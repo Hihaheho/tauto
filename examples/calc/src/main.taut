@@ -1,6 +1,7 @@
 import "calc.taut"
 import "../../compiler/src/compiler.taut"
 import std::prelude::Os
+import std::prelude::Macro { SynArg, SynDiag }
 
 pub fn show_stack(r: Option(List(nat))): Unit {
   match r {
@@ -15,16 +16,52 @@ pub fn show_stack(r: Option(List(nat))): Unit {
   }
 }
 
+// A syntax error carries the id of the tools' message and its arguments, not a
+// text: the program writes its own from the terminals that would have been taken
+// and the one it found.
+pub fn show_expected(args: List(SynArg), sep: Text): Unit ! {stdout} {
+  match args {
+    Nil => ()
+    Cons(a, rest) => if a.name == "expected" {
+      print(sep)
+      print(a.value)
+      show_expected(rest, " or ")
+    } else {
+      show_expected(rest, sep)
+    }
+  }
+}
+
+pub fn show_found(args: List(SynArg)): Unit ! {stdout} {
+  match args {
+    Nil => print("the end of the text")
+    Cons(a, rest) => if a.name == "found" { print(a.value) } else { show_found(rest) }
+  }
+}
+
+pub fn show_diag(d: SynDiag): Unit ! {stdout} {
+  if d.message == "macro-syntax-not-a-token" {
+    print("this text is not a token of the syntax")
+  } else {
+    print("expected ")
+    show_expected(d.args, "")
+    print(", found ")
+    show_found(d.args)
+  }
+}
+
 pub fn calc_main(src: Text): Unit ! {Div, stdout} {
   print(src)
   print(" => ")
   match arith::parse(src) {
     Err(d) => {
       print("error: ")
-      print(d.message)
+      show_diag(d)
       print("\n")
     }
-    Ok(t) => show_stack(run_code(compile_expr(fold_expr(calc_expr_lower(arith::Expr::to_i(t)))), Nil))
+    Ok(t) => show_stack(
+      run_code(compile_expr(fold_expr(calc_expr_lower(arith::Expr::to_i(t)))), Nil)
+    )
   }
 }
 

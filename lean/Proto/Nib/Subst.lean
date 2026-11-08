@@ -49,6 +49,7 @@ mutual
     | .text _, _, _ => by simp [Tm.ren]
     | .dec _, _, _ => by simp [Tm.ren]
     | .flt _, _, _ => by simp [Tm.ren]
+    | .flt32 _, _, _ => by simp [Tm.ren]
     | .prim _ _ _, _, _ => by simp [Tm.ren]
     | .lam ps b, ξ, ζ => by
         simp only [Tm.ren]; rw [Tm.ren_ren b, upRN_comp]
@@ -108,6 +109,7 @@ mutual
     | .text _, _, _ => by simp [Tm.ren, Tm.subst]
     | .dec _, _, _ => by simp [Tm.ren, Tm.subst]
     | .flt _, _, _ => by simp [Tm.ren, Tm.subst]
+    | .flt32 _, _, _ => by simp [Tm.ren, Tm.subst]
     | .prim _ _ _, _, _ => by simp [Tm.ren, Tm.subst]
     | .lam ps b, ξ, σ => by
         simp only [Tm.ren, Tm.subst]; rw [Tm.subst_ren b, upN_upRN]
@@ -185,6 +187,7 @@ mutual
     | .text _, _, _ => by simp [Tm.ren, Tm.subst]
     | .dec _, _, _ => by simp [Tm.ren, Tm.subst]
     | .flt _, _, _ => by simp [Tm.ren, Tm.subst]
+    | .flt32 _, _, _ => by simp [Tm.ren, Tm.subst]
     | .prim _ _ _, _, _ => by simp [Tm.ren, Tm.subst]
     | .lam ps b, σ, ξ => by
         simp only [Tm.ren, Tm.subst]; rw [Tm.ren_subst b, upN_ren]
@@ -262,6 +265,7 @@ mutual
     | .text _, _, _ => by simp [Tm.subst]
     | .dec _, _, _ => by simp [Tm.subst]
     | .flt _, _, _ => by simp [Tm.subst]
+    | .flt32 _, _, _ => by simp [Tm.subst]
     | .prim _ _ _, _, _ => by simp [Tm.subst]
     | .lam ps b, σ, τ => by
         simp only [Tm.subst]; rw [Tm.subst_subst b, upN_subst]
@@ -321,6 +325,7 @@ mutual
     | .text _ => by simp [Tm.subst]
     | .dec _ => by simp [Tm.subst]
     | .flt _ => by simp [Tm.subst]
+    | .flt32 _ => by simp [Tm.subst]
     | .prim _ _ _ => by simp [Tm.subst]
     | .lam ps b => by simp only [Tm.subst]; rw [upN_var, Tm.subst_var b]
     | .app f args => by simp only [Tm.subst]; rw [Tm.subst_var f, Tms.subst_var args]

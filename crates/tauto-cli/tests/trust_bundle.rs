@@ -351,7 +351,6 @@ fn certified_state_example_replays_offline_and_rejects_rehashed_invalid_transiti
         "std/Data.taut",
         "std/Nat.taut",
         "std/State.taut",
-        "std/Std.taut",
     ];
     for relative in sources {
         let path = f.0.join(relative);

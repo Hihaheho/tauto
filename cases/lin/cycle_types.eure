@@ -1,0 +1,81 @@
+// What a type says the cycle check: a value whose type holds no storage and
+// no closure is not followed, however the analysis merged it with others
+// (`docs/design/shared-levels.md`).
+
+@ cases.a-list-field-holds-no-storage
+// The tail of a `List(A)` is a `List(A)` again: its `A` stands for the
+// argument already read, not for an unknown type. `pass` merges the
+// storage with the record, so the record is kept apart only by its type.
+source = ```nib
+struct Node { items: List(i64) }
+fn pass<T>(x: T): T { x }
+let r := Ref::new(Node { items: Nil })
+let same := pass(r)
+Ref::set(r, pass(Node { items: Cons(1, Nil) }))
+```
+lin = "ok"
+
+@ cases.a-list-of-storages-in-itself-is-a-cycle
+source = ```nib
+struct Node { items: List(Ref(Node)) }
+let r := Ref::new(Node { items: Nil })
+let s := Ref::new(Node { items: Nil })
+Ref::set(r, Node { items: Cons(s, Nil) })
+Ref::set(s, Node { items: Cons(r, Nil) })
+```
+lin = "error: strong reference cycle"
+
+
+@ cases.deeply-nested-data-is-read-once
+// Each type reaches the next one through two fields, so the paths through
+// the fields double at every level. A type read once is not read again, so
+// the check stays linear in the number of types.
+source = ```nib
+enum T40 { A40, B40(i64) }
+enum T39 { A39(T40), B39(T40) }
+enum T38 { A38(T39), B38(T39) }
+enum T37 { A37(T38), B37(T38) }
+enum T36 { A36(T37), B36(T37) }
+enum T35 { A35(T36), B35(T36) }
+enum T34 { A34(T35), B34(T35) }
+enum T33 { A33(T34), B33(T34) }
+enum T32 { A32(T33), B32(T33) }
+enum T31 { A31(T32), B31(T32) }
+enum T30 { A30(T31), B30(T31) }
+enum T29 { A29(T30), B29(T30) }
+enum T28 { A28(T29), B28(T29) }
+enum T27 { A27(T28), B27(T28) }
+enum T26 { A26(T27), B26(T27) }
+enum T25 { A25(T26), B25(T26) }
+enum T24 { A24(T25), B24(T25) }
+enum T23 { A23(T24), B23(T24) }
+enum T22 { A22(T23), B22(T23) }
+enum T21 { A21(T22), B21(T22) }
+enum T20 { A20(T21), B20(T21) }
+enum T19 { A19(T20), B19(T20) }
+enum T18 { A18(T19), B18(T19) }
+enum T17 { A17(T18), B17(T18) }
+enum T16 { A16(T17), B16(T17) }
+enum T15 { A15(T16), B15(T16) }
+enum T14 { A14(T15), B14(T15) }
+enum T13 { A13(T14), B13(T14) }
+enum T12 { A12(T13), B12(T13) }
+enum T11 { A11(T12), B11(T12) }
+enum T10 { A10(T11), B10(T11) }
+enum T9 { A9(T10), B9(T10) }
+enum T8 { A8(T9), B8(T9) }
+enum T7 { A7(T8), B7(T8) }
+enum T6 { A6(T7), B6(T7) }
+enum T5 { A5(T6), B5(T6) }
+enum T4 { A4(T5), B4(T5) }
+enum T3 { A3(T4), B3(T4) }
+enum T2 { A2(T3), B2(T3) }
+enum T1 { A1(T2), B1(T2) }
+enum T0 { A0(T1), B0(T1) }
+struct Node { t: T0 }
+fn pass<T>(x: T): T { x }
+let r := Ref::new(Node { t: A0(A1(A2(A3(A4(A5(A6(A7(A8(A9(A10(A11(A12(A13(A14(A15(A16(A17(A18(A19(A20(A21(A22(A23(A24(A25(A26(A27(A28(A29(A30(A31(A32(A33(A34(A35(A36(A37(A38(A39(A40)))))))))))))))))))))))))))))))))))))))) })
+let same := pass(r)
+Ref::set(r, pass(Node { t: B0(A1(A2(A3(A4(A5(A6(A7(A8(A9(A10(A11(A12(A13(A14(A15(A16(A17(A18(A19(A20(A21(A22(A23(A24(A25(A26(A27(A28(A29(A30(A31(A32(A33(A34(A35(A36(A37(A38(A39(A40)))))))))))))))))))))))))))))))))))))))) }))
+```
+lin = "ok"

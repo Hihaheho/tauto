@@ -1,0 +1,605 @@
+import "../../surface/src/surface.taut"
+import "../../text/src/text.taut"
+import std::Base
+import std::Text
+
+// The names a file declares and the places it uses a name, read from its
+// surface program without types.
+//
+// A declaration is listed under the name it is written with and, inside
+// `module M`, under `M::name`; a constructor also under `Type::Ctor` and a
+// class method under `Class::method`. A use is a variable whose span is
+// exactly its written name. A use whose name any binder of the same
+// top-level statement binds (a parameter, `let`, a pattern, a generic) is
+// left out, so a local never resolves to a declaration of the same name.
+
+pub(open) inductive NamesDecl: Type {
+  Mk(name: Text, kind: Text, start: Nat, end: Nat): NamesDecl
+}
+
+// `scope` is the module path the use is written in (`M::` or empty).
+pub(open) inductive NamesUse: Type {
+  Mk(name: Text, scope: Text, start: Nat, end: Nat): NamesUse
+}
+
+pub(open) inductive NamesAcc: Type {
+  Mk(uses: List(NamesUse), binds: List(Text)): NamesAcc
+}
+
+pub fn names_bind(a: NamesAcc, name: Text): NamesAcc {
+  NamesAcc { uses: a.uses, binds: Cons(name, a.binds) }
+}
+
+pub fn names_bind_all(a: NamesAcc, names: List(Text)): NamesAcc {
+  ⊢ NamesAcc from match names {
+    Nil => a
+    Cons(n, rest) => names_bind_all(names_bind(a, n), rest)
+  }
+}
+
+pub fn names_bind_opt(a: NamesAcc, name: Option(Text)): NamesAcc {
+  ⊢ NamesAcc from match name {
+    None => a
+    Some(n) => names_bind(a, n)
+  }
+}
+
+pub fn names_use(a: NamesAcc, name: Text, scope: Text, start: Nat, end: Nat): NamesAcc {
+  NamesAcc { uses: Cons(NamesUse { name: name, scope: scope, start: start, end: end }, a.uses), binds: a.binds }
+}
+
+mutual {
+  pub fn names_pattern(a: NamesAcc, p: SurfacePattern): NamesAcc {
+    ⊢ NamesAcc from match p {
+      PtWild => a
+      PtBind(n) => names_bind(a, n)
+      PtInt(neg, m) => a
+      PtBool(v) => a
+      PtText(v) => a
+      PtCtor(name, args) => names_patterns(a, args)
+      PtRecord(name, fields) => names_pattern_fields(a, fields)
+      PtOther(w) => a
+    }
+  }
+
+  pub fn names_patterns(a: NamesAcc, ps: List(SurfacePattern)): NamesAcc {
+    ⊢ NamesAcc from match ps {
+      Nil => a
+      Cons(p, rest) => names_patterns(names_pattern(a, p), rest)
+    }
+  }
+
+  pub fn names_pattern_field(a: NamesAcc, f: SurfacePatternField): NamesAcc {
+    ⊢ NamesAcc from match f {
+      SurfacePatternFieldMk(name, p) => names_pattern(a, p)
+    }
+  }
+
+  pub fn names_pattern_fields(a: NamesAcc, fs: List(SurfacePatternField)): NamesAcc {
+    ⊢ NamesAcc from match fs {
+      Nil => a
+      Cons(f, rest) => names_pattern_fields(names_pattern_field(a, f), rest)
+    }
+  }
+}
+
+mutual {
+  pub fn names_term(a: NamesAcc, s: Text, t: SurfaceTerm): NamesAcc {
+    ⊢ NamesAcc from match t {
+      SurfaceTermIndexedMk(kind, start, end, o) => names_kind(a, s, kind, start, end)
+    }
+  }
+
+  pub fn names_terms(a: NamesAcc, s: Text, ts: List(SurfaceTerm)): NamesAcc {
+    ⊢ NamesAcc from match ts {
+      Nil => a
+      Cons(t, rest) => names_terms(names_term(a, s, t), s, rest)
+    }
+  }
+
+  pub fn names_opt(a: NamesAcc, s: Text, t: Option(SurfaceTerm)): NamesAcc {
+    ⊢ NamesAcc from match t {
+      None => a
+      Some(x) => names_term(a, s, x)
+    }
+  }
+
+  pub fn names_opts(a: NamesAcc, s: Text, ts: List(Option(SurfaceTerm))): NamesAcc {
+    ⊢ NamesAcc from match ts {
+      Nil => a
+      Cons(t, rest) => names_opts(names_opt(a, s, t), s, rest)
+    }
+  }
+
+  pub fn names_kind(a: NamesAcc, s: Text, k: SurfaceKind, start: Nat, end: Nat): NamesAcc {
+    ⊢ NamesAcc from match k {
+      SkVar(name) => names_use(a, name, s, start, end)
+      SkNat(d) => a
+      SkFloat(d) => a
+      SkRow(es) => a
+      SkText(v) => a
+      SkBool(v) => a
+      SkApp(head, args) => names_terms(names_term(a, s, head), s, args)
+      SkPi(params, result, es) => names_term(names_params(a, s, params), s, result)
+      SkExists(binder, domain, body) => names_term(names_term(names_bind(a, binder), s, domain), s, body)
+      SkLam(params, body) => names_term(names_bind_all(a, params), s, body)
+      SkUnion(parts) => names_terms(a, s, parts)
+      SkProduct(members) => names_terms(a, s, members)
+      SkTagged(tag, value) => names_term(a, s, value)
+      SkIf(c, th, o) => names_opt(names_term(names_term(a, s, c), s, th), s, o)
+      SkField(value, name) => names_term(a, s, value)
+      SkProject(value, ty) => names_term(names_term(a, s, value), s, ty)
+      SkBlock(stmts) => names_stmts(a, s, stmts)
+      SkPerform(op, args) => names_terms(a, s, args)
+      SkHandle(body, hs) => names_handlers(names_term(a, s, body), s, hs)
+      SkBudget(m, amount, body) => names_term(names_term(a, s, amount), s, body)
+      SkMatch(scrutinee, motive, arms, binder) => names_arms(
+        names_opt(names_term(names_bind_opt(a, binder), s, scrutinee), s, motive),
+        s,
+        arms
+      )
+      SkHole(name) => a
+      SkRecord(name, fields) => names_fields(a, s, fields)
+      SkBorrow(m, value) => names_term(a, s, value)
+      SkFnKind(kind, ty) => names_term(a, s, ty)
+      SkBorrowLam(bs, lam) => names_term(a, s, lam)
+      SkOther(w) => a
+      SkMacroCall(name, arg) => names_term(a, s, arg)
+      SkQuote(f, stmts) => names_stmts(a, s, stmts)
+      SkSplice(value) => names_term(a, s, value)
+      SkSyntaxLit(name, body) => a
+      SkStep(tactic, arg, cs, ce, before, arms) => names_step_arms(
+        names_opt(names_term(a, s, arg), s, before),
+        s,
+        arms
+      )
+    }
+  }
+
+  pub fn names_param(a: NamesAcc, s: Text, p: SurfaceParam): NamesAcc {
+    ⊢ NamesAcc from match p {
+      SurfaceParamMk(name, ty) => names_term(names_bind_opt(a, name), s, ty)
+    }
+  }
+
+  pub fn names_params(a: NamesAcc, s: Text, ps: List(SurfaceParam)): NamesAcc {
+    ⊢ NamesAcc from match ps {
+      Nil => a
+      Cons(p, rest) => names_params(names_param(a, s, p), s, rest)
+    }
+  }
+
+  // A field of a record, or a binder of a step arm (`binds` then binds
+  // its name).
+  pub fn names_field(a: NamesAcc, s: Text, binds: Bool, f: SurfaceField): NamesAcc {
+    ⊢ NamesAcc from match f {
+      SurfaceFieldMk(name, value) => if binds { names_term(names_bind(a, name), s, value) } else { names_term(a, s, value) }
+    }
+  }
+
+  pub fn names_fields_of(a: NamesAcc, s: Text, binds: Bool, fs: List(SurfaceField)): NamesAcc {
+    ⊢ NamesAcc from match fs {
+      Nil => a
+      Cons(f, rest) => names_fields_of(names_field(a, s, binds, f), s, binds, rest)
+    }
+  }
+
+  pub fn names_fields(a: NamesAcc, s: Text, fs: List(SurfaceField)): NamesAcc {
+    names_fields_of(a, s, false, fs)
+  }
+
+  pub fn names_named1(a: NamesAcc, s: Text, n: SurfaceNamed): NamesAcc {
+    ⊢ NamesAcc from match n {
+      SurfaceNamedMk(name, ty) => names_term(names_bind(a, name), s, ty)
+    }
+  }
+
+  pub fn names_named(a: NamesAcc, s: Text, ns: List(SurfaceNamed)): NamesAcc {
+    ⊢ NamesAcc from match ns {
+      Nil => a
+      Cons(n, rest) => names_named(names_named1(a, s, n), s, rest)
+    }
+  }
+
+  pub fn names_arm(a: NamesAcc, s: Text, arm: SurfaceArm): NamesAcc {
+    ⊢ NamesAcc from match arm {
+      SurfaceArmMk(p, guard, goal, body) => names_term(names_opt(names_opt(names_pattern(a, p), s, guard), s, goal), s, body)
+    }
+  }
+
+  pub fn names_arms(a: NamesAcc, s: Text, arms: List(SurfaceArm)): NamesAcc {
+    ⊢ NamesAcc from match arms {
+      Nil => a
+      Cons(arm, rest) => names_arms(names_arm(a, s, arm), s, rest)
+    }
+  }
+
+  pub fn names_step_arm(a: NamesAcc, s: Text, arm: SurfaceStepArm): NamesAcc {
+    ⊢ NamesAcc from match arm {
+      SurfaceStepArmMk(binders, goal, body, st, en) => names_term(
+        names_term(names_fields_of(a, s, true, binders), s, goal),
+        s,
+        body
+      )
+    }
+  }
+
+  pub fn names_step_arms(a: NamesAcc, s: Text, arms: List(SurfaceStepArm)): NamesAcc {
+    ⊢ NamesAcc from match arms {
+      Nil => a
+      Cons(arm, rest) => names_step_arms(names_step_arm(a, s, arm), s, rest)
+    }
+  }
+
+  pub fn names_handler(a: NamesAcc, s: Text, h: SurfaceHandler): NamesAcc {
+    ⊢ NamesAcc from match h {
+      HdReturn(p, body) => names_term(names_pattern(a, p), s, body)
+      HdOperation(op, binds, types, ps, r, guard, body) => names_term(
+        names_opt(names_terms(names_patterns(names_bind_opt(names_bind_all(a, binds), r), ps), s, types), s, guard),
+        s,
+        body
+      )
+    }
+  }
+
+  pub fn names_handlers(a: NamesAcc, s: Text, hs: List(SurfaceHandler)): NamesAcc {
+    ⊢ NamesAcc from match hs {
+      Nil => a
+      Cons(h, rest) => names_handlers(names_handler(a, s, h), s, rest)
+    }
+  }
+
+  pub fn names_constraint(a: NamesAcc, s: Text, c: SurfaceConstraint): NamesAcc {
+    ⊢ NamesAcc from match c {
+      SurfaceConstraintMk(cl, ty, st, en, args) => names_terms(names_term(a, s, ty), s, args)
+    }
+  }
+
+  pub fn names_constraints(a: NamesAcc, s: Text, cs: List(SurfaceConstraint)): NamesAcc {
+    ⊢ NamesAcc from match cs {
+      Nil => a
+      Cons(c, rest) => names_constraints(names_constraint(a, s, c), s, rest)
+    }
+  }
+
+  pub fn names_fn(a: NamesAcc, s: Text, f: SurfaceFn): NamesAcc {
+    ⊢ NamesAcc from match f {
+      SurfaceFnMk(name, generics, bounds, params, borrows, types, result, es, wheres, st, en, body, gtypes) => names_terms(
+        names_term(
+          names_constraints(
+            names_opt(names_opts(names_bind_all(names_bind_all(a, generics), params), s, types), s, result),
+            s,
+            wheres
+          ),
+          s,
+          body
+        ),
+        s,
+        gtypes
+      )
+    }
+  }
+
+  pub fn names_fns(a: NamesAcc, s: Text, fs: List(SurfaceFn)): NamesAcc {
+    ⊢ NamesAcc from match fs {
+      Nil => a
+      Cons(f, rest) => names_fns(names_fn(a, s, f), s, rest)
+    }
+  }
+
+  pub fn names_theorem(a: NamesAcc, s: Text, t: SurfaceTheorem): NamesAcc {
+    ⊢ NamesAcc from match t {
+      SurfaceTheoremMk(name, implicit, params, ty, body, st, en) => names_opt(
+        names_term(names_named(a, s, params), s, ty),
+        s,
+        body
+      )
+    }
+  }
+
+  pub fn names_ctor(a: NamesAcc, s: Text, c: SurfaceCtor): NamesAcc {
+    ⊢ NamesAcc from match c {
+      SurfaceCtorMk(name, implicit, params, result) => names_term(names_named(a, s, params), s, result)
+    }
+  }
+
+  pub fn names_ctors(a: NamesAcc, s: Text, cs: List(SurfaceCtor)): NamesAcc {
+    ⊢ NamesAcc from match cs {
+      Nil => a
+      Cons(c, rest) => names_ctors(names_ctor(a, s, c), s, rest)
+    }
+  }
+
+  pub fn names_inductive(a: NamesAcc, s: Text, i: SurfaceInductive): NamesAcc {
+    ⊢ NamesAcc from match i {
+      SurfaceInductiveMk(name, params, sort, ctors, st, en) => names_ctors(
+        names_term(names_named(a, s, params), s, sort),
+        s,
+        ctors
+      )
+    }
+  }
+
+  pub fn names_effect(a: NamesAcc, s: Text, e: SurfaceEffect): NamesAcc {
+    ⊢ NamesAcc from match e {
+      SurfaceEffectMk(name, generics, params, result, r, st, en, set) => names_opt(
+        names_opts(names_bind_all(a, generics), s, params),
+        s,
+        result
+      )
+    }
+  }
+
+  pub fn names_data_field(a: NamesAcc, s: Text, f: SurfaceDataField): NamesAcc {
+    ⊢ NamesAcc from match f {
+      SurfaceDataFieldMk(name, ty) => names_term(a, s, ty)
+    }
+  }
+
+  pub fn names_data_fields(a: NamesAcc, s: Text, fs: List(SurfaceDataField)): NamesAcc {
+    ⊢ NamesAcc from match fs {
+      Nil => a
+      Cons(f, rest) => names_data_fields(names_data_field(a, s, f), s, rest)
+    }
+  }
+
+  pub fn names_data_ctor(a: NamesAcc, s: Text, c: SurfaceDataCtor): NamesAcc {
+    ⊢ NamesAcc from match c {
+      SurfaceDataCtorMk(name, fields) => names_data_fields(a, s, fields)
+    }
+  }
+
+  pub fn names_data_ctors(a: NamesAcc, s: Text, cs: List(SurfaceDataCtor)): NamesAcc {
+    ⊢ NamesAcc from match cs {
+      Nil => a
+      Cons(c, rest) => names_data_ctors(names_data_ctor(a, s, c), s, rest)
+    }
+  }
+
+  pub fn names_data(a: NamesAcc, s: Text, d: SurfaceData): NamesAcc {
+    ⊢ NamesAcc from match d {
+      SurfaceDataMk(kind, name, generics, ctors, st, en) => names_data_ctors(names_bind_all(a, generics), s, ctors)
+    }
+  }
+
+  pub fn names_class(a: NamesAcc, s: Text, c: SurfaceClass): NamesAcc {
+    ⊢ NamesAcc from match c {
+      SurfaceClassMk(name, param, arity, bound, methods, laws, st, en, parameters) => names_fns(
+        names_named(names_bind(a, param), s, parameters),
+        s,
+        methods
+      )
+    }
+  }
+
+  pub fn names_instance(a: NamesAcc, s: Text, i: SurfaceInstance): NamesAcc {
+    ⊢ NamesAcc from match i {
+      SurfaceInstanceMk(generics, bounds, cl, head, wheres, methods, laws, st, en, gtypes, args) => names_fns(
+        names_terms(
+          names_terms(names_constraints(names_term(names_bind_all(a, generics), s, head), s, wheres), s, gtypes),
+          s,
+          args
+        ),
+        s,
+        methods
+      )
+    }
+  }
+
+  pub fn names_stmts(a: NamesAcc, s: Text, stmts: List(SurfaceStmt)): NamesAcc {
+    ⊢ NamesAcc from match stmts {
+      Nil => a
+      Cons(st, rest) => names_stmts(names_stmt(a, s, st), s, rest)
+    }
+  }
+
+  pub fn names_stmt(a: NamesAcc, s: Text, st: SurfaceStmt): NamesAcc {
+    ⊢ NamesAcc from match st {
+      StLet(name, ty, value, b, m) => names_term(names_opt(names_bind(a, name), s, ty), s, value)
+      StVar(name, ty, value, b) => names_term(names_opt(names_bind(a, name), s, ty), s, value)
+      StModule(name, stmts, st0, en) => names_stmts(a, Text::concat_all(Cons(s, Cons(name, Cons("::", Nil)))), stmts)
+      StAssign(name, place, value) => names_term(names_opt(a, s, place), s, value)
+      StCalled(g, call) => names_term(a, s, call)
+      StFn(f) => names_fn(a, s, f)
+      StTheorem(t) => names_theorem(a, s, t)
+      StDef(t) => names_theorem(a, s, t)
+      StMutual(stmts, st0, en) => names_stmts(a, s, stmts)
+      StImport(path, st0, en) => a
+      StInductive(i) => names_inductive(a, s, i)
+      StEffect(e) => names_effect(a, s, e)
+      StStruct(d) => names_data(a, s, d)
+      StEnum(d) => names_data(a, s, d)
+      StExtern(abi, fns, st0, en) => names_fns(a, s, fns)
+      StClass(c) => names_class(a, s, c)
+      StInstance(i) => names_instance(a, s, i)
+      StWhile(c, body) => names_term(names_term(a, s, c), s, body)
+      StReturn(value) => names_opt(a, s, value)
+      StExpr(value) => names_term(a, s, value)
+      StOther(w, st0, en) => a
+      StMacro(name, function, st0, en) => a
+      StSyntax(name, grammar, st0, en) => a
+      StAttributed(name, arg, g, stmt) => names_stmt(names_term(a, s, arg), s, stmt)
+    }
+  }
+}
+
+pub fn names_qualified(s: Text, name: Text): Text {
+  Text::concat(s, name)
+}
+
+pub fn names_decl(s: Text, name: Text, kind: Text, start: Nat, end: Nat): NamesDecl {
+  NamesDecl { name: names_qualified(s, name), kind: kind, start: start, end: end }
+}
+
+pub fn names_fn_decls(s: Text, owner: Text, kind: Text, fs: List(SurfaceFn), out: List(NamesDecl)): List(NamesDecl) {
+  ⊢ List(NamesDecl) from match fs {
+    Nil => out
+    Cons(f, rest) => {
+      let qualified := if owner == "" {
+        out
+      } else {
+        Cons(names_decl(s, Text::concat_all(Cons(owner, Cons("::", Cons(f.name, Nil)))), kind, f.start, f.end), out)
+      }
+      names_fn_decls(s, owner, kind, rest, Cons(names_decl(s, f.name, kind, f.start, f.end), qualified))
+    }
+  }
+}
+
+pub fn names_ctor_decl(s: Text, owner: Text, ctor: Text, start: Nat, end: Nat, out: List(NamesDecl)): List(NamesDecl) {
+  Cons(
+    names_decl(s, Text::concat_all(Cons(owner, Cons("::", Cons(ctor, Nil)))), "ctor", start, end),
+    Cons(names_decl(s, ctor, "ctor", start, end), out)
+  )
+}
+
+pub fn names_ctor_decls(s: Text, owner: Text, cs: List(SurfaceCtor), start: Nat, end: Nat, out: List(NamesDecl)): List(NamesDecl) {
+  ⊢ List(NamesDecl) from match cs {
+    Nil => out
+    Cons(c, rest) => names_ctor_decls(s, owner, rest, start, end, names_ctor_decl(s, owner, c.name, start, end, out))
+  }
+}
+
+pub fn names_data_ctor_decls(s: Text, owner: Text, cs: List(SurfaceDataCtor), start: Nat, end: Nat, out: List(NamesDecl)): List(NamesDecl) {
+  ⊢ List(NamesDecl) from match cs {
+    Nil => out
+    Cons(c, rest) => names_data_ctor_decls(s, owner, rest, start, end, names_ctor_decl(s, owner, c.name, start, end, out))
+  }
+}
+
+mutual {
+  // The declarations of `stmts`, written inside the module path `s`, put
+  // before `out` in reverse order.
+  pub fn names_decls_of(s: Text, stmts: List(SurfaceStmt), out: List(NamesDecl)): List(NamesDecl) {
+    ⊢ List(NamesDecl) from match stmts {
+      Nil => out
+      Cons(st, rest) => names_decls_of(s, rest, names_decls_stmt(s, st, out))
+    }
+  }
+
+  pub fn names_decls_stmt(s: Text, st: SurfaceStmt, out: List(NamesDecl)): List(NamesDecl) {
+    ⊢ List(NamesDecl) from match st {
+      StModule(name, stmts, start, end) => names_decls_of(
+        Text::concat_all(Cons(s, Cons(name, Cons("::", Nil)))),
+        stmts,
+        Cons(names_decl(s, name, "module", start, end), out)
+      )
+      StFn(f) => Cons(names_decl(s, f.name, "fn", f.start, f.end), out)
+      StTheorem(t) => Cons(names_decl(s, t.name, "theorem", t.start, t.end), out)
+      StDef(t) => Cons(names_decl(s, t.name, "def", t.start, t.end), out)
+      StMutual(stmts, start, end) => names_decls_of(s, stmts, out)
+      StInductive(i) => names_ctor_decls(
+        s,
+        i.name,
+        i.constructors,
+        i.start,
+        i.end,
+        Cons(names_decl(s, i.name, "inductive", i.start, i.end), out)
+      )
+      StEffect(e) => Cons(names_decl(s, e.name, "effect", e.start, e.end), out)
+      StStruct(d) => names_data_ctor_decls(
+        s,
+        d.name,
+        d.constructors,
+        d.start,
+        d.end,
+        Cons(names_decl(s, d.name, "struct", d.start, d.end), out)
+      )
+      StEnum(d) => names_data_ctor_decls(
+        s,
+        d.name,
+        d.constructors,
+        d.start,
+        d.end,
+        Cons(names_decl(s, d.name, "enum", d.start, d.end), out)
+      )
+      StExtern(abi, fns, start, end) => names_fn_decls(s, "", "extern fn", fns, out)
+      StClass(c) => names_fn_decls(
+        s,
+        c.name,
+        "method",
+        c.methods,
+        Cons(names_decl(s, c.name, "class", c.start, c.end), out)
+      )
+      StMacro(name, function, start, end) => Cons(names_decl(s, name, "macro", start, end), out)
+      StSyntax(name, grammar, start, end) => Cons(names_decl(s, name, "syntax", start, end), out)
+      StAttributed(name, arg, g, stmt) => names_decls_stmt(s, stmt, out)
+      _ => out
+    }
+  }
+}
+
+// The declarations of a program, in the order they are written.
+pub fn names_decls(stmts: List(SurfaceStmt)): List(NamesDecl) {
+  text_list_reverse(names_decls_of("", stmts, Nil))
+}
+
+pub fn names_has(names: List(Text), name: Text): Bool {
+  ⊢ Bool from match names {
+    Nil => false
+    Cons(n, rest) => if Text::eq(n, name) { true } else { names_has(rest, name) }
+  }
+}
+
+// The uses of `acc` that its binders do not bind and whose span is the name
+// as written, put before `out`.
+pub fn names_kept(source: Text, acc: NamesAcc, uses: List(NamesUse), out: List(NamesUse)): List(NamesUse) {
+  ⊢ List(NamesUse) from match uses {
+    Nil => out
+    Cons(u, rest) => if Text::eq(Text::slice_or_empty(source, u.start, u.end), u.name) && not(names_has(acc.binds, u.name)) {
+      names_kept(source, acc, rest, Cons(u, out))
+    } else {
+      names_kept(source, acc, rest, out)
+    }
+  }
+}
+
+mutual {
+  pub fn names_uses_of(source: Text, s: Text, stmts: List(SurfaceStmt), out: List(NamesUse)): List(NamesUse) {
+    ⊢ List(NamesUse) from match stmts {
+      Nil => out
+      Cons(st, rest) => names_uses_of(source, s, rest, names_uses_stmt(source, s, st, out))
+    }
+  }
+
+  // A module or a `mutual` block is read statement by statement, so that a
+  // binder of one declaration does not hide the uses of another.
+  pub fn names_uses_stmt(source: Text, s: Text, st: SurfaceStmt, out: List(NamesUse)): List(NamesUse) {
+    ⊢ List(NamesUse) from match st {
+      StModule(name, stmts, start, end) => names_uses_of(
+        source,
+        Text::concat_all(Cons(s, Cons(name, Cons("::", Nil)))),
+        stmts,
+        out
+      )
+      StMutual(stmts, start, end) => names_uses_of(source, s, stmts, out)
+      _ => {
+        let acc := names_stmt(NamesAcc { uses: Nil, binds: Nil }, s, st)
+        names_kept(source, acc, acc.uses, out)
+      }
+    }
+  }
+}
+
+// The uses of names in a program, in no particular order.
+pub fn names_uses(source: Text, stmts: List(SurfaceStmt)): List(NamesUse) {
+  names_uses_of(source, "", stmts, Nil)
+}
+
+// The files a program imports by path (`import "a.taut"`), as written.
+pub fn names_imports(stmts: List(SurfaceStmt)): List(Text) {
+  ⊢ List(Text) from match stmts {
+    Nil => Nil
+    Cons(st, rest) => ⊢ List(Text) from match st {
+      StImport(path, start, end) => if names_ends_with(path, ".taut") || names_ends_with(path, ".tauto") {
+        Cons(path, names_imports(rest))
+      } else {
+        names_imports(rest)
+      }
+      _ => names_imports(rest)
+    }
+  }
+}
+
+pub fn names_ends_with(t: Text, suffix: Text): Bool {
+  Text::len(suffix) <= Text::len(t) && text_starts_with(t, suffix, Text::len(t) - Text::len(suffix))
+}

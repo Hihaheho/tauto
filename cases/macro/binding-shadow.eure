@@ -1,0 +1,91 @@
+// A name bound inside a function (a parameter, a `let`, a pattern variable)
+// hides a global function of the same spelling.
+
+@ cases.a-parameter-hides-a-global-function-of-the-same-name
+files."binding-defs.taut" = ````taut
+import std::prelude::Macro
+import std::prelude::Par
+
+fn first(): Unit {
+  let cell := Ref::new(false)
+  Ref::set(cell, true)
+}
+fn choose(first: Bool, value: SynExpr): SynExpr {
+  if first { value } else { quote { 0 } }
+}
+macro fn answer(value: SynExpr): SynExpr { choose(true, value) }
+````
+files."binding.taut" = ````taut
+import "binding-defs.taut"
+perform show("answer", answer!(42))
+````
+entry = "binding.taut"
+shows = ["answer = 42"]
+
+@ cases.a-let-hides-a-global-function-of-the-same-name
+files."binding-defs.taut" = ````taut
+import std::prelude::Macro
+import std::prelude::Par
+
+fn first(): Unit {
+  let cell := Ref::new(false)
+  Ref::set(cell, true)
+}
+fn choose(value: SynExpr): SynExpr {
+  let first := true
+  if first { value } else { quote { 0 } }
+}
+macro fn answer(value: SynExpr): SynExpr { choose(value) }
+````
+files."binding.taut" = ````taut
+import "binding-defs.taut"
+perform show("answer", answer!(42))
+````
+entry = "binding.taut"
+shows = ["answer = 42"]
+
+@ cases.a-match-variable-hides-a-global-function-of-the-same-name
+files."binding-defs.taut" = ````taut
+import std::prelude::Macro
+import std::prelude::Par
+
+fn first(): Unit {
+  let cell := Ref::new(false)
+  Ref::set(cell, true)
+}
+fn choose(flag: Option(Bool), value: SynExpr): SynExpr {
+  match flag {
+    Some(first) => if first { value } else { quote { 0 } }
+    None => quote { 0 }
+  }
+}
+macro fn answer(value: SynExpr): SynExpr { choose(Some(true), value) }
+````
+files."binding.taut" = ````taut
+import "binding-defs.taut"
+perform show("answer", answer!(42))
+````
+entry = "binding.taut"
+shows = ["answer = 42"]
+
+@ cases.a-macro-function-may-use-a-shared-cell
+files."binding-defs.taut" = ````taut
+import std::prelude::Macro
+import std::prelude::Par
+
+fn first(): Unit {
+  let cell := Ref::new(false)
+  Ref::set(cell, true)
+}
+fn choose(value: SynExpr): SynExpr {
+  first()
+  value
+}
+macro fn answer(value: SynExpr): SynExpr { choose(value) }
+````
+files."binding.taut" = ````taut
+import "binding-defs.taut"
+perform show("answer", answer!(42))
+````
+entry = "binding.taut"
+shows = ["answer = 42"]

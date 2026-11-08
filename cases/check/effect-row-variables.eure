@@ -1,0 +1,107 @@
+description = "Functions whose rows have a variable, read in proofs: the variable is the operations and answers of the effects it stands for, given at claim_each call."
+
+@ cases.a-loop-over-a-row-variable-is-read
+extract = true
+imports = [path`../../std/Base.taut`]
+source = ```tauto
+effect claim(n: Nat): Unit
+effect log(n: Nat): Unit
+
+fn claim_each<!e>(n: Nat, act: (i: Nat) -> Unit ! {claim} ∪ e): Unit ! {claim} ∪ e {
+  ⊢ Unit from match n {
+    Zero => Star
+    Succ(m) => {
+      let u := act(m)
+      claim_each(m, act)
+    }
+  }
+}
+
+fn step(i: Nat): Unit ! {claim, log} {
+  let u := perform log(i)
+  perform claim(i)
+}
+
+fn run(n: Nat): Unit ! {claim, log} { claim_each(n, step) }
+
+fn total(n: Nat): Nat {
+  var s: Nat := 0
+  var logged: Nat := 0
+  handle { run(n) } with {
+    claim(i), k => {
+      s := Nat::add(s, i)
+      k(Star)
+    }
+    log(i), k => {
+      logged := Nat::add(logged, 1)
+      k(Star)
+    }
+  }
+  Nat::add(s, logged)
+}
+
+theorem total_three(): total(3) = 6 { Refl }
+perform show("total", total(3))
+```
+checks.claim_each = "checked"
+checks.run = "checked"
+checks.total_three = "checked"
+shows = ["total = 6"]
+
+// The variable may stand for no effect, and for effects the caller handles
+// elsewhere: a call in a larger row is forwarded.
+@ cases.a-row-variable-for-no-effect-and-in-a-larger-row
+imports = [path`../../std/Base.taut`]
+source = ```tauto
+effect claim(n: Nat): Unit
+effect log(n: Nat): Unit
+
+fn claim_each<!e>(n: Nat, act: (i: Nat) -> Unit ! {claim} ∪ e): Unit ! {claim} ∪ e {
+  ⊢ Unit from match n {
+    Zero => Star
+    Succ(m) => {
+      let u := act(m)
+      claim_each(m, act)
+    }
+  }
+}
+
+fn just(i: Nat): Unit ! {claim} { perform claim(i) }
+
+fn run(n: Nat): Unit ! {claim, log} {
+  let u := perform log(n)
+  claim_each(n, just)
+}
+
+fn total(n: Nat): Nat {
+  var s: Nat := 0
+  handle { run(n) } with {
+    claim(i), k => {
+      s := Nat::add(s, i)
+      k(Star)
+    }
+    log(i), k => k(Star)
+  }
+  s
+}
+
+theorem total_four(): total(4) = 6 { Refl }
+theorem total_wrong(): total(4) = 7 { Refl }
+```
+checks.run = "checked"
+checks.total_four = "checked"
+checks.total_wrong = "error: type mismatch"
+
+// The variable stands for every row, so the function may not perform an
+// effect its row does not name.
+@ cases.a-row-variable-does-not-stand-for-a-performed-effect
+imports = [path`../../std/Base.taut`]
+source = ```tauto
+effect claim(n: Nat): Unit
+effect log(n: Nat): Unit
+
+fn claim_each<!e>(n: Nat, act: (i: Nat) -> Unit ! {claim} ∪ e): Unit ! {claim} ∪ e {
+  perform log(n)
+}
+```
+checks.claim_each = "skipped"

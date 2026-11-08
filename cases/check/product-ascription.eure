@@ -1,0 +1,197 @@
+@ cases.an-ascription-takes-the-members-of-a-product-by-their-types
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn first(p: Nat × Bool): Nat { (p: Nat) }
+
+fn second(p: Nat × Bool): Bool { (p: Bool) }
+
+fn same(p: Nat × Bool): Nat × Bool { (p: Nat × Bool) }
+
+fn fewer(p: Nat × Bool × Unit): Nat × Unit { (p: Nat × Unit) }
+
+fn swapped(p: Nat × Bool): Bool × Nat { (p: Bool × Nat) }
+
+theorem first_of(): (#(Zero, true): Nat) = Zero { Refl(Nat, Zero) }
+
+theorem swapped_of(): (#(Zero, true): Bool × Nat) = #(true, Zero) { Refl(Bool × Nat, #(true, Zero)) }
+```
+
+checks_all = "ok"
+checks."input/main.taut::first" = "ok"
+checks."input/main.taut::second" = "ok"
+checks."input/main.taut::same" = "ok"
+checks."input/main.taut::fewer" = "ok"
+checks."input/main.taut::swapped" = "ok"
+checks."input/main.taut::first_of" = "ok"
+checks."input/main.taut::swapped_of" = "ok"
+
+@ cases.an-ascription-to-a-member-two-members-share-is-rejected
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn clash(p: Nat × Nat): Nat { (p: Nat) }
+
+fn missing(p: Nat × Bool): Unit { (p: Unit) }
+```
+
+checks_all = "ok"
+checks."input/main.taut::clash" = "error: "
+checks."input/main.taut::missing" = "error: "
+
+@ cases.a-product-is-not-its-member-on-a-side-of-an-equation
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem side(p: Nat × Bool): p = Zero { Refl(Nat, Zero) }
+```
+
+checks_all = "ok"
+checks."input/main.taut::side" = "error: "
+
+@ cases.an-expected-type-takes-the-members-of-a-product
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn double(n: Nat): Nat { n + n }
+
+fn argument(p: Nat × Bool): Nat { double(p) }
+
+fn result(p: Nat × Bool × Unit): Unit × Nat { p }
+
+fn annotated(p: Nat × Bool): Bool {
+  let b: Bool := p
+  b
+}
+
+theorem argument_of(): argument(#(Succ(Zero), true)) = Succ(Succ(Zero)) { Refl }
+```
+
+checks_all = "ok"
+checks."input/main.taut::double" = "ok"
+checks."input/main.taut::argument" = "ok"
+checks."input/main.taut::result" = "ok"
+checks."input/main.taut::annotated" = "ok"
+checks."input/main.taut::argument_of" = "ok"
+
+@ cases.an-expected-generic-type-picks-no-member
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn id<A>(x: A): A { x }
+
+fn whole(p: Nat × Bool): Nat × Bool { id(p) }
+```
+
+checks_all = "ok"
+checks."input/main.taut::id" = "ok"
+checks."input/main.taut::whole" = "ok"
+
+@ cases.a-product-is-ordered-and-a-closed-permutation-is-a-subtype
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn flip(p: Nat × Bool): Bool × Nat { p }
+
+fn labelled(p: @a Nat × @b Nat): @b Nat × @a Nat { p }
+
+fn both(n: Nat, b: Bool): Bool × Nat { #(n, b) }
+
+fn tagged(m: Nat, n: Nat): @a Nat × @b Nat { #(@b n, @a m) }
+
+fn first(p: Bool × Nat): Nat {
+  match p {
+    #(x, y) => y
+  }
+}
+
+theorem flip_of(): flip(#(Zero, true)) = #(true, Zero) { Refl }
+```
+
+checks_all = "ok"
+checks."input/main.taut::flip" = "ok"
+checks."input/main.taut::labelled" = "ok"
+checks."input/main.taut::both" = "ok"
+checks."input/main.taut::tagged" = "ok"
+checks."input/main.taut::first" = "ok"
+checks."input/main.taut::flip_of" = "ok"
+
+@ cases.a-pattern-by-position-on-members-of-one-type
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn first(p: Nat × Nat): Nat {
+  match p {
+    #(x, y) => x
+  }
+}
+
+fn named(p: @a Nat × @b Nat): Nat {
+  match p {
+    #(@a x, @b y) => x
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::first" = "ok"
+checks."input/main.taut::named" = "ok"
+
+@ cases.a-product-in-another-type-is-ordered
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn nested(l: List(Nat × Bool)): List(Bool × Nat) { l }
+
+fn same(l: List(Nat × Bool)): List(Nat × Bool) { l }
+```
+
+checks_all = "ok"
+checks."input/main.taut::nested" = "error: "
+checks."input/main.taut::same" = "ok"
+
+@ cases.members-of-a-generic-product-are-matched-by-their-types
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn swap<K, V>(p: K × V): V × K { p }
+
+fn first<K, V>(p: K × V): K { (p: K) }
+
+fn keep<K, V>(p: K × V): K × V { p }
+```
+
+checks_all = "ok"
+checks."input/main.taut::swap" = "ok"
+checks."input/main.taut::first" = "ok"
+checks."input/main.taut::keep" = "ok"
+
+@ cases.a-product-of-members-of-one-type-is-not-matched-by-their-types
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn take(p: Nat × Nat): Nat { (p: Nat) }
+
+fn rebuilt(p: Nat × Nat × Bool): Bool × Nat × Nat { p }
+
+fn kept(p: Nat × Nat): Nat × Nat { p }
+```
+
+checks_all = "ok"
+checks."input/main.taut::take" = "error: two members of a product have the type `Nat`, so the members cannot be matched by their types; write the members by position, or tell them apart with a label (`@x Nat`)"
+checks."input/main.taut::rebuilt" = "error: "
+checks."input/main.taut::kept" = "ok"
+
+@ cases.a-generic-call-fixes-the-members-of-a-product-by-its-arguments
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+pub(open) inductive Table(K: Type, V: Type): Type {
+  Mk(keys: List(K), values: List(V)): Table(K, V)
+}
+
+fn entries<K, V>(t: Table(K, V)): List(K × V) { Nil }
+
+fn keys_of<K>(es: List(K × Bool)): List(K) {
+  ⊢ List(K) from match es {
+    Nil => Nil
+    Cons(#(k, b), rest) => Cons(k, keys_of(rest))
+  }
+}
+
+fn to_list<K>(t: Table(K, Bool)): List(K) { keys_of(entries(t)) }
+```
+
+checks_all = "ok"
+checks."input/main.taut::entries" = "ok"
+checks."input/main.taut::keys_of" = "ok"
+checks."input/main.taut::to_list" = "ok"

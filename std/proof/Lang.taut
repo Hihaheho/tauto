@@ -1,0 +1,536 @@
+import std::prelude::Macro {
+  Syn,
+  SynBinder,
+  SynCtx,
+  SynExpr,
+  SynHighlight,
+  SynIdent,
+  SynSpan,
+  SynTok,
+  SynToken,
+  macro_error
+}
+import std::prelude::Std { List, Option }
+import std::prelude::Shared { concat }
+import "Tooling.taut" { ProofLayout }
+
+// Proof-lang: the language of a `proof!` document. The text before `%%` is
+// Proof-prose, sentences nested by their indentation; the text after it is
+// Proof-code, the program of a sentence under that sentence's label. Only a
+// sentence that is referred to later has a label. This file only reads the
+// document, builds the tree of sentences from the columns they start at (the
+// grammar reads each line break with the indentation after it, and the tree
+// is built from those afterwards), and turns each sentence into a call of the
+// macro of its sentence form, `proof_<first word>!`. What a sentence means is
+// that macro's.
+
+syntax!(proof_lang, ```par
+%start Document
+%title "proof"
+%describe Dot "the '.' that ends a sentence or the names of a λ"
+%auto_newline_off
+%auto_ws_off
+%on LParen %push Inner
+%on Divider %enter Code
+
+%scanner Inner {
+  %on LParen %push Inner
+  %on RParen %pop
+}
+%scanner Code { }
+%%
+Document: [Gap] Sentence {Next} [Gap] [Program];
+Gap: Line | Space;
+Next: Line Sentence;
+Sentence: [Head] Clause {More};
+Head: Label [Space];
+More: [Space] Clause;
+Clause: Word {Piece} Dot^;
+Piece: Word | Line | Space;
+Word: Term | Mark;
+Term: Name [Args] | Number | TautoExpr;
+Args: LParen^ Term {Comma^ Term} RParen^;
+Mark: Comma | Colon | Equals | Define;
+Label: LBracket^ Key RBracket^;
+Key: Name | Number;
+Program: Divider^ {Entry};
+Entry: Label Item {Semi^ Item};
+Item: Lam | Applied;
+Applied: Atom {Call};
+Call: LParen^ Item {Comma^ Item} RParen^;
+Atom: Name | Number | TautoExpr | Tuple;
+Tuple: LParen^ Item {Comma^ Item} RParen^;
+Lam: Lambda^ Name {Name} Dot^ Item;
+Name: <INITIAL, Inner, Code>/[\p{L}_][\p{L}\p{N}_]*(::[\p{L}_][\p{L}\p{N}_]*)*/;
+Number: <INITIAL, Inner, Code>/[0-9]+/;
+LParen: <INITIAL, Inner, Code>'(';
+RParen: <INITIAL, Inner, Code>')';
+Comma: <INITIAL, Inner, Code>',';
+Colon: ':';
+Equals: '=';
+Define: ':=';
+Dot: <INITIAL, Code>'.';
+LBracket: <INITIAL, Code>'[';
+RBracket: <INITIAL, Code>']';
+Semi: <Code>';';
+Lambda: <Code>'λ';
+Divider: '%%';
+Line: /[ ]*(\r?\n[ ]*)+/;
+Space: /[ ]+/;
+```, with(fmt: proof_format, tokens: proof_tokens)) => struct Document, struct Applied, struct Args, struct Args_Rep1, enum Atom, struct Call, struct Call_Rep1, struct Clause, struct Entry, struct Entry_Rep1, enum Gap, struct Head, enum Item, enum Key, struct Label, struct Lam, enum Mark, struct More, struct Next, enum Piece, struct Program, struct Sentence, enum Term, struct Tuple, struct Tuple_Rep1, enum Word, fn parse
+
+pub fn proof_format(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+  ProofLayout::format(ts, width)
+}
+
+pub fn proof_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  ProofLayout::tokens(ts)
+}
+
+// A sentence as read: the column it starts at, its label if it has one, and
+// the words of each of its clauses.
+pub(open) struct ProofRead {
+  indent: u64
+  label: Option(Text)
+  clauses: List(List(SynExpr))
+  span: SynSpan
+}
+// A sentence with the sentences under it.
+pub(open) enum ProofTree {
+  ProofBranch(ProofRead, List(ProofTree))
+}
+pub(open) struct ProofGrown { trees: List(ProofTree), rest: List(ProofRead) }
+// What a sentence-form macro is given: the words of its clause, the clauses
+// after it in the same sentence, the Proof-code left for the sentence, and
+// the calls of the sentences under it.
+pub(open) struct ProofClause {
+  words: List(SynExpr)
+  rest: List(List(SynExpr))
+  code: List(SynExpr)
+  children: List(SynExpr)
+  span: SynSpan
+}
+
+module ProofCore {
+  fn map<A, B>(f: (A) -> B ! {Div}, xs: List(A)): List(B) ! {Div} {
+    match xs {
+      Nil => Nil
+      Cons(x, rest) => Cons(f(x), ProofCore::map(f, rest))
+    }
+  }
+
+  fn length<A>(xs: List(A)): u64 ! {Div} {
+    match xs {
+      Nil => 0
+      Cons(_, rest) => 1 + ProofCore::length(rest)
+    }
+  }
+
+  pub fn fail(at: SynSpan, message: Text): Never ! {macro_error, Div} {
+    Syn::error(at, concat("proof!: ", message))
+  }
+
+  // A name only this file and the sentence-form macros read.
+  pub fn tag(name: Text, at: SynSpan): SynExpr ! {Div} {
+    ExVar(SynIdent { name: name, ctx: SynCtx { scopes: Nil }, span: at, declaration: None })
+  }
+
+  pub fn tagged(
+    name: Text,
+    xs: List(SynExpr),
+    at: SynSpan
+  ): SynExpr ! {Div} { ExApp(ProofCore::tag(name, at), xs, at) }
+
+  fn name(t: SynToken): SynExpr ! {Div} { ExVar(Syn::ident(t)) }
+
+  fn term(t: proof_lang::Term): SynExpr ! {Div} {
+    match t {
+      NameOpt { span, name, args } => match args {
+        None => ProofCore::name(name)
+        Some(a) => ExApp(
+          ProofCore::name(name),
+          Cons(
+            ProofCore::term(a.term),
+            ProofCore::map((r: proof_lang::Args_Rep1) => ProofCore::term(r.term), a.rep)
+          ),
+          span
+        )
+      }
+      Number(n) => ExNat(n.text, n.span)
+      TautoExpr(e) => e
+    }
+  }
+
+  fn mark(t: SynToken): SynExpr ! {Div} { ExText(t.text, t.span) }
+
+  fn word(w: proof_lang::Word): SynExpr ! {Div} {
+    match w {
+      Term(t) => ProofCore::term(t)
+      Mark(m) => match m {
+        Comma(t) => ProofCore::mark(t)
+        Colon(t) => ProofCore::mark(t)
+        Equals(t) => ProofCore::mark(t)
+        Define(t) => ProofCore::mark(t)
+      }
+    }
+  }
+
+  // The words of a clause; a line break inside a clause only continues it.
+  fn pieces(ps: List(proof_lang::Piece)): List(SynExpr) ! {Div} {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => match p {
+        Word(w) => Cons(ProofCore::word(w), ProofCore::pieces(rest))
+        Line(_) => ProofCore::pieces(rest)
+        Space(_) => ProofCore::pieces(rest)
+      }
+    }
+  }
+
+  fn words(c: proof_lang::Clause): List(SynExpr) ! {Div} {
+    Cons(ProofCore::word(c.word), ProofCore::pieces(c.piece))
+  }
+
+  fn key(l: proof_lang::Label): Text ! {Div} {
+    match l.key {
+      Name(t) => t.text
+      Number(t) => t.text
+    }
+  }
+
+  // The column after the last line break of a `Line`: the indentation of
+  // the line it ends at.
+  fn column(t: Text, i: u64, last: u64): u64 ! {Div} {
+    match std::prelude::Text::byte(t, i) {
+      None => i - last
+      Some(b) => if b == 10 {
+        ProofCore::column(t, i + 1, i + 1)
+      } else {
+        ProofCore::column(t, i + 1, last)
+      }
+    }
+  }
+
+  fn indent(l: SynToken): u64 ! {Div} { ProofCore::column(l.text, 0, 0) }
+
+  fn read(at: u64, s: proof_lang::Sentence): ProofRead ! {Div} {
+    ProofRead {
+      indent: at
+      label: match s.head {
+        None => None
+        Some(h) => Some(ProofCore::key(h.label))
+      }
+      clauses: Cons(
+        ProofCore::words(s.clause),
+        ProofCore::map((m: proof_lang::More) => ProofCore::words(m.clause), s.more)
+      )
+      span: s.span
+    }
+  }
+
+  // Proof-code: a name, a number, an expression, a tuple, a call or a `λ`.
+  fn item(i: proof_lang::Item): SynExpr ! {Div} {
+    match i {
+      Lam(l) => ExLam(
+        Cons(
+          BName(Syn::ident(l.name), None),
+          ProofCore::map((t: SynToken) => BName(Syn::ident(t), None), l.name_2)
+        ),
+        ProofCore::item(l.item),
+        l.span
+      )
+      Applied(a) => ProofCore::calls(ProofCore::atom(a.atom), a.call)
+    }
+  }
+
+  fn calls(f: SynExpr, cs: List(proof_lang::Call)): SynExpr ! {Div} {
+    match cs {
+      Nil => f
+      Cons(c, rest) => ProofCore::calls(
+        ExApp(
+          f,
+          Cons(
+            ProofCore::item(c.item),
+            ProofCore::map((r: proof_lang::Call_Rep1) => ProofCore::item(r.item), c.rep)
+          ),
+          c.span
+        ),
+        rest
+      )
+    }
+  }
+
+  fn atom(a: proof_lang::Atom): SynExpr ! {Div} {
+    match a {
+      Name(t) => ProofCore::name(t)
+      Number(t) => ExNat(t.text, t.span)
+      TautoExpr(e) => e
+      Tuple(t) => ProofCore::tagged(
+        "proof_tuple",
+        Cons(
+          ProofCore::item(t.item),
+          ProofCore::map((r: proof_lang::Tuple_Rep1) => ProofCore::item(r.item), t.rep)
+        ),
+        t.span
+      )
+    }
+  }
+
+  fn entry_items(e: proof_lang::Entry): List(SynExpr) ! {Div} {
+    Cons(
+      ProofCore::item(e.item),
+      ProofCore::map((r: proof_lang::Entry_Rep1) => ProofCore::item(r.item), e.rep)
+    )
+  }
+
+  fn has(xs: List(Text), x: Text): Bool ! {Div} {
+    match xs {
+      Nil => false
+      Cons(y, rest) => y == x || ProofCore::has(rest, x)
+    }
+  }
+
+  // The labels of the sentences, each once.
+  fn labels(xs: List(ProofRead), seen: List(Text)): List(Text) ! {macro_error, Div} {
+    match xs {
+      Nil => seen
+      Cons(s, rest) => match s.label {
+        None => ProofCore::labels(rest, seen)
+        Some(l) => if ProofCore::has(seen, l) {
+          ProofCore::fail(s.span, concat("the label is used twice: ", l))
+        } else {
+          ProofCore::labels(rest, Cons(l, seen))
+        }
+      }
+    }
+  }
+
+  // Each entry of the Proof-code names a sentence's label, once.
+  fn check_entries(
+    entries: List(proof_lang::Entry),
+    labels: List(Text),
+    seen: List(Text)
+  ): Unit ! {macro_error, Div} {
+    match entries {
+      Nil => ()
+      Cons(e, rest) => ProofCore::check_entry(e, ProofCore::key(e.label), rest, labels, seen)
+    }
+  }
+
+  fn check_entry(
+    e: proof_lang::Entry,
+    k: Text,
+    rest: List(proof_lang::Entry),
+    labels: List(Text),
+    seen: List(Text)
+  ): Unit ! {macro_error, Div} {
+    if ProofCore::has(labels, k) {
+      if ProofCore::has(seen, k) {
+        ProofCore::fail(e.span, concat("the Proof-code of a label is written twice: ", k))
+      } else {
+        ProofCore::check_entries(rest, labels, Cons(k, seen))
+      }
+    } else {
+      ProofCore::fail(e.span, concat("no sentence has the label ", k))
+    }
+  }
+
+  // The Proof-code written under a label.
+  fn code_of(entries: List(proof_lang::Entry), label: Option(Text)): List(SynExpr) ! {Div} {
+    match label {
+      None => Nil
+      Some(l) => match entries {
+        Nil => Nil
+        Cons(e, rest) => if ProofCore::key(e.label) == l {
+          ProofCore::entry_items(e)
+        } else {
+          ProofCore::code_of(rest, label)
+        }
+      }
+    }
+  }
+
+  // The sentences from the front indented deeper than `parent`, as trees:
+  // the first sets the column of its siblings, and each sentence deeper than
+  // a sibling is under it (the offside rule).
+  fn grow(xs: List(ProofRead), parent: u64): ProofGrown ! {macro_error, Div} {
+    match xs {
+      Nil => ProofGrown { trees: Nil, rest: Nil }
+      Cons(s, _) => if s.indent <= parent {
+        ProofGrown { trees: Nil, rest: xs }
+      } else {
+        ProofCore::siblings(xs, parent, s.indent)
+      }
+    }
+  }
+
+  fn siblings(xs: List(ProofRead), parent: u64, level: u64): ProofGrown ! {macro_error, Div} {
+    match xs {
+      Nil => ProofGrown { trees: Nil, rest: Nil }
+      Cons(s, more) => if s.indent <= parent {
+        ProofGrown { trees: Nil, rest: xs }
+      } else if s.indent != level {
+        ProofCore::fail(s.span, "the sentence is indented to no column of the sentences before it")
+      } else {
+        let children := ProofCore::grow(more, level)
+        let rest := ProofCore::siblings(children.rest, parent, level)
+        ProofGrown {
+          trees: Cons(ProofBranch(s, children.trees), rest.trees),
+          rest: rest.rest
+        }
+      }
+    }
+  }
+
+  fn lower_byte(b: u8): u8 ! {Div} { if b >= 65 && b <= 90 { b + 32 } else { b } }
+
+  fn lower_bytes(t: Text, i: u64): List(u8) ! {Div} {
+    match std::prelude::Text::byte(t, i) {
+      None => Nil
+      Some(b) => Cons(ProofCore::lower_byte(b), ProofCore::lower_bytes(t, i + 1))
+    }
+  }
+
+  // The macro of a clause's form: `proof_` and its first word in lower case.
+  pub fn form(words: List(SynExpr), at: SynSpan): SynIdent ! {macro_error, Div} {
+    match words {
+      Nil => ProofCore::fail(at, "a clause has no words")
+      Cons(w, _) => match Syn::ident_of(w) {
+        None => ProofCore::fail(at, "a clause begins with a word")
+        Some(i) => match std::prelude::Text::of_utf8(ProofCore::lower_bytes(i.name, 0)) {
+          None => ProofCore::fail(at, "a clause begins with a word")
+          Some(lower) => SynIdent {
+            name: concat("proof_", lower),
+            ctx: i.ctx,
+            span: i.span,
+            declaration: None
+          }
+        }
+      }
+    }
+  }
+
+  // The call of the macro of a clause, given what it needs.
+  pub fn clause_call(c: ProofClause): SynExpr ! {macro_error, Div} {
+    let arg := ProofCore::tagged(
+      "proof_clause",
+      [
+        ProofCore::tagged("proof_words", c.words, c.span),
+        ProofCore::tagged(
+          "proof_rest",
+          ProofCore::map(
+            (ws: List(SynExpr)) => ProofCore::tagged("proof_words", ws, c.span),
+            c.rest
+          ),
+          c.span
+        ),
+        ProofCore::tagged("proof_code", c.code, c.span),
+        ProofCore::tagged("proof_children", c.children, c.span)
+      ],
+      c.span
+    )
+    ExMacroExpr(ProofCore::form(c.words, c.span), arg, c.span)
+  }
+
+  fn emit(t: ProofTree, entries: List(proof_lang::Entry)): SynExpr ! {macro_error, Div} {
+    match t {
+      ProofBranch(s, children) => match s.clauses {
+        Nil => ProofCore::fail(s.span, "a sentence has no clauses")
+        Cons(first, rest) => ProofCore::clause_call(ProofClause {
+          words: first
+          rest: rest
+          code: ProofCore::code_of(entries, s.label)
+          children: ProofCore::emit_all(children, entries)
+          span: s.span
+        })
+      }
+    }
+  }
+
+  fn emit_all(
+    ts: List(ProofTree),
+    entries: List(proof_lang::Entry)
+  ): List(SynExpr) ! {macro_error, Div} {
+    match ts {
+      Nil => Nil
+      Cons(t, rest) => Cons(ProofCore::emit(t, entries), ProofCore::emit_all(rest, entries))
+    }
+  }
+
+  pub fn document(d: proof_lang::Document): SynExpr ! {macro_error, Div} {
+    let base := match d.gap {
+      None => 0
+      Some(g) => match g {
+        Line(l) => ProofCore::indent(l)
+        Space(l) => ProofCore::indent(l)
+      }
+    }
+    let root := ProofCore::read(base, d.sentence)
+    let rest := ProofCore::map(
+      (n: proof_lang::Next) => ProofCore::read(ProofCore::indent(n.line), n.sentence),
+      d.next
+    )
+    let entries := match d.program {
+      None => Nil
+      Some(p) => p.entry
+    }
+    ProofCore::check_entries(entries, ProofCore::labels(Cons(root, rest), Nil), Nil)
+    let grown := ProofCore::grow(rest, base)
+    match grown.rest {
+      Cons(s, _) => ProofCore::fail(
+        s.span,
+        "a document has one first sentence, and every other sentence is indented under it"
+      )
+      Nil => ProofCore::emit(ProofBranch(root, grown.trees), entries)
+    }
+  }
+
+  // ---- What the sentence-form macros use ----
+
+  fn rest_words(e: SynExpr): List(SynExpr) ! {Div} {
+    match Syn::app_parts(e) {
+      Some(#(xs, _)) => xs
+      None => Nil
+    }
+  }
+
+  // What a sentence-form macro is given, read back.
+  pub fn clause(s: SynExpr, at: SynSpan): ProofClause ! {macro_error, Div} {
+    match Syn::app_parts(s) {
+      Some(#(parts, _)) => match parts {
+        Cons(w, Cons(r, Cons(c, Cons(k, Nil)))) => ProofClause {
+          words: ProofCore::rest_words(w)
+          rest: ProofCore::map(ProofCore::rest_words, ProofCore::rest_words(r))
+          code: ProofCore::rest_words(c)
+          children: ProofCore::rest_words(k)
+          span: at
+        }
+        Nil => ProofCore::fail(at, "a sentence-form macro is called by proof!")
+        Cons(_, Nil) => ProofCore::fail(at, "a sentence-form macro is called by proof!")
+        Cons(_, Cons(_, Nil)) => ProofCore::fail(at, "a sentence-form macro is called by proof!")
+        Cons(_, Cons(_, Cons(_, Nil))) => ProofCore::fail(
+          at,
+          "a sentence-form macro is called by proof!"
+        )
+        Cons(_, Cons(_, Cons(_, Cons(_, Cons(_, _))))) => ProofCore::fail(
+          at,
+          "a sentence-form macro is called by proof!"
+        )
+      }
+      None => ProofCore::fail(at, "a sentence-form macro is called by proof!")
+    }
+  }
+
+  // The call of the clause after `c`, with the Proof-code `code` left.
+  pub fn next(c: ProofClause, code: List(SynExpr)): SynExpr ! {macro_error, Div} {
+    match c.rest {
+      Nil => ProofCore::fail(c.span, "the sentence ends before its proof")
+      Cons(first, more) => ProofCore::clause_call(
+        ProofClause { words: first, rest: more, code: code, children: c.children, span: c.span }
+      )
+    }
+  }
+}
+
+// The document's term: each sentence becomes a call of its form's macro.
+pub macro fn proof(d: proof_lang::Document): SynExpr ! {macro_error, Div} { ProofCore::document(d) }

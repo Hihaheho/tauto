@@ -1,48 +1,48 @@
 // `types`: "ok" or "error: <part of the message>" from the type check.
 
 @ cases.an-integer-literal-is-i64
-source = "let a = 1 + 2"
+source = "let a := 1 + 2"
 types = "ok"
 
 @ cases.a-written-width-is-kept
-source = "let a: i32 = 1 + 2"
+source = "let a: i32 := 1 + 2"
 types = "ok"
 
 @ cases.widths-do-not-mix
-source = "fn f(a: i32, b: i64) -> i64 { a + b }"
+source = "fn f(a: i32, b: i64): i64 { a + b }"
 types = "error: operands differ"
 
 @ cases.i32-does-not-fit-i64
-source = "fn f(a: i32) -> i64 { a }"
+source = "fn f(a: i32): i64 { a }"
 types = "error: i32 does not fit i64"
 
 @ cases.a-literal-out-of-range
-source = "let a: i32 = 3000000000"
+source = "let a: i32 := 3000000000"
 types = "error: does not fit i32"
 
 @ cases.integer-division-is-a-type-error
-source = "let a = 7 / 2"
+source = "let a := 7 / 2"
 types = "error: integer `/`"
 
 @ cases.div-and-mod-divide-integers
-source = "let a: i32 = div(7, 2)"
+source = "let a: i32 := div(7, 2)"
 types = "ok"
 
 @ cases.no-concatenation-of-text
-source = "let a = \"x\" + \"y\""
+source = "let a := \"x\" + \"y\""
 types = "error: not a number"
 
 @ cases.names-are-case-sensitive
 source = ```nib
-fn total() -> i64 { 1 }
-let a = Total()
+fn total(): i64 { 1 }
+let a := Total()
 ```
 types = "error: Total is not defined"
 
 @ cases.a-handler-gives-the-union-of-its-arms
 source = ```nib
-effect ask: () -> i64
-fn f() -> (i64 | Text) {
+effect ask(): i64
+fn f(): (i64 | Text) {
   handle { perform ask() } with {
     ask(), k => "none"
   }
@@ -52,8 +52,8 @@ types = "ok"
 
 @ cases.the-union-is-not-widened-to-a-number
 source = ```nib
-effect ask: () -> i64
-fn f() -> i64 {
+effect ask(): i64
+fn f(): i64 {
   handle { perform ask() } with {
     ask(), k => "none"
   }
@@ -63,8 +63,8 @@ types = "error: i64 | Text does not fit i64"
 
 @ cases.k-takes-the-operation-result
 source = ```nib
-effect ask: () -> i64
-let c = handle { perform ask() } with {
+effect ask(): i64
+let c := handle { perform ask() } with {
   ask(), k => k("a")
 }
 ```
@@ -72,7 +72,7 @@ types = "error: Text does not fit i64"
 
 @ cases.info-more-gives-the-handle-type
 source = ```nib
-let d: i64 = handle { budget(steps: 10) { 1 } } with {
+let d: i64 := handle { budget(steps: 10) { 1 } } with {
   exceeded(info), k => info.more(10)
 }
 ```
@@ -84,22 +84,124 @@ types = "error: i64 does not fit Text"
 
 @ cases.a-tag-is-forgotten
 source = ```nib
-label price
-fn f(x: @price i64) -> i64 { x }
+fn f(x: @price i64): i64 { x }
 ```
 types = "ok"
 
-@ cases.a-tag-is-not-added
+// Where `@a T` is written for a `T`, the value is wrapped, as in a proof.
+@ cases.a-tag-is-added-where-it-is-written
 source = ```nib
-label price
-fn f(x: i64) -> @price i64 { x }
+fn f(x: i64): @price i64 { x }
 ```
-types = "error: does not fit @price i64"
+types = "ok"
 
 @ cases.a-match-covers-every-value
-source = "let a = match 1 { 0 => 1 }"
+source = "let a := match 1 { 0 => 1 }"
 types = "error: does not cover"
 
 @ cases.a-bool-match-with-both-arms
-source = "let a = match true { true => 1, false => 0 }"
+source = "let a := match true { true => 1, false => 0 }"
 types = "ok"
+
+@ cases.function-names-are-unique
+source = ```nib
+fn same(): i64 { 1 }
+fn same(): i64 { 2 }
+```
+types = "error: function same is declared twice"
+
+@ cases.extern-function-names-are-unique
+source = ```nib
+extern { fn same(): i64 }
+fn same(): i64 { 2 }
+```
+types = "error: function same is declared twice"
+
+@ cases.extern-block-function-names-are-unique
+source = ```nib
+extern {
+  fn same(): i64
+  fn same(): i64
+}
+```
+types = "error: function same is declared twice"
+
+@ cases.a-call-cannot-require-a-recursive-type
+source = "let apply := (f) => f(f)"
+types = "error: cannot infer a function type for this call"
+
+@ cases.a-type-cannot-have-extra-arguments
+source = ```nib
+shared struct Box(A: Shared) { value: A }
+fn unused(x: Box(i64, Bool)): Unit { #() }
+```
+types = "error: Box takes 1 arguments"
+
+@ cases.data-declaration-names-are-unique
+source = ```nib
+shared struct Repeated { value: i64 }
+shared struct Repeated { value: Bool }
+```
+types = "error: type Repeated is declared twice"
+
+@ cases.struct-and-enum-names-are-unique
+source = ```nib
+shared struct Repeated { value: i64 }
+shared enum Repeated { First, Second }
+```
+types = "error: type Repeated is declared twice"
+
+// A type of a module is `m::E`: it is not `E`, so `E` and its constructors keep their meaning.
+@ cases.a-type-in-a-module-does-not-replace-a-type
+source = ```nib
+enum E { L(i64), A(E, E) }
+module m { pub struct E { x: i64 } }
+fn ev(e: E): i64 { match e { L(n) => n, A(a, b) => ev(a) + ev(b) } }
+```
+types = "ok"
+
+@ cases.forward-field-type-arguments-are-checked
+source = ```nib
+shared struct Outer { inner: Later(i64, Bool) }
+shared struct Later(A: Shared) { value: A }
+```
+types = "error: Later takes 1 arguments"
+
+@ cases.recursive-field-type-arguments-are-checked
+source = ```nib
+shared enum Chain(A: Shared) { End(A), Next(Chain(A, Bool)) }
+```
+types = "error: Chain takes 1 arguments"
+
+@ cases.a-borrowed-inferred-parameter-does-not-borrow-the-result
+source = ```nib
+extern { fn bad(&x): Slice(i32) }
+```
+types = "error: Slice(A) can only be borrowed"
+
+@ cases.a-borrowed-inferred-parameter-does-not-borrow-the-next-signature
+source = ```nib
+extern {
+  fn first(&x)
+  fn second(): Slice(i32)
+}
+```
+types = "error: Slice(A) can only be borrowed"
+
+@ cases.an-explicitly-borrowed-result-after-an-inferred-parameter
+source = ```nib
+extern { fn valid(&x): &Slice(i32) }
+```
+types = "ok"
+
+@ cases.a-secret-has-no-equality
+source = ```nib
+struct K { s: Secret(u64) }
+let a := K { s: secret(U64::of_nat(1)) }
+perform show("e", a == a)
+```
+types = "error: == needs PartialEq(K)"
+
+@ cases.a-label-binds-tighter-than-an-operator
+source = "fn f(a: u64, b: u64): u64 { @next a + b }"
+types = "error: to label the result, write `@next (a + b)`"

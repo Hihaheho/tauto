@@ -1,0 +1,110 @@
+description = "The bits of a word: and, or, exclusive or, shifts and rotations of `U32` and `U64`, decided by `Refl` in the kernel and run the same on every backend."
+
+@ cases.word-bits-agree
+backends = ["rust", "javascript"]
+extract = true
+source = ```tauto
+import std::UInt
+import std::Base
+import std::Nat
+fn w(n: Nat): U32 { U32::Mk(Nat::rem_nz(n, 4294967296, Nat::ne_zero_of_pos(4294967296, Refl)), Nat::mod_lt(n, 4294967296, Refl)) }
+theorem and_v(): U32::val(U32::and(w(4042322160), w(4278255360))) = 4026593280 { Refl }
+theorem xor_v(): U32::val(U32::xor(w(1732584193), w(4023233417))) = 2290649224 { Refl }
+theorem rotl_v(): U32::val(U32::rotl(w(2147483649), 1)) = 3 { Refl }
+theorem rotr_v(): U32::val(U32::rotr(w(3), 1)) = 2147483649 { Refl }
+theorem shl_v(): U32::val(U32::shl(w(4294967295), 4)) = 4294967280 { Refl }
+fn show_all(): List(Nat) {
+  Cons(U32::val(U32::and(w(4042322160), w(4278255360))),
+  Cons(U32::val(U32::or(w(240), w(15))),
+  Cons(U32::val(U32::xor(w(1732584193), w(4023233417))),
+  Cons(U32::val(U32::rotl(w(2147483649), 33)),
+  Cons(U32::val(U32::rotr(w(3), 1)),
+  Cons(U32::val(U32::shr(w(256), 4)),
+  Cons(U32::val(U32::rotr(w(3), 1000001)),
+  Cons(U32::val(U32::shr(w(256), Nat::add(2, 2))),
+  Cons(⊢ Nat from match U64::of_nat_checked(1) { Some(x) => U64::val(U64::rotl(x, 62)), None => 0 }, Nil)))))))))
+}
+perform show("bits", show_all())
+```
+checks.and_v = "checked"
+checks.xor_v = "checked"
+checks.rotl_v = "checked"
+checks.rotr_v = "checked"
+checks.shl_v = "checked"
+shows = ["bits = Cons(4026593280, Cons(255, Cons(2290649224, Cons(3, Cons(2147483649, Cons(16, Cons(2147483649, Cons(16, Cons(4611686018427387904, Nil)))))))))"]
+
+// A SHA-1 test vector (one block, eighty rounds) as a theorem: the kernel
+// computes the words' bits on numerals, so `Refl` decides it.
+@ cases.sha1-test-vector-by-refl
+backends = ["rust", "javascript"]
+extract = true
+source = ```tauto
+import std::UInt
+import std::Base
+import std::Nat
+fn w(n: Nat): U32 { U32::Mk(Nat::rem_nz(n, 4294967296, Nat::ne_zero_of_pos(4294967296, Refl)), Nat::mod_lt(n, 4294967296, Refl)) }
+fn add(a: U32, b: U32): U32 { U32::wrapping_add(a, b) }
+fn not32(a: U32): U32 { U32::xor(a, w(4294967295)) }
+fn at(l: List(U32), n: Nat): U32 {
+  ⊢ U32 from match l {
+    Nil => w(0)
+    Cons(x, rest) => ⊢ U32 from match n { Zero => x, Succ(k) => at(rest, k) }
+  }
+}
+fn tail_of(l: List(U32)): List(U32) { ⊢ List(U32) from match l { Nil => Nil, Cons(x, rest) => rest } }
+fn snoc(l: List(U32), y: U32): List(U32) {
+  ⊢ List(U32) from match l { Nil => Cons(y, Nil), Cons(x, rest) => Cons(x, snoc(rest, y)) }
+}
+inductive St: Type { Mk(a: U32, b: U32, c: U32, d: U32, e: U32): St }
+fn f_of(t: Nat, b: U32, c: U32, d: U32): U32 {
+  ⊢ U32 from match Nat::lt(t, 20) {
+    true => U32::or(U32::and(b, c), U32::and(not32(b), d))
+    false => ⊢ U32 from match Nat::lt(t, 40) {
+      true => U32::xor(U32::xor(b, c), d)
+      false => ⊢ U32 from match Nat::lt(t, 60) {
+        true => U32::or(U32::or(U32::and(b, c), U32::and(b, d)), U32::and(c, d))
+        false => U32::xor(U32::xor(b, c), d)
+      }
+    }
+  }
+}
+fn k_of(t: Nat): U32 {
+  ⊢ U32 from match Nat::lt(t, 20) {
+    true => w(1518500249)
+    false => ⊢ U32 from match Nat::lt(t, 40) {
+      true => w(1859775393)
+      false => ⊢ U32 from match Nat::lt(t, 60) { true => w(2400959708), false => w(3395469782) }
+    }
+  }
+}
+fn rounds(n: Nat, t: Nat, win: List(U32), s: St): St {
+  ⊢ St from match n {
+    Zero => s
+    Succ(m) => ⊢ St from match s {
+      Mk(a, b, c, d, e) => {
+        let wt := at(win, 0)
+        let next := U32::rotl(U32::xor(U32::xor(at(win, 13), at(win, 8)), U32::xor(at(win, 2), at(win, 0))), 1)
+        let temp := add(add(add(U32::rotl(a, 5), f_of(t, b, c, d)), add(e, k_of(t))), wt)
+        rounds(m, Succ(t), snoc(tail_of(win), next), St::Mk(temp, a, U32::rotl(b, 30), c, d))
+      }
+    }
+  }
+}
+fn h0(): St { St::Mk(w(1732584193), w(4023233417), w(2562383102), w(271733878), w(3285377520)) }
+fn digest(block: List(U32)): List(Nat) {
+  ⊢ List(Nat) from match rounds(80, 0, block, h0()) {
+    Mk(a, b, c, d, e) => ⊢ List(Nat) from match h0() {
+      Mk(a0, b0, c0, d0, e0) => Cons(U32::val(add(a, a0)), Cons(U32::val(add(b, b0)), Cons(U32::val(add(c, c0)),
+        Cons(U32::val(add(d, d0)), Cons(U32::val(add(e, e0)), Nil)))))
+    }
+  }
+}
+fn abc(): List(U32) {
+  Cons(w(1633837952), Cons(w(0), Cons(w(0), Cons(w(0), Cons(w(0), Cons(w(0), Cons(w(0), Cons(w(0),
+  Cons(w(0), Cons(w(0), Cons(w(0), Cons(w(0), Cons(w(0), Cons(w(0), Cons(w(0), Cons(w(24), Nil))))))))))))))))
+}
+theorem sha1_abc(): digest(abc()) = Cons(2845392438, Cons(1191608682, Cons(3124634993, Cons(2018558572, Cons(2630932637, Nil))))) { Refl }
+perform show("sha1", digest(abc()))
+```
+checks.sha1_abc = "checked"
+shows = ["sha1 = Cons(2845392438, Cons(1191608682, Cons(3124634993, Cons(2018558572, Cons(2630932637, Nil)))))"]

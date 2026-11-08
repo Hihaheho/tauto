@@ -50,7 +50,7 @@ fn named_and_lambda_captures_keep_their_value_and_drop_scope() {
 rust {
   bridge = "bridge"
   types { Probe = "scoped_capture_bridge::Probe" }
-  extern { "Probe.new" = "scoped_capture_bridge::probe" }
+  extern { "Probe::new" = "scoped_capture_bridge::probe" }
 }
 "#,
         );

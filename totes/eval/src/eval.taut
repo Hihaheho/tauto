@@ -71,7 +71,7 @@ mutual {
   ): EResult(MVal) {
     match fuel {
       Zero => ErFuel
-      Succ(f) => match e: EResult(MVal) {
+      Succ(f) => ⊢ EResult(MVal) from match e {
         CPure(v) => ErValue(e_value(v), cx)
         CRead(id, deref) => e_read(ctors, cx, env, id, deref)
         MkCPrim(op, args) => e_bind(
@@ -95,7 +95,7 @@ mutual {
         CCall(callee, args, ticked) => ErUnsupported("call")
         CTail(inst, args) => ErUnsupported("tail call")
         CBuiltin(name, args) => ErUnsupported("builtin")
-        CDefine(id, r#shared, init) => ErUnsupported("definition")
+        CDefine(id, r#shared, drop, init) => ErUnsupported("definition")
         CAssign(id, path, through, value) => ErUnsupported("assignment")
         CWhile(cond, body, ticked) => ErUnsupported("while")
         CReturn(value) => ErUnsupported("return")
@@ -120,7 +120,7 @@ mutual {
   ): EResult(MVal) {
     match fuel {
       Zero => ErFuel
-      Succ(f) => match m_get(ctors, cx, value): EResult(MVal) {
+      Succ(f) => ⊢ EResult(MVal) from match m_get(ctors, cx, value) {
         MvBool(go) => e_eval(f, ctors, env, e_choose(go, then, otherwise), cx)
         _ => ErError("internal: a branch condition is not a boolean")
       }
@@ -136,7 +136,7 @@ mutual {
   ): EResult(List(MVal)) {
     match fuel {
       Zero => ErFuel
-      Succ(f) => match es: EResult(List(MVal)) {
+      Succ(f) => ⊢ EResult(List(MVal)) from match es {
         Nil => ErValue(Nil, cx)
         Cons(e, rest) => e_bind(
           e_eval(f, ctors, env, e, cx),
@@ -158,9 +158,9 @@ mutual {
   ): EResult(MVal) {
     match fuel {
       Zero => ErFuel
-      Succ(f) => match es: EResult(MVal) {
+      Succ(f) => ⊢ EResult(MVal) from match es {
         Nil => ErValue(MvUnit, cx)
-        Cons(e, rest) => match rest: EResult(MVal) {
+        Cons(e, rest) => ⊢ EResult(MVal) from match rest {
           Nil => e_eval(f, ctors, env, e, cx)
           Cons(next, more) => e_bind(
             e_eval(f, ctors, env, e, cx),

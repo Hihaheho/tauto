@@ -5,7 +5,7 @@ import Proto.Renaming
 
 The non-dependent fragment of the Rust kernel (`crates/tauto/src/check.rs`)
 with de Bruijn variables: functions, `Bool`, and `Nat` with its eliminator at
-a constant motive (`Nat_rec` of `check/inductive.rs` where the motive does not
+a constant motive (`Nat::rec` of `check/inductive.rs` where the motive does not
 mention the major premise). The two `natRec` reduction rules are the iota
 rules the kernel generates for `zero` and `succ`, with the induction
 hypothesis `natRec A z s n`.

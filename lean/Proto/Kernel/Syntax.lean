@@ -10,7 +10,7 @@ The dependent core of `crates/tauto/src/check.rs`, with de Bruijn variables.
   (the kernel checks lambdas against an expected `Pi`, it never infers a
   domain), `app f a` an application.
 * `nat`, `zero`, `succ` and `natRec P z s n` are one generated inductive type
-  and its dependent eliminator (`Nat_rec`/`Nat_ind` of `check/inductive.rs`).
+  and its dependent eliminator (`Nat::rec`/`Nat::ind` of `check/inductive.rs`).
   The motive `P` is a function, so the four arguments of `natRec` all live in
   the same context.
 -/

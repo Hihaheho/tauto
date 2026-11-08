@@ -16,12 +16,15 @@ import "types_match.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
-pub theorem ck_arm_enter_frame_errors(c: Checker, xs: List(TypeName)): CkErrorFrame(
-  c,
-  ck_arm_enter(c, xs)
-) { (clean => clean) }
+pub theorem ck_arm_enter_frame_errors(
+  c: Checker,
+  xs: List(TypeName)
+): CkErrorFrame(c, ck_arm_enter(c, xs)) { (clean => clean) }
 
-pub theorem ck_enter_fn_frame_errors(c: Checker, scheme: Scheme): CkErrorFrame(c, ck_enter_fn(c, scheme)) {
+pub theorem ck_enter_fn_frame_errors(
+  c: Checker,
+  scheme: Scheme
+): CkErrorFrame(c, ck_enter_fn(c, scheme)) {
   (clean => clean)
 }
 
@@ -37,7 +40,7 @@ pub theorem ck_arm_report_frame_errors(
   rv: Option(Nat),
   body: SurfaceTerm
 ): CkErrorFrame(c, ck_arm_report(c, why, rv, body)) {
-  match rv: CkErrorFrame(c, ck_arm_report(c, why, rv, body)) {
+  ⊢ CkErrorFrame(c, ck_arm_report(c, why, rv, body)) from match rv {
     Some(v) => ck_error_frame_errors(c, why, span_of(body))
     None => (clean => clean)
   }
@@ -51,7 +54,7 @@ pub theorem arm_fresh_step_frame_errors(
   has: Bool,
   ih: ∀ next: Checker. ∀ m: Ordmap(Text, Ty). CkErrorFrame(next, ck_arm_fresh(next, rest, m))
 ): CkErrorFrame(c, arm_fresh_step(c, g, rest, map, has)) {
-  match has: CkErrorFrame(c, arm_fresh_step(c, g, rest, map, has)) {
+  ⊢ CkErrorFrame(c, arm_fresh_step(c, g, rest, map, has)) from match has {
     true => error_frame_rewrap(c, ck_arm_fresh(c, rest, map), ih(c, map))
     false => error_frame_bind(
       Ty,
@@ -76,7 +79,7 @@ pub theorem ck_arm_fresh_frame_errors(
   gs: List(Text),
   map: Ordmap(Text, Ty)
 ): CkErrorFrame(c, ck_arm_fresh(c, gs, map)) {
-  match gs: CkErrorFrame(c, ck_arm_fresh(c, gs, map)) {
+  ⊢ CkErrorFrame(c, ck_arm_fresh(c, gs, map)) from match gs {
     Nil => (clean => clean)
     Cons(g, rest) => Eq::subst(
       (z: Mut1(Ordmap(Text, Ty), Checker)) => CkErrorFrame(c, z),
@@ -99,9 +102,9 @@ pub theorem ck_arm_given_frame_errors(
   types: List(SurfaceTerm),
   map: Ordmap(Text, Ty)
 ): CkErrorFrame(c, ck_arm_given(c, typed, types, map)) {
-  match typed: CkErrorFrame(c, ck_arm_given(c, typed, types, map)) {
+  ⊢ CkErrorFrame(c, ck_arm_given(c, typed, types, map)) from match typed {
     Nil => (clean => clean)
-    Cons(g, gs) => match types: CkErrorFrame(c, ck_arm_given(c, Cons(g, gs), types, map)) {
+    Cons(g, gs) => ⊢ CkErrorFrame(c, ck_arm_given(c, Cons(g, gs), types, map)) from match types {
       Nil => (clean => clean)
       Cons(t, ts) => error_frame_bind(
         Ty,
@@ -129,14 +132,17 @@ pub theorem ck_rigid_k_frame_errors(
   m: Mut1(Ordmap(Text, Ty), Checker),
   h: CkErrorFrame(c, m)
 ): CkErrorFrame(c, ck_rigid_k(g, t, m)) {
-  match m: CkErrorFrame(c, ck_rigid_k(g, t, m)) {
+  ⊢ CkErrorFrame(c, ck_rigid_k(g, t, m)) from match m {
     mut1(x, c2) => h
   }
 }
 
 // Making rigid types only counts them.
-pub theorem ck_rigid_frame_errors(gs: List(Pair(Text, Kind)), c: Checker): CkErrorFrame(c, ck_rigid(gs, c)) {
-  match gs: CkErrorFrame(c, ck_rigid(gs, c)) {
+pub theorem ck_rigid_frame_errors(
+  gs: List(Pair(Text, Kind)),
+  c: Checker
+): CkErrorFrame(c, ck_rigid(gs, c)) {
+  ⊢ CkErrorFrame(c, ck_rigid(gs, c)) from match gs {
     Nil => (clean => clean)
     Cons(g, rest) => ck_rigid_k_frame_errors(
       c,
@@ -157,7 +163,7 @@ pub theorem ck_arm_sig_at_frame_errors(
   rv: Option(Nat),
   body: SurfaceTerm
 ): CkErrorFrame(c, ck_arm_sig_at(c, s, typed, r#instance, binds, rv, body)) {
-  match r#instance: CkErrorFrame(c, ck_arm_sig_at(c, s, typed, r#instance, binds, rv, body)) {
+  ⊢ CkErrorFrame(c, ck_arm_sig_at(c, s, typed, r#instance, binds, rv, body)) from match r#instance {
     ArmBad(why) => error_frame_bind(
       Unit,
       Option(ArmSig),
@@ -242,7 +248,7 @@ pub theorem arm_sig_found_frame_errors(
   body: SurfaceTerm,
   found: Option(EffectSig)
 ): CkErrorFrame(c, arm_sig_found(c, eff, binds, types, rv, body, found)) {
-  match found: CkErrorFrame(c, arm_sig_found(c, eff, binds, types, rv, body, found)) {
+  ⊢ CkErrorFrame(c, arm_sig_found(c, eff, binds, types, rv, body, found)) from match found {
     Some(s) => error_frame_rewrap(
       c,
       ck_arm_sig_at(
@@ -287,10 +293,10 @@ pub theorem arm_sig_step_frame_errors(
   body: SurfaceTerm,
   exceeded: Bool
 ): CkErrorFrame(c, arm_sig_step(c, eff, binds, types, result, rv, budget_ty, body, exceeded)) {
-  match exceeded: CkErrorFrame(
+  ⊢ CkErrorFrame(
     c,
     arm_sig_step(c, eff, binds, types, result, rv, budget_ty, body, exceeded)
-  ) {
+  ) from match exceeded {
     true => (clean => clean)
     false => arm_sig_found_frame_errors(
       c,
@@ -317,10 +323,19 @@ pub theorem ck_handle_arm_sig_frame_errors(
   Eq::subst(
     (z: Mut1(Option(ArmSig), Checker)) => CkErrorFrame(c, z),
     Eq::sym(arm_sig_unf(c, eff, binds, types, result, rv, budget_ty, body)),
-    arm_sig_step_frame_errors(c, eff, binds, types, result, rv, budget_ty, body, Text::eq(eff, "exceeded"))
+    arm_sig_step_frame_errors(
+      c,
+      eff,
+      binds,
+      types,
+      result,
+      rv,
+      budget_ty,
+      body,
+      Text::eq(eff, "exceeded")
+    )
   )
 }
-
 
 pub theorem arm_finish_after_run_frame_checked(
   c: Checker,
@@ -332,7 +347,7 @@ pub theorem arm_finish_after_run_frame_checked(
   out: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, arm_finish_after(c, eff, a, result, rv, span, out)) {
-  match out: CkCheckedFrame(c, arm_finish_after(c, eff, a, result, rv, span, out)) {
+  ⊢ CkCheckedFrame(c, arm_finish_after(c, eff, a, result, rv, span, out)) from match out {
     true => checked_frame_read(
       c,
       arm_finish_after(c, eff, a, result, rv, span, true),

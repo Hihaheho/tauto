@@ -16,12 +16,15 @@ pub theorem where_generic_head(
   name: Text,
   equal: where_generic_name(entry) = name
 ): WhereGeneric(Cons(entry, rest), name) {
-  match entry: WhereGeneric(Cons(entry, rest), name) {
+  ⊢ WhereGeneric(Cons(entry, rest), name) from match entry {
     Pair { fst: spelling, snd: kind } => {
       let known: WhereGeneric(
         Cons(Pair { fst: spelling, snd: kind }, rest),
         spelling
-      ) := WhereGeneric::Mk(kind, MemHere(Pair(Text, Kind), Pair { fst: spelling, snd: kind }, rest))
+      ) := WhereGeneric::Mk(
+        kind,
+        MemHere(Pair(Text, Kind), Pair { fst: spelling, snd: kind }, rest)
+      )
       Eq::subst(
         Text,
         spelling,
@@ -39,7 +42,7 @@ pub theorem where_generic_tail<rest: List(
   known: WhereGeneric(rest, name),
   first: Pair(Text, Kind)
 ): WhereGeneric(Cons(first, rest), name) {
-  match known: WhereGeneric(Cons(first, rest), name) {
+  ⊢ WhereGeneric(Cons(first, rest), name) from match known {
     Mk(kind, present) => WhereGeneric::Mk(kind, MemThere(first, rest, present))
   }
 }
@@ -48,7 +51,7 @@ pub theorem generics_have_sound(
   name: Text,
   found: generics_have(generics, name) = true
 ): WhereGeneric(generics, name) {
-  match generics: WhereGeneric(generics, name) {
+  ⊢ WhereGeneric(generics, name) from match generics {
     Nil => False::elim(false_ne_true(found))
     Cons(entry, rest) => kyn_or_true(
       Text::eq(where_generic_name(entry), name),
@@ -66,7 +69,7 @@ pub theorem generics_have_sound(
   }
 }
 pub fn where_generic_choice(name: Text, present: Bool): Option(Text) {
-  match present: Option(Text) {
+  ⊢ Option(Text) from match present {
     true => Some(name)
     false => None
   }
@@ -86,17 +89,17 @@ pub theorem where_generic_choice_sound(
   SurfaceTermIndexedMk(SkVar(spelling), start, end, ast_occurrence),
   name
 ) {
-  match present: WhereGenericTerm(
+  ⊢ WhereGenericTerm(
     generics,
     SurfaceTermIndexedMk(SkVar(spelling), start, end, ast_occurrence),
     name
-  ) {
+  ) from match present {
     false => False::elim(ck_none_ne_some(name, found))
-    true => match found: WhereGenericTerm(
+    true => ⊢ WhereGenericTerm(
       generics,
       SurfaceTermIndexedMk(SkVar(spelling), start, end, ast_occurrence),
       name
-    ) {
+    ) from match found {
       Refl => WhereGenericTerm::Mk(
         spelling,
         start,
@@ -114,13 +117,12 @@ pub theorem constraint_generic_shape_sound(
   end: Nat,
   generics: List(Pair(Text, Kind)),
   name: Text,
-  found: constraint_generic(SurfaceTermIndexedMk(sk, start, end, ast_occurrence), generics) = Some(name)
-): WhereGenericTerm(generics, SurfaceTermIndexedMk(sk, start, end, ast_occurrence), name) {
-  match sk: WhereGenericTerm(
-    generics,
+  found: constraint_generic(
     SurfaceTermIndexedMk(sk, start, end, ast_occurrence),
-    name
-  ) {
+    generics
+  ) = Some(name)
+): WhereGenericTerm(generics, SurfaceTermIndexedMk(sk, start, end, ast_occurrence), name) {
+  ⊢ WhereGenericTerm(generics, SurfaceTermIndexedMk(sk, start, end, ast_occurrence), name) from match sk {
     SkVar(arg_name) => where_generic_choice_sound(
       ast_occurrence,
       generics,
@@ -175,7 +177,7 @@ pub theorem constraint_generic_sound(
   name: Text,
   found: constraint_generic(source, generics) = Some(name)
 ): WhereGenericTerm(generics, source, name) {
-  match source: WhereGenericTerm(generics, source, name) {
+  ⊢ WhereGenericTerm(generics, source, name) from match source {
     SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => constraint_generic_shape_sound(
       ast_occurrence,
       sk,

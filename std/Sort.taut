@@ -15,7 +15,7 @@ import std::prelude::Std { List, Ordering }
 pub def SortLe(A: Type, cmp: (A, A) -> Ordering, a: A, b: A): Prop := (cmp(a, b) = Greater) -> False
 
 pub fn sort_all_le<A>(cmp: (A, A) -> Ordering, a: A, l: List(A)): Prop {
-  match l: Prop {
+  ⊢ Prop from match l {
     Nil => True
     Cons(h, t) => SortLe(A, cmp, a, h) ∧ sort_all_le(cmp, a, t)
   }
@@ -23,7 +23,7 @@ pub fn sort_all_le<A>(cmp: (A, A) -> Ordering, a: A, l: List(A)): Prop {
 
 // Each element is not after those that follow it.
 pub fn sort_sorted<A>(cmp: (A, A) -> Ordering, l: List(A)): Prop {
-  match l: Prop {
+  ⊢ Prop from match l {
     Nil => True
     Cons(h, t) => sort_all_le(cmp, h, t) ∧ sort_sorted(cmp, t)
   }
@@ -32,9 +32,9 @@ pub fn sort_sorted<A>(cmp: (A, A) -> Ordering, l: List(A)): Prop {
 module List {
   // `x` before the first element that is after it.
   pub fn insert_sorted<A>(cmp: (A, A) -> Ordering, x: A, l: List(A)): List(A) {
-    match l: List(A) {
+    ⊢ List(A) from match l {
       Nil => [x]
-      Cons(h, t) => match cmp(x, h): List(A) {
+      Cons(h, t) => ⊢ List(A) from match cmp(x, h) {
         Less => Cons(x, Cons(h, t))
         Equal => Cons(h, List::insert_sorted(cmp, x, t))
         Greater => Cons(h, List::insert_sorted(cmp, x, t))
@@ -43,7 +43,7 @@ module List {
   }
 
   pub fn sort<A>(cmp: (A, A) -> Ordering, l: List(A)): List(A) {
-    match l: List(A) {
+    ⊢ List(A) from match l {
       Nil => Nil
       Cons(h, t) => List::insert_sorted(cmp, h, sort(cmp, t))
     }
@@ -101,9 +101,9 @@ pub theorem sort_all_le_trans<A: Type>(
   h: SortLe(A, cmp, a, b),
   all: sort_all_le(cmp, b, l)
 ): sort_all_le(cmp, a, l) {
-  match l: sort_all_le(cmp, a, l) {
+  ⊢ sort_all_le(cmp, a, l) from match l {
     Nil => Trivial
-    Cons(x, t) => match all: sort_all_le(cmp, a, Cons(x, t)) {
+    Cons(x, t) => ⊢ sort_all_le(cmp, a, Cons(x, t)) from match all {
       AndIntro(hx, ht) => AndIntro(
         sort_le_trans(cmp, w, a, b, x, h, hx),
         sort_all_le_trans(cmp, w, a, b, t, h, ht)
@@ -144,13 +144,13 @@ pub theorem sort_insert_all_le<A: Type>(
   all: sort_all_le(cmp, y, l),
   hx: SortLe(A, cmp, y, x)
 ): sort_all_le(cmp, y, List::insert_sorted(cmp, x, l)) {
-  match l: sort_all_le(cmp, y, List::insert_sorted(cmp, x, l)) {
+  ⊢ sort_all_le(cmp, y, List::insert_sorted(cmp, x, l)) from match l {
     Nil => AndIntro(hx, Trivial)
     Cons(h, t) => Ordering::cases(
       (o: Ordering) => sort_all_le(
         cmp,
         y,
-        match o: List(A) {
+        ⊢ List(A) from match o {
           Less => Cons(x, Cons(h, t))
           Equal => Cons(h, List::insert_sorted(cmp, x, t))
           Greater => Cons(h, List::insert_sorted(cmp, x, t))
@@ -177,12 +177,12 @@ pub theorem sort_insert_sorted<A: Type>(
   l: List(A),
   s: sort_sorted(cmp, l)
 ): sort_sorted(cmp, List::insert_sorted(cmp, x, l)) {
-  match l: sort_sorted(cmp, List::insert_sorted(cmp, x, l)) {
+  ⊢ sort_sorted(cmp, List::insert_sorted(cmp, x, l)) from match l {
     Nil => AndIntro(Trivial, Trivial)
     Cons(h, t) => Ordering::cases(
       (o: Ordering) => sort_sorted(
         cmp,
-        match o: List(A) {
+        ⊢ List(A) from match o {
           Less => Cons(x, Cons(h, t))
           Equal => Cons(h, List::insert_sorted(cmp, x, t))
           Greater => Cons(h, List::insert_sorted(cmp, x, t))
@@ -213,7 +213,7 @@ pub theorem sort_sorts<A: Type>(
   w: OrdmapLaw(A, cmp),
   l: List(A)
 ): sort_sorted(cmp, List::sort(cmp, l)) {
-  match l: sort_sorted(cmp, List::sort(cmp, l)) {
+  ⊢ sort_sorted(cmp, List::sort(cmp, l)) from match l {
     Nil => Trivial
     Cons(h, t) => sort_insert_sorted(cmp, w, h, List::sort(cmp, t), sort_sorts(cmp, w, t))
   }
@@ -227,9 +227,9 @@ pub theorem sort_mem_cons<A: Type>(
   e: A,
   m: Mem(A, e, Cons(x, a))
 ): Mem(A, e, Cons(x, b)) {
-  match m: Mem(A, e, Cons(x, b)) {
-    MemHere(t) => MemHere(A, e, b)
-    MemThere(c, t, m2) => MemThere(A, e, x, b, h(e, m2))
+  ⊢ Mem(A, e, Cons(x, b)) from match m {
+    MemHere(t) => MemHere(<A: A, a: e>, b)
+    MemThere(c, t, m2) => MemThere(<A: A, a: e>, x, b, h(e, m2))
   }
 }
 
@@ -250,22 +250,22 @@ pub theorem sort_mem_insert_self<A: Type>(
   x: A,
   l: List(A)
 ): Mem(A, x, List::insert_sorted(cmp, x, l)) {
-  match l: Mem(A, x, List::insert_sorted(cmp, x, l)) {
-    Nil => MemHere(A, x, Nil)
+  ⊢ Mem(A, x, List::insert_sorted(cmp, x, l)) from match l {
+    Nil => MemHere(<A: A, a: x>, Nil)
     Cons(h, t) => Ordering::cases(
       (o: Ordering) => Mem(
         A,
         x,
-        match o: List(A) {
+        ⊢ List(A) from match o {
           Less => Cons(x, Cons(h, t))
           Equal => Cons(h, List::insert_sorted(cmp, x, t))
           Greater => Cons(h, List::insert_sorted(cmp, x, t))
         }
       ),
       cmp(x, h),
-      (e: cmp(x, h) = Less) => MemHere(A, x, Cons(h, t)),
-      (e: cmp(x, h) = Equal) => MemThere(A, x, h, List::insert_sorted(cmp, x, t), sort_mem_insert_self(cmp, x, t)),
-      (e: cmp(x, h) = Greater) => MemThere(A, x, h, List::insert_sorted(cmp, x, t), sort_mem_insert_self(cmp, x, t))
+      (e: cmp(x, h) = Less) => MemHere(<A: A, a: x>, Cons(h, t)),
+      (e: cmp(x, h) = Equal) => MemThere(<A: A, a: x>, h, List::insert_sorted(cmp, x, t), sort_mem_insert_self(cmp, x, t)),
+      (e: cmp(x, h) = Greater) => MemThere(<A: A, a: x>, h, List::insert_sorted(cmp, x, t), sort_mem_insert_self(cmp, x, t))
     )
   }
 }
@@ -277,27 +277,27 @@ pub theorem sort_mem_insert<A: Type>(
   l: List(A),
   m: Mem(A, e, l)
 ): Mem(A, e, List::insert_sorted(cmp, x, l)) {
-  match l: Mem(A, e, List::insert_sorted(cmp, x, l)) {
+  ⊢ Mem(A, e, List::insert_sorted(cmp, x, l)) from match l {
     Nil => Mem::nil(Mem(A, e, List::insert_sorted(cmp, x, Nil)), m)
     Cons(h, t) => Ordering::cases(
       (o: Ordering) => Mem(
         A,
         e,
-        match o: List(A) {
+        ⊢ List(A) from match o {
           Less => Cons(x, Cons(h, t))
           Equal => Cons(h, List::insert_sorted(cmp, x, t))
           Greater => Cons(h, List::insert_sorted(cmp, x, t))
         }
       ),
       cmp(x, h),
-      (c: cmp(x, h) = Less) => MemThere(A, e, x, Cons(h, t), m),
-      (c: cmp(x, h) = Equal) => match m: Mem(A, e, Cons(A, h, List::insert_sorted(cmp, x, t))) {
-        MemHere(t2) => MemHere(A, e, List::insert_sorted(cmp, x, t))
-        MemThere(b, t2, m2) => MemThere(A, e, h, List::insert_sorted(cmp, x, t), sort_mem_insert(cmp, x, e, t, m2))
+      (c: cmp(x, h) = Less) => MemThere(<A: A, a: e>, x, Cons(h, t), m),
+      (c: cmp(x, h) = Equal) => ⊢ Mem(A, e, Cons(<A: A>, h, List::insert_sorted(cmp, x, t))) from match m {
+        MemHere(t2) => MemHere(<A: A, a: e>, List::insert_sorted(cmp, x, t))
+        MemThere(b, t2, m2) => MemThere(<A: A, a: e>, h, List::insert_sorted(cmp, x, t), sort_mem_insert(cmp, x, e, t, m2))
       },
-      (c: cmp(x, h) = Greater) => match m: Mem(A, e, Cons(A, h, List::insert_sorted(cmp, x, t))) {
-        MemHere(t2) => MemHere(A, e, List::insert_sorted(cmp, x, t))
-        MemThere(b, t2, m2) => MemThere(A, e, h, List::insert_sorted(cmp, x, t), sort_mem_insert(cmp, x, e, t, m2))
+      (c: cmp(x, h) = Greater) => ⊢ Mem(A, e, Cons(<A: A>, h, List::insert_sorted(cmp, x, t))) from match m {
+        MemHere(t2) => MemHere(<A: A, a: e>, List::insert_sorted(cmp, x, t))
+        MemThere(b, t2, m2) => MemThere(<A: A, a: e>, h, List::insert_sorted(cmp, x, t), sort_mem_insert(cmp, x, e, t, m2))
       }
     )
   }
@@ -310,9 +310,9 @@ pub theorem sort_mem_skip<A: Type>(
   e: A,
   m: Mem(A, e, Cons(x, t))
 ): Mem(A, e, Cons(x, Cons(h, t))) {
-  match m: Mem(A, e, Cons(x, Cons(h, t))) {
-    MemHere(t2) => MemHere(A, e, Cons(h, t))
-    MemThere(b, t2, m2) => MemThere(A, e, x, Cons(h, t), MemThere(A, e, h, t, m2))
+  ⊢ Mem(A, e, Cons(x, Cons(h, t))) from match m {
+    MemHere(t2) => MemHere(<A: A, a: e>, Cons(h, t))
+    MemThere(b, t2, m2) => MemThere(<A: A, a: e>, x, Cons(h, t), MemThere(<A: A, a: e>, h, t, m2))
   }
 }
 
@@ -325,15 +325,15 @@ pub theorem sort_mem_step<A: Type>(
   e: A,
   m: Mem(A, e, Cons(h, i))
 ): Mem(A, e, Cons(x, Cons(h, t))) {
-  match m: Mem(A, e, Cons(x, Cons(h, t))) {
-    MemHere(t2) => MemThere(A, e, x, Cons(e, t), MemHere(A, e, t))
+  ⊢ Mem(A, e, Cons(x, Cons(h, t))) from match m {
+    MemHere(t2) => MemThere(<A: A, a: e>, x, Cons(e, t), MemHere(<A: A, a: e>, t))
     MemThere(b, t2, m2) => sort_mem_skip(x, h, t, e, ih(e, m2))
   }
 }
 
 // What `List::insert_sorted` does with `Cons(h, t)` once `cmp(x, h)` is `o`.
 pub fn sort_insert_case<A>(cmp: (A, A) -> Ordering, x: A, h: A, t: List(A), o: Ordering): List(A) {
-  match o: List(A) {
+  ⊢ List(A) from match o {
     Less => Cons(x, Cons(h, t))
     Equal => Cons(h, List::insert_sorted(cmp, x, t))
     Greater => Cons(h, List::insert_sorted(cmp, x, t))
@@ -350,7 +350,7 @@ pub theorem sort_mem_case_inv<A: Type>(
   ih: Sub(A, List::insert_sorted(cmp, x, t), Cons(x, t)),
   m: Mem(A, e, sort_insert_case(cmp, x, h, t, o))
 ): Mem(A, e, Cons(x, Cons(h, t))) {
-  match o: Mem(A, e, Cons(x, Cons(h, t))) {
+  ⊢ Mem(A, e, Cons(x, Cons(h, t))) from match o {
     Less => m
     Equal => sort_mem_step(x, h, t, List::insert_sorted(cmp, x, t), ih, e, m)
     Greater => sort_mem_step(x, h, t, List::insert_sorted(cmp, x, t), ih, e, m)
@@ -362,7 +362,7 @@ pub theorem sort_insert_sub<A: Type>(
   x: A,
   l: List(A)
 ): Sub(A, List::insert_sorted(cmp, x, l), Cons(x, l)) {
-  match l: Sub(A, List::insert_sorted(cmp, x, l), Cons(x, l)) {
+  ⊢ Sub(A, List::insert_sorted(cmp, x, l), Cons(x, l)) from match l {
     Nil => (e: A) => (m: Mem(A, e, List::insert_sorted(cmp, x, Nil))) => m
     Cons(h, t) => (e: A) => (m: Mem(A, e, List::insert_sorted(cmp, x, Cons(h, t)))) => sort_mem_case_inv(
       cmp,
@@ -384,7 +384,7 @@ pub theorem sort_insert_sup<A: Type>(
   e: A,
   m: Mem(A, e, Cons(x, l))
 ): Mem(A, e, List::insert_sorted(cmp, x, l)) {
-  match m: Mem(A, e, List::insert_sorted(cmp, x, l)) {
+  ⊢ Mem(A, e, List::insert_sorted(cmp, x, l)) from match m {
     MemHere(t) => sort_mem_insert_self(cmp, e, t)
     MemThere(b, t, m2) => sort_mem_insert(cmp, x, e, t, m2)
   }
@@ -405,8 +405,8 @@ pub theorem sort_equiv<A: Type>(
   cmp: (A, A) -> Ordering,
   l: List(A)
 ): Equiv(A, List::sort(cmp, l), l) {
-  match l: Equiv(A, List::sort(cmp, l), l) {
-    Nil => Equiv::refl(A, Nil(A))
+  ⊢ Equiv(A, List::sort(cmp, l), l) from match l {
+    Nil => Equiv::refl(<A: A>, Nil(<A: A>))
     Cons(h, t) => Equiv::trans(
       A,
       List::insert_sorted(cmp, h, List::sort(cmp, t)),
@@ -426,7 +426,7 @@ pub theorem sort_insert_case_length<A: Type>(
   o: Ordering,
   ih: List::length(List::insert_sorted(cmp, x, t)) = Succ(List::length(t))
 ): List::length(sort_insert_case(cmp, x, h, t, o)) = Succ(Succ(List::length(t))) {
-  match o: List::length(sort_insert_case(cmp, x, h, t, o)) = Succ(Succ(List::length(t))) {
+  ⊢ List::length(sort_insert_case(cmp, x, h, t, o)) = Succ(Succ(List::length(t))) from match o {
     Less => Refl
     Equal => Eq::congr(Succ, ih)
     Greater => Eq::congr(Succ, ih)
@@ -438,7 +438,7 @@ pub theorem sort_insert_length<A: Type>(
   x: A,
   l: List(A)
 ): List::length(List::insert_sorted(cmp, x, l)) = Succ(List::length(l)) {
-  match l: List::length(List::insert_sorted(cmp, x, l)) = Succ(List::length(l)) {
+  ⊢ List::length(List::insert_sorted(cmp, x, l)) = Succ(List::length(l)) from match l {
     Nil => Refl
     Cons(h, t) => sort_insert_case_length(cmp, x, h, t, cmp(x, h), sort_insert_length(cmp, x, t))
   }
@@ -448,7 +448,7 @@ pub theorem sort_length<A: Type>(
   cmp: (A, A) -> Ordering,
   l: List(A)
 ): List::length(List::sort(cmp, l)) = List::length(l) {
-  match l: List::length(List::sort(cmp, l)) = List::length(l) {
+  ⊢ List::length(List::sort(cmp, l)) = List::length(l) from match l {
     Nil => Refl
     Cons(h, t) => Eq::trans(
       sort_insert_length(cmp, h, List::sort(cmp, t)),
@@ -468,12 +468,12 @@ pub theorem sort_insert_head_case<A: Type>(
   le: SortLe(A, cmp, x, h),
   ih: List::insert_sorted(cmp, x, t) = Cons(x, t)
 ): sort_insert_case(cmp, x, h, t, o) = Cons(x, Cons(h, t)) {
-  match o: sort_insert_case(cmp, x, h, t, o) = Cons(x, Cons(h, t)) {
+  ⊢ sort_insert_case(cmp, x, h, t, o) = Cons(x, Cons(h, t)) from match o {
     Less => Refl
     Equal => Eq::trans(
       Eq::congr(⟦Cons(h, □)⟧, ih),
       Eq::subst(
-        (z: A) => Cons(A, h, Cons(A, z, t)) = Cons(A, z, Cons(A, h, t)),
+        (z: A) => Cons(<A: A>, h, Cons(<A: A>, z, t)) = Cons(<A: A>, z, Cons(<A: A>, h, t)),
         Eq::sym(Ordmap::law_eq(cmp, w, x, h, c)),
         Refl
       )
@@ -489,7 +489,7 @@ pub theorem sort_insert_head<A: Type>(
   l: List(A),
   all: sort_all_le(cmp, x, l)
 ): List::insert_sorted(cmp, x, l) = Cons(x, l) {
-  match l: List::insert_sorted(cmp, x, l) = Cons(x, l) {
+  ⊢ List::insert_sorted(cmp, x, l) = Cons(x, l) from match l {
     Nil => Refl
     Cons(h, t) => sort_insert_head_case(
       cmp,
@@ -511,7 +511,7 @@ pub theorem sort_of_sorted<A: Type>(
   l: List(A),
   s: sort_sorted(cmp, l)
 ): List::sort(cmp, l) = l {
-  match l: List::sort(cmp, l) = l {
+  ⊢ List::sort(cmp, l) = l from match l {
     Nil => Refl
     Cons(h, t) => Eq::trans(
       Eq::congr(⟦List::insert_sorted(cmp, h, □)⟧, sort_of_sorted(cmp, w, t, And::right(s))),

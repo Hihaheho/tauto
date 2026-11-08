@@ -6,7 +6,7 @@ import "../src/syntax.taut"
 // and the default only when none matches.
 
 theorem bytes_eq_refl(a: List(Nat)): byte_list_eq(a, a) = true {
-  match a: byte_list_eq(a, a) = true {
+  ⊢ byte_list_eq(a, a) = true from match a {
     Nil => Refl
     Cons(c, t) => Eq::subst(
       Bool,
@@ -20,12 +20,12 @@ theorem bytes_eq_refl(a: List(Nat)): byte_list_eq(a, a) = true {
 }
 
 theorem none_ne_some(x: Variant, e: None = Some(x)): False {
-  match e: False {
+  ⊢ False from match e {
   }
 }
 
 fn get_or(d: Variant, o: Option(Variant)): Variant {
-  match o: Variant {
+  ⊢ Variant from match o {
     None => d
     Some(x) => x
   }
@@ -46,14 +46,10 @@ theorem found_step(
   h: find_step(o, y, find_variant(l, v, rest)) = Some(x),
   ih: (find_variant(l, v, rest) = Some(x)) -> Found(l, v, rest, x)
 ): Found(l, v, Cons(y, rest), x) {
-  match o: (
+  (⊢ (
     key_matches(l, v, variant_key(y)) = o
-  ) -> (
-    find_step(o, y, find_variant(l, v, rest)) = Some(x)
-  ) -> Found(l, v, Cons(y, rest), x) {
-    true => (e1: key_matches(l, v, variant_key(y)) = true) => (
-      h1: Some(y) = Some(x)
-    ) => Eq::subst(
+  ) -> (find_step(o, y, find_variant(l, v, rest)) = Some(x)) -> Found(l, v, Cons(y, rest), x) from match o {
+    true => (e1: key_matches(l, v, variant_key(y)) = true) => (h1: Some(y) = Some(x)) => Eq::subst(
       Variant,
       y,
       x,
@@ -61,10 +57,11 @@ theorem found_step(
       Eq::congr((p: Option(Variant)) => get_or(y, p), h1),
       AndIntro(MemHere(rest), e1)
     )
-    false => (e1: key_matches(l, v, variant_key(y)) = false) => (
-      h1: find_variant(l, v, rest) = Some(x)
-    ) => AndIntro(MemThere(y, rest, And::left(ih(h1))), And::right(ih(h1)))
-  }(e, h)
+    false => (e1: key_matches(l, v, variant_key(y)) = false) => (h1: find_variant(l, v, rest) = Some(x)) => AndIntro(
+      MemThere(y, rest, And::left(ih(h1))),
+      And::right(ih(h1))
+    )
+  })(e, h)
 }
 
 theorem find_variant_sound(
@@ -85,26 +82,20 @@ theorem find_variant_sound(
       key_matches(l, v, variant_key(y)),
       Refl,
       h,
-      (h2: find_variant(l, v, rest) = Some(x)) => find_variant_sound(
-        l,
-        v,
-        rest,
-        x,
-        h2
-      )
+      (h2: find_variant(l, v, rest) = Some(x)) => find_variant_sound(l, v, rest, x, h2)
     )
   }
 }
 
 fn none_match(l: List(Nat), v: Value, vs: List(Variant)): Prop {
-  match vs: Prop {
+  ⊢ Prop from match vs {
     Nil => True
     Cons(y, rest) => And(key_matches(l, v, variant_key(y)) = false, none_match(l, v, rest))
   }
 }
 
 theorem some_ne_none(y: Variant, e: Some(y) = None): False {
-  match e: False {
+  ⊢ False from match e {
   }
 }
 
@@ -118,18 +109,17 @@ theorem none_step(
   h: find_step(o, y, find_variant(l, v, rest)) = None,
   ih: (find_variant(l, v, rest) = None) -> none_match(l, v, rest)
 ): none_match(l, v, Cons(y, rest)) {
-  match o: (
+  (⊢ (
     key_matches(l, v, variant_key(y)) = o
-  ) -> (
-    find_step(o, y, find_variant(l, v, rest)) = None
-  ) -> none_match(l, v, Cons(y, rest)) {
-    true => (e1: key_matches(l, v, variant_key(y)) = true) => (
-      h1: Some(y) = None
-    ) => False::elim(some_ne_none(y, h1))
-    false => (e1: key_matches(l, v, variant_key(y)) = false) => (
-      h1: find_variant(l, v, rest) = None
-    ) => AndIntro(e1, ih(h1))
-  }(e, h)
+  ) -> (find_step(o, y, find_variant(l, v, rest)) = None) -> none_match(l, v, Cons(y, rest)) from match o {
+    true => (e1: key_matches(l, v, variant_key(y)) = true) => (h1: Some(y) = None) => False::elim(
+      some_ne_none(y, h1)
+    )
+    false => (e1: key_matches(l, v, variant_key(y)) = false) => (h1: find_variant(l, v, rest) = None) => AndIntro(
+      e1,
+      ih(h1)
+    )
+  })(e, h)
 }
 
 theorem find_variant_none(
@@ -192,10 +182,11 @@ theorem exact_number_first(
   d: List(Elem)
 ): pick(l, VNum(n), Cons(Variant::Mk(KeyNum(n), p), rest), d) = p {
   Eq::subst(
-    Bool,
-    true,
-    Nat::eq(n, n),
-    (o: Bool) => pattern_of(d, find_step(o, Variant::Mk(KeyNum(n), p), find_variant(l, VNum(n), rest))) = p,
+    <A: Bool, a: true, b: Nat::eq(n, n)>,
+    (o: Bool) => pattern_of(
+      d,
+      find_step(o, Variant::Mk(KeyNum(n), p), find_variant(l, VNum(n), rest))
+    ) = p,
     Eq::sym(Nat::eq_refl(n)),
     Refl
   )
@@ -209,10 +200,11 @@ theorem exact_string_first(
   d: List(Elem)
 ): pick(l, VStr(s), Cons(Variant::Mk(KeyId(s), p), rest), d) = p {
   Eq::subst(
-    Bool,
-    true,
-    byte_list_eq(s, s),
-    (o: Bool) => pattern_of(d, find_step(o, Variant::Mk(KeyId(s), p), find_variant(l, VStr(s), rest))) = p,
+    <A: Bool, a: true, b: byte_list_eq(s, s)>,
+    (o: Bool) => pattern_of(
+      d,
+      find_step(o, Variant::Mk(KeyId(s), p), find_variant(l, VStr(s), rest))
+    ) = p,
     Eq::sym(bytes_eq_refl(s)),
     Refl
   )

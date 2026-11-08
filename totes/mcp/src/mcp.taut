@@ -1,0 +1,715 @@
+import std::Base
+import std::prelude::Os
+import std::prelude::Shared
+import std::List
+import std::Text
+import std::Data
+import json::json
+import "../src/jsonrpc.taut"
+
+pub(open) struct ServerInfo {
+  name: Text
+  version: Text
+}
+
+pub(open) struct ClientInfo {
+  name: Text
+  version: Text
+}
+
+pub(open) struct ServerCapabilities {
+  tools: Bool
+  resources: Bool
+  prompts: Bool
+}
+
+pub(open) struct McpState {
+  initialized: Bool
+  client_info: Option(ClientInfo)
+  server_info: ServerInfo
+  capabilities: ServerCapabilities
+}
+
+pub fn mcp_state_new(): McpState {
+  McpState {
+    initialized: false,
+    client_info: None,
+    server_info: ServerInfo {
+      name: "tauto-mcp-server",
+      version: "0.1.0"
+    },
+    capabilities: ServerCapabilities {
+      tools: true,
+      resources: false,
+      prompts: false
+    }
+  }
+}
+
+pub(open) enum McpError {
+  NotInitialized
+  AlreadyInitialized
+  ToolNotFound(Text)
+  ToolExecutionFailed(Text)
+  InvalidToolParams(Text)
+}
+
+pub fn handle_mcp_request(
+  state: McpState,
+  req: RpcRequest
+): Result(Pair(McpState, Json), McpError) {
+  match state.initialized {
+    false => match Text::eq(req.method, "initialize") {
+      true => handle_initialize(state, req)
+      false => Err(NotInitialized)
+    }
+    true => match Text::eq(req.method, "initialize") {
+      true => Err(AlreadyInitialized)
+      false => match Text::eq(req.method, "ping") {
+        true => handle_ping(state, req)
+        false => match Text::eq(req.method, "tools/list") {
+          true => handle_tools_list(state, req)
+          false => match Text::eq(req.method, "tools/call") {
+            true => handle_tools_call(state, req)
+            false => Err(ToolNotFound(req.method))
+          }
+        }
+      }
+    }
+  }
+}
+
+fn handle_initialize(
+  state: McpState,
+  req: RpcRequest
+): Result(Pair(McpState, Json), McpError) {
+  let client_info: ClientInfo := extract_client_info(req.params)
+  let new_state: McpState := McpState {
+    initialized: true,
+    client_info: Some(client_info),
+    server_info: state.server_info,
+    capabilities: state.capabilities
+  }
+  let response: Json := make_initialize_response(new_state)
+  Ok(#(new_state, response))
+}
+
+fn extract_client_info(params: Option(Json)): ClientInfo {
+  match params {
+    None => ClientInfo { name: "unknown", version: "0.0.0" }
+    Some(p) => {
+      let client_info_val: Option(Json) := json_get(p, "clientInfo")
+      match client_info_val {
+        None => ClientInfo { name: "unknown", version: "0.0.0" }
+        Some(ci) => {
+          let name: Text := extract_string_field(ci, "name", "unknown")
+          let version: Text := extract_string_field(ci, "version", "0.0.0")
+          ClientInfo { name: name, version: version }
+        }
+      }
+    }
+  }
+}
+
+fn extract_string_field(obj: Json, key: Text, default: Text): Text {
+  match json_get(obj, key) {
+    None => default
+    Some(val) => match json_str(Some(val)) {
+      None => default
+      Some(s) => s
+    }
+  }
+}
+
+fn make_initialize_response(state: McpState): Json {
+  JObj(
+    Cons(
+      #("protocolVersion", JStr("2024-11-05")),
+      Cons(
+        #(
+          "serverInfo",
+          JObj(
+            Cons(
+              #("name", JStr(state.server_info.name)),
+              Cons(#("version", JStr(state.server_info.version)), Nil)
+            )
+          )
+        ),
+        Cons(#("capabilities", JObj(Cons(#("tools", JObj(Nil)), Nil))), Nil)
+      )
+    )
+  )
+}
+
+fn handle_ping(state: McpState, req: RpcRequest): Result(Pair(McpState, Json), McpError) {
+  Ok(#(state, JObj(Nil)))
+}
+
+fn handle_tools_list(
+  state: McpState,
+  req: RpcRequest
+): Result(Pair(McpState, Json), McpError) {
+  let tools: List(Json) := make_tool_list()
+  let response: Json := JObj(Cons(#("tools", JArr(tools)), Nil))
+  Ok(#(state, response))
+}
+
+fn make_tool_list(): List(Json) {
+  Cons(
+    make_tool_descriptor(
+      "tauto_check",
+      "Check a Tauto file and report axioms used",
+      make_check_params_schema()
+    ),
+    Cons(
+      make_tool_descriptor(
+        "tauto_goals",
+        "Get proof goals at holes in a file",
+        make_goals_params_schema()
+      ),
+      Cons(
+        make_tool_descriptor(
+          "tauto_try",
+          "Try filling a hole with an expression",
+          make_try_params_schema()
+        ),
+        Cons(
+          make_tool_descriptor(
+            "tauto_suggest",
+            "Suggest terms that fit a hole",
+            make_suggest_params_schema()
+          ),
+          Cons(
+            make_tool_descriptor(
+              "tauto_library",
+              "List available constants with types",
+              make_library_params_schema()
+            ),
+            Nil
+          )
+        )
+      )
+    )
+  )
+}
+
+fn make_tool_descriptor(name: Text, description: Text, params_schema: Json): Json {
+  JObj(
+    Cons(
+      #("name", JStr(name)),
+      Cons(#("description", JStr(description)), Cons(#("inputSchema", params_schema), Nil))
+    )
+  )
+}
+
+fn make_check_params_schema(): Json {
+  JObj(
+    Cons(
+      #("type", JStr("object")),
+      Cons(
+        #(
+          "properties",
+          JObj(
+            Cons(
+              #(
+                "file",
+                JObj(
+                  Cons(
+                    #("type", JStr("string")),
+                    Cons(#("description", JStr("Path to the Tauto file to check")), Nil)
+                  )
+                )
+              ),
+              Nil
+            )
+          )
+        ),
+        Cons(#("required", JArr(Cons(JStr("file"), Nil))), Nil)
+      )
+    )
+  )
+}
+
+fn make_goals_params_schema(): Json {
+  JObj(
+    Cons(
+      #("type", JStr("object")),
+      Cons(
+        #(
+          "properties",
+          JObj(
+            Cons(
+              #(
+                "file",
+                JObj(
+                  Cons(
+                    #("type", JStr("string")),
+                    Cons(#("description", JStr("Path to the Tauto file")), Nil)
+                  )
+                )
+              ),
+              Cons(
+                #(
+                  "hole",
+                  JObj(
+                    Cons(
+                      #("type", JStr("string")),
+                      Cons(
+                        #("description", JStr("Name of the hole to inspect (optional)")),
+                        Nil
+                      )
+                    )
+                  )
+                ),
+                Nil
+              )
+            )
+          )
+        ),
+        Cons(#("required", JArr(Cons(JStr("file"), Nil))), Nil)
+      )
+    )
+  )
+}
+
+fn make_try_params_schema(): Json {
+  JObj(
+    Cons(
+      #("type", JStr("object")),
+      Cons(
+        #(
+          "properties",
+          JObj(
+            Cons(
+              #(
+                "file",
+                JObj(
+                  Cons(
+                    #("type", JStr("string")),
+                    Cons(#("description", JStr("Path to the Tauto file")), Nil)
+                  )
+                )
+              ),
+              Cons(
+                #(
+                  "hole",
+                  JObj(
+                    Cons(
+                      #("type", JStr("string")),
+                      Cons(#("description", JStr("Name of the hole")), Nil)
+                    )
+                  )
+                ),
+                Cons(
+                  #(
+                    "expr",
+                    JObj(
+                      Cons(
+                        #("type", JStr("string")),
+                        Cons(#("description", JStr("Expression to try")), Nil)
+                      )
+                    )
+                  ),
+                  Nil
+                )
+              )
+            )
+          )
+        ),
+        Cons(
+          #(
+            "required",
+            JArr(
+              Cons(JStr("file"), Cons(JStr("hole"), Cons(JStr("expr"), Nil)))
+            )
+          ),
+          Nil
+        )
+      )
+    )
+  )
+}
+
+fn make_suggest_params_schema(): Json {
+  JObj(
+    Cons(
+      #("type", JStr("object")),
+      Cons(
+        #(
+          "properties",
+          JObj(
+            Cons(
+              #(
+                "file",
+                JObj(
+                  Cons(
+                    #("type", JStr("string")),
+                    Cons(#("description", JStr("Path to the Tauto file")), Nil)
+                  )
+                )
+              ),
+              Cons(
+                #(
+                  "hole",
+                  JObj(
+                    Cons(
+                      #("type", JStr("string")),
+                      Cons(#("description", JStr("Name of the hole")), Nil)
+                    )
+                  )
+                ),
+                Cons(
+                  #(
+                    "limit",
+                    JObj(
+                      Cons(
+                        #("type", JStr("number")),
+                        Cons(
+                          #("description", JStr("Maximum suggestions to return (optional)")),
+                          Nil
+                        )
+                      )
+                    )
+                  ),
+                  Nil
+                )
+              )
+            )
+          )
+        ),
+        Cons(#("required", JArr(Cons(JStr("file"), Cons(JStr("hole"), Nil)))), Nil)
+      )
+    )
+  )
+}
+
+fn make_library_params_schema(): Json {
+  JObj(
+    Cons(
+      #("type", JStr("object")),
+      Cons(
+        #(
+          "properties",
+          JObj(
+            Cons(
+              #(
+                "file",
+                JObj(
+                  Cons(
+                    #("type", JStr("string")),
+                    Cons(#("description", JStr("Path to the Tauto file")), Nil)
+                  )
+                )
+              ),
+              Nil
+            )
+          )
+        ),
+        Cons(#("required", JArr(Cons(JStr("file"), Nil))), Nil)
+      )
+    )
+  )
+}
+
+fn handle_tools_call(
+  state: McpState,
+  req: RpcRequest
+): Result(Pair(McpState, Json), McpError) ! {fs_read, proc_run} {
+  match req.params {
+    None => Err(InvalidToolParams("missing params"))
+    Some(params) => {
+      let tool_name: Text := extract_string_field(params, "name", "")
+      let args: Option(Json) := json_get(params, "arguments")
+      match args {
+        None => Err(InvalidToolParams("missing arguments"))
+        Some(tool_args) => {
+          execute_tool(state, tool_name, tool_args)
+        }
+      }
+    }
+  }
+}
+
+fn execute_tool(
+  state: McpState,
+  name: Text,
+  args: Json
+): Result(Pair(McpState, Json), McpError) ! {fs_read, proc_run} {
+  match Text::eq(name, "tauto_check") {
+    true => execute_check_tool(state, args)
+    false => match Text::eq(name, "tauto_goals") {
+      true => execute_goals_tool(state, args)
+      false => match Text::eq(name, "tauto_try") {
+        true => execute_try_tool(state, args)
+        false => match Text::eq(name, "tauto_suggest") {
+          true => execute_suggest_tool(state, args)
+          false => match Text::eq(name, "tauto_library") {
+            true => execute_library_tool(state, args)
+            false => Err(ToolNotFound(name))
+          }
+        }
+      }
+    }
+  }
+}
+
+fn execute_check_tool(
+  state: McpState,
+  args: Json
+): Result(Pair(McpState, Json), McpError) ! {fs_read, proc_run} {
+  let file: Text := extract_string_field(args, "file", "")
+  match Text::eq(file, "") {
+    true => Err(InvalidToolParams("file required"))
+    false => {
+      let process: Process := Process {
+        program: "tauto",
+        args: Cons("check", Cons("--json", Cons(file, Nil))),
+        dir: "",
+        env: Nil,
+        stdin: Bytes::empty
+      }
+      match perform proc_run(process) {
+        Err(_) => Err(ToolExecutionFailed("failed to run tauto check"))
+        Ok(output) => match Text::eq(output.stderr, "") {
+          false => Err(ToolExecutionFailed(output.stderr))
+          true => {
+            let stdout_text: Text := bytes_to_text(output.stdout)
+            match json_parse(stdout_text) {
+              Err(_) => Err(ToolExecutionFailed("invalid JSON output"))
+              Ok(json_output) => {
+                let result: Json := make_tool_result(json_output)
+                Ok(#(state, result))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn execute_goals_tool(
+  state: McpState,
+  args: Json
+): Result(Pair(McpState, Json), McpError) ! {fs_read, proc_run} {
+  let file: Text := extract_string_field(args, "file", "")
+  let hole: Text := extract_string_field(args, "hole", "")
+  match Text::eq(file, "") {
+    true => Err(InvalidToolParams("file required"))
+    false => {
+      let tauto_args: List(Text) := build_goals_args(file, hole)
+      let process: Process := Process {
+        program: "tauto",
+        args: tauto_args,
+        dir: "",
+        env: Nil,
+        stdin: Bytes::empty
+      }
+      match perform proc_run(process) {
+        Err(_) => Err(ToolExecutionFailed("failed to run tauto goals"))
+        Ok(output) => match Text::eq(output.stderr, "") {
+          false => Err(ToolExecutionFailed(output.stderr))
+          true => {
+            let stdout_text: Text := bytes_to_text(output.stdout)
+            match json_parse(stdout_text) {
+              Err(_) => Err(ToolExecutionFailed("invalid JSON output"))
+              Ok(json_output) => {
+                let result: Json := make_tool_result(json_output)
+                Ok(#(state, result))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn build_goals_args(file: Text, hole: Text): List(Text) {
+  match Text::eq(hole, "") {
+    true => Cons("goals", Cons("--json", Cons(file, Nil)))
+    false => Cons("goals", Cons("--json", Cons("--hole", Cons(hole, Cons(file, Nil)))))
+  }
+}
+
+fn execute_try_tool(
+  state: McpState,
+  args: Json
+): Result(Pair(McpState, Json), McpError) ! {fs_read, proc_run} {
+  let file: Text := extract_string_field(args, "file", "")
+  let hole: Text := extract_string_field(args, "hole", "")
+  let expr: Text := extract_string_field(args, "expr", "")
+  match Text::eq(file, "") {
+    true => Err(InvalidToolParams("file required"))
+    false => match Text::eq(hole, "") {
+      true => Err(InvalidToolParams("hole required"))
+      false => match Text::eq(expr, "") {
+        true => Err(InvalidToolParams("expr required"))
+        false => {
+          let process: Process := Process {
+            program: "tauto",
+            args: Cons(
+              "try",
+              Cons(
+                "--json",
+                Cons("--hole", Cons(hole, Cons("--with", Cons(expr, Cons(file, Nil)))))
+              )
+            ),
+            dir: "",
+            env: Nil,
+            stdin: Bytes::empty
+          }
+          match perform proc_run(process) {
+            Err(_) => Err(ToolExecutionFailed("failed to run tauto try"))
+            Ok(output) => match Text::eq(output.stderr, "") {
+              false => Err(ToolExecutionFailed(output.stderr))
+              true => {
+                let stdout_text: Text := bytes_to_text(output.stdout)
+                match json_parse(stdout_text) {
+                  Err(_) => Err(ToolExecutionFailed("invalid JSON output"))
+                  Ok(json_output) => {
+                    let result: Json := make_tool_result(json_output)
+                    Ok(#(mcp_state_new(), result))
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn execute_suggest_tool(
+  state: McpState,
+  args: Json
+): Result(Pair(McpState, Json), McpError) ! {fs_read, proc_run} {
+  let file: Text := extract_string_field(args, "file", "")
+  let hole: Text := extract_string_field(args, "hole", "")
+  let limit_val: Option(Json) := json_get(args, "limit")
+  match Text::eq(file, "") {
+    true => Err(InvalidToolParams("file required"))
+    false => match Text::eq(hole, "") {
+      true => Err(InvalidToolParams("hole required"))
+      false => {
+        let tauto_args: List(Text) := build_suggest_args(file, hole, limit_val)
+        let process: Process := Process {
+          program: "tauto",
+          args: tauto_args,
+          dir: "",
+          env: Nil,
+          stdin: Bytes::empty
+        }
+        match perform proc_run(process) {
+          Err(_) => Err(ToolExecutionFailed("failed to run tauto suggest"))
+          Ok(output) => match Text::eq(output.stderr, "") {
+            false => Err(ToolExecutionFailed(output.stderr))
+            true => {
+              let stdout_text: Text := bytes_to_text(output.stdout)
+              match json_parse(stdout_text) {
+                Err(_) => Err(ToolExecutionFailed("invalid JSON output"))
+                Ok(json_output) => {
+                  let result: Json := make_tool_result(json_output)
+                  Ok(#(mcp_state_new(), result))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn build_suggest_args(file: Text, hole: Text, limit: Option(Json)): List(Text) {
+  match limit {
+    None => Cons("suggest", Cons("--json", Cons("--hole", Cons(hole, Cons(file, Nil)))))
+    Some(lim_val) => match json_num(Some(lim_val)) {
+      None => Cons("suggest", Cons("--json", Cons("--hole", Cons(hole, Cons(file, Nil)))))
+      Some(lim_text) => {
+        Cons(
+          "suggest",
+          Cons(
+            "--json",
+            Cons("--hole", Cons(hole, Cons("--limit", Cons(lim_text, Cons(file, Nil)))))
+          )
+        )
+      }
+    }
+  }
+}
+
+fn execute_library_tool(
+  state: McpState,
+  args: Json
+): Result(Pair(McpState, Json), McpError) ! {fs_read, proc_run} {
+  let file: Text := extract_string_field(args, "file", "")
+  match Text::eq(file, "") {
+    true => Err(InvalidToolParams("file required"))
+    false => {
+      let process: Process := Process {
+        program: "tauto",
+        args: Cons("library", Cons("--json", Cons(file, Nil))),
+        dir: "",
+        env: Nil,
+        stdin: Bytes::empty
+      }
+      match perform proc_run(process) {
+        Err(_) => Err(ToolExecutionFailed("failed to run tauto library"))
+        Ok(output) => match Text::eq(output.stderr, "") {
+          false => Err(ToolExecutionFailed(output.stderr))
+          true => {
+            let stdout_text: Text := bytes_to_text(output.stdout)
+            match json_parse(stdout_text) {
+              Err(_) => Err(ToolExecutionFailed("invalid JSON output"))
+              Ok(json_output) => {
+                let result: Json := make_tool_result(json_output)
+                Ok(#(state, result))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn bytes_to_text(b: Bytes): Text {
+  match Text::of_bytes(b) {
+    None => ""
+    Some(t) => t
+  }
+}
+
+fn make_tool_result(json: Json): Json {
+  JObj(
+    Cons(
+      #(
+        "content",
+        JArr(
+          Cons(
+            JObj(
+              Cons(
+                #("type", JStr("text")),
+                Cons(#("text", JStr(json_text(json))), Nil)
+              )
+            ),
+            Nil
+          )
+        )
+      ),
+      Nil
+    )
+  )
+}
+
+pub fn mcp_error_to_rpc_error(err: McpError): RpcError {
+  match err {
+    NotInitialized => ServerError(-32002, "Server not initialized")
+    AlreadyInitialized => ServerError(-32003, "Server already initialized")
+    ToolNotFound(name) => ServerError(-32004, Text::concat("Tool not found: ", name))
+    ToolExecutionFailed(msg) => ServerError(-32005, Text::concat("Tool execution failed: ", msg))
+    InvalidToolParams(msg) => ServerError(-32006, Text::concat("Invalid tool params: ", msg))
+  }
+}

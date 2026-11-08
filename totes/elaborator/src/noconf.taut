@@ -1,0 +1,405 @@
+import "elaborate.taut"
+import "../../kernel/src/data.taut"
+import "../../kernel/src/kernel.taut"
+import "../../kernel/src/check.taut"
+import "../../kernel/src/term.taut"
+import "../../kernel/src/level.taut"
+import std::List
+import std::Text
+import std::Base
+
+// No-confusion for the families of an inductive command without indices, as
+// the host generates it from the eliminator: constructors are injective and
+// distinct. For `I` with constructors `c_j(a⃗)`:
+//
+// * `I::nc(p⃗, P, x, y): Type`, by recursion on both: `(a_i = b_i → … → P) → P`
+//   when both are `c_j`, and `P` otherwise;
+// * `I::nc_diag(p⃗, P, x): I::nc(p⃗, P, x, x)`;
+// * `I::noconf(p⃗, P, x, y, e: x = y): I::nc(p⃗, P, x, y)`.
+//
+// Only fields whose type mentions no earlier field, and lives in `Type`, get
+// an equation. A family for which they do not check has no no-confusion.
+
+// `Π (q_i: a_i = b_i) …, P` over the injective fields.
+pub fn elab_equations(
+  &mut core: KernelCore,
+  inj: List(Nat),
+  at: Nat,
+  a: List(Nat),
+  b: List(Nat),
+  types: List(KernelTerm),
+  p: Nat
+): KernelTerm {
+  ⊢ KernelTerm from match a {
+    Nil => KernelFVar(p)
+    Cons(x, rest) => ⊢ KernelTerm from match b {
+      Nil => KernelFVar(p)
+      Cons(y, more) => ⊢ KernelTerm from match types {
+        Nil => KernelFVar(p)
+        Cons(t, ts) => {
+          let tail := elab_equations(&mut core, inj, at + 1, rest, more, ts, p)
+          if elab_has_index(inj, at) {
+            let e := elab_eq(t, KernelFVar(x), KernelFVar(y))
+            let q := kernel_fresh(&mut core, e)
+            kernel_pi_over(q, e, tail)
+          } else { tail }
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_refls(inj: List(Nat), at: Nat, a: List(Nat), types: List(KernelTerm)): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match a {
+    Nil => Nil
+    Cons(x, rest) => ⊢ List(KernelTerm) from match types {
+      Nil => Nil
+      Cons(t, ts) => {
+        let tail := elab_refls(inj, at + 1, rest, ts)
+        if elab_has_index(inj, at) {
+          Cons(elab_apps(KernelConst("Eq::Refl"), Cons(t, Cons(KernelFVar(x), Nil))), tail)
+        } else { tail }
+      }
+    }
+  }
+}
+
+pub fn elab_star_minors(cs: List(KernelCtorInfo)): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(elab_lam_n(KernelConst("Unit::Star"), c.nargs + List::length(c.recursive)), elab_star_minors(rest))
+  }
+}
+
+pub fn elab_n_of(n: Nat, t: KernelTerm): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match n {
+    Zero => Nil
+    Succ(m) => Cons(t, elab_n_of(m, t))
+  }
+}
+
+pub fn elab_ctor_index(cs: List(KernelCtorInfo), name: Text, at: Nat): Nat {
+  ⊢ Nat from match cs {
+    Nil => at
+    Cons(c, rest) => if c.name == name { at } else { elab_ctor_index(rest, name, at + 1) }
+  }
+}
+
+// The inner minors of `nc`: for the constructor `c` of the outer value, the
+// equations when the inner one is `c` too, and `P` otherwise.
+pub fn elab_nc_inner(
+  k: Nat,
+  &mut core: KernelCore,
+  group: List(Text),
+  family: Text,
+  params: List(KernelTerm),
+  c: KernelCtorInfo,
+  a: ElabOpened,
+  inj: List(Nat),
+  p: Nat
+): Option(List(KernelTerm)) {
+  ⊢ Option(List(KernelTerm)) from match group {
+    Nil => Some(Nil)
+    Cons(g, rest) => ⊢ Option(List(KernelTerm)) from match kernel_ind_get(core, g) {
+      None => None
+      Some(info) => ⊢ Option(List(KernelTerm)) from match elab_nc_inner_ctors(k, &mut core, info.constructors, g == family, params, c, a, inj, p) {
+        None => None
+        Some(here) => ⊢ Option(List(KernelTerm)) from match elab_nc_inner(k, &mut core, rest, family, params, c, a, inj, p) {
+          None => None
+          Some(more) => Some(List::append(here, more))
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_nc_inner_ctors(
+  k: Nat,
+  &mut core: KernelCore,
+  ds: List(KernelCtorInfo),
+  same_family: Bool,
+  params: List(KernelTerm),
+  c: KernelCtorInfo,
+  a: ElabOpened,
+  inj: List(Nat),
+  p: Nat
+): Option(List(KernelTerm)) {
+  ⊢ Option(List(KernelTerm)) from match ds {
+    Nil => Some(Nil)
+    Cons(d, rest) => {
+      let body: Option(Pair(List(Nat), KernelTerm)) := if same_family && d.name == c.name {
+        ⊢ Option(Pair(List(Nat), KernelTerm)) from match elab_open_ctor(k, &mut core, d, params) {
+          None => None
+          Some(b) => {
+            let eqs := elab_equations(&mut core, inj, 0, a.fields, b.fields, a.types, p)
+            let kk := kernel_fresh(&mut core, eqs)
+            Some(Pair { fst: List::append(b.fields, b.ihs), snd: kernel_pi_over(kk, eqs, KernelFVar(p)) })
+          }
+        }
+      } else {
+        Some(Pair { fst: Nil, snd: elab_lam_n(KernelFVar(p), d.nargs + List::length(d.recursive)) })
+      }
+      ⊢ Option(List(KernelTerm)) from match body {
+        None => None
+        Some(bd) => {
+          let minor := ⊢ KernelTerm from match bd.fst {
+            Nil => bd.snd
+            _ => elab_lams(bd.snd, bd.fst)
+          }
+          ⊢ Option(List(KernelTerm)) from match elab_nc_inner_ctors(k, &mut core, rest, same_family, params, c, a, inj, p) {
+            None => None
+            Some(more) => Some(Cons(minor, more))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub(open) inductive ElabNcCtx: Type {
+  Mk(
+    family: Text,
+    group: List(Text),
+    params: List(Nat),
+    domains: List(KernelTerm),
+    this: KernelTerm,
+    p: Nat
+  ): ElabNcCtx
+}
+
+pub fn elab_nc_params(x: ElabNcCtx): List(KernelTerm) { elab_fvars(x.params) }
+
+pub fn elab_nc_rec(x: ElabNcCtx, motives: List(KernelTerm), minors: List(KernelTerm), major: KernelTerm): KernelTerm {
+  elab_apps(KernelConst(Text::concat(x.family, "::rec")), List::append(elab_nc_params(x), List::append(motives, List::append(minors, Cons(major, Nil)))))
+}
+
+pub fn elab_motives_for(group: List(Text), family: Text, here: KernelTerm, other: KernelTerm): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match group {
+    Nil => Nil
+    Cons(g, rest) => Cons(if g == family { here } else { other }, elab_motives_for(rest, family, here, other))
+  }
+}
+
+// The outer minors of `nc` (or `nc_diag`, by `diag`).
+pub fn elab_nc_outer(
+  k: Nat,
+  &mut core: KernelCore,
+  x: ElabNcCtx,
+  group: List(Text),
+  diag: Bool,
+  injs: List(List(Nat))
+): Option(List(KernelTerm)) {
+  ⊢ Option(List(KernelTerm)) from match group {
+    Nil => Some(Nil)
+    Cons(g, rest) => ⊢ Option(List(KernelTerm)) from match kernel_ind_get(core, g) {
+      None => None
+      Some(info) => {
+        let here: Option(List(KernelTerm)) := if g == x.family {
+          elab_nc_outer_ctors(k, &mut core, x, info.constructors, diag, injs)
+        } else { Some(elab_star_minors(info.constructors)) }
+        ⊢ Option(List(KernelTerm)) from match here {
+          None => None
+          Some(ms) => ⊢ Option(List(KernelTerm)) from match elab_nc_outer(k, &mut core, x, rest, diag, injs) {
+            None => None
+            Some(more) => Some(List::append(ms, more))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_nc_outer_ctors(
+  k: Nat,
+  &mut core: KernelCore,
+  x: ElabNcCtx,
+  cs: List(KernelCtorInfo),
+  diag: Bool,
+  injs: List(List(Nat))
+): Option(List(KernelTerm)) {
+  ⊢ Option(List(KernelTerm)) from match cs {
+    Nil => Some(Nil)
+    Cons(c, rest) => ⊢ Option(List(KernelTerm)) from match elab_open_ctor(k, &mut core, c, elab_nc_params(x)) {
+      None => None
+      Some(a) => {
+        let inj := ⊢ List(Nat) from match injs {
+          Nil => Nil
+          Cons(i, is) => i
+        }
+        let later := ⊢ List(List(Nat)) from match injs {
+          Nil => Nil
+          Cons(i, is) => is
+        }
+        let minor: Option(KernelTerm) := if diag {
+          let f := kernel_fresh(&mut core, KernelConst("Unit"))
+          Some(elab_lams(elab_apps(KernelFVar(f), elab_refls(inj, 0, a.fields, a.types)), List::append(a.fields, List::append(a.ihs, Cons(f, Nil)))))
+        } else {
+          ⊢ Option(KernelTerm) from match elab_nc_inner(k, &mut core, x.group, x.family, elab_nc_params(x), c, a, inj, x.p) {
+            None => None
+            Some(inner) => {
+              let y := kernel_fresh(&mut core, x.this)
+              let tys := elab_n_of(List::length(x.group), kernel_lam(elab_nc_ty0()))
+              Some(elab_lams(elab_nc_rec(x, tys, inner, KernelFVar(y)), List::append(a.fields, List::append(a.ihs, Cons(y, Nil)))))
+            }
+          }
+        }
+        ⊢ Option(List(KernelTerm)) from match minor {
+          None => None
+          Some(m) => ⊢ Option(List(KernelTerm)) from match elab_nc_outer_ctors(k, &mut core, x, rest, diag, later) {
+            None => None
+            Some(more) => Some(Cons(m, more))
+          }
+        }
+      }
+    }
+  }
+}
+
+// The injective fields of each constructor of the family, computed once
+// while the parameters are still in the kernel's context: declaring `nc`
+// leaves them out of it.
+pub fn elab_family_injs(k: Nat, &mut core: KernelCore, params: List(KernelTerm), cs: List(KernelCtorInfo)): Option(List(List(Nat))) {
+  ⊢ Option(List(List(Nat))) from match cs {
+    Nil => Some(Nil)
+    Cons(c, rest) => ⊢ Option(List(List(Nat))) from match elab_open_ctor(k, &mut core, c, params) {
+      None => None
+      Some(a) => {
+        let inj := elab_injective(k, &mut core, a.fields, a.types, Nil, 0)
+        ⊢ Option(List(List(Nat))) from match elab_family_injs(k, &mut core, params, rest) {
+          None => None
+          Some(more) => Some(Cons(inj, more))
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_nc_pis_over(atoms: List(Nat), domains: List(KernelTerm), body: KernelTerm): KernelTerm {
+  ⊢ KernelTerm from match atoms {
+    Nil => body
+    Cons(a, rest) => ⊢ KernelTerm from match domains {
+      Nil => body
+      Cons(d, more) => kernel_pi_over(a, d, elab_nc_pis_over(rest, more, body))
+    }
+  }
+}
+
+pub fn elab_nc_wrap(params: List(Nat), p: Nat, body: KernelTerm, extra: List(Nat)): KernelTerm {
+  elab_lams(body, List::append(params, Cons(p, extra)))
+}
+
+pub fn elab_nc_pis(params: List(Nat), domains: List(KernelTerm), p: Nat, body: KernelTerm): KernelTerm {
+  elab_nc_pis_over(params, domains, kernel_pi_over(p, elab_nc_ty0(), body))
+}
+
+pub fn elab_nc_at(x: ElabNcCtx, nc: Text, a: KernelTerm, b: KernelTerm): KernelTerm {
+  elab_apps(KernelConst(nc), List::append(elab_nc_params(x), Cons(KernelFVar(x.p), Cons(a, Cons(b, Nil)))))
+}
+
+pub fn elab_fresh_params(k: Nat, &mut core: KernelCore, ty: KernelTerm, n: Nat): Option(Pair(List(Nat), List(KernelTerm))) {
+  elab_open_fields(k, &mut core, ty, n)
+}
+
+// The three declarations of one family, declared in the kernel as they are
+// made; `None` when one does not check.
+pub fn elab_family_noconf(k: Nat, &mut core: KernelCore, family: Text): Option(List(ElabDeclaration)) {
+  ⊢ Option(List(ElabDeclaration)) from match kernel_ind_get(core, family) {
+    None => None
+    Some(info) => ⊢ Option(List(ElabDeclaration)) from match kernel_global_get(core, family) {
+      None => None
+      Some(fg) => ⊢ Option(List(ElabDeclaration)) from match elab_fresh_params(k, &mut core, fg.ty, info.params) {
+        None => None
+        Some(ps) => {
+          let this := elab_apps(KernelConst(family), elab_fvars(ps.fst))
+          let p := kernel_fresh(&mut core, elab_nc_ty0())
+          let x := ElabNcCtx::Mk(family, info.group, ps.fst, ps.snd, this, p)
+          let nc := Text::concat(family, "::nc")
+          let diag := Text::concat(family, "::nc_diag")
+          let noconf := Text::concat(family, "::noconf")
+          let xa := kernel_fresh(&mut core, this)
+          let ya := kernel_fresh(&mut core, this)
+          ⊢ Option(List(ElabDeclaration)) from match elab_family_injs(k, &mut core, elab_nc_params(x), info.constructors) {
+          None => None
+          Some(injs) => ⊢ Option(List(ElabDeclaration)) from match elab_nc_outer(k, &mut core, x, info.group, false, injs) {
+            None => None
+            Some(outer) => {
+              let m1 := kernel_lam(kernel_pi(this, elab_nc_ty0()))
+              let nc_val := elab_nc_wrap(ps.fst, p, elab_apps(elab_nc_rec(x, elab_motives_for(info.group, family, m1, kernel_lam(KernelConst("Unit"))), outer, KernelFVar(xa)), Cons(KernelFVar(ya), Nil)), Cons(xa, Cons(ya, Nil)))
+              let nc_ty := elab_nc_pis(ps.fst, ps.snd, p, kernel_pi_over(xa, this, kernel_pi_over(ya, this, elab_nc_ty0())))
+              let d1 := ElabDeclaration::Mk(nc, nc_ty, nc_val, true)
+              ⊢ Option(List(ElabDeclaration)) from match kernel_execute(k, &mut core, KernelDeclare(nc, nc_ty, Some(nc_val), true)) {
+                KernelAccepted => ⊢ Option(List(ElabDeclaration)) from match elab_nc_outer(k, &mut core, x, info.group, true, injs) {
+                  None => None
+                  Some(dminors) => {
+                    let z := kernel_fresh(&mut core, this)
+                    let dm := kernel_lam_over(z, elab_nc_at(x, nc, KernelFVar(z), KernelFVar(z)))
+                    let diag_val := elab_nc_wrap(ps.fst, p, elab_nc_rec(x, elab_motives_for(info.group, family, dm, kernel_lam(KernelConst("Unit"))), dminors, KernelFVar(xa)), Cons(xa, Nil))
+                    let diag_ty := elab_nc_pis(ps.fst, ps.snd, p, kernel_pi_over(xa, this, elab_nc_at(x, nc, KernelFVar(xa), KernelFVar(xa))))
+                    let d2 := ElabDeclaration::Mk(diag, diag_ty, diag_val, true)
+                    ⊢ Option(List(ElabDeclaration)) from match kernel_execute(k, &mut core, KernelDeclare(diag, diag_ty, Some(diag_val), true)) {
+                      KernelAccepted => {
+                        let eqxy := elab_eq(this, KernelFVar(xa), KernelFVar(ya))
+                        let e := kernel_fresh(&mut core, eqxy)
+                        let z2 := kernel_fresh(&mut core, this)
+                        let e2 := kernel_fresh(&mut core, KernelConst("Unit"))
+                        let motive := elab_lams(elab_nc_at(x, nc, KernelFVar(xa), KernelFVar(z2)), Cons(z2, Cons(e2, Nil)))
+                        let refl := elab_apps(KernelConst(diag), List::append(elab_nc_params(x), Cons(KernelFVar(p), Cons(KernelFVar(xa), Nil))))
+                        let body := elab_apps(KernelConst("Eq::rec"), Cons(this, Cons(KernelFVar(xa), Cons(motive, Cons(refl, Cons(KernelFVar(ya), Cons(KernelFVar(e), Nil)))))))
+                        let noconf_val := elab_nc_wrap(ps.fst, p, body, Cons(xa, Cons(ya, Cons(e, Nil))))
+                        let noconf_ty := elab_nc_pis(ps.fst, ps.snd, p, kernel_pi_over(xa, this, kernel_pi_over(ya, this, kernel_pi_over(e, eqxy, elab_nc_at(x, nc, KernelFVar(xa), KernelFVar(ya))))))
+                        let d3 := ElabDeclaration::Mk(noconf, noconf_ty, noconf_val, true)
+                        ⊢ Option(List(ElabDeclaration)) from match kernel_execute(k, &mut core, KernelDeclare(noconf, noconf_ty, Some(noconf_val), true)) {
+                          KernelAccepted => Some(Cons(d1, Cons(d2, Cons(d3, Nil))))
+                          // As the host keeps them when `noconf` does not check (it needs `Eq` at the family's sort).
+                          _ => Some(Cons(d1, Cons(d2, Nil)))
+                        }
+                      }
+                      _ => None
+                    }
+                  }
+                }
+                _ => None
+              }
+            }
+          }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_indexed_member(core: KernelCore, group: List(Text)): Bool {
+  ⊢ Bool from match group {
+    Nil => false
+    Cons(g, rest) => ⊢ Bool from match kernel_ind_get(core, g) {
+      None => true
+      Some(info) => info.indices != 0 || elab_indexed_member(core, rest)
+    }
+  }
+}
+
+// The no-confusion of every family of the command, in order. A family whose
+// declarations do not check gets none, and the kernel is left as before it.
+pub fn elab_no_confusion(k: Nat, &mut core: KernelCore, fs: List(KernelFamily)): List(ElabDeclaration) {
+  ⊢ List(ElabDeclaration) from match fs {
+    Nil => Nil
+    Cons(f, rest) => {
+      let skip := ⊢ Bool from match kernel_ind_get(core, f.name) {
+        None => true
+        Some(info) => elab_indexed_member(core, info.group)
+      }
+      if skip { elab_no_confusion(k, &mut core, rest) } else {
+        let saved := kernel_snapshot(core)
+        let here: List(ElabDeclaration) := ⊢ List(ElabDeclaration) from match elab_family_noconf(k, &mut core, f.name) {
+          Some(ds) => ds
+          None => {
+            kernel_set_to(&mut core, saved)
+            Nil
+          }
+        }
+        List::append(here, elab_no_confusion(k, &mut core, rest))
+      }
+    }
+  }
+}

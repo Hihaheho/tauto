@@ -1,0 +1,290 @@
+@ cases.a-product-is-written-with-times
+source = ```tauto
+let p := #(1, "a", true)
+```
+types = "ok"
+inferred_types.p = "i64 × Text × Bool"
+
+@ cases.a-product-nests-to-the-right
+source = ```tauto
+fn f(p: i64 × {Text × Bool}): Bool { let q: i64 × Text × Bool := p
+  (q: Bool) }
+let r := #(1, #("a", true))
+let s := f(r)
+```
+types = "ok"
+inferred_types.r = "i64 × Text × Bool"
+
+@ cases.a-product-on-the-left-stays-one-member
+source = ```tauto
+fn f<A, B>(x: A × B, n: Bool): Option({A × B} × Bool) { Some(#(x, n)) }
+let r := #(#(1, false), true)
+let s := f(#(1, false), true)
+```
+types = "ok"
+inferred_types.r = "(i64 × Bool) × Bool"
+
+// `Unit` is a member as any other: `i64 × Unit` is not `i64`.
+@ cases.a-unit-member-is-a-member
+source = ```tauto
+fn f(p: i64 × Unit): i64 { (p: i64) }
+let q := f(#(1, #()))
+```
+types = "ok"
+inferred_types.q = "i64"
+
+@ cases.a-member-is-taken-by-its-type
+source = ```tauto
+fn m(p: Text × i64): i64 { (p: i64) }
+fn t(p: Text × i64): Text { (p: Text) }
+let n := m(#("a", 1))
+let s := t(#("a", 1))
+```
+types = "ok"
+inferred_types.n = "i64"
+inferred_types.s = "Text"
+
+@ cases.a-product-has-no-other-member
+source = ```tauto
+fn f(p: i64 × Text): Bool { (p: Bool) }
+```
+types = "error: a type ascription: i64 × Text does not fit Bool"
+
+@ cases.a-product-forgets-members
+source = ```tauto
+fn n(x: i64): i64 { x }
+fn s(x: Text × Bool): Text { (x: Text) }
+let a := n(#(1, "a"))
+let b := s(#(1, "a", true))
+```
+types = "ok"
+inferred_types.a = "i64"
+inferred_types.b = "Text"
+
+@ cases.a-product-never-gains-members
+source = ```tauto
+fn f(x: i64 × Text): i64 { (x: i64) }
+let a := f(1)
+```
+types = "error: an argument: i64 does not fit i64 × Text"
+
+@ cases.a-type-may-be-twice-in-a-product
+source = ```tauto
+fn f(p: i64 × i64): i64 { match p {
+    #(a, b) => a - b
+  } }
+perform show("f", f(#(5, 2)))
+```
+types = "ok"
+shows = ["f = 3"]
+backends = ["rust", "javascript"]
+
+@ cases.members-of-one-type-are-not-taken-by-their-type
+source = ```tauto
+fn f(p: i64 × i64): i64 { (p: i64) }
+```
+types = "error: two members of a product have the type i64"
+
+@ cases.tags-tell-members-of-one-type-apart
+source = ```tauto
+let p := #(@x 1, @y 2)
+let a: i64 := (p: @x i64)
+let b: i64 := (p: @y i64)
+```
+types = "ok"
+inferred_types.p = "@x i64 × @y i64"
+
+@ cases.times-binds-tighter-than-a-union
+source = ```tauto
+fn f(p: i64 × Text | Bool): i64 { 1 }
+let a := f(true)
+let b := f(#(1, "a"))
+```
+types = "ok"
+
+@ cases.a-type-parameter-may-be-a-member
+source = ```tauto
+fn f<T>(x: T): T { let p := #(x, 1)
+  x }
+```
+types = "ok"
+
+@ cases.a-product-runs
+source = ```tauto
+let p := #("a", 1, true)
+perform show("p", p)
+perform show("n", (p: i64))
+perform show("s", (p: Text))
+```
+shows = ["p = #(\"a\", 1, true)", "n = 1", "s = \"a\""]
+backends = ["rust", "javascript"]
+
+@ cases.a-product-forgets-members-when-run
+source = ```tauto
+fn n(x: i64): i64 { x + 1 }
+fn s(x: Text × Bool): Text × Bool { x }
+perform show("n", n(#(1, "a")))
+perform show("s", s(#(1, "a", true)))
+```
+shows = ["n = 2", "s = #(\"a\", true)"]
+backends = ["rust", "javascript"]
+
+@ cases.members-are-evaluated-in-the-order-written
+source = ```tauto
+fn t(name: Text, v: i64): i64 { perform show(name, v)
+  v }
+let p := #(@y t("first", 1), @x t("second", 2))
+perform show("p", p)
+```
+shows = ["first = 1", "second = 2", "p = #(1, 2)"]
+backends = ["rust", "javascript"]
+
+@ cases.tagged-members-run
+source = ```tauto
+let p := #(@x 1, @y 2)
+let a: i64 := (p: @x i64)
+let b: i64 := (p: @y i64)
+perform show("a", a)
+perform show("b", b)
+```
+shows = ["a = 1", "b = 2"]
+backends = ["rust", "javascript"]
+
+@ cases.a-product-with-a-linear-member-is-linear
+source = ```tauto
+linear struct Token {}
+fn f(t: Token): i64 { let p := #(t, 1)
+  1 }
+```
+types = "ok"
+lin = "error: p is not used"
+
+@ cases.a-product-of-copy-members-is-copied
+source = ```tauto
+fn f(p: i64 × Bool): i64 { let a := p
+  let b := p
+  (a: i64) + (b: i64) }
+```
+types = "ok"
+lin = "ok"
+
+@ cases.a-linear-member-is-not-forgotten
+source = ```tauto
+linear struct Token {}
+fn f(t: Token): i64 { #(t, 1) }
+```
+types = "error: the result of `f`: this forgets the linear member Token"
+
+// Only `#(…)` and `A × B` are products. A `Pair` written by its name is the inductive
+// `Pair`: a `Pair` in its `fst` is one member, not spread into the outer product.
+@ cases.a-pair-written-by-its-name-keeps-a-pair-on-its-left
+source = ```tauto
+fn f(n: Nat): Pair(Pair(List(Nat), Pair(List(Bool), List(Bool))), Nat) {
+  Pair { fst: Pair { fst: Nil, snd: Pair { fst: Nil, snd: Nil } }, snd: n }
+}
+
+fn g(n: Nat): Pair(Pair(Nat, Bool), Nat) {
+  Pair { fst: Pair { fst: n, snd: true }, snd: n }
+}
+
+theorem g_left(): g(Zero).fst.snd = true {
+  Refl(Bool, true)
+}
+```
+checks_all = "checked"
+
+@ cases.a-pair-value-is-the-declared-pair
+source = ```tauto
+fn f(n: u64): Pair(Text, u64) { Pair { fst: "a", snd: n } }
+let p := f(1)
+let s := p.fst
+```
+types = "ok"
+inferred_types.s = "Text"
+
+// `#(a, b)` is a value of `Pair`, as `A × B` is `Pair(A, B)`.
+@ cases.a-tuple-is-a-declared-pair
+source = ```tauto
+fn f(n: i64): Pair(Text, i64) { #("a", n) }
+let p := f(1)
+let s := p.fst
+```
+types = "ok"
+inferred_types.s = "Text"
+
+// A product is a `Pair`, so a pair is cast to a member by its type as a product is.
+@ cases.a-pair-is-cast-to-a-member-by-its-type
+source = ```tauto
+fn f(n: i64): Pair(Text, i64) { Pair { fst: "a", snd: n } }
+let p := f(1)
+let m := (p: i64)
+```
+types = "ok"
+
+// The kernel sees a product and a `Pair` as one type: a `Pair` stands where a product is written,
+// and is cast to a member as the product is.
+@ cases.a-pair-is-cast-to-its-first-member
+source = ```tauto
+theorem t(p: Pair(Nat, Bool)): Nat { (p: Nat) }
+```
+checks.t = "checked"
+
+@ cases.a-pair-is-taken-for-a-product
+source = ```tauto
+theorem t(p: Pair(Nat, Bool)): Nat { let q: Nat × Bool := p; (q: Nat) }
+```
+checks.t = "checked"
+
+@ cases.a-pair-is-a-product-in-a-result
+source = ```tauto
+theorem t(p: Pair(Nat, Bool)): Nat × Bool { p }
+```
+checks.t = "checked"
+
+@ cases.a-product-is-cast-to-its-first-member
+source = ```tauto
+theorem t(p: Nat × Bool): Nat { (p: Nat) }
+```
+checks.t = "checked"
+
+// A `match` on a labeled product refines a hypothesis that mentions the matched value: the
+// value the hypothesis is refined with is the product the pattern rebuilds, not a `Pair`
+// written by its name.
+@ cases.a-match-on-a-labeled-product-refines-a-hypothesis
+source = ```tauto
+fn all_ok(ps: List(@name Bool × @value Bool)): Bool {
+  ⊢ Bool from match ps {
+    Nil => true
+    Cons(p, t) => all_ok(t)
+  }
+}
+
+theorem t(ps: List(@name Bool × @value Bool), ok: all_ok(ps) = true): true = true {
+  match ps {
+    Nil => Refl
+    Cons(p, t) => match p {
+      #(@name k, @value v) => Refl
+    }
+  }
+}
+```
+checks_all = "checked"
+
+// A member of a `List(A × B)` passed to a parameter `A × B`: the element the kernel reads off
+// the list is a `Pair`, the same type as the product.
+@ cases.a-list-member-of-a-product-is-passed-as-the-product
+source = ```tauto
+fn one(b: List(Nat) × Bool): Nat {
+  match b {
+    #(ns, f) => Zero
+  }
+}
+
+fn all(bs: List(List(Nat) × Bool)): Nat {
+  match bs {
+    Nil => Zero
+    Cons(b, rest) => one(b)
+  }
+}
+```
+checks_all = "checked"

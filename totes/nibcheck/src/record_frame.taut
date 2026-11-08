@@ -20,7 +20,7 @@ pub fn record_field_found(
   v: Ty,
   found: Option(Ty)
 ): Mut1(Unit, Checker) {
-  match found: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match found {
     Some(t) => ck_rewrap1(
       ck_expect(c, v, t, span_of(record_field_value(f)), cat3("field `", record_field_name(f), "`"))
     )
@@ -42,7 +42,7 @@ pub theorem record_field_found_frame(
   found: Option(Ty),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, record_field_found(c, name, f, v, found)) {
-  match found: CkRunFrame(c, record_field_found(c, name, f, v, found)) {
+  ⊢ CkRunFrame(c, record_field_found(c, name, f, v, found)) from match found {
     Some(t) => run_frame_rewrap(
       c,
       ck_expect(
@@ -257,7 +257,14 @@ pub theorem record_field_unf(
   v: Ty,
   declared: List(DataField),
   seen: List(Text)
-): ck_record_field_check(c, name, f, v, declared, seen) = record_field(c, name, f, v, declared, seen) { Refl }
+): ck_record_field_check(
+  c,
+  name,
+  f,
+  v,
+  declared,
+  seen
+) = record_field(c, name, f, v, declared, seen) { Refl }
 
 pub theorem ck_record_field_check_run_frame(
   c: Checker,
@@ -282,7 +289,7 @@ pub fn record_missing_name(
   span: TySpan,
   fieldname: Option(Text)
 ): Mut1(Unit, Checker) {
-  match fieldname: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match fieldname {
     None => mut1(Star, c)
     Some(n) => frame_error_if(
       c,
@@ -300,7 +307,7 @@ pub theorem record_missing_name_frame(
   span: TySpan,
   fieldname: Option(Text)
 ): CkReadFrame(c, record_missing_name(c, name, seen, span, fieldname)) {
-  match fieldname: CkReadFrame(c, record_missing_name(c, name, seen, span, fieldname)) {
+  ⊢ CkReadFrame(c, record_missing_name(c, name, seen, span, fieldname)) from match fieldname {
     None => Refl
     Some(n) => frame_error_if_ok(
       c,
@@ -317,7 +324,13 @@ pub theorem record_missing_one_unf(
   f: DataField,
   seen: List(Text),
   span: TySpan
-): ck_record_missing_one(c, name, f, seen, span) = record_missing_name(c, name, seen, span, record_data_name(f)) { Refl }
+): ck_record_missing_one(
+  c,
+  name,
+  f,
+  seen,
+  span
+) = record_missing_name(c, name, seen, span, record_data_name(f)) { Refl }
 
 pub theorem ck_record_missing_one_frame(
   c: Checker,
@@ -376,7 +389,13 @@ pub theorem record_missing_cons_unf(
   name: Text,
   seen: List(Text),
   span: TySpan
-): ck_record_missing(Cons(f, rest), c, name, seen, span) = record_missing_cons(f, rest, c, name, seen, span) { Refl }
+): ck_record_missing(
+  Cons(f, rest),
+  c,
+  name,
+  seen,
+  span
+) = record_missing_cons(f, rest, c, name, seen, span) { Refl }
 
 pub theorem ck_record_missing_frame(
   fs: List(DataField),
@@ -385,7 +404,7 @@ pub theorem ck_record_missing_frame(
   seen: List(Text),
   span: TySpan
 ): CkReadFrame(c, ck_record_missing(fs, c, name, seen, span)) {
-  match fs: CkReadFrame(c, ck_record_missing(fs, c, name, seen, span)) {
+  ⊢ CkReadFrame(c, ck_record_missing(fs, c, name, seen, span)) from match fs {
     Nil => Refl
     Cons(f, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
@@ -416,7 +435,7 @@ pub fn record_stmt_label(
   end: Nat,
   label: Bool
 ): Mut1(Ty, Checker) {
-  match label: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match label {
     true => mut1(TyUnit, c)
     false => ck_rewrap1(ck_top_level_only(c, cat2("not supported yet: ", what), start, end))
   }
@@ -429,7 +448,7 @@ pub theorem record_stmt_label_frame(
   end: Nat,
   label: Bool
 ): CkReadFrame(c, record_stmt_label(c, what, start, end, label)) {
-  match label: CkReadFrame(c, record_stmt_label(c, what, start, end, label)) {
+  ⊢ CkReadFrame(c, record_stmt_label(c, what, start, end, label)) from match label {
     true => Refl
     false => frame_rewrap(
       c,
@@ -444,10 +463,13 @@ pub theorem record_stmt_label_unf(
   what: Text,
   start: Nat,
   end: Nat
-): ck_stmt_other(c, StOther(what, start, end)) = record_stmt_label(c, what, start, end, Text::eq(what, "LabelDecl")) { Refl }
+): ck_stmt_other(
+  c,
+  StOther(what, start, end)
+) = record_stmt_label(c, what, start, end, Text::eq(what, "LabelDecl")) { Refl }
 
 pub theorem ck_stmt_other_frame(c: Checker, s: SurfaceStmt): CkReadFrame(c, ck_stmt_other(c, s)) {
-  match s: CkReadFrame(c, ck_stmt_other(c, s)) {
+  ⊢ CkReadFrame(c, ck_stmt_other(c, s)) from match s {
     StLet(pat_name, pat_ty, pat_value, pat_borrow, pat_mutable) => Refl
     StVar(pat_name, pat_ty, pat_value, pat_borrow) => Refl
     StModule(pat_name, pat_stmts, pat_start, pat_end) => Refl

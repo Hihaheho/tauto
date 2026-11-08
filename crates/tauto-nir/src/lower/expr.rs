@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, HashMap};
 use tauto::surface::{DataDecl, FnDecl, Stmt, SurfaceTerm, TermId, TermKind};
 use tauto::types::{Kind, Ty as TTy};
 
-use super::ty::{set_fn_tier, set_written_tiers, set_written_tiers_in_args};
+use super::ty::{
+    set_fn_tier, set_written_tiers, set_written_tiers_in_args, written_args_have_rows,
+};
 use super::*;
 
 const OPERATORS: &[&str] = &[
@@ -104,10 +106,12 @@ fn keep_block_capture_clones(b: &mut Block, borrowed: &[u32]) {
 }
 
 impl<'a> Lowerer<'a> {
-    pub fn find(&self, cx: &Cx, name: &str) -> Option<usize> {
+    // ---- scopes --------------------------------------------------------
+
+    pub fn find(&self, cx: &Cx, name: &Name) -> Option<usize> {
         cx.bindings
             .iter()
-            .rposition(|b| b.name == name && !cx.hidden_bindings.contains(&b.local.id))
+            .rposition(|b| &b.name == name && !cx.hidden_bindings.contains(&b.local.id))
     }
 
     fn find_capture(&self, cx: &Cx, key: &CaptureKey) -> Option<usize> {
@@ -130,7 +134,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    pub fn local_ty(&self, name: &str, at: tauto::surface::TermId, fallback: Option<&TTy>) -> TTy {
+    pub fn local_ty(&self, name: &Name, at: tauto::surface::TermId, fallback: Option<&TTy>) -> TTy {
         self.types
             .local(name, at)
             .cloned()
@@ -273,7 +277,7 @@ impl<'a> Lowerer<'a> {
     fn let_stmt(
         &mut self,
         cx: &mut Cx,
-        name: &str,
+        name: &Name,
         declared: Option<&SurfaceTerm>,
         value: &SurfaceTerm,
         borrow: bool,
@@ -343,7 +347,7 @@ impl<'a> Lowerer<'a> {
             cx.held.insert(local.id, ty.clone());
         }
         cx.bindings.push(Binding {
-            name: name.to_string(),
+            name: name.clone(),
             local: local.clone(),
             ty: lty.clone(),
             mode: match &lty {
@@ -366,7 +370,7 @@ impl<'a> Lowerer<'a> {
     fn var_stmt(
         &mut self,
         cx: &mut Cx,
-        name: &str,
+        name: &Name,
         value: &SurfaceTerm,
         rest: &[&Stmt],
     ) -> R<crate::Stmt> {
@@ -394,7 +398,7 @@ impl<'a> Lowerer<'a> {
         let ty = self.conv(&lty);
         let fn_row = self.value_row(cx, value);
         cx.bindings.push(Binding {
-            name: name.to_string(),
+            name: name.clone(),
             local: local.clone(),
             ty: lty,
             mode: Mode::Var,
@@ -413,7 +417,7 @@ impl<'a> Lowerer<'a> {
     fn assign_stmt(
         &mut self,
         cx: &mut Cx,
-        name: &str,
+        name: &Name,
         place: Option<&SurfaceTerm>,
         value: &SurfaceTerm,
     ) -> R<crate::Stmt> {
@@ -459,7 +463,7 @@ impl<'a> Lowerer<'a> {
 
     /// The names a term uses from outside, with those the local functions
     /// it calls use from the body around them.
-    pub fn free_names(&self, t: &SurfaceTerm) -> Vec<String> {
+    pub fn free_names(&self, t: &SurfaceTerm) -> Vec<Name> {
         let mut out = tauto::lin::free_vars(t);
         let mut i = 0;
         while i < out.len() {
@@ -525,7 +529,7 @@ impl<'a> Lowerer<'a> {
                 inputs.push((name, None));
             }
         }
-        let mut mutated: HashSet<String> = HashSet::new();
+        let mut mutated: HashSet<Name> = HashSet::new();
         tauto::surface::walk::values(&f.body, &mut |node| match node {
             tauto::surface::walk::Node::Stmt(Stmt::Assign { name, .. }) => {
                 mutated.insert(name.clone());
@@ -677,7 +681,8 @@ impl<'a> Lowerer<'a> {
         Ok(storage)
     }
 
-    fn capture_args(&mut self, cx: &mut Cx, name: &str, span: Span) -> R<Vec<Expr>> {
+    /// What a call of a local function passes for what it captured.
+    fn capture_args(&mut self, cx: &mut Cx, name: &Name, span: Span) -> R<Vec<Expr>> {
         let Some(caps) = self.local_caps.get(name).cloned() else {
             if self.nested_fns.contains(name) {
                 return unsupported(
@@ -708,9 +713,11 @@ impl<'a> Lowerer<'a> {
             };
             self.check_budget_value(cx, &b, span)?;
             if cx.under_budget
-                && b.fn_row
-                    .as_ref()
-                    .is_some_and(|row| row.iter().any(|e| e == "Div" || e.starts_with('|')))
+                && b.fn_row.as_ref().is_some_and(|row| {
+                    row.iter().any(|e| {
+                        tauto::bindings::is_library(&e, "Div") || e.row_variable().is_some()
+                    })
+                })
             {
                 return unsupported(msg!("nir-a-local-function-capturing-a-potentially"), span);
             }
@@ -782,7 +789,7 @@ impl<'a> Lowerer<'a> {
             TermKind::BorrowLam { lam, .. } => self.value_row(cx, lam),
             TermKind::Var(n) => match self.find(cx, n) {
                 Some(i) => cx.bindings[i].fn_row.clone(),
-                None if self.fns.contains_key(n.as_str()) => Some(self.fn_row(n)),
+                None if self.fns.contains_key(n) => Some(self.fn_row(n)),
                 None => None,
             },
             TermKind::Field { base, name } => self
@@ -813,7 +820,7 @@ impl<'a> Lowerer<'a> {
     /// Whether a `var` named `name` is captured by a closure that may
     /// outlive its scope: one not written where a borrowed function is
     /// expected.
-    fn escaping_capture(&self, cx: &Cx, rest: &[&Stmt], name: &str) -> bool {
+    fn escaping_capture(&self, cx: &Cx, rest: &[&Stmt], name: &Name) -> bool {
         let mentions = |t: &SurfaceTerm| self.free_names(t).iter().any(|n| n == name);
         let mut found = false;
         for s in rest {
@@ -826,7 +833,7 @@ impl<'a> Lowerer<'a> {
         &self,
         cx: &Cx,
         s: &Stmt,
-        name: &str,
+        name: &Name,
         mentions: &dyn Fn(&SurfaceTerm) -> bool,
         found: &mut bool,
     ) {
@@ -851,7 +858,7 @@ impl<'a> Lowerer<'a> {
         &self,
         cx: &Cx,
         t: &SurfaceTerm,
-        name: &str,
+        name: &Name,
         mentions: &dyn Fn(&SurfaceTerm) -> bool,
         borrowed: bool,
         found: &mut bool,
@@ -980,7 +987,7 @@ impl<'a> Lowerer<'a> {
             return self.borrow_expr(cx, t, *mutable, t);
         }
         let mut e = self.expr(cx, t)?;
-        if let Some(TTy::Product(have)) = self.types.term(t).cloned() {
+        if let Some(have) = self.types.term(t).cloned() {
             e = self.fit_product(e, &have, expected);
         }
         let to = self.conv(expected);
@@ -994,11 +1001,15 @@ impl<'a> Lowerer<'a> {
             return e;
         }
         let span = e.span;
-        // A `&mut` that was read as the value it points at, where the
-        // borrow itself is wanted (`fn same(&mut x: i64): &mut i64 { x }`).
-        if let (Ty::RefMut(inner), ExprKind::Read { local, how }) = (to, &e.kind)
+        // A borrow read as a copyable value still denotes the original
+        // borrow when the surrounding type requires a view.
+        if let (Ty::Ref(inner) | Ty::RefMut(inner), ExprKind::Read { local, how }) = (to, &e.kind)
             && e.ty == **inner
-            && local.repr == Repr::RefMut
+            && match to {
+                Ty::Ref(_) => matches!(local.repr, Repr::Ref | Repr::RefMut),
+                Ty::RefMut(_) => local.repr == Repr::RefMut,
+                _ => false,
+            }
             && matches!(how, Use::Copy | Use::Clone)
         {
             return expr_of(
@@ -1011,14 +1022,16 @@ impl<'a> Lowerer<'a> {
             );
         }
         if let (Ty::Fn(a), Ty::Fn(b)) = (&e.ty, to) {
-            if a.kind != b.kind
-                && a.kind.dup() != b.kind.dup()
+            let kind_change = a.kind != b.kind && a.kind.dup() != b.kind.dup();
+            let tier_lift = a.kind == b.kind && a.tier < b.tier;
+            if (kind_change || tier_lift)
                 && a.params == b.params
                 && a.ret == b.ret
-                && a.tier == b.tier
+                && a.tier <= b.tier
             {
+                let same_tier = a.tier == b.tier;
                 let mut e = e;
-                if let ExprKind::Closure(c) = &mut e.kind {
+                if same_tier && let ExprKind::Closure(c) = &mut e.kind {
                     c.fn_ty.kind = b.kind;
                     e.ty = to.clone();
                     return e;
@@ -1027,8 +1040,26 @@ impl<'a> Lowerer<'a> {
             }
         }
         match (&e.ty, to) {
-            (Ty::Ref(x), t) if **x == *t || !matches!(t, Ty::Ref(_) | Ty::RefMut(_)) => {
+            (Ty::Ref(x) | Ty::RefMut(x), t)
+                if **x == *t || !matches!(t, Ty::Ref(_) | Ty::RefMut(_)) =>
+            {
                 if let Some(how) = self.dup_use(x) {
+                    // A block releases its locals (a lock guard gives its lock
+                    // back) before whoever holds the block reads its value, so
+                    // the borrow its tail names is read at the tail, inside.
+                    if let ExprKind::Block(b) = &e.kind
+                        && b.tail.is_some()
+                    {
+                        let mut e = e;
+                        if let ExprKind::Block(b) = &mut e.kind
+                            && let Some(tail) = b.tail.take()
+                        {
+                            let tail = self.coerce(*tail, to);
+                            e.ty = tail.ty.clone();
+                            b.tail = Some(Box::new(tail));
+                        }
+                        return e;
+                    }
                     let inner = (**x).clone();
                     let d = expr_of(
                         ExprKind::Deref {
@@ -1110,6 +1141,25 @@ impl<'a> Lowerer<'a> {
                     );
                 }
             },
+            TermKind::Declaration(reference) => {
+                let slot = match self
+                    .declarations
+                    .iter()
+                    .position(|known| known == reference)
+                {
+                    Some(slot) => slot,
+                    None => {
+                        let slot = self.declarations.len();
+                        self.declarations.push(reference.clone());
+                        slot
+                    }
+                };
+                expr_of(
+                    ExprKind::Declaration(slot),
+                    Ty::Std(crate::StdType::SynDeclaration, vec![]),
+                    span,
+                )
+            }
             TermKind::Text(s) => expr_of(ExprKind::Text(s.clone()), Ty::Text, span),
             TermKind::Bool(b) => expr_of(ExprKind::Bool(*b), Ty::Bool, span),
             TermKind::Var(name) => self.var_expr(cx, t, name)?,
@@ -1117,7 +1167,7 @@ impl<'a> Lowerer<'a> {
                 self.closure(cx, t, None, false, None)?
             }
             TermKind::Borrow { mutable, term } => self.borrow_expr(cx, t, *mutable, term)?,
-            TermKind::Record { name, fields, .. } => self.record(cx, t, name, fields)?,
+            TermKind::Record { name, fields, .. } => self.record(cx, t, name, fields, None)?,
             TermKind::App {
                 function,
                 arguments,
@@ -1186,6 +1236,9 @@ impl<'a> Lowerer<'a> {
                 )
             }
             TermKind::Field { base, name } => self.field_expr(cx, t, base, name)?,
+            TermKind::Tuple(members) if members.is_empty() => {
+                expr_of(ExprKind::Unit, Ty::Unit, span)
+            }
             TermKind::Product(members) | TermKind::Tuple(members) => {
                 self.product_expr(cx, t, members)?
             }
@@ -1204,9 +1257,10 @@ impl<'a> Lowerer<'a> {
     fn check_budget_value(&self, cx: &Cx, b: &Binding, span: Span) -> R<()> {
         if cx.under_budget
             && !b.budgeted
-            && b.fn_row
-                .as_ref()
-                .is_some_and(|row| row.iter().any(|e| e == "Div" || e.starts_with('|')))
+            && b.fn_row.as_ref().is_some_and(|row| {
+                row.iter()
+                    .any(|e| tauto::bindings::is_library(&e, "Div") || e.row_variable().is_some())
+            })
         {
             return unsupported(
                 msg!(
@@ -1219,7 +1273,21 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    fn var_expr(&mut self, cx: &mut Cx, t: &SurfaceTerm, name: &str) -> R<Expr> {
+    /// The representation held by a local includes rows erased from the
+    /// checked value type, whether the local is called or passed as a value.
+    fn binding_type(&mut self, cx: &Cx, binding: &Binding, ty: &TTy) -> Ty {
+        let mut ty = self.conv(ty);
+        if let Some(written) = cx.written.get(&binding.local.id) {
+            set_written_tiers(&mut ty, written, &mut |row| self.row_tier_in(row, cx));
+        } else if let Some(held) = cx.held.get(&binding.local.id) {
+            ty = held.clone();
+        } else if let Some(row) = &binding.fn_row {
+            set_fn_tier(&mut ty, self.row_tier_in(row, cx));
+        }
+        ty
+    }
+
+    fn var_expr(&mut self, cx: &mut Cx, t: &SurfaceTerm, name: &Name) -> R<Expr> {
         let span = t.span;
         if let Some(i) = self.find(cx, name) {
             self.note_capture(cx, i);
@@ -1232,7 +1300,7 @@ impl<'a> Lowerer<'a> {
                 } else {
                     Use::Clone
                 };
-                let nty = self.conv(&ty);
+                let nty = self.binding_type(cx, &b, &ty);
                 return Ok(expr_of(
                     ExprKind::Read {
                         local: b.local,
@@ -1244,7 +1312,7 @@ impl<'a> Lowerer<'a> {
             }
             return Ok(match &ty {
                 TTy::Borrow(inner, _) => {
-                    let inner_n = self.conv(inner);
+                    let inner_n = self.binding_type(cx, &b, inner);
                     // As a value, a borrow is what it borrows when that can be
                     // copied; otherwise it is the borrow itself.
                     match self.dup_use(&inner_n) {
@@ -1257,7 +1325,7 @@ impl<'a> Lowerer<'a> {
                             span,
                         ),
                         None => {
-                            let nty = self.conv(&ty);
+                            let nty = self.binding_type(cx, &b, &ty);
                             expr_of(
                                 ExprKind::Read {
                                     local: b.local,
@@ -1271,7 +1339,7 @@ impl<'a> Lowerer<'a> {
                 }
                 _ => {
                     let how = self.use_of(&ty);
-                    let nty = self.conv(&ty);
+                    let nty = self.binding_type(cx, &b, &ty);
                     expr_of(
                         ExprKind::Read {
                             local: b.local,
@@ -1289,7 +1357,11 @@ impl<'a> Lowerer<'a> {
             if self.local_caps.get(name).is_some_and(|c| !c.is_empty()) {
                 return self.capturing_fn_value(cx, t, name, false);
             }
-            if cx.under_budget && self.fn_row(name).contains("Div") {
+            if cx.under_budget
+                && self
+                    .fn_row(name)
+                    .contains(&tauto::bindings::library_name("Div"))
+            {
                 return unsupported(
                     msg!(
                         "nir-the-divergent-named-function-used-as",
@@ -1352,7 +1424,7 @@ impl<'a> Lowerer<'a> {
         &mut self,
         cx: &mut Cx,
         t: &SurfaceTerm,
-        name: &str,
+        name: &Name,
         borrowed: bool,
     ) -> R<Expr> {
         let span = t.span;
@@ -1415,7 +1487,7 @@ impl<'a> Lowerer<'a> {
             );
         }
         let row = self.fn_row(name);
-        let diverges = row.contains("Div");
+        let diverges = row.contains(&tauto::bindings::library_name("Div"));
         if diverges && cx.under_budget {
             return unsupported(
                 msg!(
@@ -1434,8 +1506,8 @@ impl<'a> Lowerer<'a> {
                 span,
             );
         }
-        let rv: BTreeMap<String, Tier> = BTreeMap::new();
-        let rv_map: HashMap<String, Tier> = rv.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let rv: BTreeMap<Name, Tier> = BTreeMap::new();
+        let rv_map: HashMap<Name, Tier> = rv.iter().map(|(k, v)| (k.clone(), *v)).collect();
         let tier = self.row_tier(&row, &rv_map);
         // A state machine holds what it captured across suspensions, but the
         // function takes it by reference.
@@ -1477,7 +1549,12 @@ impl<'a> Lowerer<'a> {
             // enter scope: a source capture can itself be named `a0`.
             let targs = self.type_args(cx, name, t.id(), inst);
             for (i, pty) in ps.iter().enumerate() {
-                let (local, nty) = self.bind_param(cx, &format!("a{i}"), pty, None);
+                let (local, nty) = self.bind_param(
+                    cx,
+                    &Name::from(tauto::identity::LocalRef::fresh(format!("a{i}"))),
+                    pty,
+                    None,
+                );
                 args.push(match pty {
                     TTy::Borrow(inner, mutable) => {
                         let ity = self.conv(inner);
@@ -1582,16 +1659,7 @@ impl<'a> Lowerer<'a> {
                 if b.celled {
                     return Ok(None);
                 }
-                let mut ty = self.conv(b.ty.unborrowed());
-                // A function whose type is written is held at the tier its
-                // row gives, which a checked type does not say.
-                if let Some(w) = cx.written.get(&b.local.id) {
-                    set_written_tiers(&mut ty, w, &mut |row| self.row_tier_in(row, cx));
-                } else if let Some(held) = cx.held.get(&b.local.id) {
-                    // A closure is held at the tier its body gave it, which
-                    // a checked type does not say either.
-                    ty = held.clone();
-                }
+                let ty = self.binding_type(cx, &b, b.ty.unborrowed());
                 Ok(Some(Place {
                     local: b.local,
                     path: Vec::new(),
@@ -1617,8 +1685,22 @@ impl<'a> Lowerer<'a> {
                 {
                     set_fn_tier(&mut ty, tier);
                 }
+                if let Some(written) = self
+                    .types
+                    .term(base)
+                    .and_then(|b| self.named_field_term(b, name))
+                {
+                    set_written_tiers_in_args(&mut ty, &written, &mut |row| self.field_tier(row));
+                }
+                if let Some(tier) = self
+                    .types
+                    .term(base)
+                    .and_then(|b| self.argument_field_tier(b, &p.ty, name))
+                {
+                    set_fn_tier(&mut ty, tier);
+                }
                 p.path.push(FieldRef {
-                    name: name.clone(),
+                    name: name.to_string(),
                     index,
                     indirect: self.field_indirect(base, name),
                 });
@@ -1631,7 +1713,10 @@ impl<'a> Lowerer<'a> {
 
     fn pair_index(&self, base: &SurfaceTerm, field: &str) -> Option<usize> {
         match self.types.term(base).map(|t| t.unborrowed()) {
-            Some(TTy::Named(n, _)) if n == "Pair" && !self.program_declares("Pair") => {
+            Some(TTy::Named(n, _))
+                if tauto::bindings::is_library(&n, "Pair")
+                    && !self.program_declares(&tauto::bindings::library_name("Pair")) =>
+            {
                 match field {
                     "fst" => Some(0),
                     "snd" => Some(1),
@@ -1663,12 +1748,28 @@ impl<'a> Lowerer<'a> {
         {
             set_fn_tier(&mut nty, tier);
         }
+        if let Some(written) = self
+            .types
+            .term(base)
+            .and_then(|b| self.named_field_term(b, name))
+        {
+            set_written_tiers_in_args(&mut nty, &written, &mut |row| self.field_tier(row));
+        }
         let index = self.pair_index(base, name);
         let indirect = self.field_indirect(base, name);
         let base_e = match self.place_read(cx, base)? {
             Some(e) => e,
             None => self.expr(cx, base)?,
         };
+        // A function in a field that is a type argument of its data (a
+        // record without a name) has the tier its value's type gives it.
+        if let Some(tier) = self
+            .types
+            .term(base)
+            .and_then(|b| self.argument_field_tier(b, &base_e.ty, name))
+        {
+            set_fn_tier(&mut nty, tier);
+        }
         Ok(expr_of(
             ExprKind::Field {
                 base: Box::new(base_e),
@@ -1689,125 +1790,254 @@ impl<'a> Lowerer<'a> {
         ))
     }
 
-    /// A product taken to fewer members (`A × B <: A`), as `types.rs`
-    /// fitted it: the members are told apart by their checked types.
-    fn fit_product(&mut self, e: Expr, have: &[TTy], expected: &TTy) -> Expr {
-        let span = e.span;
-        let keys: Vec<String> = have.iter().map(|t| t.to_string()).collect();
-        let at = |t: &TTy| keys.iter().position(|k| *k == t.to_string());
-        match expected {
-            TTy::Product(want) if want != have => {
-                let Some(picks) = want
-                    .iter()
-                    .map(|w| at(w).map(|i| (0, Some(i))))
-                    .collect::<Option<Vec<_>>>()
-                else {
-                    return e;
-                };
-                let ty = self.conv(expected);
-                expr_of(
-                    ExprKind::Product {
-                        members: vec![e],
-                        picks,
-                    },
-                    ty,
-                    span,
-                )
-            }
-            TTy::Product(_) | TTy::Var(_) | TTy::Borrow(..) | TTy::Union(_) => e,
-            want => match at(want) {
-                Some(index) => {
-                    let ty = self.conv(want);
-                    expr_of(
-                        ExprKind::Member {
-                            value: Box::new(e),
-                            index,
-                            how: Use::Move,
-                        },
-                        ty,
-                        span,
-                    )
-                }
-                None => e,
-            },
+    /// The members of the product `t`: the first of each `Pair`, then those of its second
+    /// where that is a `Pair` too. Another type is the one member.
+    pub(crate) fn product_members(&self, t: &TTy) -> Vec<TTy> {
+        let mut out = Vec::new();
+        let mut at = t.unborrowed();
+        while let TTy::Named(n, args) = at
+            && tauto::bindings::is_library(n, "Pair")
+            && args.len() == 2
+        {
+            out.push(args[0].clone());
+            at = args[1].unborrowed();
         }
+        out.push(at.clone());
+        out
     }
 
-    /// `#(a, b, …)`: the members in the order written; a member that is a
-    /// product gives its members and one of type `Unit` none.
+    /// The product of `members`: `Pair`s nested to the right.
+    fn product_ty(&self, members: &[TTy]) -> TTy {
+        let mut it = members.iter().rev().cloned();
+        let mut tail = it.next().unwrap_or(TTy::Unit);
+        for head in it {
+            tail = TTy::Named(tauto::bindings::library_name("Pair"), vec![head, tail]);
+        }
+        tail
+    }
+
+    /// `Pair(fst, snd)` of type `ty`, a nibcheck `Pair`.
+    fn pair_of(&mut self, fst: Expr, snd: Expr, ty: &TTy, span: Span) -> Option<Expr> {
+        let ctor = self.ctor_ref_in(&tauto::bindings::library_name("Pair::Mk"), Some(ty))?;
+        let nty = self.conv(ty);
+        Some(expr_of(
+            ExprKind::Ctor {
+                ctor,
+                fields: vec![
+                    (Some("fst".to_string()), fst),
+                    (Some("snd".to_string()), snd),
+                ],
+            },
+            nty,
+            span,
+        ))
+    }
+
+    /// Member `i` of the `n`-member product `root` of type `members`: the `snd`s down
+    /// to the `Pair` that holds it, then its `fst` (the last member is the last `snd`).
+    fn product_member(&mut self, root: Expr, members: &[TTy], i: usize, how: Use) -> Expr {
+        let span = root.span;
+        let n = members.len();
+        let mut at = root;
+        for d in 0..i {
+            let ty = self.product_ty(&members[d + 1..]);
+            let nty = self.conv(&ty);
+            let last = d + 1 == i && i + 1 == n;
+            at = self.pair_field(at, "snd", 1, nty, if last { how } else { Use::Place }, span);
+        }
+        if i + 1 < n {
+            let nty = self.conv(&members[i]);
+            at = self.pair_field(at, "fst", 0, nty, how, span);
+        }
+        at
+    }
+
+    fn pair_field(
+        &mut self,
+        base: Expr,
+        name: &str,
+        index: usize,
+        ty: Ty,
+        how: Use,
+        span: Span,
+    ) -> Expr {
+        expr_of(
+            ExprKind::Field {
+                base: Box::new(base),
+                field: FieldRef {
+                    name: name.to_string(),
+                    index: Some(index),
+                    indirect: Indirect::None,
+                },
+                how,
+                indirect: Indirect::None,
+            },
+            ty,
+            span,
+        )
+    }
+
+    /// A product of type `have` taken to fewer members, or to other members in another
+    /// order (`A × B <: A`, `A × B × C <: C × A`), as `types.rs` fitted it: the members are
+    /// told apart by their checked types, taken apart from the product `e` is held in and
+    /// put together as `Pair`s again.
+    fn fit_product(&mut self, e: Expr, have: &TTy, expected: &TTy) -> Expr {
+        let have = self.product_members(have);
+        if have.len() < 2 {
+            return e;
+        }
+        let want = match expected {
+            TTy::Var(_) | TTy::Borrow(..) | TTy::Union(_) => return e,
+            want => self.product_members(want),
+        };
+        let keys: Vec<String> = have.iter().map(|t| t.to_string()).collect();
+        if keys == want.iter().map(|t| t.to_string()).collect::<Vec<_>>() {
+            return e;
+        }
+        let Some(picks) = want
+            .iter()
+            .map(|w| keys.iter().position(|k| *k == w.to_string()))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return e;
+        };
+        let span = e.span;
+        let tmp = self.fresh_local("member", Repr::Plain);
+        let root_ty = e.ty.clone();
+        let read = || {
+            expr_of(
+                ExprKind::Read {
+                    local: tmp.clone(),
+                    how: Use::Place,
+                },
+                root_ty.clone(),
+                span,
+            )
+        };
+        let mut parts: Vec<Expr> = picks
+            .iter()
+            .map(|&i| self.product_member(read(), &have, i, Use::Move))
+            .collect();
+        let Some(mut result) = parts.pop() else {
+            return e;
+        };
+        for k in (0..parts.len()).rev() {
+            let ty = self.product_ty(&want[k..]);
+            let Some(pair) = self.pair_of(parts.pop().unwrap(), result, &ty, span) else {
+                return e;
+            };
+            result = pair;
+        }
+        let ty = result.ty.clone();
+        expr_of(
+            ExprKind::Block(crate::Block {
+                stmts: vec![crate::Stmt::Let {
+                    local: tmp.clone(),
+                    ty: root_ty.clone(),
+                    init: e,
+                    span,
+                }],
+                tail: Some(Box::new(result)),
+            }),
+            ty,
+            span,
+        )
+    }
+
+    /// `#(a, b, …)`: the `Pair`s nested to the right, `Pair(a, Pair(b, …))`.
     fn product_expr(&mut self, cx: &mut Cx, t: &SurfaceTerm, members: &[SurfaceTerm]) -> R<Expr> {
         let span = t.span;
         let whole = self.types.term(t).cloned().unwrap_or(TTy::Var(0));
-        let TTy::Product(order) = whole.unborrowed().clone() else {
-            return unsupported(msg!("nir-a-product-with-fewer-than-two"), span);
-        };
-        let mut picks: Vec<(usize, Option<usize>)> = Vec::new();
+        // The type of the `Pair` that holds the member at each depth.
+        let mut pairs = Vec::new();
+        let mut at = whole.unborrowed().clone();
+        for _ in 1..members.len() {
+            let TTy::Named(n, args) = &at else {
+                return unsupported(msg!("nir-a-product-whose-members-do-not"), span);
+            };
+            if !(tauto::bindings::is_library(n, "Pair") && args.len() == 2) {
+                return unsupported(msg!("nir-a-product-whose-members-do-not"), span);
+            }
+            let next = args[1].clone();
+            pairs.push(at.clone());
+            at = next;
+        }
         let mut exprs = Vec::new();
-        for (i, m) in members.iter().enumerate() {
+        for m in members {
             let mt = self
                 .types
                 .term(m)
                 .map(|t| t.unborrowed().clone())
                 .unwrap_or(TTy::Var(0));
-            let e = self.expr_expect(cx, m, &mt)?;
-            match &mt {
-                TTy::Product(inner) => picks.extend((0..inner.len()).map(|j| (i, Some(j)))),
-                TTy::Unit => {}
-                _ => picks.push((i, None)),
-            }
-            exprs.push(e);
+            exprs.push(self.expr_expect(cx, m, &mt)?);
         }
-        if picks.len() != order.len() {
-            return unsupported(msg!("nir-a-product-whose-members-do-not"), span);
+        let Some(mut result) = exprs.pop() else {
+            return Ok(expr_of(ExprKind::Unit, Ty::Unit, span));
+        };
+        for (head, ty) in exprs.into_iter().zip(&pairs).rev() {
+            let Some(pair) = self.pair_of(head, result, ty, span) else {
+                return unsupported(msg!("nir-a-product-whose-members-do-not"), span);
+            };
+            result = pair;
         }
-        let ty = self.conv(&whole);
-        Ok(expr_of(
-            ExprKind::Product {
-                members: exprs,
-                picks,
-            },
-            ty,
-            span,
-        ))
+        Ok(result)
     }
 
-    /// `(base: T)`. The member of type `T` of a product is copied or cloned
-    /// out of a place, moved out of a temporary; fewer members (`A × C`) are
-    /// taken as [`Self::fit_product`] takes them; anything else fits `T` as an
+    /// `(base: T)`: the members `T` has of a product, taken as [`Self::fit_product`]
+    /// takes them, out of a place by copying or cloning them; anything else fits `T` as an
     /// argument does.
     fn ascribe_expr(&mut self, cx: &mut Cx, t: &SurfaceTerm, base: &SurfaceTerm) -> R<Expr> {
         let span = t.span;
         let result = self.types.term(t).cloned().unwrap_or(TTy::Var(0));
-        let key = result.unborrowed().to_string();
-        let index = match (
-            self.types.term(base).map(|b| b.unborrowed()),
-            result.unborrowed(),
-        ) {
-            (Some(TTy::Product(ms)), want)
-                if !matches!(want, TTy::Product(_) | TTy::Union(_) | TTy::Var(_)) =>
-            {
-                ms.iter().position(|m| m.to_string() == key)
+        let have = self.types.term(base).map(|b| b.unborrowed().clone());
+        let single = match &have {
+            Some(have) if self.product_members(have).len() >= 2 => {
+                !matches!(result.unborrowed(), TTy::Var(_) | TTy::Union(_))
+                    && self.product_members(result.unborrowed()).len() == 1
             }
-            _ => return self.expr_expect(cx, base, &result),
+            _ => false,
         };
-        let Some(index) = index else {
+        if !single {
+            return self.expr_expect(cx, base, &result);
+        }
+        // The one member of type `T` of a product is copied or cloned out of a place,
+        // moved out of a temporary.
+        let members = self.product_members(&have.unwrap());
+        let key = result.unborrowed().to_string();
+        let Some(index) = members.iter().position(|m| m.to_string() == key) else {
             return unsupported(
                 msg!("nir-the-member-of-a-product", key = key.to_string()),
                 span,
             );
         };
-        let nty = self.conv(result.unborrowed());
-        let (value, how) = match self.place_read(cx, base)? {
-            Some(e) => (e, self.use_of(&result)),
-            None => (self.expr(cx, base)?, Use::Move),
-        };
-        Ok(expr_of(
-            ExprKind::Member {
-                value: Box::new(value),
-                index,
-                how,
+        if let Some(place) = self.place_read(cx, base)? {
+            let how = self.use_of(&result);
+            return Ok(self.product_member(place, &members, index, how));
+        }
+        let value = self.expr(cx, base)?;
+        let tmp = self.fresh_local("member", Repr::Plain);
+        let root_ty = value.ty.clone();
+        let read = expr_of(
+            ExprKind::Read {
+                local: tmp.clone(),
+                how: Use::Place,
             },
-            nty,
+            root_ty.clone(),
+            span,
+        );
+        let picked = self.product_member(read, &members, index, Use::Move);
+        let ty = picked.ty.clone();
+        Ok(expr_of(
+            ExprKind::Block(crate::Block {
+                stmts: vec![crate::Stmt::Let {
+                    local: tmp,
+                    ty: root_ty,
+                    init: value,
+                    span,
+                }],
+                tail: Some(Box::new(picked)),
+            }),
+            ty,
             span,
         ))
     }
@@ -1875,8 +2105,9 @@ impl<'a> Lowerer<'a> {
         &mut self,
         cx: &mut Cx,
         t: &SurfaceTerm,
-        name: &str,
+        name: &Name,
         fields: &[(String, SurfaceTerm)],
+        written: Option<&SurfaceTerm>,
     ) -> R<Expr> {
         let span = t.span;
         let Some(ctor) = self.ctor_ref_in(name, self.types.term(t)) else {
@@ -1884,9 +2115,17 @@ impl<'a> Lowerer<'a> {
         };
         self.refuse_extern_type(name);
         let ty_t = self.types.term(t).cloned().unwrap_or(TTy::Var(0));
-        let ty = self.conv(&ty_t);
+        let mut ty = self.conv(&ty_t);
+        if let Some(w) = written {
+            set_written_tiers_in_args(&mut ty, w, &mut |row| self.field_tier(row));
+        }
         let ftys = self.ctor_fields(name, &ty_t);
         let rows = self.ctor_field_rows(name, &ty_t);
+        let own = self.ctor_field_terms(name, &ty_t);
+        // The fields of a record without a name are its type arguments: the
+        // type the program writes for the record gives each function field
+        // the row it is written with.
+        let wfs = self.written_fields(name, &ty_t, written);
         let mut out = Vec::new();
         for (f, v) in fields {
             let Some(ix) = ctor
@@ -1904,7 +2143,21 @@ impl<'a> Lowerer<'a> {
                 );
             };
             let want = ftys.get(ix).cloned().unwrap_or(TTy::Var(0));
-            let e = self.field_arg(cx, v, &want, rows.get(ix).cloned().flatten())?;
+            let wf = wfs.get(ix).cloned().flatten();
+            let row = rows.get(ix).cloned().flatten().or_else(|| {
+                wf.as_ref()
+                    .and_then(pi_effects)
+                    .map(|e| e.into_iter().collect())
+            });
+            // A field written with functions in its type arguments
+            // (`Option((Text) -> Located ! {e})`) is made at their tiers.
+            let e = match (own.get(ix), &wf) {
+                (Some(w), _) if row.is_none() && written_args_have_rows(w) => {
+                    self.expr_written(cx, v, &want, w)?
+                }
+                (_, Some(wf)) if row.is_none() => self.expr_written(cx, v, &want, wf)?,
+                _ => self.field_arg(cx, v, &want, row)?,
+            };
             out.push((Some(f.clone()), e));
         }
         Ok(expr_of(ExprKind::Ctor { ctor, fields: out }, ty, span))
@@ -1920,7 +2173,7 @@ impl<'a> Lowerer<'a> {
         let span = t.span;
         if let TermKind::Var(name) = &*function.kind {
             if self.find(cx, name).is_none() {
-                if name == "Tuple" && arguments.is_empty() {
+                if tauto::bindings::is_library(&name, "Tuple") && arguments.is_empty() {
                     return Ok(expr_of(ExprKind::Unit, Ty::Unit, span));
                 }
                 if OPERATORS.contains(&name.as_str()) {
@@ -1929,7 +2182,7 @@ impl<'a> Lowerer<'a> {
                 if let Some(ctor) = self.ctor_ref_in(name, self.types.term(t)) {
                     return self.construct(cx, t, ctor, name, arguments, None);
                 }
-                if let Some(src) = self.fns.get(name.as_str()) {
+                if let Some(src) = self.fns.get(name) {
                     let origin = src.origin;
                     return match origin {
                         Origin::Program | Origin::Prelude => {
@@ -1957,7 +2210,7 @@ impl<'a> Lowerer<'a> {
             && self
                 .term_row(t)
                 .iter()
-                .any(|e| e == "Div" || e.starts_with('|'))
+                .any(|e| tauto::bindings::is_library(&e, "Div") || e.row_variable().is_some())
         {
             return unsupported(
                 msg!("nir-a-potentially-divergent-computed-function-call"),
@@ -2174,7 +2427,7 @@ impl<'a> Lowerer<'a> {
         cx: &mut Cx,
         t: &SurfaceTerm,
         ctor: CtorRef,
-        name: &str,
+        name: &Name,
         arguments: &[SurfaceTerm],
         written: Option<&SurfaceTerm>,
     ) -> R<Expr> {
@@ -2188,10 +2441,18 @@ impl<'a> Lowerer<'a> {
         let ftys = self.ctor_fields(name, &ty_t);
         let rows = self.ctor_field_rows(name, &ty_t);
         let wfs = self.written_fields(name, &ty_t, written);
+        // A field the program writes with functions in its type arguments
+        // (`Option((Text) -> Located ! {e})`) is made at the tiers of those
+        // rows, as the data's own field type is (`data_def`).
+        let own = self.ctor_field_terms(name, &ty_t);
         let mut fields = Vec::new();
         for (i, a) in arguments.iter().enumerate() {
             let want = ftys.get(i).cloned().unwrap_or(TTy::Var(0));
-            let wf = wfs.get(i).cloned().flatten();
+            let wf = wfs.get(i).cloned().flatten().or_else(|| {
+                own.get(i)
+                    .filter(|t| pi_effects(t).is_none() && written_args_have_rows(t))
+                    .cloned()
+            });
             let row = rows.get(i).cloned().flatten().or_else(|| {
                 wf.as_ref()
                     .and_then(pi_effects)
@@ -2226,13 +2487,20 @@ impl<'a> Lowerer<'a> {
         {
             return self.construct(cx, a, ctor, name, arguments, Some(written));
         }
+        if let TermKind::Record {
+            name,
+            fields,
+            base: None,
+        } = &*a.kind
+        {
+            return self.record(cx, a, name, fields, Some(written));
+        }
         self.expr_expect(cx, a, want)
     }
 
     /// The value of a field. A function written with a row is made for the
-    /// tier that row gives, whatever its own body performs; one that may
-    /// suspend is taken only as a closure literal, which the field holds
-    /// for any handlers it is called under.
+    /// tier that row gives, whatever its own body performs. A function item
+    /// is represented for that tier, as it is for a function parameter.
     fn field_arg(&mut self, cx: &mut Cx, a: &SurfaceTerm, want: &TTy, row: Option<Row>) -> R<Expr> {
         let Some(row) = row else {
             return self.expr_expect(cx, a, want);
@@ -2244,10 +2512,10 @@ impl<'a> Lowerer<'a> {
             let e = self.closure(cx, a, Some(tier), false, None)?;
             return Ok(self.coerce(e, &to));
         }
-        if tier == Tier::O {
-            return unsupported(msg!("nir-a-field-whose-function-may-suspend"), a.span);
+        let mut e = self.expr(cx, a)?;
+        if let (ExprKind::FnValue { .. }, Ty::Fn(function)) = (&e.kind, &mut e.ty) {
+            function.tier = function.tier.max(tier);
         }
-        let e = self.expr(cx, a)?;
         Ok(self.coerce(e, &to))
     }
 
@@ -2257,7 +2525,7 @@ impl<'a> Lowerer<'a> {
         decl: &FnDecl,
         call: &SurfaceTerm,
         arguments: &[SurfaceTerm],
-    ) -> R<BTreeMap<String, Tier>> {
+    ) -> R<BTreeMap<Name, Tier>> {
         let mut out = BTreeMap::new();
         let assumed = super::assumed_row_vars(decl);
         for v in self.row_vars(decl)? {
@@ -2274,11 +2542,14 @@ impl<'a> Lowerer<'a> {
                 };
                 if !effects
                     .iter()
-                    .any(|e| e.strip_prefix('|') == Some(v.as_str()))
+                    .any(|e| e.row_variable().as_ref() == Some(&v))
                 {
                     continue;
                 }
-                let named: Vec<&String> = effects.iter().filter(|e| !e.starts_with('|')).collect();
+                let named: Vec<&Name> = effects
+                    .iter()
+                    .filter(|e| !e.row_variable().is_some())
+                    .collect();
                 let row: Row = self
                     .known_arg_row(cx, arg)?
                     .ok_or_else(|| Unsupported {
@@ -2286,8 +2557,7 @@ impl<'a> Lowerer<'a> {
                             "nir-callback-row-needed",
                             var = v.to_string(),
                             decl = decl.name.as_str()
-                        )
-                        .to_string(),
+                        ),
                         span: Some(arg.span),
                     })?
                     .into_iter()
@@ -2299,7 +2569,7 @@ impl<'a> Lowerer<'a> {
                 pi_effects(pt).is_some_and(|effects| {
                     effects
                         .iter()
-                        .any(|e| e.strip_prefix('|') == Some(v.as_str()))
+                        .any(|e| e.row_variable().as_ref() == Some(&v))
                 })
             }) {
                 tier = tier.max(self.call_row_tier(cx, decl, call, &v)?);
@@ -2312,21 +2582,20 @@ impl<'a> Lowerer<'a> {
     /// The tier of a row variable that no callback parameter carries, from
     /// the callee's row as this call instantiates it. The named effects of
     /// the callee's row are counted in its own tier already.
-    fn call_row_tier(&self, cx: &Cx, decl: &FnDecl, call: &SurfaceTerm, v: &str) -> R<Tier> {
+    fn call_row_tier(&self, cx: &Cx, decl: &FnDecl, call: &SurfaceTerm, v: &Name) -> R<Tier> {
         let row = self.rows.calls.get(&call.id()).ok_or_else(|| Unsupported {
             what: msg!(
                 "nir-instantiated-row-needed",
                 var = v.to_string(),
                 decl = decl.name.as_str()
-            )
-            .to_string(),
+            ),
             span: Some(call.span),
         })?;
-        let named: Vec<&String> = decl
+        let named: Vec<&Name> = decl
             .effects
             .iter()
             .flatten()
-            .filter(|e| !e.starts_with('|'))
+            .filter(|e| !e.row_variable().is_some())
             .collect();
         let row: Row = row.iter().filter(|e| !named.contains(e)).cloned().collect();
         let tier = self.row_tier_in(&row, cx);
@@ -2351,8 +2620,7 @@ impl<'a> Lowerer<'a> {
                         "nir-row-variable-carried-suspending",
                         var = v.to_string(),
                         decl = decl.name.as_str()
-                    )
-                    .to_string(),
+                    ),
                     span: Some(call.span),
                 });
         }
@@ -2361,15 +2629,15 @@ impl<'a> Lowerer<'a> {
 
     /// The data types in `decl`'s parameter types that `v` is an argument
     /// of, and whose fields hold a function with a row variable.
-    fn datas_carrying(&self, decl: &FnDecl, v: &str) -> Vec<String> {
-        fn mentions(t: &SurfaceTerm, v: &str) -> bool {
+    fn datas_carrying(&self, decl: &FnDecl, v: &Name) -> Vec<Name> {
+        fn mentions(t: &SurfaceTerm, v: &Name) -> bool {
             let mut found = false;
             visit(t, &mut |t| match &*t.kind {
                 TermKind::Var(n) if n == v => found = true,
                 TermKind::Pi {
                     effects: Some(effects),
                     ..
-                } if effects.iter().any(|e| e.strip_prefix('|') == Some(v)) => found = true,
+                } if effects.iter().any(|e| e.row_variable().as_ref() == Some(v)) => found = true,
                 _ => {}
             });
             found
@@ -2406,12 +2674,12 @@ impl<'a> Lowerer<'a> {
         // Each data type applied to `v`, with the row parameters `v` is given
         // as: a record of records, `App(R, e)` with `List(Answer(e))`, carries
         // `v` on to the data types its fields apply to those parameters.
-        let mut seen: Vec<String> = Vec::new();
-        let mut todo: Vec<(&SurfaceTerm, String)> = decl
+        let mut seen: Vec<Name> = Vec::new();
+        let mut todo: Vec<(&SurfaceTerm, Name)> = decl
             .param_types
             .iter()
             .flatten()
-            .map(|pt| (pt, v.to_string()))
+            .map(|pt| (pt, v.clone()))
             .collect();
         while let Some((t, v)) = todo.pop() {
             visit(t, &mut |t| {
@@ -2423,7 +2691,7 @@ impl<'a> Lowerer<'a> {
                     && !seen.contains(name)
                     && let Some(d) = self.data_decl(name)
                 {
-                    let params: Vec<&String> = d
+                    let params: Vec<&Name> = d
                         .generics
                         .iter()
                         .zip(&d.rows)
@@ -2449,18 +2717,20 @@ impl<'a> Lowerer<'a> {
         seen
     }
 
-    fn data_decl(&self, name: &str) -> Option<&'a DataDecl> {
+    fn data_decl(&self, name: &Name) -> Option<&'a DataDecl> {
         self.program.stmts.iter().find_map(|s| match s {
-            Stmt::Struct(d) | Stmt::Enum(d) if d.name == name => Some(d),
+            Stmt::Struct(d) | Stmt::Enum(d) if &d.name == name => Some(d),
             _ => None,
         })
     }
 
-    fn holds_row_function(&self, name: &str) -> bool {
+    /// Whether a field of the data type `name` holds a function whose row
+    /// has a row variable.
+    fn holds_row_function(&self, name: &Name) -> bool {
         self.program.stmts.iter().any(|s| match s {
-            Stmt::Struct(d) | Stmt::Enum(d) if d.name == name => d.constructors.iter().any(|c| {
+            Stmt::Struct(d) | Stmt::Enum(d) if &d.name == name => d.constructors.iter().any(|c| {
                 c.fields.iter().any(|(_, t)| {
-                    pi_effects(t).is_some_and(|e| e.iter().any(|e| e.starts_with('|')))
+                    pi_effects(t).is_some_and(|e| e.iter().any(|e| e.row_variable().is_some()))
                 })
             }),
             _ => false,
@@ -2494,7 +2764,7 @@ impl<'a> Lowerer<'a> {
             TermKind::Borrow { term, .. } => self.arg_row(cx, term),
             TermKind::Var(n) => match self.find(cx, n) {
                 Some(i) => cx.bindings[i].fn_row.clone().unwrap_or_default(),
-                None if self.fns.contains_key(n.as_str()) => self.fn_row(n),
+                None if self.fns.contains_key(n) => self.fn_row(n),
                 None => Row::new(),
             },
             _ => Row::new(),
@@ -2505,7 +2775,7 @@ impl<'a> Lowerer<'a> {
         &mut self,
         cx: &mut Cx,
         t: &SurfaceTerm,
-        name: &str,
+        name: &Name,
         function: &SurfaceTerm,
         arguments: &[SurfaceTerm],
     ) -> R<Expr> {
@@ -2513,14 +2783,21 @@ impl<'a> Lowerer<'a> {
         let decl: &'a FnDecl = self.fns[name].decl;
         let rv = self.call_rowvars(cx, decl, t, arguments)?;
         // A function that runs a budget ticks, as one that diverges does.
-        let diverges = self.fn_row(name).contains("Div") || self.runs_budget(name);
+        let diverges = self
+            .fn_row(name)
+            .contains(&tauto::bindings::library_name("Div"))
+            || self.runs_budget(name);
         // The callback row can carry divergence through a row variable.
         // Keep the budget specialization while forwarding such callbacks.
         let div_parameter = decl.param_types.iter().flatten().any(|ty| {
-            pi_effects(ty).is_some_and(|effects| effects.iter().any(|effect| effect == "Div"))
+            pi_effects(ty).is_some_and(|effects| {
+                effects
+                    .iter()
+                    .any(|effect| tauto::bindings::is_library(&effect, "Div"))
+            })
         });
         let callback_o = div_parameter || rv.values().any(|tier| *tier >= Tier::O);
-        let rv_map: HashMap<String, Tier> = rv.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let rv_map: HashMap<Name, Tier> = rv.iter().map(|(k, v)| (k.clone(), *v)).collect();
         let mut tier = self.row_tier(&self.fn_row(name), &rv_map);
         if cx.under_budget && callback_o && !diverges && tier < Tier::O {
             return unsupported(
@@ -2560,21 +2837,6 @@ impl<'a> Lowerer<'a> {
             })
             .collect();
         let mut explicit = self.call_args(cx, arguments, &ps, Some(decl), &rv_map)?;
-        if let (Some(scheme), Some(own)) = (
-            self.types.scheme(name),
-            self.types.instantiations.get(&function.id()),
-        ) && let TTy::Fn(generic, _, _) = scheme.ty.clone()
-        {
-            let own = own.clone();
-            explicit = explicit
-                .into_iter()
-                .enumerate()
-                .map(|(i, e)| match generic.get(i) {
-                    Some(g) => self.regroup_arg(e, g, &own),
-                    None => Ok(e),
-                })
-                .collect::<R<Vec<_>>>()?;
-        }
         if !borrowed.is_empty() {
             for arg in &mut explicit {
                 keep_capture_clones(arg, &borrowed);
@@ -2588,16 +2850,6 @@ impl<'a> Lowerer<'a> {
             (true, true) => Tick::Budget,
             (true, false) => Tick::Host,
         };
-        let widths = match (
-            self.types.scheme(name).map(|s| s.ty.clone()),
-            self.types.instantiations.get(&function.id()),
-        ) {
-            (Some(TTy::Fn(_, result, _)), Some(own)) => product_widths(&result, own),
-            _ => None,
-        };
-        // The callee returns the members a generic stands for as one member: the caller
-        // reads them flat.
-        let nested = widths.as_ref().and_then(|w| nest_product(&ty, w));
         let call = expr_of(
             ExprKind::Call(Box::new(CallNode {
                 callee: Callee::Inst(inst),
@@ -2608,172 +2860,15 @@ impl<'a> Lowerer<'a> {
                 recur: false,
                 span,
             })),
-            nested.clone().unwrap_or_else(|| ty.clone()),
-            span,
-        );
-        let (Some(widths), Some(_)) = (widths, nested) else {
-            return Ok(call);
-        };
-        let tmp = self.fresh_local("nested", Repr::Plain);
-        let mut members = Vec::new();
-        let mut picks = Vec::new();
-        let Ty::Product(fms) = &ty else {
-            return Ok(call);
-        };
-        let mut at = 0;
-        for (i, w) in widths.iter().enumerate() {
-            let n = w.unwrap_or(1);
-            let mty = if w.is_some() {
-                Ty::Product(fms[at..at + n].to_vec())
-            } else {
-                fms[at].1.clone()
-            };
-            members.push(expr_of(
-                ExprKind::Member {
-                    value: Box::new(expr_of(
-                        ExprKind::Read {
-                            local: tmp.clone(),
-                            how: Use::Place,
-                        },
-                        call.ty.clone(),
-                        span,
-                    )),
-                    index: i,
-                    how: Use::Move,
-                },
-                mty,
-                span,
-            ));
-            match w {
-                Some(n) => picks.extend((0..*n).map(|j| (i, Some(j)))),
-                None => picks.push((i, None)),
-            }
-            at += n;
-        }
-        let call_ty = call.ty.clone();
-        Ok(expr_of(
-            ExprKind::Block(Block {
-                stmts: vec![crate::Stmt::Let {
-                    local: tmp,
-                    ty: call_ty,
-                    init: call,
-                    span,
-                }],
-                tail: Some(Box::new(expr_of(
-                    ExprKind::Product { members, picks },
-                    ty.clone(),
-                    span,
-                ))),
-            }),
             ty,
             span,
-        ))
-    }
-
-    /// An argument for a parameter of the product `generic` (`A × B`, or a borrow of it) in
-    /// which a generic stands for a product: the checker reads the product flat (`i64 × i64 ×
-    /// i64` for `A × B` at `B := i64 × i64`), and the callee holds that generic's members as
-    /// one member (`i64 × (i64 × i64)`), so the argument is put together that way. A borrowed
-    /// argument is put together from copies of its members.
-    fn regroup_arg(
-        &mut self,
-        e: Expr,
-        generic: &TTy,
-        own: &HashMap<tauto::types::ParamId, TTy>,
-    ) -> R<Expr> {
-        let Some(widths) = product_widths(generic, own) else {
-            return Ok(e);
-        };
-        let borrow = match generic {
-            TTy::Borrow(_, m) => Some(*m),
-            _ => None,
-        };
-        let span = e.span;
-        let flat = match &e.ty {
-            Ty::Ref(t) | Ty::RefMut(t) => (**t).clone(),
-            t => t.clone(),
-        };
-        let (Ty::Product(fms), Some(Ty::Product(tys))) = (&flat, nest_product(&flat, &widths))
-        else {
-            return unsupported(msg!("nir-a-product-whose-members-do-not"), span);
-        };
-        let how = match borrow {
-            None => Use::Move,
-            Some(true) => return unsupported(msg!("nir-a-product-regrouped-under-mut"), span),
-            Some(false) => match self.dup_use(&flat) {
-                Some(how) => how,
-                None => return unsupported(msg!("nir-a-product-regrouped-under-mut"), span),
-            },
-        };
-        let tmp = self.fresh_local("regroup", Repr::Plain);
-        let member = |i: usize| {
-            expr_of(
-                ExprKind::Member {
-                    value: Box::new(expr_of(
-                        ExprKind::Read {
-                            local: tmp.clone(),
-                            how: Use::Place,
-                        },
-                        e.ty.clone(),
-                        span,
-                    )),
-                    index: i,
-                    how,
-                },
-                fms[i].1.clone(),
-                span,
-            )
-        };
-        let product = |members: Vec<Expr>, ty: Ty| {
-            let picks = (0..members.len()).map(|j| (j, None)).collect();
-            expr_of(ExprKind::Product { members, picks }, ty, span)
-        };
-        let mut members = Vec::new();
-        let mut at = 0;
-        for (w, (_, ty)) in widths.iter().zip(&tys) {
-            match w {
-                Some(n) => {
-                    members.push(product((at..at + n).map(&member).collect(), ty.clone()));
-                    at += n;
-                }
-                None => {
-                    members.push(member(at));
-                    at += 1;
-                }
-            }
-        }
-        let nested_ty = Ty::Product(tys);
-        let nested = product(members, nested_ty.clone());
-        let init_ty = e.ty.clone();
-        // The value is put together where the borrow is taken, so that it lives as long as
-        // the call it is lent to.
-        let block = expr_of(
-            ExprKind::Block(Block {
-                stmts: vec![crate::Stmt::Let {
-                    local: tmp.clone(),
-                    ty: init_ty,
-                    init: e,
-                    span,
-                }],
-                tail: Some(Box::new(nested)),
-            }),
-            nested_ty.clone(),
-            span,
         );
-        Ok(if borrow.is_some() {
-            expr_of(
-                ExprKind::TempRef(Box::new(block)),
-                Ty::Ref(Box::new(nested_ty)),
-                span,
-            )
-        } else {
-            block
-        })
+        Ok(call)
     }
 
     /// The checked type arguments of this exact function occurrence, and
     /// the bounds it forces. Union shapes cannot reconstruct this mapping.
-    fn type_args(&mut self, cx: &Cx, name: &str, at: TermId, callee: InstId) -> Vec<Ty> {
+    fn type_args(&mut self, cx: &Cx, name: &Name, at: TermId, callee: InstId) -> Vec<Ty> {
         let own_parameters = self.meta[callee].own_parameters;
         let own = match self.types.instantiations.get(&at) {
             Some(own) => own.clone(),
@@ -2838,7 +2933,7 @@ impl<'a> Lowerer<'a> {
         arguments: &[SurfaceTerm],
         ps: &[TTy],
         decl: Option<&FnDecl>,
-        callee_rv: &HashMap<String, Tier>,
+        callee_rv: &HashMap<Name, Tier>,
     ) -> R<Vec<Expr>> {
         let mut out = Vec::new();
         for (i, a) in arguments.iter().enumerate() {
@@ -2850,7 +2945,7 @@ impl<'a> Lowerer<'a> {
             let budgeted_callback = cx.under_budget
                 && effects
                     .as_ref()
-                    .is_some_and(|es| es.iter().any(|e| e == "Div"));
+                    .is_some_and(|es| es.iter().any(|e| tauto::bindings::is_library(&e, "Div")));
             let tier = effects.map(|es| {
                 let tier = self.row_tier(&es.into_iter().collect(), callee_rv);
                 if budgeted_callback {
@@ -2979,7 +3074,18 @@ impl<'a> Lowerer<'a> {
                 }
             },
             _ => {
-                let e = self.expr_expect(cx, a, inner)?;
+                let mut e = self.expr(cx, a)?;
+                // An expression returning a borrow already denotes the
+                // argument's place. Coercing it to the referent would copy
+                // that value before borrowing an unrelated temporary.
+                if matches!(e.ty, Ty::Ref(_) | Ty::RefMut(_)) {
+                    return Ok(e);
+                }
+                if let Some(have) = self.types.term(a).cloned() {
+                    e = self.fit_product(e, &have, inner);
+                }
+                let expected = self.conv(inner);
+                let e = self.coerce(e, &expected);
                 let ty = e.ty.clone();
                 Ok(expr_of(
                     ExprKind::TempRef(Box::new(e)),
@@ -2998,7 +3104,7 @@ impl<'a> Lowerer<'a> {
         &mut self,
         cx: &mut Cx,
         t: &SurfaceTerm,
-        name: &str,
+        name: &Name,
         function: &SurfaceTerm,
         arguments: &[SurfaceTerm],
     ) -> R<Expr> {
@@ -3068,7 +3174,7 @@ impl<'a> Lowerer<'a> {
         &mut self,
         cx: &mut Cx,
         t: &SurfaceTerm,
-        name: &str,
+        name: &Name,
         function: &SurfaceTerm,
         arguments: &[SurfaceTerm],
     ) -> R<Expr> {
@@ -3084,13 +3190,20 @@ impl<'a> Lowerer<'a> {
             None => Tier::S,
         };
         let is_extern = decl.is_some() && self.fns[name].origin == Origin::Extern;
+        // `Syn::global` names a declaration the macro's tote sees: only the expander answers it.
+        if tauto::bindings::is_library(name, "Syn::global") {
+            return unsupported(
+                msg!("nir-expansion-only-extern", name = "Syn::global"),
+                span,
+            );
+        }
         if is_extern
             && cx.under_budget
             && (decl.is_some_and(|d| {
-                d.param_types
-                    .iter()
-                    .flatten()
-                    .any(|t| pi_effects(t).is_some_and(|es| es.iter().any(|e| e == "Div")))
+                d.param_types.iter().flatten().any(|t| {
+                    pi_effects(t)
+                        .is_some_and(|es| es.iter().any(|e| tauto::bindings::is_library(&e, "Div")))
+                })
             }) || arguments
                 .iter()
                 .any(|a| self.row_tier_in(&self.arg_row(cx, a), cx) >= Tier::O))
@@ -3100,7 +3213,7 @@ impl<'a> Lowerer<'a> {
         let rv = HashMap::new();
         let args = self.call_args(cx, arguments, &ps, decl, &rv)?;
         let ty = self.ety(t);
-        if name == "Syn::parse" && !is_extern {
+        if tauto::bindings::is_library(&name, "Syn::parse") && !is_extern {
             self.runtime_syntax(&args, &ty, span)?;
         }
         if name.starts_with("HashMap::") {
@@ -3119,7 +3232,7 @@ impl<'a> Lowerer<'a> {
         Ok(expr_of(
             ExprKind::Call(Box::new(CallNode {
                 callee: if is_extern {
-                    Callee::Extern(name.to_string())
+                    Callee::Extern(name.clone())
                 } else {
                     Callee::Builtin(name.to_string())
                 },
@@ -3272,7 +3385,11 @@ impl<'a> Lowerer<'a> {
         };
         let body_tier = self.row_tier_in(&self.term_row(body), cx);
         let mut tier = tier.map_or(body_tier, |expected| expected.max(body_tier));
-        if cx.under_budget && self.term_row(body).contains("Div") {
+        if cx.under_budget
+            && self
+                .term_row(body)
+                .contains(&tauto::bindings::library_name("Div"))
+        {
             // A closure that may diverge under a budget yields to the budget
             // driver, so it is made suspendable whether it is lent or owned.
             tier = tier.max(Tier::O);
@@ -3507,17 +3624,14 @@ fn holds_ref(t: &Ty) -> bool {
                 || holds_ref(a)
                 || holds_ref(b)
         }
-        Ty::Product(ms) => ms
-            .iter()
-            .any(|(_, m)| matches!(m, Ty::Ref(_) | Ty::RefMut(_)) || holds_ref(m)),
         _ => false,
     }
 }
 
 /// Whether `body` may consume `name`: it names it other than to lend it
 /// (`&name`, `&name.field`).
-fn consumes(body: &SurfaceTerm, name: &str) -> bool {
-    fn root_is(t: &SurfaceTerm, name: &str) -> bool {
+fn consumes(body: &SurfaceTerm, name: &Name) -> bool {
+    fn root_is(t: &SurfaceTerm, name: &Name) -> bool {
         match &*t.kind {
             TermKind::Var(n) => n == name,
             TermKind::Field { base, .. } => root_is(base, name),
@@ -3531,59 +3645,4 @@ fn consumes(body: &SurfaceTerm, name: &str) -> bool {
         _ => {}
     });
     named > lent
-}
-
-/// For a product `generic` (`A × B`, or a borrow of it) in which a generic stands for a
-/// product at `own`, how many members of the flat product each of its members stands for:
-/// `Some(n)` for a generic that stands for a product of `n`, `None` for one member. `None`
-/// when no generic of it stands for a product.
-fn product_widths(
-    generic: &TTy,
-    own: &HashMap<tauto::types::ParamId, TTy>,
-) -> Option<Vec<Option<usize>>> {
-    let TTy::Product(gms) = generic.unborrowed() else {
-        return None;
-    };
-    let widths: Vec<Option<usize>> = gms
-        .iter()
-        .map(|g| match g {
-            TTy::Param(p, _) => match own.get(p.id()) {
-                Some(TTy::Product(ms)) => Some(ms.len()),
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect();
-    widths.iter().any(Option::is_some).then_some(widths)
-}
-
-/// The flat product `flat` with the members `widths` groups put together as one.
-fn nest_product(flat: &Ty, widths: &[Option<usize>]) -> Option<Ty> {
-    let Ty::Product(fms) = flat else {
-        return None;
-    };
-    if widths.iter().map(|w| w.unwrap_or(1)).sum::<usize>() != fms.len() {
-        return None;
-    }
-    let mut at = 0;
-    let mut out = Vec::new();
-    for w in widths {
-        match w {
-            Some(n) => {
-                let group = fms[at..at + n].to_vec();
-                let key = group
-                    .iter()
-                    .map(|(k, _)| k.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" × ");
-                out.push((key, Ty::Product(group)));
-                at += n;
-            }
-            None => {
-                out.push(fms[at].clone());
-                at += 1;
-            }
-        }
-    }
-    Some(Ty::Product(out))
 }

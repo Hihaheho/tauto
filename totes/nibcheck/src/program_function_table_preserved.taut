@@ -45,7 +45,7 @@ pub theorem ck_extern_fns_preserved(
   name: Text,
   absent: FunctionNameAbsent(name, fs)
 ): CkFnPreserved(name, c, ck_extern_fns(fs, c)) {
-  match fs: CkFnPreserved(name, c, ck_extern_fns(fs, c)) {
+  ⊢ CkFnPreserved(name, c, ck_extern_fns(fs, c)) from match fs {
     Nil => fnt_preserved_return(name, c, Star)
     Cons(source, rest) => Eq::subst(
       (result: Mut1(Unit, Checker)) => CkFnPreserved(name, c, result),
@@ -108,7 +108,7 @@ pub theorem ck_program_decl_preserved(
   query: Text,
   absent: FunctionNameAbsent(query, types_stmt_functions(stmt))
 ): CkFnPreserved(query, c, ck_program_decl(c, stmt)) {
-  match stmt: CkFnPreserved(query, c, ck_program_decl(c, stmt)) {
+  ⊢ CkFnPreserved(query, c, ck_program_decl(c, stmt)) from match stmt {
     StLet(name, ty, value, borrow, mutable) => fnt_preserved_return(query, c, None)
     StVar(name, ty, value, borrow) => fnt_preserved_return(query, c, None)
     StModule(name, stmts, start, end) => fnt_preserved_return(query, c, None)
@@ -207,7 +207,7 @@ pub theorem ck_program_decls_preserved(
   name: Text,
   absent: FunctionNameAbsent(name, types_function_decls(program))
 ): CkFnPreserved(name, c, ck_program_decls(program, c)) {
-  match program: CkFnPreserved(name, c, ck_program_decls(program, c)) {
+  ⊢ CkFnPreserved(name, c, ck_program_decls(program, c)) from match program {
     Nil => fnt_preserved_return(name, c, Nil)
     Cons(Stmt, rest) => Eq::subst(
       (result: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => CkFnPreserved(name, c, result),

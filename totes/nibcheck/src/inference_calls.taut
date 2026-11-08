@@ -163,7 +163,14 @@ pub theorem inference_unf_ck_app_call_in(
   function: SurfaceTerm,
   arguments: List(SurfaceTerm),
   env: List(Local)
-): ck_app_call_in(Succ(j), c, term, function, arguments, env) = inference_step_ck_app_call_in(j, c, term, function, arguments, env) { Refl }
+): ck_app_call_in(
+  Succ(j),
+  c,
+  term,
+  function,
+  arguments,
+  env
+) = inference_step_ck_app_call_in(j, c, term, function, arguments, env) { Refl }
 
 pub fn inference_clone_rest(
   j: Nat,
@@ -173,7 +180,7 @@ pub fn inference_clone_rest(
   arg: SurfaceTerm,
   rest: List(SurfaceTerm)
 ): Mut1(Ty, Checker) {
-  match rest: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match rest {
     Nil => frame_bind(
       Ty,
       Ty,
@@ -194,7 +201,7 @@ pub theorem inference_clone_rest_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_clone_rest(j, c, env, span, arg, rest)) {
-  match rest: CkRunFrame(c, inference_clone_rest(j, c, env, span, arg, rest)) {
+  ⊢ CkRunFrame(c, inference_clone_rest(j, c, env, span, arg, rest)) from match rest {
     Nil => run_frame_bind(
       Ty,
       Ty,
@@ -229,7 +236,7 @@ pub fn inference_clone_args(
   span: TySpan,
   arguments: List(SurfaceTerm)
 ): Mut1(Ty, Checker) {
-  match arguments: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match arguments {
     Nil => ck_rewrap1(ck_clone_bad(c, span))
     Cons(arg, rest) => inference_clone_rest(j, c, env, span, arg, rest)
   }
@@ -244,7 +251,7 @@ pub theorem inference_clone_args_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_clone_args(j, c, env, span, arguments)) {
-  match arguments: CkRunFrame(c, inference_clone_args(j, c, env, span, arguments)) {
+  ⊢ CkRunFrame(c, inference_clone_args(j, c, env, span, arguments)) from match arguments {
     Nil => run_frame_read(
       c,
       ck_rewrap1(ck_clone_bad(c, span)),
@@ -282,7 +289,25 @@ pub theorem inference_unf_ck_clone_of_in(
   arguments: List(SurfaceTerm),
   env: List(Local),
   span: TySpan
-): ck_clone_of_in(Succ(j), c, arguments, env, span) = inference_step_ck_clone_of_in(j, c, arguments, env, span) { match arguments: ck_clone_of_in(Succ(j), c, arguments, env, span) = inference_step_ck_clone_of_in(j, c, arguments, env, span) {
+): ck_clone_of_in(
+  Succ(j),
+  c,
+  arguments,
+  env,
+  span
+) = inference_step_ck_clone_of_in(
+  j,
+  c,
+  arguments,
+  env,
+  span
+) { ⊢ ck_clone_of_in(
+  Succ(j),
+  c,
+  arguments,
+  env,
+  span
+) = inference_step_ck_clone_of_in(j, c, arguments, env, span) from match arguments {
     Nil => Refl
     Cons(arg, rest) => Refl
   } }
@@ -298,7 +323,7 @@ pub fn inference_argument_hint(
   expected: Option(Ty),
   lambda: Bool
 ): Mut1(Unit, Checker) {
-  match lambda: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match lambda {
     true => inference_set_hint(c, expected)
     false => mut1(Star, c)
   }
@@ -317,10 +342,10 @@ pub theorem inference_argument_hint_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_argument_hint(j, c, a, rest, known, env, i, expected, lambda)) {
-  match lambda: CkRunFrame(
+  ⊢ CkRunFrame(
     c,
     inference_argument_hint(j, c, a, rest, known, env, i, expected, lambda)
-  ) {
+  ) from match lambda {
     true => run_frame_read(
       c,
       inference_set_hint(c, expected),
@@ -458,12 +483,7 @@ pub theorem inference_argument_frame(
           ck_expect_opt(c3, t, expected, a)
         ),
         inference_set_hint(c2, None),
-        run_frame_read(
-          c2,
-          inference_set_hint(c2, None),
-          inference_set_hint_frame(c2, None),
-          o_c2
-        ),
+        run_frame_read(c2, inference_set_hint(c2, None), inference_set_hint_frame(c2, None), o_c2),
         cleared => c3 => o_c3 => run_frame_bind(
           Unit,
           List(Ty),
@@ -499,7 +519,7 @@ pub fn inference_arguments(
   i: Nat,
   arguments: List(SurfaceTerm)
 ): Mut1(List(Ty), Checker) {
-  match arguments: Mut1(List(Ty), Checker) {
+  ⊢ Mut1(List(Ty), Checker) from match arguments {
     Nil => mut1(Nil, c)
     Cons(a, rest) => inference_argument(j, c, a, rest, known, env, i, ck_expected(known, i))
   }
@@ -515,7 +535,7 @@ pub theorem inference_arguments_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_arguments(j, c, known, env, i, arguments)) {
-  match arguments: CkRunFrame(c, inference_arguments(j, c, known, env, i, arguments)) {
+  ⊢ CkRunFrame(c, inference_arguments(j, c, known, env, i, arguments)) from match arguments {
     Nil => run_frame_return(c, Nil, ordered)
     Cons(a, rest) => inference_argument_frame(
       j,
@@ -562,13 +582,34 @@ pub theorem inference_unf_ck_app_args_in(
   known: Option(List(Ty)),
   env: List(Local),
   i: Nat
-): ck_app_args_in(Succ(j), c, arguments, known, env, i) = inference_step_ck_app_args_in(j, c, arguments, known, env, i) { match arguments: ck_app_args_in(Succ(j), c, arguments, known, env, i) = inference_step_ck_app_args_in(j, c, arguments, known, env, i) {
+): ck_app_args_in(
+  Succ(j),
+  c,
+  arguments,
+  known,
+  env,
+  i
+) = inference_step_ck_app_args_in(
+  j,
+  c,
+  arguments,
+  known,
+  env,
+  i
+) { ⊢ ck_app_args_in(
+  Succ(j),
+  c,
+  arguments,
+  known,
+  env,
+  i
+) = inference_step_ck_app_args_in(j, c, arguments, known, env, i) from match arguments {
     Nil => Refl
     Cons(a, rest) => Refl
   } }
 
 pub fn inference_match_answer(j: Nat, c: Checker, result: Option(Ty)): Mut1(Ty, Checker) {
-  match result: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match result {
     None => mut1(TyNever, c)
     Some(t) => mut1(t, c)
   }
@@ -581,7 +622,7 @@ pub theorem inference_match_answer_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_match_answer(j, c, result)) {
-  match result: CkRunFrame(c, inference_match_answer(j, c, result)) {
+  ⊢ CkRunFrame(c, inference_match_answer(j, c, result)) from match result {
     None => run_frame_return(c, TyNever, ordered)
     Some(t) => run_frame_return(c, t, ordered)
   }
@@ -677,4 +718,11 @@ pub theorem inference_unf_ck_match_expr_in(
   arms: List(SurfaceArm),
   env: List(Local),
   span: TySpan
-): ck_match_expr_in(Succ(j), c, scrutinee, arms, env, span) = inference_step_ck_match_expr_in(j, c, scrutinee, arms, env, span) { Refl }
+): ck_match_expr_in(
+  Succ(j),
+  c,
+  scrutinee,
+  arms,
+  env,
+  span
+) = inference_step_ck_match_expr_in(j, c, scrutinee, arms, env, span) { Refl }

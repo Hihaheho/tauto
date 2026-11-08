@@ -1,0 +1,43 @@
+@ cases.a-match-on-a-lambda-parameter-leaves-the-open-result-type-closed
+files."main.nib" = ```tauto
+fn g(o: Option(Nat)): Option(Nat) { o }
+fn run(fuel: Nat, s: Nat): Option(Nat) {
+  ⊢ Option(Nat) from match fuel {
+    Zero => None
+    Succ(f) => ⊢ Option(Nat) from match g(Some(s)) {
+      None => Some(s)
+      Some(x) => run(f, x)
+    }
+  }
+}
+inductive RunsTo(s1: Nat, s2: Nat): Prop {
+  Mk(fuel: Nat, e: run(fuel, s1) = Some(s2)): RunsTo(s1, s2)
+}
+theorem stops(s: Nat, stop: g(Some(s)) = None): RunsTo(s, s) {
+  RunsTo::Mk(1, Eq::congr((o: Option(Nat)) => ⊢ Option(Nat) from match o {
+    None => Some(s)
+    Some(x) => run(Zero, x)
+  }, stop))
+}
+```
+checks.stops = "ok"
+
+@ cases.an-unannotated-lambda-before-a-match-argument-reads-its-notation
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::Base
+fn len(l: List(Nat)): Nat { List::length(l) }
+theorem len_self(l: List(Nat)): len(l) = len(l) {
+  List::ind(
+    Nat,
+    (k) => len(k) = len(k),
+    Refl,
+    (h, t, ih) => match h: len(Cons(h, t)) = len(Cons(h, t)) {
+      Zero => Refl
+      Succ(p) => Refl
+    },
+    l
+  )
+}
+```
+checks.len_self = "ok"

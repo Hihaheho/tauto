@@ -34,17 +34,17 @@ pub(open) inductive SchemeKind: Type {
 }
 
 pub fn scheme_kind(s: List(Nat)): SchemeKind {
-  match bytes_eq(s, Text::bytes("http")): SchemeKind {
+  ⊢ SchemeKind from match bytes_eq(s, Text::bytes("http")) {
     true => Special(80)
-    false => match bytes_eq(s, Text::bytes("https")): SchemeKind {
+    false => ⊢ SchemeKind from match bytes_eq(s, Text::bytes("https")) {
       true => Special(443)
-      false => match bytes_eq(s, Text::bytes("ws")): SchemeKind {
+      false => ⊢ SchemeKind from match bytes_eq(s, Text::bytes("ws")) {
         true => Special(80)
-        false => match bytes_eq(s, Text::bytes("wss")): SchemeKind {
+        false => ⊢ SchemeKind from match bytes_eq(s, Text::bytes("wss")) {
           true => Special(443)
-          false => match bytes_eq(s, Text::bytes("ftp")): SchemeKind {
+          false => ⊢ SchemeKind from match bytes_eq(s, Text::bytes("ftp")) {
             true => Special(21)
-            false => match bytes_eq(s, Text::bytes("file")): SchemeKind {
+            false => ⊢ SchemeKind from match bytes_eq(s, Text::bytes("file")) {
               true => File
               false => NotSpecial
             }
@@ -56,7 +56,7 @@ pub fn scheme_kind(s: List(Nat)): SchemeKind {
 }
 
 pub fn is_special(s: List(Nat)): Bool {
-  match scheme_kind(s): Bool {
+  ⊢ Bool from match scheme_kind(s) {
     Special(d) => true
     File => true
     NotSpecial => false
@@ -64,19 +64,22 @@ pub fn is_special(s: List(Nat)): Bool {
 }
 
 pub fn scheme_byte(b: Nat): Bool {
-  Bool::or(is_lower(b), Bool::or(is_digit(b), Bool::or(Nat::eq(b, 43), Bool::or(Nat::eq(b, 45), Nat::eq(b, 46)))))
+  Bool::or(
+    is_lower(b),
+    Bool::or(is_digit(b), Bool::or(Nat::eq(b, 43), Bool::or(Nat::eq(b, 45), Nat::eq(b, 46))))
+  )
 }
 
 // A scheme as the parser leaves it: a lower-case letter, then scheme bytes.
 pub fn scheme_ok(s: List(Nat)): Bool {
-  match s: Bool {
+  ⊢ Bool from match s {
     Nil => false
     Cons(b, t) => Bool::and(is_lower(b), all_bytes(scheme_byte, t))
   }
 }
 
 pub fn query_set_of(s: List(Nat)): (Nat) -> Bool {
-  match is_special(s): (Nat) -> Bool {
+  ⊢ (Nat) -> Bool from match is_special(s) {
     true => special_query_set
     false => query_set
   }
@@ -84,11 +87,14 @@ pub fn query_set_of(s: List(Nat)): (Nat) -> Bool {
 
 // The decimal digits of `n`, with `fuel` digits at most.
 pub fn decimal(fuel: Nat, n: Nat): List(Nat) {
-  match fuel: List(Nat) {
+  ⊢ List(Nat) from match fuel {
     Zero => Nil
-    Succ(k) => match Nat::lt(n, 10): List(Nat) {
+    Succ(k) => ⊢ List(Nat) from match Nat::lt(n, 10) {
       true => Cons(Nat::add(n, 48), Nil)
-      false => List::append(decimal(k, Nat::div_nz(n, 10, Nat::ne_zero(10, Refl))), Cons(Nat::add(Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl)), 48), Nil))
+      false => List::append(
+        decimal(k, Nat::div_nz(n, 10, Nat::ne_zero(10, Refl))),
+        Cons(Nat::add(Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl)), 48), Nil)
+      )
     }
   }
 }
@@ -99,9 +105,9 @@ pub fn port_text(n: Nat): List(Nat) {
 }
 
 pub fn digits_value(acc: Nat, l: List(Nat)): Option(Nat) {
-  match l: Option(Nat) {
+  ⊢ Option(Nat) from match l {
     Nil => Some(acc)
-    Cons(b, t) => match is_digit(b): Option(Nat) {
+    Cons(b, t) => ⊢ Option(Nat) from match is_digit(b) {
       true => digits_value(Nat::add(Nat::mul(acc, 10), Nat::sub(b, 48)), t)
       false => None
     }
@@ -109,21 +115,21 @@ pub fn digits_value(acc: Nat, l: List(Nat)): Option(Nat) {
 }
 
 pub fn opt_bytes(c: Nat, o: Option(List(Nat))): List(Nat) {
-  match o: List(Nat) {
+  ⊢ List(Nat) from match o {
     None => Nil
     Some(x) => Cons(c, x)
   }
 }
 
 pub fn port_part(o: Option(Nat)): List(Nat) {
-  match o: List(Nat) {
+  ⊢ List(Nat) from match o {
     None => Nil
     Some(n) => Cons(58, port_text(n))
   }
 }
 
 pub fn pass_part(pass: List(Nat)): List(Nat) {
-  match pass: List(Nat) {
+  ⊢ List(Nat) from match pass {
     Nil => Nil
     Cons(b, t) => Cons(58, pass)
   }
@@ -131,20 +137,23 @@ pub fn pass_part(pass: List(Nat)): List(Nat) {
 
 // `user:pass@`, or nothing when both are empty.
 pub fn cred_part(user: List(Nat), pass: List(Nat)): List(Nat) {
-  match Bool::and(is_empty(user), is_empty(pass)): List(Nat) {
+  ⊢ List(Nat) from match Bool::and(is_empty(user), is_empty(pass)) {
     true => Nil
     false => List::append(user, List::append(pass_part(pass), Cons(64, Nil)))
   }
 }
 
 pub fn auth_part(a: Authority): List(Nat) {
-  match a: List(Nat) {
-    Auth(user, pass, host, port) => List::append(cred_part(user, pass), List::append(host, port_part(port)))
+  ⊢ List(Nat) from match a {
+    Auth(user, pass, host, port) => List::append(
+      cred_part(user, pass),
+      List::append(host, port_part(port))
+    )
   }
 }
 
 pub fn segments_part(ss: List(List(Nat))): List(Nat) {
-  match ss: List(Nat) {
+  ⊢ List(Nat) from match ss {
     Nil => Nil
     Cons(s, rest) => Cons(47, join(47, ss))
   }
@@ -153,11 +162,11 @@ pub fn segments_part(ss: List(List(Nat))): List(Nat) {
 // Without an authority, a path whose first segment is empty would read as
 // one: `/.` goes before it.
 pub fn dot_prefix(ss: List(List(Nat))): List(Nat) {
-  match ss: List(Nat) {
+  ⊢ List(Nat) from match ss {
     Nil => Nil
-    Cons(s, rest) => match is_empty(s): List(Nat) {
+    Cons(s, rest) => ⊢ List(Nat) from match is_empty(s) {
       false => Nil
-      true => match rest: List(Nat) {
+      true => ⊢ List(Nat) from match rest {
         Nil => Nil
         Cons(s2, more) => Cons(47, Cons(46, Nil))
       }
@@ -166,9 +175,9 @@ pub fn dot_prefix(ss: List(List(Nat))): List(Nat) {
 }
 
 pub fn path_part(has_auth: Bool, p: UrlPath): List(Nat) {
-  match p: List(Nat) {
+  ⊢ List(Nat) from match p {
     Opaque(o) => o
-    Segments(ss) => match has_auth: List(Nat) {
+    Segments(ss) => ⊢ List(Nat) from match has_auth {
       true => segments_part(ss)
       false => List::append(dot_prefix(ss), segments_part(ss))
     }
@@ -176,17 +185,23 @@ pub fn path_part(has_auth: Bool, p: UrlPath): List(Nat) {
 }
 
 pub fn hier_part(a: Option(Authority), p: UrlPath): List(Nat) {
-  match a: List(Nat) {
+  ⊢ List(Nat) from match a {
     None => path_part(false, p)
     Some(x) => Cons(47, Cons(47, List::append(auth_part(x), path_part(true, p))))
   }
 }
 
 pub fn serialize(u: Url): List(Nat) {
-  match u: List(Nat) {
+  ⊢ List(Nat) from match u {
     MkUrl(scheme, auth, path, query, fragment) => List::append(
       scheme,
-      Cons(58, List::append(hier_part(auth, path), List::append(opt_bytes(63, query), opt_bytes(35, fragment))))
+      Cons(
+        58,
+        List::append(
+          hier_part(auth, path),
+          List::append(opt_bytes(63, query), opt_bytes(35, fragment))
+        )
+      )
     )
   }
 }

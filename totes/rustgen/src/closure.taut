@@ -11,7 +11,7 @@ import std::Text
 // Pure callable values may only reach acyclic declared bodies. All declarations
 // are also checked by the emitter; this scan supplies no type assumptions.
 pub fn rustgen_closure_names(bindings: List(RustgenBinding)): List(Text) {
-  match bindings: List(Text) {
+  ⊢ List(Text) from match bindings {
     Nil => Nil
     Cons(binding, rest) => Cons(binding.name, rustgen_closure_names(rest))
   }
@@ -19,7 +19,7 @@ pub fn rustgen_closure_names(bindings: List(RustgenBinding)): List(Text) {
 // Type-parameter entries belong to one lexical function body, not to a
 // transitive callee. Value parameters are tracked separately by each scan.
 pub fn rustgen_pure_globals(functions: List(RustgenFunction)): List(RustgenFunction) {
-  match functions: List(RustgenFunction) {
+  ⊢ List(RustgenFunction) from match functions {
     Nil => Nil
     Cons(f, rest) => if f.kind == 3 { rustgen_pure_globals(rest) } else {
       Cons(f, rustgen_pure_globals(rest))
@@ -49,9 +49,9 @@ pub(open) inductive RustgenPureJob: Type {
   ): RustgenPureJob
 }
 pub fn rustgen_pure_pattern_args(patterns: List(SurfacePattern)): List(Text) {
-  match patterns: List(Text) {
+  ⊢ List(Text) from match patterns {
     Nil => Nil
-    Cons(pattern, rest) => match pattern: List(Text) {
+    Cons(pattern, rest) => ⊢ List(Text) from match pattern {
       PtBind(name) => Cons(name, rustgen_pure_pattern_args(rest))
       PtCtor(name, args) => rustgen_pure_pattern_args(rest)
       PtWild => rustgen_pure_pattern_args(rest)
@@ -64,7 +64,7 @@ pub fn rustgen_pure_pattern_args(patterns: List(SurfacePattern)): List(Text) {
   }
 }
 pub fn rustgen_pure_pattern(pattern: SurfacePattern): List(Text) {
-  match pattern: List(Text) {
+  ⊢ List(Text) from match pattern {
     PtBind(name) => Cons(name, Nil)
     PtCtor(name, args) => rustgen_pure_pattern_args(args)
     PtWild => Nil
@@ -80,11 +80,11 @@ pub fn rustgen_pure_jobs(
   jobs: List(RustgenPureJob),
   functions: List(RustgenFunction)
 ): Bool {
-  match k: Bool {
+  ⊢ Bool from match k {
     Zero => false
-    Succ(j) => match jobs: Bool {
+    Succ(j) => ⊢ Bool from match jobs {
       Nil => true
-      Cons(job, rest) => match job: Bool {
+      Cons(job, rest) => ⊢ Bool from match job {
         RustgenPureFunctionJob(f, active) => if rustgen_member(f.name, active) { false } else {
           rustgen_pure_jobs(
             j,
@@ -95,12 +95,12 @@ pub fn rustgen_pure_jobs(
             functions
           )
         }
-        RustgenPureTermJob(term, locals, active) => match term.kind: Bool {
+        RustgenPureTermJob(term, locals, active) => ⊢ Bool from match term.kind {
           SkVar(name) => if rustgen_member(
             name,
             locals
           ) { rustgen_pure_jobs(j, rest, functions) } else {
-            match rustgen_find_function(name, functions): Bool {
+            ⊢ Bool from match rustgen_find_function(name, functions) {
               None => rustgen_pure_jobs(j, rest, functions)
               Some(f) => if f.kind == 0 {
                 rustgen_pure_jobs(j, Cons(RustgenPureFunctionJob(f, active), rest), functions)
@@ -125,7 +125,7 @@ pub fn rustgen_pure_jobs(
             Cons(RustgenPureTermJob(body, List::append(params, locals), active), rest),
             functions
           )
-          SkIf(condition, then, otherwise) => match otherwise: Bool {
+          SkIf(condition, then, otherwise) => ⊢ Bool from match otherwise {
             None => false
             Some(other) => rustgen_pure_jobs(
               j,
@@ -182,7 +182,7 @@ pub fn rustgen_pure_jobs(
           SkSyntaxLit(unused0, unused1) => false
           SkStep(unused0, unused1, unused2, unused3, unused4, unused5) => false
         }
-        RustgenPureTermsJob(Terms, locals, active) => match Terms: Bool {
+        RustgenPureTermsJob(Terms, locals, active) => ⊢ Bool from match Terms {
           Nil => rustgen_pure_jobs(j, rest, functions)
           Cons(term, more) => rustgen_pure_jobs(
             j,
@@ -193,7 +193,7 @@ pub fn rustgen_pure_jobs(
             functions
           )
         }
-        RustgenPureFieldsJob(fields, locals, active) => match fields: Bool {
+        RustgenPureFieldsJob(fields, locals, active) => ⊢ Bool from match fields {
           Nil => rustgen_pure_jobs(j, rest, functions)
           Cons(field, more) => rustgen_pure_jobs(
             j,
@@ -204,7 +204,7 @@ pub fn rustgen_pure_jobs(
             functions
           )
         }
-        RustgenPureArmsJob(arms, locals, active) => match arms: Bool {
+        RustgenPureArmsJob(arms, locals, active) => ⊢ Bool from match arms {
           Nil => rustgen_pure_jobs(j, rest, functions)
           Cons(arm, more) => rustgen_pure_jobs(
             j,
@@ -219,9 +219,9 @@ pub fn rustgen_pure_jobs(
             functions
           )
         }
-        RustgenPureBlockJob(Stmts, locals, active) => match Stmts: Bool {
+        RustgenPureBlockJob(Stmts, locals, active) => ⊢ Bool from match Stmts {
           Nil => rustgen_pure_jobs(j, rest, functions)
-          Cons(stmt, more) => match stmt: Bool {
+          Cons(stmt, more) => ⊢ Bool from match stmt {
             StExpr(value) => rustgen_pure_jobs(
               j,
               Cons(
@@ -324,17 +324,17 @@ pub fn rustgen_apply_resolved(
   values: List(RustgenValue),
   subst: List(RustgenBinding)
 ): RustgenResult(RustgenValue) {
-  match rustgen_resolve(10000, result, subst): RustgenResult(RustgenValue) {
+  ⊢ RustgenResult(RustgenValue) from match rustgen_resolve(10000, result, subst) {
     RustgenErr(Message) => RustgenErr(Message)
-    RustgenOk(output) => match rustgen_resolve_many(
+    RustgenOk(output) => ⊢ RustgenResult(RustgenValue) from match rustgen_resolve_many(
       10000,
       params,
       subst
-    ): RustgenResult(RustgenValue) {
+    ) {
       RustgenErr(Message) => RustgenErr(Message)
       RustgenOk(inputs) => if not(rustgen_pending_list(10000, inputs, output)) {
         RustgenErr("cannot infer a result-erased callable parameter")
-      } else { match rustgen_call_generics(inputs, output): RustgenResult(RustgenValue) {
+      } else { ⊢ RustgenResult(RustgenValue) from match rustgen_call_generics(inputs, output) {
           RustgenErr(Message) => RustgenErr(Message)
           RustgenOk(types) => RustgenOk(
             RustgenValue::Mk(

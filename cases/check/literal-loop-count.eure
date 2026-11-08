@@ -1,0 +1,37 @@
+// A loop count written as a literal (`255`) in a theorem whose proof goes
+// through lemmas stated over a variable count: checking it must not run the
+// loop. The lambda given to `Eq::congr` is applied to a term at the count; typed
+// by computing that application, the loop unfolds 255 times on a variable and
+// the term grows with each step.
+
+@ cases.a-literal-loop-count-is-not-computed-through-a-lemma
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn sq1(x: Nat): Nat { x * x + 1 }
+fn iter_a(k: Nat, x: Nat): Nat {
+  ⊢ Nat from match k {
+    Zero => x
+    Succ(m) => sq1(iter_a(m, x))
+  }
+}
+fn iter_b(k: Nat, x: Nat): Nat {
+  ⊢ Nat from match k {
+    Zero => x
+    Succ(m) => sq1(iter_b(m, x))
+  }
+}
+theorem iter_same(k: Nat, x: Nat): iter_a(k, x) = iter_b(k, x) {
+  ⊢ iter_a(k, x) = iter_b(k, x) from match k {
+    Zero => Refl
+    Succ(m) => Eq::congr((y: Nat) => sq1(y), iter_same(m, x))
+  }
+}
+theorem iter_same_255(x: Nat): iter_a(255, x) = iter_b(255, x) {
+  iter_same(255, x)
+}
+theorem iter_congr_255(x: Nat, y: Nat, e: x = y): iter_a(255, x) = iter_b(255, y) {
+  Eq::trans(Eq::congr((w: Nat) => iter_a(255, w), e), iter_same(255, y))
+}
+```
+
+checks_all = "ok"

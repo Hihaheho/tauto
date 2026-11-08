@@ -95,7 +95,7 @@ fn propositions_are_checked_despite_runtime_constructor_names() {
 enum Token { True, False }
 inductive Box: Type { Mk(value: Nat): Box }
 fn Valid(b: Option(Box), n: Nat): Prop {
-  match b: Prop { None => False, Some(v) => n = Zero }
+  ⊢ Prop from match b { None => False, Some(v) => n = Zero }
 }
 theorem box_zero(): Valid(Some(Box::Mk(Zero)), Zero) { Refl }
 "#;

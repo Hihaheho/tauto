@@ -19,7 +19,7 @@ module Acc {
     F: ∀ x: A. (∀ y: A. (R(y, x)) -> B(y)) -> B(x),
     x: A,
     a: Acc(A, R, x)
-  ): B(x) := Acc::rec(A, R, x2 => a2 => B(x2), x2 => h => ih => F(x2, ih), x, a)
+  ): B(x) := Acc::rec(<A: A, R: R>, x2 => a2 => B(x2), x2 => h => ih => F(x2, ih), x, a)
 
   // Whichever proof of accessibility the recursion is run on, `F` sees the same
   // values at the predecessors: the proofs are not told apart.
@@ -32,8 +32,7 @@ module Acc {
     a: Acc(A, R, x)
   ): fix(R, B, F, x, a) = F(x, y => r => fix(R, B, F, y, wf(y))) {
     Acc::ind(
-      A,
-      R,
+      <A: A, R: R>,
       x2 => a2 => fix(R, B, F, x2, a2) = F(x2, y => r => fix(R, B, F, y, wf(y))),
       x2 => h => ih => Refl,
       x,
@@ -64,7 +63,7 @@ pub def NatLt(a: Nat, b: Nat): Prop := a < b = true
 
 module Nat {
   pub fn lt_succ_cases(m: Nat, k: Nat, h: NatLt(m, Succ(k))): NatLt(m, k) ∨ m = k {
-    match m: NatLt(m, k) ∨ m = k {
+    ⊢ NatLt(m, k) ∨ m = k from match m {
       Zero => match k {
         Zero => OrInr(Refl)
         Succ(k2) => OrInl(Refl)
@@ -81,7 +80,7 @@ module Nat {
   }
 
   pub fn lt_acc(n: Nat, m: Nat, h: NatLt(m, n)): Acc(Nat, NatLt, m) {
-    match n: Acc(Nat, NatLt, m) {
+    ⊢ Acc(Nat, NatLt, m) from match n {
       Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(Nat::lt_zero_false(m)), h)))
       Succ(k) => Or::elim(
         lt_succ_cases(m, k, h),
@@ -120,12 +119,10 @@ pub fn inv_image_acc_gen<A: Type>(
   a: Acc(B, R, z)
 ): InvImageAcc(A, B, R, f, z) {
   Acc::ind(
-    B,
-    R,
+    <A: B, R: R>,
     z2 => a2 => InvImageAcc(A, B, R, f, z2),
     z2 => h => ih => x => e => AccIntro(
-      A,
-      InvImage(A, B, R, f),
+      <A: A, R: InvImage(A, B, R, f)>,
       x,
       y => r => ih(f(y), Eq::subst(w => R(f(y), w), e, r), y, Refl)
     ),
@@ -148,10 +145,10 @@ pub(open) inductive WfRel(A: Type): Type {
 }
 
 pub def wf_rel_lt<A: Type>(w: WfRel(A)): Relation(A) :=
-WfRel::rec(A, w2 => Relation(A), R => wf => R, w)
+WfRel::rec(<A: A>, w2 => Relation(A), R => wf => R, w)
 
 pub fn wf_rel_wf<A: Type>(w: WfRel(A)): WellFounded(A, wf_rel_lt(w)) {
-  match w: WellFounded(A, wf_rel_lt(w)) {
+  ⊢ WellFounded(A, wf_rel_lt(w)) from match w {
     Mk(R, wf) => wf
   }
 }

@@ -48,61 +48,50 @@ fn assert_code(out: &Output, code: i32) {
 }
 
 #[test]
-fn local_docs_show_proofs_axioms_runtime_and_escaped_sources() {
+fn pages_highlight_sources_and_link_names_across_imports() {
     let tmp = Temp::new();
-    let source = tmp.write(
-        "api.taut",
-        r#"// <script>alert("x")</script> 日本語 & 'text'
-axiom assumed(): Zero = Zero
-theorem proved(): Zero = Zero { Refl(Nat, Zero) }
-theorem dependent(): Zero = Zero { assumed() }
-fn twice(n: i64): i64 { n + n }
-"#,
+    tmp.write(
+        "lib/shapes.taut",
+        "// Shapes.\npub enum Shape {\n  Dot\n}\n\npub fn area(s: Shape): i64 { 0 }\n",
+    );
+    let main = tmp.write(
+        "main.taut",
+        "import \"lib/shapes.taut\"\n\nfn twice(n: i64): i64 { n + n }\n\nfn use_it(): i64 {\n  let area: i64 := 1\n  twice(area)\n}\n\nfn other(): i64 { area(Dot) }\n",
     );
     let output = tmp.0.join("docs");
-    assert_code(&doc(&source, &output), 0);
-    let html = fs::read_to_string(output.join("index.html")).unwrap();
-    assert!(html.contains("axiom (assumption, not a proof)"), "{html}");
-    assert!(html.contains("Axiom dependencies: assumed"), "{html}");
-    assert!(html.contains("fn twice(n: i64): i64"), "{html}");
-    assert!(html.contains("not proof-checked"));
-    assert!(html.contains("not type-checked or proof-checked"));
+    let out = doc(&main, &output);
+    assert_code(&out, 0);
+    let index = fs::read_to_string(output.join("index.html")).unwrap();
     assert!(
-        html.contains(
-            "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; 日本語 &amp; &#39;text&#39;"
-        )
+        index.contains("<a href=\"main.taut.html\">main.taut</a>"),
+        "{index}"
     );
-    assert!(!html.contains("<script>"));
-    assert!(html.contains("href=\"#source-0-L"));
-    assert!(html.contains("id=\"source-0-L1\""));
-    let second = tmp.0.join("again");
-    assert_code(&doc(&source, &second), 0);
-    assert_eq!(html, fs::read_to_string(second.join("index.html")).unwrap());
-    let before = fs::read(output.join("index.html")).unwrap();
-    assert_code(&doc(&source, &output), 1);
-    assert_eq!(before, fs::read(output.join("index.html")).unwrap());
-}
-
-#[test]
-fn incomplete_and_failed_proofs_are_documented_but_not_successful() {
-    let tmp = Temp::new();
-    for (name, proof, code, status) in [
-        ("hole", r#"?todo"#, 3, "incomplete (not accepted)"),
-        ("bad", r#"Zero"#, 1, "failed (not accepted)"),
-    ] {
-        let source = tmp.write(
-            &format!("{name}.taut"),
-            &format!(
-                r#"theorem unfinished(): Zero = Zero {{ {} }}
-"#,
-                proof
-            ),
-        );
-        let output = tmp.0.join(name);
-        assert_code(&doc(&source, &output), code);
-        let html = fs::read_to_string(output.join("index.html")).unwrap();
-        assert!(html.contains(status), "{html}");
-    }
+    assert!(
+        index.contains("lib/shapes.taut.html#L6\">area</a>"),
+        "{index}"
+    );
+    let page = fs::read_to_string(output.join("main.taut.html")).unwrap();
+    // Line anchors, keywords and comments.
+    assert!(page.contains("id=\"L3\""), "{page}");
+    assert!(page.contains("<span class=\"kw\">fn</span>"), "{page}");
+    // A call links within the file; a name from an import links to its page.
+    assert!(page.contains("<a href=\"#L3\">twice</a>"), "{page}");
+    assert!(page.contains("<a href=\"lib/shapes.taut.html#L6\">area</a>(<a href=\"lib/shapes.taut.html#L3\">Dot</a>)"), "{page}");
+    // A local of the same name is not linked.
+    assert!(page.contains("twice</a>(area)"), "{page}");
+    let lib = fs::read_to_string(output.join("lib/shapes.taut.html")).unwrap();
+    assert!(
+        lib.contains("<span class=\"com\">// Shapes.</span>"),
+        "{lib}"
+    );
+    assert!(lib.contains("href=\"../index.html\""), "{lib}");
+    // Same input, same bytes.
+    let again = tmp.0.join("again");
+    assert_code(&doc(&main, &again), 0);
+    assert_eq!(
+        page,
+        fs::read_to_string(again.join("main.taut.html")).unwrap()
+    );
 }
 
 #[test]
@@ -126,29 +115,25 @@ perform show("must-not-run", 1)
     let html = fs::read_to_string(output.join("index.html")).unwrap();
     assert!(html.contains("twice"));
     assert!(!html.contains("outside.taut"));
+    assert!(output.join("src/main.taut.html").is_file());
 }
 
 #[test]
-fn imported_parent_paths_and_html_filenames_only_become_escaped_labels() {
+fn imports_outside_the_root_and_markup_in_paths_stay_out() {
     let tmp = Temp::new();
-    tmp.write(
-        "shared<&>.taut",
-        r#"pub theorem r#shared(): Zero = Zero { Refl(Nat, Zero) }
-"#,
-    );
-    let source = tmp.write(
-        "src/main.taut",
-        r#"import "../shared<&>.taut"
-theorem local(): Zero = Zero { r#shared() }
-"#,
+    tmp.write("shared.taut", "pub fn shared(): i64 { 1 }\n");
+    let entry = tmp.write(
+        "pkg/main<&>.taut",
+        "import \"../shared.taut\"\nfn main_value(): Text { \"<b>&</b>\" }\n",
     );
     let output = tmp.0.join("docs");
-    assert_code(&doc(&source, &output), 0);
-    let html = fs::read_to_string(output.join("index.html")).unwrap();
-    assert!(html.contains("shared&lt;&amp;&gt;.taut"));
-    assert!(!html.contains("href=\"../"));
-    assert_eq!(fs::read_dir(&output).unwrap().count(), 1);
-    assert!(tmp.0.join("shared<&>.taut").exists());
+    assert_code(&doc(&entry, &output), 0);
+    let index = fs::read_to_string(output.join("index.html")).unwrap();
+    assert!(index.contains("main&lt;&amp;&gt;.taut"), "{index}");
+    assert!(!index.contains("shared"), "{index}");
+    let page = fs::read_to_string(output.join("main<&>.taut.html")).unwrap();
+    assert!(page.contains("&lt;b&gt;&amp;&lt;/b&gt;"), "{page}");
+    assert!(!tmp.0.join("shared.taut.html").exists());
 }
 
 #[test]
@@ -198,56 +183,18 @@ fn output_symlinks_are_not_followed() {
 }
 
 #[test]
-fn class_law_signatures_are_obligations_not_claimed_proofs() {
+fn pages_colour_the_tokens_inside_macros_as_an_editor_does() {
     let tmp = Temp::new();
-    let source = tmp.write(
-        "laws.taut",
-        r#"class Identity(A: Type) {
-  fn identity(x: A): A
-  law same<x: A>(): Identity::identity(x) = x
-}
-"#,
+    let main = tmp.write(
+        "main.taut",
+        "import std::proof::Lang { proof }\nimport std::proof::Forms { proof_by }\n\ntheorem t(): 1 = 1 {\n  proof!(```\n    By Refl.\n  ```)\n}\n",
     );
     let output = tmp.0.join("docs");
-    assert_code(&doc(&source, &output), 0);
-    let html = fs::read_to_string(output.join("index.html")).unwrap();
-    assert!(html.contains("law (obligation) same"), "{html}");
-    assert!(html.contains("does not supply their proofs"));
-}
-
-#[test]
-fn written_instance_methods_and_module_names_survive_runtime_lowering() {
-    let tmp = Temp::new();
-    let source = tmp.write(
-        "api.taut",
-        r#"class Twice(A: Type) { fn twice(x: A): A }
-instance Twice(i64) { fn twice(x: i64): i64 { x + x } }
-module Calc { fn identity(n: i64): i64 { n } }
-"#,
-    );
-    let output = tmp.0.join("docs");
-    assert_code(&doc(&source, &output), 0);
-    let html = fs::read_to_string(output.join("index.html")).unwrap();
-    assert!(html.contains("instance Twice(i64)"), "{html}");
-    assert!(html.contains("fn twice(x: i64): i64"));
-    assert!(html.contains("fn Calc::identity(n: i64): i64"));
-    assert_eq!(html.matches("<code>Calc::identity</code>").count(), 1);
-}
-
-#[test]
-fn inductive_constructor_generics_are_not_rendered_as_explicit_arguments() {
-    let tmp = Temp::new();
-    let source = tmp.write(
-        "generic.taut",
-        r#"inductive Witness: Type1 { Mk<A>(value: A): Witness }
-"#,
-    );
-    let output = tmp.0.join("docs");
-    let out = doc(&source, &output);
+    let out = doc(&main, &output);
     assert_code(&out, 0);
-    let html = fs::read_to_string(output.join("index.html")).unwrap();
-    assert!(
-        html.contains("Mk&lt;A: Type&gt;(value: A): Witness"),
-        "{html}"
-    );
+    let page = fs::read_to_string(output.join("main.taut.html")).unwrap();
+    // The text of the macro is split: its words take the editor's classes.
+    assert!(page.contains("<span class=\"kw\">By</span>"), "{page}");
+    // What no token colours is plain, not the colour of the text around it.
+    assert!(!page.contains("<span class=\"str\">"), "{page}");
 }

@@ -14,7 +14,7 @@ pub(open) inductive Stack: Type {
 }
 
 pub fn shape(stack: Stack): Shape {
-  match stack: Shape {
+  ⊢ Shape from match stack {
     EmptyStack => Empty
     Number(value, rest) => NumOn(shape(rest))
     Boolean(value, rest) => BoolOn(shape(rest))
@@ -37,19 +37,19 @@ pub(open) inductive Code: Type {
 
 // Failure means an operand is absent or has the wrong kind.
 pub fn run_op(op: Op, stack: Stack): Option(Stack) {
-  match op: Option(Stack) {
+  ⊢ Option(Stack) from match op {
     PushNum(value) => Some(Number(value, stack))
     PushBool(value) => Some(Boolean(value, stack))
-    Add => match stack: Option(Stack) {
+    Add => ⊢ Option(Stack) from match stack {
       EmptyStack => None
       Boolean(flag, rest) => None
-      Number(right, rest) => match rest: Option(Stack) {
+      Number(right, rest) => ⊢ Option(Stack) from match rest {
         EmptyStack => None
         Boolean(flag, tail) => None
         Number(left, tail) => Some(Number(Nat::add(left, right), tail))
       }
     }
-    Dup => match stack: Option(Stack) {
+    Dup => ⊢ Option(Stack) from match stack {
       EmptyStack => None
       Number(value, rest) => Some(Number(value, Number(value, rest)))
       Boolean(value, rest) => Some(Boolean(value, Boolean(value, rest)))
@@ -58,21 +58,21 @@ pub fn run_op(op: Op, stack: Stack): Option(Stack) {
 }
 
 pub fn chain(result: Option(Stack), next: (Stack) -> Option(Stack)): Option(Stack) {
-  match result: Option(Stack) {
+  ⊢ Option(Stack) from match result {
     None => None
     Some(stack) => next(stack)
   }
 }
 
 pub fn run(code: Code, stack: Stack): Option(Stack) {
-  match code: Option(Stack) {
+  ⊢ Option(Stack) from match code {
     Halt => Some(stack)
     Exec(op) => run_op(op, stack)
     Seq(first, second) => chain(run(first, stack), next => run(second, next))
-    Branch(yes, no) => match stack: Option(Stack) {
+    Branch(yes, no) => ⊢ Option(Stack) from match stack {
       EmptyStack => None
       Number(value, rest) => None
-      Boolean(flag, rest) => match flag: Option(Stack) {
+      Boolean(flag, rest) => ⊢ Option(Stack) from match flag {
         true => run(yes, rest)
         false => run(no, rest)
       }

@@ -16,11 +16,7 @@ import "written_error_sound.taut"
 import "written_list_sound.taut"
 import "../../surface/src/surface.taut"
 
-pub fn written_nested_tail(
-  span: TySpan,
-  inner: Ty,
-  m: Mut1(List(Ty), Checker)
-): Mut1(Ty, Checker) {
+pub fn written_nested_tail(span: TySpan, inner: Ty, m: Mut1(List(Ty), Checker)): Mut1(Ty, Checker) {
   frame_bind(
     List(Ty),
     Ty,
@@ -80,14 +76,14 @@ pub theorem written_nested_tail_sound(
   SkApp(SurfaceTermIndexedMk(SkApp(function, before), start, end, ast_occurrence), args),
   ck_val(written_nested_tail(span, inner, m))
 ) {
-  match m: WrittenKind(
+  ⊢ WrittenKind(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
     under_borrow,
     SkApp(SurfaceTermIndexedMk(SkApp(function, before), start, end, ast_occurrence), args),
     ck_val(written_nested_tail(span, inner, m))
-  ) {
+  ) from match m {
     mut1(types, MkState) => written_kind_state(
       c,
       MkState,
@@ -166,7 +162,9 @@ pub theorem written_nested_after_sound(
     SurfaceTermIndexedMk(SkApp(function, before), start, end, ast_occurrence),
     ck_val(m)
   ),
-  ihtail: ∀ MkState: Checker. ∀ ordinary_state: frame_under_borrow(MkState) = false. ∀ clean: DiagnosticClean(
+  ihtail: ∀ MkState: Checker. ∀ ordinary_state: frame_under_borrow(
+    MkState
+  ) = false. ∀ clean: DiagnosticClean(
     ck_st(ck_written_each(args, MkState, generics))
   ). WrittenTerms(
     ck_datas_of(MkState),
@@ -184,17 +182,21 @@ pub theorem written_nested_after_sound(
   SkApp(SurfaceTermIndexedMk(SkApp(function, before), start, end, ast_occurrence), args),
   ck_val(context_nested_after(c, args, generics, span, m))
 ) {
-  match m: WrittenKind(
+  ⊢ WrittenKind(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
     under_borrow,
     SkApp(SurfaceTermIndexedMk(SkApp(function, before), start, end, ast_occurrence), args),
     ck_val(context_nested_after(c, args, generics, span, m))
-  ) {
+  ) from match m {
     mut1(inner, MkState) => {
-      let ordinary: frame_under_borrow(written_nested_restore(c, MkState)) = false := Eq::congr(written_context_borrow, context)
-      let same: ck_datas_of(written_nested_restore(c, MkState)) = ck_datas_of(c) := Eq::congr(frame_read_datas, read)
+      let ordinary: frame_under_borrow(
+        written_nested_restore(c, MkState)
+      ) = false := Eq::congr(written_context_borrow, context)
+      let same: ck_datas_of(
+        written_nested_restore(c, MkState)
+      ) = ck_datas_of(c) := Eq::congr(frame_read_datas, read)
       let head_clean: DiagnosticClean(
         MkState
       ) := written_nested_tail_errors(
@@ -284,7 +286,9 @@ pub theorem written_application_kind_sound(
     SurfaceTermIndexedMk(sk, start, end, ast_occurrence),
     ck_val(ck_written_in(SurfaceTermIndexedMk(sk, start, end, ast_occurrence), MkState, generics))
   ),
-  iheach: ∀ MkState: Checker. ∀ ordinary_state: frame_under_borrow(MkState) = false. ∀ clean: DiagnosticClean(
+  iheach: ∀ MkState: Checker. ∀ ordinary_state: frame_under_borrow(
+    MkState
+  ) = false. ∀ clean: DiagnosticClean(
     ck_st(ck_written_each(args, MkState, generics))
   ). WrittenTerms(
     ck_datas_of(MkState),
@@ -324,7 +328,7 @@ pub theorem written_application_kind_sound(
     )
   )
 ) {
-  match sk: WrittenKind(
+  ⊢ WrittenKind(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
@@ -341,7 +345,7 @@ pub theorem written_application_kind_sound(
         written_nested(SurfaceTermIndexedMk(sk, start, end, ast_occurrence))
       )
     )
-  ) {
+  ) from match sk {
     SkVar(name) => written_non_nested_kind_sound(
       ast_occurrence,
       SkVar(name),
@@ -841,14 +845,7 @@ pub theorem written_application_kind_sound(
       iheach(c, ordinary),
       clean
     )
-    SkStep(
-      arg_tactic,
-      arg_arg,
-      arg_call_start,
-      arg_call_end,
-      arg_before,
-      arg_arms
-    ) => written_non_nested_kind_sound(
+    SkStep(arg_tactic, arg_arg, arg_call_start, arg_call_end, arg_before, arg_arms) => written_non_nested_kind_sound(
       ast_occurrence,
       SkStep(arg_tactic, arg_arg, arg_call_start, arg_call_end, arg_before, arg_arms),
       c,
@@ -884,7 +881,9 @@ pub theorem written_application_sound(
     function,
     ck_val(ck_written_in(function, MkState, generics))
   ),
-  iheach: ∀ MkState: Checker. ∀ ordinary_state: frame_under_borrow(MkState) = false. ∀ clean: DiagnosticClean(
+  iheach: ∀ MkState: Checker. ∀ ordinary_state: frame_under_borrow(
+    MkState
+  ) = false. ∀ clean: DiagnosticClean(
     ck_st(ck_written_each(args, MkState, generics))
   ). WrittenTerms(
     ck_datas_of(MkState),
@@ -908,7 +907,7 @@ pub theorem written_application_sound(
     frame_written_app(c, args, generics, span, function, under_borrow, written_nested(function))
   )
 ) {
-  match function: WrittenKind(
+  ⊢ WrittenKind(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
@@ -917,7 +916,7 @@ pub theorem written_application_sound(
     ck_val(
       frame_written_app(c, args, generics, span, function, under_borrow, written_nested(function))
     )
-  ) {
+  ) from match function {
     SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => written_application_kind_sound(
       ast_occurrence,
       sk,

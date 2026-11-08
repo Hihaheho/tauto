@@ -18,14 +18,14 @@ pub(open) inductive Scope: Type {
 }
 
 pub fn env_find(env: List(Local), name: Text): Option(Local) {
-  match env: Option(Local) {
+  ⊢ Option(Local) from match env {
     Nil => None
     Cons(l, rest) => if l.name == name { Some(l) } else { env_find(rest, name) }
   }
 }
 
 pub fn env_has(env: List(Local), name: Text): Bool {
-  match env_find(env, name): Bool {
+  ⊢ Bool from match env_find(env, name) {
     Some(l) => true
     None => false
   }
@@ -43,7 +43,9 @@ pub fn ck_bind_local(
     &mut c.locals,
     Ordmap::insert(c.locals, LocalKey { name: name, site: site }, ty, local_key_compare)
   )
-  env := Scope { items: Cons(Local { name: name, ty: ty, mutable: mutable, r#view: false }, env.items) }
+  env := Scope {
+    items: Cons(Local { name: name, ty: ty, mutable: mutable, r#view: false }, env.items)
+  }
 }
 
 pub fn ck_bind_params(
@@ -53,9 +55,9 @@ pub fn ck_bind_params(
   tys: List(Ty),
   site: Nat
 ): Unit {
-  match names: Unit {
+  ⊢ Unit from match names {
     Nil => #()
-    Cons(n, rest) => match tys: Unit {
+    Cons(n, rest) => ⊢ Unit from match tys {
       Nil => #()
       Cons(t, more) => {
         ck_bind_local(&mut c, &mut env, n, t, false, site)
@@ -66,7 +68,7 @@ pub fn ck_bind_params(
 }
 
 pub fn ck_fresh_each(gs: List(Text), &mut c: Checker): List(Ty) {
-  match gs: List(Ty) {
+  ⊢ List(Ty) from match gs {
     Nil => Nil
     Cons(g, rest) => {
       let h := ck_fresh(&mut c)
@@ -77,25 +79,25 @@ pub fn ck_fresh_each(gs: List(Text), &mut c: Checker): List(Ty) {
 }
 
 pub fn data_generics_of(d: Datas, dname: Text): List(Text) {
-  match datas_decl(d, dname): List(Text) {
+  ⊢ List(Text) from match datas_decl(d, dname) {
     Some(data) => data.generics
     None => Nil
   }
 }
 
 pub fn data_is_struct(d: Datas, dname: Text): Bool {
-  match datas_decl(d, dname): Bool {
+  ⊢ Bool from match datas_decl(d, dname) {
     Some(data) => data.is_struct
     None => false
   }
 }
 
 pub fn datas_ctor_nullary(d: Datas, dc: Pair(Text, Nat)): Bool {
-  match datas_decl(d, dc.fst): Bool {
+  ⊢ Bool from match datas_decl(d, dc.fst) {
     None => false
-    Some(data) => match datas_constructor(d, dc.fst, dc.snd): Bool {
+    Some(data) => ⊢ Bool from match datas_constructor(d, dc.fst, dc.snd) {
       None => false
-      Some(ctor) => match ctor.fields: Bool {
+      Some(ctor) => ⊢ Bool from match ctor.fields {
         Nil => not(data.is_struct)
         Cons(f, rest) => false
       }
@@ -104,14 +106,14 @@ pub fn datas_ctor_nullary(d: Datas, dc: Pair(Text, Nat)): Bool {
 }
 
 pub fn datas_any_nullary(d: Datas, candidates: List(Pair(Text, Nat))): Bool {
-  match candidates: Bool {
+  ⊢ Bool from match candidates {
     Nil => false
     Cons(candidate, rest) => datas_ctor_nullary(d, candidate) || datas_any_nullary(d, rest)
   }
 }
 
 pub fn datas_nullary_expected(d: Datas, name: Text, expected: Ty): Bool {
-  match datas_ctor_expected(d, name, expected): Bool {
+  ⊢ Bool from match datas_ctor_expected(d, name, expected) {
     Some(dc) => datas_ctor_nullary(d, dc)
     None => datas_any_nullary(d, datas_ctor_candidates(d, name))
   }
@@ -122,14 +124,14 @@ pub fn datas_nullary(d: Datas, name: Text): Bool {
 }
 
 pub fn ty_borrow_mode(t: Ty): Option(Bool) {
-  match t: Option(Bool) {
+  ⊢ Option(Bool) from match t {
     TyBorrow(x, m) => Some(m)
     _ => None
   }
 }
 
 pub fn field_under(t: Ty, borrowed: Option(Bool)): Ty {
-  match borrowed: Ty {
+  ⊢ Ty from match borrowed {
     Some(m) => TyBorrow(t, m)
     None => t
   }
@@ -153,7 +155,7 @@ pub fn ck_ctor_fields(
   t: Ty,
   span: TySpan
 ): Option(List(DataField)) {
-  match datas_ctor_expected(c.datas, name, ck_resolve(&c, t)): Option(List(DataField)) {
+  ⊢ Option(List(DataField)) from match datas_ctor_expected(c.datas, name, ck_resolve(&c, t)) {
     None => {
       ck_error(&mut c, datas_ctor_error(c.datas, name), span)
       None
@@ -202,12 +204,12 @@ mutual {
     span: TySpan,
     at: Nat
   ): Unit {
-    match k: Unit {
+    ⊢ Unit from match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         #()
       }
-      Succ(j) => match p: Unit {
+      Succ(j) => ⊢ Unit from match p {
         PtWild => #()
         PtBind(name) => if datas_nullary_expected(c.datas, name, ck_resolve(&c, t)) {
           ck_ctor_pattern_in(j, &mut c, name, Nil, t, &mut env, span, at)
@@ -234,12 +236,12 @@ mutual {
         PtBool(b) => ck_pattern_literal(&mut c, TyBool, t, span)
         PtText(s) => ck_pattern_literal(&mut c, TyText, t, span)
         PtCtor(name, args) => ck_ctor_pattern_in(j, &mut c, name, args, t, &mut env, span, at)
-        PtRecord(name, fields) => match datas_positional_expected(
+        PtRecord(name, fields) => ⊢ Unit from match datas_positional_expected(
           c.datas,
           name,
           fields,
           ck_resolve(&c, t)
-        ): Unit {
+        ) {
           PositionalOk(args) => ck_ctor_pattern_in(j, &mut c, name, args, t, &mut env, span, at)
           PositionalErr(e) => ck_error(&mut c, e, span)
         }
@@ -258,14 +260,14 @@ mutual {
     span: TySpan,
     at: Nat
   ): Unit {
-    match k: Unit {
+    ⊢ Unit from match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         #()
       }
       Succ(j) => {
         let borrowed := ty_borrow_mode(ck_resolve(&c, t))
-        match ck_ctor_fields(&mut c, name, args, t, span): Unit {
+        ⊢ Unit from match ck_ctor_fields(&mut c, name, args, t, span) {
           None => #()
           Some(fields) => ck_ctor_args_in(j, &mut c, args, fields, borrowed, &mut env, span, at)
         }
@@ -283,14 +285,14 @@ mutual {
     span: TySpan,
     at: Nat
   ): Unit {
-    match k: Unit {
+    ⊢ Unit from match k {
       Zero => {
         ck_error(&mut c, "type checking ran out of steps", TySpan { start: 0, end: 0 })
         #()
       }
-      Succ(j) => match args: Unit {
+      Succ(j) => ⊢ Unit from match args {
         Nil => #()
-        Cons(p, rest) => match fields: Unit {
+        Cons(p, rest) => ⊢ Unit from match fields {
           Nil => #()
           Cons(f, more) => {
             ck_pattern_in(j, &mut c, p, field_under(f.ty, borrowed), &mut env, span, at)
@@ -314,9 +316,9 @@ pub fn ck_pattern(
 }
 
 pub fn open_patterns(arms: List(SurfaceArm)): List(SurfacePattern) {
-  match arms: List(SurfacePattern) {
+  ⊢ List(SurfacePattern) from match arms {
     Nil => Nil
-    Cons(a, rest) => match a.guard: List(SurfacePattern) {
+    Cons(a, rest) => ⊢ List(SurfacePattern) from match a.guard {
       None => Cons(a.pattern, open_patterns(rest))
       Some(g) => open_patterns(rest)
     }
@@ -324,7 +326,7 @@ pub fn open_patterns(arms: List(SurfaceArm)): List(SurfacePattern) {
 }
 
 pub fn pattern_takes_all(d: Datas, p: SurfacePattern, expected: Ty): Bool {
-  match p: Bool {
+  ⊢ Bool from match p {
     PtWild => true
     PtBind(n) => not(datas_nullary_expected(d, n, expected))
     _ => false
@@ -332,28 +334,28 @@ pub fn pattern_takes_all(d: Datas, p: SurfacePattern, expected: Ty): Bool {
 }
 
 pub fn any_takes_all(d: Datas, pats: List(SurfacePattern), expected: Ty): Bool {
-  match pats: Bool {
+  ⊢ Bool from match pats {
     Nil => false
     Cons(p, rest) => pattern_takes_all(d, p, expected) || any_takes_all(d, rest, expected)
   }
 }
 
 pub fn pattern_is_bool(p: SurfacePattern, b: Bool): Bool {
-  match p: Bool {
+  ⊢ Bool from match p {
     PtBool(x) => x == b
     _ => false
   }
 }
 
 pub fn has_bool(pats: List(SurfacePattern), b: Bool): Bool {
-  match pats: Bool {
+  ⊢ Bool from match pats {
     Nil => false
     Cons(p, rest) => pattern_is_bool(p, b) || has_bool(rest, b)
   }
 }
 
 pub fn is_ctor_of(d: Datas, name: Text, dname: Text, i: Nat): Bool {
-  match datas_ctor_expected(d, name, TyNamed(dname, Nil)): Bool {
+  ⊢ Bool from match datas_ctor_expected(d, name, TyNamed(dname, Nil)) {
     None => false
     Some(dc) => dc.fst == dname && dc.snd == i
   }
@@ -365,15 +367,15 @@ pub fn covers_row_of(
   i: Nat,
   p: SurfacePattern
 ): Option(List(SurfacePattern)) {
-  match p: Option(List(SurfacePattern)) {
+  ⊢ Option(List(SurfacePattern)) from match p {
     PtCtor(n, args) => if is_ctor_of(d, n, dname, i) { Some(args) } else { None }
     PtRecord(n, fields) => if is_ctor_of(d, n, dname, i) {
-      match datas_positional_expected(
+      ⊢ Option(List(SurfacePattern)) from match datas_positional_expected(
         d,
         n,
         fields,
         TyNamed(dname, Nil)
-      ): Option(List(SurfacePattern)) {
+      ) {
         PositionalOk(args) => Some(args)
         PositionalErr(e) => None
       }
@@ -391,9 +393,9 @@ pub fn covers_rows(
   i: Nat,
   pats: List(SurfacePattern)
 ): List(List(SurfacePattern)) {
-  match pats: List(List(SurfacePattern)) {
+  ⊢ List(List(SurfacePattern)) from match pats {
     Nil => Nil
-    Cons(p, rest) => match covers_row_of(d, dname, i, p): List(List(SurfacePattern)) {
+    Cons(p, rest) => ⊢ List(List(SurfacePattern)) from match covers_row_of(d, dname, i, p) {
       Some(r) => Cons(r, covers_rows(d, dname, i, rest))
       None => covers_rows(d, dname, i, rest)
     }
@@ -401,9 +403,9 @@ pub fn covers_rows(
 }
 
 pub fn first_of_rows(rows: List(List(SurfacePattern))): List(SurfacePattern) {
-  match rows: List(SurfacePattern) {
+  ⊢ List(SurfacePattern) from match rows {
     Nil => Nil
-    Cons(row, rest) => match row: List(SurfacePattern) {
+    Cons(row, rest) => ⊢ List(SurfacePattern) from match row {
       Nil => first_of_rows(rest)
       Cons(p, more) => Cons(p, first_of_rows(rest))
     }
@@ -411,7 +413,7 @@ pub fn first_of_rows(rows: List(List(SurfacePattern))): List(SurfacePattern) {
 }
 
 pub fn data_ctor_count(d: Datas, dname: Text): Option(Nat) {
-  match datas_decl(d, dname): Option(Nat) {
+  ⊢ Option(Nat) from match datas_decl(d, dname) {
     None => None
     Some(data) => Some(list_len(data.constructors))
   }
@@ -423,19 +425,19 @@ pub fn data_ctor_count(d: Datas, dname: Text): Option(Nat) {
 // the declarations' steps.
 mutual {
   pub fn covers_in(k: Nat, d: Datas, t: Ty, pats: List(SurfacePattern)): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
       Succ(j) => any_takes_all(
         d,
         pats,
         t
-      ) || (has_bool(pats, true) && has_bool(pats, false)) || match ty_unborrowed(t): Bool {
-        TyNamed(dname, args) => match data_ctor_count(d, dname): Bool {
+      ) || (has_bool(pats, true) && has_bool(pats, false)) || (⊢ Bool from match ty_unborrowed(t) {
+        TyNamed(dname, args) => ⊢ Bool from match data_ctor_count(d, dname) {
           None => false
           Some(n) => covers_ctors_in(j, d, dname, args, pats, 0, n)
         }
         _ => false
-      }
+      })
     }
   }
 
@@ -448,7 +450,7 @@ mutual {
     i: Nat,
     n: Nat
   ): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
       Succ(j) => n <= i || (
         covers_ctor_in(
@@ -467,27 +469,27 @@ mutual {
     fields: List(DataField),
     rows: List(List(SurfacePattern))
   ): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => covers_any_row_in(j, d, rows, fields) || match fields: Bool {
-        Cons(f, rest) => match rest: Bool {
+      Succ(j) => covers_any_row_in(j, d, rows, fields) || (⊢ Bool from match fields {
+        Cons(f, rest) => ⊢ Bool from match rest {
           Nil => covers_in(j, d, f.ty, first_of_rows(rows))
           Cons(g, more) => false
         }
         Nil => false
-      }
+      })
     }
   }
 
   pub fn covers_row_in(k: Nat, d: Datas, row: List(SurfacePattern), fields: List(DataField)): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match row: Bool {
-        Nil => match fields: Bool {
+      Succ(j) => ⊢ Bool from match row {
+        Nil => ⊢ Bool from match fields {
           Nil => true
           Cons(f, more) => false
         }
-        Cons(p, rest) => match fields: Bool {
+        Cons(p, rest) => ⊢ Bool from match fields {
           Nil => false
           Cons(f, more) => covers_in(j, d, f.ty, Cons(p, Nil)) && covers_row_in(j, d, rest, more)
         }
@@ -501,9 +503,9 @@ mutual {
     rows: List(List(SurfacePattern)),
     fields: List(DataField)
   ): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match rows: Bool {
+      Succ(j) => ⊢ Bool from match rows {
         Nil => false
         Cons(row, rest) => (
           list_len(row) == list_len(fields) && covers_row_in(j, d, row, fields)
@@ -518,23 +520,23 @@ pub fn covers(d: Datas, t: Ty, pats: List(SurfacePattern)): Bool {
 }
 
 pub fn handler_answers_exceeded(h: SurfaceHandler): Bool {
-  match h: Bool {
+  ⊢ Bool from match h {
     HdOperation(eff, hfa, hty, ps, k, g, b) => eff == "exceeded"
     HdReturn(p, b) => false
   }
 }
 
 pub fn handlers_answer_exceeded(hs: List(SurfaceHandler)): Bool {
-  match hs: Bool {
+  ⊢ Bool from match hs {
     Nil => false
     Cons(h, rest) => handler_answers_exceeded(h) || handlers_answer_exceeded(rest)
   }
 }
 
 pub fn handlers_return(hs: List(SurfaceHandler)): Option(Pair(SurfacePattern, SurfaceTerm)) {
-  match hs: Option(Pair(SurfacePattern, SurfaceTerm)) {
+  ⊢ Option(Pair(SurfacePattern, SurfaceTerm)) from match hs {
     Nil => None
-    Cons(h, rest) => match h: Option(Pair(SurfacePattern, SurfaceTerm)) {
+    Cons(h, rest) => ⊢ Option(Pair(SurfacePattern, SurfaceTerm)) from match h {
       HdReturn(p, b) => Some(Pair { fst: p, snd: b })
       HdOperation(eff, hfa, hty, ps, k, g, b) => handlers_return(rest)
     }
@@ -542,7 +544,7 @@ pub fn handlers_return(hs: List(SurfaceHandler)): Option(Pair(SurfacePattern, Su
 }
 
 pub fn ty_fn_sig(t: Ty): Option(Pair(List(Ty), Ty)) {
-  match t: Option(Pair(List(Ty), Ty)) {
+  ⊢ Option(Pair(List(Ty), Ty)) from match t {
     TyFn(ps, r, k) => Some(Pair { fst: ps, snd: r })
     _ => None
   }
@@ -558,7 +560,7 @@ pub fn ck_handle_sig(
   if eff == "exceeded" {
     Some(Pair { fst: Cons(TyInfo(result), Nil), snd: budget_ty })
   } else {
-    match Ordmap::get(c.effects, eff, Ordmap::compare_text): Option(Pair(List(Ty), Ty)) {
+    ⊢ Option(Pair(List(Ty), Ty)) from match Ordmap::get(c.effects, eff, Ordmap::compare_text) {
       Some(s) => ty_fn_sig(
         ck_instantiate_named(&mut c, s.generics, TyFn(s.params, s.result, KindShared))
       )
@@ -571,7 +573,7 @@ pub fn ck_handle_sig(
 }
 
 pub fn scheme_type_names(gs: List(Pair(Text, Kind))): List(TypeName) {
-  match gs: List(TypeName) {
+  ⊢ List(TypeName) from match gs {
     Nil => Nil
     Cons(g, rest) => Cons(TypeNameMk(g.fst, g.fst, g.snd), scheme_type_names(rest))
   }
@@ -590,14 +592,14 @@ pub fn ck_leave_fn(&mut c: Checker, assume: List(Pair(Text, Text)), types: List(
 }
 
 pub fn ck_quant_of(c: Checker, eff: Text): Quant {
-  match Ordmap::get(c.quants, eff, Ordmap::compare_text): Quant {
+  ⊢ Quant from match Ordmap::get(c.quants, eff, Ordmap::compare_text) {
     Some(q) => q
     None => QuantAtMostOne
   }
 }
 
 pub fn quant_is_zero(q: Quant): Bool {
-  match q: Bool {
+  ⊢ Bool from match q {
     QuantZero => true
     _ => false
   }
@@ -612,7 +614,7 @@ pub fn ck_handle_direct(
   guard: Option(SurfaceTerm),
   body: SurfaceTerm
 ): Unit {
-  let tail := match cont: Bool {
+  let tail := ⊢ Bool from match cont {
     Some(k) => dir_is_tail(body, k) && dir_guard_ok(guard, k)
     None => false
   }
@@ -632,9 +634,9 @@ pub fn ck_handle_patterns(
   &mut inner: Scope,
   body: SurfaceTerm
 ): Unit {
-  match ps: Unit {
+  ⊢ Unit from match ps {
     Nil => #()
-    Cons(p, rest) => match tys: Unit {
+    Cons(p, rest) => ⊢ Unit from match tys {
       Nil => #()
       Cons(t, more) => {
         ck_pattern(&mut c, p, t, &mut inner, span_of(body), body.start)
@@ -655,7 +657,7 @@ pub fn ck_handle_cont(
   result: Ty,
   body: SurfaceTerm
 ): Unit {
-  match cont: Unit {
+  ⊢ Unit from match cont {
     Some(k) => {
       if quant_is_zero(quant) {
         ck_error(
@@ -678,8 +680,8 @@ pub fn ck_handle_cont(
 }
 
 pub fn ck_widen_fn(&mut c: Checker, a: Ty, current: Ty, rv: Nat): Bool {
-  match ck_resolve(&c, a): Bool {
-    TyFn(pa, ra, ka) => match current: Bool {
+  ⊢ Bool from match ck_resolve(&c, a) {
+    TyFn(pa, ra, ka) => ⊢ Bool from match current {
       TyFn(pb, rb, kb) => if list_len(pa) == list_len(pb) && not(kind_eq(ka, kb)) {
         let wide := TyFn(pb, rb, kind_join(ka, kb))
         let probe := TyFn(pa, ra, kind_join(ka, kb))
@@ -702,10 +704,10 @@ pub fn ck_widen_fn(&mut c: Checker, a: Ty, current: Ty, rv: Nat): Bool {
 }
 
 pub fn ck_widen_borrowed_current(&mut c: Checker, a: Ty, current: Ty, rv: Nat): Bool {
-  match current: Bool {
-    TyBorrow(x, m) => if not(ty_is_borrow(
-      ck_resolve(&c, a)
-    )) && kind_dup(ck_kind(&c, x)) && ck_attempt_fits(&mut c, a, x) {
+  ⊢ Bool from match current {
+    TyBorrow(x, m) => if not(
+      ty_is_borrow(ck_resolve(&c, a))
+    ) && kind_dup(ck_kind(&c, x)) && ck_attempt_fits(&mut c, a, x) {
       let x2 := ck_resolve(&c, x)
       if not(ck_occurs(&c, rv, x2)) {
         ck_set_subst(&mut c, rv, x2)
@@ -719,10 +721,10 @@ pub fn ck_widen_borrowed_current(&mut c: Checker, a: Ty, current: Ty, rv: Nat): 
 }
 
 pub fn ck_widen_borrowed_arm(&mut c: Checker, a: Ty, current: Ty): Bool {
-  match ck_resolve(&c, a): Bool {
-    TyBorrow(x, m) => not(ty_is_borrow(
-      current
-    )) && kind_dup(ck_kind(&c, x)) && ck_attempt_fits(&mut c, x, current)
+  ⊢ Bool from match ck_resolve(&c, a) {
+    TyBorrow(x, m) => not(
+      ty_is_borrow(current)
+    ) && kind_dup(ck_kind(&c, x)) && ck_attempt_fits(&mut c, x, current)
     _ => false
   }
 }
@@ -744,7 +746,7 @@ pub fn ck_handle_widen(&mut c: Checker, a: Ty, result: Ty, rv: Nat): Unit {
 }
 
 pub fn ck_handle_result_choices(result: Ty): List(Ty) {
-  match result: List(Ty) {
+  ⊢ List(Ty) from match result {
     TyUnion(choices) => Cons(result, choices)
     _ => Cons(result, Nil)
   }
@@ -768,7 +770,7 @@ pub fn ck_handle_arm_result(
   variable: Option(Nat),
   span: TySpan
 ): Unit {
-  match variable: Unit {
+  ⊢ Unit from match variable {
     Some(rv) => ck_handle_widen(&mut c, arm, result, rv)
     None => ck_handle_validate(&mut c, arm, result, span)
   }
@@ -776,7 +778,7 @@ pub fn ck_handle_arm_result(
 
 mutual {
   pub fn ty_names_generic_any(ts: List(Ty), g: Text): Bool {
-    match ts: Bool {
+    ⊢ Bool from match ts {
       Nil => false
       Cons(t, rest) => ty_names_generic(t, g) || ty_names_generic_any(rest, g)
     }
@@ -785,7 +787,7 @@ mutual {
   // Whether an operation's type mentions its generic `g`, which it reads as
   // a name without arguments.
   pub fn ty_names_generic(t: Ty, g: Text): Bool {
-    match t: Bool {
+    ⊢ Bool from match t {
       TyNamed(n, args) => (n == g && ty_no_args(args)) || ty_names_generic_any(args, g)
       TyParam(n, k) => n == g
       TyFn(ps, r, k) => ty_names_generic_any(ps, g) || ty_names_generic(r, g)
@@ -801,7 +803,7 @@ mutual {
 // The generics of an operation that its values mention: what an arm writes
 // the instance with. A row's generic (`test<e>`) is not one.
 pub fn effect_typed_generics(gs: List(Text), s: EffectSig): List(Text) {
-  match gs: List(Text) {
+  ⊢ List(Text) from match gs {
     Nil => Nil
     Cons(g, rest) => if ty_names_generic_any(Cons(s.result, s.params), g) {
       Cons(g, effect_typed_generics(rest, s))
@@ -823,14 +825,14 @@ pub(open) inductive ArmInstance: Type {
 
 // Whether each type argument is the name `∀` binds at its place.
 pub fn arm_binds_each(types: List(SurfaceTerm), binds: List(Text)): Bool {
-  match types: Bool {
-    Nil => match binds: Bool {
+  ⊢ Bool from match types {
+    Nil => ⊢ Bool from match binds {
       Nil => true
       Cons(b, rest) => false
     }
-    Cons(t, ts) => match binds: Bool {
+    Cons(t, ts) => ⊢ Bool from match binds {
       Nil => false
-      Cons(b, bs) => match t.kind: Bool {
+      Cons(b, bs) => ⊢ Bool from match t.kind {
         SkVar(v) => v == b && arm_binds_each(ts, bs)
         _ => false
       }
@@ -838,7 +840,12 @@ pub fn arm_binds_each(types: List(SurfaceTerm), binds: List(Text)): Bool {
   }
 }
 
-pub fn arm_instance(eff: Text, binds: List(Text), types: List(SurfaceTerm), typed: List(Text)): ArmInstance {
+pub fn arm_instance(
+  eff: Text,
+  binds: List(Text),
+  types: List(SurfaceTerm),
+  typed: List(Text)
+): ArmInstance {
   let n := list_len(typed)
   let names := text_join(typed, ", ")
   let every := cat5("`∀ ", names, ". ", eff, cat3("<", names, ">(…)`"))
@@ -860,7 +867,13 @@ pub fn arm_instance(eff: Text, binds: List(Text), types: List(SurfaceTerm), type
     )
   } else if not(list_len(types) == n) {
     ArmBad(
-      cat5("`", eff, "` takes ", Text::of_nat(n), cat2(" type arguments, given ", Text::of_nat(list_len(types))))
+      cat5(
+        "`",
+        eff,
+        "` takes ",
+        Text::of_nat(n),
+        cat2(" type arguments, given ", Text::of_nat(list_len(types)))
+      )
     )
   } else if list_len(binds) == 0 {
     ArmOne(types)
@@ -879,7 +892,7 @@ pub(open) inductive ArmSig: Type {
 }
 
 pub fn arm_sig_of(t: Ty, rigid: List(Text), bound: List(TypeName)): Option(ArmSig) {
-  match t: Option(ArmSig) {
+  ⊢ Option(ArmSig) from match t {
     TyFn(ps, r, k) => Some(ArmSig { params: ps, answer: r, rigid: rigid, bound: bound })
     _ => None
   }
@@ -893,9 +906,9 @@ pub fn ck_arm_given(
   types: List(SurfaceTerm),
   map: Ordmap(Text, Ty)
 ): Ordmap(Text, Ty) {
-  match typed: Ordmap(Text, Ty) {
+  ⊢ Ordmap(Text, Ty) from match typed {
     Nil => map
-    Cons(g, gs) => match types: Ordmap(Text, Ty) {
+    Cons(g, gs) => ⊢ Ordmap(Text, Ty) from match types {
       Nil => map
       Cons(t, ts) => {
         let scope := type_scope(c.type_params)
@@ -907,7 +920,7 @@ pub fn ck_arm_given(
 }
 
 pub fn ck_arm_fresh(&mut c: Checker, gs: List(Text), map: Ordmap(Text, Ty)): Ordmap(Text, Ty) {
-  match gs: Ordmap(Text, Ty) {
+  ⊢ Ordmap(Text, Ty) from match gs {
     Nil => map
     Cons(g, rest) => if Ordmap::contains(map, g, Ordmap::compare_text) {
       ck_arm_fresh(&mut c, rest, map)
@@ -919,7 +932,7 @@ pub fn ck_arm_fresh(&mut c: Checker, gs: List(Text), map: Ordmap(Text, Ty)): Ord
 }
 
 pub fn affine_generics(gs: List(Text)): List(Pair(Text, Kind)) {
-  match gs: List(Pair(Text, Kind)) {
+  ⊢ List(Pair(Text, Kind)) from match gs {
     Nil => Nil
     Cons(g, rest) => Cons(Pair { fst: g, snd: KindAffine }, affine_generics(rest))
   }
@@ -927,12 +940,12 @@ pub fn affine_generics(gs: List(Text)): List(Pair(Text, Kind)) {
 
 // The names `∀` binds, each for the rigid type of the generic at its place.
 pub fn arm_bound(binds: List(Text), typed: List(Text), rigid: Ordmap(Text, Ty)): List(TypeName) {
-  match binds: List(TypeName) {
+  ⊢ List(TypeName) from match binds {
     Nil => Nil
-    Cons(b, bs) => match typed: List(TypeName) {
+    Cons(b, bs) => ⊢ List(TypeName) from match typed {
       Nil => Nil
-      Cons(g, gs) => match Ordmap::get(rigid, g, Ordmap::compare_text): List(TypeName) {
-        Some(t) => match t: List(TypeName) {
+      Cons(g, gs) => ⊢ List(TypeName) from match Ordmap::get(rigid, g, Ordmap::compare_text) {
+        Some(t) => ⊢ List(TypeName) from match t {
           TyParam(n, k) => Cons(TypeNameMk(b, n, k), arm_bound(bs, gs, rigid))
           _ => arm_bound(bs, gs, rigid)
         }
@@ -943,17 +956,17 @@ pub fn arm_bound(binds: List(Text), typed: List(Text), rigid: Ordmap(Text, Ty)):
 }
 
 pub fn type_names_onto(xs: List(TypeName), rest: List(TypeName)): List(TypeName) {
-  match xs: List(TypeName) {
+  ⊢ List(TypeName) from match xs {
     Nil => rest
     Cons(x, more) => Cons(x, type_names_onto(more, rest))
   }
 }
 
 pub fn rigid_param_names(gs: List(Text), rigid: Ordmap(Text, Ty)): List(Text) {
-  match gs: List(Text) {
+  ⊢ List(Text) from match gs {
     Nil => Nil
-    Cons(g, rest) => match Ordmap::get(rigid, g, Ordmap::compare_text): List(Text) {
-      Some(t) => match t: List(Text) {
+    Cons(g, rest) => ⊢ List(Text) from match Ordmap::get(rigid, g, Ordmap::compare_text) {
+      Some(t) => ⊢ List(Text) from match t {
         TyParam(n, k) => Cons(n, rigid_param_names(rest, rigid))
         _ => rigid_param_names(rest, rigid)
       }
@@ -963,7 +976,7 @@ pub fn rigid_param_names(gs: List(Text), rigid: Ordmap(Text, Ty)): List(Text) {
 }
 
 pub fn ck_mentions_locals(&c: Checker, ns: List(Text), env: List(Local)): Bool {
-  match env: Bool {
+  ⊢ Bool from match env {
     Nil => false
     Cons(l, rest) => ck_mentions_in(c.steps, &c, ns, l.ty) || ck_mentions_locals(&c, ns, rest)
   }
@@ -971,15 +984,21 @@ pub fn ck_mentions_locals(&c: Checker, ns: List(Text), env: List(Local)): Bool {
 
 // Whether a rigid type of an arm for every instance got out of it: into what
 // the arm gives, the handler's result, or a local of the handler's scope.
-pub fn ck_arm_lets_rigid_out(&c: Checker, rigid: List(Text), a: Ty, result: Ty, env: List(Local)): Bool {
-  match rigid: Bool {
+pub fn ck_arm_lets_rigid_out(
+  &c: Checker,
+  rigid: List(Text),
+  a: Ty,
+  result: Ty,
+  env: List(Local)
+): Bool {
+  ⊢ Bool from match rigid {
     Nil => false
-    Cons(r, rest) => ck_mentions_in(c.steps, &c, rigid, a) || ck_mentions_in(
+    Cons(r, rest) => ck_mentions_in(
       c.steps,
       &c,
       rigid,
-      result
-    ) || ck_mentions_locals(&c, rigid, env)
+      a
+    ) || ck_mentions_in(c.steps, &c, rigid, result) || ck_mentions_locals(&c, rigid, env)
   }
 }
 
@@ -1036,7 +1055,7 @@ pub fn ck_handle_arm_sig(
   if eff == "exceeded" {
     Some(ArmSig { params: Cons(TyInfo(result), Nil), answer: budget_ty, rigid: Nil, bound: Nil })
   } else {
-    match Ordmap::get(c.effects, eff, Ordmap::compare_text): Option(ArmSig) {
+    ⊢ Option(ArmSig) from match Ordmap::get(c.effects, eff, Ordmap::compare_text) {
       Some(s) => ck_arm_sig_at(
         &mut c,
         s,
@@ -1057,7 +1076,7 @@ pub fn ck_handle_arm_sig(
 // What the arm writes wrong is reported once (`rv`: the arms are checked
 // twice).
 pub fn ck_arm_report(&mut c: Checker, why: Text, rv: Option(Nat), body: SurfaceTerm): Unit {
-  match rv: Unit {
+  ⊢ Unit from match rv {
     Some(v) => ck_error(&mut c, why, span_of(body))
     None => #()
   }
@@ -1074,7 +1093,7 @@ pub fn ck_arm_sig_at(
   rv: Option(Nat),
   body: SurfaceTerm
 ): Option(ArmSig) {
-  match r#instance: Option(ArmSig) {
+  ⊢ Option(ArmSig) from match r#instance {
     ArmBad(why) => {
       ck_arm_report(&mut c, why, rv, body)
       let fresh := ck_arm_fresh(&mut c, s.generics, Ordmap::empty())

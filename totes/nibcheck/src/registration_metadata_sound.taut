@@ -21,10 +21,7 @@ pub def ProtectedData(
   n: Text,
   value: Option(Data),
   c: Checker
-): Prop := And(
-  CkDatasOrdered(c),
-  data_metadata_lookup(summary_decls(ck_datas_of(c)), n) = value
-)
+): Prop := And(CkDatasOrdered(c), data_metadata_lookup(summary_decls(ck_datas_of(c)), n) = value)
 
 pub theorem protected_data_read<A: Type>(
   n: Text,
@@ -75,8 +72,14 @@ pub theorem data_metadata_insert_other_k(
   eo: Ordmap::compare_text(n, key) = o,
   ordered: Ordmap::ordered(m, Ordmap::compare_text),
   different: (n = key) -> False
-): data_metadata_lookup(Ordmap::insert(m, key, data, Ordmap::compare_text), n) = data_metadata_lookup(m, n) {
-  match o: data_metadata_lookup(Ordmap::insert(m, key, data, Ordmap::compare_text), n) = data_metadata_lookup(m, n) {
+): data_metadata_lookup(
+  Ordmap::insert(m, key, data, Ordmap::compare_text),
+  n
+) = data_metadata_lookup(m, n) {
+  ⊢ data_metadata_lookup(
+    Ordmap::insert(m, key, data, Ordmap::compare_text),
+    n
+  ) = data_metadata_lookup(m, n) from match o {
     Equal => False::elim(different(Ordmap::compare_text_eq(n, key, eo)))
     Less => Eq::congr(
       data_metadata_option,
@@ -149,7 +152,7 @@ pub theorem registration_bind_protected<A: Type, B: Type>(
     ProtectedData(n, value, next)
   ) -> ProtectedData(n, value, ck_st(k(v, next)))
 ): ProtectedData(n, value, ck_st(frame_bind(k, m))) {
-  match m: ProtectedData(n, value, ck_st(frame_bind(k, m))) {
+  ⊢ ProtectedData(n, value, ck_st(frame_bind(k, m))) from match m {
     mut1(v, next) => hk(v, next, hm)
   }
 }
@@ -314,5 +317,9 @@ pub theorem registration_rewrap_protected<A: Type>(
   m: Mut1(A, Checker),
   h: ProtectedData(n, value, ck_st(m))
 ): ProtectedData(n, value, ck_st(ck_rewrap1(m))) {
-  Eq::subst((z: Mut1(A, Checker)) => ProtectedData(n, value, ck_st(z)), Eq::sym(ck_rewrap1_id(m)), h)
+  Eq::subst(
+    (z: Mut1(A, Checker)) => ProtectedData(n, value, ck_st(z)),
+    Eq::sym(ck_rewrap1_id(m)),
+    h
+  )
 }

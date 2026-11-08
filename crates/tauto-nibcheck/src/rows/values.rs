@@ -14,7 +14,7 @@ pub(super) fn value_type(t: &SurfaceTerm) -> Latent {
                 .iter()
                 .map_while(|(n, t)| match (n, &*t.kind) {
                     (Some(n), TermKind::Var(k)) if crate::types::Kind::parse(k).is_some() => {
-                        Some((n.clone(), Some(k.clone())))
+                        Some((n.clone(), Some(k.to_string().into())))
                     }
                     _ => None,
                 })
@@ -65,14 +65,10 @@ fn host_held(value: Latent) -> Latent {
     }
 }
 
-pub(super) fn free_row_variables(value: &Latent, out: &mut BTreeSet<String>) {
+pub(super) fn free_row_variables(value: &Latent, out: &mut BTreeSet<Name>) {
     match value {
         Latent::Known(f) => {
-            let mut free: BTreeSet<_> = f
-                .row
-                .iter()
-                .filter_map(|e| e.strip_prefix('|').map(str::to_string))
-                .collect();
+            let mut free: BTreeSet<_> = f.row.iter().filter_map(Name::row_variable).collect();
             for param in &f.params {
                 free_row_variables(param, &mut free);
             }
@@ -88,10 +84,7 @@ pub(super) fn free_row_variables(value: &Latent, out: &mut BTreeSet<String>) {
             }
         }
         Latent::Borrow(value, _) => free_row_variables(value, out),
-        Latent::Effects(row) => out.extend(
-            row.iter()
-                .filter_map(|e| e.strip_prefix('|').map(str::to_string)),
-        ),
+        Latent::Effects(row) => out.extend(row.iter().filter_map(Name::row_variable)),
         _ => {}
     }
 }
@@ -100,12 +93,12 @@ pub(super) fn free_row_variables(value: &Latent, out: &mut BTreeSet<String>) {
 /// argument assumes them (inside a parameter of a callback parameter), never
 /// where an argument supplies them (its own row or what it returns, or under
 /// a type constructor, which is read as both), and nowhere in its result.
-pub(super) fn assumed_rows(f: &Callable) -> Vec<String> {
-    fn walk(value: &Latent, supplied: bool, shadow: &[String], out: &mut [BTreeSet<String>; 2]) {
+pub(super) fn assumed_rows(f: &Callable) -> Vec<Name> {
+    fn walk(value: &Latent, supplied: bool, shadow: &[Name], out: &mut [BTreeSet<Name>; 2]) {
         let mut note = |row: &Row, supplied: bool| {
-            for v in row.iter().filter_map(|e| e.strip_prefix('|')) {
-                if !shadow.iter().any(|s| s == v) {
-                    out[usize::from(supplied)].insert(v.to_string());
+            for v in row.iter().filter_map(|e| e.row_variable()) {
+                if !shadow.iter().any(|s| s == &v) {
+                    out[usize::from(supplied)].insert(v.clone());
                 }
             }
         };
@@ -152,15 +145,16 @@ pub(super) fn assumed_rows(f: &Callable) -> Vec<String> {
         .collect()
 }
 
-fn mentions(value: &Latent, var: &str) -> bool {
+/// Whether the type parameter `var` occurs in `value`.
+fn mentions(value: &Latent, var: &Name) -> bool {
     match value {
         Latent::Named(n, args) => n == var || args.iter().any(|a| mentions(a, var)),
         Latent::Record(_, fields) => fields.iter().any(|(_, v)| mentions(v, var)),
         Latent::Borrow(v, _) => mentions(v, var),
-        Latent::Effects(row) => row.iter().any(|e| e.strip_prefix('|') == Some(var)),
+        Latent::Effects(row) => row.iter().any(|e| e.row_variable() == Some(var.clone())),
         Latent::Known(f) => {
             !f.generics.iter().any(|(g, _)| g == var)
-                && (f.row.iter().any(|e| e.strip_prefix('|') == Some(var))
+                && (f.row.iter().any(|e| e.row_variable() == Some(var.clone()))
                     || f.params.iter().any(|p| mentions(p, var))
                     || mentions(&f.result, var))
         }
@@ -168,10 +162,56 @@ fn mentions(value: &Latent, var: &str) -> bool {
     }
 }
 
+/// A type as a term, when it is a name applied to names.
+fn latent_type_term(value: &Latent) -> Option<SurfaceTerm> {
+    let Latent::Named(name, args) = value else {
+        return None;
+    };
+    let span = Span::new(0, 0);
+    let head = SurfaceTerm::new(TermKind::Var(name.clone()), span);
+    if args.is_empty() {
+        return Some(head);
+    }
+    let arguments = args
+        .iter()
+        .map(latent_type_term)
+        .collect::<Option<Vec<_>>>()?;
+    Some(SurfaceTerm::new(
+        TermKind::App {
+            function: Box::new(head),
+            arguments,
+        },
+        span,
+    ))
+}
+
+/// A row entry with the known types in its effect's index: `res(A)` at `A = u64` is `res(u64)`.
+fn substituted_instance(
+    entry: &Name,
+    types: &HashMap<Name, Latent>,
+    rows: &HashMap<Name, Row>,
+) -> Name {
+    let mut map: HashMap<Name, SurfaceTerm> = types
+        .iter()
+        .filter_map(|(name, value)| Some((name.clone(), latent_type_term(value)?)))
+        .collect();
+    // A row given as an index (`ui(e)` at `e = !{out}`) is the row written out, in the
+    // one spelling the index expansion gives it (`types/indices.rs`).
+    for (name, row) in rows {
+        let mut names: Vec<Name> = row.iter().cloned().collect();
+        names.sort_by_key(|n| n.to_string());
+        names.dedup();
+        // A type argument read as a one-entry row (`fields`) stays the type.
+        map.entry(name.clone())
+            .or_insert_with(|| SurfaceTerm::new(TermKind::Row(names), Span::new(0, 0)));
+    }
+    crate::types::indices::instance_of_entry(entry, &map).unwrap_or_else(|| entry.clone())
+}
+
 pub(super) fn substitute(
     value: &Latent,
-    types: &HashMap<String, Latent>,
-    rows: &HashMap<String, Row>,
+    types: &HashMap<Name, Latent>,
+    rows: &HashMap<Name, Row>,
 ) -> Latent {
     match value {
         Latent::Borrow(v, mutable) => {
@@ -185,11 +225,20 @@ pub(super) fn substitute(
             n.clone(),
             args.iter().map(|a| substitute(a, types, rows)).collect(),
         ),
+        // An argument context still inferring a row carries a placeholder,
+        // not a fixed callable contract. Known substitutions take precedence.
+        Latent::Effects(row)
+            if row.iter().filter_map(Name::row_variable).any(|var| {
+                !rows.contains_key(&var) && matches!(types.get(&var), Some(Latent::Unknown))
+            }) =>
+        {
+            Latent::Unknown
+        }
         Latent::Effects(row) => Latent::Effects(
             row.iter()
-                .flat_map(|e| match e.strip_prefix('|').and_then(|v| rows.get(v)) {
+                .flat_map(|e| match e.row_variable().and_then(|v| rows.get(&v)) {
                     Some(r) => r.iter().cloned().collect::<Vec<_>>(),
-                    None => vec![e.clone()],
+                    None => vec![substituted_instance(e, types, rows)],
                 })
                 .collect(),
         ),
@@ -208,9 +257,9 @@ pub(super) fn substitute(
             f.row = f
                 .row
                 .iter()
-                .flat_map(|e| match e.strip_prefix('|').and_then(|v| rows.get(v)) {
+                .flat_map(|e| match e.row_variable().and_then(|v| rows.get(&v)) {
                     Some(r) => r.iter().cloned().collect::<Vec<_>>(),
-                    None => vec![e.clone()],
+                    None => vec![substituted_instance(e, &types, &rows)],
                 })
                 .collect();
             f.params = f
@@ -226,7 +275,7 @@ pub(super) fn substitute(
 }
 
 impl Analysis<'_> {
-    fn host_sensitive(&self, value: &Latent, seen: &mut HashSet<String>, depth: usize) -> bool {
+    fn host_sensitive(&self, value: &Latent, seen: &mut HashSet<Name>, depth: usize) -> bool {
         if depth > 32 {
             return true;
         }
@@ -247,7 +296,7 @@ impl Analysis<'_> {
                 if !seen.insert(name.clone()) {
                     return false;
                 }
-                self.datas.get(name.as_str()).is_some_and(|data| {
+                self.datas.get(name).is_some_and(|data| {
                     data.constructors.iter().any(|ctor| {
                         ctor.fields
                             .iter()
@@ -333,8 +382,8 @@ impl Analysis<'_> {
 
     // Resolve by the nominal owner when it is known, otherwise require a
     // unique constructor. Short names never select a declaration by iteration order.
-    fn constructor(&self, name: &str, expected: Option<&Latent>) -> Option<(&DataDecl, usize)> {
-        fn owner(value: &Latent) -> Option<&str> {
+    fn constructor(&self, name: &Name, expected: Option<&Latent>) -> Option<(&DataDecl, usize)> {
+        fn owner(value: &Latent) -> Option<&Name> {
             match value.unborrowed() {
                 Latent::Named(name, _) | Latent::Record(name, _) => Some(name),
                 Latent::Known(f) => owner(&f.result),
@@ -342,25 +391,23 @@ impl Analysis<'_> {
             }
         }
         let wanted = expected.and_then(owner);
-        let mut matches = self.datas.values().flat_map(|data| {
-            data.constructors
-                .iter()
-                .enumerate()
-                .filter_map(move |(index, ctor)| {
-                    names_constructor(name, &data.name, &ctor.name).then_some((*data, index))
-                })
-        });
-        let first = matches.next()?;
-        let candidates: Vec<_> = std::iter::once(first).chain(matches).collect();
+        let candidates = self.constructors.lookup(name);
+        let &(data, index) = candidates.first()?;
+        let first = (self.datas[data], index);
         if candidates.len() == 1 {
             return Some(first);
         }
-        wanted.and_then(|wanted| candidates.into_iter().find(|(data, _)| data.name == wanted))
+        wanted.and_then(|wanted| {
+            candidates
+                .into_iter()
+                .find(|(data, _)| *data == wanted)
+                .map(|(data, index)| (self.datas[data], index))
+        })
     }
 
     pub(super) fn constructor_signature(
         &self,
-        name: &str,
+        name: &Name,
         expected: Option<&Latent>,
     ) -> Option<Callable> {
         let (data, index) = self.constructor(name, expected)?;
@@ -394,17 +441,13 @@ impl Analysis<'_> {
     pub(super) fn constructor_signature_at(
         &mut self,
         term: &SurfaceTerm,
-        name: &str,
+        name: &Name,
         expected: Option<&Latent>,
     ) -> Option<Callable> {
         if let Some(signature) = self.constructor_signature(name, expected) {
             return Some(signature);
         }
-        if !self.datas.values().any(|data| {
-            data.constructors
-                .iter()
-                .any(|ctor| names_constructor(name, &data.name, &ctor.name))
-        }) {
+        if !self.constructors.names_any(name) {
             return None;
         }
         let owner = self.nominal_owner(term)?;
@@ -415,7 +458,7 @@ impl Analysis<'_> {
     fn constructor_fields(
         &self,
         value: &Latent,
-        name: &str,
+        name: &Name,
     ) -> Option<Vec<(Option<String>, Latent)>> {
         let Latent::Named(owner, args) = value.unborrowed() else {
             return None;
@@ -436,7 +479,7 @@ impl Analysis<'_> {
             .zip(args)
             .filter_map(|(name, arg)| match arg {
                 Latent::Named(var, args) if args.is_empty() => {
-                    Some((name.clone(), Row::from([format!("|{var}")])))
+                    Some((name.clone(), Row::from([var.in_row()])))
                 }
                 Latent::Effects(row) => Some((name.clone(), row.clone())),
                 _ => None,
@@ -453,24 +496,35 @@ impl Analysis<'_> {
 
     // Callable contracts belong to every alternative, not just a struct's
     // named fields. The key includes the constructor and position.
-    fn members(&self, value: &Latent) -> Option<Vec<(String, Latent)>> {
+    fn members(&self, value: &Latent) -> Option<std::rc::Rc<[((Name, usize), Latent)]>> {
+        if let Some(members) = self.members.borrow().get(value) {
+            return members.clone();
+        }
+        let members = self.unfold_members(value).map(std::rc::Rc::from);
+        self.members
+            .borrow_mut()
+            .insert(value.clone(), members.clone());
+        members
+    }
+
+    fn unfold_members(&self, value: &Latent) -> Option<Vec<((Name, usize), Latent)>> {
         match value.unborrowed() {
             Latent::Named(name, _) => {
-                let data = self.datas.get(name.as_str())?;
+                let data = self.datas.get(name)?;
                 let mut members = Vec::new();
                 for ctor in &data.constructors {
                     for (index, (_, ty)) in self
-                        .constructor_fields(value, &format!("{}::{}", name, ctor.name))?
+                        .constructor_fields(value, &ctor.name)?
                         .into_iter()
                         .enumerate()
                     {
-                        members.push((format!("{}::{index}", ctor.name), ty));
+                        members.push(((ctor.name.clone(), index), ty));
                     }
                 }
                 Some(members)
             }
             Latent::Record(name, fields) => {
-                let data = self.datas.get(name.as_str())?;
+                let data = self.datas.get(name)?;
                 if data.constructors.len() != 1 {
                     return None;
                 }
@@ -485,7 +539,7 @@ impl Analysis<'_> {
                                 .find(|(field, _)| Some(field) == name.as_ref())
                                 .map(|(_, value)| value.clone())
                                 .unwrap_or(Latent::Unknown);
-                            (format!("{}::{index}", ctor.name), value)
+                            ((ctor.name.clone(), index), value)
                         })
                         .collect(),
                 )
@@ -553,8 +607,8 @@ impl Analysis<'_> {
         locals: &Locals,
         expected: Option<&Latent>,
     ) -> (
-        HashMap<String, Latent>,
-        HashMap<String, Row>,
+        HashMap<Name, Latent>,
+        HashMap<Name, Row>,
         Vec<(Latent, Latent)>,
     ) {
         let (mut types, mut rows, values) = self.call_substitution_values(
@@ -614,7 +668,7 @@ impl Analysis<'_> {
         }
     }
 
-    pub(super) fn operation_signature(&self, name: &str) -> Option<Callable> {
+    pub(super) fn operation_signature(&self, name: &Name) -> Option<Callable> {
         let effect = self.operations.get(name)?;
         Some(Callable {
             row: Row::new(),
@@ -646,11 +700,27 @@ impl Analysis<'_> {
         }
     }
 
+    fn indexed_record_type(&mut self, term: &SurfaceTerm, owner: &Name) -> Option<Latent> {
+        let data = self.datas.get(owner)?;
+        if !data.constructors.iter().any(|c| {
+            c.fields
+                .iter()
+                .any(|(_, ty)| crate::types::indices::writes_indexed_row(ty))
+        }) {
+            return None;
+        }
+        if self.term_types.is_none() {
+            self.term_types = Some(crate::types::check_program(self.program).terms);
+        }
+        let ty = self.term_types.as_ref()?.get(&term.id())?;
+        crate::types::indices::type_term(ty, term.span).map(|t| value_type(&t))
+    }
+
     pub(super) fn fields(&self, value: &Latent) -> Option<Vec<(String, Latent)>> {
         match value.unborrowed() {
             Latent::Record(_, fields) => Some(fields.clone()),
             Latent::Named(name, args) => {
-                let data = self.datas.get(name.as_str())?;
+                let data = self.datas.get(name)?;
                 if data.constructors.len() != 1 {
                     return None;
                 }
@@ -666,7 +736,7 @@ impl Analysis<'_> {
                     .zip(args)
                     .filter_map(|(n, a)| match a {
                         Latent::Named(v, a) if a.is_empty() => {
-                            Some((n.clone(), Row::from([format!("|{v}")])))
+                            Some((n.clone(), Row::from([v.in_row()])))
                         }
                         Latent::Effects(row) => Some((n.clone(), row.clone())),
                         _ => None,
@@ -725,14 +795,10 @@ impl Analysis<'_> {
     /// A constructor applied only to constructors and literals. Its value
     /// does not depend on functions or locals, so it is computed once.
     fn is_constant_data(&mut self, t: &SurfaceTerm, locals: &Locals) -> bool {
-        let constructor = |this: &Self, name: &str| {
+        let constructor = |this: &Self, name: &Name| {
             !locals.iter().any(|(local, _)| local == name)
                 && !this.fns.contains_key(name)
-                && this.datas.values().any(|data| {
-                    data.constructors
-                        .iter()
-                        .any(|ctor| names_constructor(name, &data.name, &ctor.name))
-                })
+                && this.constructors.names_any(name)
         };
         match &*t.kind {
             TermKind::Nat(_) | TermKind::Float(_) | TermKind::Text(_) | TermKind::Bool(_) => true,
@@ -768,6 +834,10 @@ impl Analysis<'_> {
                 *mutable,
             ),
             TermKind::Lam { params, body, .. } => {
+                let key = (t.id(), self.owner, expected.cloned(), locals.clone());
+                if let Some(value) = self.lambda_values.get(&key) {
+                    return value.clone();
+                }
                 let signature = match expected {
                     Some(Latent::Known(f)) => Some(f),
                     _ => None,
@@ -789,7 +859,7 @@ impl Analysis<'_> {
                 let row = self.term_row_as(body, &mut inner, result.as_ref());
                 let value = self.value_of(body, &inner, result.as_ref());
                 self.expected_result = outer;
-                Latent::Known(Callable {
+                let value = Latent::Known(Callable {
                     row,
                     mutable_params: signature
                         .map(|f| f.mutable_params.clone())
@@ -799,19 +869,21 @@ impl Analysis<'_> {
                     generics: Vec::new(),
                     host: false,
                     row_written: false,
-                })
+                });
+                self.lambda_values.insert(key, value.clone());
+                value
             }
             TermKind::Var(n) => {
                 if let Some((_, v)) = locals.iter().rev().find(|(name, _)| name == n) {
                     return v.clone();
                 }
-                if let Some((&key, &f)) = self.fns.get_key_value(n.as_str()) {
+                if let Some((&key, &f)) = self.fns.get_key_value(n) {
                     let mut row = self.fn_row(key);
                     if self.in_progress.contains(key)
                         && !self.total.contains(key)
                         && !self.structural.contains(key)
                     {
-                        row.insert("Div".into());
+                        row.insert(self.intrinsic("Div"));
                     }
                     return Latent::Known(self.signature(f, row));
                 }
@@ -835,7 +907,7 @@ impl Analysis<'_> {
             } => {
                 if let TermKind::Var(name) = &*function.kind {
                     if !locals.iter().any(|(local, _)| local == name)
-                        && !self.fns.contains_key(name.as_str())
+                        && !self.fns.contains_key(name)
                     {
                         if let Some(signature) = self.constructor_signature_at(t, name, expected) {
                             let value = self
@@ -876,7 +948,7 @@ impl Analysis<'_> {
                 let signature = self.constructor_signature_at(t, name, expected);
                 let nominal = signature.as_ref().map(|f| &*f.result);
                 let constructor = self.constructor(name, nominal.or(expected));
-                if !matches!(constructor, Some((data, _)) if data.name == *name && data.constructors.len() == 1)
+                if !matches!(constructor, Some((data, _)) if self.structs.contains(&data.name) && data.constructors.len() == 1)
                 {
                     if let Some((data, index)) = constructor {
                         let arguments: Option<Vec<_>> = data.constructors[index]
@@ -901,13 +973,14 @@ impl Analysis<'_> {
                     }
                     return Latent::Unknown;
                 }
+                let owner = constructor.expect("the record constructor").0.name.clone();
                 // Without a context, the record's own type parameters are
                 // what its fields infer, not contracts to read them against:
                 // `App { answers: Cons(loading(from_db), Nil) }` for
                 // `App<e>` reads the field on its own, as a call does.
-                let open = self.datas.get(name.as_str()).map(|data| {
+                let open = self.datas.get(&owner).map(|data| {
                     Latent::Named(
-                        name.clone(),
+                        owner.clone(),
                         data.generics.iter().map(|_| Latent::Unknown).collect(),
                     )
                 });
@@ -915,6 +988,31 @@ impl Analysis<'_> {
                     .and_then(|e| self.fields(e))
                     .or_else(|| open.and_then(|open| self.fields(&open)))
                     .unwrap_or_default();
+                // A field's row that indexes an effect by the record's generic is read against
+                // the checked type: a row alone does not say which instance it means.
+                // A row the context gives the record (`Boundary(!{})`) is what the checked type
+                // leaves out: the types read a row as `()`.
+                let given = expected.filter(|e| {
+                    matches!(e.unborrowed(), Latent::Named(n, args)
+                        if *n == owner && args.iter().any(|a| matches!(a, Latent::Effects(_))))
+                });
+                if let Some(typed) = self
+                    .indexed_record_type(t, &owner)
+                    .map(|typed| given.map(|g| g.unborrowed().clone()).unwrap_or(typed))
+                    && let Some(typed_fields) = self.fields(&typed)
+                {
+                    let values: Vec<_> = fields
+                        .iter()
+                        .map(|(n, v)| {
+                            let expected =
+                                typed_fields.iter().find(|(m, _)| m == n).map(|(_, t)| t);
+                            (n.clone(), self.value_of(v, locals, expected))
+                        })
+                        .collect();
+                    let value = Latent::Record(owner.clone(), values);
+                    self.check_value(&value, &typed, t.span, 0);
+                    return value;
+                }
                 let values: Vec<_> = fields
                     .iter()
                     .map(|(n, v)| {
@@ -922,13 +1020,17 @@ impl Analysis<'_> {
                         (n.clone(), self.value_of(v, locals, expected))
                     })
                     .collect();
-                let value = Latent::Record(name.clone(), values);
+                let value = Latent::Record(owner.clone(), values);
+                if let Some(given) = given {
+                    self.check_value(&value, &given.unborrowed().clone(), t.span, 0);
+                    return value;
+                }
                 // Fixed callable fields are contracts even in a generic
                 // record. Generic rows and types are instantiated from fields.
-                if let Some(data) = self.datas.get(name.as_str()) {
+                if let Some(data) = self.datas.get(&owner) {
                     let vars = data.generics.clone();
                     let declared = Latent::Named(
-                        name.clone(),
+                        owner.clone(),
                         vars.iter()
                             .map(|n| Latent::Named(n.clone(), Vec::new()))
                             .collect(),
@@ -953,7 +1055,7 @@ impl Analysis<'_> {
                                 (n.clone(), self.value_of(v, locals, expected))
                             })
                             .collect();
-                        let value = Latent::Record(name.clone(), values);
+                        let value = Latent::Record(owner.clone(), values);
                         self.check_value(&value, &inferred, t.span, 0);
                         return value;
                     }
@@ -1231,7 +1333,7 @@ impl Analysis<'_> {
         span: Span,
         depth: usize,
         seen: &mut HashSet<(Latent, Latent)>,
-        active: &mut HashSet<String>,
+        active: &mut HashSet<Name>,
     ) {
         if actual == expected {
             return;
@@ -1249,7 +1351,7 @@ impl Analysis<'_> {
                 let row = |value: &Latent| match value {
                     Latent::Effects(row) => Some(row.clone()),
                     Latent::Named(name, args) if args.is_empty() => {
-                        Some(Row::from([format!("|{name}")]))
+                        Some(Row::from([name.in_row()]))
                     }
                     _ => None,
                 };
@@ -1346,7 +1448,7 @@ impl Analysis<'_> {
                         Latent::Record(name, _) => {
                             let vars = self
                                 .datas
-                                .get(name.as_str())
+                                .get(name)
                                 .map(|d| d.generics.clone())
                                 .unwrap_or_default();
                             let declared = Latent::Named(
@@ -1374,6 +1476,13 @@ impl Analysis<'_> {
                     // opaque storage. Their callable contracts are invariant.
                     for (index, expected_arg) in expected_args.iter().enumerate() {
                         let actual_arg = actual_args.get(index).unwrap_or(&Latent::Unknown);
+                        // A row the context gives a record literal is read off its fields
+                        // below: `constrain` cannot take `ui(e)` apart from the row it saw.
+                        if matches!(actual, Latent::Record(..))
+                            && matches!(expected_arg, Latent::Effects(_))
+                        {
+                            continue;
+                        }
                         self.check_value_inner(
                             actual_arg,
                             expected_arg,
@@ -1382,6 +1491,13 @@ impl Analysis<'_> {
                             seen,
                             active,
                         );
+                        // The fields of a record without a name are its type arguments, and
+                        // a field is read as a value is: a function that performs less than
+                        // its field's type permits fits it. Only a named type's arguments
+                        // are invariant.
+                        if tauto_surface::records::fields_of(&a.to_string()).is_some() {
+                            continue;
+                        }
                         self.check_value_inner(
                             expected_arg,
                             actual_arg,
@@ -1408,12 +1524,12 @@ impl Analysis<'_> {
                     active.remove(a);
                     return;
                 };
-                for (n, e) in expected_fields {
-                    if !self.has_callable(&e, &mut HashSet::new()) {
+                for (n, e) in expected_fields.iter() {
+                    if !self.has_callable(e, &mut HashSet::new()) {
                         continue;
                     }
-                    if let Some((_, a)) = actual_fields.iter().find(|(m, _)| *m == n) {
-                        self.check_value_inner(a, &e, span, depth + 1, seen, active);
+                    if let Some((_, a)) = actual_fields.iter().find(|(m, _)| m == n) {
+                        self.check_value_inner(a, e, span, depth + 1, seen, active);
                     }
                 }
                 active.remove(a);
@@ -1426,11 +1542,11 @@ impl Analysis<'_> {
         }
     }
 
-    pub(super) fn has_callable(&self, value: &Latent, seen: &mut HashSet<String>) -> bool {
+    pub(super) fn has_callable(&self, value: &Latent, seen: &mut HashSet<Name>) -> bool {
         self.has_callable_at(value, seen, 0)
     }
 
-    fn has_callable_at(&self, value: &Latent, seen: &mut HashSet<String>, depth: usize) -> bool {
+    fn has_callable_at(&self, value: &Latent, seen: &mut HashSet<Name>, depth: usize) -> bool {
         if depth > 32 {
             return true;
         }
@@ -1446,7 +1562,7 @@ impl Analysis<'_> {
                 if !seen.insert(name.clone()) {
                     return false;
                 }
-                self.datas.get(name.as_str()).is_some_and(|data| {
+                self.datas.get(name).is_some_and(|data| {
                     data.constructors.iter().any(|ctor| {
                         ctor.fields
                             .iter()
@@ -1465,9 +1581,9 @@ impl Analysis<'_> {
         &self,
         expected: &Latent,
         actual: &Latent,
-        vars: &[String],
-        types: &mut HashMap<String, Latent>,
-        rows: &mut HashMap<String, Row>,
+        vars: &[Name],
+        types: &mut HashMap<Name, Latent>,
+        rows: &mut HashMap<Name, Row>,
         depth: usize,
     ) {
         if vars.is_empty() {
@@ -1485,21 +1601,41 @@ impl Analysis<'_> {
         );
     }
 
+    fn row_parameter(&self, name: &Name) -> bool {
+        self.row_variables
+            .get(name)
+            .is_some_and(|variable| variable.declared)
+            || self.datas.values().any(|data| {
+                data.generics
+                    .iter()
+                    .zip(&data.rows)
+                    .any(|(generic, row)| *row && generic == name)
+            })
+    }
+
     fn constrain_inner(
         &self,
         expected: &Latent,
         actual: &Latent,
-        vars: &[String],
-        types: &mut HashMap<String, Latent>,
-        rows: &mut HashMap<String, Row>,
+        vars: &[Name],
+        types: &mut HashMap<Name, Latent>,
+        rows: &mut HashMap<Name, Row>,
         depth: usize,
         seen: &mut HashSet<(Latent, Latent)>,
-        active: &mut HashSet<String>,
+        active: &mut HashSet<Name>,
     ) {
         if depth > 32 || !seen.insert((expected.clone(), actual.clone())) {
             return;
         }
         match (expected.unborrowed(), actual.unborrowed()) {
+            (Latent::Named(n, args), Latent::Named(actual, actual_args))
+                if args.is_empty()
+                    && actual_args.is_empty()
+                    && vars.contains(n)
+                    && self.row_parameter(n) =>
+            {
+                rows.entry(n.clone()).or_default().insert(actual.in_row());
+            }
             (Latent::Named(n, a), Latent::Effects(row)) if a.is_empty() && vars.contains(n) => {
                 rows.entry(n.clone())
                     .or_default()
@@ -1512,12 +1648,12 @@ impl Analysis<'_> {
             (Latent::Effects(e), Latent::Effects(a)) => {
                 for var in e
                     .iter()
-                    .filter_map(|v| v.strip_prefix('|'))
+                    .filter_map(|v| v.row_variable())
                     .filter(|v| vars.iter().any(|g| g == v))
                 {
-                    rows.entry(var.to_string()).or_default().extend(
+                    rows.entry(var.clone()).or_default().extend(
                         a.iter()
-                            .filter(|r| !e.contains(*r) || r.starts_with('|'))
+                            .filter(|r| !e.contains(*r) || r.row_variable().is_some())
                             .cloned(),
                     );
                 }
@@ -1531,13 +1667,13 @@ impl Analysis<'_> {
                 for var in e
                     .row
                     .iter()
-                    .filter_map(|v| v.strip_prefix('|'))
+                    .filter_map(|v| v.row_variable())
                     .filter(|v| vars.iter().any(|g| g == v))
                 {
-                    rows.entry(var.to_string()).or_default().extend(
+                    rows.entry(var.clone()).or_default().extend(
                         a.row
                             .iter()
-                            .filter(|r| !e.row.contains(*r) || r.starts_with('|'))
+                            .filter(|r| !e.row.contains(*r) || r.row_variable().is_some())
                             .cloned(),
                     );
                 }
@@ -1565,7 +1701,7 @@ impl Analysis<'_> {
                     return;
                 }
                 if let (Some(ef), Some(af)) = (self.members(expected), self.members(actual)) {
-                    for ((_, e), (_, a)) in ef.iter().zip(&af) {
+                    for ((_, e), (_, a)) in ef.iter().zip(af.iter()) {
                         self.constrain_inner(e, a, vars, types, rows, depth + 1, seen, active);
                     }
                 }
@@ -1573,9 +1709,9 @@ impl Analysis<'_> {
             }
             (Latent::Named(en, _), Latent::Record(an, _)) if en == an => {
                 if let (Some(ef), Some(af)) = (self.members(expected), self.members(actual)) {
-                    for (n, e) in ef {
-                        if let Some((_, a)) = af.iter().find(|(m, _)| *m == n) {
-                            self.constrain_inner(&e, a, vars, types, rows, depth + 1, seen, active);
+                    for (n, e) in ef.iter() {
+                        if let Some((_, a)) = af.iter().find(|(m, _)| m == n) {
+                            self.constrain_inner(e, a, vars, types, rows, depth + 1, seen, active);
                         }
                     }
                 }
@@ -1589,7 +1725,7 @@ impl Analysis<'_> {
         f: &Callable,
         arguments: &[SurfaceTerm],
         locals: &Locals,
-    ) -> (HashMap<String, Latent>, HashMap<String, Row>) {
+    ) -> (HashMap<Name, Latent>, HashMap<Name, Row>) {
         self.call_substitution_in(f, arguments, locals, &HashMap::new(), &HashMap::new())
     }
 
@@ -1610,7 +1746,7 @@ impl Analysis<'_> {
         arguments: &[SurfaceTerm],
         locals: &Locals,
         expected: Option<&Latent>,
-    ) -> (HashMap<String, Latent>, HashMap<String, Row>) {
+    ) -> (HashMap<Name, Latent>, HashMap<Name, Row>) {
         let vars: Vec<_> = f.generics.iter().map(|(n, _)| n.clone()).collect();
         let mut context_types = HashMap::new();
         let mut context_rows = HashMap::new();
@@ -1634,7 +1770,7 @@ impl Analysis<'_> {
         // callable type there is a contract later insertions are checked
         // against, even with its row left unwritten (which reads as `{}`).
         for var in &vars {
-            if let Some(row) = context_rows.get(var)
+            if let Some(row) = context_rows.get(&var)
                 && self.row_in_scope(row)
             {
                 rows.insert(var.clone(), row.clone());
@@ -1649,6 +1785,12 @@ impl Analysis<'_> {
                 types.insert(var.clone(), ty);
             }
         }
+        // Empty constructions can retain a declaration's unfixed row
+        // parameter. Instantiate it with the same least row used for the
+        // call's effects before checking the argument contracts as well.
+        for row in rows.values_mut() {
+            row.retain(|effect| !self.unfixed_row_parameter(effect));
+        }
         (types, rows)
     }
 
@@ -1657,10 +1799,10 @@ impl Analysis<'_> {
     /// still inferring.
     fn row_in_scope(&self, row: &Row) -> bool {
         row.iter().all(|effect| {
-            effect.strip_prefix('|').is_none_or(|var| {
-                !self.inferring.iter().any(|v| v == var)
-                    && (self.row_variables.contains_key(var)
-                        || self.direct_vars.iter().any(|v| v == var))
+            effect.row_variable().is_none_or(|var| {
+                !self.inferring.iter().any(|v| v == &var)
+                    && (self.row_variables.contains_key(&var)
+                        || self.direct_vars.iter().any(|v| v == &var))
             })
         })
     }
@@ -1672,9 +1814,9 @@ impl Analysis<'_> {
         f: &Callable,
         arguments: &[SurfaceTerm],
         locals: &Locals,
-        context_types: &HashMap<String, Latent>,
-        context_rows: &HashMap<String, Row>,
-    ) -> (HashMap<String, Latent>, HashMap<String, Row>) {
+        context_types: &HashMap<Name, Latent>,
+        context_rows: &HashMap<Name, Row>,
+    ) -> (HashMap<Name, Latent>, HashMap<Name, Row>) {
         let (types, rows, _) =
             self.call_substitution_values(f, arguments, locals, context_types, context_rows);
         (types, rows)
@@ -1686,15 +1828,15 @@ impl Analysis<'_> {
         f: &Callable,
         arguments: &[SurfaceTerm],
         locals: &Locals,
-        context_types: &HashMap<String, Latent>,
-        context_rows: &HashMap<String, Row>,
+        context_types: &HashMap<Name, Latent>,
+        context_rows: &HashMap<Name, Row>,
     ) -> (
-        HashMap<String, Latent>,
-        HashMap<String, Row>,
+        HashMap<Name, Latent>,
+        HashMap<Name, Row>,
         Vec<(Latent, Latent)>,
     ) {
         let mut values = Vec::new();
-        let mut types: HashMap<String, Latent> = HashMap::new();
+        let mut types: HashMap<Name, Latent> = HashMap::new();
         let mut rows = HashMap::new();
         let vars: Vec<_> = f.generics.iter().map(|(n, _)| n.clone()).collect();
         // A row variable that the parameters carry only inside a callback's
@@ -1806,17 +1948,12 @@ impl Analysis<'_> {
         self.callable_bounds(&f, &rows, span);
     }
 
-    pub(super) fn callable_bounds(
-        &mut self,
-        f: &Callable,
-        rows: &HashMap<String, Row>,
-        span: Span,
-    ) {
+    pub(super) fn callable_bounds(&mut self, f: &Callable, rows: &HashMap<Name, Row>, span: Span) {
         for (var, bound) in &f.generics {
-            if let Some(row) = rows.get(var) {
+            if let Some(row) = rows.get(&var) {
                 let set = bound
-                    .as_deref()
-                    .and_then(crate::surface::effect_sets::set_of_bound);
+                    .as_ref()
+                    .and_then(crate::surface::GenericBound::effect_set);
                 for effect in row {
                     if let Some((name, set)) = &set {
                         let allowed: Row = set.iter().cloned().collect();
@@ -1835,8 +1972,8 @@ impl Analysis<'_> {
                         );
                     } else if bound.as_deref() == Some("<=1")
                         && (self.quants.get(effect) == Some(&Quant::Many)
-                            || effect.strip_prefix('|').is_some_and(|key| {
-                                !self.row_variables.get(key).is_some_and(|v| {
+                            || effect.row_variable().is_some_and(|key| {
+                                !self.row_variables.get(&key).is_some_and(|v| {
                                     matches!(v.bound.as_deref(), Some("direct" | "<=1"))
                                 })
                             }))
@@ -1852,11 +1989,11 @@ impl Analysis<'_> {
     /// `struct App(e: Type)`) that a value kept without fixing it. The rows of
     /// functions in scope are keyed `@row:…`; such a parameter keeps its
     /// written name.
-    fn unfixed_row_parameter(&self, effect: &str) -> bool {
-        effect.strip_prefix('|').is_some_and(|key| {
+    fn unfixed_row_parameter(&self, effect: &Name) -> bool {
+        effect.row_variable().is_some_and(|key| {
             !key.starts_with("@row:")
-                && !self.row_variables.contains_key(key)
-                && !self.direct_vars.iter().any(|v| v == key)
+                && !self.row_variables.contains_key(&key)
+                && !self.direct_vars.iter().any(|v| v == &key)
         })
     }
 
@@ -1873,8 +2010,8 @@ impl Analysis<'_> {
             .row
             .iter()
             .flat_map(|effect| {
-                if let Some(var) = effect.strip_prefix('|') {
-                    if let Some(row) = rows.get(var) {
+                if let Some(var) = effect.row_variable() {
+                    if let Some(row) = rows.get(&var) {
                         // A declaration's row parameter that nothing fixed,
                         // `App { functions: Nil }` for `App(e)`, holds no
                         // function that could perform anything: every row
@@ -1886,8 +2023,8 @@ impl Analysis<'_> {
                             .cloned()
                             .collect::<Vec<_>>();
                     }
-                    if f.generics.iter().any(|(n, _)| n == var)
-                        || !self.row_variables.contains_key(var)
+                    if f.generics.iter().any(|(n, _)| n == &var)
+                        || !self.row_variables.contains_key(&var)
                     {
                         return vec![unchecked(&format!("the row variable `{var}`"))];
                     }
@@ -1942,7 +2079,7 @@ fn alpha_renamed(actual: &Callable, expected: &Callable) -> Option<Callable> {
     let mut rows = HashMap::new();
     for ((a, _), (e, _)) in actual.generics.iter().zip(&expected.generics) {
         types.insert(a.clone(), Latent::Named(e.clone(), Vec::new()));
-        rows.insert(a.clone(), Row::from([format!("|{e}")]));
+        rows.insert(a.clone(), Row::from([e.in_row()]));
     }
     let mut open = actual.clone();
     open.generics.clear();
@@ -1958,22 +2095,97 @@ fn alpha_renamed(actual: &Callable, expected: &Callable) -> Option<Callable> {
     Some(renamed)
 }
 
-fn names_constructor(name: &str, data: &str, ctor: &str) -> bool {
-    name == ctor
-        || name
-            .strip_prefix(data)
-            .and_then(|rest| rest.strip_prefix("::"))
-            .is_some_and(|rest| rest == ctor)
+/// The constructors of `datas`, keyed by each name that selects them: the
+/// constructor's own name, `Data::Ctor` when both are spelled, and a struct's
+/// own name for each of its constructors. A `Selection` is looked up by each
+/// of its candidates. A name is the constructor written bare or as
+/// `Data::Ctor`; a struct is also written by its own name.
+pub(super) struct Constructors<'a> {
+    by_name: HashMap<&'a Name, Vec<(&'a Name, usize)>>,
+    by_spelling: HashMap<String, Vec<(&'a Name, usize)>>,
+    /// Struct names, kept apart: they select a constructor only through
+    /// `lookup`, not through `names_any`.
+    by_struct: HashMap<&'a Name, Vec<(&'a Name, usize)>>,
+}
+
+impl<'a> Constructors<'a> {
+    pub(super) fn new(
+        datas: &HashMap<&'a Name, &'a DataDecl>,
+        structs: &HashSet<&'a Name>,
+    ) -> Self {
+        let mut index = Constructors {
+            by_name: HashMap::new(),
+            by_spelling: HashMap::new(),
+            by_struct: HashMap::new(),
+        };
+        for &data in datas.values() {
+            let is_struct = structs.contains(&data.name);
+            for (i, ctor) in data.constructors.iter().enumerate() {
+                let entry = (&data.name, i);
+                index.by_name.entry(&ctor.name).or_default().push(entry);
+                if let (Name::Spelled(d), Name::Spelled(c)) = (&data.name, &ctor.name) {
+                    index
+                        .by_spelling
+                        .entry(format!("{d}::{c}"))
+                        .or_default()
+                        .push(entry);
+                }
+                if is_struct {
+                    index.by_struct.entry(&data.name).or_default().push(entry);
+                }
+            }
+        }
+        index
+    }
+
+    fn named(&self, name: &Name, mut found: impl FnMut(&[(&'a Name, usize)])) {
+        let mut take = |entries: Option<&Vec<(&'a Name, usize)>>| {
+            if let Some(entries) = entries {
+                found(entries);
+            }
+        };
+        take(self.by_name.get(name));
+        match name {
+            Name::Selection(selection) => {
+                for candidate in selection.candidates() {
+                    take(self.by_name.get(&Name::Global(candidate.clone())));
+                }
+            }
+            Name::Spelled(spelled) => take(self.by_spelling.get(spelled.as_str())),
+            _ => {}
+        }
+    }
+
+    /// Whether `name` names some constructor, not counting a struct's own name.
+    pub(super) fn names_any(&self, name: &Name) -> bool {
+        let mut any = false;
+        self.named(name, |entries| any |= !entries.is_empty());
+        any
+    }
+
+    /// Every `(data, index)` that `name` selects, each once, ordered by data
+    /// name and then index.
+    pub(super) fn lookup(&self, name: &Name) -> Vec<(&'a Name, usize)> {
+        let mut found = Vec::new();
+        self.named(name, |entries| found.extend_from_slice(entries));
+        if let Some(entries) = self.by_struct.get(name) {
+            found.extend_from_slice(entries);
+        }
+        found.sort();
+        found.dedup();
+        found
+    }
 }
 
 /// What a function value performs that its type does not permit. An effect that could not be
 /// followed (`?…`) says why, not that it is performed.
-fn value_performs(effect: &str, permitted: &Row) -> String {
+fn value_performs(effect: &Name, permitted: &Row) -> String {
     match effect.strip_prefix('?') {
         Some(what) => unfollowed(what),
         None => format!(
-            "a function value may perform {effect} but its type permits {{{}}}",
-            show(permitted.iter().map(String::as_str))
+            "a function value may perform {} but its type permits {{{}}}",
+            effect.display_in_row(),
+            show(permitted.iter())
         ),
     }
 }

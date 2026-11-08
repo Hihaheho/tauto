@@ -20,7 +20,7 @@ pub fn float_err_ok(y: Float, r: Rat, A: Nat): Bool {
 }
 
 pub fn float_err_ok_by(o: Option(Rat), r: Rat, A: Nat): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     None => true
     Some(v) => Rat::le(Rat::dist(v, r), float_round_err(r, A))
   }
@@ -91,9 +91,9 @@ pub theorem fin_neg(
 
 // An infinity is not a number: nothing to show.
 pub theorem inf_ok(r: Rat, s: Nat, hs: s < 2 = true): ErrBits(r, Float::inf_raw(s)) {
-  match s: ErrBits(r, Float::inf_raw(s)) {
+  ⊢ ErrBits(r, Float::inf_raw(s)) from match s {
     Zero => Refl
-    Succ(s1) => match s1: ErrBits(r, Float::inf_raw(Succ(s1))) {
+    Succ(s1) => ⊢ ErrBits(r, Float::inf_raw(Succ(s1))) from match s1 {
       Zero => Refl
       Succ(s2) => False::elim(false_ne_true(hs))
     }
@@ -129,17 +129,17 @@ pub theorem zero_le_qb(q0: Nat): NatLe(0 * Nat::pow2(4000), Succ(q0) * Nat::pow2
 // The rounding error of `float_of_rat`: when `float_of_rat(r)` is a number
 // `v`, `|v - r| <= 2^-52 |r| + 2^-1074`.
 pub theorem float_of_rat_err(r: Rat): float_err_ok(Float::of_rat(r), r, 1074) = true {
-  match r: float_err_ok(Float::of_rat(r), r, 1074) = true {
-    Rat::Mk(n, q0) => match n: float_err_ok(
+  ⊢ float_err_ok(Float::of_rat(r), r, 1074) = true from match r {
+    Rat::Mk(n, q0) => ⊢ float_err_ok(
       Float::of_rat(Rat::Mk(n, q0)),
       Rat::Mk(n, q0),
       1074
-    ) = true {
-      IntOfNat(p) => match p: float_err_ok(
+    ) = true from match n {
+      IntOfNat(p) => ⊢ float_err_ok(
         Float::of_rat(Rat::Mk(IntOfNat(p), q0)),
         Rat::Mk(IntOfNat(p), q0),
         1074
-      ) = true {
+      ) = true from match p {
         Zero => zero_ok(q0)
         Succ(p0) => frac_ok(
           0,
@@ -178,14 +178,14 @@ pub theorem float_of_rat_near(
 }
 
 pub fn float_near_by(o: Option(Rat), r: Rat, eps: Rat): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     None => false
     Some(v) => Rat::le(Rat::dist(v, r), eps)
   }
 }
 
 pub fn float_some_by(o: Option(Rat)): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     None => false
     Some(v) => true
   }
@@ -201,18 +201,10 @@ pub theorem float_near_of_err(
   he: float_err_ok_by(o, r, a) = true,
   hb: RatLe(float_round_err(r, a), eps)
 ): float_near_by(o, r, eps) = true {
-  match o: (
-    float_some_by(o) = true
-  ) -> (float_err_ok_by(o, r, a) = true) -> float_near_by(o, r, eps) = true {
-    None => (s: false = true) => (e: true = true) => False::elim(false_ne_true(s))
-    Some(v) => (s: true = true) => (e: RatLe(Rat::dist(v, r), float_round_err(r, a))) => Rat::le_trans(
-      Rat::dist(v, r),
-      float_round_err(r, a),
-      eps,
-      e,
-      hb
-    )
-  }(hs, he)
+  ⊢ float_near_by(o, r, eps) = true from match o {
+    None => False::elim(false_ne_true(hs))
+    Some(v) => Rat::le_trans(Rat::dist(v, r), float_round_err(r, a), eps, he, hb)
+  }
 }
 
 pub theorem float_near_of_err_at(

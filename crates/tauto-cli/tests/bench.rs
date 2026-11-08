@@ -49,6 +49,7 @@ fn native_benchmark_builds_once_and_reports_real_samples() {
         .arg(&source)
         .args(["--warmup", "1", "--samples", "3", "--json"])
         .env("TAUTO_TARGET_DIR", &target)
+        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .unwrap();
     assert!(
@@ -76,7 +77,8 @@ fn native_benchmark_builds_once_and_reports_real_samples() {
     assert!(target.join("target/release/calc").exists());
     fs::write(
         &source,
-        r#"perform exit(7)
+        r#"import std::prelude::Os
+perform exit(7)
 "#,
     )
     .unwrap();
@@ -87,10 +89,15 @@ fn native_benchmark_builds_once_and_reports_real_samples() {
         .arg(&source)
         .args(["--warmup", "0", "--samples", "1", "--json"])
         .env("TAUTO_TARGET_DIR", &target)
+        .env("CARGO_NET_OFFLINE", "true")
         .output()
         .unwrap();
     assert_eq!(failed.status.code(), Some(1));
     assert!(failed.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&failed.stderr).contains("program failed"));
+    assert!(
+        String::from_utf8_lossy(&failed.stderr).contains("program failed"),
+        "{}",
+        String::from_utf8_lossy(&failed.stderr)
+    );
     let _ = fs::remove_dir_all(&root);
 }

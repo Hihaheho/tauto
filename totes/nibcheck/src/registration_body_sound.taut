@@ -79,10 +79,10 @@ pub theorem body_register_after_sound(
   ck_datas_of(ck_st(body_register_after(source, is_struct, builtin, constructors, m))),
   source
 ) {
-  match m: DataBodyRegistered(
+  ⊢ DataBodyRegistered(
     ck_datas_of(ck_st(body_register_after(source, is_struct, builtin, constructors, m))),
     source
-  ) {
+  ) from match m {
     mut1(ignored, next) => registration_insert_body(
       next,
       source,
@@ -185,10 +185,10 @@ pub theorem body_declare_after_sound(
   ck_datas_of(ck_st(body_declare_after(source, is_struct, builtin, m))),
   source
 ) {
-  match m: DataBodyRegistered(
+  ⊢ DataBodyRegistered(
     ck_datas_of(ck_st(body_declare_after(source, is_struct, builtin, m))),
     source
-  ) {
+  ) from match m {
     mut1(constructors, next) => body_register_and_store_sound(
       source,
       is_struct,
@@ -324,9 +324,9 @@ pub theorem registration_declare_body(
   source
 ) {
   let allowed: Bool::and(
-      surface_data_is_view(source),
-      Bool::or(not(is_struct), ctors_have_fields(registration_ctors(source)))
-    ) = false := body_declare_checked_allowed(
+    surface_data_is_view(source),
+    Bool::or(not(is_struct), ctors_have_fields(registration_ctors(source)))
+  ) = false := body_declare_checked_allowed(
     c,
     source,
     is_struct,

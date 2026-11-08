@@ -1,0 +1,37 @@
+description = "The self-hosted kernel recognizes the quotient constants by their Tauto declaration names."
+
+@ cases.quotient_special_names_use_declaration_paths
+backends = ["rust"]
+extract = true
+imports = [path`../totes/kernel/src/data.taut`]
+source = ```tauto
+fn has_quotient_type(name: Text): Bool {
+  ⊢ Bool from match kernel_quot_type(name) {
+    None => false
+    Some(_) => true
+  }
+}
+
+fn quotient_types_use_declaration_paths(): Bool {
+  has_quotient_type("Quot::mk") &&
+  has_quotient_type("Quot::lift") &&
+  has_quotient_type("Quot::ind")
+}
+
+fn quotient_dependencies_use_declaration_paths(): Bool {
+  ⊢ Bool from match kernel_quot_needs("Quot::ind") {
+    Nil => false
+    Cons(quotient, rest) => ⊢ Bool from match rest {
+      Nil => false
+      Cons(mk, tail) => ⊢ Bool from match tail {
+        Nil => quotient == "Quot" && mk == "Quot::mk"
+        Cons(_, _) => false
+      }
+    }
+  }
+}
+
+perform show("quotient_types_use_declaration_paths", quotient_types_use_declaration_paths())
+perform show("quotient_dependencies_use_declaration_paths", quotient_dependencies_use_declaration_paths())
+```
+shows = ["quotient_types_use_declaration_paths = true", "quotient_dependencies_use_declaration_paths = true"]

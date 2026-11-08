@@ -41,7 +41,7 @@ pub theorem where_class_structural(
   )
 }
 pub fn where_class_present(info: Option(ClassInfo)): Bool {
-  match info: Bool {
+  ⊢ Bool from match info {
     None => false
     Some(decl) => true
   }
@@ -53,7 +53,7 @@ pub theorem where_class_lookup(
   found: Ordmap::get(classes, name, Ordmap::compare_text) = info,
   present: where_class_present(info) = true
 ): WhereClass(classes, name) {
-  match info: WhereClass(classes, name) {
+  ⊢ WhereClass(classes, name) from match info {
     None => False::elim(false_ne_true(present))
     Some(decl) => WhereClassDeclared(name, decl, found)
   }
@@ -74,9 +74,9 @@ pub theorem where_class_allowed(
   declared: Ordmap::contains(classes, name, Ordmap::compare_text) = present,
   allowed: Bool::and(not(structural), not(present)) = false
 ): WhereClass(classes, name) {
-  match structural: WhereClass(classes, name) {
+  ⊢ WhereClass(classes, name) from match structural {
     true => where_class_structural(classes, name, built_in)
-    false => match present: WhereClass(classes, name) {
+    false => ⊢ WhereClass(classes, name) from match present {
       true => where_class_contains(classes, name, declared)
       false => False::elim(true_ne_false(allowed))
     }

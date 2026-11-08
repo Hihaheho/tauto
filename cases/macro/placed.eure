@@ -1,0 +1,60 @@
+@ cases.a-placed-macro-is-given-its-goal-and-what-is-written
+entry = "main.taut"
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+
+// What is written, used as it is.
+pub macro fn same(at: Judgement, e: SynExpr): SynExpr { e }
+
+// Reflexivity, whatever is written: the place's goal is an equation.
+pub macro fn trivially(at: Judgement, e: SynExpr): SynExpr { quote { Refl } }
+
+// A call of `trivially!`, left for the next round.
+pub macro fn later(at: Judgement, e: SynExpr): SynExpr { quote { trivially!(ignored) } }
+````
+files."main.taut" = ````tauto
+import std::Base
+import "lib.taut" { same, trivially, later }
+
+theorem a(n: Nat): n = n { same!(Refl) }
+// What is written is not checked: only the term the macro makes is.
+theorem b(n: Nat): Nat::add(n, 0) = n { trivially!(no_such_name(1)) }
+// A call in the output of a placed macro is expanded after it, outermost first.
+theorem c(n: Nat): n = n { later!(()) }
+````
+checks.a = "ok"
+checks.b = "ok"
+checks.c = "ok"
+diagnostics = []
+
+@ cases.what-a-placed-macro-makes-is-checked-at-its-place
+entry = "main.taut"
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+
+pub macro fn trivially(at: Judgement, e: SynExpr): SynExpr { quote { Refl } }
+````
+files."main.taut" = ````tauto
+import std::Base
+import "lib.taut" { trivially }
+
+theorem d(n: Nat): Nat::lt(n, Succ(n)) = false { trivially!(()) }
+````
+checks.d = "error: type mismatch"
+
+@ cases.a-typed-macro-sees-a-helper-written-after-its-declaration
+entry = "main.taut"
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+
+pub macro fn trivially(at: Judgement): SynExpr { quote { Refl } }
+````
+files."main.taut" = ````tauto
+import "lib.taut" { trivially }
+
+// The file's check declares `later` first, so the macro's check does too.
+theorem uses_later(n: Nat): n = n { trivially!(later(n)) }
+theorem later(n: Nat): n = n { Refl }
+````
+checks.uses_later = "ok"
+trace = ["trivially"]

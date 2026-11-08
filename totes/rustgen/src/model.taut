@@ -20,7 +20,7 @@ pub fn rustgen_find_function(
   name: Text,
   functions: List(RustgenFunction)
 ): Option(RustgenFunction) {
-  match functions: Option(RustgenFunction) {
+  ⊢ Option(RustgenFunction) from match functions {
     Nil => None
     Cons(function, rest) => if name == function.name { Some(function) } else {
       rustgen_find_function(name, rest)
@@ -30,7 +30,7 @@ pub fn rustgen_find_function(
 
 // Every UTF-8 byte has its own decimal component, including underscores.
 pub fn rustgen_ident_in(k: Nat, name: Text, at: Nat): Text {
-  match k: Text {
+  ⊢ Text from match k {
     Zero => ""
     Succ(j) => Text::concat_all(
       Cons(
@@ -57,10 +57,10 @@ pub fn rustgen_location_in(
   line: Nat,
   col: Nat
 ): @line Nat × @col Nat {
-  match k: @line Nat × @col Nat {
+  ⊢ @line Nat × @col Nat from match k {
     Zero => #(@line line, @col col)
     Succ(j) => if at >= end { #(@line line, @col col) } else {
-      match text_decode(source, at): @line Nat × @col Nat {
+      ⊢ @line Nat × @col Nat from match text_decode(source, at) {
         None => #(@line line, @col col)
 
         Some(#(@code code, @len len)) => if code == 10 {
@@ -97,7 +97,7 @@ pub fn rustgen_location(source: Text, at: Nat): Text {
 }
 
 pub fn rustgen_call_name(term: SurfaceTerm): Option(Text) {
-  match term.kind: Option(Text) {
+  ⊢ Option(Text) from match term.kind {
     SkVar(name) => Some(name)
     SkNat(unused0) => None
     SkFloat(unused0) => None
@@ -135,9 +135,9 @@ pub fn rustgen_call_name(term: SurfaceTerm): Option(Text) {
 
 mutual {
   pub fn rustgen_type_name_in(k: Nat, ty: RustgenType): Text {
-    match k: Text {
+    ⊢ Text from match k {
       Zero => "compile_error!(\"type depth exceeded\")"
-      Succ(j) => match ty: Text {
+      Succ(j) => ⊢ Text from match ty {
         RustgenCallable(params, result) => Text::concat_all(
           Cons(
             "std::rc::Rc<dyn Fn(",
@@ -167,9 +167,9 @@ mutual {
     }
   }
   pub fn rustgen_type_names_in(k: Nat, types: List(RustgenType)): List(Text) {
-    match k: List(Text) {
+    ⊢ List(Text) from match k {
       Zero => Nil
-      Succ(j) => match types: List(Text) {
+      Succ(j) => ⊢ List(Text) from match types {
         Nil => Nil
         Cons(ty, rest) => Cons(rustgen_type_name_in(j, ty), rustgen_type_names_in(j, rest))
       }
@@ -181,7 +181,7 @@ pub fn rustgen_type_name(ty: RustgenType): Text { rustgen_type_name_in(10000, ty
 // A written function type with an omitted row denotes the empty row.
 // An absent function type is not a callable contract.
 pub fn rustgen_callable_effects(effects: Option(List(Text))): Bool {
-  match effects: Bool {
+  ⊢ Bool from match effects {
     None => true
     Some(names) => List::length(names) == 0
   }
@@ -189,12 +189,12 @@ pub fn rustgen_callable_effects(effects: Option(List(Text))): Bool {
 
 mutual {
   pub fn rustgen_written_in(k: Nat, term: SurfaceTerm): RustgenResult(RustgenType) {
-    match k: RustgenResult(RustgenType) {
+    ⊢ RustgenResult(RustgenType) from match k {
       Zero => RustgenErr("type depth exceeded")
-      Succ(j) => match term.kind: RustgenResult(RustgenType) {
-        SkApp(head, args) => match rustgen_call_name(head): RustgenResult(RustgenType) {
+      Succ(j) => ⊢ RustgenResult(RustgenType) from match term.kind {
+        SkApp(head, args) => ⊢ RustgenResult(RustgenType) from match rustgen_call_name(head) {
           None => RustgenErr("type application requires a named family")
-          Some(name) => match rustgen_written_args(j, args): RustgenResult(RustgenType) {
+          Some(name) => ⊢ RustgenResult(RustgenType) from match rustgen_written_args(j, args) {
             RustgenErr(Message) => RustgenErr(Message)
             RustgenOk(types) => RustgenOk(RustgenApply(name, types))
           }
@@ -211,9 +211,9 @@ mutual {
         SkBool(unused0) => RustgenErr("unsupported type form: Bool")
         SkPi(params, result, effects) => if not(rustgen_callable_effects(effects)) {
           RustgenErr("effectful callable types are unsupported")
-        } else { match rustgen_written_params(j, params): RustgenResult(RustgenType) {
+        } else { ⊢ RustgenResult(RustgenType) from match rustgen_written_params(j, params) {
             RustgenErr(Message) => RustgenErr(Message)
-            RustgenOk(types) => match rustgen_written_in(j, result): RustgenResult(RustgenType) {
+            RustgenOk(types) => ⊢ RustgenResult(RustgenType) from match rustgen_written_in(j, result) {
               RustgenErr(Message) => RustgenErr(Message)
               RustgenOk(output) => RustgenOk(RustgenCallable(types, output))
             }
@@ -251,18 +251,18 @@ mutual {
     k: Nat,
     params: List(SurfaceParam)
   ): RustgenResult(List(RustgenType)) {
-    match k: RustgenResult(List(RustgenType)) {
+    ⊢ RustgenResult(List(RustgenType)) from match k {
       Zero => RustgenErr("type depth exceeded")
-      Succ(j) => match params: RustgenResult(List(RustgenType)) {
+      Succ(j) => ⊢ RustgenResult(List(RustgenType)) from match params {
         Nil => RustgenOk(Nil)
-        Cons(param, rest) => match param.name: RustgenResult(List(RustgenType)) {
+        Cons(param, rest) => ⊢ RustgenResult(List(RustgenType)) from match param.name {
           Some(name) => RustgenErr("dependent or polymorphic callable types are unsupported")
-          None => match rustgen_written_in(j, param.ty): RustgenResult(List(RustgenType)) {
+          None => ⊢ RustgenResult(List(RustgenType)) from match rustgen_written_in(j, param.ty) {
             RustgenErr(Message) => RustgenErr(Message)
-            RustgenOk(ty) => match rustgen_written_params(
+            RustgenOk(ty) => ⊢ RustgenResult(List(RustgenType)) from match rustgen_written_params(
               j,
               rest
-            ): RustgenResult(List(RustgenType)) {
+            ) {
               RustgenErr(Message) => RustgenErr(Message)
               RustgenOk(types) => RustgenOk(Cons(ty, types))
             }
@@ -272,13 +272,13 @@ mutual {
     }
   }
   pub fn rustgen_written_args(k: Nat, args: List(SurfaceTerm)): RustgenResult(List(RustgenType)) {
-    match k: RustgenResult(List(RustgenType)) {
+    ⊢ RustgenResult(List(RustgenType)) from match k {
       Zero => RustgenErr("type depth exceeded")
-      Succ(j) => match args: RustgenResult(List(RustgenType)) {
+      Succ(j) => ⊢ RustgenResult(List(RustgenType)) from match args {
         Nil => RustgenOk(Nil)
-        Cons(arg, rest) => match rustgen_written_in(j, arg): RustgenResult(List(RustgenType)) {
+        Cons(arg, rest) => ⊢ RustgenResult(List(RustgenType)) from match rustgen_written_in(j, arg) {
           RustgenErr(Message) => RustgenErr(Message)
-          RustgenOk(ty) => match rustgen_written_args(j, rest): RustgenResult(List(RustgenType)) {
+          RustgenOk(ty) => ⊢ RustgenResult(List(RustgenType)) from match rustgen_written_args(j, rest) {
             RustgenErr(Message) => RustgenErr(Message)
             RustgenOk(types) => RustgenOk(Cons(ty, types))
           }
@@ -294,7 +294,7 @@ pub fn rustgen_written(
 pub fn rustgen_clone(code: Text): Text { rustgen_wrapped("(", code, ").clone()") }
 
 pub fn rustgen_text_bytes(k: Nat, value: Text, at: Nat): Text {
-  match k: Text {
+  ⊢ Text from match k {
     Zero => ""
     Succ(j) => Text::concat_all(
       Cons(
@@ -314,7 +314,7 @@ pub fn rustgen_text(value: Text): Text {
 }
 
 pub fn rustgen_number_in(k: Nat, digits: Text, at: Nat, value: Nat): Option(Nat) {
-  match k: Option(Nat) {
+  ⊢ Option(Nat) from match k {
     Zero => None
     Succ(j) => if at == Text::len(digits) { Some(value) } else {
       let digit := Text::byte_value(digits, at)
@@ -334,9 +334,9 @@ pub fn rustgen_number(digits: Text): Option(Nat) {
 
 mutual {
   pub fn rustgen_known_in(k: Nat, ty: RustgenType, functions: List(RustgenFunction)): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match ty: Bool {
+      Succ(j) => ⊢ Bool from match ty {
         RustgenCallable(params, result) => rustgen_known_list(j, Cons(result, params), functions)
         RustgenNumber(Id, value) => false
         RustgenInt => true
@@ -345,11 +345,11 @@ mutual {
         RustgenNat => true
         RustgenVar(name) => true
         RustgenMeta(name) => false
-        RustgenNamed(name) => match rustgen_find_function(name, functions): Bool {
+        RustgenNamed(name) => ⊢ Bool from match rustgen_find_function(name, functions) {
           None => false
           Some(f) => f.kind == 2 && List::length(f.generics) == 0
         }
-        RustgenApply(name, args) => match rustgen_find_function(name, functions): Bool {
+        RustgenApply(name, args) => ⊢ Bool from match rustgen_find_function(name, functions) {
           None => false
           Some(f) => f.kind == 2 && List::length(
             f.generics
@@ -363,9 +363,9 @@ mutual {
     args: List(RustgenType),
     functions: List(RustgenFunction)
   ): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match args: Bool {
+      Succ(j) => ⊢ Bool from match args {
         Nil => true
         Cons(t, rest) => rustgen_known_in(j, t, functions) && rustgen_known_list(j, rest, functions)
       }

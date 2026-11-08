@@ -1,0 +1,42 @@
+@ cases.a-comparison-in-a-hypothesis-and-a-result-type-reads-as-in-a-body-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem double_ne_zero(x: Nat, h: x == 0 = false): Nat::mul(2, x) == 0 = false {
+  ⊢ Nat::mul(2, x) == 0 = false from match x {
+    Zero => ⊢ Nat::mul(2, Zero) == 0 = false from match true_ne_false(h) {
+    }
+    Succ(y) => Refl
+  }
+}
+theorem succ_ne_zero_by_comparison(x: Nat): Nat::mul(2, Succ(x)) == 0 = false { Refl }
+```
+
+checks_all = "ok"
+@ cases.a-comparison-written-on-an-arm-goal-is-compiled-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem arm_goal(b: Nat, r: Nat): Nat::eq(Succ(r), b) == false = Nat::eq(Succ(r), b) == false {
+  ⊢ Nat::eq(Succ(r), b) == false = Nat::eq(Succ(r), b) == false from match Succ(r) == b {
+    false => ⊢ false == false = false == false from Refl
+    true => ⊢ true == false = true == false from Refl
+  }
+}
+```
+
+checks_all = "ok"
+@ cases.a-product-with-an-operand-that-needs-unfolding-reduces-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn zero_of(p: Nat × Nat): Nat {
+  ⊢ Nat from match p {
+    #(q, r) => q
+  }
+}
+theorem product_by_unfolding(b: Nat): Nat::mul(b, zero_of(#(Zero, Zero))) = Zero { Refl }
+theorem sum_by_unfolding(b: Nat): Nat::add(Nat::mul(b, zero_of(#(Zero, Zero))), Zero) = Zero { Refl }
+```
+
+checks_all = "ok"

@@ -19,7 +19,7 @@ pub theorem diagnostic_items_head<A: Type, p: (
   Checker,
   A
 ) -> Prop, c: Checker, x: A, xs: List(A)>(h: DiagnosticItems(A, p, c, Cons(x, xs))): p(c, x) {
-  match h: p(c, x) { DiagnosticItemsCons(first, rest, head, tail) => head }
+  ⊢ p(c, x) from match h { DiagnosticItemsCons(first, rest, head, tail) => head }
 }
 pub theorem diagnostic_items_tail<A: Type, p: (
   Checker,
@@ -27,7 +27,7 @@ pub theorem diagnostic_items_tail<A: Type, p: (
 ) -> Prop, c: Checker, x: A, xs: List(
   A
 )>(h: DiagnosticItems(A, p, c, Cons(x, xs))): DiagnosticItems(A, p, c, xs) {
-  match h: DiagnosticItems(A, p, c, xs) { DiagnosticItemsCons(first, rest, head, tail) => tail }
+  ⊢ DiagnosticItems(A, p, c, xs) from match h { DiagnosticItemsCons(first, rest, head, tail) => tail }
 }
 pub theorem diagnostic_items_reverse_onto<A: Type>(
   p: (Checker, A) -> Prop,
@@ -37,7 +37,7 @@ pub theorem diagnostic_items_reverse_onto<A: Type>(
   acc: List(A),
   tail: DiagnosticItems(A, p, c, acc)
 ): DiagnosticItems(A, p, c, List::reverse_onto(xs, acc)) {
-  match h: DiagnosticItems(A, p, c, List::reverse_onto(xs, acc)) {
+  ⊢ DiagnosticItems(A, p, c, List::reverse_onto(xs, acc)) from match h {
     DiagnosticItemsNil => tail
     DiagnosticItemsCons(x, rest, head, inside) => diagnostic_items_reverse_onto(
       p,
@@ -71,7 +71,7 @@ pub theorem diagnostic_kept_member(
   entry: KeptIn(ks, gs, rigid, a, b),
   checked: DiagnosticItems(TyKept, DiagnosticKept, c, ks)
 ): RigidFor(ck_subst_of(c), gs, rigid, a, b) {
-  match entry: RigidFor(ck_subst_of(c), gs, rigid, a, b) {
+  ⊢ RigidFor(ck_subst_of(c), gs, rigid, a, b) from match entry {
     KeptHere(generics, map, left, right, rest) => ck_rigid_kept_sound(
       c,
       generics,

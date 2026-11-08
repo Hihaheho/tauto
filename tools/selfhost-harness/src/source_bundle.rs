@@ -161,7 +161,7 @@ impl BundlePlan {
             })?;
             // This is Eure manifest metadata, not the Tauto language parser.
             let manifest =
-                tauto::manifest::parse(raw, Path::new(&manifest_id)).map_err(io::Error::other)?;
+                tauto::manifest::parse(raw, Path::new(&manifest_id)).map_err(|m| io::Error::other(m.to_string()))?;
             if expected.is_some_and(|name| name != manifest.package.name) {
                 return Err(io::Error::other(format!(
                     "dependency name differs from package: {manifest_id}"

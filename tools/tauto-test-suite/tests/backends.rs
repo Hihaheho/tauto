@@ -1,6 +1,7 @@
 //! Every backend against the cases: each case a backend selects (see
-//! `Scenario`) is compiled, run, and compared, and its status is compared
-//! with `cases/coverage/<backend>.tsv`; see `tauto_test_suite::coverage`.
+//! `Scenario`) is compiled, run, and compared. A case that fails where it
+//! declares no failure, or passes where it declares one, fails the run; see
+//! `tauto_test_suite::coverage`.
 //!
 //! `cargo test -p tauto-test-suite --test backends -- [rust|javascript|vm]
 //! [<filter>]` runs one backend, or both, on the cases whose name contains
@@ -43,19 +44,19 @@ fn run() -> ExitCode {
             Scenario::Backend(Backend::Rust) => tauto_test_suite::coverage::run_backend(
                 &root,
                 backend,
-                filter.as_deref(),
+                filter.as_deref().map(tauto_test_suite::Filter::Contains),
                 rust::runner,
             ),
             Scenario::Backend(Backend::Javascript) => tauto_test_suite::coverage::run_backend(
                 &root,
                 backend,
-                filter.as_deref(),
+                filter.as_deref().map(tauto_test_suite::Filter::Contains),
                 javascript::runner,
             ),
             Scenario::Backend(Backend::Vm) => tauto_test_suite::coverage::run_backend(
                 &root,
                 backend,
-                filter.as_deref(),
+                filter.as_deref().map(tauto_test_suite::Filter::Contains),
                 vm::runner,
             ),
             Scenario::Eval => unreachable!(),

@@ -8,10 +8,10 @@ import "../../text/src/text.taut"
 import "../../unicode/src/classes.taut"
 import std::Text
 import std::prelude::Os
-pub fn elab_source(k: Nat, source: Text): ElabResult(List(ElabDeclaration)) {
-  match syntax_tables(): ElabResult(List(ElabDeclaration)) {
+pub fn elab_source(k: Nat, source: Text): ElabResult(List(ElabItem)) {
+  ⊢ ElabResult(List(ElabItem)) from match syntax_tables() {
     None => ElabErr("invalid syntax tables")
-    Some(tables) => match syntax_parse(tables, source): ElabResult(List(ElabDeclaration)) {
+    Some(tables) => ⊢ ElabResult(List(ElabItem)) from match syntax_parse(tables, source) {
       None => ElabErr("cannot parse source")
       Some(Root) => if elab_unsupported(surface_size(Root) + 1, Cons(Root, Nil)) {
         ElabErr("attributes and generated declarations are unsupported")
@@ -26,7 +26,7 @@ pub fn elab_source(k: Nat, source: Text): ElabResult(List(ElabDeclaration)) {
           Root
         )
         var core := kernel_new()
-        elab_program(stmts, k, &mut core)
+        if elab_prelude(k, &mut core) { elab_program(stmts, k, &mut core) } else { ElabErr("cannot declare the library families") }
       }
     }
   }
@@ -50,7 +50,7 @@ pub fn elab_main_files(paths: List(Text)): Unit {
             )
             perform exit(1)
           }
-          ElabOk(ds) => print(elab_write_declarations(ds))
+          ElabOk(ds) => print(elab_write_items(ds))
         }
       }
       elab_main_files(rest)

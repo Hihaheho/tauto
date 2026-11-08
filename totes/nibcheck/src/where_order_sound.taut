@@ -18,7 +18,7 @@ import "../../surface/src/surface.taut"
 pub theorem where_reverse_member<A: Type, item: A, items: List(
   A
 )>(present: Mem(A, item, items)): Mem(A, item, List::reverse(items)) {
-  match present: Mem(A, item, List::reverse(items)) {
+  ⊢ Mem(A, item, List::reverse(items)) from match present {
     MemHere(rest) => Eq::subst(
       (xs: List(A)) => Mem(A, item, xs),
       Eq::sym(List::reverse_cons(item, rest)),
@@ -34,7 +34,7 @@ pub theorem where_reverse_member<A: Type, item: A, items: List(
 pub theorem where_generic_reverse<generics: List(
   Pair(Text, Kind)
 ), name: Text>(known: WhereGeneric(generics, name)): WhereGeneric(List::reverse(generics), name) {
-  match known: WhereGeneric(List::reverse(generics), name) {
+  ⊢ WhereGeneric(List::reverse(generics), name) from match known {
     Mk(kind, present) => WhereGeneric::Mk(kind, where_reverse_member(present))
   }
 }
@@ -43,7 +43,7 @@ pub theorem where_generic_term_reverse<generics: List(
 ), source: SurfaceTerm, name: Text>(
   known: WhereGenericTerm(generics, source, name)
 ): WhereGenericTerm(List::reverse(generics), source, name) {
-  match known: WhereGenericTerm(List::reverse(generics), source, name) {
+  ⊢ WhereGenericTerm(List::reverse(generics), source, name) from match known {
     Mk(ctor_ast_occurrence, spelling, start, end, declared) => WhereGenericTerm::Mk(
       spelling,
       start,
@@ -64,7 +64,7 @@ pub theorem where_constraint_reverse<classes: Ordmap(
 )>(
   known: WhereConstraint(classes, generics, source, previous, final)
 ): WhereConstraint(classes, List::reverse(generics), source, previous, final) {
-  match known: WhereConstraint(classes, List::reverse(generics), source, previous, final) {
+  ⊢ WhereConstraint(classes, List::reverse(generics), source, previous, final) from match known {
     Mk(name, r#class, Generic, Fresh) => WhereConstraint::Mk(
       name,
       r#class,
@@ -87,17 +87,9 @@ pub theorem where_constraints_reverse<classes: Ordmap(
 )>(
   known: WhereConstraints(classes, generics, sources, previous, final)
 ): WhereConstraints(classes, List::reverse(generics), sources, previous, final) {
-  match known: WhereConstraints(classes, List::reverse(generics), sources, previous, final) {
+  ⊢ WhereConstraints(classes, List::reverse(generics), sources, previous, final) from match known {
     WhereConstraintsNil(predicates) => WhereConstraintsNil(predicates)
-    WhereConstraintsCons(
-      source,
-      rest,
-      initial,
-      next,
-      final_preds,
-      head,
-      tail
-    ) => WhereConstraintsCons(
+    WhereConstraintsCons(source, rest, initial, next, final_preds, head, tail) => WhereConstraintsCons(
       source,
       rest,
       initial,
@@ -120,7 +112,7 @@ pub theorem where_clauses_reverse<classes: Ordmap(
 )>(
   known: WhereClauses(classes, generics, sources, predicates)
 ): WhereClauses(classes, List::reverse(generics), sources, predicates) {
-  match known: WhereClauses(classes, List::reverse(generics), sources, predicates) {
+  ⊢ WhereClauses(classes, List::reverse(generics), sources, predicates) from match known {
     Mk(Reversed, derived, ordered) => WhereClauses::Mk(
       Reversed,
       where_constraints_reverse(derived),

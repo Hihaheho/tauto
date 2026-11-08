@@ -17,7 +17,7 @@ pub theorem fnt_registration_if_context(
   take: Bool,
   h: CkFnsFrame(c, m)
 ): CkFnsFrame(c, registration_if(c, m, take)) {
-  match take: CkFnsFrame(c, registration_if(c, m, take)) {
+  ⊢ CkFnsFrame(c, registration_if(c, m, take)) from match take {
     true => fnt_frame_rewrap(c, m, h)
     false => Refl
   }
@@ -26,7 +26,7 @@ pub theorem fnt_ck_program_data_one_context(
   c: Checker,
   s: SurfaceStmt
 ): CkFnsFrame(c, ck_program_data_one(c, s)) {
-  match s: CkFnsFrame(c, ck_program_data_one(c, s)) {
+  ⊢ CkFnsFrame(c, ck_program_data_one(c, s)) from match s {
     StLet(name, ty, value, borrow, mutable) => Refl
     StVar(name, ty, value, borrow) => Refl
     StModule(name, stmts, start, end) => Refl
@@ -61,7 +61,11 @@ pub theorem fnt_ck_program_data_one_context(
     StEnum(d) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkFnsFrame(c, m),
       Eq::sym(registration_program_StEnum_unf(d, c)),
-      fnt_frame_rewrap(c, ck_declare_data(c, d, false, false), fnt_ck_declare_data_context(c, d, false, false))
+      fnt_frame_rewrap(
+        c,
+        ck_declare_data(c, d, false, false),
+        fnt_ck_declare_data_context(c, d, false, false)
+      )
     )
   }
 }
@@ -69,7 +73,7 @@ pub theorem fnt_ck_program_data_context(
   stmts: List(SurfaceStmt),
   c: Checker
 ): CkFnsFrame(c, ck_program_data(stmts, c)) {
-  match stmts: CkFnsFrame(c, ck_program_data(stmts, c)) {
+  ⊢ CkFnsFrame(c, ck_program_data(stmts, c)) from match stmts {
     Nil => Refl
     Cons(s, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkFnsFrame(c, m),
@@ -95,7 +99,7 @@ pub theorem fnt_ck_prelude_data_one_context(
   s: SurfaceStmt,
   own: Ordmap(Text, Bool)
 ): CkFnsFrame(c, ck_prelude_data_one(c, s, own)) {
-  match s: CkFnsFrame(c, ck_prelude_data_one(c, s, own)) {
+  ⊢ CkFnsFrame(c, ck_prelude_data_one(c, s, own)) from match s {
     StLet(name, ty, value, borrow, mutable) => Refl
     StVar(name, ty, value, borrow) => Refl
     StModule(name, stmts, start, end) => Refl
@@ -154,7 +158,7 @@ pub theorem fnt_ck_prelude_data_context(
   c: Checker,
   own: Ordmap(Text, Bool)
 ): CkFnsFrame(c, ck_prelude_data(stmts, c, own)) {
-  match stmts: CkFnsFrame(c, ck_prelude_data(stmts, c, own)) {
+  ⊢ CkFnsFrame(c, ck_prelude_data(stmts, c, own)) from match stmts {
     Nil => Refl
     Cons(s, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkFnsFrame(c, m),

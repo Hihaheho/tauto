@@ -29,9 +29,9 @@ fn wf_source() -> &'static str {
     r#"fn id_nat(n: Nat): Nat { n }
 
 fn half(n: Nat): Nat decreasing_by measure(id_nat) {
-  match n: Nat {
+  ⊢ Nat from match n {
     Zero => Zero
-    Succ(m) => match m: Nat {
+    Succ(m) => ⊢ Nat from match m {
       Zero => Zero
       Succ(k) => Succ(half(k, Nat::le_succ(k)))
     }

@@ -1,0 +1,181 @@
+import "../../std/Mode.taut"
+
+@mode!(
+  `depth(rec l, out n) -> Measured { MeasuredYes | MeasuredNo }`
+) => inductive Measured, fn depth
+inductive Depth: (List(Nat), Nat) -> Prop {
+  DNil: Depth(Nil, Zero)
+  DCons<x: Nat, xs: List(Nat), n: Nat>(h: Depth(xs, n)): Depth(Cons(x, xs), Succ(n))
+}
+
+@mode!(`le(rec n, in m) -> LeResult { LeYes | LeNo }`) => inductive LeResult, fn le
+inductive Le: (Nat, Nat) -> Prop {
+  LeZero(m: Nat): Le(Zero, m)
+  LeSucc<n: Nat, m: Nat>(h: Le(n, m)): Le(Succ(n), Succ(m))
+}
+
+fn answer(l: List(Nat)): Nat {
+  ⊢ Nat from match depth(l) {
+    MeasuredYes(n, h, unique) => n
+    MeasuredNo(refute) => Zero
+  }
+}
+
+theorem empty_depth(): answer(Nil) = Zero { Refl }
+theorem two_depth(): answer(Cons(Zero, Cons(Zero, Nil))) = Succ(Succ(Zero)) { Refl }
+
+fn le_bool(n: Nat, m: Nat): Bool {
+  ⊢ Bool from match le(n, m) {
+    LeYes(h) => true
+    LeNo(refute) => false
+  }
+}
+
+theorem le_true(): le_bool(Zero, Succ(Zero)) = true { Refl }
+theorem le_false(): le_bool(Succ(Zero), Zero) = false { Refl }
+
+@mode!(
+  `nested(rec n, out m) -> NestedAnswer { NestedYes | NestedNo }`
+) => inductive NestedAnswer, fn nested
+inductive Nested: (Nat, Nat) -> Prop {
+  NZero: Nested(Zero, Zero)
+  NPair<n: Nat, m: Nat>(h: Nested(n, m)): Nested(Succ(Succ(n)), Succ(m))
+}
+fn nested_value(n: Nat): Option(Nat) {
+  ⊢ Option(Nat) from match nested(n) {
+    NestedYes(m, h, unique) => Some(m)
+    NestedNo(refute) => None
+  }
+}
+theorem nested_yes(): nested_value(Succ(Succ(Zero))) = Some(Succ(Zero)) { Refl }
+theorem nested_no(): nested_value(Succ(Zero)) = None { Refl }
+
+@mode!(
+  `mixed(rec n, in m, out k) -> MixedAnswer { MixedYes | MixedNo }`
+) => inductive MixedAnswer, fn mixed
+inductive Mixed: (Nat, Nat, Nat) -> Prop {
+  MLeft<n: Nat>: Mixed(n, Zero, Zero)
+  MRight<m: Nat>: Mixed(Zero, Succ(m), m)
+}
+fn mixed_value(n: Nat, m: Nat): Option(Nat) {
+  ⊢ Option(Nat) from match mixed(n, m) {
+    MixedYes(k, h, unique) => Some(k)
+    MixedNo(refute) => None
+  }
+}
+theorem mixed_left(): mixed_value(Succ(Zero), Zero) = Some(Zero) { Refl }
+theorem mixed_right(): mixed_value(Zero, Succ(Succ(Zero))) = Some(Succ(Zero)) { Refl }
+theorem mixed_none(): mixed_value(Succ(Zero), Succ(Zero)) = None { Refl }
+
+inductive Packet: Type {
+  Empty: Packet
+  Packed(flag: Bool): Packet
+  Wrapped(inner: Packet): Packet
+}
+@mode!(`build(rec n, out p) -> Built { BuiltYes | BuiltNo }`) => inductive Built, fn build
+inductive Build: (Nat, Packet) -> Prop {
+  BZero: Build(Zero, Empty)
+  BSucc<n: Nat>: Build(Succ(n), Wrapped(Packed(true)))
+}
+inductive BoolAnswer(a: Bool, b: Bool): Type {
+  BoolSame(e: a = b): BoolAnswer(a, b)
+  BoolDiff(no: (a = b) -> False): BoolAnswer(a, b)
+}
+fn bool_dec(a: Bool, b: Bool): BoolAnswer(a, b) {
+  ⊢ BoolAnswer(a, b) from match a {
+    true => ⊢ BoolAnswer(true, b) from match b {
+      true => BoolSame(Refl)
+      false => BoolDiff(e => ⊢ False from match e {})
+    }
+    false => ⊢ BoolAnswer(false, b) from match b {
+      true => BoolDiff(e => ⊢ False from match e {})
+      false => BoolSame(Refl)
+    }
+  }
+}
+@mode!(
+  ```
+select(rec n, in b, out k) -> Selected { SelectedYes | SelectedNo }
+  via Build: build { BuiltYes | BuiltNo }
+  eq Bool: bool_dec { BoolSame | BoolDiff }
+```
+) => inductive Selected, fn select
+inductive Select: (Nat, Bool, Nat) -> Prop {
+  SelectPacket<n: Nat, b: Bool>(h: Build(n, Wrapped(Packed(b)))): Select(n, b, Zero)
+}
+fn selected(n: Nat, b: Bool): Bool {
+  ⊢ Bool from match select(n, b) {
+    SelectedYes(k, h, unique) => true
+    SelectedNo(refute) => false
+  }
+}
+theorem selected_yes(): selected(Succ(Zero), true) = true { Refl }
+theorem selected_diff(): selected(Succ(Zero), false) = false { Refl }
+theorem selected_shape(): selected(Zero, true) = false { Refl }
+
+// These types refer to the original relations, independently of the generated contracts.
+theorem depth_unique(
+  l: List(Nat),
+  n: Nat,
+  m: Nat,
+  hn: Depth(l, n),
+  hm: Depth(l, m)
+): n = m {
+  ⊢ n = m from match depth(l) {
+    MeasuredYes(k, h, unique) => Eq::trans(unique(n, hn), Eq::sym(unique(m, hm)))
+    MeasuredNo(refute) => False::elim(refute(n, hn))
+  }
+}
+fn select_contract(
+  n: Nat,
+  b: Bool
+): Or(Exists(Nat, k => Select(n, b, k)), (∀ k: Nat. (Select(n, b, k)) -> False)) {
+  ⊢ Or(Exists(Nat, k => Select(n, b, k)), (∀ k: Nat. (Select(n, b, k)) -> False)) from match select(
+    n,
+    b
+  ) {
+    SelectedYes(k, h, unique) => OrInl(ExIntro(k, h))
+    SelectedNo(refute) => OrInr(refute)
+  }
+}
+fn le_contract(n: Nat, m: Nat): Or(Le(n, m), (Le(n, m)) -> False) {
+  ⊢ Or(Le(n, m), (Le(n, m)) -> False) from match le(n, m) {
+    LeYes(h) => OrInl(h)
+    LeNo(refute) => OrInr(refute)
+  }
+}
+
+@mode!(
+  `never(rec n, out m) -> NeverAnswer { NeverYes | NeverNo }`
+) => inductive NeverAnswer, fn never
+inductive NeverRelated: (Nat, Nat) -> Prop {}
+theorem never_contract(n: Nat, m: Nat, h: NeverRelated(n, m)): False {
+  ⊢ False from match never(n) {
+    NeverYes(k, hk, unique) => ⊢ False from match hk {}
+    NeverNo(refute) => refute(m, h)
+  }
+}
+
+@mode!(
+  `bool_identity(rec b, out c) -> BoolIdentityAnswer { BIYes | BINo }`
+) => inductive BoolIdentityAnswer, fn bool_identity
+inductive BoolIdentity: (Bool, Bool) -> Prop {
+  BITrue: BoolIdentity(true, true)
+  BIFalse: BoolIdentity(false, false)
+}
+fn bool_value(b: Bool): Bool {
+  ⊢ Bool from match bool_identity(b) {
+    BIYes(c, h, unique) => c
+    BINo(refute) => false
+  }
+}
+theorem bool_true(): bool_value(true) = true { Refl }
+theorem bool_false(): bool_value(false) = false { Refl }
+
+perform show("selected", selected(Succ(Zero), true))
+perform show("different", selected(Succ(Zero), false))
+perform show("shape", selected(Zero, true))
+perform show("le", le_bool(Zero, Succ(Zero)))
+perform show("not-le", le_bool(Succ(Zero), Zero))
+perform show("true", bool_value(true))
+perform show("false", bool_value(false))

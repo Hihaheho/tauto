@@ -2,33 +2,33 @@
 
 @ cases.a-temporary-of-a-macro-does-not-take-the-users-name
 files."swap.nib" = ````nib
-syntax swp => struct swp_Pair, fn swp_parse = ```par
-{{par:swap}}```
-fn swap_expand(p: swp_Pair) -> List(SynStmt) {
-  let a = syn_ident(p.name)
-  let b = syn_ident(p.name_2)
+import std::prelude::Macro
+
+syntax!(swp, ```par
+{{par:swap}}```) => struct Pair, fn parse
+pub macro fn swap(p: swp::Pair): List(SynStmt) {
+  let a := Syn::ident(p.name)
+  let b := Syn::ident(p.name_2)
   quote stmts {
-    let tmp = $a
+    let tmp := $a
     $a := $b
     $b := tmp
   }
 }
-
-macro swap = swap_expand
 ````
 files."main.nib" = ````nib
 import "swap.nib"
-var tmp = 1
-var other = 2
+var tmp := 1
+var other := 2
 swap!(`tmp other`)
 perform show("tmp", tmp)
 perform show("other", other)
 ````
 shows = ["tmp = 2", "other = 1"]
 expands = ```nib
-var tmp = 1
-var other = 2
-let tmp#1 = tmp
+var tmp := 1
+var other := 2
+let tmp#1 := tmp
 tmp := other
 other := tmp#1
 perform show("tmp", tmp)
@@ -37,17 +37,19 @@ perform show("other", other)
 trace = ["swap"]
 
 // An explicit capture: the binder `it` borrows the context of the call
-// (`syn_ident_like`), so the user's `${it + 1}` is bound by it. The lint
+// (`Syn::ident_like`), so the user's `${it + 1}` is bound by it. The lint
 // `macro-capture` forbids this in `std/` and `meta/`.
 @ cases.an-anaphoric-name-is-captured-explicitly
 files."aif.nib" = ````nib
-syntax aif => struct aif_Aif, fn aif_parse = ```par
-{{par:aif}}```
-fn aif_expand(a: aif_Aif) -> SynExpr {
-  let it = syn_ident_like(syn_ident(a.kw_then), "it")
-  let c = a.tauto_expr
-  let t = a.tauto_expr_2
-  let e = a.tauto_expr_3
+import std::prelude::Macro
+
+syntax!(aif, ```par
+{{par:aif}}```) => struct Aif, fn parse
+pub macro fn aif(a: aif::Aif): SynExpr {
+  let it := Syn::ident_like(Syn::ident(a.kw_then), "it")
+  let c := a.tauto_expr
+  let t := a.tauto_expr_2
+  let e := a.tauto_expr_3
   quote {
     match $c {
       Some($it) => $t
@@ -55,24 +57,23 @@ fn aif_expand(a: aif_Aif) -> SynExpr {
     }
   }
 }
-macro aif = aif_expand
 ````
 files."main.nib" = ````nib
 import "aif.nib"
-fn lookup(k: u64) -> Option(u64) { if k == 1 { Some(41) } else { None } }
-let n = aif!(`${lookup(1)} then ${it + 1} else ${0}`)
-let m = aif!(`${lookup(2)} then ${it + 1} else ${0}`)
+fn lookup(k: u64): Option(u64) { if k == 1 { Some(41) } else { None } }
+let n := aif!(`${lookup(1)} then ${it + 1} else ${0}`)
+let m := aif!(`${lookup(2)} then ${it + 1} else ${0}`)
 perform show("n", n)
 perform show("m", m)
 ````
 expands = ```nib
-fn lookup(k: u64) -> Option(u64) { if k == 1 { Some(41) } else { None } }
-let n = match lookup(1) {
-  Some(it) => it + 1
+fn lookup(k: u64): Option(u64) { if k == 1 { Option::Some(41) } else { Option::None } }
+let n := match lookup(1) {
+  Option::Some(it) => it + 1
   None => 0
 }
-let m = match lookup(2) {
-  Some(it) => it + 1
+let m := match lookup(2) {
+  Option::Some(it) => it + 1
   None => 0
 }
 perform show("n", n)
@@ -80,16 +81,18 @@ perform show("m", m)
 ```
 shows = ["n = 42", "m = 0"]
 
-// Without `syn_ident_like` the `it` of the `quote` has the macro's scope, and
+// Without `Syn::ident_like` the `it` of the `quote` has the macro's scope, and
 // the user's `it` is not bound by it (running it says `it is not defined`).
 @ cases.a-name-of-a-quote-does-not-bind-the-users-name
 files."aif.nib" = ````nib
-syntax aif => struct aif_Aif, fn aif_parse = ```par
-{{par:aif}}```
-fn aif_expand(a: aif_Aif) -> SynExpr {
-  let c = a.tauto_expr
-  let t = a.tauto_expr_2
-  let e = a.tauto_expr_3
+import std::prelude::Macro
+
+syntax!(aif, ```par
+{{par:aif}}```) => struct Aif, fn parse
+pub macro fn aif(a: aif::Aif): SynExpr {
+  let c := a.tauto_expr
+  let t := a.tauto_expr_2
+  let e := a.tauto_expr_3
   quote {
     match $c {
       Some(it) => $t
@@ -97,17 +100,56 @@ fn aif_expand(a: aif_Aif) -> SynExpr {
     }
   }
 }
-macro aif = aif_expand
 ````
 files."main.nib" = ````nib
 import "aif.nib"
-fn lookup(k: u64) -> Option(u64) { if k == 1 { Some(41) } else { None } }
-let n = aif!(`${lookup(1)} then ${it + 1} else ${0}`)
+fn lookup(k: u64): Option(u64) { if k == 1 { Some(41) } else { None } }
+let n := aif!(`${lookup(1)} then ${it + 1} else ${0}`)
 ````
 expands = ```nib
-fn lookup(k: u64) -> Option(u64) { if k == 1 { Some(41) } else { None } }
-let n = match lookup(1) {
-  Some(it#1) => it + 1
+fn lookup(k: u64): Option(u64) { if k == 1 { Option::Some(41) } else { Option::None } }
+let n := match lookup(1) {
+  Option::Some(it#1) => it + 1
   None => 0
 }
 ```
+
+@ cases.a-macro-function-means-the-prelude-text-len-where-its-file-does
+files."lib.taut" = ````nib
+pub macro fn length(c: Judgement): SynExpr {
+  let n: u64 := Text::len("abcd")
+  Syn::lift_u64(n, Syn::call_span())
+}
+````
+files."main.nib" = ````nib
+import std::Text
+import "lib.taut"
+theorem proof_side(): Text::len("abcd") = 4 { Refl }
+fn program_side(): u64 { length!(x) }
+````
+checks."main.nib::proof_side" = "ok"
+
+// A name the caller wrote in the text of a syntax macro means what it means at the
+// call, whatever the file of the macro imports: `std/proof/Lang.taut` imports the
+// prelude's `concat`, and the caller's own `concat` is still the one meant.
+@ cases.a-name-in-the-text-of-a-macro-is-the-callers
+entry = "concat.taut"
+files."concat.taut" = ````tauto
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_we }
+
+pub fn concat(a: List(Nat), b: List(Nat)): List(Nat) {
+  match a {
+    [] => b
+    [x, ..rest] => [x, ..concat(rest, b)]
+  }
+}
+
+theorem t(b: List(Nat)): concat([], b) = b {
+  proof!(```
+    We have concat($[], b) = b.
+  ```)
+}
+````
+checks.t = "ok"
+diagnostics = []

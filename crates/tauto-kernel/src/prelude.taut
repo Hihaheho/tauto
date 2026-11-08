@@ -47,33 +47,33 @@ module False {
 
 module Eq {
   pub theorem subst<A: Type, a: A, b: A>(P: (A) -> Prop, e: a = b, p: P(a)): P(b) {
-    Eq::ind(A, a, y => e2 => P(y), p, b, e)
+    Eq::ind(<A: A, a: a>, y => e2 => P(y), p, b, e)
   }
 }
 
 module And {
   pub theorem left<A: Prop, B: Prop>(p: And(A, B)): A {
-    And::ind(A, B, t => A, x => y => x, p)
+    And::ind(<A: A, B: B>, t => A, x => y => x, p)
   }
 
   pub theorem right<A: Prop, B: Prop>(p: And(A, B)): B {
-    And::ind(A, B, t => B, x => y => y, p)
+    And::ind(<A: A, B: B>, t => B, x => y => y, p)
   }
 }
 
 module Or {
   pub theorem elim<A: Prop, B: Prop, C: Prop>(p: Or(A, B), f: (A) -> C, g: (B) -> C): C {
-    Or::ind(A, B, t => C, x => f(x), y => g(y), p)
+    Or::ind(<A: A, B: B>, t => C, x => f(x), y => g(y), p)
   }
 }
 
 module Iff {
   pub theorem mp<A: Prop, B: Prop>(p: Iff(A, B), a: A): B {
-    Iff::ind(A, B, t => B, f => g => f(a), p)
+    Iff::ind(<A: A, B: B>, t => B, f => g => f(a), p)
   }
 
   pub theorem mpr<A: Prop, B: Prop>(p: Iff(A, B), b: B): A {
-    Iff::ind(A, B, t => A, f => g => g(b), p)
+    Iff::ind(<A: A, B: B>, t => A, f => g => g(b), p)
   }
 
   // The composition `calc` gives a chain of `↔`, as `Eq::trans` is for a chain of `=`.
@@ -96,15 +96,15 @@ pub(open) inductive BelowPair(A: Type, B: Type): Type {
 
 module Eq {
   pub theorem sym<A: Type, a: A, b: A>(e: a = b): (b = a) {
-    subst(A, a, b, y => y = a, e, Refl(A, a))
+    subst(<A: A, a: a, b: b>, y => y = a, e, Refl(<A: A, a: a>))
   }
 
   pub theorem trans<A: Type, a: A, b: A, c: A>(e1: a = b, e2: b = c): (a = c) {
-    subst(A, b, c, y => a = y, e2, e1)
+    subst(<A: A, a: b, b: c>, y => a = y, e2, e1)
   }
 
   pub theorem congr<A: Type, B: Type, a: A, b: A>(f: (A) -> B, e: a = b): (f(a) = f(b)) {
-    subst(A, a, b, y => f(a) = f(y), e, Refl(B, f(a)))
+    subst(<A: A, a: a, b: b>, y => f(a) = f(y), e, Refl(<A: B, a: f(a)>))
   }
 }
 
@@ -128,7 +128,7 @@ module Quot {
 
   pub axiom ind<A: Type, r: (A, A) -> Prop>(
     P: (Quot(A, r)) -> Prop,
-    m: ∀ a: A. P(mk(A, r, a)),
+    m: ∀ a: A. P(mk(<A: A, r: r>, a)),
     q: Quot(A, r)
   ): P(q)
 
@@ -137,7 +137,7 @@ module Quot {
   // axioms.
   pub axiom sound<A: Type, r: (A, A) -> Prop, a: A, b: A>(
     p: r(a, b)
-  ): mk(A, r, a) = mk(A, r, b)
+  ): mk(<A: A, r: r>, a) = mk(<A: A, r: r>, b)
 }
 
 // `let x: T := e` in a proof stands for `the(T, e)` wherever `x` is used: the
@@ -164,14 +164,14 @@ pub(open) inductive OpNone: Type {
 }
 
 pub fn res_sum(L: Type, R: Type, RL: (L) -> Type, RR: (R) -> Type, o: OpSum(L, R)): Type {
-  match o: Type {
+  ⊢ Type from match o {
     OpHere(a) => RL(a)
     OpThere(b) => RR(b)
   }
 }
 
 pub fn res_none(o: OpNone): Type {
-  match o: Type {
+  ⊢ Type from match o {
   }
 }
 
@@ -182,9 +182,9 @@ module Comp {
     c: Comp(Op, Res, A),
     f: (A) -> Comp(Op, Res, B)
   ): Comp(Op, Res, B) {
-    match c: Comp(Op, Res, B) {
+    ⊢ Comp(Op, Res, B) from match c {
       CompPure(a) => f(a)
-      CompOp(o, k) => CompOp(Op, Res, B, o, (r: Res(o)) => bind(Op, Res, k(r), f))
+      CompOp(o, k) => CompOp(<Op: Op, Res: Res, A: B>, o, (r: Res(o)) => bind(Op, Res, k(r), f))
     }
   }
 
@@ -195,30 +195,30 @@ module Comp {
     arm: ∀ o: Op. ((Res(o)) -> B) -> B,
     c: Comp(Op, Res, A)
   ): B {
-    match c: B {
+    ⊢ B from match c {
       CompPure(a) => ret(a)
       CompOp(o, k) => arm(o, (r: Res(o)) => fold(Op, Res, ret, arm, k(r)))
     }
   }
 
   pub fn value<A>(c: Comp(OpNone, res_none, A)): A {
-    match c: A {
+    ⊢ A from match c {
       CompPure(a) => a
-      CompOp(o, k) => match o: A {
+      CompOp(o, k) => ⊢ A from match o {
       }
     }
   }
 
   pub fn ret<A>(Op: Type, Res: (Op) -> Type, a: A): Comp(Op, Res, A) {
-    CompPure(Op, Res, A, a)
+    CompPure(<Op: Op, Res: Res, A: A>, a)
   }
 
   pub fn op(Op: Type, Res: (Op) -> Type, o: Op): Comp(Op, Res, Res(o)) {
-    CompOp(Op, Res, Res(o), o, r => CompPure(Op, Res, Res(o), r))
+    CompOp(<Op: Op, Res: Res, A: Res(o)>, o, r => CompPure(<Op: Op, Res: Res, A: Res(o)>, r))
   }
 
   pub fn forward<A>(Op: Type, Res: (Op) -> Type, o: Op, k: (Res(o)) -> Comp(Op, Res, A)): Comp(Op, Res, A) {
-    CompOp(Op, Res, A, o, k)
+    CompOp(<Op: Op, Res: Res, A: A>, o, k)
   }
 
   // `c` in a larger row: every operation is forwarded.
@@ -230,7 +230,7 @@ module Comp {
     c: Comp(Op, Res, A),
     arm: ∀ o: Op. ((Res(o)) -> Comp(Op2, Res2, A)) -> Comp(Op2, Res2, A)
   ): Comp(Op2, Res2, A) {
-    fold(Op, Res, (a: A) => CompPure(Op2, Res2, A, a), arm, c)
+    fold(Op, Res, (a: A) => CompPure(<Op: Op2, Res: Res2, A: A>, a), arm, c)
   }
 
   // `c` handled, with the computation first, so that its type is found first.
@@ -259,14 +259,14 @@ pub fn arm_sum<B>(
   o: OpSum(L, R),
   k: (res_sum(L, R, RL, RR, o)) -> B
 ): B {
-  match o: ((res_sum(L, R, RL, RR, o)) -> B) -> B {
+  (⊢ ((res_sum(L, R, RL, RR, o)) -> B) -> B from match o {
     OpHere(x) => here(x)
     OpThere(y) => there(y)
-  }(k)
+  })(k)
 }
 
 pub fn arm_none<B>(o: OpNone, k: (res_none(o)) -> B): B {
-  match o: B {
+  ⊢ B from match o {
   }
 }
 
@@ -277,4 +277,4 @@ pub fn arm_none<B>(o: OpNone, k: (res_none(o)) -> B): B {
 // unfolds it and sees the `Pair`.
 pub fn Prod(A: Type, B: Type): Type { Pair(A, B) }
 
-pub fn prod_mk<A, B>(a: A, b: B): Prod(A, B) { Pair::Mk(A, B, a, b) }
+pub fn prod_mk<A, B>(a: A, b: B): Prod(A, B) { Pair::Mk(<A: A, B: B>, a, b) }

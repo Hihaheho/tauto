@@ -81,7 +81,7 @@ fn add(counts: &mut Counts, file: &Path) {
         match &e.entry.verdict {
             Verdict::Checked { axioms } => {
                 counts.ok += 1;
-                counts.axioms.extend(axioms.iter().cloned());
+                counts.axioms.extend(axioms.iter().map(ToString::to_string));
             }
             Verdict::Incomplete { holes, .. } => {
                 counts.incomplete += 1;

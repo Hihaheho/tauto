@@ -56,7 +56,7 @@ fn a_syntax_without_a_fmt_function_keeps_its_literals() {
     let source = r#"import "lib.taut"
 import std::prelude::Macro
 
-fn other(): outline_Doc {
+fn other(): outline::Doc {
   outline`a ,  1`
 }
 "#;
@@ -77,7 +77,10 @@ fn with_library<T>(f: impl FnOnce(&Library, &tauto::program::Loaded) -> T) -> T 
     f(&library, &loaded)
 }
 
-fn tables_of(loaded: &tauto::program::Loaded, syntax: &str) -> std::rc::Rc<tauto_syntax::Tables> {
+fn tables_of(
+    loaded: &tauto::program::Loaded,
+    syntax: &str,
+) -> std::sync::Arc<tauto_syntax::Tables> {
     loaded
         .literals
         .iter()
@@ -139,7 +142,7 @@ fn errors_of(text: &str) -> Vec<String> {
         .program
         .errors
         .into_iter()
-        .map(|(m, _)| m)
+        .map(|(m, _)| m.to_string())
         .collect()
 }
 
@@ -280,7 +283,9 @@ Comma: ',';
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("may perform Div only")),
+        errors
+            .iter()
+            .any(|e| e.contains("may perform Div and macro_error only")),
         "{errors:?}"
     );
 }

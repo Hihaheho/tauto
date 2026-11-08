@@ -1186,11 +1186,10 @@ fn native_build_rejects_corrupted_transition_proof() {
     fs::copy(example.join("src/main.taut"), dir.join("src/main.taut")).unwrap();
     let source = fs::read_to_string(example.join("src/state.taut"))
         .unwrap()
-        .replace("../../../std/", &format!("{}/std/", root().display()))
-        .replace(
-            "GateOpen(n) => GateOpen(Nat.pred(n))",
-            "GateOpen(n) => GateOpen(succ(n))",
-        );
+        .replace("../../../std/", &format!("{}/std/", root().display()));
+    let transition = "GateOpen(n) => GateOpen(Nat::pred(n))";
+    assert_eq!(source.matches(transition).count(), 1);
+    let source = source.replace(transition, "GateOpen(n) => GateOpen(Succ(n))");
     fs::write(dir.join("src/state.taut"), source).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_tauto"))
         .args(["build", "--backend", "rust"])

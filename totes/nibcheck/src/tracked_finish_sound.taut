@@ -31,23 +31,27 @@ pub theorem literal_records_bind_stable<A: Type, B: Type>(
   first: FinishStableFrame(c, m),
   tail: ∀ value: A. ∀ next: Checker. FinishStableFrame(next, k(value, next))
 ): FinishStableFrame(c, frame_bind(A, B, k, m)) {
-  match m: FinishStableFrame(
+  ⊢ FinishStableFrame(
     c,
     frame_bind(A, B, k, m)
-  ) { mut1(value, next) => Eq::trans(tail(value, next), first) }
+  ) from match m { mut1(value, next) => Eq::trans(tail(value, next), first) }
 }
 pub theorem literal_records_rewrap_stable<A: Type>(
   c: Checker,
   m: Mut1(A, Checker),
   h: FinishStableFrame(c, m)
 ): FinishStableFrame(c, ck_rewrap1(m)) {
-  Eq::subst((result: Mut1(A, Checker)) => FinishStableFrame(c, result), Eq::sym(ck_rewrap1_id(m)), h)
+  Eq::subst(
+    (result: Mut1(A, Checker)) => FinishStableFrame(c, result),
+    Eq::sym(ck_rewrap1_id(m)),
+    h
+  )
 }
 pub theorem literal_default_records_stable(
   c: Checker,
   t: Ty
 ): FinishStableFrame(c, finish_default(c, t)) {
-  match t: FinishStableFrame(c, finish_default(c, t)) {
+  ⊢ FinishStableFrame(c, finish_default(c, t)) from match t {
     TyInt(w) => Refl
     TyBool => Refl
     TyText => Refl
@@ -82,7 +86,7 @@ pub theorem ck_default_ints_records_stable(
   vs: List(Pair(Nat, Bool)),
   c: Checker
 ): FinishStableFrame(c, ck_default_ints(vs, c)) {
-  match vs: FinishStableFrame(c, ck_default_ints(vs, c)) {
+  ⊢ FinishStableFrame(c, ck_default_ints(vs, c)) from match vs {
     Nil => Refl
     Cons(v, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => FinishStableFrame(c, m),
@@ -123,7 +127,7 @@ pub theorem literal_finish_default_records_stable(
   first: FinishStableFrame(c, m),
   clean: DiagnosticReportClean(diagnostic_finish_default_result(m))
 ): FinishStableFrame(c, diagnostic_finish_default_result(m)) {
-  match m: FinishStableFrame(c, diagnostic_finish_default_result(m)) {
+  ⊢ FinishStableFrame(c, diagnostic_finish_default_result(m)) from match m {
     mut1(value, next) => Eq::trans(
       literal_after_defaults_records_stable(
         next,

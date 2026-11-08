@@ -21,14 +21,14 @@ pub theorem written_map_value<A: Type, B: Type>(
   f: (A) -> B,
   m: Mut1(A, Checker)
 ): ck_val(written_map(f, m)) = f(ck_val(m)) {
-  match m: ck_val(written_map(f, m)) = f(ck_val(m)) { mut1(value, state) => Refl }
+  ⊢ ck_val(written_map(f, m)) = f(ck_val(m)) from match m { mut1(value, state) => Refl }
 }
 pub theorem written_map_clean<A: Type, B: Type>(
   f: (A) -> B,
   m: Mut1(A, Checker),
   clean: DiagnosticClean(ck_st(written_map(f, m)))
 ): DiagnosticClean(ck_st(m)) {
-  match m: DiagnosticClean(ck_st(m)) { mut1(value, state) => clean }
+  ⊢ DiagnosticClean(ck_st(m)) from match m { mut1(value, state) => clean }
 }
 
 pub theorem written_union_sound(
@@ -231,11 +231,7 @@ pub theorem written_borrow_sound(
   )
 }
 
-pub fn written_fnkind_after(
-  spelling: Text,
-  span: TySpan,
-  m: Mut1(Ty, Checker)
-): Mut1(Ty, Checker) {
+pub fn written_fnkind_after(spelling: Text, span: TySpan, m: Mut1(Ty, Checker)): Mut1(Ty, Checker) {
   frame_bind(
     Ty,
     Ty,
@@ -264,14 +260,14 @@ pub theorem written_fnkind_after_sound(
   SkFnKind(spelling, body),
   ck_val(written_fnkind_after(spelling, span, m))
 ) {
-  match m: WrittenKind(
+  ⊢ WrittenKind(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
     under_borrow,
     SkFnKind(spelling, body),
     ck_val(written_fnkind_after(spelling, span, m))
-  ) {
+  ) from match m {
     mut1(value, state) => Eq::subst(
       (env: Datas) => WrittenKind(
         env,
@@ -314,17 +310,17 @@ pub theorem written_fnkind_rewrap(
   span: TySpan,
   m: Mut1(Ty, Checker)
 ): frame_bind(
+  Ty,
+  Ty,
+  (value: Ty, state: Checker) => ck_rewrap1(ck_written_fn_kind(value, state, spelling, span)),
+  m
+) = written_fnkind_after(spelling, span, m) {
+  ⊢ frame_bind(
     Ty,
     Ty,
     (value: Ty, state: Checker) => ck_rewrap1(ck_written_fn_kind(value, state, spelling, span)),
     m
-  ) = written_fnkind_after(spelling, span, m) {
-  match m: frame_bind(
-      Ty,
-      Ty,
-      (value: Ty, state: Checker) => ck_rewrap1(ck_written_fn_kind(value, state, spelling, span)),
-      m
-    ) = written_fnkind_after(spelling, span, m) {
+  ) = written_fnkind_after(spelling, span, m) from match m {
     mut1(value, state) => ck_rewrap1_id(ck_written_fn_kind(value, state, spelling, span))
   }
 }

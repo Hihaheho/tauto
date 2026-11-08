@@ -14,7 +14,7 @@ import "unify_allocation_steps.taut"
 import "unify_sound.taut"
 
 pub fn OptionTypeAllocated(limit: Nat, value: Option(Ty)): Prop {
-  match value: Prop { None => True
+  ⊢ Prop from match value { None => True
     Some(ty) => TypeAllocated(limit, ty) }
 }
 pub def JoinAllocation(
@@ -53,8 +53,8 @@ pub theorem join_alloc_borrow_result(
   first: AllocationRun(c, m),
   bounded: TypeAllocated(ck_next_of(c), x)
 ): JoinOptionAllocation(c, ck_jb_k(x, m)) {
-  match m: JoinOptionAllocation(c, ck_jb_k(x, m)) {
-    mut1(flag, next) => match flag: JoinOptionAllocation(c, ck_jb_k(x, mut1(flag, next))) {
+  ⊢ JoinOptionAllocation(c, ck_jb_k(x, m)) from match m {
+    mut1(flag, next) => ⊢ JoinOptionAllocation(c, ck_jb_k(x, mut1(flag, next))) from match flag {
       false => AndIntro(first, Trivial)
       true => AndIntro(
         first,
@@ -78,7 +78,7 @@ pub theorem join_alloc_second_choice(
   x_bound: TypeAllocated(ck_next_of(c), x),
   flag: Bool
 ): JoinOptionAllocation(c, ck_jb2y(c, a, x, flag)) {
-  match flag: JoinOptionAllocation(c, ck_jb2y(c, a, x, flag)) {
+  ⊢ JoinOptionAllocation(c, ck_jb2y(c, a, x, flag)) from match flag {
     false => join_allocation_none(c, state)
     true => join_alloc_borrow_result(
       c,
@@ -98,7 +98,7 @@ pub theorem join_alloc_second(
   a_bound: TypeAllocated(ck_next_of(c), a),
   b_bound: TypeAllocated(ck_next_of(c), b)
 ): JoinOptionAllocation(c, ck_join_borrowed_second(c, a, b)) {
-  match b: JoinOptionAllocation(c, ck_join_borrowed_second(c, a, b)) {
+  ⊢ JoinOptionAllocation(c, ck_join_borrowed_second(c, a, b)) from match b {
     TyInt(width) => join_allocation_none(c, state)
     TyBool => join_allocation_none(c, state)
     TyText => join_allocation_none(c, state)
@@ -139,7 +139,7 @@ pub theorem join_alloc_first_choice(
   b_bound: TypeAllocated(ck_next_of(c), b),
   flag: Bool
 ): JoinOptionAllocation(c, ck_jb1y(c, x, mutable, b, flag)) {
-  match flag: JoinOptionAllocation(c, ck_jb1y(c, x, mutable, b, flag)) {
+  ⊢ JoinOptionAllocation(c, ck_jb1y(c, x, mutable, b, flag)) from match flag {
     true => join_alloc_borrow_result(
       c,
       x,
@@ -163,7 +163,7 @@ pub theorem ck_join_borrowed_allocation(
   a_bound: TypeAllocated(ck_next_of(c), a),
   b_bound: TypeAllocated(ck_next_of(c), b)
 ): JoinOptionAllocation(c, ck_join_borrowed(c, a, b)) {
-  match a: JoinOptionAllocation(c, ck_join_borrowed(c, a, b)) {
+  ⊢ JoinOptionAllocation(c, ck_join_borrowed(c, a, b)) from match a {
     TyInt(width) => join_option_rewrap(
       c,
       ck_join_borrowed_second(c, TyInt(width), b),
@@ -271,8 +271,8 @@ pub theorem join_alloc_union_result(
   a_bound: TypeAllocated(ck_next_of(c), a),
   b_bound: TypeAllocated(ck_next_of(c), b)
 ): JoinAllocation(c, ck_join_e2(a, b, m)) {
-  match m: JoinAllocation(c, ck_join_e2(a, b, m)) {
-    mut1(option, next) => match option: JoinAllocation(c, ck_join_e2(a, b, mut1(option, next))) {
+  ⊢ JoinAllocation(c, ck_join_e2(a, b, m)) from match m {
+    mut1(option, next) => ⊢ JoinAllocation(c, ck_join_e2(a, b, mut1(option, next))) from match option {
       Some(ty) => first
       None => AndIntro(
         And::left(first),
@@ -280,9 +280,17 @@ pub theorem join_alloc_union_result(
           Cons(a, Cons(b, Nil)),
           ck_next_of(next),
           AndIntro(
-            Eq::subst((limit: Nat) => TypeAllocated(limit, a), And::left(And::left(first)), a_bound),
+            Eq::subst(
+              (limit: Nat) => TypeAllocated(limit, a),
+              And::left(And::left(first)),
+              a_bound
+            ),
             AndIntro(
-              Eq::subst((limit: Nat) => TypeAllocated(limit, b), And::left(And::left(first)), b_bound),
+              Eq::subst(
+                (limit: Nat) => TypeAllocated(limit, b),
+                And::left(And::left(first)),
+                b_bound
+              ),
               Trivial
             )
           )
@@ -301,7 +309,7 @@ pub theorem join_alloc_e1z(
   b_bound: TypeAllocated(ck_next_of(c), b),
   flag: Bool
 ): JoinAllocation(c, ck_join_e1z(c, a, b, flag)) {
-  match flag: JoinAllocation(c, ck_join_e1z(c, a, b, flag)) {
+  ⊢ JoinAllocation(c, ck_join_e1z(c, a, b, flag)) from match flag {
     true => join_allocation_return(c, b, state, b_bound)
     false => join_alloc_union_result(
       c,
@@ -324,7 +332,7 @@ pub theorem join_alloc_e1y(
   b_bound: TypeAllocated(ck_next_of(c), b),
   flag: Bool
 ): JoinAllocation(c, ck_join_e1y(c, a, b, flag)) {
-  match flag: JoinAllocation(c, ck_join_e1y(c, a, b, flag)) {
+  ⊢ JoinAllocation(c, ck_join_e1y(c, a, b, flag)) from match flag {
     true => join_allocation_return(c, a, state, a_bound)
     false => join_alloc_e1z(c, a, b, ordered, state, a_bound, b_bound, ty_is_never(a))
   }
@@ -368,8 +376,8 @@ pub theorem join_alloc_after(
   a_bound: TypeAllocated(ck_next_of(c), a),
   b_bound: TypeAllocated(ck_next_of(c), b)
 ): JoinAllocation(c, ck_join_k(a, b, m)) {
-  match m: JoinAllocation(c, ck_join_k(a, b, m)) {
-    mut1(flag, next) => match flag: JoinAllocation(c, ck_join_k(a, b, mut1(flag, next))) {
+  ⊢ JoinAllocation(c, ck_join_k(a, b, m)) from match m {
+    mut1(flag, next) => ⊢ JoinAllocation(c, ck_join_k(a, b, mut1(flag, next))) from match flag {
       true => AndIntro(
         first,
         ck_resolve_allocated(
@@ -407,7 +415,7 @@ pub theorem join_alloc_my(
   b_bound: TypeAllocated(ck_next_of(c), b),
   flag: Bool
 ): AllocationRun(c, ck_join_my(c, a, b, flag)) {
-  match flag: AllocationRun(c, ck_join_my(c, a, b, flag)) {
+  ⊢ AllocationRun(c, ck_join_my(c, a, b, flag)) from match flag {
     false => AndIntro(Refl, state)
     true => allocation_run_rewrap(
       c,
@@ -444,7 +452,9 @@ pub theorem ck_join_allocation(
         b_bound,
         Bool::or(ck_has_vars(c, a), ck_has_vars(c, b))
       ),
-      And::left(And::left(join_my_ok(c, a, b, Bool::or(ck_has_vars(c, a), ck_has_vars(c, b)))(ordered))),
+      And::left(
+        And::left(join_my_ok(c, a, b, Bool::or(ck_has_vars(c, a), ck_has_vars(c, b)))(ordered))
+      ),
       a_bound,
       b_bound
     )

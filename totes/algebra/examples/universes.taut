@@ -8,7 +8,7 @@ pub theorem one_unique<u: Level>(
   AlgebraOne::ind(
     u,
     y => AlgebraEq(u, AlgebraOne(u), AlgebraOne::Mk(u), y),
-    AlgebraRefl(u, AlgebraOne(u), AlgebraOne::Mk(u)),
+    AlgebraRefl(<u: u, A: AlgebraOne(u), a: AlgebraOne::Mk(u)>),
     x
   )
 }
@@ -16,12 +16,10 @@ pub theorem one_unique<u: Level>(
 pub def one_monoid<u: Level>(): AlgebraMonoid(
   u,
   AlgebraOne(u)
-) := AlgebraMonoid::Mk(
-  u,
-  AlgebraOne(u),
+) := AlgebraMonoid::Mk(<u: u, A: AlgebraOne(u)>,
   AlgebraOne::Mk(u),
   x => y => AlgebraOne::Mk(u),
-  x => y => z => AlgebraRefl(u, AlgebraOne(u), AlgebraOne::Mk(u)),
+  x => y => z => AlgebraRefl(<u: u, A: AlgebraOne(u), a: AlgebraOne::Mk(u)>),
   one_unique(u),
   one_unique(u)
 )
@@ -31,56 +29,40 @@ pub def one_cross_universe(): AlgebraHom(
   2,
   AlgebraOne(1),
   AlgebraOne(2),
-  one_monoid(1),
-  one_monoid(2)
-) := AlgebraHom::Mk(
-  1,
-  2,
-  AlgebraOne(1),
-  AlgebraOne(2),
-  one_monoid(1),
-  one_monoid(2),
+  one_monoid(<u: 1>),
+  one_monoid(<u: 2>)
+) := AlgebraHom::Mk(<u: 1, v: 2, A: AlgebraOne(1), B: AlgebraOne(2), source: one_monoid(<u: 1>), target: one_monoid(<u: 2>)>,
   x => AlgebraOne::Mk(2),
-  AlgebraRefl(2, AlgebraOne(2), AlgebraOne::Mk(2)),
-  x => y => AlgebraRefl(2, AlgebraOne(2), AlgebraOne::Mk(2))
+  AlgebraRefl(<u: 2, A: AlgebraOne(2), a: AlgebraOne::Mk(2)>),
+  x => y => AlgebraRefl(<u: 2, A: AlgebraOne(2), a: AlgebraOne::Mk(2)>)
 )
 
 pub theorem high_unit(): AlgebraEq(
   2,
   AlgebraOne(2),
-  algebra_unit(2, AlgebraOne(2), one_monoid(2)),
+  algebra_unit(<u: 2, A: AlgebraOne(2)>, one_monoid(<u: 2>)),
   AlgebraOne::Mk(2)
-) { AlgebraRefl(2, AlgebraOne(2), AlgebraOne::Mk(2)) }
+) { AlgebraRefl(<u: 2, A: AlgebraOne(2), a: AlgebraOne::Mk(2)>) }
 
 pub theorem high_map(): AlgebraEq(
   2,
   AlgebraOne(2),
-  algebra_map(
-    1,
-    2,
-    AlgebraOne(1),
-    AlgebraOne(2),
-    one_monoid(1),
-    one_monoid(2),
+  algebra_map(<u: 1, v: 2, A: AlgebraOne(1), B: AlgebraOne(2), source: one_monoid(<u: 1>), target: one_monoid(<u: 2>)>,
     one_cross_universe
   )(AlgebraOne::Mk(1)),
   AlgebraOne::Mk(2)
-) { AlgebraRefl(2, AlgebraOne(2), AlgebraOne::Mk(2)) }
+) { AlgebraRefl(<u: 2, A: AlgebraOne(2), a: AlgebraOne::Mk(2)>) }
 
-pub theorem equality_of_types(): AlgebraEq(2, Type1, Type, Type) { AlgebraRefl(2, Type1, Type) }
+pub theorem equality_of_types(): AlgebraEq(2, Type1, Type, Type) { AlgebraRefl(<u: 2, A: Type1, a: Type>) }
 
 import "../src/Group.taut"
 import "../src/Equality.taut"
 import "../src/Monoid.taut"
 
-pub theorem one_group<u: Level>(): AlgebraGroup(u, AlgebraOne(u), one_monoid(u), x => x) {
-  AlgebraGroup::Mk(
-    u,
-    AlgebraOne(u),
-    one_monoid(u),
-    x => x,
-    x => AlgebraRefl(u, AlgebraOne(u), AlgebraOne::Mk(u)),
-    x => AlgebraRefl(u, AlgebraOne(u), AlgebraOne::Mk(u))
+pub theorem one_group<u: Level>(): AlgebraGroup(u, AlgebraOne(u), one_monoid(<u: u>), x => x) {
+  AlgebraGroup::Mk(<u: u, A: AlgebraOne(u), m: one_monoid(<u: u>), inverse: (x => x)>,
+    x => AlgebraRefl(<u: u, A: AlgebraOne(u), a: AlgebraOne::Mk(u)>),
+    x => AlgebraRefl(<u: u, A: AlgebraOne(u), a: AlgebraOne::Mk(u)>)
   )
 }
 
@@ -89,16 +71,12 @@ pub theorem high_cancel(
   b: AlgebraOne(2),
   c: AlgebraOne(2)
 ): AlgebraEq(2, AlgebraOne(2), b, c) {
-  algebra_cancel_left(
-    2,
-    AlgebraOne(2),
-    one_monoid(2),
-    x => x,
-    one_group(2),
+  algebra_cancel_left(<u: 2, A: AlgebraOne(2), m: one_monoid(<u: 2>), inverse: (x => x)>,
+    one_group(<u: 2>),
     a,
     b,
     c,
-    AlgebraRefl(2, AlgebraOne(2), AlgebraOne::Mk(2))
+    AlgebraRefl(<u: 2, A: AlgebraOne(2), a: AlgebraOne::Mk(2)>)
   )
 }
 
@@ -106,15 +84,11 @@ pub theorem high_inverse_unique(
   a: AlgebraOne(2),
   b: AlgebraOne(2)
 ): AlgebraEq(2, AlgebraOne(2), b, a) {
-  algebra_inverse_unique(
-    2,
-    AlgebraOne(2),
-    one_monoid(2),
-    x => x,
-    one_group(2),
+  algebra_inverse_unique(<u: 2, A: AlgebraOne(2), m: one_monoid(<u: 2>), inverse: (x => x)>,
+    one_group(<u: 2>),
     a,
     b,
-    AlgebraRefl(2, AlgebraOne(2), AlgebraOne::Mk(2))
+    AlgebraRefl(<u: 2, A: AlgebraOne(2), a: AlgebraOne::Mk(2)>)
   )
 }
 
@@ -123,44 +97,17 @@ pub theorem high_composition(
 ): AlgebraEq(
   2,
   AlgebraOne(2),
-  algebra_map(
-    1,
-    2,
-    AlgebraOne(1),
-    AlgebraOne(2),
-    one_monoid(1),
-    one_monoid(2),
-    algebra_compose(
-      1,
-      2,
-      2,
-      AlgebraOne(1),
-      AlgebraOne(2),
-      AlgebraOne(2),
-      one_monoid(1),
-      one_monoid(2),
-      one_monoid(2),
+  algebra_map(<u: 1, v: 2, A: AlgebraOne(1), B: AlgebraOne(2), source: one_monoid(<u: 1>), target: one_monoid(<u: 2>)>,
+    algebra_compose(<u: 1, v: 2, w: 2, A: AlgebraOne(1), B: AlgebraOne(2), C: AlgebraOne(2), source: one_monoid(<u: 1>), middle: one_monoid(<u: 2>), target: one_monoid(<u: 2>)>,
       one_cross_universe,
-      algebra_identity(2, AlgebraOne(2), one_monoid(2))
+      algebra_identity(<u: 2, A: AlgebraOne(2)>, one_monoid(<u: 2>))
     )
   )(x),
-  algebra_map(
-    1,
-    2,
-    AlgebraOne(1),
-    AlgebraOne(2),
-    one_monoid(1),
-    one_monoid(2),
+  algebra_map(<u: 1, v: 2, A: AlgebraOne(1), B: AlgebraOne(2), source: one_monoid(<u: 1>), target: one_monoid(<u: 2>)>,
     one_cross_universe
   )(x)
 ) {
-  algebra_identity_right(
-    1,
-    2,
-    AlgebraOne(1),
-    AlgebraOne(2),
-    one_monoid(1),
-    one_monoid(2),
+  algebra_identity_right(<u: 1, v: 2, A: AlgebraOne(1), B: AlgebraOne(2), source: one_monoid(<u: 1>), target: one_monoid(<u: 2>)>,
     one_cross_universe,
     x
   )
@@ -171,89 +118,29 @@ pub theorem high_associativity(
 ): AlgebraEq(
   2,
   AlgebraOne(2),
-  algebra_map(
-    1,
-    2,
-    AlgebraOne(1),
-    AlgebraOne(2),
-    one_monoid(1),
-    one_monoid(2),
-    algebra_compose(
-      1,
-      2,
-      2,
-      AlgebraOne(1),
-      AlgebraOne(2),
-      AlgebraOne(2),
-      one_monoid(1),
-      one_monoid(2),
-      one_monoid(2),
-      algebra_compose(
-        1,
-        2,
-        2,
-        AlgebraOne(1),
-        AlgebraOne(2),
-        AlgebraOne(2),
-        one_monoid(1),
-        one_monoid(2),
-        one_monoid(2),
+  algebra_map(<u: 1, v: 2, A: AlgebraOne(1), B: AlgebraOne(2), source: one_monoid(<u: 1>), target: one_monoid(<u: 2>)>,
+    algebra_compose(<u: 1, v: 2, w: 2, A: AlgebraOne(1), B: AlgebraOne(2), C: AlgebraOne(2), source: one_monoid(<u: 1>), middle: one_monoid(<u: 2>), target: one_monoid(<u: 2>)>,
+      algebra_compose(<u: 1, v: 2, w: 2, A: AlgebraOne(1), B: AlgebraOne(2), C: AlgebraOne(2), source: one_monoid(<u: 1>), middle: one_monoid(<u: 2>), target: one_monoid(<u: 2>)>,
         one_cross_universe,
-        algebra_identity(2, AlgebraOne(2), one_monoid(2))
+        algebra_identity(<u: 2, A: AlgebraOne(2)>, one_monoid(<u: 2>))
       ),
-      algebra_identity(2, AlgebraOne(2), one_monoid(2))
+      algebra_identity(<u: 2, A: AlgebraOne(2)>, one_monoid(<u: 2>))
     )
   )(x),
-  algebra_map(
-    1,
-    2,
-    AlgebraOne(1),
-    AlgebraOne(2),
-    one_monoid(1),
-    one_monoid(2),
-    algebra_compose(
-      1,
-      2,
-      2,
-      AlgebraOne(1),
-      AlgebraOne(2),
-      AlgebraOne(2),
-      one_monoid(1),
-      one_monoid(2),
-      one_monoid(2),
+  algebra_map(<u: 1, v: 2, A: AlgebraOne(1), B: AlgebraOne(2), source: one_monoid(<u: 1>), target: one_monoid(<u: 2>)>,
+    algebra_compose(<u: 1, v: 2, w: 2, A: AlgebraOne(1), B: AlgebraOne(2), C: AlgebraOne(2), source: one_monoid(<u: 1>), middle: one_monoid(<u: 2>), target: one_monoid(<u: 2>)>,
       one_cross_universe,
-      algebra_compose(
-        2,
-        2,
-        2,
-        AlgebraOne(2),
-        AlgebraOne(2),
-        AlgebraOne(2),
-        one_monoid(2),
-        one_monoid(2),
-        one_monoid(2),
-        algebra_identity(2, AlgebraOne(2), one_monoid(2)),
-        algebra_identity(2, AlgebraOne(2), one_monoid(2))
+      algebra_compose(<u: 2, v: 2, w: 2, A: AlgebraOne(2), B: AlgebraOne(2), C: AlgebraOne(2), source: one_monoid(<u: 2>), middle: one_monoid(<u: 2>), target: one_monoid(<u: 2>)>,
+        algebra_identity(<u: 2, A: AlgebraOne(2)>, one_monoid(<u: 2>)),
+        algebra_identity(<u: 2, A: AlgebraOne(2)>, one_monoid(<u: 2>))
       )
     )
   )(x)
 ) {
-  algebra_compose_assoc(
-    1,
-    2,
-    2,
-    2,
-    AlgebraOne(1),
-    AlgebraOne(2),
-    AlgebraOne(2),
-    AlgebraOne(2),
-    one_monoid(1),
-    one_monoid(2),
-    one_monoid(2),
-    one_monoid(2),
+  algebra_compose_assoc(<u: 1, v: 2, w: 2, t: 2, A: AlgebraOne(1), B: AlgebraOne(2), C: AlgebraOne(2), D: AlgebraOne(2), ma: one_monoid(<u: 1>), mb: one_monoid(<u: 2>), mc: one_monoid(<u: 2>), md: one_monoid(<u: 2>)>,
     one_cross_universe,
-    algebra_identity(2, AlgebraOne(2), one_monoid(2)),
-    algebra_identity(2, AlgebraOne(2), one_monoid(2)),
+    algebra_identity(<u: 2, A: AlgebraOne(2)>, one_monoid(<u: 2>)),
+    algebra_identity(<u: 2, A: AlgebraOne(2)>, one_monoid(<u: 2>)),
     x
   )
 }

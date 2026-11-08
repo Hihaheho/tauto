@@ -1,0 +1,110 @@
+import "../Lib.taut" { nat }
+import "../../../std/proof/Lang.taut" { proof }
+import "../../../std/proof/Forms.taut" { proof_by, proof_case, proof_we }
+
+pub fn pred(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(k) => k
+  }
+}
+
+pub theorem succ_inj<a: Nat, b: Nat>(h: Succ(a) = Succ(b)): a = b {
+  proof!(```
+    We have a = pred(Succ(a)) = pred(Succ(b)) by h = b.
+    ```)
+}
+
+pub theorem succ_cong<a: Nat, b: Nat>(h: a = b): Succ(a) = Succ(b) {
+  proof!(```
+    We have Succ(a) = Succ(b) by h.
+    ```)
+}
+
+pub theorem add_zero_r(n: Nat): nat!(`$n + 0 = $n`) {
+  proof!(```
+    By Refl.
+    ```)
+}
+
+pub theorem add_succ_r(n: Nat, m: Nat): nat!(`$n + $Succ(m) = $Succ(n + m)`) {
+  proof!(```
+    By Refl.
+    ```)
+}
+
+pub theorem add_zero_l(n: Nat): nat!(`0 + $n = $n`) {
+  proof!(```
+    By induction on n.
+      Case Zero. By Refl.
+      Case Succ(k). We have $(0 + Succ(k)) = $Succ(0 + k) = Succ(k) by the induction hypothesis.
+    ```)
+}
+
+pub theorem add_succ_l(n: Nat, m: Nat): nat!(`$Succ(n) + $m = $Succ(n + m)`) {
+  proof!(```
+    By induction on m.
+      Case Zero. By Refl.
+      Case Succ(k). We have $(Succ(n) + Succ(k))
+        = $Succ(Succ(n) + k)
+        = $Succ(Succ(n + k)) by the induction hypothesis
+        = $Succ(n + Succ(k)).
+    ```)
+}
+
+pub theorem add_comm(n: Nat, m: Nat): nat!(`$n + $m = $m + $n`) {
+  proof!(```
+    By induction on m.
+      Case Zero. We have $(n + Zero) = n = $(0 + n) by add_zero_l(n).
+      Case Succ(k). We have $(n + Succ(k))
+        = $Succ(n + k)
+        = $Succ(k + n) by the induction hypothesis
+        = $(Succ(k) + n) by add_succ_l(k, n).
+    ```)
+}
+
+pub theorem add_assoc(a: Nat, b: Nat, c: Nat): nat!(`($a + $b) + $c = $a + ($b + $c)`) {
+  proof!(```
+    By induction on c.
+      Case Zero. By Refl.
+      Case Succ(k). We have $((a + b) + Succ(k))
+        = $Succ((a + b) + k)
+        = $Succ(a + (b + k)) by the induction hypothesis
+        = $(a + (b + Succ(k))).
+    ```)
+}
+
+pub theorem add_cancel_r(a: Nat, b: Nat, c: Nat, h: nat!(`$a + $c = $b + $c`)): nat!(`$a = $b`) {
+  proof!(```
+    By induction on c.
+      Case Zero. By h.
+      [succ] Case Succ(k). We have a = b by the induction hypothesis.
+    %%
+    [succ] $succ_inj(h)
+    ```)
+}
+
+pub theorem add_cancel_l(a: Nat, b: Nat, c: Nat, h: nat!(`$a + $b = $a + $c`)): nat!(`$b = $c`) {
+  proof!(```
+    [main] We have e: $(b + a) = $(a + b) by add_comm(b, a) = $(a + c) by h = $(c + a) by add_comm(a, c). By add_cancel_r(b, c, a).
+    %%
+    [main] e
+    ```)
+}
+
+pub theorem add_left_comm(a: Nat, b: Nat, c: Nat): nat!(`$a + ($b + $c) = $b + ($a + $c)`) {
+  proof!(```
+    We have $(a + (b + c))
+      = $((a + b) + c) by add_assoc(a, b, c)
+      = $((b + a) + c) by add_comm(a, b)
+      = $(b + (a + c)) by add_assoc(b, a, c).
+    ```)
+}
+
+pub theorem add_eq_zero_l(a: Nat, b: Nat, e: nat!(`$a + $b = 0`)): nat!(`$a = 0`) {
+  proof!(```
+    By induction on b.
+      Case Zero. By e.
+      Case Succ(k). By $Nat::noconf(a = 0, Succ(a + k), Zero, e).
+    ```)
+}

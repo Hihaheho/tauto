@@ -11,6 +11,8 @@ pub struct Replay {
     pub expected: String,
     /// Operations whose surface input could not be read as a core term.
     pub unread: usize,
+    /// The time the Rust core spent in the recorded operations.
+    pub time: std::time::Duration,
 }
 
 /// A named checker whose independent-kernel declarations are recorded.
@@ -35,7 +37,8 @@ impl Recorder {
     /// Check a theorem's curried statement and body directly, without named
     /// elaboration, so that the replay includes core rejections too.
     pub fn theorem_written(&mut self, source: &str) -> Result<bool, String> {
-        let p = parse_program_as_written(source)?;
+        let mut p = parse_program_as_written(source)?;
+        self.0.resolver.statements(&mut p.stmts);
         let Some(Stmt::Theorem(t)) = p.stmts.first() else {
             return Err("expected a theorem".into());
         };
@@ -58,7 +61,8 @@ impl Recorder {
 
     /// Read an inductive declaration directly into the independent checker.
     pub fn inductive_written(&mut self, source: &str) -> Result<bool, String> {
-        let p = parse_program_as_written(source)?;
+        let mut p = parse_program_as_written(source)?;
+        self.0.resolver.statements(&mut p.stmts);
         let Some(Stmt::Inductive(i)) = p.stmts.first() else {
             return Err("expected an inductive declaration".into());
         };
@@ -108,9 +112,12 @@ impl Recorder {
 
     /// Exercise an explicit eliminator specialization directly, including rejection.
     pub fn recursor_written(&mut self, family: &str, level: u32) -> bool {
+        let Some(reference) = self.0.resolver.source_reference(family) else {
+            return false;
+        };
         self.0
             .core
-            .recursor_at(family, &crate::check::Level::konst(level))
+            .recursor_at(&reference, &crate::check::Level::konst(level))
             .is_ok()
     }
 
@@ -126,11 +133,19 @@ impl Recorder {
             input,
             expected,
             unread: self.0.core.replay_skipped,
+            time: self.0.core.replay_time,
         }
     }
 }
 
 impl Core {
+    pub(super) fn timed<X>(&mut self, f: impl FnOnce(&mut Self) -> X) -> X {
+        let start = std::time::Instant::now();
+        let x = f(self);
+        self.replay_time += start.elapsed();
+        x
+    }
+
     pub(super) fn record(&mut self, input: Option<String>, good: bool) {
         if let Some(trace) = &mut self.replay {
             if let Some(input) = input {
@@ -208,13 +223,14 @@ pub(super) fn encode_inductive(
 ) -> Option<String> {
     let mut reading = Core::new();
     reading.globals = c.globals.clone();
+    reading.names = c.names.clone();
     let mut types = Vec::new();
     for f in fams {
         let ty = reading.read(&f.ty).ok()?;
         types.push(ty.clone());
         reading
             .globals
-            .insert(f.name.as_str().into(), Global { ty, value: None });
+            .insert(reading.names.register(&f.name), Global { ty, value: None });
     }
     let mut text = format!("I {np} {} {}", sort(out), fams.len());
     for (f, ty) in fams.iter().zip(types) {

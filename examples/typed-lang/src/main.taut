@@ -3,25 +3,54 @@ import "pipeline.taut"
 import "lower.taut"
 import "syntax.taut"
 import std::prelude::Os
+import std::prelude::Macro { SynArg, SynDiag }
 import "../../../std/Text.taut"
 
 pub fn show_ty(ty: Ty): Text {
-  match ty: Text {
-    TNat => "Nat"
-    TBool => "Bool"
-  }
+  ⊢ Text from match ty { TNat => "Nat", TBool => "Bool" }
 }
 
 pub fn show_val(v: Option(Val)): Text {
-  match v: Text {
+  ⊢ Text from match v {
     None => "stuck"
-    Some(x) => match x: Text {
+    Some(x) => ⊢ Text from match x {
       VNat(n) => Text::of_nat(n)
-      VBool(b) => match b: Text {
-        true => "true"
-        false => "false"
-      }
+      VBool(b) => ⊢ Text from match b { true => "true", false => "false" }
     }
+  }
+}
+
+// A syntax error carries the id of the tools' message and its arguments, not a
+// text: the program writes its own from the terminals that would have been taken
+// and the one it found.
+pub fn show_expected(args: List(SynArg), sep: Text): Unit ! {stdout} {
+  match args {
+    Nil => ()
+    Cons(a, rest) => if a.name == "expected" {
+      print(sep)
+      print(a.value)
+      show_expected(rest, " or ")
+    } else {
+      show_expected(rest, sep)
+    }
+  }
+}
+
+pub fn show_found(args: List(SynArg)): Unit ! {stdout} {
+  match args {
+    Nil => print("the end of the text")
+    Cons(a, rest) => if a.name == "found" { print(a.value) } else { show_found(rest) }
+  }
+}
+
+pub fn show_diag(d: SynDiag): Unit ! {stdout} {
+  if d.message == "macro-syntax-not-a-token" {
+    print("this text is not a token of the syntax")
+  } else {
+    print("expected ")
+    show_expected(d.args, "")
+    print(", found ")
+    show_found(d.args)
   }
 }
 
@@ -29,7 +58,7 @@ pub fn run_text(src: Text): Unit ! {Div, stdout} {
   match tl::parse(src) {
     Err(d) => {
       print("syntax error: ")
-      print(d.message)
+      show_diag(d)
       print("\n")
     }
     Ok(tree) => {
@@ -53,13 +82,11 @@ pub fn repl(): Unit ! {Div, stdin, stdout, stdout_flush} {
   perform stdout_flush()
   match perform stdin() {
     None => ()
-    Some(line) => {
-      if Text::eq(line, ":quit") {
-        ()
-      } else {
-        if Text::eq(line, "") { () } else { run_text(line) }
-        repl()
-      }
+    Some(line) => if Text::eq(line, ":quit") {
+      ()
+    } else {
+      if Text::eq(line, "") { () } else { run_text(line) }
+      repl()
     }
   }
 }

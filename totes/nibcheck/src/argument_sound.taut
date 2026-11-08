@@ -31,7 +31,13 @@ pub def ArgumentsIH(
   Ty
 ). ∀ args: List(
   SurfaceTerm
-). ∀ same: Nat::eq(list_len(actual), list_len(ps)) = true. ∀ count: Nat::eq(list_len(actual), list_len(args)) = true. ∀ ordered: CkOrdered(
+). ∀ same: Nat::eq(
+  list_len(actual),
+  list_len(ps)
+) = true. ∀ count: Nat::eq(
+  list_len(actual),
+  list_len(args)
+) = true. ∀ ordered: CkOrdered(
   c
 ). ∀ clean: DiagnosticClean(
   ck_st(ck_expect_args(actual, c, ps, args))
@@ -48,10 +54,10 @@ pub fn arguments_after(
   terms: List(SurfaceTerm),
   m: Mut1(Unit, Checker)
 ): Mut1(Unit, Checker) {
-  match m: Mut1(
+  ⊢ Mut1(
     Unit,
     Checker
-  ) { mut1(value, state) => ck_rewrap1(ck_expect_args(rest, state, more, terms)) }
+  ) from match m { mut1(value, state) => ck_rewrap1(ck_expect_args(rest, state, more, terms)) }
 }
 pub theorem arguments_cons_after(
   c: Checker,
@@ -68,12 +74,7 @@ pub theorem arguments_cons_after(
   ordered: CkOrdered(ck_st(m)),
   clean: DiagnosticClean(ck_st(arguments_after(rest, more, terms, m)))
 ): ArgumentsResult(c, Cons(a, rest), Cons(p, more), arguments_after(rest, more, terms, m)) {
-  match m: ArgumentsResult(
-    c,
-    Cons(a, rest),
-    Cons(p, more),
-    arguments_after(rest, more, terms, m)
-  ) {
+  ⊢ ArgumentsResult(c, Cons(a, rest), Cons(p, more), arguments_after(rest, more, terms, m)) from match m {
     mut1(value, state) => {
       let tail_clean: DiagnosticClean(
         ck_st(ck_expect_args(rest, state, more, terms))
@@ -137,7 +138,14 @@ pub theorem argument_terms_unf(
   more: List(Ty),
   at: SurfaceTerm,
   terms: List(SurfaceTerm)
-): argument_terms(a, rest, c, p, more, Cons(at, terms)) = arguments_after(rest, more, terms, ck_expect(c, a, p, span_of(at), "an argument")) { Refl }
+): argument_terms(
+  a,
+  rest,
+  c,
+  p,
+  more,
+  Cons(at, terms)
+) = arguments_after(rest, more, terms, ck_expect(c, a, p, span_of(at), "an argument")) { Refl }
 pub theorem argument_terms_sound(
   a: Ty,
   rest: List(Ty),
@@ -151,12 +159,12 @@ pub theorem argument_terms_sound(
   ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(argument_terms(a, rest, c, p, more, args)))
 ): ArgumentsResult(c, Cons(a, rest), Cons(p, more), argument_terms(a, rest, c, p, more, args)) {
-  match args: ArgumentsResult(
+  ⊢ ArgumentsResult(
     c,
     Cons(a, rest),
     Cons(p, more),
     argument_terms(a, rest, c, p, more, args)
-  ) {
+  ) from match args {
     Nil => False::elim(false_ne_true(count))
     Cons(at, terms) => Eq::subst(
       (m: Mut1(Unit, Checker)) => ArgumentsResult(c, Cons(a, rest), Cons(p, more), m),
@@ -198,7 +206,7 @@ pub theorem argument_params_sound(
   ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(argument_params(a, rest, c, args, ps)))
 ): ArgumentsResult(c, Cons(a, rest), ps, argument_params(a, rest, c, args, ps)) {
-  match ps: ArgumentsResult(c, Cons(a, rest), ps, argument_params(a, rest, c, args, ps)) {
+  ⊢ ArgumentsResult(c, Cons(a, rest), ps, argument_params(a, rest, c, args, ps)) from match ps {
     Nil => False::elim(false_ne_true(same))
     Cons(p, more) => argument_terms_sound(
       a,
@@ -221,7 +229,7 @@ pub theorem arguments_nil_sound(
   same: Nat::eq(0, list_len(ps)) = true,
   ordered: CkOrdered(c)
 ): ArgumentsResult(c, Nil, ps, mut1(Star, c)) {
-  match ps: ArgumentsResult(c, Nil, ps, mut1(Star, c)) {
+  ⊢ ArgumentsResult(c, Nil, ps, mut1(Star, c)) from match ps {
     Nil => AndIntro(grows_refl(c, ordered), TysubNil)
     Cons(p, more) => False::elim(false_ne_true(same))
   }
@@ -236,7 +244,7 @@ pub theorem ck_expect_args_sound(
   ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(ck_expect_args(actual, c, ps, args)))
 ): ArgumentsResult(c, actual, ps, ck_expect_args(actual, c, ps, args)) {
-  match actual: ArgumentsResult(c, actual, ps, ck_expect_args(actual, c, ps, args)) {
+  ⊢ ArgumentsResult(c, actual, ps, ck_expect_args(actual, c, ps, args)) from match actual {
     Nil => arguments_nil_sound(c, ps, same, ordered)
     Cons(a, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => ArgumentsResult(c, Cons(a, rest), ps, m),

@@ -41,9 +41,6 @@ fn visit(
             visit(pkg, a, safe_params, active, fuel - 1)
                 || visit(pkg, b, safe_params, active, fuel - 1)
         }
-        Ty::Product(ms) => ms
-            .iter()
-            .any(|(_, m)| visit(pkg, m, safe_params, active, fuel - 1)),
         Ty::Data(name, args) => {
             if args
                 .iter()

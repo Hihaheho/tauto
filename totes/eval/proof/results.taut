@@ -30,16 +30,16 @@ pub theorem e_bind_value<A, B>(
 ): EBindValue(A, B, r, next, w, final) {
   match r {
     ErValue(v, heap) => Ebv(v, heap, Refl, done)
-    ErError(message) => match done: EBindValue(A, B, ErError(message), next, w, final) {}
-    ErFuel => match done: EBindValue(A, B, ErFuel, next, w, final) {}
-    ErUnsupported(construct) => match done: EBindValue(
+    ErError(message) => ⊢ EBindValue(A, B, ErError(message), next, w, final) from match done {}
+    ErFuel => ⊢ EBindValue(A, B, ErFuel, next, w, final) from match done {}
+    ErUnsupported(construct) => ⊢ EBindValue(
       A,
       B,
       ErUnsupported(construct),
       next,
       w,
       final
-    ) {}
+    ) from match done {}
   }
 }
 
@@ -50,19 +50,19 @@ pub theorem e_primitive_value(
   done: e_primitive_out(out) = ErValue(v, cx)
 ): out = MoutVal(v, cx) {
   match out {
-    MoutVal(w, heap) => match done: Eq(MOut, MoutVal(w, heap), MoutVal(v, cx)) {
+    MoutVal(w, heap) => ⊢ Eq(MOut, MoutVal(w, heap), MoutVal(v, cx)) from match done {
       Refl => ⊢ Eq(MOut, MoutVal(w, heap), MoutVal(w, heap)) from Refl
     }
-    MoutErr(message) => match done: Eq(MOut, MoutErr(message), MoutVal(v, cx)) {}
-    MoutExit(code) => match done: Eq(MOut, MoutExit(code), MoutVal(v, cx)) {}
-    MoutAsk(name, args, heap) => match done: Eq(MOut, MoutAsk(name, args, heap), MoutVal(v, cx)) {}
-    MoutPerform(op) => match done: Eq(MOut, MoutPerform(op), MoutVal(v, cx)) {}
-    MoutSpawn(fnval, pid, heap) => match done: Eq(
+    MoutErr(message) => ⊢ Eq(MOut, MoutErr(message), MoutVal(v, cx)) from match done {}
+    MoutExit(code) => ⊢ Eq(MOut, MoutExit(code), MoutVal(v, cx)) from match done {}
+    MoutAsk(name, args, heap) => ⊢ Eq(MOut, MoutAsk(name, args, heap), MoutVal(v, cx)) from match done {}
+    MoutPerform(op) => ⊢ Eq(MOut, MoutPerform(op), MoutVal(v, cx)) from match done {}
+    MoutSpawn(fnval, pid, heap) => ⊢ Eq(
       MOut,
       MoutSpawn(fnval, pid, heap),
       MoutVal(v, cx)
-    ) {}
-    MoutYield(pid, heap) => match done: Eq(MOut, MoutYield(pid, heap), MoutVal(v, cx)) {}
+    ) from match done {}
+    MoutYield(pid, heap) => ⊢ Eq(MOut, MoutYield(pid, heap), MoutVal(v, cx)) from match done {}
   }
 }
 

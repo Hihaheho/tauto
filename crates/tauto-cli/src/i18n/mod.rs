@@ -61,7 +61,7 @@ fn config_lang() -> Option<String> {
         let mut f = doc.fields(doc.root(), &name)?;
         let lang = f.optional("lang");
         f.finish()?;
-        lang.map(|id| doc.text(id)).transpose()
+        lang.map(|id| doc.text(id)).transpose().map_err(|e| e.to_string())
     };
     match read() {
         Ok(lang) => lang,

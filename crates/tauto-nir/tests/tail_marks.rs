@@ -7,7 +7,7 @@ fn marks(source: &str, name: &str) -> Vec<bool> {
     let f = package
         .fns
         .iter()
-        .find(|f| f.source == name)
+        .find(|f| f.source.as_str() == name)
         .unwrap_or_else(|| panic!("no function {name}"));
     let mut marks = Vec::new();
     f.body.walk(&mut |e| {
@@ -50,13 +50,13 @@ perform show("sum", handle { sum_from(&v, 0, 3, 0) } with { out_of_bounds() => 0
         ),
         (
             r#"fn reverse_onto<A>(l: List(A), acc: List(A)): List(A) {
-    match l: List(A) {
+    ⊢ List(A) from match l {
         Nil => acc
         Cons(h, t) => reverse_onto(t, Cons(h, acc))
     }
 }
 fn len<A>(l: List(A), n: u64): u64 {
-    match l: u64 {
+    ⊢ u64 from match l {
         Nil => n
         Cons(_, t) => len(t, n + 1)
     }
@@ -158,10 +158,38 @@ perform show("sum", all())
     let m: Vec<_> = package
         .fns
         .iter()
-        .filter(|f| f.source == "pick" && f.tier == Tier::M)
+        .filter(|f| f.source.as_str() == "pick" && f.tier == Tier::M)
         .collect();
     assert!(!m.is_empty());
     for f in m {
         assert!(!tauto_nir::recurs(&f.body));
     }
+}
+
+#[test]
+fn borrowed_callback_is_passed_on_without_rebinding() {
+    let source = r#"
+fn scan(&items: List(u64), &predicate: (u64) -> Bool): Bool ! {Div} {
+  match &items {
+    Nil => false
+    Cons(value, rest) => if predicate(value) { true } else { scan(&rest, &predicate) }
+  }
+}
+"#;
+    assert_eq!(marks(source, "scan"), vec![true]);
+}
+
+#[test]
+fn replacing_a_borrowed_callback_keeps_the_frame() {
+    let source = r#"
+fn scan(&items: List(u64), &predicate: (u64) -> Bool): Bool ! {Div} {
+  match &items {
+    Nil => false
+    Cons(value, rest) => if predicate(value) { true } else {
+      scan(&rest, &(next) => predicate(next))
+    }
+  }
+}
+"#;
+    assert_eq!(marks(source, "scan"), vec![false]);
 }

@@ -7,53 +7,109 @@
 parses = true
 source = ```tauto
 inductive Seq(A: Type): Type {
-  nil(): Seq(A)
-  cons(h: A, t: Seq(A)): Seq(A)
+  Nil: Seq(A)
+  Cons(h: A, t: Seq(A)): Seq(A)
 }
-fn len<A>(l: Seq(A)) -> Nat {
-  match l -> Nat {
-    nil => zero
-    cons(h, t) => succ(len(t))
+fn len<A>(l: Seq(A)): Nat {
+  ⊢ Nat from match l {
+    Nil => Zero
+    Cons(h, t) => Succ(len(t))
   }
 }
-theorem two(): Eq(Nat, len(cons(1, cons(2, nil))), 2) { refl() }
+theorem two(): len(Cons(1, Cons(2, Nil))) = 2 { Refl }
 ```
 checks.len = "ok"
 checks.two = "ok"
 
+@ cases.a-function-that-returns-a-function-takes-generics-as-implicit-arguments
+parses = true
+source = ```tauto
+fn comp2<A, B, C>(f: (A) -> B, g: (B) -> C): (A) -> C {
+  (x: A) => g(f(x))
+}
+theorem same<A: Type, B: Type, C: Type>(f: (A) -> B, g: (B) -> C, a: A): comp2(f, g)(a) = g(f(a)) {
+  Refl
+}
+theorem written<A: Type, B: Type, C: Type>(f: (A) -> B, g: (B) -> C, a: A): comp2(A, B, C, f, g)(a) = g(f(a)) {
+  Refl
+}
+```
+checks.comp2 = "ok"
+checks.same = "ok"
+checks.written = "ok"
+
+@ cases.a-call-in-a-motive-takes-generics-as-implicit-arguments
+parses = true
+source = ```tauto
+inductive Opt(A: Type): Type {
+  None: Opt(A)
+  Some(a: A): Opt(A)
+}
+inductive Out(R: Type, E: Type): Type {
+  Ok(r: R): Out(R, E)
+  Err(e: E): Out(R, E)
+}
+inductive P2(A: Type, B: Type): Type {
+  Mk(fst: A, snd: B): P2(A, B)
+}
+fn step<S, R, E>(s: S, o: Opt(E), r: R): P2(Out(R, E), S) {
+  ⊢ P2(Out(R, E), S) from match o {
+    None => Mk(Ok(r), s)
+    Some(e) => Mk(Err(e), s)
+  }
+}
+theorem t<S: Type, R: Type, E: Type>(s: S, r: R, e: E, o: Opt(E), p: Some(e) = o): step(s, o, r) = Mk(Err(e), s) {
+  Eq::subst((q: Opt(E)) => step(s, q, r) = Mk(Err(e), s), p, Refl)
+}
+```
+checks.step = "ok"
+checks.t = "ok"
+
+@ cases.a-function-that-uses-a-skipped-one-is-skipped
+parses = true
+source = ```tauto
+fn inner(x: Nat): Result(Nat, String) { Ok(x) }
+fn outer(x: Nat): Nat {
+  match inner(x) {
+    Ok(_) => Zero
+    Err(_) => Succ(Zero)
+  }
+}
+fn top(x: Nat): Nat { outer(x) }
+```
+checks.inner = "skipped"
+checks.outer = "skipped"
+checks.top = "skipped"
+
 @ cases.a-match-on-a-term-is-a-case-analysis
 parses = true
 source = ```tauto
-inductive Yn(): Type {
-  no(): Yn
-  yes(): Yn
-}
-fn lt(a: Nat, b: Nat) -> Yn {
-  match a -> Yn {
-    zero => match b -> Yn {
-      zero => no
-      succ(b2) => yes
+fn lt(a: Nat, b: Nat): Bool {
+  ⊢ Bool from match a {
+    Zero => ⊢ Bool from match b {
+      Zero => false
+      Succ(b2) => true
     }
-    succ(a2) => match b -> Yn {
-      zero => no
-      succ(b2) => lt(a2, b2)
+    Succ(a2) => ⊢ Bool from match b {
+      Zero => false
+      Succ(b2) => lt(a2, b2)
     }
   }
 }
-fn max(a: Nat, b: Nat) -> Nat {
-  match lt(a, b) -> Nat {
-    no => a
-    yes => b
+fn max(a: Nat, b: Nat): Nat {
+  ⊢ Nat from match lt(a, b) {
+    false => a
+    true => b
   }
 }
-fn capped(n: Nat) -> Nat {
-  succ(match lt(n, 3) -> Nat {
-    no => 3
-    yes => n
+fn capped(n: Nat): Nat {
+  Succ(⊢ Nat from match lt(n, 3) {
+    false => 3
+    true => n
   })
 }
-theorem max_3_5(): Eq(Nat, max(3, 5), 5) { refl() }
-theorem capped_7(): Eq(Nat, capped(7), 4) { refl() }
+theorem max_3_5(): max(3, 5) = 5 { Refl }
+theorem capped_7(): capped(7) = 4 { Refl }
 ```
 checks.max = "ok"
 checks.capped = "ok"
@@ -63,29 +119,25 @@ checks.capped_7 = "ok"
 @ cases.recursion-may-pass-through-a-match-on-a-term
 parses = true
 source = ```tauto
-inductive Yn(): Type {
-  no(): Yn
-  yes(): Yn
-}
-fn even(n: Nat) -> Yn {
-  match n -> Yn {
-    zero => yes
-    succ(k) => match even(k) -> Yn {
-      no => yes
-      yes => no
+fn even(n: Nat): Bool {
+  ⊢ Bool from match n {
+    Zero => true
+    Succ(k) => ⊢ Bool from match even(k) {
+      false => true
+      true => false
     }
   }
 }
-fn evens(n: Nat) -> Nat {
-  match n -> Nat {
-    zero => zero
-    succ(k) => match even(k) -> Nat {
-      no => evens(k)
-      yes => succ(evens(k))
+fn evens(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(k) => ⊢ Nat from match even(k) {
+      false => evens(k)
+      true => Succ(evens(k))
     }
   }
 }
-theorem evens_10(): Eq(Nat, evens(10), 5) { refl() }
+theorem evens_10(): evens(10) = 5 { Refl }
 ```
 checks.even = "ok"
 checks.evens = "ok"
@@ -94,16 +146,16 @@ checks.evens_10 = "ok"
 @ cases.a-match-on-a-term-does-not-recurse-on-its-fields
 parses = true
 source = ```tauto
-fn pred(n: Nat) -> Nat {
-  match n -> Nat {
-    zero => zero
-    succ(k) => k
+fn pred(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(k) => k
   }
 }
-fn down(n: Nat) -> Nat {
-  match pred(n) -> Nat {
-    zero => zero
-    succ(k) => down(k)
+fn down(n: Nat): Nat {
+  ⊢ Nat from match pred(n) {
+    Zero => Zero
+    Succ(k) => down(k)
   }
 }
 ```
@@ -113,43 +165,34 @@ checks.down = "error: calls itself"
 @ cases.records-and-operators-are-sugar
 parses = true
 source = ```tauto
-inductive Yn(): Type {
-  no(): Yn
-  yes(): Yn
-}
-fn nat_add(a: Nat, b: Nat) -> Nat {
-  match b -> Nat {
-    zero => a
-    succ(c) => succ(nat_add(a, c))
+fn nat_add(a: Nat, b: Nat): Nat {
+  ⊢ Nat from match b {
+    Zero => a
+    Succ(c) => Succ(nat_add(a, c))
   }
 }
-fn nat_lt_in(b: Nat, a: Nat) -> Yn {
-  match b -> Yn {
-    zero => no
-    succ(c) => match a -> Yn {
-      zero => yes
-      succ(d) => nat_lt_in(c, d)
+fn nat_lt_in(b: Nat, a: Nat): Bool {
+  ⊢ Bool from match b {
+    Zero => false
+    Succ(c) => ⊢ Bool from match a {
+      Zero => true
+      Succ(d) => nat_lt_in(c, d)
     }
   }
 }
-fn nat_lt(a: Nat, b: Nat) -> Yn {
-  nat_lt_in(b, a)
+inductive Point: Type {
+  Mk(x: Nat, y: Nat): Point
 }
-inductive Point(): Type {
-  point(x: Nat, y: Nat): Point
-}
-fn sum(p: Point) -> Nat {
-  match p -> Nat {
+fn sum(p: Point): Nat {
+  ⊢ Nat from match p {
     Point { x, y } => x + y
   }
 }
-theorem three(): Eq(Nat, sum(Point { y: 2, x: 1 }), 3) { refl() }
-theorem bigger(): Eq(Yn, 3 > 2, yes) { refl() }
+theorem three(): sum(Point { y: 2, x: 1 }) = 3 { Refl }
+theorem bigger(): (3 > 2) = true { Refl }
 ```
-checks.Yn = "ok"
 checks.nat_add = "ok"
 checks.nat_lt_in = "ok"
-checks.nat_lt = "ok"
 checks.Point = "ok"
 checks.sum = "ok"
 checks.three = "ok"
@@ -158,39 +201,21 @@ checks.bigger = "ok"
 @ cases.fields-equality-and-lets-are-sugar
 parses = true
 source = ```tauto
-inductive Yn(): Type {
-  no(): Yn
-  yes(): Yn
+inductive Point: Type {
+  Mk(x: Nat, y: Nat): Point
 }
-fn nat_eq(a: Nat, b: Nat) -> Yn {
-  match a -> Yn {
-    zero => match b -> Yn {
-      zero => yes
-      succ(b2) => no
-    }
-    succ(a2) => match b -> Yn {
-      zero => no
-      succ(b2) => nat_eq(a2, b2)
-    }
-  }
-}
-inductive Point(): Type {
-  point(x: Nat, y: Nat): Point
-}
-fn diagonal(p: Point) -> Yn {
-  let a = p.x
+fn diagonal(p: Point): Bool {
+  let a := p.x
   a == p.y
 }
-fn swapped(p: Point) -> Point {
-  let q = p
-  point(q.y, q.x)
+fn swapped(p: Point): Point {
+  let q := p
+  Point::Mk(q.y, q.x)
 }
-theorem on(): Eq(Yn, diagonal(point(2, 2)), yes) { refl() }
-theorem off(): Eq(Yn, diagonal(point(2, 3)), no) { refl() }
-theorem swap(): Eq(Point, swapped(point(1, 2)), point(2, 1)) { refl() }
+theorem on(): diagonal(Point::Mk(2, 2)) = true { Refl }
+theorem off(): diagonal(Point::Mk(2, 3)) = false { Refl }
+theorem swap(): swapped(Point::Mk(1, 2)) = Point::Mk(2, 1) { Refl }
 ```
-checks.Yn = "ok"
-checks.nat_eq = "ok"
 checks.Point = "ok"
 checks.diagonal = "ok"
 checks.swapped = "ok"
@@ -201,33 +226,29 @@ checks.swap = "ok"
 @ cases.a-mut-parameter-comes-back-with-the-value
 parses = true
 source = ```tauto
-inductive Yn(): Type {
-  no(): Yn
-  yes(): Yn
+inductive Counter: Type {
+  Mk(n: Nat, hits: Nat): Counter
 }
-inductive Counter(): Type {
-  counter(n: Nat, hits: Nat): Counter
-}
-fn set_to<A>(&mut slot: A, v: A) -> () {
+fn set_to<A>(&mut slot: A, v: A): Unit {
   slot := v
 }
-fn bump(&mut c: Counter) -> Nat {
-  set_to(&mut c.n, succ(c.n))
-  set_to(&mut c.hits, succ(c.hits))
+fn bump(&mut c: Counter): Nat {
+  set_to(&mut c.n, Succ(c.n))
+  set_to(&mut c.hits, Succ(c.hits))
   c.n
 }
-fn maybe(&mut c: Counter, go: Yn) -> Nat {
-  var seen: Nat = zero
+fn maybe(&mut c: Counter, go: Bool): Nat {
+  var seen: Nat := Zero
   if go {
     seen := bump(&mut c)
   }
   seen
 }
-theorem once(): Eq(Mut1(Nat, Counter), maybe(counter(zero, zero), yes), mut1(succ(zero), counter(succ(zero), succ(zero)))) {
-  refl(Mut1(Nat, Counter), mut1(succ(zero), counter(succ(zero), succ(zero))))
+theorem once(): maybe(Counter::Mk(Zero, Zero), true) = mut1(Succ(Zero), Counter::Mk(Succ(Zero), Succ(Zero))) {
+  Refl(Mut1(Nat, Counter), mut1(Succ(Zero), Counter::Mk(Succ(Zero), Succ(Zero))))
 }
-theorem never(): Eq(Mut1(Nat, Counter), maybe(counter(zero, zero), no), mut1(zero, counter(zero, zero))) {
-  refl(Mut1(Nat, Counter), mut1(zero, counter(zero, zero)))
+theorem never(): maybe(Counter::Mk(Zero, Zero), false) = mut1(Zero, Counter::Mk(Zero, Zero)) {
+  Refl(Mut1(Nat, Counter), mut1(Zero, Counter::Mk(Zero, Zero)))
 }
 ```
 checks.set_to = "ok"
@@ -239,39 +260,63 @@ checks.never = "ok"
 @ cases.mut-functions-can-share-a-step-count
 parses = true
 source = ```tauto
-inductive Yn(): Type {
-  no(): Yn
-  yes(): Yn
-}
-fn set_to<A>(&mut slot: A, v: A) -> () {
+fn set_to<A>(&mut slot: A, v: A): Unit {
   slot := v
 }
 mutual {
   // Counts down `n` into `seen`, a step at a time; out of steps, `seen` is
   // what it was.
-  fn down(k: Nat, &mut seen: Nat, n: Nat) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match n -> Yn {
-        zero => yes
-        succ(m) => {
-          set_to(&mut seen, succ(seen))
+  fn down(k: Nat, &mut seen: Nat, n: Nat): Bool {
+    ⊢ Bool from match k {
+      Zero => false
+      Succ(j) => ⊢ Bool from match n {
+        Zero => true
+        Succ(m) => {
+          set_to(&mut seen, Succ(seen))
           again(j, &mut seen, m)
         }
       }
     }
   }
-  fn again(k: Nat, &mut seen: Nat, n: Nat) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => down(j, &mut seen, n)
+  fn again(k: Nat, &mut seen: Nat, n: Nat): Bool {
+    ⊢ Bool from match k {
+      Zero => false
+      Succ(j) => down(j, &mut seen, n)
     }
   }
 }
-theorem done(): Eq(Mut1(Yn, Nat), down(10, zero, 2), mut1(yes, 2)) { refl(Mut1(Yn, Nat), mut1(yes, 2)) }
-theorem short(): Eq(Mut1(Yn, Nat), down(2, zero, 5), mut1(no, 1)) { refl(Mut1(Yn, Nat), mut1(no, 1)) }
+theorem done(): down(10, Zero, 2) = mut1(true, 2) { Refl(Mut1(Bool, Nat), mut1(true, 2)) }
+theorem short(): down(2, Zero, 5) = mut1(false, 1) { Refl(Mut1(Bool, Nat), mut1(false, 1)) }
 ```
 checks.down = "ok"
 checks.again = "ok"
 checks.done = "ok"
 checks.short = "ok"
+
+@ cases.a-handler-arm-may-change-an-outer-var
+parses = true
+source = ```tauto
+affine struct Platform {}
+extern {
+  fn platform_new(): Platform
+  fn platform_bump(&mut p: Platform, n: i64): Unit
+  fn platform_get(&p: Platform): i64
+}
+effect tick(n: i64): Unit direct
+effect peek(): i64 direct
+fn app(): i64 ! {tick, peek} {
+  perform tick(1)
+  perform tick(2)
+  perform peek()
+}
+// The arms resume through `k`, so the state cannot be passed along by name:
+// the function stays executable code.
+fn run(): i64 {
+  var p := platform_new()
+  handle { app() } with {
+    tick(n), k => { platform_bump(&mut p, n); k(#()) }
+    peek(), k => k(platform_get(&p))
+  }
+}
+```
+checks.run = "skipped"

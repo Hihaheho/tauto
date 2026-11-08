@@ -79,12 +79,10 @@ module Tac {
           )
           Some(#(@lhs l, @rhs r)) => if name == "Nat::le" || name == "<=" {
             Tac::nat_le_sides(at, false, l, r)
+          } else if name == "Nat::lt" || name == "<" {
+            Tac::nat_le_sides(at, true, l, r)
           } else {
-            if name == "Nat::lt" || name == "<" {
-              Tac::nat_le_sides(at, true, l, r)
-            } else {
-              Syn::error(at, "nat_le!: the goal is not `l <= r = true` or `l < r = true` on Nat")
-            }
+            Syn::error(at, "nat_le!: the goal is not `l <= r = true` or `l < r = true` on Nat")
           }
         }
       }
@@ -191,16 +189,14 @@ module Tac {
             let u := (x: SynExpr)
             let v := (y: SynExpr)
             #(quote { NeAdd($u, $v) }, (y: List(SynExpr)))
+          } else if name == "Nat::mul" || name == "*" {
+            let x := Tac::nn_read(a, vars, at)
+            let y := Tac::nn_read(b, (x: List(SynExpr)), at)
+            let u := (x: SynExpr)
+            let v := (y: SynExpr)
+            #(quote { NeMul($u, $v) }, (y: List(SynExpr)))
           } else {
-            if name == "Nat::mul" || name == "*" {
-              let x := Tac::nn_read(a, vars, at)
-              let y := Tac::nn_read(b, (x: List(SynExpr)), at)
-              let u := (x: SynExpr)
-              let v := (y: SynExpr)
-              #(quote { NeMul($u, $v) }, (y: List(SynExpr)))
-            } else {
-              Tac::nn_var(e, vars, at)
-            }
+            Tac::nn_var(e, vars, at)
           }
           Cons(_, _) => Tac::nn_var(e, vars, at)
         }

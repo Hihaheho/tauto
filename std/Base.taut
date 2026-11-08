@@ -13,10 +13,7 @@ module Bool {
   // kernel's prelude too.
 
   pub fn or(a: Bool, b: Bool): Bool {
-    match a: Bool {
-      false => b
-      true => true
-    }
+    ⊢ Bool from match a { false => b, true => true }
   }
 
   pub theorem cases(
@@ -25,131 +22,98 @@ module Bool {
     a: (o = false) -> P(false),
     b: (o = true) -> P(true)
   ): P(o) {
-    match o: P(o) {
+    ⊢ P(o) from match o {
       false => a(Refl)
       true => b(Refl)
     }
   }
 
   pub theorem or_true_left(a: Bool, b: Bool, h: a = true): a || b = true {
-    match a: a || b = true {
+    ⊢ a || b = true from match a {
       false => False::elim(false_ne_true(h))
       true => Refl
     }
   }
 
   pub theorem or_true_right(a: Bool, b: Bool, h: b = true): a || b = true {
-    match a: a || b = true {
-      false => h
-      true => Refl
-    }
+    ⊢ a || b = true from match a { false => h, true => Refl }
   }
 
   pub theorem or_false_right(a: Bool, b: Bool, h: b = false): a || b = a {
-    match a: a || b = a {
-      false => h
-      true => Refl
-    }
+    ⊢ a || b = a from match a { false => h, true => Refl }
   }
 
   pub theorem or_false_split(a: Bool, b: Bool, h: a || b = false): a = false ∧ b = false {
-    match a: a = false ∧ b = false {
+    ⊢ a = false ∧ b = false from match a {
       false => AndIntro(Refl, h)
       true => False::elim(true_ne_false(h))
     }
   }
 
   pub theorem or_comm(a: Bool, b: Bool): a || b = b || a {
-    match a: a || b = b || a {
-      false => match b: b = b || false {
-        false => Refl
-        true => Refl
-      }
-      true => match b: true = b || true {
-        false => Refl
-        true => Refl
-      }
+    ⊢ a || b = b || a from match a {
+      false => ⊢ b = b || false from match b { false => Refl, true => Refl }
+      true => ⊢ true = b || true from match b { false => Refl, true => Refl }
     }
   }
 
   pub theorem or_assoc(a: Bool, b: Bool, c: Bool): a || b || c = a || (b || c) {
-    match a: a || b || c = a || (b || c) {
-      false => Refl
-      true => Refl
-    }
+    ⊢ a || b || c = a || (b || c) from match a { false => Refl, true => Refl }
   }
 
   pub theorem or_absorb(a: Bool, b: Bool): a || (a && b) = a {
-    match a: a || (a && b) = a {
-      false => Refl
-      true => Refl
-    }
+    ⊢ a || (a && b) = a from match a { false => Refl, true => Refl }
   }
 
   pub theorem and_true_left(a: Bool, b: Bool, h: a && b = true): a = true {
-    match a: a = true {
+    ⊢ a = true from match a {
       false => False::elim(false_ne_true(h))
       true => Refl
     }
   }
 
   pub theorem and_true_right(a: Bool, b: Bool, h: a && b = true): b = true {
-    match a: b = true {
+    ⊢ b = true from match a {
       false => False::elim(false_ne_true(h))
       true => h
     }
   }
 
   pub theorem and_false_right(a: Bool): a && false = false {
-    match a: a && false = false {
-      false => Refl
-      true => Refl
-    }
+    ⊢ a && false = false from match a { false => Refl, true => Refl }
   }
 
   pub theorem and_comm(a: Bool, b: Bool): a && b = b && a {
-    match a: a && b = b && a {
-      false => match b: false = b && false {
-        false => Refl
-        true => Refl
-      }
-      true => match b: b = b && true {
-        false => Refl
-        true => Refl
-      }
+    ⊢ a && b = b && a from match a {
+      false => ⊢ false = b && false from match b { false => Refl, true => Refl }
+      true => ⊢ b = b && true from match b { false => Refl, true => Refl }
     }
   }
 
   pub theorem and_assoc(a: Bool, b: Bool, c: Bool): a && b && c = a && (b && c) {
-    match a: a && b && c = a && (b && c) {
-      false => Refl
-      true => Refl
-    }
+    ⊢ a && b && c = a && (b && c) from match a { false => Refl, true => Refl }
   }
 
   pub theorem and_absorb(a: Bool, b: Bool): a && (a || b) = a {
-    match a: a && (a || b) = a {
-      false => Refl
-      true => Refl
-    }
+    ⊢ a && (a || b) = a from match a { false => Refl, true => Refl }
   }
 
   pub theorem not_true(a: Bool, h: not(a) = true): a = false {
-    match a: a = false {
+    ⊢ a = false from match a {
       false => Refl
       true => False::elim(false_ne_true(h))
     }
   }
 
   pub theorem not_false(a: Bool, h: not(a) = false): a = true {
-    match a: a = true {
+    ⊢ a = true from match a {
       false => False::elim(true_ne_false(h))
       true => Refl
     }
   }
 
   pub theorem not_of_false(a: Bool, h: a = false): not(a) = true {
-    match a: not(a) = true {
+    ⊢ not(a) = true from match a {
       false => Refl
       true => False::elim(true_ne_false(h))
     }
@@ -190,28 +154,22 @@ module Nat {
   }
 
   pub fn max(a: Nat, b: Nat): Nat {
-    match lt(a, b): Nat {
-      false => a
-      true => b
-    }
+    ⊢ Nat from match lt(a, b) { false => a, true => b }
   }
 
   pub fn min(a: Nat, b: Nat): Nat {
-    match lt(a, b): Nat {
-      false => b
-      true => a
-    }
+    ⊢ Nat from match lt(a, b) { false => b, true => a }
   }
 
   pub theorem lt_irrefl(a: Nat): lt(a, a) = false {
-    match a: lt(a, a) = false {
+    ⊢ lt(a, a) = false from match a {
       Zero => Refl
       Succ(a2) => lt_irrefl(a2)
     }
   }
 
   pub theorem lt_asym(a: Nat, b: Nat, h: lt(a, b) = true): lt(b, a) = false {
-    match a: lt(b, a) = false {
+    ⊢ lt(b, a) = false from match a {
       Zero => match b {
         Zero => Refl
         Succ(_) => Refl
@@ -230,7 +188,7 @@ module Nat {
     h1: lt(a, b) = true,
     h2: lt(b, c) = true
   ): lt(a, c) = true {
-    match a: lt(a, c) = true {
+    ⊢ lt(a, c) = true from match a {
       Zero => match c {
         Zero => match b {
           Zero => False::elim(false_ne_true(h2))
@@ -250,7 +208,7 @@ module Nat {
 
   // Neither is less than the other: they are equal.
   pub theorem lt_total(a: Nat, b: Nat, h1: lt(a, b) = false, h2: lt(b, a) = false): a = b {
-    match a: a = b {
+    ⊢ a = b from match a {
       Zero => match b {
         Zero => Refl
         Succ(b2) => False::elim(true_ne_false(h1))
@@ -266,21 +224,21 @@ module Nat {
 module List {
 
   pub fn length<A>(l: List(A)): Nat {
-    match l: Nat {
+    ⊢ Nat from match l {
       Nil => Zero
-      Cons(h, t) => Succ(length(t))
+      Cons(h, t) => Succ(List::length(t))
     }
   }
 
   pub fn append<A>(l: List(A), m: List(A)): List(A) {
-    match l: List(A) {
+    ⊢ List(A) from match l {
       Nil => m
-      Cons(h, t) => Cons(h, append(t, m))
+      Cons(h, t) => Cons(h, List::append(t, m))
     }
   }
 
   pub fn reverse_onto<A>(l: List(A), acc: List(A)): List(A) {
-    match l: List(A) {
+    ⊢ List(A) from match l {
       Nil => acc
       Cons(h, t) => reverse_onto(t, Cons(h, acc))
     }
@@ -291,17 +249,17 @@ module List {
   }
 
   pub fn map<A, B>(f: (A) -> B, l: List(A)): List(B) {
-    match l: List(B) {
+    ⊢ List(B) from match l {
       Nil => Nil
-      Cons(h, t) => Cons(f(h), map(f, t))
+      Cons(h, t) => Cons(f(h), List::map(f, t))
     }
   }
 
   // The first `n` elements (all of them when there are fewer).
   pub fn take<A>(n: Nat, l: List(A)): List(A) {
-    match n: List(A) {
+    ⊢ List(A) from match n {
       Zero => Nil
-      Succ(k) => match l: List(A) {
+      Succ(k) => ⊢ List(A) from match l {
         Nil => Nil
         Cons(h, t) => Cons(h, take(k, t))
       }
@@ -309,9 +267,9 @@ module List {
   }
 
   pub fn drop<A>(n: Nat, l: List(A)): List(A) {
-    match n: List(A) {
+    ⊢ List(A) from match n {
       Zero => l
-      Succ(k) => match l: List(A) {
+      Succ(k) => ⊢ List(A) from match l {
         Nil => Nil
         Cons(h, t) => drop(k, t)
       }
@@ -320,9 +278,9 @@ module List {
 
   // The `i`th element, counted from 0.
   pub fn nth<A>(l: List(A), i: Nat): Option(A) {
-    match l: Option(A) {
+    ⊢ Option(A) from match l {
       Nil => None
-      Cons(h, t) => match i: Option(A) {
+      Cons(h, t) => ⊢ Option(A) from match i {
         Zero => Some(h)
         Succ(j) => nth(t, j)
       }
@@ -333,8 +291,8 @@ module List {
     a: List(A),
     b: List(A),
     c: List(A)
-  ): append(append(a, b), c) = append(a, append(b, c)) {
-    match a: append(append(a, b), c) = append(a, append(b, c)) {
+  ): List::append(List::append(a, b), c) = List::append(a, List::append(b, c)) {
+    ⊢ List::append(List::append(a, b), c) = List::append(a, List::append(b, c)) from match a {
       Nil => Refl
       Cons(h, t) => Eq::congr(⟦Cons(h, □)⟧, append_assoc(t, b, c))
     }
@@ -353,7 +311,7 @@ module Ordering {
     b: (o = Equal) -> P(Equal),
     c: (o = Greater) -> P(Greater)
   ): P(o) {
-    match o: P(o) {
+    ⊢ P(o) from match o {
       Less => a(Refl)
       Equal => b(Refl)
       Greater => c(Refl)

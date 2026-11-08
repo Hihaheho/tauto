@@ -85,7 +85,7 @@ pub theorem ck_data_fields_frame_errors(
   c: Checker,
   generics: Ordmap(Text, Ty)
 ): CkErrorFrame(c, ck_data_fields(fs, c, generics)) {
-  match fs: CkErrorFrame(c, ck_data_fields(fs, c, generics)) {
+  ⊢ CkErrorFrame(c, ck_data_fields(fs, c, generics)) from match fs {
     Nil => (clean_errors => clean_errors)
     Cons(field, rest) => Eq::subst(
       (z: Mut1(List(DataField), Checker)) => CkErrorFrame(c, z),
@@ -143,7 +143,7 @@ pub theorem ck_data_ctors_frame_errors(
   c: Checker,
   generics: Ordmap(Text, Ty)
 ): CkErrorFrame(c, ck_data_ctors(cs, c, generics)) {
-  match cs: CkErrorFrame(c, ck_data_ctors(cs, c, generics)) {
+  ⊢ CkErrorFrame(c, ck_data_ctors(cs, c, generics)) from match cs {
     Nil => (clean_errors => clean_errors)
     Cons(ctor, rest) => Eq::subst(
       (z: Mut1(List(DataCtor), Checker)) => CkErrorFrame(c, z),
@@ -166,7 +166,7 @@ pub theorem ck_effect_param_frame_errors(
   p: Option(SurfaceTerm),
   generics: Ordmap(Text, Ty)
 ): CkErrorFrame(c, ck_effect_param(c, e, p, generics)) {
-  match p: CkErrorFrame(c, ck_effect_param(c, e, p, generics)) {
+  ⊢ CkErrorFrame(c, ck_effect_param(c, e, p, generics)) from match p {
     None => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
     Some(x) => error_frame_rewrap(
       c,
@@ -214,7 +214,7 @@ pub theorem ck_effect_params_frame_errors(
   e: SurfaceEffect,
   generics: Ordmap(Text, Ty)
 ): CkErrorFrame(c, ck_effect_params(ps, c, e, generics)) {
-  match ps: CkErrorFrame(c, ck_effect_params(ps, c, e, generics)) {
+  ⊢ CkErrorFrame(c, ck_effect_params(ps, c, e, generics)) from match ps {
     Nil => (clean_errors => clean_errors)
     Cons(p, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => CkErrorFrame(c, z),
@@ -237,7 +237,7 @@ pub theorem registration_quant_parsed_frame_errors(
   q: Text,
   o: Option(Quant)
 ): CkErrorFrame(c, registration_quant_parsed(c, e, q, o)) {
-  match o: CkErrorFrame(c, registration_quant_parsed(c, e, q, o)) {
+  ⊢ CkErrorFrame(c, registration_quant_parsed(c, e, q, o)) from match o {
     Some(x) => (clean_errors => clean_errors)
     None => (clean_errors => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean_errors))))
   }
@@ -247,7 +247,7 @@ pub theorem registration_quant_resume_frame_errors(
   e: SurfaceEffect,
   r#resume: Option(Text)
 ): CkErrorFrame(c, registration_quant_resume(c, e, r#resume)) {
-  match r#resume: CkErrorFrame(c, registration_quant_resume(c, e, r#resume)) {
+  ⊢ CkErrorFrame(c, registration_quant_resume(c, e, r#resume)) from match r#resume {
     None => (clean_errors => clean_errors)
     Some(q) => registration_quant_parsed_frame_errors(c, e, q, quant_parse(q))
   }
@@ -268,7 +268,7 @@ pub theorem registration_effect_result_frame_errors(
   generics: Ordmap(Text, Ty),
   o: Option(SurfaceTerm)
 ): CkErrorFrame(c, registration_effect_result_k(c, generics, o)) {
-  match o: CkErrorFrame(c, registration_effect_result_k(c, generics, o)) {
+  ⊢ CkErrorFrame(c, registration_effect_result_k(c, generics, o)) from match o {
     None => (clean_errors => clean_errors)
     Some(r) => error_frame_rewrap(
       c,

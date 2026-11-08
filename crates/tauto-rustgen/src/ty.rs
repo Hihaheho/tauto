@@ -39,11 +39,11 @@ impl Gen<'_> {
                 quote!(tauto_rt::stdlib::Array<#a>)
             }
             Ty::Std(n, args) if args.is_empty() => {
-                let n = id(n);
+                let n = id(n.rust_name());
                 quote!(tauto_rt::stdlib::#n)
             }
             Ty::Std(n, args) => {
-                let n = id(n);
+                let n = id(n.rust_name());
                 let args = comma(args.iter().map(|a| self.ty(a)));
                 quote!(tauto_rt::stdlib::#n<#args>)
             }
@@ -67,12 +67,8 @@ impl Gen<'_> {
                 let (a, b) = (self.ty(a), self.ty(b));
                 quote!((#a, #b))
             }
-            Ty::Product(ms) => {
-                let ms = comma(ms.iter().map(|(_, m)| self.ty(m)));
-                quote!(tauto_rt::Product<(#ms,)>)
-            }
             Ty::Data(name, args) => {
-                let n = Gen::data_name(name);
+                let n = Gen::data_name(self.pkg, name);
                 let mut a: Vec<Rs> = Vec::new();
                 if self.data(name).is_some_and(|d| d.view) {
                     a.push(if self.named_refs.get() {

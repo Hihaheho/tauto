@@ -19,18 +19,23 @@ pub fn select(
     using: &[String],
     limit: usize,
 ) -> Result<Vec<Suggestion>, String> {
-    let names: BTreeSet<&str> = using.iter().map(String::as_str).collect();
-    for name in &names {
-        if !hole.goal.context.iter().any(|(n, _)| n.as_str() == *name)
-            && !report.library.iter().any(|entry| entry.name == *name)
-        {
+    let mut references = BTreeSet::new();
+    for name in using {
+        let Some(reference) = report.source_reference(hole, name).filter(|reference| {
+            hole.goal
+                .context
+                .iter()
+                .any(|(local, _)| local == reference)
+                || report.library.iter().any(|entry| &entry.name == reference)
+        }) else {
             return Err(
-                tauto_message::msg!("analyzer-candidate-not-in-scope", name = *name).to_string(),
+                tauto_message::msg!("analyzer-candidate-not-in-scope", name = name).to_string(),
             );
-        }
+        };
+        references.insert(reference);
     }
     let mut candidates = suggest(report, hole, usize::MAX);
-    candidates.retain(|s| names.is_empty() || names.contains(s.name.as_str()));
+    candidates.retain(|s| references.is_empty() || references.contains(&s.reference));
     candidates.truncate(limit);
     Ok(candidates)
 }
@@ -95,7 +100,7 @@ pub fn verify(path: &Path, hole: &str, expression: &str) -> Validation {
         Ok(attempt) => attempt,
         Err(error) => {
             result.status = "rejected";
-            result.diagnostic = Some(error);
+            result.diagnostic = Some(error.to_string());
             return result;
         }
     };
@@ -110,7 +115,7 @@ pub fn verify(path: &Path, hole: &str, expression: &str) -> Validation {
     result.remaining_holes.sort();
     result.remaining_holes.dedup();
     let entry = attempt.report.entries.iter().find(|entry| {
-        entry.file == attempt.hole.file && entry.entry.name == attempt.hole.declaration
+        entry.file == attempt.hole.file && entry.entry.name.as_str() == attempt.hole.declaration
     });
     if !attempt.accepted {
         result.status = "rejected";
@@ -123,7 +128,7 @@ pub fn verify(path: &Path, hole: &str, expression: &str) -> Validation {
             let mut axioms = axioms.clone();
             axioms.sort();
             axioms.dedup();
-            result.axioms = Some(axioms);
+            result.axioms = Some(axioms.iter().map(ToString::to_string).collect());
         }
         Some(Verdict::Incomplete { .. }) => result.status = "incomplete",
         _ => {

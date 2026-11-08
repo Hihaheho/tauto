@@ -130,6 +130,8 @@ pub struct FileIndex {
     pub top_stmts: Vec<Span>,
     /// The `name!(…)` calls, whole.
     pub macro_calls: Vec<Span>,
+    /// The theorem keyword and the declaration it introduces (hover only).
+    pub theorem_keywords: Vec<(Span, usize)>,
     /// The files this one sees, itself last: its imports, transitively.
     pub closure: Vec<usize>,
     /// The top-level names, for the files that see this one.
@@ -548,6 +550,7 @@ impl Walk<'_, '_> {
                     | Nt::ClassItem
                     | Nt::InstanceItem
                     | Nt::MutualItem
+                    | Nt::MutualMember
             )
         ) {
             let kids = self.kids(id);
@@ -890,6 +893,14 @@ impl Walk<'_, '_> {
         let d = self.def_once(n, &name, kind, span, sig);
         let declared = self.ty(n).map(|t| squeeze(self.text(self.cst.span(t))));
         self.idx.defs[d].declared = declared;
+        if kind == Kind::Theorem {
+            for child in self.kids(n) {
+                let span = self.cst.span(child);
+                if self.nt(child) == Some(Nt::KwTheorem) {
+                    self.idx.theorem_keywords.push((span, d));
+                }
+            }
+        }
         self.declare(&name, d);
         Some(d)
     }
@@ -1367,6 +1378,15 @@ impl Walk<'_, '_> {
                 }
             }
             Nt::Block => self.block(n),
+            // A block in an expression, `Brace: LBrace BraceBody`; a record type has no statements.
+            Nt::BraceBody if self.first(n, Nt::BraceBody).is_some() => self.walk_kids(n),
+            Nt::BraceBody if self.first(n, Nt::Stmts).is_some() => self.block(n),
+            Nt::BraceBody if self.first(n, Nt::RecordType).is_none() => {
+                // `{ s … }`: its statements are its own `Stmt` and `StmtsTail`.
+                self.frames.push(HashMap::new());
+                self.stmts_in_frame(n);
+                self.frames.pop();
+            }
             Nt::MatchExpr => self.match_expr(n),
             Nt::HandleExpr => self.handle(n),
             Nt::BudgetExpr => {

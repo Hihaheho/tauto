@@ -1,0 +1,25 @@
+@ cases.weak-upgrades-while-a-strong-handle-remains
+backends = ["rust", "javascript", "vm"]
+source = ```nib
+import std::prelude::Par
+let r := Ref::new(5)
+let w := Weak::of(r)
+Ref::set(r, 6)
+let seen := match Weak::get(w) { Some(s) => Ref::get(s), None => 0 }
+perform show("alive", seen + Ref::get(r) - 6)
+```
+shows = ["alive = 6"]
+
+@ cases.weak-sees-the-slot-the-ref-shares
+backends = ["rust", "javascript", "vm"]
+source = ```nib
+import std::prelude::Par
+let r := Ref::new(1)
+let w := Weak::of(r)
+match Weak::get(w) {
+  Some(s) => Ref::set(s, 9)
+  None => ()
+}
+perform show("through", Ref::get(r))
+```
+shows = ["through = 9"]

@@ -6,8 +6,8 @@ type Subst = BTreeMap<String, Ty>;
 
 pub fn package(
     input: &Package,
-    native: &BTreeSet<String>,
-) -> Result<(Package, BTreeMap<String, String>), String> {
+    native: &BTreeSet<Name>,
+) -> Result<(Package, BTreeMap<Name, Name>), String> {
     if !input
         .externs
         .iter()
@@ -100,7 +100,12 @@ fn infer(pattern: &Ty, actual: &Ty, out: &mut Subst) -> Result<(), String> {
             infer(a, c, out)?;
             infer(b, d, out)?;
         }
-        (Ty::Data(n, a), Ty::Data(m, b)) | (Ty::Std(n, a), Ty::Std(m, b)) if n == m => {
+        (Ty::Data(n, a), Ty::Data(m, b)) if n == m => {
+            for (a, b) in a.iter().zip(b) {
+                infer(a, b, out)?;
+            }
+        }
+        (Ty::Std(n, a), Ty::Std(m, b)) if n == m => {
             for (a, b) in a.iter().zip(b) {
                 infer(a, b, out)?;
             }
@@ -136,11 +141,11 @@ fn concrete(names: impl Iterator<Item = String>, s: &Subst) -> Result<Vec<Ty>, S
 }
 struct Specializer<'a> {
     input: &'a Package,
-    native: &'a BTreeSet<String>,
+    native: &'a BTreeSet<Name>,
     output: Package,
     functions: BTreeMap<(usize, Vec<Ty>), usize>,
-    externs: BTreeMap<(String, Vec<Ty>), String>,
-    origins: BTreeMap<String, String>,
+    externs: BTreeMap<(Name, Vec<Ty>), Name>,
+    origins: BTreeMap<Name, Name>,
 }
 impl Specializer<'_> {
     fn function(&mut self, id: usize, s: &Subst) -> Result<usize, String> {
@@ -304,7 +309,7 @@ impl Specializer<'_> {
                 if targs.len() != f.generics.len() {
                     return Err(crate::i18n::t!(
                         "js-incomplete-type-arguments",
-                        name = &f.source
+                        name = f.source.to_string()
                     ));
                 }
                 let subst: Subst = f
@@ -361,10 +366,16 @@ impl Specializer<'_> {
                                 let mut suffix = self.externs.len();
                                 let alias = loop {
                                     let candidate = format!("__tauto_wasm_{suffix}");
-                                    if !self.input.externs.iter().any(|x| x.name == candidate)
-                                        && !self.origins.contains_key(&candidate)
+                                    if !self
+                                        .input
+                                        .externs
+                                        .iter()
+                                        .any(|x| x.name.as_str() == candidate)
+                                        && !self.origins.keys().any(|n| n.as_str() == candidate)
                                     {
-                                        break candidate;
+                                        break Name::Global(tauto::identity::DeclRef::fresh(
+                                            candidate,
+                                        ));
                                     }
                                     suffix += 1;
                                 };
@@ -553,7 +564,7 @@ mod tests {
         }
     }
 
-    fn state<'a>(input: &'a Package, native: &'a BTreeSet<String>) -> Specializer<'a> {
+    fn state<'a>(input: &'a Package, native: &'a BTreeSet<Name>) -> Specializer<'a> {
         Specializer {
             input,
             native,

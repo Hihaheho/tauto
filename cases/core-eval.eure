@@ -1,0 +1,201 @@
+@ cases.arithmetic-and-closures
+source = ```tauto
+let a := 1 + 2 * 3
+let f := (x, y) => x * y
+perform show("a", a)
+perform show("b", f(a, 2))
+```
+shows = ["a = 7", "b = 14"]
+
+@ cases.recursion-and-if
+source = ```tauto
+fn fact(n: i64): i64 { if n <= 1 { 1 } else { n * fact(n - 1) } }
+perform show("r", fact(10))
+```
+shows = ["r = 3628800"]
+
+@ cases.var-and-while
+source = ```tauto
+fn sum(n: i64): i64 {
+  var i := 0
+  var s := 0
+  while i < n {
+    i := i + 1
+    s := s + i
+  }
+  s
+}
+perform show("r", sum(100))
+```
+shows = ["r = 5050"]
+
+@ cases.a-continuation-resumes-twice
+source = ```tauto
+effect ask(n: i64): i64 resume ω
+let c := handle { perform ask(5) + 1 } with {
+  ask(n), k => k(n) + k(n + 1)
+  return v => v
+}
+perform show("c", c)
+```
+shows = ["c = 13"]
+
+@ cases.return-clause-wraps-the-result
+source = ```tauto
+effect ask(n: i64): i64
+let c := handle { perform ask(1) } with {
+  ask(n), k => k(n)
+  return v => v * 100
+}
+perform show("c", c)
+```
+shows = ["c = 100"]
+
+@ cases.budget-exceeded-is-handled
+source = ```tauto
+fn spin(): i64 { while true { }
+  0 }
+let d := handle { budget(steps: 50) { spin() } } with {
+  exceeded(info), k => k(0 - 1)
+}
+perform show("d", d)
+```
+shows = ["d = -1"]
+
+@ cases.more-steps-resume-the-body
+source = ```tauto
+fn count(n: i64): i64 {
+  var i := 0
+  while i < n { i := i + 1 }
+  i
+}
+var stops := 0
+let d := handle { budget(steps: 50) { count(100) } } with {
+  exceeded(info), k => {
+    stops := stops + 1
+    info.more(50)
+  }
+}
+perform show("d", d)
+perform show("stopped", stops > 0)
+```
+shows = ["d = 100", "stopped = true"]
+
+@ cases.unbounded-runs-the-body-to-the-end
+source = ```tauto
+fn count(n: i64): i64 {
+  var i := 0
+  while i < n { i := i + 1 }
+  i
+}
+let d := handle { budget(steps: 10) { count(1000) } } with {
+  exceeded(info), k => info.unbounded()
+}
+perform show("d", d)
+```
+shows = ["d = 1000"]
+
+@ cases.show-inside-a-handled-computation
+source = ```tauto
+effect ask(): i64
+let c := handle { perform show("in", 1)
+  perform ask() } with {
+  ask(), k => k(2)
+}
+perform show("c", c)
+```
+shows = ["in = 1", "c = 2"]
+
+@ cases.integers-overflow-at-their-width-1
+source = ```tauto
+let a: i32 := 2147483646
+perform show("a", a + 1)
+```
+shows = ["a = 2147483647"]
+
+@ cases.integers-overflow-at-their-width-2
+source = ```tauto
+let a: i32 := 2147483647
+perform show("a", a + 1)
+```
+run_error = "the number is too large"
+
+@ cases.integers-overflow-at-their-width-3
+source = ```tauto
+let a: i64 := 2147483647
+perform show("a", a + 1)
+```
+shows = ["a = 2147483648"]
+
+@ cases.div-and-mod-1
+source = ```tauto
+perform show("q", div(7, 2))
+perform show("r", mod(7, 2))
+```
+shows = ["q = 3", "r = 1"]
+
+@ cases.div-and-mod-2
+source = ```tauto
+let a := 7 / 2
+```
+types = "error: integer `/`"
+run_error = "type error:"
+compile_errors.rust = "front: integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)"
+compile_errors.javascript = "front: integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)"
+compile_errors.vm = "front: integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)"
+
+@ cases.names-are-case-sensitive
+source = ```tauto
+fn f(): i64 { 1 }
+let a := F()
+```
+types = "error: F"
+run_error = "`F` is not defined"
+compile_errors.rust = "front: F is not defined"
+compile_errors.javascript = "front: F is not defined"
+compile_errors.vm = "front: F is not defined"
+
+@ cases.an-unhandled-effect-is-an-error
+source = ```tauto
+effect ask(n: i64): i64
+let c := perform ask(1)
+```
+run_error = "unhandled effect ask at the top level"
+compile_errors.rust = "front: unhandled effect ask at the top level"
+compile_errors.javascript = "front: unhandled effect ask at the top level"
+compile_errors.vm = "front: unhandled effect ask at the top level"
+
+@ cases.the-session-limit-interrupts
+source = ```tauto
+fn spin(): i64 { while true { }
+  0 }
+let d := spin()
+```
+budget = 1000
+run_error = "interrupted: the step limit ran out"
+
+
+@ cases.the-session-limit-counts-calls-not-machine-steps-1
+source = ```tauto
+fn deep(n: i64): i64 {
+  if n == 0 { 0 } else { let a := { { { { 1 } } } }
+  let b := { { { { a } } } }
+  b + deep(n - 1) }
+}
+let r := deep(100)
+perform show("r", r)
+```
+budget = 500
+shows = ["r = 100"]
+
+@ cases.the-session-limit-counts-calls-not-machine-steps-2
+source = ```tauto
+fn deep(n: i64): i64 {
+  if n == 0 { 0 } else { let a := { { { { 1 } } } }
+  let b := { { { { a } } } }
+  b + deep(n - 1) }
+}
+let r := deep(100)
+```
+budget = 50
+run_error = "interrupted: the step limit ran out"

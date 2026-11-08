@@ -1,0 +1,242 @@
+// `f(<x: v>, h)` writes implicit arguments by name, before the explicit ones.
+// The names are the generics' names; a value is a postfix expression.
+
+@ cases.named-implicits-fix-the-generics
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+pub(open) inductive enum 記号 { M, I, U }
+
+fn app(a: List(記号), b: List(記号)): List(記号) {
+  match a {
+    Nil => b
+    Cons(h, t) => Cons(h, app(t, b))
+  }
+}
+
+pub(open) inductive 導出可能: List(記号) -> Prop {
+  公理: 導出可能([M, I])
+  規則1<x: List(記号)>(h: 導出可能(app(x, [I]))): 導出可能(app(x, [I, U]))
+  規則2<x: List(記号)>(h: 導出可能([M, ..x])): 導出可能([M, ..app(x, x)])
+  規則3<x: List(記号), y: List(記号)>(h: 導出可能(app(x, [I, I, I, ..y]))): 導出可能(app(x, [U, ..y]))
+}
+
+theorem MIIIIUは作れる(): 導出可能([M, I, I, I, I, U]) {
+  let mii: 導出可能([M, I, I]) := 規則2(公理)
+  let miiii: 導出可能([M, I, I, I, I]) := 規則2(mii)
+  規則1(<x: [M, I, I, I]>, miiii)
+}
+
+theorem MUIは作れる(): 導出可能([M, U, I]) {
+  let mii: 導出可能([M, I, I]) := 規則2(公理)
+  let miiii: 導出可能([M, I, I, I, I]) := 規則2(mii)
+  規則3(<x: [M], y: [I]>, miiii)
+}
+
+theorem 演算は括弧の中(): 導出可能([M, I, I, I, I, U]) {
+  let mii: 導出可能([M, I, I]) := 規則2(公理)
+  let miiii: 導出可能([M, I, I, I, I]) := 規則2(mii)
+  規則1(<x: app([M], [I, I, I])>, miiii)
+}
+```
+checks_all = "ok"
+
+@ cases.named-implicit-unknown-name
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+pub(open) inductive enum 記号 { M, I, U }
+
+fn app(a: List(記号), b: List(記号)): List(記号) {
+  match a {
+    Nil => b
+    Cons(h, t) => Cons(h, app(t, b))
+  }
+}
+
+pub(open) inductive 導出可能: List(記号) -> Prop {
+  公理: 導出可能([M, I])
+  規則1<x: List(記号)>(h: 導出可能(app(x, [I]))): 導出可能(app(x, [I, U]))
+  規則2<x: List(記号)>(h: 導出可能([M, ..x])): 導出可能([M, ..app(x, x)])
+  規則3<x: List(記号), y: List(記号)>(h: 導出可能(app(x, [I, I, I, ..y]))): 導出可能(app(x, [U, ..y]))
+}
+
+theorem T(): 導出可能([M, I, I, I, I, U]) {
+  let mii: 導出可能([M, I, I]) := 規則2(公理)
+  let miiii: 導出可能([M, I, I, I, I]) := 規則2(mii)
+  規則1(<z: [M, I, I, I]>, miiii)
+}
+```
+checks."T" = "error: has no implicit parameter `z`"
+
+@ cases.named-implicit-written-twice
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+pub(open) inductive enum 記号 { M, I, U }
+
+fn app(a: List(記号), b: List(記号)): List(記号) {
+  match a {
+    Nil => b
+    Cons(h, t) => Cons(h, app(t, b))
+  }
+}
+
+pub(open) inductive 導出可能: List(記号) -> Prop {
+  公理: 導出可能([M, I])
+  規則1<x: List(記号)>(h: 導出可能(app(x, [I]))): 導出可能(app(x, [I, U]))
+  規則2<x: List(記号)>(h: 導出可能([M, ..x])): 導出可能([M, ..app(x, x)])
+  規則3<x: List(記号), y: List(記号)>(h: 導出可能(app(x, [I, I, I, ..y]))): 導出可能(app(x, [U, ..y]))
+}
+
+theorem T(): 導出可能([M, I, I, I, I, U]) {
+  let mii: 導出可能([M, I, I]) := 規則2(公理)
+  let miiii: 導出可能([M, I, I, I, I]) := 規則2(mii)
+  規則1(<x: [M, I, I, I], x: [M]>, miiii)
+}
+```
+checks."T" = "error: the implicit argument `x` is written twice"
+
+@ cases.named-implicit-checked-against-the-call
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+pub(open) inductive enum 記号 { M, I, U }
+
+fn app(a: List(記号), b: List(記号)): List(記号) {
+  match a {
+    Nil => b
+    Cons(h, t) => Cons(h, app(t, b))
+  }
+}
+
+pub(open) inductive 導出可能: List(記号) -> Prop {
+  公理: 導出可能([M, I])
+  規則1<x: List(記号)>(h: 導出可能(app(x, [I]))): 導出可能(app(x, [I, U]))
+  規則2<x: List(記号)>(h: 導出可能([M, ..x])): 導出可能([M, ..app(x, x)])
+  規則3<x: List(記号), y: List(記号)>(h: 導出可能(app(x, [I, I, I, ..y]))): 導出可能(app(x, [U, ..y]))
+}
+
+theorem T(): 導出可能([M, I, I, I, I, U]) {
+  let mii: 導出可能([M, I, I]) := 規則2(公理)
+  let miiii: 導出可能([M, I, I, I, I]) := 規則2(mii)
+  規則1(<x: [M, I, I]>, miiii)
+}
+```
+checks."T" = "error: type mismatch"
+
+@ cases.named-implicits-write-every-explicit-argument
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+pub(open) inductive enum 記号 { M, I, U }
+
+fn app(a: List(記号), b: List(記号)): List(記号) {
+  match a {
+    Nil => b
+    Cons(h, t) => Cons(h, app(t, b))
+  }
+}
+
+pub(open) inductive 導出可能: List(記号) -> Prop {
+  公理: 導出可能([M, I])
+  規則1<x: List(記号)>(h: 導出可能(app(x, [I]))): 導出可能(app(x, [I, U]))
+  規則2<x: List(記号)>(h: 導出可能([M, ..x])): 導出可能([M, ..app(x, x)])
+  規則3<x: List(記号), y: List(記号)>(h: 導出可能(app(x, [I, I, I, ..y]))): 導出可能(app(x, [U, ..y]))
+}
+
+theorem T(): 導出可能([M, I, I, I, I, U]) {
+  規則1(<x: [M, I, I, I]>)
+}
+```
+checks."T" = "error: writes all 1 explicit arguments"
+
+@ cases.named-implicits-need-implicit-parameters
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+pub(open) inductive enum 記号 { M, I, U }
+
+fn app(a: List(記号), b: List(記号)): List(記号) {
+  match a {
+    Nil => b
+    Cons(h, t) => Cons(h, app(t, b))
+  }
+}
+
+pub(open) inductive 導出可能: List(記号) -> Prop {
+  公理: 導出可能([M, I])
+  規則1<x: List(記号)>(h: 導出可能(app(x, [I]))): 導出可能(app(x, [I, U]))
+  規則2<x: List(記号)>(h: 導出可能([M, ..x])): 導出可能([M, ..app(x, x)])
+  規則3<x: List(記号), y: List(記号)>(h: 導出可能(app(x, [I, I, I, ..y]))): 導出可能(app(x, [U, ..y]))
+}
+
+fn f(n: Nat): Nat { n }
+fn g(): Nat { f(<x: 1>, 2) }
+```
+checks."g" = "error: implicit arguments are written by name only"
+
+// A call written in the source does not pass implicit arguments by position.
+@ cases.positional-implicits-are-an-error-in-source
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+pub(open) inductive enum 記号 { M, I, U }
+
+fn app(a: List(記号), b: List(記号)): List(記号) {
+  match a {
+    Nil => b
+    Cons(h, t) => Cons(h, app(t, b))
+  }
+}
+
+pub(open) inductive 導出可能: List(記号) -> Prop {
+  公理: 導出可能([M, I])
+  規則1<x: List(記号)>(h: 導出可能(app(x, [I]))): 導出可能(app(x, [I, U]))
+  規則2<x: List(記号)>(h: 導出可能([M, ..x])): 導出可能([M, ..app(x, x)])
+  規則3<x: List(記号), y: List(記号)>(h: 導出可能(app(x, [I, I, I, ..y]))): 導出可能(app(x, [U, ..y]))
+}
+
+theorem T(): 導出可能([M, I, I, I, I, U]) {
+  let mii: 導出可能([M, I, I]) := 規則2(公理)
+  let miiii: 導出可能([M, I, I, I, I]) := 規則2(mii)
+  規則1([M, I, I, I], miiii)
+}
+```
+checks."T" = "error: implicit arguments are written by name"
+
+// A call that a recursion through a λ moves under new names keeps its named
+// arguments pointing at the same variables.
+@ cases.named-implicits-follow-renamed-variables
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+pub(open) inductive R(a: Nat, b: Nat): Type {
+  Yes(h: a = b): R(a, b)
+  No: R(a, b)
+}
+
+pub fn go(a: Nat, b: Nat, rec: (x: Nat) -> (y: Nat) -> R(x, y)): R(a, b) { rec(a, b) }
+
+pub fn f(fuel: Nat, a: Nat, b: Nat): R(a, b) {
+  ⊢ R(a, b) from match fuel {
+    Zero => No(<a: a, b: b>)
+    Succ(k) => go(a, b, x => y => f(k, x, y))
+  }
+}
+```
+checks_all = "ok"
+
+// A recursive call under a match names its implicit arguments as any call does.
+@ cases.named-implicits-in-a-recursive-call
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+pub fn s<R: Type>(r: R, n: Nat): R {
+  ⊢ R from match n {
+    Zero => r
+    Succ(k) => s(<R: R>, r, k)
+  }
+}
+```
+checks_all = "ok"

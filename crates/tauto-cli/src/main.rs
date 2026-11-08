@@ -36,8 +36,7 @@ mod vm;
 
 /// Runs `f` on a thread with a deep stack: the kernel normalizes under the
 /// arms of a stuck `match`, so a comparison with a large literal
-/// (`nat_le(55296, c)`) recurses once per unit. The same stack allowance is used
-/// in `crates/tauto/tests/tauto_lib.rs`.
+/// (`nat_le(55296, c)`) recurses once per unit.
 fn with_deep_stack(f: impl FnOnce() -> ExitCode + Send) -> ExitCode {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
@@ -210,6 +209,11 @@ fn main() -> ExitCode {
         return totebag_index::engine::on_deep_stack(|| index::command(&args[1..]));
     }
     if args.first().is_some_and(|a| a == "init") {
+        // The command written in Tauto (`totes/initcmd`) is run with `TAUTO_INIT=tote`, to compare
+        // it with this one; `tests/init_tote.rs` checks that they agree.
+        if std::env::var_os("TAUTO_INIT").is_some_and(|v| v == "tote") {
+            return init_tote(&args[1..]);
+        }
         return init::command(&args[1..]);
     }
     if args.first().is_some_and(|a| a == "trust") {
@@ -219,7 +223,7 @@ fn main() -> ExitCode {
         return publish_crates::command(&args[1..]);
     }
     if args.first().is_some_and(|a| a == "lsp") {
-        return lsp::command();
+        return with_deep_stack(lsp::command);
     }
     // A syntax's tables are looked up from where the program is read.
     tauto::syntax::set_search_dirs(
@@ -254,6 +258,11 @@ fn main() -> ExitCode {
         return macros::command(&args[1..]);
     }
     if args.first().is_some_and(|a| a == "fmt") {
+        // The command written in Tauto (`totes/fmtcmd`) is run with `TAUTO_FMT=tote`, to compare
+        // it with this one; `tests/fmt_tote.rs` checks that they agree.
+        if std::env::var_os("TAUTO_FMT").is_some_and(|v| v == "tote") {
+            return fmt_tote(&args[1..]);
+        }
         return format_files(&args[1..]);
     }
     if matches!(
@@ -288,6 +297,12 @@ fn main() -> ExitCode {
     }
     if args.first().is_some_and(|a| a == "bind") {
         return ExitCode::from(tauto_bind::command(&args[1..]) as u8);
+    }
+    if args.first().is_some_and(|a| a == "run" || a == "dev")
+        && let Err(e) = default_run_file(&mut args)
+    {
+        eprintln!("{e}");
+        return ExitCode::from(2);
     }
     // What the run is trusted with is approved by the user whenever it changes.
     if args
@@ -350,6 +365,42 @@ fn main() -> ExitCode {
         return lint_paths(&args[1..]);
     }
     usage()
+}
+
+/// `tauto run` and `tauto dev` given neither a file nor `--tote` run the
+/// `run.file` of the nearest `Tauto.eure` from the current directory up: the
+/// file is put among tauto's own arguments, before any `--`. Without such a
+/// manifest or `run.file` the arguments are left as they are.
+fn default_run_file(args: &mut Vec<String>) -> Result<(), String> {
+    let own = args.iter().position(|a| a == "--").unwrap_or(args.len());
+    let mut rest = args[1..own].iter();
+    while let Some(a) = rest.next() {
+        match a.as_str() {
+            "--tote" => return Ok(()),
+            "--permissions" | "--steps" | "--backend" | "--emit" | "-o" | "--target" => {
+                rest.next();
+            }
+            a if !a.starts_with('-') => return Ok(()),
+            _ => {}
+        }
+    }
+    let Ok(cwd) = std::env::current_dir() else {
+        return Ok(());
+    };
+    let Some(dir) = cwd.ancestors().find(|d| d.join("Tauto.eure").is_file()) else {
+        return Ok(());
+    };
+    let manifest = tauto::manifest::read(dir)?;
+    let Some(file) = manifest.run_file else {
+        return Ok(());
+    };
+    let path = if dir == cwd {
+        file
+    } else {
+        dir.join(file).display().to_string()
+    };
+    args.insert(own, path);
+    Ok(())
 }
 
 fn command_usage(command: &str) -> Vec<&'static str> {
@@ -434,7 +485,7 @@ fn lint_paths(paths: &[String]) -> ExitCode {
         };
         let (found, error) = match tauto::lint::lint(&source) {
             Ok(found) => (found.iter().map(|f| f.to_string()).collect(), false),
-            Err(error) => (vec![error], true),
+            Err(error) => (vec![error.to_string()], true),
         };
         if found.is_empty() {
             continue;
@@ -617,10 +668,14 @@ fn proof_command(args: &[String]) -> ExitCode {
     let path = std::path::Path::new(&path);
     // A directory is checked as a tote.
     let tote = tote || (command == "check" && path.is_dir());
-    let run = |result: Result<ExitCode, String>| match result {
+    let run = |result: Result<ExitCode, tauto_message::Message>| match result {
         Ok(code) => code,
         // Errors reading the program already name the file they are in.
-        Err(error) if error.starts_with(&format!("{}:", path.display())) => {
+        Err(error)
+            if error
+                .to_string()
+                .starts_with(&format!("{}:", path.display())) =>
+        {
             eprintln!("{error}");
             ExitCode::FAILURE
         }
@@ -634,15 +689,17 @@ fn proof_command(args: &[String]) -> ExitCode {
     }
     if fix && tote {
         // Each source file of the tote is an entry of its own fix.
-        return run(tauto::program::package_source_files(path).and_then(|files| {
-            let mut code = ExitCode::SUCCESS;
-            for file in files {
-                if fix_command(&file, dry_run)? != ExitCode::SUCCESS {
-                    code = ExitCode::FAILURE;
+        return run(tauto::program::package_source_files(path)
+            .map_err(tauto_message::Message::from)
+            .and_then(|files| {
+                let mut code = ExitCode::SUCCESS;
+                for file in files {
+                    if fix_command(&file, dry_run)? != ExitCode::SUCCESS {
+                        code = ExitCode::FAILURE;
+                    }
                 }
-            }
-            Ok(code)
-        }));
+                Ok(code)
+            }));
     }
     if fix {
         return run(fix_command(path, dry_run));
@@ -893,6 +950,27 @@ fn status_code(status: Status) -> ExitCode {
     }
 }
 
+/// `tauto init [PATH]` as the tote `initcmd` runs it, with the permissions it needs.
+fn init_tote(args: &[String]) -> ExitCode {
+    let mut tote_args: Vec<String> = ["--allow-read", "--allow-write", "--allow-div", "--"]
+        .map(String::from)
+        .into();
+    tote_args.extend(args.iter().cloned());
+    tauto_cli_totes::main("initcmd", tote_args).unwrap_or(ExitCode::FAILURE)
+}
+
+/// `tauto fmt [--check] FILE…` as the tote `fmtcmd` runs it, with the permissions it needs.
+fn fmt_tote(args: &[String]) -> ExitCode {
+    tauto_cli_totes::set_fmt_usage(&usage_text());
+    // The formatter of `tauto::fmt` has no step limit, and a long file would run out of the
+    // host's: `--allow-div`.
+    let mut tote_args: Vec<String> = ["--allow-read", "--allow-write", "--allow-div", "--"]
+        .map(String::from)
+        .into();
+    tote_args.extend(args.iter().cloned());
+    tauto_cli_totes::main("fmtcmd", tote_args).unwrap_or(ExitCode::FAILURE)
+}
+
 /// `tauto fmt [--check] FILE…`: lays the files out again, or with `--check`
 /// lists the ones that would change.
 fn format_files(args: &[String]) -> ExitCode {
@@ -981,15 +1059,47 @@ fn line_col(source: &str, offset: u32) -> (usize, usize) {
     (line, col)
 }
 
+/// Each `«byte N»` of the steps of a message as `file:line:col`.
+fn located_steps(loaded: &Loaded, shown: &str) -> String {
+    let mut out = String::new();
+    let mut rest = shown;
+    while let Some((before, after)) = rest.split_once("«byte ") {
+        out.push_str(before);
+        let Some((offset, tail)) = after.split_once('»') else {
+            out.push_str("«byte ");
+            rest = after;
+            continue;
+        };
+        match offset.parse().ok().and_then(|o| loaded.locate(o)) {
+            Some((file, line, col)) => out.push_str(&format!("{}:{line}:{col}", file.display())),
+            None => out.push_str("(unknown place)"),
+        }
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
+}
+
 /// `message (byte N)` with N an offset into all the files of the program
 /// becomes `file:line:col: message`.
 pub(crate) fn locate_in(loaded: &Loaded, entry: &str, shown: &str) -> String {
+    let shown = &located_steps(loaded, shown);
     let at = split_offset(shown).and_then(|(m, offset)| Some((m, loaded.locate(offset)?)));
     match at {
         Some((message, (file, line, col))) => {
             format!("{}:{line}:{col}: {message}", file.display())
         }
         None => format!("{entry}: {shown}"),
+    }
+}
+
+/// Frontend type diagnostics already carry their file; row and use
+/// diagnostics retain byte offsets until the CLI renders them.
+pub(crate) fn locate_front(loaded: &Loaded, entry: &str, shown: &str) -> String {
+    if split_offset(shown).is_some() {
+        locate_in(loaded, entry, shown)
+    } else {
+        shown.to_string()
     }
 }
 
@@ -1236,7 +1346,7 @@ pub(crate) fn usage() -> ExitCode {
 /// `tauto check FILE --fix [--dry-run]`: the edits the diagnostics carry, made in memory
 /// round by round (`tauto::fix`); the files are written once at the end, or shown as a
 /// diff with `--dry-run`.
-fn fix_command(path: &std::path::Path, dry_run: bool) -> Result<ExitCode, String> {
+fn fix_command(path: &std::path::Path, dry_run: bool) -> Result<ExitCode, tauto_message::Message> {
     let outcome = tauto::fix::fix(path)?;
     let shown = |p: &std::path::Path| p.display().to_string();
     for (edit, (line, col)) in &outcome.applied {

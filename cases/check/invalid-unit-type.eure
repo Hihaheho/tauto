@@ -1,0 +1,41 @@
+@ cases.a-unit-value-is-rejected-as-a-function-result-type
+files."main.taut" = ```tauto
+fn bad(): #() { #() }
+```
+entry = "main.taut"
+checks.bad = "error: `#()` is the unit value, not a type; write the unit type as `Unit`"
+
+@ cases.a-unit-value-is-rejected-after-a-function-parameter
+files."main.taut" = ```tauto
+fn bad(n: Nat): #() { #() }
+```
+entry = "main.taut"
+checks.bad = "error: `#()` is the unit value, not a type; write the unit type as `Unit`"
+
+@ cases.a-unit-value-is-rejected-as-a-mutable-parameter-type
+files."main.taut" = ```tauto
+fn bad(&mut value: #()): Unit { #() }
+```
+entry = "main.taut"
+checks.bad = "error: `#()` is the unit value, not a type; write the unit type as `Unit`"
+
+@ cases.a-unit-value-is-rejected-as-a-mutable-function-result-type
+files."main.taut" = ```tauto
+fn bad(&mut value: Nat): #() { #() }
+```
+entry = "main.taut"
+checks.bad = "error: type mismatch: expected `Type`, found `Unit`"
+
+@ cases.a-unit-value-is-rejected-as-a-local-type
+files."main.taut" = ```tauto
+fn bad(): Unit { let value: #() := #(); value }
+```
+entry = "main.taut"
+checks.bad = "error: type mismatch: expected `Type1`, found `Unit`"
+
+@ cases.unit-remains-a-type-in-a-mutable-function
+files."main.taut" = ```tauto
+fn good(&mut value: Unit): Unit { let result: Unit := #(); value := result; value }
+```
+entry = "main.taut"
+checks.good = "ok"

@@ -1,0 +1,126 @@
+@ cases.a-missing-import-is-written-after-the-imports
+description = "`check --fix` writes the import a name needs after the last import of the file that uses it, and the name is seen."
+entry = "main.taut"
+files."main.taut" = ```tauto
+import "a.taut"
+import "b.taut"
+```
+files."a.taut" = ```tauto
+pub def one(): Nat := 1
+```
+files."b.taut" = ```tauto
+import std::List
+
+pub def two(): Nat := one()
+```
+fixes.applied = ["import \"a.taut\""]
+fixes.reverted = []
+fixes.files."b.taut" = ```tauto
+import std::List
+import "a.taut"
+
+pub def two(): Nat := one()
+```
+
+@ cases.a-missing-import-is-written-at-the-start-of-a-file-without-imports
+description = "A file with no import gets the import as its first line."
+entry = "main.taut"
+files."main.taut" = ```tauto
+import "a.taut"
+import "b.taut"
+```
+files."a.taut" = ```tauto
+pub def one(): Nat := 1
+```
+files."b.taut" = ```tauto
+pub def two(): Nat := one()
+```
+fixes.applied = ["import \"a.taut\""]
+fixes.files."b.taut" = ```tauto
+import "a.taut"
+pub def two(): Nat := one()
+```
+
+@ cases.an-import-that-makes-a-name-ambiguous-is-taken-back
+description = "The import `one` needs also brings a second `k`: the program has as many errors and a new one, so the edit is taken back and the file is left as it was."
+entry = "main.taut"
+files."main.taut" = ```tauto
+import "a.taut"
+import "u.taut"
+```
+files."a.taut" = ```tauto
+pub def one(): Nat := 1
+pub def k(): Nat := 2
+```
+files."d.taut" = ```tauto
+pub def k(): Nat := 3
+```
+files."u.taut" = ```tauto
+import "d.taut"
+
+def two(): Nat := one()
+def three(): Nat := k()
+```
+fixes.applied = []
+fixes.reverted = ["import \"a.taut\""]
+
+@ cases.the-diff-of-a-dry-run-names-each-file-edited
+description = "What `check --fix --dry-run` prints: a unified diff of each file edited, the files left as they are."
+entry = "main.taut"
+files."main.taut" = ```tauto
+import "a.taut"
+import "b.taut"
+```
+files."a.taut" = ```tauto
+pub def one(): Nat := 1
+```
+files."b.taut" = ```tauto
+import std::List
+
+pub def two(): Nat := one()
+```
+fixes.diff = ```diff
+--- b.taut
++++ b.taut
+@@ -1,3 +1,4 @@
+ import std::List
++import "a.taut"
+ 
+ pub def two(): Nat := one()
+```
+
+@ cases.a-missing-import-names-the-file-as-it-is-named
+description = "The import `check --fix` writes names the file by its path, hyphen and all, not by its module."
+entry = "main.taut"
+files."main.taut" = ```tauto
+import "catalog-data.taut"
+import "b.taut"
+```
+files."catalog-data.taut" = ```tauto
+pub def one(): Nat := 1
+```
+files."b.taut" = ```tauto
+pub def two(): Nat := one()
+```
+fixes.applied = ["import \"catalog-data.taut\""]
+fixes.reverted = []
+fixes.files."b.taut" = ```tauto
+import "catalog-data.taut"
+pub def two(): Nat := one()
+```
+
+@ cases.lint-fix-keeps-no-list-in-a-file-that-does-not-check
+description = "`lint --fix` on a file with an error of its own writes no import list that leaves the errors as they were, and says the list it took back."
+entry = "main.taut"
+fixes.lint = true
+files."main.taut" = ```tauto
+import "a.taut"
+
+pub def two(): Nat := one()
+pub def bad(): Nat := missing
+```
+files."a.taut" = ```tauto
+pub def one(): Nat := 1
+```
+fixes.applied = []
+fixes.reverted = ["Write the list of what the import brings"]

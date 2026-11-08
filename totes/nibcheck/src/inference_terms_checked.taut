@@ -39,10 +39,10 @@ pub theorem inference_class_method_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_class_method(j, c, term, env, span, base, name, cn, found)) {
-  match found: CkCheckedFrame(
+  ⊢ CkCheckedFrame(
     c,
     inference_class_method(j, c, term, env, span, base, name, cn, found)
-  ) {
+  ) from match found {
     true => checked_frame_read(
       c,
       ck_rewrap1(ck_lookup(c, cat3(cn, ".", name), env, span)),
@@ -102,7 +102,10 @@ pub theorem inference_field_base_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_field_base(j, c, term, env, span, base, name, r#class)) {
-  match r#class: CkCheckedFrame(c, inference_field_base(j, c, term, env, span, base, name, r#class)) {
+  ⊢ CkCheckedFrame(
+    c,
+    inference_field_base(j, c, term, env, span, base, name, r#class)
+  ) from match r#class {
     None => checked_frame_bind(
       Ty,
       Ty,
@@ -148,7 +151,7 @@ pub theorem inference_term_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_term(j, c, term, env, span, sk)) {
-  match sk: CkCheckedFrame(c, inference_term(j, c, term, env, span, sk)) {
+  ⊢ CkCheckedFrame(c, inference_term(j, c, term, env, span, sk)) from match sk {
     SkVar(name) => checked_frame_read(
       c,
       ck_rewrap1(ck_lookup(c, name, env, span)),
@@ -751,14 +754,7 @@ pub theorem inference_term_frame_checked(
       error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
       ordered
     )
-    SkStep(
-      pat_tactic,
-      pat_arg,
-      pat_call_start,
-      pat_call_end,
-      pat_before,
-      pat_arms
-    ) => checked_frame_bind(
+    SkStep(pat_tactic, pat_arg, pat_call_start, pat_call_end, pat_before, pat_arms) => checked_frame_bind(
       Unit,
       Ty,
       c,

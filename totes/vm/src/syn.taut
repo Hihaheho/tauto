@@ -137,12 +137,24 @@ pub fn syn_fields(lr: Bool, values: List(SynV), keep: List(Bool)): List(MVal) {
   }
 }
 
-pub fn syn_node(p: SynParser, ctor: Nat, spanned: Bool, keep: List(Bool), values: List(SynV), start: Nat): MVal {
+pub fn syn_node(
+  p: SynParser,
+  ctor: Nat,
+  spanned: Bool,
+  keep: List(Bool),
+  values: List(SynV),
+  start: Nat
+): MVal {
   let fields := syn_fields(p.lr, values, keep)
   MvData(ctor, if spanned { Cons(syn_span(p, start), fields) } else { fields })
 }
 
-pub fn syn_element(p: SynParser, e: SynElem, values: List(SynV), start: Nat): Result(MVal, SynFail) {
+pub fn syn_element(
+  p: SynParser,
+  e: SynElem,
+  values: List(SynV),
+  start: Nat
+): Result(MVal, SynFail) {
   match e {
     SeItem => match values {
       Cons(v, rest) => match rest {
@@ -166,7 +178,12 @@ pub fn syn_split_last(values: List(SynV)): Option(Pair(List(SynV), SynV)) {
 }
 
 // What the node of the production becomes, of its values in order.
-pub fn syn_close(p: SynParser, production: Nat, values: List(SynV), open_end: Nat): Result(SynV, SynFail) {
+pub fn syn_close(
+  p: SynParser,
+  production: Nat,
+  values: List(SynV),
+  open_end: Nat
+): Result(SynV, SynFail) {
   let end := syn_last_end(values, open_end)
   let start := match syn_first_start(values) {
     None => end
@@ -175,7 +192,9 @@ pub fn syn_close(p: SynParser, production: Nat, values: List(SynV), open_end: Na
   match Array::get(p.productions, production) {
     None => Err(SfSchema("an event names a production of another non-terminal"))
     Some(prod) => match prod.shape {
-      ShNode(ctor, spanned, keep) => Ok(SvOne(syn_node(p, ctor, spanned, keep, values, start), start, end))
+      ShNode(ctor, spanned, keep) => Ok(
+        SvOne(syn_node(p, ctor, spanned, keep, values, start), start, end)
+      )
       ShPass => match values {
         Nil => Err(SfSchema("a token non-terminal without its token"))
         Cons(v, rest) => Ok(sv_respan(v, start, end))
@@ -310,7 +329,9 @@ pub fn syn_predict_in(
       Succ(chosen) => Ok(chosen)
       Zero => match syn_find_transition(la.transitions, state, syn_term_at(seen, cur + i)) {
         Some(t) => syn_predict_in(k2, la, seen, cur, i + 1, t.to, t.production)
-        None => Err(SfSyntax(Array::get(seen, cur + i), syn_dedup(syn_outgoing(la.transitions, state))))
+        None => Err(
+          SfSyntax(Array::get(seen, cur + i), syn_dedup(syn_outgoing(la.transitions, state)))
+        )
       }
     }
   }
@@ -342,7 +363,12 @@ pub fn syn_push_rhs(rhs: List(SynSym), rest: List(SynItem)): List(SynItem) {
 pub fn syn_add(frames: List(SynFrame), v: SynV): Option(List(SynFrame)) {
   match frames {
     Nil => None
-    Cons(f, up) => Some(Cons(SynFrame { production: f.production, values: Cons(v, f.values), open_end: f.open_end }, up))
+    Cons(f, up) => Some(
+      Cons(
+        SynFrame { production: f.production, values: Cons(v, f.values), open_end: f.open_end },
+        up
+      )
+    )
   }
 }
 
@@ -381,7 +407,18 @@ pub fn syn_ll(
               Nil => syn_ll(f, p, text, seen, rest, Nat::sub(depth, 1), Nil, cur, last_end, Some(v))
               Cons(parent, up2) => match syn_add(up, v) {
                 None => Err(SfSchema("a close without an open"))
-                Some(up3) => syn_ll(f, p, text, seen, rest, Nat::sub(depth, 1), up3, cur, last_end, result)
+                Some(up3) => syn_ll(
+                  f,
+                  p,
+                  text,
+                  seen,
+                  rest,
+                  Nat::sub(depth, 1),
+                  up3,
+                  cur,
+                  last_end,
+                  result
+                )
               }
             }
           }
@@ -403,7 +440,10 @@ pub fn syn_ll(
                     seen,
                     syn_push_rhs(prod.rhs, Cons(SiClose, rest)),
                     depth + width,
-                    Cons(SynFrame { production: production, values: Nil, open_end: last_end }, frames),
+                    Cons(
+                      SynFrame { production: production, values: Nil, open_end: last_end },
+                      frames
+                    ),
                     cur,
                     last_end,
                     result
@@ -417,7 +457,18 @@ pub fn syn_ll(
             Some(tok) => if tok.token_type == t {
               match syn_add(frames, syn_token(p, text, tok)) {
                 None => Err(SfSchema("a token outside a node"))
-                Some(frames2) => syn_ll(f, p, text, seen, rest, Nat::sub(depth, 1), frames2, cur + 1, tok.end, result)
+                Some(frames2) => syn_ll(
+                  f,
+                  p,
+                  text,
+                  seen,
+                  rest,
+                  Nat::sub(depth, 1),
+                  frames2,
+                  cur + 1,
+                  tok.end,
+                  result
+                )
               }
             } else {
               Err(SfSyntax(Some(tok), Cons(t, Nil)))
@@ -530,12 +581,10 @@ pub fn syn_lr(
                       )
                     }
                   }
+                } else if depth == m {
+                  syn_close(p, a.arg, children, last_end)
                 } else {
-                  if depth == m {
-                    syn_close(p, a.arg, children, last_end)
-                  } else {
-                    Err(SfSyntax(Array::get(seen, cur), Nil))
-                  }
+                  Err(SfSyntax(Array::get(seen, cur), Nil))
                 }
               }
             }
@@ -567,7 +616,17 @@ pub fn syn_texts(ts: List(Text)): List(MVal) {
   }
 }
 
-pub fn syn_diag(p: SynParser, message: Text, at: Nat, expected: List(Text)): MVal {
+// The machine writes no message: `message` is the id of a message of the
+// tools and the arguments are its (`macro-syntax-*`), so that a tool writes it
+// in its language. `expected` comes once for each terminal that would have been
+// taken, in order.
+pub fn syn_diag(
+  p: SynParser,
+  message: Text,
+  at: Nat,
+  expected: List(Text),
+  args: List(MVal)
+): MVal {
   m_errv(
     MvData(
       p.diag,
@@ -575,40 +634,76 @@ pub fn syn_diag(p: SynParser, message: Text, at: Nat, expected: List(Text)): MVa
         MvText(message),
         Cons(
           MvInt(IntOfNat(at)),
-          Cons(m_list(syn_texts(expected)), Cons(MvText("macro.syntax_error"), Nil))
+          Cons(
+            m_list(syn_texts(expected)),
+            Cons(MvText("macro.syntax_error"), Cons(m_list(args), Nil))
+          )
         )
       )
     )
   )
 }
 
+pub fn syn_arg(p: SynParser, name: Text, value: Text): MVal {
+  MvData(p.arg, Cons(MvText(name), Cons(MvText(value), Nil)))
+}
+
+// An `expected` for each name, then `rest`.
+pub fn syn_expected_args(p: SynParser, names: List(Text), rest: List(MVal)): List(MVal) {
+  match names {
+    Nil => rest
+    Cons(n, more) => Cons(syn_arg(p, "expected", n), syn_expected_args(p, more, rest))
+  }
+}
+
 pub fn syn_failed(p: SynParser, text: Text, fail: SynFail): MVal {
-  let within := Text::concat("macro.syntax_error: in ", Text::concat(p.name, ": "))
+  let syntax := syn_arg(p, "syntax", p.name)
   match fail {
-    SfLex(at) => syn_diag(p, Text::concat(within, "this text is not a token of the syntax"), at, Nil)
+    SfLex(at) => syn_diag(p, "macro-syntax-not-a-token", at, Nil, Cons(syntax, Nil))
     SfSyntax(token, expected) => {
       let names := syn_names(p, expected)
-      let list := match names {
-        Nil => "something else"
-        Cons(n, rest) => text_join(names, " or ")
-      }
-      let found := match token {
-        None => "found the end of the text"
-        Some(t) => Text::concat("found ", syn_name(p, t.token_type))
-      }
       let at := match token {
         None => Text::len(text)
         Some(t) => t.start
       }
-      syn_diag(
-        p,
-        Text::concat(within, Text::concat("expected ", Text::concat(list, Text::concat(", ", found)))),
-        at,
-        names
-      )
+      // The scanner's catch-all token (`Error`) is text that is no token of
+      // the syntax, not a terminal of it.
+      let is_error: Bool := match token {
+        None => false
+        Some(t) => syn_name(p, t.token_type) == "Error"
+      }
+      if is_error {
+        syn_diag(p, "macro-syntax-not-a-token", at, Nil, Cons(syntax, Nil))
+      } else {
+        match token {
+          None => syn_diag(
+            p,
+            "macro-syntax-expected-end",
+            at,
+            names,
+            Cons(syntax, syn_expected_args(p, names, Nil))
+          )
+          Some(t) => syn_diag(
+            p,
+            "macro-syntax-expected-found",
+            at,
+            names,
+            Cons(
+              syntax,
+              syn_expected_args(p, names, Cons(syn_arg(p, "found", syn_name(p, t.token_type)), Nil))
+            )
+          )
+        }
+      }
     }
-    SfLimit(m) => syn_diag(p, Text::concat(within, m), 0, Nil)
-    SfSchema(m) => syn_diag(p, Text::concat("macro.syntax_error: ", m), 0, Nil)
+    SfLimit(m) => syn_diag(
+      p,
+      "macro-syntax-limit",
+      0,
+      Nil,
+      Cons(syntax, Cons(syn_arg(p, "detail", m), Nil))
+    )
+    SfSchema(m) => syn_diag(p, "macro-syntax-schema", 0, Nil, Cons(syn_arg(p, "detail", m), Nil))
   }
 }
 
@@ -631,7 +726,9 @@ pub fn syn_run(p: SynParser, text: Text): MVal {
         let seen := Array::of_list(syn_seen(p, tokens))
         // Every step reads a token, or opens or closes a node; between two tokens a
         // node of each symbol of every production opens and closes at most once.
-        let fuel := (Array::len(seen) + 1) * (syn_rhs_total(Array::to_list(p.productions)) + 1) * 2 + 2
+        let fuel := (
+          Array::len(seen) + 1
+        ) * (syn_rhs_total(Array::to_list(p.productions)) + 1) * 2 + 2
         let r: Result(SynV, SynFail) := if p.lr {
           syn_lr(fuel, p, text, seen, Cons(0, Nil), Nil, 0, 0, 0)
         } else {

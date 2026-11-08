@@ -5,6 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use tauto_message::{Message, msg};
 use tauto_parol::Span;
 
 use crate::check::{FileEntry, Verdict};
@@ -108,7 +109,7 @@ impl State {
     }
 }
 
-fn check(path: &Path, texts: &BTreeMap<PathBuf, String>) -> Result<State, String> {
+fn check(path: &Path, texts: &BTreeMap<PathBuf, String>) -> Result<State, Message> {
     let source = |p: &Path| texts.get(p).map(|t| Ok(t.clone()));
     let (entries, _, _, _) = crate::check::check_file_sourced(path, &source)?;
     Ok(State {
@@ -119,7 +120,11 @@ fn check(path: &Path, texts: &BTreeMap<PathBuf, String>) -> Result<State, String
 fn error_of(e: &FileEntry) -> Option<(ErrorKey, Option<Span>, Option<crate::check::Fix>)> {
     match &e.entry.verdict {
         Verdict::Failed(d) => Some((
-            (e.file.clone(), e.entry.name.clone(), d.message.to_string()),
+            (
+                e.file.clone(),
+                e.entry.name.to_string(),
+                d.message.to_string(),
+            ),
             d.span,
             d.fix.clone(),
         )),
@@ -128,7 +133,7 @@ fn error_of(e: &FileEntry) -> Option<(ErrorKey, Option<Span>, Option<crate::chec
 }
 
 /// Whether a check is better than `before`: fewer errors, none of them new.
-fn better(before: &State, after: &Result<State, String>) -> bool {
+fn better(before: &State, after: &Result<State, Message>) -> bool {
     match after {
         Ok(after) => after.count() < before.count() && after.new_since(before).is_empty(),
         Err(_) => false,
@@ -223,7 +228,7 @@ pub fn apply(text: &str, edits: &[Edit]) -> Option<String> {
 /// have. Else each of its edits is tried alone, on what stayed: one that
 /// does not leave fewer errors, or brings an error, is taken back and not
 /// made again. The rounds end when no edit is left to make.
-pub fn fix(path: &Path) -> Result<Outcome, String> {
+pub fn fix(path: &Path) -> Result<Outcome, Message> {
     // Each round reads the program again with one file changed: what the
     // files before it expanded to is kept between the rounds.
     let _kept = KeepExpansions::on();
@@ -248,13 +253,13 @@ pub fn fix(path: &Path) -> Result<Outcome, String> {
     let errors_before = state.count();
     let mut refused = BTreeSet::new();
     let (mut applied, mut reverted) = (Vec::new(), Vec::new());
-    let take_back = |edit: &Edit, before: &State, after: &Result<State, String>| Reverted {
+    let take_back = |edit: &Edit, before: &State, after: &Result<State, Message>| Reverted {
         edit: edit.clone(),
         before: before.count(),
         after: after.as_ref().ok().map(State::count),
         new_errors: match after {
             Ok(a) => a.new_since(before),
-            Err(e) => vec![e.clone()],
+            Err(e) => vec![e.to_string()],
         },
     };
     loop {
@@ -264,8 +269,13 @@ pub fn fix(path: &Path) -> Result<Outcome, String> {
         }
         for file in round.keys() {
             if !original.contains_key(file) {
-                let text = std::fs::read_to_string(file)
-                    .map_err(|e| format!("{}: {e}", file.display()))?;
+                let text = std::fs::read_to_string(file).map_err(|e| {
+                    msg!(
+                        "tauto-in-file",
+                        file = file.display().to_string(),
+                        error = e.to_string()
+                    )
+                })?;
                 original.insert(file.clone(), text.clone());
                 texts.insert(file.clone(), text);
             }
@@ -281,7 +291,7 @@ pub fn fix(path: &Path) -> Result<Outcome, String> {
             }
         }
         let checked = if broken {
-            Err("an edit is outside its file".to_string())
+            Err(msg!("tauto-fix-edit-outside"))
         } else {
             check(path, &next)
         };
@@ -302,7 +312,7 @@ pub fn fix(path: &Path) -> Result<Outcome, String> {
                     one.insert(edit.file.clone(), t);
                     check(path, &one)
                 }
-                None => Err("the edit is outside its file".to_string()),
+                None => Err(msg!("tauto-fix-edit-outside")),
             };
             if better(&state, &checked) {
                 let at = crate::report::line_col(&texts[&edit.file], edit.span.start as usize);
@@ -436,13 +446,14 @@ pub fn unified_diff(name: &str, old: &str, new: &str) -> String {
 /// that `refused` holds or that writes what is already there. An edit that takes a statement
 /// away takes the end of its line with it.
 fn lint_edits(
+    state: &State,
     path: &Path,
     texts: &BTreeMap<PathBuf, String>,
     titles: &[&str],
     refused: &BTreeSet<(PathBuf, String, String)>,
-) -> Result<Vec<Edit>, String> {
+) -> Result<Vec<Edit>, Message> {
     let source = |p: &Path| texts.get(p).map(|t| Ok(t.clone()));
-    let loaded = crate::program::load_with_source(path, &source)?;
+    let loaded = crate::program::load_with_source_in(path, &source)?;
     let here = crate::program::canonical_path(path);
     let Some(file) = loaded
         .files
@@ -483,6 +494,29 @@ fn lint_edits(
             (now != edit.text && !refused.contains(&lint_key(&edit, &file.text))).then_some(edit)
         })
         .collect();
+    // Kernel-generated declarations carry their edits on the check diagnostic.
+    for ((diagnostic_file, _, _), _, fix) in &state.errors {
+        let Some(fix) = fix else { continue };
+        if crate::program::canonical_path(diagnostic_file) != here
+            || !titles.contains(&fix.title.as_str())
+        {
+            continue;
+        }
+        let edit = Edit {
+            file: here.clone(),
+            span: fix.span,
+            text: fix.text.clone(),
+            title: fix.title.clone(),
+        };
+        if file
+            .text
+            .get(edit.span.start as usize..edit.span.end as usize)
+            .is_some_and(|now| now != edit.text)
+            && !refused.contains(&lint_key(&edit, &file.text))
+        {
+            out.push(edit);
+        }
+    }
     out.sort_by_key(|e| (e.span.start, e.span.end));
     out.dedup_by_key(|e| (e.span.start, e.span.end));
     Ok(out)
@@ -494,7 +528,11 @@ fn lint_key(edit: &Edit, text: &str) -> (PathBuf, String, String) {
     let over = text
         .get(edit.span.start as usize..edit.span.end as usize)
         .unwrap_or_default();
-    (edit.file.clone(), edit.title.clone(), format!("{}\u{0}{over}", edit.text))
+    (
+        edit.file.clone(),
+        edit.title.clone(),
+        format!("{}\u{0}{over}", edit.text),
+    )
 }
 
 /// The edits `tauto lint --fix` makes: the list an import writes of the names the file uses
@@ -509,7 +547,7 @@ pub const LINT_FIXES: &[&str] = &[
 /// Whether an edit of `tauto lint --fix` stays: a program that checked still checks; a program
 /// that did not check gets no new error and has fewer errors, so an edit that leaves the
 /// errors as they were (a list that still does not check) is not written.
-fn no_worse(before: &State, after: &Result<State, String>) -> bool {
+fn no_worse(before: &State, after: &Result<State, Message>) -> bool {
     match after {
         Ok(after) if before.count() == 0 => after.count() == 0,
         Ok(after) => after.count() < before.count() && after.new_since(before).is_empty(),
@@ -522,10 +560,16 @@ fn no_worse(before: &State, after: &Result<State, String>) -> bool {
 /// when the program has no more errors and none it did not have; else each of its edits is
 /// tried alone, and one that brings an error is taken back and not made again (an import that
 /// is needed after all stays). The rounds end when no edit is left to make.
-pub fn fix_lints(path: &Path, titles: &[&str]) -> Result<Outcome, String> {
+pub fn fix_lints(path: &Path, titles: &[&str]) -> Result<Outcome, Message> {
     let _kept = KeepExpansions::on();
     let here = crate::program::canonical_path(path);
-    let text = std::fs::read_to_string(&here).map_err(|e| format!("{}: {e}", here.display()))?;
+    let text = std::fs::read_to_string(&here).map_err(|e| {
+        msg!(
+            "tauto-in-file",
+            file = here.display().to_string(),
+            error = e.to_string()
+        )
+    })?;
     let original: BTreeMap<PathBuf, String> = [(here.clone(), text.clone())].into();
     let mut texts = original.clone();
     let mut state = check(path, &texts)?;
@@ -535,11 +579,11 @@ pub fn fix_lints(path: &Path, titles: &[&str]) -> Result<Outcome, String> {
     // Each round makes an edit or refuses one; the bound keeps edits that undo each other
     // from going on.
     for _ in 0..200 {
-        let round = lint_edits(path, &texts, titles, &refused)?;
+        let round = lint_edits(&state, path, &texts, titles, &refused)?;
         if round.is_empty() {
             break;
         }
-        let made = |these: &[Edit]| -> (Option<BTreeMap<PathBuf, String>>, Result<State, String>) {
+        let made = |these: &[Edit]| -> (Option<BTreeMap<PathBuf, String>>, Result<State, Message>) {
             match apply(&texts[&here], these) {
                 Some(t) => {
                     let mut next = texts.clone();
@@ -547,7 +591,7 @@ pub fn fix_lints(path: &Path, titles: &[&str]) -> Result<Outcome, String> {
                     let checked = check(path, &next);
                     (Some(next), checked)
                 }
-                None => (None, Err("an edit is outside its file".to_string())),
+                None => (None, Err(msg!("tauto-fix-edit-outside"))),
             }
         };
         let (next, checked) = made(&round);
@@ -577,7 +621,7 @@ pub fn fix_lints(path: &Path, titles: &[&str]) -> Result<Outcome, String> {
                 after: checked.as_ref().ok().map(State::count),
                 new_errors: match &checked {
                     Ok(a) => a.new_since(&state),
-                    Err(e) => vec![e.clone()],
+                    Err(e) => vec![e.to_string()],
                 },
                 edit,
             });

@@ -104,7 +104,8 @@ pub fn tote_binary(name: &str) -> Result<PathBuf, String> {
 }
 
 fn build_tote(name: &str) -> Result<PathBuf, String> {
-    native_cache::build_tote(name)
+    // Discovering compiler inputs parses the same deep syntax as loading a tote.
+    tauto_test_suite::with_deep_stack(|| native_cache::build_tote(name))
 }
 
 fn run_tote_here(dir: &Path, args: &[String], steps: u64) -> RunOutput {
@@ -444,7 +445,9 @@ fn case_sources(text: &str, file: &str) -> Vec<(String, String)> {
                 {
                     out.push((
                         format!("{name}/{}", relative(&root(), &source)),
-                        std::fs::read_to_string(source).unwrap(),
+                        tauto::stdlib::text(&source)
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| std::fs::read_to_string(&source).unwrap()),
                     ));
                 }
             }
@@ -546,7 +549,7 @@ pub fn table_files(
     header: &str,
     tables: &[TableText],
 ) -> Vec<Generated> {
-    let mut source = String::from(header);
+    let mut source = format!("import std::prelude::Shared\n\n{header}");
     let mut out = Vec::new();
     for (name, what, text) in tables {
         assert!(

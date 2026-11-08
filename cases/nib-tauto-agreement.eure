@@ -1,0 +1,310 @@
+description = "The same source read by Nib's checks, by the proof checker, and run after extraction: each says the same."
+
+// `match e: G`: the written type is the type of the whole `match`, in Nib as in a proof.
+@ cases.match-type-is-checked-in-nib
+source = ```tauto
+fn f(b: Bool): Nat {
+  ⊢ Bool from match b {
+    true => 1
+    false => 0
+  }
+}
+```
+types = "error: the result of the `match`"
+checks."f" = "error: type mismatch"
+
+@ cases.match-type-joins-no-arms-in-nib
+source = ```tauto
+fn f(b: Bool): Bool {
+  ⊢ Bool from match b {
+    true => 1
+    false => false
+  }
+}
+```
+types = "error: does not fit Bool"
+checks."f" = "error: type mismatch"
+
+@ cases.arm-goal-is-checked-in-nib
+source = ```tauto
+fn f(b: Bool): Bool {
+  ⊢ Bool from match b {
+    true => ⊢ Bool from 1
+    false => ⊢ Bool from false
+  }
+}
+```
+types = "error: does not fit Bool"
+checks."f" = "error: type mismatch"
+
+@ cases.a-dependent-match-type-is-rejected-by-nib
+source = ```tauto
+fn f(b: Bool): Bool {
+  (⊢ b = b -> Bool from match b {
+    true => h => true
+    false => h => false
+  })(Refl)
+}
+```
+types = "error: depends on the value `b`"
+
+// `(p: Bool)` on `Bool × Unit`: the member the elaboration takes is what runs.
+@ cases.a-member-taken-by-its-type-is-extracted
+extract = true
+source = ```tauto
+fn f(p: Bool × Unit): Bool { (p: Bool) }
+perform show("f", f(#(true, #())))
+```
+shows = ["f = true"]
+
+// `@a x`: the value with a label, the same in Nib and in a proof.
+@ cases.a-labelled-value
+source = ```tauto
+fn f(x: Bool): @a Bool { @a x }
+fn g(y: @a Bool): Bool {
+  match y {
+    @a z => z
+  }
+}
+perform show("g", g(f(true)))
+```
+types = "ok"
+checks_all = "ok"
+shows = ["g = true"]
+
+@ cases.a-labelled-value-runs-after-extraction
+extract = true
+source = ```tauto
+fn f(x: Bool): @a Bool { @a x }
+fn g(y: @a Bool): Bool {
+  match y {
+    @a z => z
+  }
+}
+perform show("g", g(f(true)))
+```
+shows = ["g = true"]
+
+// `@a p` takes the label off the type of what `p` binds, after extraction as in the
+// kernel: the bound value is a `Nat` again, which `+` takes.
+@ cases.a-labelled-pattern-unwraps-after-extraction
+extract = true
+source = ```tauto
+fn f(x: @a Nat): Nat {
+  match x {
+    @a n => n + 1
+  }
+}
+perform show("f", f(@a 4))
+```
+shows = ["f = 5"]
+
+@ cases.a-labelled-argument-pattern-unwraps-after-extraction
+extract = true
+source = ```tauto
+fn f(o: Option(@b Nat)): Nat {
+  match o {
+    Some(@b n) => n + 1
+    None => 0
+  }
+}
+perform show("f", f(Some(@b 4)))
+```
+shows = ["f = 5"]
+
+// A value is wrapped where `@a T` is expected for a `T`, in one application of the constructor.
+@ cases.wrapping-in-a-label-ends
+source = ```tauto
+fn f(x: Bool): @a Bool { x }
+fn g(x: Bool): @a Bool {
+  let y: @a Bool := x
+  y
+}
+```
+types = "ok"
+checks_all = "ok"
+
+// `#(true, #())` and the type `Bool × Unit`: one product on both sides.
+@ cases.a-product-value-has-the-product-type
+source = ```tauto
+fn f(): Bool × Unit { #(true, #()) }
+```
+types = "ok"
+checks."f" = "ok"
+
+// `×` is a type: a value is written `#(a, b)`.
+@ cases.a-product-is-not-written-with-times
+source = ```tauto
+fn f(): Bool × Unit { true × #() }
+```
+types = "error: "
+checks."f" = "error: "
+
+// A product's members are a sequence in Nib and in a proof: `Option(Nat × Bool)` is not
+// `Option(Bool × Nat)`, where no value can be rebuilt.
+@ cases.a-product-in-a-type-argument-is-ordered-in-nib-and-in-a-proof
+source = ```tauto
+fn g(o: Option(Bool × Nat)): Option(Nat × Bool) { o }
+```
+types = "error: does not fit"
+checks."g" = "error: "
+
+// `Unit` is a member as any other: `Bool × Unit` is not `Bool`.
+@ cases.a-unit-member-is-a-member
+source = ```tauto
+fn g(o: Option(Bool × Unit)): Option(Bool) { o }
+```
+types = "error: does not fit"
+checks."g" = "error: "
+
+// The value `#()` is a member too: `#(true, #())` has the type `Bool × Unit`.
+@ cases.a-unit-value-member-is-a-member
+source = ```tauto
+fn f(): Bool × Unit { #(true, #()) }
+fn g(b: Bool × Unit): Bool {
+  match b {
+    #(x, #()) => x
+  }
+}
+perform show("g", g(f()))
+```
+types = "ok"
+checks_all = "ok"
+shows = ["g = true"]
+
+// `×` nests to the right: `Bool × (Nat × Text)` is `Bool × Nat × Text`.
+@ cases.a-product-nests-to-the-right
+source = ```tauto
+fn g(o: Option(Bool × (Nat × Option(Bool)))): Option(Bool × Nat × Option(Bool)) { o }
+```
+types = "ok"
+checks."g" = "ok"
+
+// A product held by a generic stays one member of the product it is put in, as written.
+@ cases.a-generic-product-in-a-product-stays-one-member
+source = ```tauto
+fn use<A, B>(x: A × B, n: Bool): Option((A × B) × Bool) { Some(#(x, n)) }
+```
+types = "ok"
+checks."use" = "ok"
+
+// A product on the left stays one member: `(Bool × Nat) × Text` is not `Bool × (Nat × Text)`.
+@ cases.a-product-on-the-left-is-not-flattened
+source = ```tauto
+fn g(o: Option((Bool × Nat) × Option(Bool))): Option(Bool × (Nat × Option(Bool))) { o }
+```
+types = "error: the result of `g`"
+
+// A nested value keeps its nesting: `#(#(a, b), c)` has `#(a, b)` as its first member.
+@ cases.a-nested-product-value-keeps-its-nesting
+source = ```tauto
+fn f(): (Bool × Option(Bool)) × Option(Option(Bool)) { #(#(true, Some(false)), Some(Some(true))) }
+fn g(p: (Bool × Option(Bool)) × Option(Option(Bool))): Option(Bool) {
+  match p { #(#(_, o), _) => o }
+}
+perform show("g", g(f()))
+```
+types = "ok"
+checks_all = "ok"
+shows = ["g = Some(false)"]
+
+// Labels are a set: `@a @b T` and `@b @a T` are one type, in either order of the patterns.
+@ cases.labels-are-a-set
+source = ```tauto
+fn f(x: Bool): @a @b Bool { @b @a x }
+fn g(y: @b @a Bool): Bool {
+  match y {
+    @a @b z => z
+  }
+}
+perform show("g", g(f(true)))
+```
+types = "ok"
+checks_all = "ok"
+shows = ["g = true"]
+
+// `@a p` takes off `@a` only: `p` is matched against the value with the other labels.
+@ cases.a-label-pattern-keeps-the-other-labels
+source = ```tauto
+fn g(y: @a @b Bool): Bool {
+  match y {
+    @a z => match z {
+      @b w => w
+    }
+  }
+}
+```
+types = "ok"
+checks."g" = "ok"
+
+// The default arm is the last, and only where some value is left for it.
+@ cases.a-default-arm-is-the-last
+source = ```tauto
+fn f(o: Option(Bool)): Bool {
+  match o {
+    _ => false
+    Some(b) => b
+  }
+}
+```
+types = "error: the default arm `_ =>` must be the last"
+checks."f" = "error: the default arm `_ =>` must be the last"
+
+@ cases.a-default-arm-takes-some-value
+source = ```tauto
+fn h(b: Bool): Nat {
+  match b {
+    true => 1
+    false => 0
+    _ => 2
+  }
+}
+```
+types = "error: the default arm `_ =>` matches no value"
+checks."h" = "error: the default arm `_ =>` matches no constructor"
+
+// An arm with a guard is a `match` on the guard, on both sides.
+@ cases.a-guard-in-both
+source = ```tauto
+fn j(o: Option(Bool), c: Bool): Bool {
+  match o {
+    Some(x) if c => x
+    Some(x) => false
+    None => c
+  }
+}
+theorem kept(): j(Some(true), true) = true { Refl }
+theorem passed(): j(Some(true), false) = false { Refl }
+perform show("j", j(Some(true), true))
+```
+types = "ok"
+checks_all = "ok"
+shows = ["j = true"]
+
+@ cases.a-guard-runs-after-extraction
+extract = true
+source = ```tauto
+fn j(o: Option(Bool), c: Bool): Bool {
+  match o {
+    Some(x) if c => x
+    Some(x) => false
+    None => c
+  }
+}
+perform show("j", j(Some(true), true))
+perform show("k", j(Some(true), false))
+```
+shows = ["j = true", "k = false"]
+
+// A numeral is a `Nat` where a `Nat` is expected, in Nib as in a proof.
+@ cases.a-numeral-is-a-nat
+source = ```tauto
+fn f(b: Bool): Nat {
+  match b {
+    true => 1
+    false => 0
+  }
+}
+```
+types = "ok"
+checks."f" = "ok"

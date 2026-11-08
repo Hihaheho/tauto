@@ -1,0 +1,62 @@
+// A match whose result is a function taking a proof: the proof parameter is
+// erased, so the argument the match is applied to and the arms' parameters
+// for it are erased too, and every route runs what `check` accepted.
+@ cases.proof-argument-erased
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+inductive All: (List(Nat)) -> Prop {
+  AllNil: All(Nil)
+  AllCons<b: Nat, t: List(Nat)>(h: All(t)): All(Cons(b, t))
+}
+
+theorem tl(b: Nat, t: List(Nat), e: All(Cons(b, t))): All(t) {
+  match e {
+    AllCons(h) => h
+  }
+}
+
+fn sum(l: List(Nat), h: All(l)): Nat {
+  (⊢ (All(l)) -> Nat from match l {
+    Nil => e => 0
+    Cons(b, t) => (e) => b + sum(t, tl(b, t, e))
+  })(h)
+}
+
+fn total(): Nat { sum([1, 2, 3], AllCons(AllCons(AllCons(AllNil)))) }
+
+perform show("sum", total())
+```
+shows = ["sum = 6"]
+rust_shows = ["sum = 6"]
+javascript_shows = ["sum = 6"]
+
+@ cases.proof-argument-erased-among-values
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+inductive All: (List(Nat)) -> Prop {
+  AllNil: All(Nil)
+  AllCons<b: Nat, t: List(Nat)>(h: All(t)): All(Cons(b, t))
+}
+
+theorem tl(b: Nat, t: List(Nat), e: All(Cons(b, t))): All(t) {
+  match e {
+    AllCons(h) => h
+  }
+}
+
+fn sum_from(acc: Nat, l: List(Nat), h: All(l)): Nat {
+  (⊢ (Nat, All(l), Nat) -> Nat from match l {
+    Nil => (a, e, k) => a + k
+    Cons(b, t) => (a, e, k) => sum_from(a + b, t, tl(b, t, e)) + k
+  })(acc, h, 10)
+}
+
+fn total(): Nat { sum_from(0, [1, 2, 3], AllCons(AllCons(AllCons(AllNil)))) }
+
+perform show("sum", total())
+```
+shows = ["sum = 46"]
+rust_shows = ["sum = 46"]
+javascript_shows = ["sum = 46"]

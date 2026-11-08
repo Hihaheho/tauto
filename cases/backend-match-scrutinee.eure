@@ -1,0 +1,49 @@
+// A matched local that an arm uses again stays in its slot: the arm's use,
+// not the match, moves it.
+@ cases.arm-passes-the-matched-local-again
+backends = ["rust", "javascript"]
+source = ```nib
+struct Box2 { w: u64, kids: List(u64) }
+enum Lay {
+  LBox(Box2, List(Lay))
+  LLeaf(u64, u64, u64)
+}
+fn size_of(l: Lay): u64 {
+  match l {
+    LBox(b, kids) => b.w
+    LLeaf(w, h, g) => w
+  }
+}
+fn at(l: Lay): u64 {
+  match l {
+    LLeaf(w, h, g) => size_of(l) + h
+    LBox(b, kids) => size_of(l)
+  }
+}
+perform show("leaf", at(LLeaf(3, 4, 0)))
+perform show("box", at(LBox(Box2 { w: 5, kids: Nil }, Nil)))
+```
+shows = ["leaf = 7", "box = 5"]
+
+// A recursive field that an arm only tests is borrowed, so the arm can still
+// return the whole matched local.
+@ cases.arm-returns-the-local-after-testing-its-tail
+backends = ["rust", "javascript"]
+source = ```nib
+fn single<A: Shared>(l: List(A)): List(A) {
+  match l {
+    Nil => Nil
+    Cons(_, Nil) => l
+    _ => Nil
+  }
+}
+fn len(l: List(u64)): u64 {
+  match l {
+    Nil => 0
+    Cons(_, t) => 1 + len(t)
+  }
+}
+perform show("one", len(single(Cons(7, Nil))))
+perform show("two", len(single(Cons(7, Cons(8, Nil)))))
+```
+shows = ["one = 1", "two = 0"]

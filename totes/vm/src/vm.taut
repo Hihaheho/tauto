@@ -28,7 +28,7 @@ pub(open) inductive Expr: Type {
 }
 
 pub fn bool_nat(b: Bool): Nat {
-  match b: Nat {
+  ⊢ Nat from match b {
     true => 1
     false => 0
   }
@@ -138,13 +138,13 @@ pub fn step_nat2(
   st: List(Val),
   fr: List(Frame)
 ): Option(State) {
-  match st: Option(State) {
+  ⊢ Option(State) from match st {
     Nil => None
-    Cons(vb, s1) => match vb: Option(State) {
+    Cons(vb, s1) => ⊢ Option(State) from match vb {
       VPair(p, q) => None
-      VNat(m) => match s1: Option(State) {
+      VNat(m) => ⊢ Option(State) from match s1 {
         Nil => None
-        Cons(va, s2) => match va: Option(State) {
+        Cons(va, s2) => ⊢ Option(State) from match va {
           VPair(p, q) => None
           VNat(n) => Some(StateMk(k, env, Cons(VNat(op(n, m)), s2), fr))
         }
@@ -154,11 +154,11 @@ pub fn step_nat2(
 }
 
 pub fn step_ret(env: List(Val), st: List(Val), fr: List(Frame)): Option(State) {
-  match st: Option(State) {
+  ⊢ Option(State) from match st {
     Nil => None
-    Cons(v, s1) => match fr: Option(State) {
+    Cons(v, s1) => ⊢ Option(State) from match fr {
       Nil => None
-      Cons(f, rest) => match f: Option(State) {
+      Cons(f, rest) => ⊢ Option(State) from match f {
         FrameMk(k, env2, st2) => Some(StateMk(k, env2, Cons(v, st2), rest))
       }
     }
@@ -173,11 +173,11 @@ pub fn step_branch(
   st: List(Val),
   fr: List(Frame)
 ): Option(State) {
-  match st: Option(State) {
+  ⊢ Option(State) from match st {
     Nil => None
-    Cons(c, s1) => match c: Option(State) {
+    Cons(c, s1) => ⊢ Option(State) from match c {
       VPair(p, q) => None
-      VNat(n) => match n: Option(State) {
+      VNat(n) => ⊢ Option(State) from match n {
         Zero => Some(StateMk(e, env, Nil, Cons(FrameMk(k, env, s1), fr)))
         Succ(n2) => Some(StateMk(t, env, Nil, Cons(FrameMk(k, env, s1), fr)))
       }
@@ -192,11 +192,11 @@ pub fn step_proj(
   st: List(Val),
   fr: List(Frame)
 ): Option(State) {
-  match st: Option(State) {
+  ⊢ Option(State) from match st {
     Nil => None
-    Cons(p, s1) => match p: Option(State) {
+    Cons(p, s1) => ⊢ Option(State) from match p {
       VNat(n) => None
-      VPair(a, b) => match first: Option(State) {
+      VPair(a, b) => ⊢ Option(State) from match first {
         true => Some(StateMk(k, env, Cons(a, s1), fr))
         false => Some(StateMk(k, env, Cons(b, s1), fr))
       }
@@ -211,7 +211,7 @@ pub fn step_load(
   st: List(Val),
   fr: List(Frame)
 ): Option(State) {
-  match o: Option(State) {
+  ⊢ Option(State) from match o {
     None => None
     Some(v) => Some(StateMk(k, env, Cons(v, st), fr))
   }
@@ -226,7 +226,7 @@ pub fn step_call(
   st: List(Val),
   fr: List(Frame)
 ): Option(State) {
-  match o: Option(State) {
+  ⊢ Option(State) from match o {
     None => None
     Some(body) => Some(StateMk(body, Cons(v, Nil), Nil, Cons(FrameMk(k, env, st), fr)))
   }
@@ -235,8 +235,8 @@ pub fn step_call(
 // One instruction. `None` when the machine has stopped: the program returned from its
 // last frame, or an instruction found the wrong values (which compiled code never does).
 pub fn step(prog: List(Bytecode), s: State): Option(State) {
-  match s: Option(State) {
-    StateMk(code, env, st, fr) => match code: Option(State) {
+  ⊢ Option(State) from match s {
+    StateMk(code, env, st, fr) => ⊢ Option(State) from match code {
       CRet => step_ret(env, st, fr)
       CLoad(i, k) => step_load(List::nth(env, i), k, env, st, fr)
       CPush(n, k) => Some(StateMk(k, env, Cons(VNat(n), st), fr))
@@ -244,25 +244,25 @@ pub fn step(prog: List(Bytecode), s: State): Option(State) {
       CSub(k) => step_nat2(Nat::sub, k, env, st, fr)
       CMul(k) => step_nat2(Nat::mul, k, env, st, fr)
       CLt(k) => step_nat2((n: Nat, m: Nat) => bool_nat(Nat::lt(n, m)), k, env, st, fr)
-      CBind(k) => match st: Option(State) {
+      CBind(k) => ⊢ Option(State) from match st {
         Nil => None
         Cons(v, s1) => Some(StateMk(k, Cons(v, env), s1, fr))
       }
-      CUnbind(k) => match env: Option(State) {
+      CUnbind(k) => ⊢ Option(State) from match env {
         Nil => None
         Cons(v, env2) => Some(StateMk(k, env2, st, fr))
       }
       CBranch(t, e, k) => step_branch(t, e, k, env, st, fr)
-      CMkpair(k) => match st: Option(State) {
+      CMkpair(k) => ⊢ Option(State) from match st {
         Nil => None
-        Cons(vb, s1) => match s1: Option(State) {
+        Cons(vb, s1) => ⊢ Option(State) from match s1 {
           Nil => None
           Cons(va, s2) => Some(StateMk(k, env, Cons(VPair(va, vb), s2), fr))
         }
       }
       CFst(k) => step_proj(true, k, env, st, fr)
       CSnd(k) => step_proj(false, k, env, st, fr)
-      CCall(f, k) => match st: Option(State) {
+      CCall(f, k) => ⊢ Option(State) from match st {
         Nil => None
         Cons(v, s1) => step_call(List::nth(prog, f), v, k, env, s1, fr)
       }
@@ -273,9 +273,9 @@ pub fn step(prog: List(Bytecode), s: State): Option(State) {
 // Runs at most `fuel` instructions and gives the state where the machine stopped, or
 // `None` when the fuel ran out first.
 pub fn run(prog: List(Bytecode), fuel: Nat, s: State): Option(State) {
-  match fuel: Option(State) {
+  ⊢ Option(State) from match fuel {
     Zero => None
-    Succ(f) => match step(prog, s): Option(State) {
+    Succ(f) => ⊢ Option(State) from match step(prog, s) {
       None => Some(s)
       Some(s2) => run(prog, f, s2)
     }
@@ -283,7 +283,7 @@ pub fn run(prog: List(Bytecode), fuel: Nat, s: State): Option(State) {
 }
 
 pub fn comp(e: Expr, k: Bytecode): Bytecode {
-  match e: Bytecode {
+  ⊢ Bytecode from match e {
     XVar(i) => CLoad(i, k)
     XNat(n) => CPush(n, k)
     XAdd(a, b) => comp(a, comp(b, CAdd(k)))
@@ -316,12 +316,12 @@ pub fn start(f: Nat, arg: Val): State {
 // The answer of a machine that returned from its last frame: the one value on its stack.
 // A machine stuck on an instruction that found the wrong values has no answer.
 pub fn final_answer(s: State): Option(Val) {
-  match s: Option(Val) {
-    StateMk(code, env, st, fr) => match code: Option(Val) {
-      CRet => match fr: Option(Val) {
-        Nil => match st: Option(Val) {
+  ⊢ Option(Val) from match s {
+    StateMk(code, env, st, fr) => ⊢ Option(Val) from match code {
+      CRet => ⊢ Option(Val) from match fr {
+        Nil => ⊢ Option(Val) from match st {
           Nil => None
-          Cons(v, rest) => match rest: Option(Val) {
+          Cons(v, rest) => ⊢ Option(Val) from match rest {
             Nil => Some(v)
             Cons(w, rest2) => None
           }
@@ -346,7 +346,7 @@ pub fn final_answer(s: State): Option(Val) {
 }
 
 pub fn answer(o: Option(State)): Option(Val) {
-  match o: Option(Val) {
+  ⊢ Option(Val) from match o {
     None => None
     Some(s) => final_answer(s)
   }

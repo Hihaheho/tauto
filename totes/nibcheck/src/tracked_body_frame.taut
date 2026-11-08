@@ -65,14 +65,7 @@ pub theorem body_functions_cons_frame_tracked(
   )
 }
 
-pub theorem ck_check_fns_frame_tracked(
-  fs: List(Pair(SurfaceFn, Scheme)),
-  c: Checker,
-  ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_check_fns(fs, c)
-) { match fs: TrackedRunFrame(c, ck_check_fns(fs, c)) { Nil => AndIntro(
+pub theorem ck_check_fns_frame_tracked(fs: List(Pair(SurfaceFn, Scheme)), c: Checker, ordered: CkOrdered(c)): TrackedRunFrame(c, ck_check_fns(fs, c)) { ⊢ TrackedRunFrame(c, ck_check_fns(fs, c)) from match fs { Nil => AndIntro(
   ordered,
   AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
 )
@@ -92,14 +85,11 @@ pub theorem ck_top_let_frame_tracked(
   c: Checker,
   s: SurfaceStmt,
   env: Scope
-): TrackedFrame(c, ck_top_let(c, s, env)) { match s: TrackedFrame(c, ck_top_let(c, s, env)) {
-    StLet(name, ty, value, borrow, bm) => match env: TrackedFrame(
-      c,
-      ck_top_let(c, StLet(name, ty, value, borrow, bm), env)
-    ) { ScopeMk(items) => match items: TrackedFrame(
-      c,
-      ck_top_let(c, StLet(name, ty, value, borrow, bm), ScopeMk(items))
-    ) { Nil => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
+): TrackedFrame(c, ck_top_let(c, s, env)) { ⊢ TrackedFrame(c, ck_top_let(c, s, env)) from match s {
+    StLet(name, ty, value, borrow, bm) => ⊢ TrackedFrame(c, ck_top_let(c, StLet(name, ty, value, borrow, bm), env)) from match env { ScopeMk(items) => ⊢ TrackedFrame(c, ck_top_let(c, StLet(name, ty, value, borrow, bm), ScopeMk(items))) from match items { Nil => AndIntro(
+      item => member => member,
+      AndIntro(Refl, obligation_state_refl(c))
+    )
         Cons(l, older) => AndIntro(
           item => member => member,
           AndIntro(Refl, obligation_state_refl(c))
@@ -128,10 +118,7 @@ pub theorem ck_top_let_frame_tracked(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
     )
-    StTheorem(pat_t) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
+    StTheorem(pat_t) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     StDef(pat_t) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     StMutual(pat_stmts, pat_start, pat_end) => AndIntro(
       item => member => member,
@@ -145,22 +132,13 @@ pub theorem ck_top_let_frame_tracked(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
     )
-    StStruct(pat_d) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
-    StEnum(pat_d) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
+    StStruct(pat_d) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
+    StEnum(pat_d) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     StExtern(pat_abi, pat_fns, pat_start, pat_end) => AndIntro(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
     )
-    StClass(pat_c) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
+    StClass(pat_c) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     StInstance(pat_i) => AndIntro(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
@@ -190,7 +168,7 @@ pub theorem body_top_one_frame_tracked(
   check: Bool,
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, body_top_one(s, c, env, check)) {
-  match check: TrackedScopeFrame(c, body_top_one(s, c, env, check)) {
+  ⊢ TrackedScopeFrame(c, body_top_one(s, c, env, check)) from match check {
     true => tracked_pattern_bind(
       Ty,
       Unit,
@@ -238,15 +216,7 @@ pub theorem body_top_cons_frame_tracked(
   )
 }
 
-pub theorem ck_top_level_frame_tracked(
-  ss: List(SurfaceStmt),
-  c: Checker,
-  env: Scope,
-  ordered: CkOrdered(c)
-): TrackedScopeFrame(
-  c,
-  ck_top_level(ss, c, env)
-) { match ss: TrackedScopeFrame(c, ck_top_level(ss, c, env)) { Nil => AndIntro(
+pub theorem ck_top_level_frame_tracked(ss: List(SurfaceStmt), c: Checker, env: Scope, ordered: CkOrdered(c)): TrackedScopeFrame(c, ck_top_level(ss, c, env)) { ⊢ TrackedScopeFrame(c, ck_top_level(ss, c, env)) from match ss { Nil => AndIntro(
   ordered,
   AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
 )

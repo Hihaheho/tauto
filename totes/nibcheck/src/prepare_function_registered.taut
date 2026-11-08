@@ -27,7 +27,7 @@ pub fn fnt_synthesized_get(
   rest: List(SurfaceFn),
   found: Option(Scheme)
 ): List(Pair(SurfaceFn, Scheme)) {
-  match found: List(Pair(SurfaceFn, Scheme)) {
+  ⊢ List(Pair(SurfaceFn, Scheme)) from match found {
     None => ck_synthesized_schemes(rest, c)
     Some(scheme) => Cons(Pair {fst: source, snd: scheme}, ck_synthesized_schemes(rest, c))
   }
@@ -36,7 +36,10 @@ pub theorem fnt_synthesized_unf(
   c: Checker,
   source: SurfaceFn,
   rest: List(SurfaceFn)
-): ck_synthesized_schemes(Cons(source, rest), c) = fnt_synthesized_get(c, source, rest, fnt_lookup(c, signature_name(source))) { Refl }
+): ck_synthesized_schemes(
+  Cons(source, rest),
+  c
+) = fnt_synthesized_get(c, source, rest, fnt_lookup(c, signature_name(source))) { Refl }
 pub theorem fnt_synthesized_get_registered(
   c: Checker,
   source: SurfaceFn,
@@ -45,7 +48,7 @@ pub theorem fnt_synthesized_get_registered(
   lookup: fnt_lookup(c, signature_name(source)) = found,
   tail: RegisteredSignatures(fnt_table(c), ck_synthesized_schemes(rest, c))
 ): RegisteredSignatures(fnt_table(c), fnt_synthesized_get(c, source, rest, found)) {
-  match found: RegisteredSignatures(fnt_table(c), fnt_synthesized_get(c, source, rest, found)) {
+  ⊢ RegisteredSignatures(fnt_table(c), fnt_synthesized_get(c, source, rest, found)) from match found {
     None => tail
     Some(scheme) => RegisteredSignaturesCons(
       source,
@@ -60,7 +63,7 @@ pub theorem ck_synthesized_schemes_registered(
   sources: List(SurfaceFn),
   c: Checker
 ): RegisteredSignatures(fnt_table(c), ck_synthesized_schemes(sources, c)) {
-  match sources: RegisteredSignatures(fnt_table(c), ck_synthesized_schemes(sources, c)) {
+  ⊢ RegisteredSignatures(fnt_table(c), ck_synthesized_schemes(sources, c)) from match sources {
     Nil => RegisteredSignaturesNil
     Cons(source, rest) => Eq::subst(
       (schemes: List(Pair(SurfaceFn, Scheme))) => RegisteredSignatures(fnt_table(c), schemes),
@@ -86,7 +89,7 @@ pub theorem fnt_registered_append<table: Ordmap(
   rest: List(Pair(SurfaceFn, Scheme)),
   tail: RegisteredSignatures(table, rest)
 ): RegisteredSignatures(table, List::append(first, rest)) {
-  match prefix: RegisteredSignatures(table, List::append(first, rest)) {
+  ⊢ RegisteredSignatures(table, List::append(first, rest)) from match prefix {
     RegisteredSignaturesNil => tail
     RegisteredSignaturesCons(source, scheme, remaining, found, checked) => RegisteredSignaturesCons(
       source,
@@ -105,10 +108,10 @@ pub theorem fnt_append_synthesized_registered(
   fnt_table(ck_st(signature_append_synthesized(sources, m))),
   ck_val(signature_append_synthesized(sources, m))
 ) {
-  match m: RegisteredSignatures(
+  ⊢ RegisteredSignatures(
     fnt_table(ck_st(signature_append_synthesized(sources, m))),
     ck_val(signature_append_synthesized(sources, m))
-  ) {
+  ) from match m {
     mut1(schemes, next) => fnt_registered_append(
       registered,
       ck_synthesized_schemes(sources, next),
@@ -129,10 +132,10 @@ pub theorem fnt_prepared_bind<A: Type>(
   fnt_table(ck_st(frame_bind(A, List(Pair(SurfaceFn, Scheme)), k, m))),
   ck_val(frame_bind(A, List(Pair(SurfaceFn, Scheme)), k, m))
 ) {
-  match m: RegisteredSignatures(
+  ⊢ RegisteredSignatures(
     fnt_table(ck_st(frame_bind(A, List(Pair(SurfaceFn, Scheme)), k, m))),
     ck_val(frame_bind(A, List(Pair(SurfaceFn, Scheme)), k, m))
-  ) {
+  ) from match m {
     mut1(value, next) => after(value, next, step(ordered))
   }
 }

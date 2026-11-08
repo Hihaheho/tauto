@@ -1,0 +1,136 @@
+// A function of a `mutual` block whose body is not a `match` (one that only
+// calls the others) is written out at each call of the block's `match`es,
+// and declared after the block: the kernel gets the terms written by hand.
+
+@ cases.a-mutual-function-may-only-call-the-others
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn flip(y: Bool): Bool {
+  ⊢ Bool from match y {
+    true => false
+    false => true
+  }
+}
+
+mutual {
+  fn even(n: Nat): Bool {
+    not_odd(n)
+  }
+  fn not_odd(n: Nat): Bool {
+    flip(odd(n))
+  }
+  fn odd(n: Nat): Bool {
+    ⊢ Bool from match n {
+      Zero => false
+      Succ(k) => even(k)
+    }
+  }
+}
+
+theorem four(): even(4) = true { Refl }
+theorem three(): odd(3) = true { Refl }
+```
+
+checks_all = "ok"
+
+@ cases.mutual-functions-not-defined-by-a-match-do-not-call-each-other
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+mutual {
+  fn a(n: Nat): Nat {
+    b(n)
+  }
+  fn b(n: Nat): Nat {
+    a(n)
+  }
+  fn c(n: Nat): Nat {
+    ⊢ Nat from match n {
+      Zero => 0
+      Succ(k) => a(k)
+    }
+  }
+}
+```
+
+checks."input/main.taut::a" = "error: reaches itself through functions not defined by a match"
+checks."input/main.taut::b" = "error: reaches itself through functions not defined by a match"
+checks."input/main.taut::c" = "error: reaches itself through functions not defined by a match"
+
+@ cases.mutual-calls-use-their-own-induction-hypotheses
+source = ```tauto
+mutual {
+  fn left(n: Nat): Nat {
+    ⊢ Nat from match n { Zero => 0, Succ(k) => right(k) + left(k) }
+  }
+  fn right(n: Nat): Nat {
+    ⊢ Nat from match n { Zero => 1, Succ(k) => left(k) + 1 }
+  }
+}
+theorem left_three(): left(3) = 4 { Refl }
+theorem right_three(): right(3) = 3 { Refl }
+```
+checks_all = "ok"
+
+@ cases.mutual-type-parameters-keep-their-bindings
+source = ```tauto
+mutual {
+  fn first(A: Type, xs: List(A)): Nat {
+    ⊢ Nat from match xs { Nil => 0, Cons(x, rest) => second(A, rest) }
+  }
+  fn second(B: Type, ys: List(B)): Nat {
+    ⊢ Nat from match ys { Nil => 1, Cons(y, tail) => first(B, tail) }
+  }
+}
+theorem empty(): first(Nat, Nil) = 0 { Refl }
+theorem one(): first(Nat, Cons(7, Nil)) = 1 { Refl }
+```
+checks_all = "ok"
+
+@ cases.mutual-recursion-keeps-dependent-type-parameters-fixed
+source = ```tauto
+mutual {
+  fn first(A: Type, xs: List(A)): Nat {
+    ⊢ Nat from match xs { Nil => 0, Cons(x, rest) => second(Nat, rest) }
+  }
+  fn second(B: Type, ys: List(B)): Nat {
+    ⊢ Nat from match ys { Nil => 1, Cons(y, tail) => first(B, tail) }
+  }
+}
+```
+checks_all = "error: so a recursive call passes it unchanged"
+
+@ cases.shared-fuel-arms-preserve-source-parameter-references
+source = ```tauto
+mutual {
+  fn left(fuel: Nat, n: Nat): Nat {
+    ⊢ Nat from match fuel {
+      Zero => fuel + n
+      Succ(rest) => right(rest, n) + fuel
+    }
+  }
+  fn right(steps: Nat, value: Nat): Nat {
+    ⊢ Nat from match steps {
+      Zero => steps + value
+      Succ(smaller) => left(smaller, value)
+    }
+  }
+}
+theorem result(): left(3, 2) = 6 { Refl }
+```
+checks_all = "ok"
+
+@ cases.shared-fuel-functions-may-have-dependent-results
+source = ```tauto
+mutual {
+  fn left(fuel: Nat, n: Nat): n = n {
+    ⊢ n = n from match fuel { Zero => Refl, Succ(rest) => right(rest, n) }
+  }
+  fn right(steps: Nat, value: Nat): value = value {
+    ⊢ value = value from match steps { Zero => Refl, Succ(smaller) => left(smaller, value) }
+  }
+}
+theorem result(): Eq(Nat, 7, 7) { left(3, 7) }
+```
+checks_all = "ok"

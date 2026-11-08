@@ -17,7 +17,7 @@ pub(open) inductive ResultHas: (Option(Stack), Shape) -> Prop {
 }
 
 pub theorem stack_typed(stack: Stack): StackHas(stack, shape(stack)) {
-  match stack: StackHas(stack, shape(stack)) {
+  ⊢ StackHas(stack, shape(stack)) from match stack {
     EmptyStack => HEmpty
     Number(value, rest) => HNum(stack_typed(rest))
     Boolean(value, rest) => HBool(stack_typed(rest))
@@ -29,21 +29,21 @@ pub theorem op_safe<op: Op, input: Shape, output: Shape>(
   stack: Stack,
   typed: StackHas(stack, input)
 ): ResultHas(run_op(op, stack), output) {
-  match derivation: ResultHas(run_op(op, stack), output) {
+  ⊢ ResultHas(run_op(op, stack), output) from match derivation {
     TPushNum(value, tail) => Returned(HNum(typed))
     TPushBool(value, tail) => Returned(HBool(typed))
-    TAdd(tail) => match typed: ResultHas(run_op(Add, stack), NumOn(tail)) {
-      HNum(right, rest, rest_type, hrest) => match hrest: ResultHas(
+    TAdd(tail) => ⊢ ResultHas(run_op(Add, stack), NumOn(tail)) from match typed {
+      HNum(right, rest, rest_type, hrest) => ⊢ ResultHas(
         run_op(Add, Number(right, rest)),
         NumOn(tail)
-      ) {
+      ) from match hrest {
         HNum(left, bottom, bottom_type, hbottom) => Returned(HNum(hbottom))
       }
     }
-    TDupNum(tail) => match typed: ResultHas(run_op(Dup, stack), NumOn(NumOn(tail))) {
+    TDupNum(tail) => ⊢ ResultHas(run_op(Dup, stack), NumOn(NumOn(tail))) from match typed {
       HNum(value, rest, rest_type, hrest) => Returned(HNum(HNum(hrest)))
     }
-    TDupBool(tail) => match typed: ResultHas(run_op(Dup, stack), BoolOn(BoolOn(tail))) {
+    TDupBool(tail) => ⊢ ResultHas(run_op(Dup, stack), BoolOn(BoolOn(tail))) from match typed {
       HBool(value, rest, rest_type, hrest) => Returned(HBool(HBool(hrest)))
     }
   }
@@ -57,7 +57,7 @@ pub theorem chain_safe(
   safe: ResultHas(result, middle),
   continue_safe: (stack: Stack, typed: StackHas(stack, middle)) -> ResultHas(next(stack), output)
 ): ResultHas(chain(result, next), output) {
-  match safe: ResultHas(chain(result, next), output) {
+  ⊢ ResultHas(chain(result, next), output) from match safe {
     Returned(stack, state, typed) => continue_safe(stack, typed)
   }
 }
@@ -72,11 +72,11 @@ pub theorem branch_safe(
   yes_safe: (rest: Stack, hrest: StackHas(rest, input)) -> ResultHas(run(yes, rest), output),
   no_safe: (rest: Stack, hrest: StackHas(rest, input)) -> ResultHas(run(no, rest), output)
 ): ResultHas(run(Branch(yes, no), stack), output) {
-  match typed: ResultHas(run(Branch(yes, no), stack), output) {
-    HBool(flag, rest, state, hrest) => match flag: ResultHas(
+  ⊢ ResultHas(run(Branch(yes, no), stack), output) from match typed {
+    HBool(flag, rest, state, hrest) => ⊢ ResultHas(
       run(Branch(yes, no), Boolean(flag, rest)),
       output
-    ) {
+    ) from match flag {
       true => yes_safe(rest, hrest)
       false => no_safe(rest, hrest)
     }
@@ -89,7 +89,7 @@ pub theorem run_safe<code: Code, input: Shape, output: Shape>(
   stack: Stack,
   typed: StackHas(stack, input)
 ): ResultHas(run(code, stack), output) {
-  match derivation: ResultHas(run(code, stack), output) {
+  ⊢ ResultHas(run(code, stack), output) from match derivation {
     THalt(state) => Returned(typed)
     TExec(op, before, after, hop) => op_safe(hop, stack, typed)
     TSeq(first, second, before, middle, after, hfirst, hsecond) => chain_safe(
@@ -124,7 +124,7 @@ pub theorem run_never_stuck<code: Code, input: Shape, output: Shape>(
     None,
     output
   ) := Eq::subst((result: Option(Stack)) => ResultHas(result, output), stuck, safe)
-  match impossible: False {}
+  ⊢ False from match impossible {}
 }
 
 // The independent contract names the original relation, including uniqueness and rejection.
@@ -132,7 +132,7 @@ pub theorem output_unique<code: Code, input: Shape, a: Shape, b: Shape>(
   ha: Typing(code, input, a),
   hb: Typing(code, input, b)
 ): Eq(Shape, a, b) {
-  match check_code(code, input): Eq(Shape, a, b) {
+  ⊢ Eq(Shape, a, b) from match check_code(code, input) {
     CodeAccepted(output, derivation, unique) => Eq::trans(unique(a, ha), Eq::sym(unique(b, hb)))
     CodeRejected(refute) => False::elim(refute(a, ha))
   }
@@ -145,12 +145,12 @@ pub theorem checker_contract(
   Exists(Shape, output => Typing(code, input, output)),
   (∀ output: Shape. (Typing(code, input, output)) -> False)
 ) {
-  match check_code(
-    code,
-    input
-  ): Or(
+  ⊢ Or(
     Exists(Shape, output => Typing(code, input, output)),
     (∀ output: Shape. (Typing(code, input, output)) -> False)
+  ) from match check_code(
+    code,
+    input
   ) {
     CodeAccepted(output, derivation, unique) => OrInl(ExIntro(output, derivation))
     CodeRejected(refute) => OrInr(refute)
@@ -165,8 +165,8 @@ pub theorem rejected_refutes(
   output: Shape,
   derivation: Typing(code, input, output)
 ): False {
-  match decision: False {
-    CodeAccepted(actual, proof, unique) => match absent: False {}
+  ⊢ False from match decision {
+    CodeAccepted(actual, proof, unique) => ⊢ False from match absent {}
     CodeRejected(refute) => refute(output, derivation)
   }
 }
@@ -178,7 +178,7 @@ pub theorem execute_decision_safe(
   output: Shape,
   derivation: Typing(code, shape(stack), output)
 ): ResultHas(execute_decision(code, stack, decision), output) {
-  match decision: ResultHas(execute_decision(code, stack, decision), output) {
+  ⊢ ResultHas(execute_decision(code, stack, decision), output) from match decision {
     CodeAccepted(actual, proof, unique) => run_safe(derivation, stack, stack_typed(stack))
     CodeRejected(refute) => False::elim(refute(output, derivation))
   }

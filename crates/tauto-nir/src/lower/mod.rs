@@ -8,13 +8,14 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use tauto::rows::{Row, RowReport, check_program_rows};
 use tauto::surface::{BudgetLimit, FnDecl, Program, Stmt, SurfaceTerm, TermKind};
-use tauto::types::{Datas, Kind, Param as TParam, ParamId, Quant, Ty as TTy, TypeReport, prelude};
+use tauto::types::{Datas, Kind, Param as TParam, ParamId, Quant, Ty as TTy, TypeReport};
 
 use crate::*;
 
 mod expr;
 pub(crate) mod handle;
 mod pat;
+mod specialize;
 mod syntax;
 mod ty;
 
@@ -22,7 +23,7 @@ pub(crate) type R<T> = Result<T, Unsupported>;
 
 pub(crate) fn unsupported<T>(what: Message, span: Span) -> R<T> {
     Err(Unsupported {
-        what: what.to_string(),
+        what,
         span: Some(span),
     })
 }
@@ -33,6 +34,9 @@ pub struct LowerInput<'a> {
     pub types: &'a TypeReport,
     pub rows: &'a RowReport,
     pub lib: bool,
+    /// The functions that run only while the program is expanded
+    /// (`Loaded::expansion_only`), which a library does not export.
+    pub expansion_only: Option<&'a HashSet<tauto::identity::Name>>,
 }
 
 pub struct Lowered {
@@ -82,7 +86,9 @@ pub fn compile(source: &str) -> Result<Package, CompileError> {
 }
 
 /// As `compile`; with `lib`, every function of the program without type
-/// parameters is lowered and listed in `Package::exports` (`tauto-build`).
+/// parameters that does not run only while the program is expanded
+/// (`Loaded::expansion_only`) is lowered and listed in `Package::exports`
+/// (`tauto-build`).
 pub fn compile_with(source: &str, lib: bool) -> Result<Package, CompileError> {
     compile_with_observer(source, lib, |_| {})
 }
@@ -122,10 +128,11 @@ fn compile_target(
     mut observe: impl FnMut(CompilePhase),
 ) -> Result<Package, CompileError> {
     observe(CompilePhase::ParseExpand);
-    let program = tauto::surface::parse_program(source).map_err(|e| {
+    let mut program = tauto::surface::parse_program(source).map_err(|e| {
         CompileError::Front(msg!("nir-syntax-error", error = e.to_string()).to_string())
     })?;
-    compile_program(&program, None, false, lib, javascript, observe)
+    tauto::resolve::Resolver::default().statements(&mut program.stmts);
+    compile_program(&program, None, false, false, lib, javascript, None, observe)
 }
 
 /// Checks and lowers an expanded, file-aware program. Reading and expansion
@@ -136,6 +143,20 @@ pub fn compile_loaded_with_observer(
     javascript: bool,
     observe: impl FnMut(CompilePhase),
 ) -> Result<Package, CompileError> {
+    compile_loaded_entries_with_observer(loaded, lib, javascript, None, observe)
+}
+
+/// Checks and lowers a loaded program, limiting library roots to the named entries.
+/// Calls and function values reachable from those entries are lowered normally.
+pub fn compile_loaded_entries_with_observer(
+    loaded: &tauto::program::Loaded,
+    lib: bool,
+    javascript: bool,
+    entries: Option<&BTreeSet<String>>,
+    observe: impl FnMut(CompilePhase),
+) -> Result<Package, CompileError> {
+    let mut loaded = loaded.clone();
+    loaded.resolve_runtime();
     let dirs = loaded
         .files
         .iter()
@@ -144,10 +165,12 @@ pub fn compile_loaded_with_observer(
     let mut package = tauto::syntax::with_search_dirs(dirs, || {
         compile_program(
             &loaded.program,
-            Some(loaded),
+            Some(&loaded),
+            false,
             false,
             lib,
             javascript,
+            entries,
             observe,
         )
     })?;
@@ -159,7 +182,7 @@ pub fn compile_loaded_with_observer(
 /// with the modules it is declared in (`syntax.ident`).
 fn enclosing_fn(stmts: &[Stmt], offset: u32) -> Option<String> {
     stmts.iter().find_map(|s| match s {
-        Stmt::Fn(f) if f.span.start <= offset && offset < f.span.end => Some(f.name.clone()),
+        Stmt::Fn(f) if f.span.start <= offset && offset < f.span.end => Some(f.name.to_string()),
         Stmt::Module { name, items, span } if span.start <= offset && offset < span.end => {
             enclosing_fn(items, offset).map(|f| format!("{name}.{f}"))
         }
@@ -168,12 +191,16 @@ fn enclosing_fn(stmts: &[Stmt], offset: u32) -> Option<String> {
 }
 
 /// `wrapped`: `program` is the host wrapping of the program `loaded` read.
+/// `rewritten`: `program` is not the one `loaded` read but its copy with
+/// functions specialized (`specialize`), which is not specialized again.
 fn compile_program(
     program: &Program,
     loaded: Option<&tauto::program::Loaded>,
     wrapped: bool,
+    rewritten: bool,
     lib: bool,
     javascript: bool,
+    entries: Option<&BTreeSet<String>>,
     mut observe: impl FnMut(CompilePhase),
 ) -> Result<Package, CompileError> {
     observe(CompilePhase::Check);
@@ -190,7 +217,7 @@ fn compile_program(
                 line = line,
                 col = col,
                 function = function,
-                error = e.message.as_str()
+                error = e.message.clone()
             )
             .to_string(),
             (Some((file, line, col)), None) => msg!(
@@ -198,51 +225,80 @@ fn compile_program(
                 file = file.display().to_string(),
                 line = line,
                 col = col,
-                error = e.message.as_str()
+                error = e.message.clone()
             )
             .to_string(),
             _ => msg!("nir-type-error", error = e.to_string()).to_string(),
         }));
     }
-    // A method with generics of its own, a type constructor variable: the
-    // rust backend does not write these.
+    // A method with generics of its own, a type constructor variable: no
+    // backend writes these as they are, so each use gets its own copy
+    // (`specialize`), which is checked again.
     if report
         .terms
         .values()
         .chain(report.schemes.values().map(|s| &s.ty))
         .any(poly)
     {
+        if !rewritten
+            && let Some(copied) = specialize::program(program, &report)
+            && tauto::types::check_program(&copied).errors.is_empty()
+        {
+            return compile_program(
+                &copied, loaded, wrapped, true, lib, javascript, entries, observe,
+            );
+        }
         return Err(CompileError::Unsupported(Unsupported {
-            what: msg!("nir-class-method-with-generics").to_string(),
+            what: msg!("nir-class-method-with-generics"),
             span: None,
         }));
     }
-    let rows = add_prelude_rows(match loaded {
-        Some(loaded) if wrapped => {
-            loaded.check_wrapped_rows_with_types(program, javascript, &report)
-        }
-        Some(loaded) => loaded.check_rows_with_types(javascript, &report),
-        None if javascript => {
-            tauto::rows::check_program_rows_javascript_with_types(program, &report)
-        }
-        None => tauto::rows::check_program_rows_with_types(program, &report),
-    });
+    let rows = add_prelude_rows(
+        program,
+        match loaded {
+            Some(loaded) if wrapped || rewritten => {
+                loaded.check_wrapped_rows_with_types(program, javascript, &report)
+            }
+            Some(loaded) => loaded.check_rows_with_types(javascript, &report),
+            None if javascript => {
+                tauto::rows::check_program_rows_javascript_with_types(program, &report)
+            }
+            None => tauto::rows::check_program_rows_with_types(program, &report),
+        },
+    );
+    // Only what can run is generated, so only it answers to the checks of
+    // generating: an error in a function no root reaches is not reported
+    // (`tauto check` has already checked every declaration). The functions
+    // lowering actually reaches are compared with these after lowering.
+    let live = live_functions(program, lib, entries, loaded.map(|l| &l.expansion_only));
+    let mut deferred: Vec<(Name, String)> = Vec::new();
     // An effect nobody handles is an error here as it is for `tauto check`,
     // `tauto run` and the JavaScript backend, `resume 0` ones included.
-    if let Some(e) = rows.errors.first() {
-        return Err(CompileError::Front(format!("{e}")));
+    for e in &rows.errors {
+        match unreached(&program.stmts, &live, e.span.start) {
+            Some(name) => deferred.push((name, format!("{e}"))),
+            None => return Err(CompileError::Front(format!("{e}"))),
+        }
     }
-    if let Some(e) = tauto::lin::check(program, &report, &rows).first() {
-        return Err(CompileError::Front(
-            msg!("nir-use-error", error = e.to_string()).to_string(),
-        ));
+    for e in tauto::lin::check(program, &report, &rows) {
+        let message = msg!("nir-use-error", error = e.to_string()).to_string();
+        match unreached(&program.stmts, &live, e.span.start) {
+            Some(name) => deferred.push((name, message)),
+            None => return Err(CompileError::Front(message)),
+        }
     }
     // The standard effects that reach the top level (a task's are in the row of its `spawn`):
     // the prelude's `host_run` answers them around the program and around
     // each task, which is checked again. What `host_run` leaves to the host
-    // (`wait`) the backend's driver answers (`tauto_rt::o::run_top`).
+    // (`wait`) the backend's driver answers (`tauto_rt::o::run_top`), so a
+    // program whose top level reaches only `wait` is not wrapped: `host_run`
+    // would answer nothing, and its handler would bring every host primitive
+    // into a target that has none of them (the browser).
     if !wrapped
-        && (!rows.host_effects.is_empty())
+        && rows
+            .host_effects
+            .iter()
+            .any(|e| e.as_str() != "wait")
         && let Some(wrapped) = tauto::host::wrap(program)
     {
         let permissions: Vec<String> = tauto::host::permissions(rows.host_effects.iter())
@@ -253,21 +309,95 @@ fn compile_program(
             &wrapped,
             loaded,
             true,
+            rewritten,
             lib,
             javascript,
+            entries,
             &mut observe as &mut dyn FnMut(CompilePhase),
         )?;
         package.permissions = permissions;
         return Ok(package);
     }
-    let report = report.with_prelude();
+    let report = report.with_prelude_for(program);
     observe(CompilePhase::Lower);
     let pruned = prune_dead(program, &report);
-    lower(LowerInput {
-        program: pruned.as_ref().unwrap_or(program),
-        types: &report,
-        rows: &rows,
-        lib,
+    let package = lower_entries(
+        LowerInput {
+            program: pruned.as_ref().unwrap_or(program),
+            types: &report,
+            rows: &rows,
+            lib,
+            expansion_only: loaded.map(|l| &l.expansion_only),
+        },
+        entries,
+    )?;
+    // A function judged unreachable that lowering reached after all keeps
+    // its error: nothing generated escapes the checks.
+    if let Some((_, message)) = deferred
+        .into_iter()
+        .find(|(name, _)| package.fns.iter().any(|f| &f.source == name))
+    {
+        return Err(CompileError::Front(message));
+    }
+    Ok(package)
+}
+
+/// The functions lowering can reach: from the top-level statements other
+/// than functions (and, for a library, the functions it exports, as
+/// `Lowerer::run` chooses them), through every name a reached declaration
+/// mentions.
+fn live_functions(
+    program: &Program,
+    lib: bool,
+    entries: Option<&BTreeSet<String>>,
+    expansion_only: Option<&HashSet<Name>>,
+) -> HashSet<Name> {
+    let fns: HashMap<&Name, &Stmt> = program
+        .stmts
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::Fn(f) => Some((&f.name, s)),
+            _ => None,
+        })
+        .collect();
+    let mut live: HashSet<Name> = HashSet::new();
+    let mut pending: Vec<Stmt> = Vec::new();
+    for s in &program.stmts {
+        match s {
+            Stmt::Fn(f) => {
+                if lib
+                    && f.generics.is_empty()
+                    && !expansion_only.is_some_and(|e| e.contains(&f.name))
+                    && !entries.is_some_and(|names| !names.contains(f.name.as_str()))
+                    && live.insert(f.name.clone())
+                {
+                    pending.push(s.clone());
+                }
+            }
+            _ => pending.push(s.clone()),
+        }
+    }
+    while let Some(mut s) = pending.pop() {
+        let mut found = Vec::new();
+        tauto::surface::references::statement(&mut s, &mut |name| {
+            if let Some(decl) = fns.get(name)
+                && live.insert(name.clone())
+            {
+                found.push((*decl).clone());
+            }
+        });
+        pending.extend(found);
+    }
+    live
+}
+
+/// The function no root reaches whose declaration holds `offset`.
+fn unreached(stmts: &[Stmt], live: &HashSet<Name>, offset: u32) -> Option<Name> {
+    stmts.iter().find_map(|s| match s {
+        Stmt::Fn(f) if f.span.start <= offset && offset < f.span.end => {
+            (!live.contains(&f.name)).then(|| f.name.clone())
+        }
+        _ => None,
     })
 }
 
@@ -319,10 +449,10 @@ fn run_tests(program: &Program) -> Option<Program> {
         let TermKind::Perform { effect, args } = &*t.kind else {
             return false;
         };
-        if effect != "test" {
+        if !tauto::bindings::is_library(&effect, "test") {
             return false;
         }
-        let function = SurfaceTerm::new(TermKind::Var("run_test".into()), t.span);
+        let function = SurfaceTerm::var(&tauto::bindings::library_name("run_test"), t.span);
         let call = TermKind::App {
             function: Box::new(function),
             arguments: args.clone(),
@@ -342,8 +472,9 @@ fn run_tests(program: &Program) -> Option<Program> {
     any.then_some(program)
 }
 
-fn add_prelude_rows(mut rows: RowReport) -> RowReport {
-    rows.merge_prelude(check_program_rows(prelude()));
+/// The rows of a program, and what the library's functions perform.
+fn add_prelude_rows(program: &Program, mut rows: RowReport) -> RowReport {
+    rows.merge_prelude(check_program_rows(tauto::types::prelude_for(program)));
     rows
 }
 
@@ -370,6 +501,13 @@ fn normalized_rows(rows: &RowReport) -> Result<RowReport, CompileError> {
 }
 
 pub fn lower(input: LowerInput<'_>) -> Result<Package, CompileError> {
+    lower_entries(input, None)
+}
+
+fn lower_entries(
+    input: LowerInput<'_>,
+    entries: Option<&BTreeSet<String>>,
+) -> Result<Package, CompileError> {
     let rows = normalized_rows(input.rows)?;
     let input = LowerInput {
         rows: &rows,
@@ -379,7 +517,7 @@ pub fn lower(input: LowerInput<'_>) -> Result<Package, CompileError> {
     let mut carried = HashMap::new();
     loop {
         let mut l = Lowerer::new(input, rc_enabled, carried.clone());
-        let result = l.run();
+        let result = l.run(entries);
         if l.rc_violation && rc_enabled {
             // Shared cells require cloneable payloads. If a call supplies a payload
             // without `Clone`, lower the package again using owned cells.
@@ -417,13 +555,13 @@ pub(crate) enum Origin {
 pub(crate) struct CaptureKey {
     // Lowered local declarations have unique names. The ordinal is their
     // lexical capture order, not a runtime or inference allocation number.
-    pub function: String,
+    pub function: Name,
     pub index: usize,
 }
 
 #[derive(Clone)]
 pub(crate) struct LiftedCap {
-    pub name: String,
+    pub name: Name,
     pub key: CaptureKey,
     /// A helper forwards another declaration's environment slot, rather
     /// than introducing this diagnostic name into its source scope.
@@ -446,8 +584,8 @@ pub(crate) struct FnSrc<'a> {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct InstKey {
-    pub name: String,
-    pub rowvars: Vec<(String, Tier)>,
+    pub name: Name,
+    pub rowvars: Vec<(Name, Tier)>,
     /// The instance of the O tier that counts steps for a `budget` it runs
     /// under.
     pub under_budget: bool,
@@ -478,16 +616,18 @@ pub(crate) struct InstMeta {
 
 pub(crate) struct Lowerer<'a> {
     pub syntax_parsers: Vec<SyntaxParser>,
+    pub declarations: Vec<tauto::identity::DeclRef>,
     pub program: &'a Program,
     pub types: &'a TypeReport,
     pub operation_facts: Option<&'a tauto::types::OperationFacts>,
     pub rows: &'a RowReport,
     pub lib: bool,
-    pub fns: HashMap<String, FnSrc<'a>>,
+    pub expansion_only: Option<&'a HashSet<tauto::identity::Name>>,
+    pub fns: HashMap<Name, FnSrc<'a>>,
     /// The functions written inside another body, and what each of them
     /// captures: a lifted function takes the captures as leading parameters.
-    pub nested_fns: HashSet<String>,
-    pub local_caps: HashMap<String, Vec<LiftedCap>>,
+    pub nested_fns: HashSet<Name>,
+    pub local_caps: HashMap<Name, Vec<LiftedCap>>,
     /// Declaration and binder order, independent of occurrence allocation.
     pub param_order: HashMap<ParamId, (usize, usize)>,
     /// Output names in the function being lowered; never semantic identities.
@@ -495,22 +635,24 @@ pub(crate) struct Lowerer<'a> {
     /// Data and operation signatures have their own declaration-local names.
     pub declaration_param_names: HashMap<ParamId, String>,
     pub datas: Vec<DataDef>,
-    pub data_index: HashMap<String, usize>,
-    pub row_params: HashMap<String, Vec<usize>>,
+    pub data_index: HashMap<Name, usize>,
+    /// Each data type's row parameters (`row_parameters_of`).
+    pub row_params: HashMap<Name, Vec<usize>>,
     /// Recursive generic data whose cells share their tails.
-    pub rc_datas: HashSet<String>,
+    pub rc_datas: HashSet<Name>,
     pub rc_enabled: bool,
     pub rc_violation: bool,
     /// The tier each data type holds the functions of its fields at whose
     /// rows have a row variable, when a call specializes that variable to a
     /// suspending row (`carried_row`); the others hold them at the tier of
     /// the row as written.
-    pub carried: HashMap<String, Tier>,
-    pub carried_wanted: std::cell::RefCell<HashMap<String, Tier>>,
+    pub carried: HashMap<Name, Tier>,
+    /// The tiers this lowering found the data types must carry.
+    pub carried_wanted: std::cell::RefCell<HashMap<Name, Tier>>,
     pub unions: Vec<UnionDef>,
     pub union_ids: HashMap<Vec<Ty>, UnionId>,
     pub ops: Vec<OpDef>,
-    pub op_ids: HashMap<String, usize>,
+    pub op_ids: HashMap<Name, usize>,
     pub insts: Vec<Option<FnInst>>,
     pub inst_keys: HashMap<InstKey, InstId>,
     pub inst_names: Vec<InstKey>,
@@ -525,7 +667,7 @@ pub(crate) struct Lowerer<'a> {
     pub m_hit: std::cell::Cell<bool>,
     /// Whether each named function runs a `budget`, itself or through a
     /// call ([`Lowerer::runs_budget`]).
-    pub runs_budget: std::cell::RefCell<HashMap<String, bool>>,
+    pub runs_budget: std::cell::RefCell<HashMap<Name, bool>>,
     pub rust_names: HashMap<String, u32>,
     /// What `tauto build` rejects after the front end (`Decimal`).
     pub build_errors: Vec<String>,
@@ -537,7 +679,7 @@ pub(crate) struct Lowerer<'a> {
 
 #[derive(Clone)]
 pub(crate) struct Binding {
-    pub name: String,
+    pub name: Name,
     pub local: Local,
     pub ty: TTy,
     pub mode: Mode,
@@ -571,7 +713,7 @@ pub(crate) struct Cx {
     /// Owned environment slots and forwarded helper parameters are not
     /// visible to source lookup, even when their diagnostic names coincide.
     pub hidden_bindings: HashSet<u32>,
-    pub rowvars: HashMap<String, Tier>,
+    pub rowvars: HashMap<Name, Tier>,
     pub tier: Tier,
     pub frames: Vec<CFrame>,
     pub ret: TTy,
@@ -606,9 +748,9 @@ fn collect_nested<'a>(t: &'a SurfaceTerm, out: &mut Vec<&'a FnDecl>) {
 }
 
 impl<'a> Lowerer<'a> {
-    fn new(input: LowerInput<'a>, rc_enabled: bool, carried: HashMap<String, Tier>) -> Self {
-        let mut fns: HashMap<String, FnSrc<'a>> = HashMap::new();
-        let lib: &'static Program = prelude();
+    fn new(input: LowerInput<'a>, rc_enabled: bool, carried: HashMap<Name, Tier>) -> Self {
+        let mut fns: HashMap<Name, FnSrc<'a>> = HashMap::new();
+        let lib: &'static Program = tauto::types::prelude_for(input.program);
         for (stmts, own) in [(&lib.stmts, false), (&input.program.stmts, true)] {
             for s in stmts {
                 match s {
@@ -652,13 +794,13 @@ impl<'a> Lowerer<'a> {
                 collect_nested(&f.body, &mut nested);
             }
         }
-        let mut seen: HashMap<&str, usize> = HashMap::new();
+        let mut seen: HashMap<&tauto::identity::Name, usize> = HashMap::new();
         for f in &nested {
-            *seen.entry(f.name.as_str()).or_insert(0) += 1;
+            *seen.entry(&f.name).or_insert(0) += 1;
         }
         let mut nested_fns = HashSet::new();
         for f in nested {
-            if seen[f.name.as_str()] > 1 || fns.contains_key(&f.name) {
+            if seen[&f.name] > 1 || fns.contains_key(&f.name) {
                 continue;
             }
             nested_fns.insert(f.name.clone());
@@ -709,6 +851,7 @@ impl<'a> Lowerer<'a> {
             .collect();
         Lowerer {
             syntax_parsers: Vec::new(),
+            declarations: Vec::new(),
             program: input.program,
             row_params: tauto::surface::row_parameters_of(input.program.stmts.iter().filter_map(
                 |s| match s {
@@ -720,6 +863,7 @@ impl<'a> Lowerer<'a> {
             operation_facts: input.types.operation_instances_for(input.program),
             rows: input.rows,
             lib: input.lib,
+            expansion_only: input.expansion_only,
             fns,
             nested_fns,
             local_caps: HashMap::new(),
@@ -754,7 +898,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn run(&mut self) -> Result<Package, CompileError> {
+    fn run(&mut self, entries: Option<&BTreeSet<String>>) -> Result<Package, CompileError> {
         self.build_datas()?;
         // A `Decimal` anywhere in a signature is an error, called or not.
         let sigs: Vec<(TTy, Vec<(TParam, Kind)>)> = self
@@ -782,7 +926,10 @@ impl<'a> Lowerer<'a> {
         if self.lib {
             for s in &self.program.stmts {
                 let Stmt::Fn(f) = s else { continue };
-                if !f.generics.is_empty() {
+                if !f.generics.is_empty()
+                    || self.expansion_only.is_some_and(|e| e.contains(&f.name))
+                    || entries.is_some_and(|names| !names.contains(f.name.as_str()))
+                {
                     continue;
                 }
                 let id = self.instance(&f.name, BTreeMap::new(), false, false, false)?;
@@ -791,18 +938,22 @@ impl<'a> Lowerer<'a> {
                     .declaration_row(&f.name, f.body.id())
                     .expect("declaration rows were checked before lowering")
                 {
-                    Some(declaration) => declaration.inferred.iter().cloned().collect(),
+                    Some(declaration) => declaration
+                        .inferred
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
                     None => self
                         .rows
                         .functions
                         .iter()
                         .find(|(n, _)| *n == f.name)
-                        .map(|(_, r)| r.iter().cloned().collect())
+                        .map(|(_, r)| r.iter().map(ToString::to_string).collect())
                         .unwrap_or_default(),
                 };
                 exports.push(Export {
                     inst: id,
-                    name: f.name.clone(),
+                    name: f.name.to_string(),
                     row,
                     pure_borrow_callbacks: self.types.scheme(&f.name).map(|s| {
                         let TTy::Fn(params, _, _) = &s.ty else { return Vec::new() };
@@ -829,6 +980,7 @@ impl<'a> Lowerer<'a> {
             .map(|f| f.expect("an instance is lowered"))
             .collect();
         let mut pkg = Package {
+            declarations: std::mem::take(&mut self.declarations),
             sources: None,
             syntax_parsers: std::mem::take(&mut self.syntax_parsers),
             datas: std::mem::take(&mut self.datas),
@@ -844,6 +996,12 @@ impl<'a> Lowerer<'a> {
             permissions: Vec::new(),
             rust_unsupported: self.rust_unsupported.take(),
         };
+        // `TAUTO_KEEP_RECURSION=1` turns off the accumulators
+        // (`accumulate.rs`): a function adding to its own result stays as
+        // written.
+        if std::env::var_os("TAUTO_KEEP_RECURSION").is_none() {
+            crate::accumulate::introduce(&mut pkg, &mut |name, repr| self.fresh_local(name, repr));
+        }
         // `TAUTO_KEEP_OWNED=1` turns off the borrowed parameters
         // (`borrow.rs`): every parameter stays owned.
         if std::env::var_os("TAUTO_KEEP_OWNED").is_none() {
@@ -905,8 +1063,11 @@ impl<'a> Lowerer<'a> {
                 self.param_names.clear();
                 out.push(ExternDef {
                     name: f.name.clone(),
-                    generics,
-                    params,
+                    generics: generics.into_iter().map(|n: Name| n.to_string()).collect(),
+                    params: params
+                        .into_iter()
+                        .map(|(n, t, p): (Name, Ty, Pass)| (n.to_string(), t, p))
+                        .collect(),
                     ret,
                     span: f.span,
                 });
@@ -931,7 +1092,9 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    pub fn quant(&self, effect: &str) -> Quant {
+    // ---- rows and tiers ------------------------------------------------
+
+    pub fn quant(&self, effect: &Name) -> Quant {
         self.rows
             .quants
             .get(effect)
@@ -940,18 +1103,23 @@ impl<'a> Lowerer<'a> {
             .unwrap_or(Quant::AtMostOne)
     }
 
-    pub fn effect_tier(&self, effect: &str, rowvars: &HashMap<String, Tier>) -> Tier {
-        if let Some(v) = effect.strip_prefix('|') {
-            if let Some(tier) = carried_tier(v) {
+    pub fn effect_tier(&self, effect: &Name, rowvars: &HashMap<Name, Tier>) -> Tier {
+        if let Some(v) = effect.row_variable() {
+            if let Some(tier) = carried_tier(&v) {
                 return tier;
             }
-            return rowvars.get(v).copied().unwrap_or(Tier::S);
+            return rowvars.get(&v).copied().unwrap_or(Tier::S);
         }
         // `spawn` is lowered to a call of the body (`handle.rs`).
-        if effect.starts_with('?') || effect == "Div" || effect == "spawn" {
+        if effect.starts_with('?')
+            || tauto::bindings::is_library(&effect, "Div")
+            || tauto::bindings::is_library(&effect, "spawn")
+        {
             return Tier::S;
         }
-        if effect == "Exceeded" || effect == "exceeded" {
+        if tauto::bindings::is_library(&effect, "Exceeded")
+            || tauto::bindings::is_library(&effect, "exceeded")
+        {
             return Tier::O;
         }
         match self.quant(effect) {
@@ -969,7 +1137,7 @@ impl<'a> Lowerer<'a> {
             self.rust_unsupported
                 .borrow_mut()
                 .get_or_insert_with(|| Unsupported {
-                    what: msg!("nir-in-a-kept-continuation", what = what).to_string(),
+                    what: msg!("nir-in-a-kept-continuation", what = what),
                     span: Some(t.span),
                 });
         }
@@ -978,13 +1146,13 @@ impl<'a> Lowerer<'a> {
     /// Whether `row` has a `direct` operation (row variables aside).
     pub fn has_direct(&self, row: &Row) -> bool {
         row.iter().any(|e| {
-            !e.starts_with('|')
+            !e.row_variable().is_some()
                 && !e.starts_with('?')
-                && (e == "show" || self.quant(e) == Quant::Direct)
+                && (tauto::bindings::is_library(&e, "show") || self.quant(e) == Quant::Direct)
         })
     }
 
-    pub fn row_tier(&self, row: &Row, rowvars: &HashMap<String, Tier>) -> Tier {
+    pub fn row_tier(&self, row: &Row, rowvars: &HashMap<Name, Tier>) -> Tier {
         row.iter()
             .map(|e| self.effect_tier(e, rowvars))
             .max()
@@ -995,7 +1163,7 @@ impl<'a> Lowerer<'a> {
     /// therefore uses the same future ABI as an at-most-once operation.
     pub fn row_tier_in(&self, row: &Row, cx: &Cx) -> Tier {
         let tier = self.row_tier(row, &cx.rowvars);
-        if cx.under_budget && row.contains("Div") {
+        if cx.under_budget && row.contains(&tauto::bindings::library_name("Div")) {
             tier.max(Tier::O)
         } else {
             tier
@@ -1007,7 +1175,7 @@ impl<'a> Lowerer<'a> {
     /// so called under a budget it counts the outer budget's steps, and must
     /// be able to stop where that one runs out: it is given the instance of
     /// the O tier, as a divergent function is.
-    pub fn runs_budget(&self, name: &str) -> bool {
+    pub fn runs_budget(&self, name: &Name) -> bool {
         if let Some(known) = self.runs_budget.borrow().get(name) {
             return *known;
         }
@@ -1015,9 +1183,7 @@ impl<'a> Lowerer<'a> {
             return false;
         };
         // A recursive call does not decide it: the rest of the body does.
-        self.runs_budget
-            .borrow_mut()
-            .insert(name.to_string(), false);
+        self.runs_budget.borrow_mut().insert(name.clone(), false);
         let mut found = false;
         let mut callees = Vec::new();
         tauto::surface::walk::value_terms(&src.decl.body, &mut |t| match &*t.kind {
@@ -1026,14 +1192,12 @@ impl<'a> Lowerer<'a> {
             _ => {}
         });
         let found = found || callees.iter().any(|c| c != name && self.runs_budget(c));
-        self.runs_budget
-            .borrow_mut()
-            .insert(name.to_string(), found);
+        self.runs_budget.borrow_mut().insert(name.clone(), found);
         found
     }
 
     /// The row callers of `name` see: the written one, else the inferred one.
-    pub fn fn_row(&self, name: &str) -> Row {
+    pub fn fn_row(&self, name: &Name) -> Row {
         let Some(src) = self.fns.get(name) else {
             return Row::new();
         };
@@ -1061,21 +1225,21 @@ impl<'a> Lowerer<'a> {
 
     /// The row variables this backend can specialize, with their exact
     /// declaration owner checked before reducing them to source tokens.
-    pub fn row_vars(&self, decl: &FnDecl) -> R<Vec<String>> {
-        fn note(effects: &[String], vars: &mut Vec<String>) {
+    pub fn row_vars(&self, decl: &FnDecl) -> R<Vec<Name>> {
+        fn note(effects: &[Name], vars: &mut Vec<Name>) {
             for effect in effects {
-                if let Some(var) = effect.strip_prefix('|')
-                    && !vars.iter().any(|known| known == var)
+                if let Some(var) = effect.row_variable()
+                    && !vars.iter().any(|known| known == &var)
                 {
-                    vars.push(var.to_string());
+                    vars.push(var);
                 }
             }
         }
         fn type_vars(
             t: &SurfaceTerm,
             direct: bool,
-            vars: &mut Vec<String>,
-            nested: &mut HashSet<String>,
+            vars: &mut Vec<Name>,
+            nested: &mut HashSet<Name>,
         ) {
             match &*t.kind {
                 TermKind::Pi {
@@ -1087,11 +1251,7 @@ impl<'a> Lowerer<'a> {
                     if let Some(effects) = effects {
                         note(effects, vars);
                         if !direct {
-                            nested.extend(
-                                effects
-                                    .iter()
-                                    .filter_map(|e| e.strip_prefix('|').map(str::to_string)),
-                            );
+                            nested.extend(effects.iter().filter_map(Name::row_variable));
                         }
                     }
                     for (_, param) in params {
@@ -1133,28 +1293,24 @@ impl<'a> Lowerer<'a> {
                 };
                 let named: Row = effects
                     .iter()
-                    .filter(|e| !e.starts_with('|'))
+                    .filter(|e| !e.row_variable().is_some())
                     .cloned()
                     .collect();
-                let carried = effects
-                    .iter()
-                    .filter_map(|e| e.strip_prefix('|'))
-                    .find(|v| {
-                        !decl
-                            .effects
-                            .iter()
-                            .flatten()
-                            .any(|e| e.strip_prefix('|') == Some(*v))
-                    });
+                let carried = effects.iter().filter_map(Name::row_variable).find(|v| {
+                    !decl
+                        .effects
+                        .iter()
+                        .flatten()
+                        .any(|e| e.row_variable().as_ref() == Some(v))
+                });
                 let what = if self.row_tier(&named, &HashMap::new()) > Tier::S {
-                    msg!("nir-record-row-suspends", decl = decl.name.as_str()).to_string()
+                    msg!("nir-record-row-suspends", decl = decl.name.as_str())
                 } else if let Some(v) = carried {
                     msg!(
                         "nir-row-variable-carried-only-by-record",
                         var = v.to_string(),
                         decl = decl.name.as_str()
                     )
-                    .to_string()
                 } else {
                     return;
                 };
@@ -1174,11 +1330,7 @@ impl<'a> Lowerer<'a> {
         }
         for ty in decl.param_types.iter().flatten() {
             if let Some(effects) = pi_effects(ty) {
-                inferable.extend(
-                    effects
-                        .iter()
-                        .filter_map(|e| e.strip_prefix('|').map(str::to_string)),
-                );
+                inferable.extend(effects.iter().filter_map(Name::row_variable));
             }
             type_vars(ty, true, &mut vars, &mut nested);
         }
@@ -1197,7 +1349,7 @@ impl<'a> Lowerer<'a> {
                 span: Some(decl.span),
             })?
             .ok_or_else(|| Unsupported {
-                what: msg!("nir-effect-row-owner", decl = decl.name.as_str()).to_string(),
+                what: msg!("nir-effect-row-owner", decl = decl.name.as_str()),
                 span: Some(decl.span),
             })?;
         for var in &vars {
@@ -1223,7 +1375,7 @@ impl<'a> Lowerer<'a> {
                 .effects
                 .iter()
                 .flatten()
-                .any(|effect| effect.strip_prefix('|') == Some(var.as_str()));
+                .any(|effect| effect.row_variable().as_ref() == Some(var));
             if (nested.contains(var) || !inferable.contains(var))
                 && !in_own_row
                 && !assumed.contains(var)
@@ -1270,9 +1422,11 @@ impl<'a> Lowerer<'a> {
                 // The call report may omit a top-level lambda's divergence;
                 // named recursion still requires budget instrumentation.
                 if let TermKind::Var(name) = &*function.kind
-                    && self.fn_row(name).contains("Div")
+                    && self
+                        .fn_row(name)
+                        .contains(&tauto::bindings::library_name("Div"))
                 {
-                    row.insert("Div".into());
+                    row.insert(tauto::bindings::library_name("Div"));
                 }
                 self.term_row_into(function, row);
                 arguments.iter().for_each(|a| self.term_row_into(a, row));
@@ -1291,11 +1445,11 @@ impl<'a> Lowerer<'a> {
                             .iter()
                             .all(|p| matches!(p, Pattern::Wild | Pattern::Bind(_)))
                     {
-                        inner.remove(if effect == "exceeded" {
-                            "Exceeded"
+                        if tauto::bindings::is_library(&effect, "exceeded") {
+                            inner.remove(&tauto::bindings::library_name("Exceeded"));
                         } else {
-                            effect
-                        });
+                            inner.remove(effect);
+                        }
                     }
                 }
                 row.extend(inner);
@@ -1318,10 +1472,10 @@ impl<'a> Lowerer<'a> {
                 // Only steps stop a body that does not: a memory budget
                 // leaves `Div` in the row.
                 if *limit == BudgetLimit::Steps {
-                    inner.remove("Div");
+                    inner.remove(&tauto::bindings::library_name("Div"));
                 }
                 row.extend(inner);
-                row.insert("Exceeded".into());
+                row.insert(tauto::bindings::library_name("Exceeded"));
             }
             TermKind::Lam { .. } | TermKind::BorrowLam { .. } => {}
             TermKind::Block(stmts) => {
@@ -1334,7 +1488,7 @@ impl<'a> Lowerer<'a> {
                         Stmt::While { condition, body } => {
                             self.term_row_into(condition, row);
                             self.term_row_into(body, row);
-                            row.insert("Div".into());
+                            row.insert(tauto::bindings::library_name("Div"));
                         }
                         _ => {}
                     }
@@ -1392,8 +1546,8 @@ impl<'a> Lowerer<'a> {
 
     pub fn instance(
         &mut self,
-        name: &str,
-        rowvars: BTreeMap<String, Tier>,
+        name: &Name,
+        rowvars: BTreeMap<Name, Tier>,
         under_budget: bool,
         m: bool,
         detached: bool,
@@ -1416,20 +1570,25 @@ impl<'a> Lowerer<'a> {
         // one given to a data type's row parameter (`App(R, e)`, which the
         // data type erases), is no Rust type either.
         let mut row_parameters = row_parameters;
+        for (parameter, row) in decl.generics.iter().zip(&decl.rows) {
+            if *row && !row_parameters.contains(parameter) {
+                row_parameters.push(parameter.clone());
+            }
+        }
         let data_rows = &self.row_params;
         for ty in decl.param_types.iter().flatten().chain(&decl.result) {
             let mut ty = ty.clone();
             tauto::surface::walk::term(&mut ty, &mut |t| {
-                let mut add = |v: &str| {
+                let mut add = |v: &Name| {
                     if !row_parameters.iter().any(|r| r == v) {
-                        row_parameters.push(v.to_string());
+                        row_parameters.push(v.clone());
                     }
                 };
                 match &*t.kind {
                     TermKind::Row(effects) => effects
                         .iter()
-                        .filter_map(|e| e.strip_prefix('|'))
-                        .for_each(add),
+                        .filter_map(Name::row_variable)
+                        .for_each(|v| add(&v)),
                     TermKind::App {
                         function,
                         arguments,
@@ -1448,7 +1607,7 @@ impl<'a> Lowerer<'a> {
             });
         }
         let key = InstKey {
-            name: name.to_string(),
+            name: name.clone(),
             rowvars: rowvars.into_iter().collect(),
             under_budget,
             m,
@@ -1471,7 +1630,7 @@ impl<'a> Lowerer<'a> {
         let mut parameters: Vec<_> = scheme
             .generics
             .iter()
-            .filter(|(param, _)| !row_parameters.iter().any(|row| row == param.name()))
+            .filter(|(param, _)| !row_parameters.iter().any(|row| row == param.reference()))
             .cloned()
             .collect();
         let own_parameters = parameters.len();
@@ -1520,8 +1679,8 @@ impl<'a> Lowerer<'a> {
         Ok(id)
     }
 
-    pub fn inst_tier(&self, name: &str, rowvars: &[(String, Tier)]) -> Tier {
-        let map: HashMap<String, Tier> = rowvars.iter().cloned().collect();
+    pub fn inst_tier(&self, name: &Name, rowvars: &[(Name, Tier)]) -> Tier {
+        let map: HashMap<Name, Tier> = rowvars.iter().cloned().collect();
         self.row_tier(&self.fn_row(name), &map)
     }
 
@@ -1557,7 +1716,7 @@ impl<'a> Lowerer<'a> {
             );
         };
         self.param_names = self.meta[id].param_names.clone();
-        let rowvars: HashMap<String, Tier> = key.rowvars.iter().cloned().collect();
+        let rowvars: HashMap<Name, Tier> = key.rowvars.iter().cloned().collect();
         let mut cx = Cx {
             bindings: Vec::new(),
             capture_bindings: Vec::new(),
@@ -1696,7 +1855,7 @@ impl<'a> Lowerer<'a> {
     pub fn bind_param(
         &mut self,
         cx: &mut Cx,
-        name: &str,
+        name: &Name,
         ty: &TTy,
         declared: Option<&SurfaceTerm>,
     ) -> (Local, Ty) {
@@ -1718,7 +1877,7 @@ impl<'a> Lowerer<'a> {
             None
         };
         cx.bindings.push(Binding {
-            name: name.to_string(),
+            name: name.clone(),
             local: local.clone(),
             ty: ty.clone(),
             mode: match ty {
@@ -1735,15 +1894,16 @@ impl<'a> Lowerer<'a> {
     fn lower_top(&mut self) -> R<InstId> {
         // What reaches the top level is the host's: a `wait` there makes the
         // top level a future the host runs (`tauto_rt::o::run_top`).
-        let tier = if self.rows.host_effects.contains("wait") {
+        let tier = if self.rows.host_waits {
             Tier::O
         } else {
             Tier::S
         };
         let id = self.insts.len();
         self.insts.push(None);
+        let top: Name = tauto::identity::DeclRef::fresh("<top>").into();
         self.inst_names.push(InstKey {
-            name: "<top>".into(),
+            name: top.clone(),
             rowvars: Vec::new(),
             under_budget: false,
             m: false,
@@ -1777,7 +1937,7 @@ impl<'a> Lowerer<'a> {
         let rust_name = self.rust_name("top", tier);
         self.insts[id] = Some(FnInst {
             id,
-            source: "<top>".into(),
+            source: top,
             rust_name,
             tier,
             generics: Vec::new(),
@@ -1848,11 +2008,10 @@ impl<'a> Lowerer<'a> {
     fn cloneable(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Vec(a) | Ty::Array(a) | Ty::Option(a) => self.cloneable(a),
-            Ty::Std(n, _) => n != "Pending" && n != "MutexGuard",
+            Ty::Std(n, _) => !n.taken_once(),
             Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
                 self.cloneable(a) && self.cloneable(b)
             }
-            Ty::Product(ms) => ms.iter().all(|(_, m)| self.cloneable(m)),
             Ty::Data(n, args) => {
                 self.data_index.get(n).is_none_or(|i| self.datas[*i].clone)
                     && args.iter().all(|a| self.cloneable(a))
@@ -1915,8 +2074,8 @@ fn collect_parameters(t: &TTy, out: &mut Vec<(TParam, Kind)>) {
 /// (`run: (() -> A ! {|e}) -> B`), and its result does not carry. No argument
 /// gives evidence for them, so each call instantiates them with the empty row
 /// (as the row checker does) and they are specialized to the synchronous tier.
-pub(crate) fn assumed_row_vars(decl: &FnDecl) -> HashSet<String> {
-    fn walk(t: &SurfaceTerm, supplied: bool, out: &mut [HashSet<String>; 2]) {
+pub(crate) fn assumed_row_vars(decl: &FnDecl) -> HashSet<Name> {
+    fn walk(t: &SurfaceTerm, supplied: bool, out: &mut [HashSet<Name>; 2]) {
         match &*t.kind {
             TermKind::Pi {
                 params,
@@ -1924,8 +2083,8 @@ pub(crate) fn assumed_row_vars(decl: &FnDecl) -> HashSet<String> {
                 effects,
             } => {
                 for effect in effects.iter().flatten() {
-                    if let Some(var) = effect.strip_prefix('|') {
-                        out[usize::from(supplied)].insert(var.to_string());
+                    if let Some(var) = effect.row_variable() {
+                        out[usize::from(supplied)].insert(var);
                     }
                 }
                 for (_, param) in params {
@@ -1945,11 +2104,7 @@ pub(crate) fn assumed_row_vars(decl: &FnDecl) -> HashSet<String> {
                     | TermKind::Pi {
                         effects: Some(effects),
                         ..
-                    } => out[1].extend(
-                        effects
-                            .iter()
-                            .filter_map(|e| e.strip_prefix('|').map(str::to_string)),
-                    ),
+                    } => out[1].extend(effects.iter().filter_map(Name::row_variable)),
                     _ => {}
                 });
             }
@@ -1970,7 +2125,7 @@ pub(crate) fn assumed_row_vars(decl: &FnDecl) -> HashSet<String> {
 
 /// The effects written in a function type (`(A) -> B ! {fail | e}`), under
 /// the kind or borrow written on it.
-pub(crate) fn pi_effects(t: &SurfaceTerm) -> Option<Vec<String>> {
+pub(crate) fn pi_effects(t: &SurfaceTerm) -> Option<Vec<Name>> {
     match &*t.kind {
         TermKind::FnKind { ty, .. } | TermKind::Borrow { term: ty, .. } => pi_effects(ty),
         TermKind::Pi { effects, .. } => Some(effects.clone().unwrap_or_default()),
@@ -2014,6 +2169,32 @@ pub(crate) fn sanitize(name: &str) -> String {
 mod scoped_generic_tests {
     use super::*;
 
+    fn compile_both(source: &str) -> Result<(Package, Package), CompileError> {
+        let mut program = tauto::surface::parse_program(source)
+            .map_err(|error| CompileError::Front(error.to_string()))?;
+        tauto::resolve::Resolver::default().statements(&mut program.stmts);
+        let package = compile_program(&program, None, false, false, false, false, None, |_| {})?;
+        let mut javascript =
+            compile_program(&program, None, false, false, false, true, None, |_| {})?;
+        // The synthetic entry belongs to its compilation, not to the source tree.
+        if let (Some(a), Some(b)) = (package.top, javascript.top) {
+            let source = package
+                .fns
+                .iter()
+                .find(|f| f.id == a)
+                .unwrap()
+                .source
+                .clone();
+            javascript
+                .fns
+                .iter_mut()
+                .find(|f| f.id == b)
+                .unwrap()
+                .source = source;
+        }
+        Ok((package, javascript))
+    }
+
     fn source(case: &str) -> &'static str {
         crate::lower::case_inputs::source_static("types/scoped-generics.eure", case)
     }
@@ -2033,15 +2214,17 @@ let r := handle { apply(() => if perform choose() { 1 } else { 2 }) } with {
         let declaration = rows
             .declarations
             .iter()
-            .find(|d| d.name == "apply")
+            .find(|d| d.name.as_str() == "apply")
             .unwrap();
         let key = rows
             .row_variables
             .iter()
-            .find(|(_, variable)| variable.owner == declaration.owner && variable.name == "e")
+            .find(|(_, variable)| {
+                variable.owner == declaration.owner && variable.name.as_str() == "e"
+            })
             .map(|(key, _)| key)
             .unwrap();
-        let token = format!("|{key}");
+        let token = key.in_row();
         let call = *rows
             .calls
             .iter()
@@ -2049,33 +2232,29 @@ let r := handle { apply(() => if perform choose() { 1 } else { 2 }) } with {
             .map(|(id, _)| id)
             .unwrap();
         let normalized = normalized_rows(&rows).unwrap();
-        assert_eq!(normalized.calls[&call], Row::from(["|e".into()]));
-        assert!(normalized.calls.values().all(|row| {
-            rows.row_variables
-                .keys()
-                .all(|key| !row.contains(&format!("|{key}")))
-        }));
+        assert_eq!(normalized.calls[&call], Row::from([token.clone()]));
+        assert!(normalized.calls[&call].contains(&key.in_row()));
 
         let mut foreign = rows.clone();
         foreign.call_owners.insert(call, None);
         assert!(matches!(
             normalized_rows(&foreign),
             Err(CompileError::Unsupported(Unsupported { what, .. }))
-                if what.contains("captured row variable `e`")
+                if what.id == "rows-captured-variable-needs-owner" && what.get("var") == Some(&"e".into())
         ));
         let mut missing = rows.clone();
         missing.call_owners.remove(&call);
         assert!(matches!(
             normalized_rows(&missing),
             Err(CompileError::Unsupported(Unsupported { what, .. }))
-                if what.contains("no lexical effect-row owner")
+                if what.id == "rows-call-no-owner"
         ));
         let mut ambiguous = rows.clone();
         ambiguous.declarations.push(declaration.clone());
         assert!(matches!(
             normalized_rows(&ambiguous),
             Err(CompileError::Unsupported(Unsupported { what, .. }))
-                if what.contains("ambiguous effect-row declaration `apply`")
+                if what.id == "rows-ambiguous-declaration" && what.get("name") == Some(&"apply".into())
         ));
     }
 
@@ -2101,11 +2280,14 @@ let r := handle { apply(() => if perform choose() { 1 } else { 2 }) } with {
         ] {
             let input =
                 crate::lower::case_inputs::source_static("check/local-function-rows.eure", case);
-            let package = compile(input).unwrap_or_else(|error| panic!("{case}: {error}"));
-            let javascript =
-                compile_javascript(input).unwrap_or_else(|error| panic!("{case}: {error}"));
+            let (package, javascript) =
+                compile_both(input).unwrap_or_else(|error| panic!("{case}: {error}"));
             assert_eq!(format!("{package:?}"), format!("{javascript:?}"));
-            let function = package.fns.iter().find(|f| f.source == name).unwrap();
+            let function = package
+                .fns
+                .iter()
+                .find(|f| f.source.as_str() == name)
+                .unwrap();
             assert_eq!(function.tier, tier, "{case}");
             assert!(matches!(&function.params[0].ty, Ty::Fn(callback) if callback.tier == tier));
         }
@@ -2120,7 +2302,7 @@ let r := handle { apply(() => if perform choose() { 1 } else { 2 }) } with {
 "#;
         assert!(
             matches!(compile(foreign), Err(CompileError::Unsupported(Unsupported { what, .. }))
-            if what.contains("captured row variable `e`"))
+            if what.id == "rows-captured-variable-needs-owner" && what.get("var") == Some(&"e".into()))
         );
     }
 
@@ -2137,7 +2319,7 @@ fn caller(): Text ! {ask} {
 "#;
         assert!(
             matches!(compile_with(input, true), Err(CompileError::Unsupported(Unsupported { what, .. }))
-            if what.contains("row-polymorphic function `apply`"))
+            if what.id == "nir-the-row-polymorphic-function-used-as" && what.get("name") == Some(&"apply".into()))
         );
     }
 
@@ -2168,7 +2350,7 @@ perform show("r", r)
         let package = compile(suspending).unwrap();
         assert!(package.rust_unsupported.is_none());
         assert!(package.datas.iter().any(|d| {
-            d.name == "Handlers"
+            d.name.as_str() == "Handlers"
                 && d.generics.is_empty()
                 && d.ctors[0]
                     .fields
@@ -2189,7 +2371,7 @@ perform show("r", r)
 "#;
         assert!(
             matches!(&compile_javascript(many).unwrap().rust_unsupported, Some(Unsupported { what, .. })
-            if what.contains("carried by a record"))
+            if what.id == "nir-row-variable-carried-suspending")
         );
     }
 
@@ -2199,11 +2381,11 @@ perform show("r", r)
         for (case, message) in [
             (
                 "computed-callback-row-requires-backend-evidence",
-                "callback row needed to specialize",
+                "nir-callback-row-needed",
             ),
             (
                 "implicit-row-function-value-requires-backend-evidence",
-                "row-polymorphic function `apply`",
+                "nir-the-row-polymorphic-function-used-as",
             ),
         ] {
             let input =
@@ -2211,7 +2393,7 @@ perform show("r", r)
             for result in [compile(input), compile_javascript(input)] {
                 assert!(
                     matches!(result, Err(CompileError::Unsupported(Unsupported { what, .. }))
-                    if what.contains(message)),
+                    if what.id == message),
                     "{case}"
                 );
             }
@@ -2224,8 +2406,16 @@ perform show("r", r)
             "transitive-generic-captures-keep-own-and-outer-identities",
         ))
         .unwrap();
-        let first = package.fns.iter().find(|f| f.source == "first").unwrap();
-        let forward = package.fns.iter().find(|f| f.source == "forward").unwrap();
+        let first = package
+            .fns
+            .iter()
+            .find(|f| f.source.as_str() == "first")
+            .unwrap();
+        let forward = package
+            .fns
+            .iter()
+            .find(|f| f.source.as_str() == "forward")
+            .unwrap();
         assert_eq!(forward.generics.len(), 2);
         assert_ne!(forward.generics[0].0, forward.generics[1].0);
         let mut calls = 0;
@@ -2251,8 +2441,16 @@ perform show("r", r)
     #[test]
     fn lifted_capture_and_own_binder_have_distinct_names_and_bounds() {
         let package = compile(source("nested-same-name-capture-multiple-uses")).unwrap();
-        let inner = package.fns.iter().find(|f| f.source == "inner").unwrap();
-        let outer = package.fns.iter().find(|f| f.source == "outer").unwrap();
+        let inner = package
+            .fns
+            .iter()
+            .find(|f| f.source.as_str() == "inner")
+            .unwrap();
+        let outer = package
+            .fns
+            .iter()
+            .find(|f| f.source.as_str() == "outer")
+            .unwrap();
         assert_eq!(inner.generics.len(), 2);
         let own = &inner.generics[0].0;
         let captured = &inner.generics[1].0;
@@ -2319,7 +2517,11 @@ fn outer(): Unit {
 outer()
 "#;
         let package = compile(input).unwrap();
-        let outer = package.fns.iter().find(|f| f.source == "outer").unwrap();
+        let outer = package
+            .fns
+            .iter()
+            .find(|f| f.source.as_str() == "outer")
+            .unwrap();
         let ExprKind::Block(body) = &outer.body.kind else {
             panic!("outer block")
         };
@@ -2327,7 +2529,9 @@ outer()
             .stmts
             .iter()
             .find_map(|stmt| match stmt {
-                crate::Stmt::Let { local, .. } if local.name == "captured" => Some(local.id),
+                crate::Stmt::Let { local, .. } if local.name.as_str() == "captured" => {
+                    Some(local.id)
+                }
                 _ => None,
             })
             .unwrap();
@@ -2363,12 +2567,15 @@ outer()
             "transitive-owned-capture-keeps-declaration-binding",
             "recursive-shared-capture-keeps-declaration-binding",
         ] {
-            let package = compile(source(case)).unwrap_or_else(|error| panic!("{case}: {error}"));
-            let javascript =
-                compile_javascript(source(case)).unwrap_or_else(|error| panic!("{case}: {error}"));
+            let (package, javascript) =
+                compile_both(source(case)).unwrap_or_else(|error| panic!("{case}: {error}"));
             assert_eq!(format!("{package:?}"), format!("{javascript:?}"), "{case}");
             if case.starts_with("transitive-") {
-                let forward = package.fns.iter().find(|f| f.source == "forward").unwrap();
+                let forward = package
+                    .fns
+                    .iter()
+                    .find(|f| f.source.as_str() == "forward")
+                    .unwrap();
                 let captured = forward.params[0].local.id;
                 let mut forwarded = 0;
                 forward.body.walk(&mut |e| {
@@ -2388,7 +2595,11 @@ outer()
                 assert_eq!(forwarded, 1);
             }
             if case.starts_with("recursive-") {
-                let read = package.fns.iter().find(|f| f.source == "read").unwrap();
+                let read = package
+                    .fns
+                    .iter()
+                    .find(|f| f.source.as_str() == "read")
+                    .unwrap();
                 let mut recursive = 0;
                 read.body.walk(&mut |e| {
                     if let ExprKind::Call(call) = &e.kind
@@ -2411,7 +2622,11 @@ outer()
             "local-generic-inferred-result-is-instantiated",
         ] {
             let package = compile(source(case)).unwrap();
-            let identity = package.fns.iter().find(|f| f.source == "identity").unwrap();
+            let identity = package
+                .fns
+                .iter()
+                .find(|f| f.source.as_str() == "identity")
+                .unwrap();
             assert_eq!(identity.generics.len(), 1);
             let mut calls = Vec::new();
             for function in &package.fns {
@@ -2435,14 +2650,24 @@ outer()
         let program = tauto::surface::parse_program(input).unwrap();
         let types = tauto::types::check_program(&program);
         assert!(types.errors.is_empty(), "{:?}", types.errors);
-        let scheme = types.scheme("observe").unwrap();
+        let scheme = types
+            .schemes
+            .iter()
+            .chain(types.local_schemes.iter())
+            .find(|(name, _)| name.as_str() == "observe")
+            .unwrap()
+            .1;
         let b = scheme.generics[0].0.id();
         let a = scheme.generics[1].0.id();
         assert!(types.instantiations.values().any(|arguments| {
             arguments.get(b) == Some(&TTy::Text) && arguments.get(a) == Some(&TTy::Int(Width::W64))
         }));
         let package = compile(input).unwrap();
-        let observe = package.fns.iter().find(|f| f.source == "observe").unwrap();
+        let observe = package
+            .fns
+            .iter()
+            .find(|f| f.source.as_str() == "observe")
+            .unwrap();
         let mut calls = 0;
         for function in &package.fns {
             function.body.walk(&mut |e| {
@@ -2463,8 +2688,16 @@ outer()
             "captured-source-name-does-not-shadow-function-value-wrapper",
         ))
         .unwrap();
-        let inner = package.fns.iter().find(|f| f.source == "inner").unwrap();
-        let outer = package.fns.iter().find(|f| f.source == "outer").unwrap();
+        let inner = package
+            .fns
+            .iter()
+            .find(|f| f.source.as_str() == "inner")
+            .unwrap();
+        let outer = package
+            .fns
+            .iter()
+            .find(|f| f.source.as_str() == "outer")
+            .unwrap();
         let mut calls = Vec::new();
         outer.body.walk(&mut |e| {
             if let ExprKind::Call(call) = &e.kind
@@ -2482,10 +2715,18 @@ outer()
     #[test]
     fn function_values_propagate_their_generic_bounds() {
         let package = compile(source("local-function-value-keeps-generic-bound-edges")).unwrap();
-        let outer = package.fns.iter().find(|f| f.source == "outer").unwrap();
+        let outer = package
+            .fns
+            .iter()
+            .find(|f| f.source.as_str() == "outer")
+            .unwrap();
         assert_eq!(outer.generics.len(), 1);
         assert!(outer.generics[0].1.contains(&Bound::Show));
-        let echo = package.fns.iter().find(|f| f.source == "echo").unwrap();
+        let echo = package
+            .fns
+            .iter()
+            .find(|f| f.source.as_str() == "echo")
+            .unwrap();
         let mut values = Vec::new();
         outer.body.walk(&mut |e| {
             if let ExprKind::FnValue { inst, targs } = &e.kind
@@ -2504,7 +2745,11 @@ outer()
             "generic-named-owned-affine-capture-single-use",
         ] {
             let package = compile(source(case)).unwrap();
-            let consume = package.fns.iter().find(|f| f.source == "consume").unwrap();
+            let consume = package
+                .fns
+                .iter()
+                .find(|f| f.source.as_str() == "consume")
+                .unwrap();
             assert_eq!(consume.params[0].ty, Ty::Buf);
             assert_eq!(consume.params[0].local.repr, Repr::Plain);
             let mut calls = 0;
@@ -2531,8 +2776,16 @@ outer()
             "owned-outer-generic-capture-keeps-its-identity-and-kind",
         ))
         .unwrap();
-        let inner = package.fns.iter().find(|f| f.source == "inner").unwrap();
-        let outer = package.fns.iter().find(|f| f.source == "outer").unwrap();
+        let inner = package
+            .fns
+            .iter()
+            .find(|f| f.source.as_str() == "inner")
+            .unwrap();
+        let outer = package
+            .fns
+            .iter()
+            .find(|f| f.source.as_str() == "outer")
+            .unwrap();
         assert_eq!(inner.generics.len(), 2);
         assert_ne!(inner.generics[0].0, inner.generics[1].0);
         assert!(inner.generics[0].1.contains(&Bound::Clone));
@@ -2568,7 +2821,11 @@ outer()
             ("generic-named-mutable-cell-capture-stays-shared", "next"),
         ] {
             let package = compile(source(case)).unwrap();
-            let callee = package.fns.iter().find(|f| f.source == name).unwrap();
+            let callee = package
+                .fns
+                .iter()
+                .find(|f| f.source.as_str() == name)
+                .unwrap();
             assert!(matches!(callee.params[0].ty, Ty::Ref(_) | Ty::RefMut(_)));
             let mut calls = 0;
             for function in &package.fns {
@@ -2595,8 +2852,15 @@ outer()
         let _ = compile(source("var-uses-function-type-parameter")).unwrap();
         let second = compile(input).unwrap();
         let javascript = compile_javascript(input).unwrap();
-        assert_eq!(format!("{first:?}"), format!("{second:?}"));
-        assert_eq!(format!("{first:?}"), format!("{javascript:?}"));
+        let names = |package: &Package| {
+            package
+                .fns
+                .iter()
+                .map(|function| function.rust_name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&first), names(&second));
+        assert_eq!(names(&first), names(&javascript));
     }
 
     #[test]
@@ -2607,8 +2871,24 @@ outer()
         let types = tauto::types::check_program(&program).with_prelude();
         assert!(types.errors.is_empty(), "{:?}", types.errors);
         let rows = tauto::rows::check_program_rows(&program);
-        let outer = types.scheme("outer").unwrap().generics[0].0.clone();
-        let inner = types.scheme("inner").unwrap().generics[0].0.clone();
+        let outer = types
+            .schemes
+            .iter()
+            .find(|(name, _)| name.as_str() == "outer")
+            .unwrap()
+            .1
+            .generics[0]
+            .0
+            .clone();
+        let inner = types
+            .local_schemes
+            .iter()
+            .find(|(name, _)| name.as_str() == "inner")
+            .unwrap()
+            .1
+            .generics[0]
+            .0
+            .clone();
         assert_ne!(outer.id(), inner.id());
         assert_eq!(outer.name(), inner.name());
         let mut lowerer = Lowerer::new(
@@ -2617,6 +2897,7 @@ outer()
                 types: &types,
                 rows: &rows,
                 lib: false,
+                expansion_only: None,
             },
             false,
             HashMap::new(),
@@ -2982,5 +3263,72 @@ perform show("value", result)
     #[allow(dead_code)]
     pub fn source(file: &str, name: &str) -> String {
         source_static(file, name).to_string()
+    }
+}
+
+#[cfg(test)]
+mod library_entry_tests {
+    use super::*;
+
+    // This checks the lowering API's root boundary using surface data, without parsing.
+    #[test]
+    fn selected_entries_keep_transitive_calls_and_exclude_other_functions() {
+        let span = Span::new(0, 0);
+        let function = |name: &str, body: SurfaceTerm| {
+            Stmt::Fn(FnDecl {
+                name: name.into(),
+                vis: Default::default(),
+                generics: vec![],
+                generic_types: vec![],
+                rows: vec![],
+                bounds: vec![],
+                bound_spans: vec![],
+                params: vec![],
+                borrows: vec![],
+                param_types: vec![],
+                result: None,
+                effects: None,
+                where_: vec![],
+                span,
+                opaque: false,
+                decreasing_by: None,
+                generates: None,
+                budget: None,
+                body,
+            })
+        };
+        let mut program = Program {
+            stmts: vec![
+                function("helper", SurfaceTerm::new(TermKind::Bool(true), span)),
+                function("entry", SurfaceTerm::app("helper", vec![], span)),
+                function("unused", SurfaceTerm::new(TermKind::Bool(false), span)),
+            ],
+            errors: vec![],
+        };
+        tauto::resolve::Resolver::default().statements(&mut program.stmts);
+        let entries = BTreeSet::from(["entry".to_string()]);
+        let package = compile_program(
+            &program,
+            None,
+            false,
+            false,
+            true,
+            true,
+            Some(&entries),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(
+            package
+                .exports
+                .iter()
+                .map(|e| e.name.as_str())
+                .collect::<Vec<_>>(),
+            ["entry"]
+        );
+        assert!(package.fns.iter().any(|f| f.source.as_str() == "helper"));
+        assert!(!package.fns.iter().any(|f| f.source.as_str() == "unused"));
+        let all = compile_program(&program, None, false, false, true, true, None, |_| {}).unwrap();
+        assert_eq!(all.exports.len(), 3);
     }
 }

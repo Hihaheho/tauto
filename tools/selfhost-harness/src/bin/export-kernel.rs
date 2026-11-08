@@ -4,10 +4,10 @@ use tauto_kernel::check::selfhost::Recorder;
 
 fn main() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    let (expected, path) = match args.as_slice() {
-        [path] => (false, path),
-        [flag, path] if flag == "--expected" => (true, path),
-        _ => return Err("usage: export-kernel [--expected] FILE".into()),
+    let (mode, path) = match args.as_slice() {
+        [path] => ("", path),
+        [flag, path] if flag == "--expected" || flag == "--time" => (flag.as_str(), path),
+        _ => return Err("usage: export-kernel [--expected | --time] FILE".into()),
     };
     let path = path.clone();
     let replay = std::thread::Builder::new()
@@ -38,13 +38,11 @@ fn main() -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .join()
         .map_err(|_| "kernel export panicked")??;
-    print!(
-        "{}",
-        if expected {
-            replay.expected
-        } else {
-            replay.input
-        }
-    );
+    match mode {
+        "--expected" => print!("{}", replay.expected),
+        // The Rust core's time in the recorded operations, in microseconds.
+        "--time" => println!("{}", replay.time.as_micros()),
+        _ => print!("{}", replay.input),
+    }
     Ok(())
 }

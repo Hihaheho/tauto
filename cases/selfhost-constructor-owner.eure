@@ -1,0 +1,186 @@
+// Constructor names are selected by the expected owning type.
+
+@ cases.pattern-and-argument-owner
+source = ```nib
+enum Reader { Read(Text) }
+enum Number { Read(i64) }
+fn read(value: Reader): Text ! {} { match value { Read(text) => text } }
+fn outer(): Text ! {} { read(Read("ok")) }
+```
+types = "ok"
+
+@ cases.reverse-declaration-order
+source = ```nib
+enum Number { Read(i64) }
+enum Reader { Read(Text) }
+fn read(value: Reader): Text ! {} { match value { Read(text) => text } }
+fn outer(): Text ! {} { read(Read("ok")) }
+```
+types = "ok"
+
+@ cases.generic-owner
+source = ```nib
+enum Box(A: Type) { Same(A) }
+enum Other { Same(i64) }
+fn read(value: Box(Text)): Text ! {} { match value { Same(text) => text } }
+```
+types = "ok"
+
+@ cases.record-owner-field-order
+source = ```nib
+enum Reader { Read { first: Text, second: i64 } }
+enum Number { Read { second: Text, first: i64 } }
+fn read(value: Reader): Text ! {} { match value { Read { second: n, first: text } => text } }
+```
+types = "ok"
+
+@ cases.nullary-owner
+source = ```nib
+enum Left { Empty, Item(i64) }
+enum Right { Empty, Item(Text) }
+fn read(value: Left): i64 ! {} { match value { Empty => 0, Item(n) => n } }
+```
+types = "ok"
+
+@ cases.borrowed-owner
+source = ```nib
+enum Left { Same(i64) }
+enum Right { Same(Text) }
+fn read(&value: Left): i64 ! {} { match value { Same(n) => n } }
+```
+types = "ok"
+
+@ cases.ambiguous-without-owner
+source = ```nib
+enum Left { Same(i64) }
+enum Right { Same(i64) }
+let value := Same(1)
+```
+types = "error: ambiguous constructor"
+
+@ cases.wrong-owner
+source = ```nib
+enum Left { Same(i64) }
+enum Right { Other(i64) }
+fn read(value: Right): i64 ! {} { match value { Same(n) => n } }
+```
+types = "error: a pattern of Left cannot match Right"
+
+@ cases.unknown-pattern-owner
+source = ```nib
+enum Left { Same(i64) }
+enum Right { Same(i64) }
+fn read<A>(value: A): i64 ! {} { match value { Same(n) => n } }
+```
+types = "error: ambiguous constructor"
+
+@ cases.mixed-arity-binder
+source = ```nib
+enum Left { Same(i64) }
+enum Right { Same }
+fn read(value: Left): i64 ! {} { match value { Same => 0 } }
+```
+types = "ok"
+
+@ cases.mixed-arity-binder-reverse
+source = ```nib
+enum Right { Same }
+enum Left { Same(i64) }
+fn read(value: Left): i64 ! {} { match value { Same => 0 } }
+```
+types = "ok"
+
+@ cases.mixed-arity-nullary-not-catchall
+source = ```nib
+enum Left { Same, Other }
+enum Right { Same(i64) }
+fn read(value: Left): i64 ! {} { match value { Same => 0 } }
+```
+types = "error: does not cover every value"
+
+@ cases.selected-linear-field-drop
+source = ```nib
+linear struct Token {}
+linear enum Left { Same(Token) }
+enum Right { Same(i64) }
+fn discard(value: Left): Unit ! {} { match value { Same(_) => #() } }
+```
+types = "ok"
+lin = "error: `_` drops a linear Token"
+
+@ cases.unselected-linear-field-does-not-drop
+source = ```nib
+linear struct Token {}
+linear enum Left { Same(Token) }
+enum Right { Same(i64) }
+fn discard(value: Right): Unit ! {} { match value { Same(_) => #() } }
+```
+types = "ok"
+lin = "ok"
+
+@ cases.misspelled-constructor-names-the-near-one
+source = ```nib
+enum Pair { Mk(i64, i64) }
+fn fst(p: Pair): i64 ! {} { match p { mk(a, b) => a } }
+```
+types = "error: `mk` is not a constructor; did you mean `main::Pair::Mk`?"
+
+@ cases.name-near-no-constructor-has-no-hint
+source = ```nib
+enum Pair { Mk(i64, i64) }
+fn fst(p: Pair): i64 ! {} { match p { Triple(a, b) => a } }
+```
+types = "error: `Triple` is not a constructor"
+
+@ cases.mixed-arity-binder-retains-its-local-reference
+source = ```nib
+enum Left { Same(i64) }
+enum Right { Same }
+fn read(value: Left): Left ! {} { match value { Same => Same } }
+let value: Left := read(Same(7))
+match value { Same(number) => perform show("number", number) }
+```
+types = "ok"
+shows = ["number = 7"]
+rust_shows = ["number = 7"]
+javascript_shows = ["number = 7"]
+
+@ cases.mixed-arity-binders-in-separate-arms-have-distinct-identities
+source = ```nib
+enum Left { Same(i64) }
+enum Right { Same }
+fn read(first: Left, second: Left): Left ! {} {
+  match first { Same => { let saved := Same; match second { Same => saved } } }
+}
+let value: Left := read(Same(7), Same(9))
+match value { Same(number) => perform show("number", number) }
+```
+types = "ok"
+shows = ["number = 7"]
+rust_shows = ["number = 7"]
+javascript_shows = ["number = 7"]
+
+@ cases.a-nullary-constructor-beside-a-nonreturning-arm-retains-its-type
+source = ```nib
+effect fail(): Never
+fn choose(items: List(u64), stop: Bool): List(u64) ! {fail} {
+  match items {
+    Nil => match stop { true => perform fail(), false => Nil }
+    Cons(first, rest) => rest
+  }
+}
+```
+types = "ok"
+
+@ cases.extracted-zero-pattern-retains-its-constructor-reference
+extract = true
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+fn count(n: Nat): Nat {
+  ⊢ Nat from match n { Zero => 0, Succ(rest) => Succ(count(rest)) }
+}
+perform show("count", count(3))
+```
+shows = ["count = 3"]
+rust_shows = ["count = 3"]
+javascript_shows = ["count = 3"]

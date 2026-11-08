@@ -8,6 +8,7 @@
 //! pieces of `declare_loaded` a caller needs to lay out the verdicts of one
 //! statement.
 
+use crate::surface::Name;
 use std::collections::HashSet;
 
 use super::*;
@@ -49,6 +50,11 @@ impl Checker {
         self.kernel.shown = shown;
     }
 
+    /// [`Kernel::source_alias`].
+    pub fn source_alias(&mut self, spelling: &str, reference: &tauto_surface::identity::DeclRef) {
+        self.kernel.source_alias(spelling, reference);
+    }
+
     /// The constants the kernel knows now, sorted by name.
     pub fn library(&self) -> Vec<LibEntry> {
         self.kernel.library()
@@ -68,16 +74,16 @@ impl Checker {
 
 /// The names the kernel knew, to tell what a statement added.
 struct Names {
-    globals: HashSet<String>,
-    inds: HashSet<String>,
-    ctors: HashSet<String>,
-    recs: HashSet<String>,
-    templates: HashSet<String>,
+    globals: HashSet<Name>,
+    inds: HashSet<Name>,
+    ctors: HashSet<Name>,
+    recs: HashSet<Name>,
+    templates: HashSet<Name>,
 }
 
 impl Names {
     fn of(k: &Kernel) -> Names {
-        let keys = |m: &mut dyn Iterator<Item = &String>| m.cloned().collect();
+        let keys = |m: &mut dyn Iterator<Item = &Name>| m.cloned().collect();
         Names {
             globals: keys(&mut k.globals.keys()),
             inds: keys(&mut k.inds.keys()),

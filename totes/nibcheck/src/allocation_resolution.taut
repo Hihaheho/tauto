@@ -10,7 +10,11 @@ import "unify_sound.taut"
 pub def SubstValuesAllocated(
   limit: Nat,
   subst: Ordmap(Nat, Ty)
-): Prop := ∀ index: Nat. ∀ value: Ty. ∀ found: Ordmap::get(subst, index, Ordmap::compare_nat) = Some(value). TypeAllocated(limit, value)
+): Prop := ∀ index: Nat. ∀ value: Ty. ∀ found: Ordmap::get(
+  subst,
+  index,
+  Ordmap::compare_nat
+) = Some(value). TypeAllocated(limit, value)
 pub def ResolveAllocatedIH(
   fuel: Nat,
   limit: Nat,
@@ -30,7 +34,7 @@ pub theorem allocated_resolve_variable(
   found: Option(Ty),
   equal: Ordmap::get(subst, index, Ordmap::compare_nat) = found
 ): TypeAllocated(limit, ty_resolve_var(fuel, subst, index, found)) {
-  match found: TypeAllocated(limit, ty_resolve_var(fuel, subst, index, found)) {
+  ⊢ TypeAllocated(limit, ty_resolve_var(fuel, subst, index, found)) from match found {
     None => bounded
     Some(value) => ih(value, values(index, value, equal))
   }
@@ -55,7 +59,7 @@ pub theorem allocated_resolve_step(
   ty: Ty,
   allocated: TypeAllocated(limit, ty)
 ): TypeAllocated(limit, ty_resolve_in(Succ(rest), subst, ty)) {
-  match ty: TypeAllocated(limit, ty_resolve_in(Succ(rest), subst, ty)) {
+  ⊢ TypeAllocated(limit, ty_resolve_in(Succ(rest), subst, ty)) from match ty {
     TyInt(width) => Trivial
     TyBool => Trivial
     TyText => Trivial
@@ -117,7 +121,7 @@ pub theorem allocated_resolve_list_step(
   types: List(Ty),
   allocated: TypeListAllocated(limit, types)
 ): TypeListAllocated(limit, ty_resolve_list_in(Succ(rest), subst, types)) {
-  match types: TypeListAllocated(limit, ty_resolve_list_in(Succ(rest), subst, types)) {
+  ⊢ TypeListAllocated(limit, ty_resolve_list_in(Succ(rest), subst, types)) from match types {
     Nil => Trivial
     Cons(head, tail) => AndIntro(
       ty_ih(head, And::left(allocated)),
@@ -131,10 +135,10 @@ pub theorem allocated_resolve_both(
   subst: Ordmap(Nat, Ty),
   values: SubstValuesAllocated(limit, subst)
 ): And(ResolveAllocatedIH(fuel, limit, subst), ResolveListAllocatedIH(fuel, limit, subst)) {
-  match fuel: And(
+  ⊢ And(
     ResolveAllocatedIH(fuel, limit, subst),
     ResolveListAllocatedIH(fuel, limit, subst)
-  ) {
+  ) from match fuel {
     Zero => AndIntro(ty => allocated => allocated, types => allocated => allocated)
     Succ(rest) => {
       let ih: And(

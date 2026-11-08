@@ -10,7 +10,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
-use tauto_message::msg;
+use tauto_message::{Message, msg};
 use tauto_parol::Span;
 
 use super::program::{FnDecl, Stmt};
@@ -40,7 +40,7 @@ pub fn collect(stmts: &[Stmt], out: &mut Sets) {
         match s {
             Stmt::Effect(e) if e.generics.is_empty() => {
                 if let Some(set) = &e.set {
-                    out.insert(e.name.clone(), (set.clone(), e.span));
+                    out.insert(e.name.to_string(), (set.clone(), e.span));
                 }
             }
             Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => collect(items, out),
@@ -52,7 +52,17 @@ pub fn collect(stmts: &[Stmt], out: &mut Sets) {
 /// Writes each set of `stmts` and of the prelude out in every row of
 /// `stmts`, and drops the sets' declarations. `others` are the sets other
 /// files declare, which a file may name too.
-pub fn expand(stmts: &mut Vec<Stmt>, others: &Sets) -> Vec<(String, Span)> {
+pub fn expand(stmts: &mut Vec<Stmt>, others: &Sets) -> Vec<(Message, Span)> {
+    expand_resolving(stmts, others, &mut |_| {})
+}
+
+/// Resolves the effects inserted by a set in the declaration environment.
+/// References already written in a row retain their source visibility checks.
+pub fn expand_resolving(
+    stmts: &mut Vec<Stmt>,
+    others: &Sets,
+    resolve: &mut dyn FnMut(&mut super::Name),
+) -> Vec<(Message, Span)> {
     let mut errors = Vec::new();
     generic_sets(stmts, &mut errors);
     let mut own = Sets::new();
@@ -83,10 +93,28 @@ pub fn expand(stmts: &mut Vec<Stmt>, others: &Sets) -> Vec<(String, Span)> {
     if outer.is_empty() {
         return errors;
     }
+    let resolved: HashMap<String, Vec<super::Name>> = outer
+        .iter()
+        .map(|(name, effects)| {
+            let effects = effects
+                .iter()
+                .map(|effect| {
+                    let mut effect = effect.into();
+                    resolve(&mut effect);
+                    effect
+                })
+                .collect();
+            (name.clone(), effects)
+        })
+        .collect();
     for s in stmts.iter_mut() {
-        rows_of_stmt(s, &mut |row| write_row(row, &outer), &mut |b| {
-            if let Some(effects) = outer.get(b.as_str()) {
-                *b = bound_of_set(b, effects);
+        rows_of_stmt(s, &mut |row| write_row(row, &resolved), &mut |bound| {
+            let name = bound.as_ref().to_string();
+            if let Some(effects) = outer.get(&name) {
+                bound.edit_spelling(&mut |written| *written = bound_of_set(&name, effects));
+                if let Some(members) = bound.effects_mut() {
+                    *members = resolved[&name].clone();
+                }
             }
         });
     }
@@ -95,11 +123,11 @@ pub fn expand(stmts: &mut Vec<Stmt>, others: &Sets) -> Vec<(String, Span)> {
 
 /// A set with type parameters (`effect State(T: Type) { Get(T), Put(T) }`) would
 /// need its arguments put in its effects; it is not read yet.
-fn generic_sets(stmts: &[Stmt], errors: &mut Vec<(String, Span)>) {
+fn generic_sets(stmts: &[Stmt], errors: &mut Vec<(Message, Span)>) {
     for s in stmts {
         match s {
             Stmt::Effect(e) if e.set.is_some() && !e.generics.is_empty() => errors.push((
-                msg!("surface-effect-set-generic", name = &e.name).to_string(),
+                msg!("surface-effect-set-generic", name = e.name.as_str()),
                 e.span,
             )),
             Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => generic_sets(items, errors),
@@ -114,7 +142,7 @@ fn effects_declared(stmts: &[Stmt], out: &mut HashSet<String>) {
     for s in stmts {
         match s {
             Stmt::Effect(e) if e.set.is_none() => {
-                out.insert(e.name.clone());
+                out.insert(e.name.to_string());
             }
             Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => effects_declared(items, out),
             _ => {}
@@ -128,7 +156,7 @@ fn effects_declared(stmts: &[Stmt], out: &mut HashSet<String>) {
 fn written_out(
     sets: &Sets,
     outer: &HashMap<String, Vec<String>>,
-    errors: &mut Vec<(String, Span)>,
+    errors: &mut Vec<(Message, Span)>,
 ) -> HashMap<String, Vec<String>> {
     fn go(
         name: &str,
@@ -136,7 +164,7 @@ fn written_out(
         outer: &HashMap<String, Vec<String>>,
         done: &mut HashMap<String, Vec<String>>,
         on: &mut Vec<String>,
-        errors: &mut Vec<(String, Span)>,
+        errors: &mut Vec<(Message, Span)>,
     ) -> Vec<String> {
         if let Some(d) = done.get(name) {
             return d.clone();
@@ -153,8 +181,7 @@ fn written_out(
                     "surface-effect-set-names-itself",
                     name = name,
                     path = on.join(" -> ")
-                )
-                .to_string(),
+                ),
                 *span,
             ));
             return Vec::new();
@@ -196,13 +223,16 @@ fn drop_sets(stmts: &mut Vec<Stmt>) {
 }
 
 /// A row with each set's name replaced by its effects, each effect once.
-fn write_row(row: &mut Vec<String>, sets: &HashMap<String, Vec<String>>) {
-    if !row.iter().any(|e| sets.contains_key(e.as_str())) {
+fn write_row(row: &mut Vec<super::Name>, sets: &HashMap<String, Vec<super::Name>>) {
+    if !row
+        .iter()
+        .any(|e| e.spelling().is_some_and(|s| sets.contains_key(s)))
+    {
         return;
     }
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<super::Name> = Vec::new();
     for e in row.drain(..) {
-        match sets.get(e.as_str()) {
+        match e.spelling().and_then(|s| sets.get(s)) {
             Some(effects) => {
                 for e in effects {
                     if !out.contains(e) {
@@ -227,14 +257,14 @@ fn write_row(row: &mut Vec<String>, sets: &HashMap<String, Vec<String>>) {
 /// `bound` on each bound of a function's generics.
 fn rows_of_stmt(
     s: &mut Stmt,
-    f: &mut dyn FnMut(&mut Vec<String>),
-    bound: &mut dyn FnMut(&mut String),
+    f: &mut dyn FnMut(&mut Vec<super::Name>),
+    bound: &mut dyn FnMut(&mut super::program::GenericBound),
 ) {
     fns_of_decl(s, &mut |d| {
         if let Some(row) = &mut d.effects {
             f(row);
         }
-        d.bounds.iter_mut().flatten().for_each(|b| bound(b));
+        d.bounds.iter_mut().flatten().for_each(&mut *bound);
     });
     walk::stmt(s, &mut |t| match std::sync::Arc::make_mut(&mut t.kind) {
         TermKind::Pi {
@@ -246,7 +276,7 @@ fn rows_of_stmt(
                 if let Some(row) = &mut d.effects {
                     f(row);
                 }
-                d.bounds.iter_mut().flatten().for_each(|b| bound(b));
+                d.bounds.iter_mut().flatten().for_each(&mut *bound);
             })
         }),
         _ => {}
@@ -296,7 +326,7 @@ mod tests {
     fn read(source: &str) -> (Vec<Stmt>, Vec<String>) {
         tauto_messages::install();
         let program = parse_program_as_written(source).unwrap();
-        let errors = program.errors.iter().map(|(m, _)| m.clone()).collect();
+        let errors = program.errors.iter().map(|(m, _)| m.to_string()).collect();
         (program.stmts, errors)
     }
 
@@ -304,7 +334,10 @@ mod tests {
         stmts
             .iter()
             .find_map(|s| match s {
-                Stmt::Fn(f) if f.name == name => f.effects.clone(),
+                Stmt::Fn(f) if f.name.spelling() == Some(name) => f
+                    .effects
+                    .as_ref()
+                    .map(|row| row.iter().map(ToString::to_string).collect()),
                 _ => None,
             })
             .unwrap()

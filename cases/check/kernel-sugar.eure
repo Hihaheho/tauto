@@ -1,0 +1,158 @@
+// `¬P` is the function type `(P) -> False`: a proof is a λ, a use is an application.
+@ cases.negation-is-a-function-to-false-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem zero_ne_one(): ¬(Eq(Nat, 0, 1)) {
+  (e: Eq(Nat, 0, 1)) => ⊢ False from match e {
+  }
+}
+theorem by_function(P: Prop, f: (P) -> False): ¬P {
+  f
+}
+theorem applied(P: Prop, n: ¬P, p: P): False {
+  n(p)
+}
+theorem twice(P: Prop, p: P): ¬¬P {
+  (n: ¬P) => n(p)
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::zero_ne_one" = "ok"
+checks."input/main.taut::by_function" = "ok"
+checks."input/main.taut::applied" = "ok"
+checks."input/main.taut::twice" = "ok"
+
+// `a == b` in a type reads as in a body: in a parameter's type, a `let` annotation and a
+// match's result type.
+@ cases.a-comparison-in-a-type-reads-as-in-a-body-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem from_param(a: Nat, b: Nat, h: a == b = true): Nat::eq(a, b) = true {
+  h
+}
+theorem in_result(a: Nat): a == a = true {
+  Nat::eq_refl(a)
+}
+theorem in_let(a: Nat): Nat::eq(a, a) = true {
+  let h: a == a = true := Nat::eq_refl(a)
+  h
+}
+theorem in_goal(a: Nat, b: Bool): Nat::eq(a, a) = true {
+  ⊢ a == a = true from match b {
+    true => Nat::eq_refl(a)
+    false => Nat::eq_refl(a)
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::from_param" = "ok"
+checks."input/main.taut::in_result" = "ok"
+checks."input/main.taut::in_let" = "ok"
+checks."input/main.taut::in_goal" = "ok"
+
+// `if c { a } else { b }` in a kernel term is `match c: T { true => a  false => b }`; `T` is
+// the type expected there, or the type of the `then` branch, or of the `else` branch.
+@ cases.an-if-in-a-kernel-term-is-a-match-on-bool-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Sym: Type {
+  Pad: Sym
+  Digit(n: Nat): Sym
+}
+inductive Opt(A: Type): Type {
+  No: Opt(A)
+  Yes(a: A): Opt(A)
+}
+inductive SymBack(c: Nat, o: Opt(Sym)): Prop {
+  Any: SymBack(c, o)
+}
+fn pad_if(z: Bool): Opt(Sym) {
+  ⊢ Opt(Sym) from match z {
+    true => Yes(Pad)
+    false => No
+  }
+}
+theorem in_type(c: Nat, z: Bool): SymBack(c, if z { Yes(Pad) } else { No }) {
+  Any
+}
+theorem else_typed(): if true { No } else { Yes(Pad) } = pad_if(false) {
+  Refl
+}
+theorem in_proof(z: Bool, p: True): True {
+  if z { p } else { Trivial }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::Sym" = "ok"
+checks."input/main.taut::Opt" = "ok"
+checks."input/main.taut::SymBack" = "ok"
+checks."input/main.taut::pad_if" = "ok"
+checks."input/main.taut::in_type" = "ok"
+checks."input/main.taut::else_typed" = "ok"
+checks."input/main.taut::in_proof" = "ok"
+
+// An `if` whose branches both leave their type open needs the type written, and an `if` in a
+// kernel term has an `else`.
+@ cases.an-if-in-a-kernel-term-needs-a-type-and-an-else-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Opt(A: Type): Type {
+  No: Opt(A)
+  Yes(a: A): Opt(A)
+}
+theorem open_type(z: Bool): if z { No } else { No } = No {
+  Refl
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::Opt" = "ok"
+checks."input/main.taut::open_type" = "error: "
+@ cases.an-if-in-a-kernel-term-needs-a-type-and-an-else-0.diagnostics[]
+file = "input/main.taut"
+name = "open_type"
+message = "Neither branch of this `if` has a type to take: a numeric literal, `[]`, a hole, a λ, or a constructor with parameters written without arguments (`Nil`, `None`) leaves it open. Write its type: `⊢ T from match c { true => a  false => b }`"
+span = "«if z { No } else { No }»"
+
+// A `match` written in an arm's goal `⊢ G from p` and in a nested match's result type is
+// compiled as in a theorem statement, not rejected as a term the kernel does not read.
+@ cases.a-match-in-an-arm-goal-and-a-motive-reads-as-in-a-statement-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn pick(a: Bool, b: Bool, c: Nat): Nat {
+  ⊢ Nat from match a {
+    false => ⊢ Nat from match b {
+      false => c
+      true => c
+    }
+    true => 1
+  }
+}
+theorem in_goal(a: Bool, b: Bool, c: Nat): pick(a, b, c) = pick(a, b, c) {
+  ⊢ pick(a, b, c) = pick(a, b, c) from match a {
+    false => ⊢ (⊢ Nat from match b {
+      false => c
+      true => c
+    }) = (⊢ Nat from match b {
+      false => c
+      true => c
+    }) from match b {
+      false => ⊢ c = c from Refl
+      true => ⊢ c = c from Refl
+    }
+    true => Refl
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::pick" = "ok"
+checks."input/main.taut::in_goal" = "ok"

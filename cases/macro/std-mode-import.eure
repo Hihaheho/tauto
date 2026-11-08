@@ -1,0 +1,35 @@
+// `import std::Mode` brings the macro `mode` and its syntax tables with it, in a tote that also
+// has a module named like a local the library writes (`s`), and runs.
+
+@ cases.a-tote-runs-with-the-mode-macro-imported-from-std-and-a-module-named-s
+files_tote = "r"
+files."r/Tauto.eure" = 'package { name = "r"  version = "0.1.0" }'
+files."r/src/rules.taut" = ````tauto
+import std::Mode { mode }
+
+pub(open) inductive Ty: Type {
+  TNat: Ty
+}
+
+@mode!(
+  ```
+check(rec term, out ty) -> Check { Accepted | Rejected }
+```
+) => inductive Check, fn check
+pub(open) inductive HasTy: (Ty, Ty) -> Prop {
+  TyNat: HasTy(TNat, TNat)
+}
+````
+files."r/src/mods.taut" = ````tauto
+module s {
+  pub fn one(): u64 { 1 }
+}
+````
+files."r/src/main.taut" = ````tauto
+import "rules.taut" { Ty }
+import "mods.taut" { s }
+
+perform show("x", s::one())
+perform show("t", TNat)
+````
+shows = ["x = 1", "t = TNat"]

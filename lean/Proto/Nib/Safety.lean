@@ -71,6 +71,7 @@ mutual
     | .text s => .text s
     | .dec q => .dec q
     | .flt f => .flt f
+    | .flt32 f => .flt32 f
     | .prim p T ρ => .prim p T ρ
     | .lam ps b => .lam ps (b.ren (upRN ps.length ξ))
     | .app f args => .app (f.ren ξ) (args.map (·.ren ξ))
@@ -119,6 +120,7 @@ mutual
     | .text s => .text s
     | .dec q => .dec q
     | .flt f => .flt f
+    | .flt32 f => .flt32 f
     | .prim p T ρ => .prim p T ρ
     | .lam ps b => .lam ps (b.subst (upN ps.length σ))
     | .app f args => .app (f.subst σ) (args.map (·.subst σ))
@@ -160,6 +162,7 @@ mutual
     | .text s => .text s
     | .dec q => .dec q
     | .flt f => .flt f
+    | .flt32 f => .flt32 f
     | .prim p T ρ => .prim p (T.inst θ) (Row.inst θ ρ)
     | .lam ps b => .lam (ps.map (·.inst θ)) (b.inst θ)
     | .app f args => .app (f.inst θ) (args.map (·.inst θ))
@@ -361,6 +364,9 @@ inductive Step (sg : Sig) : Store → Tm → Store → Tm → Prop where
   | floatArith {μ op T ρ a b c} :
       op.flt a b = some c →
       Step sg μ (.app (.prim (.floatArith op) T ρ) [.flt a, .flt b]) μ (.flt c)
+  | float32Arith {μ op T ρ a b c} :
+      op.flt32 a b = some c →
+      Step sg μ (.app (.prim (.float32Arith op) T ρ) [.flt32 a, .flt32 b]) μ (.flt32 c)
   | toDecimal {μ w T ρ w' n} : Step sg μ (.app (.prim (.decimal w) T ρ) [.int w' n]) μ (.dec n)
   | concat {μ T ρ a b} :
       Step sg μ (.app (.prim .concat T ρ) [.text a, .text b]) μ (.text (a ++ b))
@@ -741,6 +747,7 @@ theorem Atom.self : ∀ {A : Ty}, ¬ IsUnion A.strip → A.strip ≠ .never → 
   | .text, _, _ => .plain trivial
   | .decimal, _, _ => .plain trivial
   | .float, _, _ => .plain trivial
+  | .float32, _, _ => .plain trivial
   | .fn _ _ _, _, _ => .plain trivial
   | .cell _, _, _ => .plain trivial
   | .info _ _, _, _ => .plain trivial
@@ -776,6 +783,7 @@ def Head (sg : Sig) (S Γ : Ctx) : Tm → Ty → Row → Prop
   | .text _, A, ρ => A = .text ∧ ρ = []
   | .dec _, A, ρ => A = .decimal ∧ ρ = []
   | .flt _, A, ρ => A = .float ∧ ρ = []
+  | .flt32 _, A, ρ => A = .float32 ∧ ρ = []
   | .prim p T ρ', A, ρ => A = p.ty T ρ' ∧ ρ = [] ∧ Prim.Ok sg p T ρ'
   | .lam ps b, A, ρ => ρ = [] ∧ ∃ B ρl, A = .fn ps B ρl ∧ HasType sg S (ps ++ Γ) b B ρl
   | .app f args, A, ρ =>
@@ -826,6 +834,7 @@ theorem Head.hasType {sg S Γ t A ρ} (h : Head sg S Γ t A ρ) : HasType sg S �
   | text s => obtain ⟨rfl, rfl⟩ := h; exact .text
   | dec q => obtain ⟨rfl, rfl⟩ := h; exact .dec
   | flt f => obtain ⟨rfl, rfl⟩ := h; exact .flt
+  | flt32 f => obtain ⟨rfl, rfl⟩ := h; exact .flt32
   | prim p T ρ' => obtain ⟨rfl, rfl, hp⟩ := h; exact .prim hp
   | lam ps b => obtain ⟨rfl, B, ρl, rfl, hb⟩ := h; exact .lam hb
   | app f args => obtain ⟨ps, ρf, ρa, ρl, hf, ha, rfl⟩ := h; exact .app hf ha
@@ -866,6 +875,7 @@ theorem HasType.head {sg S Γ t X ρ} (h : HasType sg S Γ t X ρ) :
   | .text => exact ⟨_, _, ⟨rfl, rfl⟩, ListSet.Sub.refl _, .refl⟩
   | .dec => exact ⟨_, _, ⟨rfl, rfl⟩, ListSet.Sub.refl _, .refl⟩
   | .flt => exact ⟨_, _, ⟨rfl, rfl⟩, ListSet.Sub.refl _, .refl⟩
+  | .flt32 => exact ⟨_, _, ⟨rfl, rfl⟩, ListSet.Sub.refl _, .refl⟩
   | .prim hp => exact ⟨_, _, ⟨rfl, rfl, hp⟩, ListSet.Sub.refl _, .refl⟩
   | .lam hb => exact ⟨_, _, ⟨rfl, _, _, rfl, hb⟩, ListSet.Sub.refl _, .refl⟩
   | .app hf ha => exact ⟨_, _, ⟨_, _, _, _, hf, ha, rfl⟩, ListSet.Sub.refl _, .refl⟩
@@ -932,6 +942,7 @@ theorem Value.pure {sg S Γ v A ρ} (hv : Value v) (h : HasType sg S Γ v A ρ) 
   | text => obtain ⟨B, ρ0, hh, _, hf⟩ := h.head; obtain ⟨rfl, rfl⟩ := hh; exact HasType.text.chain hf
   | dec => obtain ⟨B, ρ0, hh, _, hf⟩ := h.head; obtain ⟨rfl, rfl⟩ := hh; exact HasType.dec.chain hf
   | flt => obtain ⟨B, ρ0, hh, _, hf⟩ := h.head; obtain ⟨rfl, rfl⟩ := hh; exact HasType.flt.chain hf
+  | flt32 => obtain ⟨B, ρ0, hh, _, hf⟩ := h.head; obtain ⟨rfl, rfl⟩ := hh; exact HasType.flt32.chain hf
   | prim => obtain ⟨B, ρ0, hh, _, hf⟩ := h.head; obtain ⟨rfl, rfl, hp⟩ := hh; exact (HasType.prim hp).chain hf
   | lam =>
       obtain ⟨B, ρ0, hh, _, hf⟩ := h.head; obtain ⟨rfl, B, ρl, rfl, hb⟩ := hh
@@ -1032,6 +1043,7 @@ theorem Value.head_plain {sg S Γ v A ρ} (hv : Value v) (hh : Head sg S Γ v A 
   | text => obtain ⟨rfl, -⟩ := hh; trivial
   | dec => obtain ⟨rfl, -⟩ := hh; trivial
   | flt => obtain ⟨rfl, -⟩ := hh; trivial
+  | flt32 => obtain ⟨rfl, -⟩ := hh; trivial
   | prim => obtain ⟨rfl, -⟩ := hh; cases ‹Prim› <;> trivial
   | lam => obtain ⟨-, B, ρl, rfl, -⟩ := hh; trivial
   | loc => obtain ⟨B, rfl, -⟩ := hh; trivial
@@ -1059,6 +1071,7 @@ theorem Value.inhab {sg S Γ v A ρ} (hv : Value v) (h : HasType sg S Γ v A ρ)
   | text => obtain ⟨H, ρ0, ⟨rfl, -⟩, -, hc⟩ := h.head; exact Inhab.chain .text hc
   | dec => obtain ⟨H, ρ0, ⟨rfl, -⟩, -, hc⟩ := h.head; exact Inhab.chain .dec hc
   | flt => obtain ⟨H, ρ0, ⟨rfl, -⟩, -, hc⟩ := h.head; exact Inhab.chain .flt hc
+  | flt32 => obtain ⟨H, ρ0, ⟨rfl, -⟩, -, hc⟩ := h.head; exact Inhab.chain .flt32 hc
   | prim =>
       obtain ⟨H, ρ0, ⟨rfl, -⟩, -, hc⟩ := h.head
       exact Inhab.chain (by cases ‹Prim› <;> exact .prim) hc
@@ -1411,6 +1424,7 @@ mutual
     | .text => rw [Tm.ren]; exact .text
     | .dec => rw [Tm.ren]; exact .dec
     | .flt => rw [Tm.ren]; exact .flt
+    | .flt32 => rw [Tm.ren]; exact .flt32
     | .prim hp => rw [Tm.ren]; exact .prim hp
     | .lam (ps := ps) hb => rw [Tm.ren]; exact .lam (HasType.ren hb (r.upN ps))
     | .app hf ha => rw [Tm.ren]; exact .app (HasType.ren hf r) (HasTypes.ren ha r)
@@ -1536,6 +1550,7 @@ mutual
     | .text => rw [Tm.subst]; exact .text
     | .dec => rw [Tm.subst]; exact .dec
     | .flt => rw [Tm.subst]; exact .flt
+    | .flt32 => rw [Tm.subst]; exact .flt32
     | .prim hp => rw [Tm.subst]; exact .prim hp
     | .lam (ps := ps) hb => rw [Tm.subst]; exact .lam (HasType.subst hb (r.upN ps))
     | .app hf ha => rw [Tm.subst]; exact .app (HasType.subst hf r) (HasTypes.subst ha r)
@@ -1630,6 +1645,7 @@ mutual
     | .text => exact .text
     | .dec => exact .dec
     | .flt => exact .flt
+    | .flt32 => exact .flt32
     | .prim hp => exact .prim hp
     | .lam hb => exact .lam (HasType.ext hb x)
     | .app hf ha => exact .app (HasType.ext hf x) (HasTypes.ext ha x)
@@ -1748,6 +1764,7 @@ theorem Owns.inst {d args A} (θ : Inst) (h : Owns d args A) :
   | text => simp only [Ty.inst]; exact .text
   | decimal => simp only [Ty.inst]; exact .decimal
   | float => simp only [Ty.inst]; exact .float
+  | float32 => simp only [Ty.inst]; exact .float32
   | fn => simp only [Ty.inst]; exact .fn
   | cell => simp only [Ty.inst]; exact .cell
   | brw => simp only [Ty.inst]; exact .brw
@@ -1891,6 +1908,7 @@ mutual
     | .text => cases A <;> simp [Ty.inst] at hA <;> first | exact .text | exact .tvar
     | .dec => cases A <;> simp [Ty.inst] at hA <;> first | exact .dec | exact .tvar
     | .flt => cases A <;> simp [Ty.inst] at hA <;> first | exact .flt | exact .tvar
+    | .flt32 => cases A <;> simp [Ty.inst] at hA <;> first | exact .flt32 | exact .tvar
     | .lam => cases A <;> simp [Ty.inst] at hA <;> first | exact .lam | exact .tvar
     | .prim => cases A <;> simp [Ty.inst] at hA <;> first | exact .prim | exact .tvar
     | .loc => cases A <;> simp [Ty.inst] at hA <;> first | exact .loc | exact .tvar
@@ -2014,6 +2032,7 @@ mutual
     | .text => rw [Tm.inst]; simp only [Ty.inst, Row.inst_nil]; exact .text
     | .dec => rw [Tm.inst]; simp only [Ty.inst, Row.inst_nil]; exact .dec
     | .flt => rw [Tm.inst]; simp only [Ty.inst, Row.inst_nil]; exact .flt
+    | .flt32 => rw [Tm.inst]; simp only [Ty.inst, Row.inst_nil]; exact .flt32
     | .prim hp => rw [Tm.inst, hp.ty_inst]; exact .prim (hp.inst hs θ)
     | .lam hb =>
         rw [Tm.inst]; simp only [Ty.inst, Row.inst_nil]
@@ -2522,6 +2541,13 @@ theorem preservation {sg} (hb : Builtins sg) (hsig : SigOk sg) (hd : DefsOk sg)
       simp only [Prim.ty, Ty.fn.injEq] at hty
       obtain ⟨rfl, rfl, rfl⟩ := hty
       exact (HasType.weaken .flt (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
+  | float32Arith hc =>
+      intro S X ρ h hμ
+      refine ⟨S, Ext.refl S, hμ, ?_⟩
+      obtain ⟨ps, A, ρl, ρa, hty, ha, hs, hx⟩ := prim_call h
+      simp only [Prim.ty, Ty.fn.injEq] at hty
+      obtain ⟨rfl, rfl, rfl⟩ := hty
+      exact (HasType.weaken .flt32 (ListSet.nil_sub _)).chainOf hx (by intro h; cases h)
   | toDecimal =>
       intro S X ρ h hμ
       refine ⟨S, Ext.refl S, hμ, ?_⟩
@@ -2876,6 +2902,8 @@ inductive Crash : Tm → Prop where
   | dec {op T ρ a b} : op.dec a b = none → Crash (.app (.prim (.decArith op) T ρ) [.dec a, .dec b])
   | flt {op T ρ a b} :
       op.flt a b = none → Crash (.app (.prim (.floatArith op) T ρ) [.flt a, .flt b])
+  | flt32 {op T ρ a b} :
+      op.flt32 a b = none → Crash (.app (.prim (.float32Arith op) T ρ) [.flt32 a, .flt32 b])
 
 /-- `t` fails at run time. -/
 def Fault (t : Tm) : Prop :=
@@ -2940,6 +2968,7 @@ theorem Value.head {sg S Γ v X ρ} (hv : Value v) (h : HasType sg S Γ v X ρ) 
     | text => exact hh.2
     | dec => exact hh.2
     | flt => exact hh.2
+    | flt32 => exact hh.2
     | prim => exact hh.2.1
     | lam => exact hh.1
     | loc => obtain ⟨_, _, _, h⟩ := hh; exact h
@@ -2981,6 +3010,14 @@ theorem Value.flt_inv {sg S Γ v ρ} (hv : Value v) (h : HasType sg S Γ v .floa
   have hh := hv.head h (by simp [Plain]) (by simp [IsFn])
   cases hv with
   | flt => exact ⟨_, rfl⟩
+  | prim => cases ‹Prim› <;> simp [Head, Prim.ty] at hh
+  | _ => simp [Head] at hh
+
+theorem Value.flt32_inv {sg S Γ v ρ} (hv : Value v) (h : HasType sg S Γ v .float32 ρ) :
+    ∃ f, v = .flt32 f := by
+  have hh := hv.head h (by simp [Plain]) (by simp [IsFn])
+  cases hv with
+  | flt32 => exact ⟨_, rfl⟩
   | prim => cases ‹Prim› <;> simp [Head, Prim.ty] at hh
   | _ => simp [Head] at hh
 
@@ -3069,6 +3106,7 @@ theorem Value.fn_inv {sg S Γ v ps A ρ ρ'} (hv : Value v) (h : HasType sg S Γ
   | text => obtain ⟨rfl, -⟩ := hh; exact absurd hfn (by simp [IsFn])
   | dec => obtain ⟨rfl, -⟩ := hh; exact absurd hfn (by simp [IsFn])
   | flt => obtain ⟨rfl, -⟩ := hh; exact absurd hfn (by simp [IsFn])
+  | flt32 => obtain ⟨rfl, -⟩ := hh; exact absurd hfn (by simp [IsFn])
   | loc => obtain ⟨B, rfl, -⟩ := hh; exact absurd hfn (by simp [IsFn])
   | info => obtain ⟨rfl, -⟩ := hh; exact absurd hfn (by simp [IsFn])
   | con => obtain ⟨_, _, rfl, -⟩ := hh; exact absurd hfn (by simp [IsFn])
@@ -3167,6 +3205,19 @@ theorem progress_call {sg S μ f args ps A ρl ρf ρa} (hf : HasType sg S [] f 
                   cases hc : op.flt a b with
                   | none => exact Or.inr ⟨[], _, rfl, .flt hc, by simp⟩
                   | some c => exact Or.inl ⟨_, _, .floatArith hc⟩
+      | float32Arith op =>
+          simp only [Prim.ty, Ty.fn.injEq] at hty
+          obtain ⟨rfl, -, -⟩ := hty
+          cases ha with
+          | cons h₁ ha =>
+              cases ha with
+              | cons h₂ ha =>
+                  cases ha
+                  obtain ⟨a, rfl⟩ := (hva _ (by simp)).flt32_inv h₁
+                  obtain ⟨b, rfl⟩ := (hva _ (by simp)).flt32_inv h₂
+                  cases hc : op.flt32 a b with
+                  | none => exact Or.inr ⟨[], _, rfl, .flt32 hc, by simp⟩
+                  | some c => exact Or.inl ⟨_, _, .float32Arith hc⟩
       | decimal w =>
           simp only [Prim.ty, Ty.fn.injEq] at hty
           obtain ⟨rfl, -, -⟩ := hty
@@ -3306,6 +3357,7 @@ mutual
     | .text => exact Or.inl .text
     | .dec => exact Or.inl .dec
     | .flt => exact Or.inl .flt
+    | .flt32 => exact Or.inl .flt32
     | .prim _ => exact Or.inl .prim
     | .lam _ => exact Or.inl .lam
     | .loc _ => exact Or.inl .loc

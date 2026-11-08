@@ -1,0 +1,32 @@
+@ cases.a-record-view-reveals-the-shared-field
+source = ```tauto
+inductive ViewRecord: Type { Make(item: Nat): ViewRecord }
+fn wrap_view(item: Nat): ViewRecord { Make(item) }
+fn project_view(record: ViewRecord): Nat {
+  ⊢ Nat from match record { Make(item) => item }
+}
+theorem same(item: Nat): project_view(wrap_view(item)) = item { Refl }
+```
+checks_all = "ok"
+
+@ cases.a-record-view-does-not-equate-different-fields
+source = ```tauto
+inductive ViewRecord: Type { Make(item: Nat): ViewRecord }
+fn wrap_view(item: Nat): ViewRecord { Make(item) }
+fn project_view(record: ViewRecord): Nat {
+  ⊢ Nat from match record { Make(item) => item }
+}
+theorem different(item: Nat): project_view(wrap_view(item)) = Succ(item) { Refl }
+```
+checks.different = "error: type mismatch:"
+
+@ cases.an-opaque-record-view-is-not-unfolded
+source = ```tauto
+inductive ViewRecord: Type { Make(item: Nat): ViewRecord }
+fn wrap_view(item: Nat): ViewRecord { Make(item) }
+opaque fn project_view(record: ViewRecord): Nat => theorem project_view::eq {
+  ⊢ Nat from match record { Make(item) => item }
+}
+theorem hidden(item: Nat): project_view(wrap_view(item)) = item { Refl }
+```
+checks.hidden = "error: type mismatch:"

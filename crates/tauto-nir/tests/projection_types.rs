@@ -6,16 +6,42 @@ fn data(name: &str, args: Vec<Ty>) -> Ty {
 
 fn check(source: &str, types: &[Ty], borrowed: Option<Repr>, pair: bool) {
     let package = compile_with(source, true).unwrap();
+    fn bound(ty: &Ty, package: &tauto_nir::Package) -> Ty {
+        match ty {
+            Ty::Data(name, arguments) => {
+                let matches: Vec<_> = package
+                    .datas
+                    .iter()
+                    .filter(|data| data.name.as_str() == name.as_str())
+                    .collect();
+                assert_eq!(
+                    matches.len(),
+                    1,
+                    "the fixture names exactly one declaration: {name}"
+                );
+                Ty::Data(
+                    matches[0].name.clone(),
+                    arguments.iter().map(|ty| bound(ty, package)).collect(),
+                )
+            }
+            Ty::Pair(first, second) => Ty::Pair(
+                Box::new(bound(first, package)),
+                Box::new(bound(second, package)),
+            ),
+            _ => ty.clone(),
+        }
+    }
+    let types: Vec<_> = types.iter().map(|ty| bound(ty, &package)).collect();
     let mut checked = 0;
     for function in &package.fns {
-        if function.source != "read" {
+        if function.source.as_str() != "read" {
             continue;
         }
         function.body.walk(&mut |expression| {
             let ExprKind::Field { field, .. } = &expression.kind else {
                 return;
             };
-            if field.name != "values" {
+            if field.name.as_str() != "values" {
                 return;
             }
             let mut current = expression;
@@ -28,7 +54,7 @@ fn check(source: &str, types: &[Ty], borrowed: Option<Repr>, pair: bool) {
                     if index > 0 {
                         assert_eq!(*how, Use::Place);
                     }
-                    if field.name == "fst" {
+                    if field.name.as_str() == "fst" {
                         assert!(pair);
                         assert_eq!(field.index, Some(0));
                     }
@@ -93,7 +119,7 @@ fn read(&mut value: Outer): List(u64) { value.inner.values }"#,
     }
     let source = r#"struct Inner { values: List(u64) }
 struct Outer { inner: Inner }
-fn read(value: Pair(Outer, u64)): List(u64) { (value: Outer).inner.values }"#;
+fn read(value: Pair(Outer, u64)): List(u64) { value.fst.inner.values }"#;
     let pair = Ty::Pair(
         Box::new(outer.clone()),
         Box::new(Ty::Int(tauto_nir::Width::U64)),
@@ -106,7 +132,7 @@ fn read(value: Pair(Outer, u64)): List(u64) { (value: Outer).inner.values }"#;
     );
     let source = r#"struct Inner { values: List(u64) }
 struct Outer { pair: Pair(Inner, u64) }
-fn read(value: Outer): List(u64) { (value.pair: Inner).values }"#;
+fn read(value: Outer): List(u64) { value.pair.fst.values }"#;
     let pair = Ty::Pair(
         Box::new(inner.clone()),
         Box::new(Ty::Int(tauto_nir::Width::U64)),

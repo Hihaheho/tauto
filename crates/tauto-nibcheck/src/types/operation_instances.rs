@@ -168,7 +168,7 @@ impl Checker {
         self.owned_known_in(ty, &mut HashSet::new())
     }
 
-    fn owned_known_in(&self, ty: &Ty, visiting: &mut HashSet<String>) -> bool {
+    fn owned_known_in(&self, ty: &Ty, visiting: &mut HashSet<crate::surface::Name>) -> bool {
         let ty = self.resolve(ty);
         if self.has_vars(&ty) || self.is_view(&ty) {
             return false;
@@ -185,12 +185,7 @@ impl Checker {
             | Ty::Param(..) => true,
             // Function signatures do not describe borrowed captures or shared cells.
             // Product ownership is outside this bounded admission.
-            Ty::Borrow(..)
-            | Ty::Fn(..)
-            | Ty::Product(_)
-            | Ty::Var(_)
-            | Ty::App(..)
-            | Ty::Poly(..) => false,
+            Ty::Borrow(..) | Ty::Fn(..) | Ty::Var(_) | Ty::App(..) | Ty::Poly(..) => false,
             Ty::Union(args) => args.iter().all(|p| self.owned_known_in(p, visiting)),
             Ty::Tagged(_, inner) | Ty::Info(inner) => self.owned_known_in(inner, visiting),
             Ty::Named(name, args) => {
@@ -547,7 +542,7 @@ mod tests {
             assert_eq!(arms[0].params.len(), 2, "{case}");
             assert!(
                 matches!(&arms[0].type_args[0], Ty::Named(name, args)
-                if name == "Token" && args.is_empty()),
+                if name.as_str() == "Token" && args.is_empty()),
                 "{case}: {:?}",
                 arms[0]
             );
@@ -659,7 +654,7 @@ mod tests {
                     instance
                         .owner
                         .as_ref()
-                        .is_some_and(|owner| owner.name == "identity")
+                        .is_some_and(|owner| owner.name.as_str() == "identity")
                 })
                 .collect();
             assert_eq!(identity.len(), 1, "{name}: {facts:?}");
@@ -744,7 +739,7 @@ mod tests {
                     instance
                         .owner
                         .as_ref()
-                        .is_some_and(|owner| owner.name == "identity")
+                        .is_some_and(|owner| owner.name.as_str() == "identity")
                 })
                 .collect();
             assert_eq!(arms.len(), 1, "{name}: {facts:?}");
@@ -767,14 +762,24 @@ mod tests {
             let arms: Vec<_> = facts
                 .arms
                 .values()
-                .filter(|instance| instance.owner.as_ref().is_some_and(|at| at.name == owner))
+                .filter(|instance| {
+                    instance
+                        .owner
+                        .as_ref()
+                        .is_some_and(|at| at.name.as_str() == owner)
+                })
                 .collect();
             assert_eq!(arms.len(), 1, "{owner}: {facts:?}");
             assert_eq!(arms[0].admission, OperationAdmission::Unique, "{owner}");
             let requests: Vec<_> = facts
                 .performs
                 .values()
-                .filter(|instance| instance.owner.as_ref().is_some_and(|at| at.name == owner))
+                .filter(|instance| {
+                    instance
+                        .owner
+                        .as_ref()
+                        .is_some_and(|at| at.name.as_str() == owner)
+                })
                 .collect();
             assert_eq!(requests.len(), 1, "{owner}: {facts:?}");
             assert_eq!(requests[0].params, arms[0].params, "{owner}");

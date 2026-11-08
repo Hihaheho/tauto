@@ -1,0 +1,27 @@
+// `.` takes a field and `::` a declaration's name; a product's members of
+// the same type are told apart by labels.
+
+@ cases.dot-before-a-declaration-name-is-rejected
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn len(l: List(Nat)): Nat { List.length(l) }
+```
+macro_error = "`.` takes a field; write the name of a declaration with `::`"
+
+@ cases.a-path-after-an-expression-does-not-parse
+source = ```tauto
+fn f(l: List(Nat)): Nat { id(l)::length }
+```
+parses = false
+
+@ cases.ascription-of-a-product-with-two-members-of-the-type-is-rejected
+source = ```tauto
+fn first(p: Nat × Nat): Nat { (p: Nat) }
+```
+checks."first" = "error: two members of a product have the type `Nat`, so the members cannot be matched by their types; write the members by position, or tell them apart with a label (`@x Nat`)"
+
+@ cases.labels-tell-members-of-the-same-type-apart
+source = ```tauto
+fn first(p: @a Nat × @b Nat): Nat { (p: @a Nat) }
+```
+checks."first" = "ok"

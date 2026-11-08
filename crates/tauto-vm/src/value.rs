@@ -18,6 +18,8 @@ pub type Env = Rc<RefCell<Vec<Value>>>;
 
 #[derive(Clone)]
 pub enum Value {
+    /// An opaque declaration reference supplied by a macro host.
+    Declaration(tauto_rt::identity::DeclRef),
     Unit,
     Bool(bool),
     Int(i128),
@@ -26,7 +28,6 @@ pub enum Value {
     Text(Rc<str>),
     Buf(Rc<String>),
     Data(Rc<Data>),
-    Product(Rc<Vec<Value>>),
     Inject(u32, u32, Rc<Value>),
     Vec(Rc<Vec<Value>>),
     Array(Rc<Vec<Value>>),
@@ -59,16 +60,32 @@ pub enum Value {
     /// What the arm of `exceeded` answers (`budget_value` and `info_*`).
     Answer(Rc<Answer>),
     Moved,
+    /// A value of an extern type: the host's, which the machine only holds
+    /// and hands back. The name is the type's, for showing it.
+    Host(Rc<str>, Rc<dyn std::any::Any>),
 }
 
 #[derive(Default)]
 pub struct Signal {
+    pub inputs: Vec<Rc<Signal>>,
     pub raised: std::cell::Cell<bool>,
     /// What a `mutex_put` hands to the place the signal stands for.
     pub handed: RefCell<Option<Value>>,
+    /// Raised by a request to end the run (`Os::on_shutdown`).
+    pub outside: RefCell<Option<tauto_rt::signal::Signal>>,
 }
 
 impl Signal {
+    fn own(&self) -> bool {
+        self.raised.get()
+            || self.outside.borrow().as_ref().is_some_and(|s| {
+                tauto_rt::shutdown::poll();
+                s.is_raised()
+            })
+    }
+    pub fn is_raised(&self) -> bool {
+        self.own() || self.inputs.iter().any(|s| s.own())
+    }
     pub fn raise(&self) {
         self.raised.set(true);
     }
@@ -279,6 +296,7 @@ impl Value {
 
     pub fn kind(&self) -> &'static str {
         match self {
+            Value::Declaration(_) => "a declaration reference",
             Value::Unit => "()",
             Value::Bool(_) => "Bool",
             Value::Int(_) => "an integer",
@@ -287,7 +305,6 @@ impl Value {
             Value::Text(_) => "Text",
             Value::Buf(_) => "Buf",
             Value::Data(_) => "a constructor",
-            Value::Product(_) => "a product",
             Value::Inject(..) => "a union",
             Value::Vec(_) => "Vec",
             Value::Array(_) => "Array",
@@ -307,6 +324,7 @@ impl Value {
             Value::Info => "Info",
             Value::Answer(_) => "a budget answer",
             Value::Moved => "a moved value",
+            Value::Host(..) => "a value of an extern type",
         }
     }
 
@@ -321,9 +339,6 @@ impl Value {
             (Value::Data(d), Step::Name(n)) => {
                 let i = d.ctor.field(n)?;
                 Ok(d.fields[i].clone())
-            }
-            (Value::Product(ms), Step::Index(i)) => {
-                ms.get(*i).cloned().ok_or_else(|| internal("a member"))
             }
             (Value::Vec(xs) | Value::Array(xs), Step::Item(i)) => {
                 xs.get(*i).cloned().ok_or_else(|| internal("an item"))
@@ -349,9 +364,6 @@ impl Value {
                 let i = d.ctor.field(n)?;
                 Ok(&mut Rc::make_mut(d).fields[i])
             }
-            (Value::Product(ms), Step::Index(i)) => Rc::make_mut(ms)
-                .get_mut(*i)
-                .ok_or_else(|| internal("a member")),
             (Value::Vec(xs) | Value::Array(xs), Step::Item(i)) => Rc::make_mut(xs)
                 .get_mut(*i)
                 .ok_or_else(|| internal("an item")),
@@ -478,6 +490,7 @@ pub fn equal(a: &Value, b: &Value) -> R<bool> {
     Ok(match (&a, &b) {
         (Value::Inject(_, _, x), _) => return equal(x, &b),
         (_, Value::Inject(_, _, y)) => return equal(&a, y),
+        (Value::Declaration(x), Value::Declaration(y)) => x == y,
         (Value::Unit, Value::Unit) => true,
         (Value::Bool(x), Value::Bool(y)) => x == y,
         (Value::Int(x), Value::Int(y)) => x == y,
@@ -501,8 +514,7 @@ pub fn equal(a: &Value, b: &Value) -> R<bool> {
             }
             true
         }
-        (Value::Product(x), Value::Product(y))
-        | (Value::Vec(x), Value::Vec(y))
+        (Value::Vec(x), Value::Vec(y))
         | (Value::Array(x), Value::Array(y)) => {
             if x.len() != y.len() {
                 return Ok(false);
@@ -541,6 +553,13 @@ pub fn show(v: &Value) -> R<String> {
     Ok(out)
 }
 
+/// Whether `d` is a `Pair`, which `#(a, b)` is.
+fn is_pair(d: &Data) -> bool {
+    d.fields.len() == 2
+        && d.ctor.is_struct
+        && tauto_nir::display_name(&d.ctor.owner) == "Pair"
+}
+
 fn show_into(v: &Value, out: &mut String) -> R<()> {
     let list = |out: &mut String, items: &[Value], open: &str, close: &str| -> R<()> {
         out.push_str(open);
@@ -555,6 +574,11 @@ fn show_into(v: &Value, out: &mut String) -> R<()> {
     };
     match v {
         Value::Ref(p) => show_into(&p.get()?, out)?,
+        Value::Host(name, _) => {
+            out.push('<');
+            out.push_str(name);
+            out.push('>');
+        }
         Value::Unit => out.push_str("()"),
         Value::Bool(b) => write!(out, "{b}").unwrap(),
         Value::Int(n) => write!(out, "{n}").unwrap(),
@@ -564,14 +588,6 @@ fn show_into(v: &Value, out: &mut String) -> R<()> {
         Value::Buf(b) => write!(out, "Buf({:?})", b.as_str()).unwrap(),
         Value::Shown(t) => out.push_str(t),
         Value::Inject(_, _, x) => show_into(x, out)?,
-        Value::Product(ms) => {
-            for (i, m) in ms.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(" × ");
-                }
-                show_into(m, out)?;
-            }
-        }
         Value::Vec(xs) => list(out, xs, "Vec[", "]")?,
         Value::Array(xs) => list(out, xs, "Array[", "]")?,
         Value::Bytes(b) => {
@@ -614,11 +630,36 @@ fn show_into(v: &Value, out: &mut String) -> R<()> {
         Value::Guard(_) => out.push_str("MutexGuard"),
         // A secret's content is never shown.
         Value::Secret(_) => out.push_str("Secret"),
+        Value::Declaration(_) => {
+            write!(out, "<declaration reference>").unwrap();
+        }
         Value::Pending(_) => out.push_str("Pending"),
+        // `#(a, b, c)`: the `Pair`s nested to the right, as the value was written.
+        Value::Data(d) if is_pair(d) => {
+            out.push_str("#(");
+            show_into(&d.fields[0], out)?;
+            let mut rest = d.fields[1].clone();
+            loop {
+                let next = match &rest {
+                    Value::Data(r) if is_pair(r) => {
+                        out.push_str(", ");
+                        show_into(&r.fields[0], out)?;
+                        r.fields[1].clone()
+                    }
+                    _ => break,
+                };
+                rest = next;
+            }
+            out.push_str(", ");
+            show_into(&rest, out)?;
+            out.push(')');
+        }
         Value::Data(d) => {
-            // Shown by the name written, not by its full name `m.T.C`.
-            let tag = d.ctor.tag.rsplit('.').next().unwrap_or(&d.ctor.tag);
-            let tag = tag.strip_prefix(':').unwrap_or(tag);
+            let tag = if d.ctor.is_struct {
+                tauto_nir::display_name(&d.ctor.owner)
+            } else {
+                d.ctor.tag.rsplit("::").next().unwrap_or(&d.ctor.tag)
+            };
             let named = d.ctor.names.iter().all(Option::is_some);
             if (d.ctor.is_struct || !d.fields.is_empty()) && named {
                 out.push_str(tag);
@@ -646,4 +687,22 @@ fn show_into(v: &Value, out: &mut String) -> R<()> {
         v => return fail(format!("internal: cannot show {}", v.kind())),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod declaration_tests {
+    use super::*;
+
+    #[test]
+    fn declaration_values_keep_identity_and_do_not_coerce_to_scalars() {
+        let reference = tauto_rt::identity::DeclRef::fresh("same");
+        let value = Value::Declaration(reference.clone());
+        let other = Value::Declaration(tauto_rt::identity::DeclRef::fresh("same"));
+        assert!(equal(&value, &value.clone()).unwrap());
+        assert!(!equal(&value, &other).unwrap());
+        assert!(value.as_text().is_err());
+        assert!(value.as_int().is_err());
+        let borrowed = temp_ref(value);
+        assert!(equal(&borrowed, &Value::Declaration(reference)).unwrap());
+    }
 }

@@ -45,8 +45,8 @@ pub theorem grows_type_records(
   next: Checker,
   grows: Grows(c, next)
 ): TypeRecordsExt(c, next) {
-  match And::right(And::right(And::right(grows))): TypeRecordsExt(c, next) {
-    AndIntro(datas, rest) => match rest: TypeRecordsExt(c, next) {
+  ⊢ TypeRecordsExt(c, next) from match And::right(And::right(And::right(grows))) {
+    AndIntro(datas, rest) => ⊢ TypeRecordsExt(c, next) from match rest {
       AndIntro(bounds, other) => AndIntro(
         And::left(And::right(And::right(grows))),
         AndIntro(bounds, datas)
@@ -80,7 +80,7 @@ pub theorem typing_state_dup(
   ty: Ty,
   h: DupBy(ck_subst_of(c), KeptOk(ck_kept_of(c)), ck_datas_of(c), ty)
 ): DupBy(ck_subst_of(next), KeptOk(ck_kept_of(next)), ck_datas_of(next), ty) {
-  match h: DupBy(ck_subst_of(next), KeptOk(ck_kept_of(next)), ck_datas_of(next), ty) {
+  ⊢ DupBy(ck_subst_of(next), KeptOk(ck_kept_of(next)), ck_datas_of(next), ty) from match h {
     Mk(original, resolved, equal, kind) => DupBy::Mk(
       resolved,
       tyeq_move(

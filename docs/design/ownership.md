@@ -4,8 +4,8 @@ Nib（したがって tauto）に **値の種（copy / shared / affine / linear�
 **二級の借用（`&x`, `&mut x`）**、**効果の再開量（`resume 0 / <=1 / 1 / ω`）**
 の仕様と、Lean での証明です。
 
-この文書には結論だけを書きます（文献と書き味の比較は載せず、却下した案は「決めたこと」の表に一行で挙げるだけにします）。
-**この文書に書いてあることは決まったことで、決まっていないのは「未決定」の節にあることだけ**です。
+この文書には仕様と、その形にした理由（「設計の理由」）だけを書きます。
+**決まっていないことは「未決定」の節にだけ書きます。**それ以外はすべて今の仕様です。
 設計を変えるときは、この文書を先に直します。
 
 正の順序は [`nib.md`](nib.md) と同じです。この文書は [`semantics.md`](semantics.md)
@@ -18,15 +18,15 @@ Nib（したがって tauto）に **値の種（copy / shared / affine / linear�
 1. すべての型に **種** がある：`copy ⊑ shared ⊑ affine ⊑ linear`。種は型の構造から決まり、宣言（`affine struct File`、`linear struct Handshake { … }`）で締められる。緩める方向はない。
 2. copy と shared は **型付けの規則上は同じ**（複製も捨てるも自由）。違いは実行時のコスト（ビットコピーか参照カウントか）だけ。合わせて「複製可」と呼ぶ。
 3. affine は **一度しか使えないが捨ててよい**。linear は **ちょうど一度使う**（捨てられない）。
-4. 束縛に量は書かない。使い方の検査は型の種から決まる。ジェネリクスの型変数は既定で affine と見なし、`<A: shared>`、`<A: linear>` で変える。
-5. **借用は二級**：`&x` / `&mut x` は引数の位置と `let &x = f(&v)` にだけ現れ、構造体・セル・脱出する閉包・効果の引数には入らない。lifetime はない。`&mut` を取れるのは `var` だけ。
-6. 借用を返す関数 `-> &A` は、すべての借用引数から派生し、`let &x = f(&v)` は現在のブロックの終わりまで `v` を凍結する（字句的、NLL なし）。
+4. 束縛に量は書かない。使い方の検査は型の種から決まる。ジェネリクスの型変数は既定で affine と見なし、`<A: Shared>`、`<A: Linear>` で変える。
+5. **借用は二級**：`&x` / `&mut x` は引数の位置と `let &x := f(&v)` にだけ現れ、構造体・セル・脱出する閉包・効果の引数には入らない。lifetime はない。`&mut` を取れるのは `var` だけ。
+6. 借用を返す関数 `-> &A` は、すべての借用引数から派生し、`let &x := f(&v)` は現在のブロックの終わりまで `v` を凍結する（字句的、NLL なし）。
 7. 複製可な `A` について **`&A` は `A` そのもの**。
 8. 効果は宣言で **再開量** を持つ：`resume 0`（再開しない）、`<=1`（高々一度、**既定**）、`1`（ちょうど一度）、`ω`（何度でも）。multi-shot は `resume ω` と明示する。
 9. 腕の継続 `k` の型は再開量で決まる：`<=1` なら affine な関数、`1` なら linear な関数、`ω` なら複製可な関数、`0` なら `k` はない。
 10. **制御フロー線形性**：ある部分式の行に `ω` の効果があれば、その部分式を跨いで生きている affine / linear の値があってはならない。行に `1` 以外の効果があれば、跨いで生きている linear の値があってはならない。この検査は関数だけでなく `handle` の本体とブロックにもかかる。
 11. ハンドラの腕（`return` 以外）が外から捕まえる変数は複製可でなければならない。
-12. 行変数 `<e>` は既定で任意の再開量を許し、`<e: <=1>` で `ω` を締め出す。
+12. 行変数 `<!e>` は既定で任意の再開量を許し、`<!e: <=1>` で `ω` を締め出す。
 13. **Drop は構造的・自動**。affine の値は束縛のブロックの終わりで捨てられる。ユーザー定義の Drop はない。linear は捨てられない（型エラー）。
 14. **`clone` は構造的・自動**。構成要素がすべて複製可能な affine 型に `clone(&x)` が付く。不透明な型（extern）には付かない。
 15. 閉包は捕まえた値の種を持つ（affine を move で捕まえれば affine な閉包＝一度しか呼べない）。借用や affine な `var` を捕まえた閉包は **借用閉包** で、借用と同じ規則に従う（引数に渡す・呼ぶだけ）。
@@ -46,7 +46,7 @@ Nib（したがって tauto）に **値の種（copy / shared / affine / linear�
 | 所有（own） | affine / linear の値を名前が持つこと。使う（move）と持ち主が変わる。 |
 | 使用（use） | 値を move する出現。借用は使用ではない。型・命題・証明の中の出現も使用ではない。 |
 | 借用（borrow） | `&x`（読むだけ）、`&mut x`（書いてよい）。二級：引数と `let &x` にだけ現れる。 |
-| 凍結（freeze） | `let &x = f(&v)` の間、`v` を move・`&mut`・代入できない状態。 |
+| 凍結（freeze） | `let &x := f(&v)` の間、`v` を move・`&mut`・代入できない状態。 |
 | 再開量（resume quantity） | 効果の宣言が決める、継続 `k` を呼べる回数：`0`, `<=1`, `1`, `ω`。 |
 | 行の量 q(ρ) | 行 ρ に含まれる効果の再開量の集合。行変数は宣言の境界で決まる。 |
 | 跨いで生きている（live across） | ある部分式が評価される間、所有されていて、その後に使われるか、ブロックの終わりで捨てられる値。 |
@@ -88,12 +88,12 @@ kind((P₁, …, Pₙ) -> R ! ρ) = 型に書いた種。書かなければ shar
 kind(affine (P…) -> R ! ρ) = affine
 kind(linear (P…) -> R ! ρ) = linear
 kind(Info(T)) = affine
-kind(A)  A は型変数 = その境界。書かなければ affine。`<A: shared>` なら shared、`<A: linear>` なら linear
+kind(A)  A は型変数 = その境界。書かなければ affine。`<A: Shared>` なら shared、`<A: Linear>` なら linear
 ```
 
 - 宣言 `affine struct X { … }`、`linear enum Y { … }`、`shared struct Z { … }`、`copy struct W { … }` が書ける。構造から決まる種より **緩い** 宣言は型エラー（`copy struct P { t: Text }` は `Text` が shared なので拒否）。
 - 再帰的な型は少なくとも shared。`enum List(A) { nil, cons(A, List(A)) }` は `kind(List(i64)) = shared`、`kind(List(File)) = affine`。
-- 型変数は既定 affine なので、ジェネリックな関数の中では `A` の値を複製できず捨てられる。`<A: shared>` で複製でき、`<A: linear>` で捨てられなくなる。呼び出し側では実際の型の種が境界に収まることを確かめる（`<A>` に `A := Handshake` を当てるのは `linear ⊑ affine` が偽なので拒否。`<A: linear>` なら可。`v: Vec(Handshake)` を `vec_clear<A>(&mut v)` に渡すときがこれにあたる）。
+- 型変数は既定 affine なので、ジェネリックな関数の中では `A` の値を複製できず捨てられる。`<A: Shared>` で複製でき、`<A: Linear>` で捨てられなくなる。呼び出し側では実際の型の種が境界に収まることを確かめる（`<A>` に `A := Handshake` を当てるのは `linear ⊑ affine` が偽なので拒否。`<A: Linear>` なら可。`v: Vec(Handshake)` を `Vec::clear<A>(&mut v)` に渡すときがこれにあたる）。
 - `Option(A)`、`Pair(A, B)`、`List(A)` は宣言に種を書かない。構造で決まる。
 - 関数型の種は型に書く。閉包式の種は捕まえた値の種の `join`（「閉包」）。閉包式の種は、期待される関数型の種に収まらなければ型エラー。
 
@@ -101,7 +101,7 @@ kind(A)  A は型変数 = その境界。書かなければ affine。`<A: shared
 
 `copy` と `shared` を分けるのは実行時の表現のためだけで、「使用の規則」–「再開量と制御フロー線形性」の規則はどちらも「複製可」として同じに扱う。
 `copy struct` と宣言できるのは「ビットコピーで複製できる」ことを型に見せるためで、フィールドに shared があれば型エラー。
-関数の署名と局所変数の型に `shared` な型が現れない関数は参照カウントを一切走らせない。これを宣言で検査させる形（たとえば `no shared`）は未決定（「決めたことと未決定」）。
+関数の署名と局所変数の型に `shared` な型が現れない関数は参照カウントを一切走らせない。これを宣言で検査させる形（たとえば `no shared`）は未決定（「設計の理由と未決定」）。
 
 ---
 
@@ -119,8 +119,8 @@ kind(A)  A は型変数 = その境界。書かなければ affine。`<A: shared
 
 ### `let` と `var`
 
-- `let x = e`：`e` の値を `x` が所有する。
-- `var x = e`：セルを作る。種は中身の種。
+- `let x := e`：`e` の値を `x` が所有する。
+- `var x := e`：セルを作る。種は中身の種。
   - 中身が複製可：制限はない。閉包と継続はセルを共有する。
   - 中身が affine：**affine な var**。`x := v` は古い中身を捨てる（Drop）。中身を move して出す（`f(x)`）のは、`x` を宣言したブロックの直線的なコードでだけ許す。閉包の中では借用（`&x`, `&mut x`）と代入だけ。move した後に読むのはエラーで、代入すれば再び使える。
   - 中身が linear：**禁止**（型エラー。`x := v` が古い中身を捨てるため）。
@@ -163,27 +163,29 @@ kind(A)  A は型変数 = その境界。書かなければ affine。`<A: shared
 
 - `-> A`：所有を返す。
 - `-> &A`：借用を返す。関数に少なくとも一つの `&` / `&mut` 引数があること。結果の借用は **すべての借用引数から派生する** と見なす。本体で返せるのは、借用引数そのもの、その field path、または `-> &A` の関数を借用引数に適用した結果だけ。閉包は借用を返せない（名前付きの `fn` だけ）。
-- `-> &mut A` は **ない**。
+- `-> &mut A`：可変の借用を返す。関数に少なくとも一つの `&mut` 引数が要る。規則（返せるもの、受け取り `let &mut x`、凍結）は [`rust-backend.md`](rust-backend.md)「`-> &mut A` と `let &mut x`」に書く。
 
 ### ジェネリクス
 
-- `<A>`：既定 affine。`<A: shared>`、`<A: linear>`。
-- 行変数 `<e>`：既定で任意の再開量。`<e: <=1>`：`ω` の効果を含まない行だけが代入できる。`<e: 1>` は用意しない。
+- `<A>`：既定 affine。`<A: Shared>`、`<A: Linear>`。
+- 行変数 `<!e>`：既定で任意の再開量。`<!e: <=1>`：`ω` の効果を含まない行だけが代入できる。`<!e: 1>` は用意しない。
 - 呼び出し側で、実際の型の種・行の量が境界に収まることを検査する。
 
 ### 閉包
 
 - 閉包は自由変数を **捕まえる**。所有している affine / linear の変数を捕まえるのは move（その後、外では使えない）。複製可の変数の捕まえ方に制限はない。`var` はセルへの参照として捕まえる（共有）。
-- 閉包式の種 = `join`（捕まえた所有変数の種）。何も捕まえなければ `copy`。affine な変数を move で捕まえた閉包は affine な関数型（`affine (…) -> …`）を持ち、**一度しか呼べない**（呼ぶことが使用）。linear を捕まえれば linear な関数（ちょうど一度呼ぶ）。
+- 閉包式の種 = `join`（捕まえた所有変数の種）。何も捕まえなければ `copy`。affine な変数を move で捕まえた閉包は affine な関数型（`affine (…) -> …`）を持つ。linear を捕まえれば linear な関数（ちょうど一度呼ぶ）。
+- 種は **複製できるか** を決め、**呼べる回数** は別に決まる（Rust の `Fn` と `FnOnce` の違いにあたる）。affine な閉包でも、本体が捕まえた値を消費せず貸すだけ（`&xs`、`&xs.f`）なら **何度でも呼べる**。呼ぶことは使用ではなく、`&f: (…) -> …` の引数にも渡せる（複製も保持もされず、呼ばれるだけなので）。本体が捕まえた値を消費する affine な閉包は **一度しか呼べない**（呼ぶことが使用）。これを `&f` の引数に渡すのは、何度呼ばれるか分からないので拒否し、捕まえた値を消費するからだとエラーに出す。
 - 期待される関数型に種が書いてあれば、閉包の種はそれに収まること。書いていなければ shared が期待されているので、affine を捕まえる閉包はエラー。
 - **借用閉包**：借用の変数（`&x` / `&mut x` の引数、`let &x`）または affine な `var` を捕まえた閉包は借用と同じ扱い（「借用閉包」）。引数の `&f: (…) -> …` の位置に渡すか、その場で呼ぶだけ。構造体・セル・結果に入れられない。
-- 閉包の引数も `&x: A` と書ける。呼ぶ側（たとえば `vec_each` の実装）は借用を渡す。
+- 閉包の引数も `&x: A` と書ける。呼ぶ側（たとえば `Vec::each` の実装）は借用を渡す。
 - `&f: (…) -> …` と宣言された引数に閉包を渡すとき、閉包リテラルはそのまま書く（その文の間だけ生きる一時的な値を借用する）。名前の付いた閉包の変数は `&g` と書く。
-- 閉包の種・借用性は閉包式から構文的に決まる。推論は要らない。
+- 閉包と局所 `fn` の種は定義時の捕捉から決まり、後の型推論で所有の制約を弱めない。捕まえた値が後から affine / linear と判明して定義時の種に収まらない場合は、その束縛に型注釈を書き、関数の定義より前に種を確定させる。一度しか使わない関数でも、この注釈を要する。
+- 捕捉の種に影響する型が検査の最後まで未確定なら拒否する。関数型の引数・結果や、構造体が所有しない型引数など、捕捉の種に影響しない未確定の型はこの制限の対象ではない。
 
 ### 呼び出し
 
-- 複製可な関数値 `f` を呼ぶのは使用ではない。affine な関数値を呼ぶのは使用（その後 `f` は使えない）。linear な関数値は各経路でちょうど一度呼ぶ。
+- 複製可な関数値 `f` を呼ぶのは使用ではない。その場で書いた affine な閉包（局所 `fn` と `let` の閉包）のうち、捕まえた値を消費しないものを呼ぶのも使用ではない。それ以外の affine な関数値（引数や構造体のフィールドで受け取った `affine (…) -> …` など）を呼ぶのは使用（その後 `f` は使えない）。linear な関数値は各経路でちょうど一度呼ぶ。
 - 借用閉包を呼ぶのは使用ではない。
 
 ---
@@ -195,22 +197,22 @@ kind(A)  A は型変数 = その境界。書かなければ affine。`<A: shared
 借用式 `&p`、`&mut p`（`p` は局所変数、またはその field path `x.f.g`）が現れてよいのは次の三か所だけ。
 
 1. `&` / `&mut` と宣言された引数の位置：`f(&v)`、`f(&mut v.items)`。
-2. `let &x = <借用を返す関数の呼び出し>`。
+2. `let &x := <借用を返す関数の呼び出し>`。
 3. `match` の対象：`match &v { … }`（「借用の `match`」）。
 
-それ以外（`let y = &v`、構造体のフィールド、`:=` の右辺、結果、効果の引数、閉包の捕まえた値として脱出）はすべて型エラー。
+それ以外（`let y := &v`、構造体のフィールド、`:=` の右辺、結果、効果の引数、閉包の捕まえた値として脱出）はすべて型エラー。
 
 ### 借用の変数
 
 - `&x: A` の引数、`let &x` の `x`、借用の `match` のパターン変数を **借用の変数** と呼ぶ。
 - 借用の変数でできること：`&` の引数に渡す（再借用）、`match` する、複製可なフィールドを読む、field path を借用する（`&x.f`）、`-> &A` の関数に渡す。
-- `&mut x: A` の変数でさらにできること：`&mut` の引数に渡す、`x := v`（古い中身を捨てる）、`&mut x.f`。
+- `&mut x: A` の変数でさらにできること：`&mut` の引数に渡す、`x := v`（古い中身を捨てる）、`x.f.g := v`（そのフィールドの古い中身を捨てる）、`&mut x.f`。`var` の変数も同じく `x.f := v` と書ける。
 - 借用の変数でできないこと：move する（所有の位置に置く）、構造体・セル・結果に入れる、効果の引数にする、脱出する閉包に捕まえさせる（捕まえた閉包は借用閉包になる）。
 - `A` が複製可なら、`&x: A` の `x` は値そのもの（`&A ≡ A`）で、何にでも使える。
 
 ### 凍結
 
-- `let &x = f(&a, &mut b)` は、`x` の生きている間（**現在のブロックの終わりまで**）`a` と `b` を凍結する。凍結された束縛は move・`&mut`・`:=` できない。`&` はできる（`f` の引数が `&` のとき）。`&mut b` から派生した借用があるときは、`b` の `&` もできない。
+- `let &x := f(&a, &mut b)` は、`x` の生きている間（**現在のブロックの終わりまで**）`a` と `b` を凍結する。凍結された束縛は move・`&mut`・`:=` できない。`&` はできる（`f` の引数が `&` のとき）。`&mut b` から派生した借用があるときは、`b` の `&` もできない。
 - `-> &A` の結果が複製可（`A` が複製可に実体化）なら凍結は起こらない。
 - 凍結は字句的で、ブロックの終わりで解ける。NLL（最後の使用で解ける）はしない。
 
@@ -245,22 +247,21 @@ kind(A)  A は型変数 = その境界。書かなければ affine。`<A: shared
 ### 宣言
 
 ```nib
-effect ask: (q: Text) -> i64                 // resume <=1（既定）
-effect choose: () -> Bool resume ω           // multi-shot
-effect fail: (msg: Text) -> Never resume 0   // 再開しない
-effect step: () -> () resume 1               // ちょうど一度再開する
+effect ask(q: Text): i64                 // resume <=1（既定）
+effect choose(): Bool resume ω           // multi-shot
+effect fail(msg: Text): Never resume 0   // 再開しない
+effect step(): () resume 1               // ちょうど一度再開する
 ```
 
 - `resume` は署名の結果型の後ろに書く。書かなければ `<=1`。
 - 組み込み：`Div` は `0`、`Exceeded(T)` は `<=1`、`show` は `<=1`、`Match(A)`（内部）は `<=1`。
-- 効果の集まり `effect State(T) = {Get(T), Put(T)}` は各操作の宣言の量を持つ。
+- 効果の集まり `effect State(T) { Get(T), Put(T) }` は各操作の宣言の量を持つ。
 
 ### 腕と `k`
 
 `handle { body } with { e(p…), k => arm; return v => r }` について：
 
 | 再開量 | `k` の型 | 腕で許される `k` の使い方 |
-|---|---|---|
 | `0` | なし。腕は `e(p…) => arm` と書く（`k` を書くとエラー） | — |
 | `<=1` | `affine (R) -> T ! ρ_h` | 高々一度呼ぶ。呼ばなければ捨てる（継続の中の affine は Drop） |
 | `1` | `linear (R) -> T ! ρ_h` | 各経路でちょうど一度呼ぶ |
@@ -276,7 +277,7 @@ effect step: () -> () resume 1               // ちょうど一度再開する
 ### 行の量
 
 - `q(e)` = 効果 `e` の宣言の再開量。
-- `q(ρ)` = ρ に現れる効果の `q` の集合。行変数 `e` は `{0, <=1, 1, ω}`、`e: <=1` なら `{0, <=1, 1}`。
+- `q(ρ)` = ρ に現れる効果の `q` の集合。行変数 `e` は `{0, <=1, 1, ω}`、`!e: <=1` なら `{0, <=1, 1}`。
 - 「ρ に ω がある」= `ω ∈ q(ρ)`。「ρ に 1 以外がある」= `q(ρ) \ {1} ≠ ∅`。
 
 ### 制御フロー線形性（CFL）の規則
@@ -294,21 +295,22 @@ q(ρ(t)) \ {1} ≠ ∅    ⟹  L(t) に linear の束縛がない
 - 呼び出しの引数は左から評価され、評価の済んだ引数の値は呼び出しの中で残りの引数を待つ。`f(x, perform ask())` の `x` は `ask` を跨いで生きている（実装では、引数へ move した値を残りの引数の間だけ束縛として数える）。
 - 関数の境界：関数の本体を跨いで生きているものは呼び出し側にあるので、呼び出し側で `ρ(f)` について検査される。関数の本体の中は本体の規則でよい。
 - 直観：`ω` の効果は継続を複製するので、継続の中の affine は複製される。`0` と `<=1` の効果は継続を捨てうるので、継続の中の linear は捨てられる。
+- `Div` は `0` なので、`resume 1` の腕の `k`（linear）を跨いで `Div` の関数は呼べない（「k is live across Div, which may not resume」）。`Div` は止まらないだけではない：`budget` は `Div` を `Exceeded` に変えて残りの計算を捨て、ホストの歩数の上限も実行を止める。そのとき `k` は呼ばれないまま捨てられ、`1` の約束（各経路でちょうど一度再開する）が破れる。書き方は三つ：止まらないかもしれない計算を本体（`perform` の引数など、`handle` の中で腕より前）で済ませて結果を操作の引数で渡す、fuel を取る再帰にして行から `Div` を消す、操作を `<=1` と宣言して `k` を affine にする。
 
 例：
 
 ```nib
-effect choose: () -> Bool resume ω
+effect choose(): Bool resume ω
 
-var v = vec_new()            // affine な var
-vec_push(&mut v, 1)
-let b = handle {
+var v := Vec::new()            // affine な var
+Vec::push(&mut v, 1)
+let b := handle {
   if perform choose() { 1 } else { 2 }     // OK：v はこの handle の本体の中では生きていない
 } with { choose(), k => k(true) + k(false) }
 
-let c = handle {
-  var w = vec_new()          // エラー：affine な var w が choose（ω）を跨いで生きている
-  if perform choose() { vec_len(&w) } else { 0 }
+let c := handle {
+  var w := Vec::new()          // エラー：affine な var w が choose（ω）を跨いで生きている
+  if perform choose() { Vec::len(&w) } else { 0 }
 } with { choose(), k => k(true) + k(false) }
 ```
 
@@ -345,7 +347,7 @@ let c = handle {
 - **型・命題・証明の中での変数の出現は使用に数えない。** `theorem t(f: File): P(f)` のように affine の値を命題に書いてよい。これは tauto の消去の規則そのものである。
 - カーネル（`check.rs`, `check/core.rs`）は **変えない**。種と再開量は Nib の層（`types.rs`, `rows.rs`, `lin.rs`）で検査し、カーネルは種と再開量のないときと同じ項を受け取る。この検査はプログラムを **より多く拒否する** だけで、受理する項の形は変えない。
 - `inductive` の宣言に種を書く必要はない（証明のためのデータは複製可）。実行されるデータで affine が要るのは `struct` / `enum` だけ。
-- 依存型の中で affine の値を計算に使う（`Vec(n, File)` の `n` を `File` の値から計算する等）必要はまだない。必要になったら線形な依存型を別に検討する。
+- 依存型の中で affine の値を計算に使う（`Vec(n, File)` の `n` を `File` の値から計算する等）ことは扱わない。線形な依存型は範囲の外にある。
 
 ---
 
@@ -358,26 +360,26 @@ let c = handle {
 `Text`、`List(A)`、`Option(A)`、`Pair(A, B)` のほかに：
 
 ```nib
-fn map<A: shared, B: shared, e>(xs: List(A), &f: (A) -> B ! {e}) -> List(B) ! {e}
-fn each<A: shared, e>(xs: List(A), &f: (A) -> () ! {e}) -> () ! {e}
-fn fold<A: shared, B: shared, e>(xs: List(A), init: B, &f: (B, A) -> B ! {e}) -> B ! {e}
-fn fold_once<A, B, e: <=1>(xs: List(A), init: B, &f: (B, A) -> B ! {e}) -> B ! {e}
-fn words(t: Text) -> List(Text)
-fn concat(a: Text, b: Text) -> Text        // 既存
+fn map<A: Shared, B: Shared, !e>(xs: List(A), &f: (A) -> B ! e): List(B) ! e
+fn each<A: Shared, !e>(xs: List(A), &f: (A) -> () ! e): () ! e
+fn fold<A: Shared, B: Shared, !e>(xs: List(A), init: B, &f: (B, A) -> B ! e): B ! e
+fn fold_once<A, B, !e: <=1>(xs: List(A), init: B, &f: (B, A) -> B ! e): B ! e
+fn words(t: Text): List(Text)
+fn concat(a: Text, b: Text): Text        // 既存
 struct Map(K, V)                            // 永続写像。kind = join(shared, kind K, kind V)
-fn map_empty<K, V>() -> Map(K, V)
-fn map_get<K: shared, V: shared>(m: Map(K, V), k: K) -> Option(V) where DecEq(K)
-fn map_insert<K: shared, V>(m: Map(K, V), k: K, v: V) -> Map(K, V) where DecEq(K)
-fn map_entries<K, V>(m: Map(K, V)) -> List(Pair(K, V))
+fn Map::empty<K, V>(): Map(K, V)
+fn Map::get<K: Shared, V: Shared>(m: Map(K, V), k: K): Option(V) where DecEq(K)
+fn Map::insert<K: Shared, V>(m: Map(K, V), k: K, v: V): Map(K, V) where DecEq(K)
+fn Map::entries<K, V>(m: Map(K, V)): List(Pair(K, V))
 struct Array(A)                             // 読むだけの配列（[`self-host.md`](self-host.md)「配列」）
-fn array_of_list<A: shared>(l: List(A)) -> Array(A)
-fn array_get<A: shared>(a: Array(A), i: u64) -> Option(A)   // O(1)
-fn array_len<A: shared>(a: Array(A)) -> u64
-fn array_to_list<A: shared>(a: Array(A)) -> List(A)
+fn Array::of_list<A: Shared>(l: List(A)): Array(A)
+fn Array::get<A: Shared>(a: Array(A), i: u64): Option(A)   // O(1)
+fn Array::len<A: Shared>(a: Array(A)): u64
+fn Array::to_list<A: Shared>(a: Array(A)): List(A)
 ```
 
 - `fold` は累積値 `B` が `f` の呼び出しを跨いで生きるので、`B: shared` か `e: <=1` のどちらかが要る。両方を用意し、名前で分ける（書き方は一つの原則：同じ署名を二つ用意しない。`fold` と `fold_once` は署名が違う）。
-- `map_get` が `Option(V)` を値で返せるのは `V: shared` のとき。affine な `V` には affine の std の `hashmap_get`（借用を返す）を使う。
+- `Map::get` が `Option(V)` を値で返せるのは `V: shared` のとき。affine な `V` には affine の std の `HashMap::get`（借用を返す）を使う。
 
 ### affine の std（Rust と同じコストモデル）
 
@@ -385,51 +387,51 @@ fn array_to_list<A: shared>(a: Array(A)) -> List(A)
 affine struct Buf {}                                 // 所有された文字列（Rust の String）
 affine struct Vec(A) {}
 affine struct HashMap(K, V) {}
-effect missing: () -> Never resume 0
-effect out_of_bounds: () -> Never resume 0
+effect missing(): Never resume 0
+effect out_of_bounds(): Never resume 0
 
-fn text_of(b: Buf) -> Text                           // move、ゼロコピー
-fn buf_of(&t: Text) -> Buf                           // 複製
-fn buf_clone(&b: Buf) -> Buf
-fn buf_each_word<e: <=1>(&s: Buf, &f: (&w: Buf) -> () ! {e}) -> () ! {e}
+fn Text::of(b: Buf): Text                           // move、ゼロコピー
+fn Buf::of(&t: Text): Buf                           // 複製
+fn Buf::clone(&b: Buf): Buf
+fn Buf::each_word<!e: <=1>(&s: Buf, &f: (&w: Buf) -> () ! e): () ! e
 
-fn vec_new<A: linear>() -> Vec(A)
-fn vec_push<A: linear>(&mut v: Vec(A), x: A) -> ()
-fn vec_pop<A: linear>(&mut v: Vec(A)) -> Option(A)
-fn vec_len<A: linear>(&v: Vec(A)) -> u64
-fn vec_index<A: linear>(&v: Vec(A), i: u64) -> &A ! {out_of_bounds}
-fn vec_clear<A>(&mut v: Vec(A)) -> ()                // 要素を捨てる：A は affine まで
-fn vec_each<A: linear, e>(&v: Vec(A), &f: (&x: A) -> () ! {e}) -> () ! {e}
-fn vec_consume<A, e: <=1>(v: Vec(A), &f: (x: A) -> () ! {e}) -> () ! {e}
-fn vec_sort_by<A: linear>(&mut v: Vec(A), &lt: (&a: A, &b: A) -> Bool) -> ()
-fn vec_into_array<A: shared>(v: Vec(A)) -> Array(A)
-fn vec_truncate<A>(&mut v: Vec(A), n: u64) -> ()
-fn vec_swap<A: linear>(&mut v: Vec(A), i: u64, j: u64) -> () ! {out_of_bounds}
+fn Vec::new<A: Linear>(): Vec(A)
+fn Vec::push<A: Linear>(&mut v: Vec(A), x: A): ()
+fn Vec::pop<A: Linear>(&mut v: Vec(A)): Option(A)
+fn Vec::len<A: Linear>(&v: Vec(A)): u64
+fn Vec::index<A: Linear>(&v: Vec(A), i: u64): &A ! {out_of_bounds}
+fn Vec::clear<A>(&mut v: Vec(A)): ()                // 要素を捨てる：A は affine まで
+fn Vec::each<A: Linear, !e>(&v: Vec(A), &f: (&x: A) -> () ! e): () ! e
+fn Vec::consume<A, !e: <=1>(v: Vec(A), &f: (x: A) -> () ! e): () ! e
+fn Vec::sort_by<A: Linear>(&mut v: Vec(A), &lt: (&a: A, &b: A) -> Bool): ()
+fn Vec::into_array<A: Shared>(v: Vec(A)): Array(A)
+fn Vec::truncate<A>(&mut v: Vec(A), n: u64): ()
+fn Vec::swap<A: Linear>(&mut v: Vec(A), i: u64, j: u64): () ! {out_of_bounds}
 
-fn hashmap_new<K: linear, V: linear>() -> HashMap(K, V) where DecEq(K), Hash(K)
-fn hashmap_get<K: linear, V: linear>(&m: HashMap(K, V), &k: K) -> Option(&V) where DecEq(K), Hash(K)
-fn hashmap_index<K: linear, V: linear>(&m: HashMap(K, V), &k: K) -> &V ! {missing} where DecEq(K), Hash(K)
-fn hashmap_insert<K: linear, V: linear>(&mut m: HashMap(K, V), k: K, v: V) -> Option(V) where DecEq(K), Hash(K)
-fn hashmap_into_vec<K: linear, V: linear>(m: HashMap(K, V)) -> Vec(Pair(K, V))
+fn HashMap::new<K: Linear, V: Linear>(): HashMap(K, V) where DecEq(K), Hash(K)
+fn HashMap::get<K: Linear, V: Linear>(&m: HashMap(K, V), &k: K): Option(&V) where DecEq(K), Hash(K)
+fn HashMap::index<K: Linear, V: Linear>(&m: HashMap(K, V), &k: K): &V ! {missing} where DecEq(K), Hash(K)
+fn HashMap::insert<K: Linear, V: Linear>(&mut m: HashMap(K, V), k: K, v: V): Option(V) where DecEq(K), Hash(K)
+fn HashMap::into_vec<K: Linear, V: Linear>(m: HashMap(K, V)): Vec(Pair(K, V))
 
-fn replace<A: linear>(&mut x: A, v: A) -> A          // &mut から move して出す唯一の方法
+fn replace<A: Linear>(&mut x: A, v: A): A          // &mut から move して出す唯一の方法
 ```
 
-- `vec_into_array` は `Vec` を消費し、順序を保って読み取り専用の `Array` に移す。要素は `shared` に限り、元の `Vec` の再利用や可変借用との併存は許さない。中間の `List` は構築しない。
+- `Vec::into_array` は `Vec` を消費し、順序を保って読み取り専用の `Array` に移す。要素は `shared` に限り、元の `Vec` の再利用や可変借用との併存は許さない。中間の `List` は構築しない。
 - Rust backend の再帰データは、走査だけでなく最後の所有者による破棄でもスタックを使う。`budget` はホストのスタック容量を制限しない。大きな平坦な列は `Vec` で構築し `Array` で共有できるが、要素自身が再帰データの場合の破棄まで保証するものではない。
-- `<A: linear>` を書くのは「要素を捨てない」関数。`vec_clear` は捨てるので既定の affine。
-- `vec_consume` は要素を一つずつ `f` に渡し、残りの要素が `f` の呼び出しを跨いで生きるので `e: <=1`。`vec_each` は借用しか渡さないので `e` は任意。
+- `<A: Linear>` を書くのは「要素を捨てない」関数。`Vec::clear` は捨てるので既定の affine。
+- `Vec::consume` は要素を一つずつ `f` に渡し、残りの要素が `f` の呼び出しを跨いで生きるので `e: <=1`。`Vec::each` は借用しか渡さないので `e` は任意。
 - std の本体にも「制御フロー線形性（CFL）の規則」が掛かるので、署名は次のようになる：
-  - `map`・`each`・`fold` は残りのリスト（と `map` では計算済みの頭）が `f` の呼び出しを跨いで生きるので、`e` が任意なら `A`（と `B`）は `shared`。affine な要素には `fold_once` か `vec_each` を使う。
-  - `vec_consume` の `A` は affine まで。`e: <=1` は 0 回（`resume 0` の効果）を含み、そのとき残りの要素が捨てられるので、linear な要素は渡せない。
-  - `buf_each_word` は単語ごとに作る `Buf` を `f` の呼び出しを跨いで持つので `e: <=1`。
-  - `map_get`・`map_insert` は鍵を `==` で何度も比べるので `K: shared` で、比べるために `where DecEq(K)` を要求する（[`classes.md`](classes.md)「std の鍵の制約」）。
-  - `vec_sort_by` は要素を `v` に置いたまま並べ替える（挿入整列）。そのために `vec_swap` が組み込みにある。
+  - `map`・`each`・`fold` は残りのリスト（と `map` では計算済みの頭）が `f` の呼び出しを跨いで生きるので、`e` が任意なら `A`（と `B`）は `shared`。affine な要素には `fold_once` か `Vec::each` を使う。
+  - `Vec::consume` の `A` は affine まで。`e: <=1` は 0 回（`resume 0` の効果）を含み、そのとき残りの要素が捨てられるので、linear な要素は渡せない。
+  - `Buf::each_word` は単語ごとに作る `Buf` を `f` の呼び出しを跨いで持つので `e: <=1`。
+  - `Map::get`・`Map::insert` は鍵を `==` で何度も比べるので `K: shared` で、比べるために `where DecEq(K)` を要求する（[`classes.md`](classes.md)「std の鍵の制約」）。
+  - `Vec::sort_by` は要素を `v` に置いたまま並べ替える（挿入整列）。そのために `Vec::swap` が組み込みにある。
 - `HashMap(K, V)` の `K` は `where DecEq(K), Hash(K)` を要求する（[`classes.md`](classes.md)「構造的な述語 `PartialEq`・`DecEq`・`Hash`」）。構造的な述語なので、フィールドがすべて比べられる struct / enum は鍵にできる。
 
 ### 境界
 
-`text_of` / `buf_of` だけが二つの std をつなぐ。日常のコードは中核を ω の std で書き、資源と性能が要る縁だけを affine の std で書く。
+`Text::of` / `Buf::of` だけが二つの std をつなぐ。日常のコードは中核を ω の std で書き、資源と性能が要る縁だけを affine の std で書く。
 
 ---
 
@@ -437,21 +439,20 @@ fn replace<A: linear>(&mut x: A, v: A) -> A          // &mut から move して�
 
 
 ```nib
-affine struct File {}
-affine struct IoError {}
-
 extern {
-  fn file_open(&path: Text) -> Result(File, IoError)
-  fn file_read_to_buf(&mut f: File, &mut buf: Buf) -> Result(u64, IoError)
-  fn io_error_message(&e: IoError) -> Text
+  affine type File
+  affine type IoError
+  fn file_open(&path: Text): Result(File, IoError)
+  fn file_read_to_buf(&mut f: File, &mut buf: Buf): Result(u64, IoError)
+  fn io_error_message(&e: IoError): Text
 }
 ```
 
 - `extern` の署名（型、種、行、再開量）は **tauto 側の主張** で、`axiom` と同じく信頼の対象。`tauto check` は信頼した extern を公理と同じ一覧に出す。
-- `affine struct X {}` を extern の型に使う（フィールドのない構造体。波括弧は省けない：構造体の書き方は一つ）。Drop は Rust の `Drop`。`linear` な extern の型はない（Rust は捨てられるから）。
+- extern の型は extern ブロックの中に `affine type X` と書く（種は `struct` と同じく前に書き、省けば `copy`）。フィールドのない構造体として読まれるが、そのコンストラクタは Tauto から呼べず、値を作るのは extern の関数だけ（バックエンドのビルドが `"error: X is an extern type; only extern functions make its values"` で拒否する）。バックエンドの設定が結びつけるのはこの宣言の型だけで、ふつうの `struct` はホストの型にならない。extern の型も `tauto check` の信頼の一覧に出る（`extern type X (file:line)`）。Drop は Rust の `Drop`。`linear` な extern の型はない（Rust は捨てられるから）。
 - Rust の `Result<T, E>` は `Result(T, E)` の値のまま受け渡す（効果にするのは std の `raise` / `catch`、[`rust-backend.md`](rust-backend.md) 「`Result`、`fail` / `raise` / `catch`、`Slice`」）。`Option<&T>` を返す API は `Option(&T)`（[`rust-backend.md`](rust-backend.md) 「view 型」）。`panic` は `Interrupted`（効果ではない）。
 - `&mut` の引数は Rust の `&mut`、`&` は `&`、所有は値渡し。複製可な tauto の値は Rust 側で `Rc` か値。
-- Drop を行に見せる `affine struct File drop ! {io}` は未決定（「決めたことと未決定」）。
+- Drop を行に見せる `affine struct File drop ! {io}` は未決定（「設計の理由と未決定」）。
 
 ---
 
@@ -461,6 +462,7 @@ extern {
 
 1. **Drop の時点**（「Drop の時点と順序」）。tauto で定義した型だけなら観測できない。extern の型が入ると Rust の `Drop` が走る時点として観測できる。
 2. **動的な所有権検査モード**（`tauto run --check-ownership`、テスト専用）：affine / linear の値を作るたびにトークンを付け、(a) 同じトークンが二度使われたら、(b) linear のトークンが消費されずに消えたら、(c) `ω` の効果で複製される継続の中にトークンがあったら、実行時エラーにする。静的検査の **対照試験** に使う：静的検査を通ったプログラムが動的検査で止まれば、静的検査の誤り。
+   この検査は評価器だけが持つ。評価器は表層のプログラムを走らせ、どの使用が移動かを実行時に型から決めるので、`lin.rs` とは独立した二本目の判断になる。バイトコード機械が走らせる NIR は、どの使用が移動か複製かを `lin.rs` の決定のまま書き写したもので（`tauto_nir` の冒頭）、フレームの値を落とす時点も変わりうる（`tauto_nir::tail`）。そこで検査しても静的検査を自分自身の決定と照らすだけで、捕まえたい誤りを捕まえられない。だから `tauto run --check-ownership` は、`--backend` を書かなければ評価器で走る。
 3. 借用は実行時には **値そのもの**（複製可）か **持ち主への参照**（affine）で、どちらにしても新しい値を作らない。
 
 参照カウントの方式は実装の自由で、仕様ではない。
@@ -518,7 +520,7 @@ def Row.quants : Row → Set Quant                   -- 行変数は境界
 - `Tm.bor a t` は `t` が `a` を借用する回数（`brw` / `mbrw` の下の出現）。`occ` は `brw` / `mbrw` の下を数えない（持ち主のセルで数える）。
 - 「借用」の規則は `Lin` と別の検査 `BLin` にする（`Lin` の証明が借用に依存しないため）。借用は引数か読み書きの対象にだけ現れ（`Bare`）、部分は左から右に走り、先の部分が所有するものを後の部分は借用せず、借用を保つ部分が借用するものを後の部分は所有しない（`Seq`, `Then`）。閉包、打ち切られうる `budget` の本体、捕まえられうる継続は外の借用を持たない（`Sealed`）。本体か `return` 腕が外を借用する `handle` の `k` は pinned で、腕の中でその場で呼ぶだけ（「借用と効果」）。
 - `Sealed` は「自分が所有するもの」と「誰も所有しないもの」（`Fr`）の借用を許す。step で持ち主が消えた場所（値が捨てられた、関数が返った）は `Fr` に入り、`Fr` は step で増える。
-- 腕が扱う操作の結果型は借用でない（`BClause` の前提 `¬ R.Bv`）。効果の署名の結果型には `&` を書けないので、検査器はこれを満たす。継続 `k` の穴（操作の答え）を引数の位置に置けるのはこのため。
+- 腕が扱う操作の結果型は借用でない（`BClause` の前提 `¬ R::Bv`）。効果の署名の結果型には `&` を書けないので、検査器はこれを満たす。継続 `k` の穴（操作の答え）を引数の位置に置けるのはこのため。
 - 不変条件 `BInv`：T2 の `Uniq` と `BLin`、セルの中身が `BLin` を通り借用でない（`StoreB`）、move したセルと生きたセルが持つ場所を誰も借用しない（`Lent`）。
 
 **T4 `borrow_safety` / `borrow_safety_run`**：検査を通るプログラムから到達するすべての状態で、項は `BLin` を通り、move したセルを項は使わず借用せず、生きたセルも持たず、そのセルに触れる step（`get`, `set`, 借用越しの `field` / `write`、`Touches`）はない。owned なセルからの move は、項の何もそのセルを借用していないときにだけ起こる。`progress` は「move したセルを読む」場合を **持たない**（それが起きないことが T4）。
@@ -527,7 +529,7 @@ def Row.quants : Row → Set Quant                   -- 行変数は境界
 
 `ω` の操作の中断点で捕まるフレームについて、`captured_dup`：継続は所有されたものを持たず（T5）、フレームが穴の左に持つ値はすべて `Held`（複製可の型で、`&mut` の型でない）。したがって複製されるのは複製可の値と `&` だけで、`&mut p` は入らない。
 
-モデルでは `&mut` の型の種が `shared` なので、`Ty.Mv`（`Kind.lean`）で `&mut` の型を区別し、`Held` に `¬ A.Mv` を、`Inst.Fits` に「型変数に代入する型は `Mv` でない」を置く（「制御フロー線形性（CFL）の規則」が `&mut` を `ω` の効果の左に持つことを禁じるのと同じ）。
+モデルでは `&mut` の型の種が `shared` なので、`Ty.Mv`（`Kind.lean`）で `&mut` の型を区別し、`Held` に `¬ A::Mv` を、`Inst.Fits` に「型変数に代入する型は `Mv` でない」を置く（「制御フロー線形性（CFL）の規則」が `&mut` を `ω` の効果の左に持つことを禁じるのと同じ）。
 
 ### 直接アームの借用捕捉（`Borrow.lean` の `Frozen`）
 
@@ -550,7 +552,7 @@ def Row.quants : Row → Set Quant                   -- 行変数は境界
 - T4：`bstep` の `vcall` の場合は、結果が引数のどれかで、その借用は呼び出しの借用の部分、その占有は呼び出しの占有の部分なので、`Lent`・`Uniq`・`StoreB` は reborrow の場合と同じ形で閉じる。
 - 例：`ViewExample.lean` の `second(a, b) = b`、`choose(c, a, b) = if c { a } else { b }`、`chooseOf(a, b, c) = choose(c, a, b)`。
 
-モデルにまだないもの：field の経路の view（借用の値は cell 全体 `brw (loc l)` だけで、cell の中の部分の借用を表せない）、view への `match`（核に `match` の項がない）、`&` と `&mut` の排他（`Tm.bor` は二つを区別しない。区別するには `Tm.bor` を共有と排他に分け、`ren`・`subst`・`inst` と T4 の `Lent` を通す必要がある）。モデルの引数は A 正規形。
+モデルにないもの：field の経路の view（借用の値は cell 全体 `brw (loc l)` だけで、cell の中の部分の借用を表せない）、view への `match`（核に `match` の項がない）、`&` と `&mut` の排他（`Tm.bor` は二つを区別しない。区別するには `Tm.bor` を共有と排他に分け、`ren`・`subst`・`inst` と T4 の `Lent` を通す必要がある）。モデルの引数は A 正規形。
 
 ### 書かないもの
 
@@ -578,32 +580,30 @@ lean/Proto/Nib/Examples.lean     受け入れ試験のうち Lean で書ける�
 
 ---
 
-## 決めたことと未決定
+## 設計の理由と未決定
 
-### 決めたこと（根拠つき）
+### 設計の理由
 
-| 決定 | 代わりに退けたもの | 根拠 |
-|---|---|---|
-| 種は型の性質 | 束縛子ごとに量を書く | Rust の型と一対一になり、コンテナの要素や「捨ててよいか」を型で言える。カーネルは消去（0 / ω）だけ持てばよい |
-| Rust の資源は affine、linear はオプトイン | すべて linear | abort（`resume 0`）の下で「ちょうど一度」は守れない。affine なら捨ててよく、Rust の Drop が後始末する |
-| 既定の再開量は `<=1`、multi-shot は `resume ω` と明示 | 既定 ω | affine を跨げる効果が既定になり、Rust の資源を普通に使える。multi-shot はまれで、明示する価値がある |
-| 二級の借用、字句的な凍結 | 第一級の参照 + lifetime + NLL | 検査が構文木を一度歩くだけで済み、`Safety.lean` の流儀（構文的 progress/preservation）で証明できる。第一級の参照と効果（継続の捕獲）の組み合わせは健全性の論証が大きくなる |
-| `&A ≡ A`（複製可） | Rust の `*r` | ジェネリックな `-> &A` が複製可な `A` でそのまま使える |
-| `&mut` は `var` だけ | `let mut` の追加 | 「可変なものは `var`」の一つの書き方 |
-| 自動の構造的 Drop / clone、ユーザー定義なし | 明示 Drop、ユーザー定義 Drop | 明示は資源のコードを 2〜3 割増やす。ユーザー定義は暗黙に効果を走らせる |
-| 腕の自由変数は複製可 | 腕ごとの使用解析 | 腕は何度も走る。状態はパラメータか `var` で持ち回せる（「腕と `k`」） |
-| 行変数の既定は任意、`<e: <=1>` で締める | 既定 `<=1` | `each(xs, x => perform choose())` のような ω のコードが注釈なしで書ける |
-| 借用閉包は二級 | 閉包の lifetime | 標準ライブラリの高階関数が `&f` で受け取れば足りる |
-| `fold` と `fold_once` を分ける | 一つの `fold` | 累積値を跨ぐ効果の量を署名に出す必要がある。署名が違うので「書き方は一つ」に反しない |
-| 参照の循環による漏れは許す | 「セルを捕まえた閉包はセルに入れられない」規則 | その規則は関数型に「セルを捕まえている」印を要し、署名に漏れる。漏れは健全性に関係しない。lint の候補として残す |
-| `Lin` を `HasType` と別の述語にする | 文脈分割型の型システムに書き換える | `Safety.lean` を壊さず、トークンの一意性という一つの不変量に証明が集まる |
-| 外を借用する `handle` の `k` はその場で呼ぶだけ | `k` の型に借用の印を付ける、外を借用する本体では `ω` だけを禁じる | 印は関数型に lifetime を持ち込み署名に漏れる。`<=1` の `k` も値として外に出せるので `ω` だけの禁止では足りない。その場で呼ぶなら継続は腕の間に使い切られ、借用は持ち主より長く生きない |
-| 持ち主をセルにして借用をモデル化 | 代入意味論で借用を値の複製にする | 複製はトークンを二重にし、`&mut` の書き込みが持ち主に届かない |
+- **種は型の性質**：Rust の型と一対一になり、コンテナの要素や「捨ててよいか」を型で言える。カーネルは消去（0 / ω）だけ持てばよい
+- **Rust の資源は affine、linear はオプトイン**：abort（`resume 0`）の下で「ちょうど一度」は守れない。affine なら捨ててよく、Rust の Drop が後始末する
+- **既定の再開量は `<=1`、multi-shot は `resume ω` と明示**：affine を跨げる効果が既定になり、Rust の資源を普通に使える。multi-shot はまれで、明示する価値がある
+- **二級の借用、字句的な凍結**：検査が構文木を一度歩くだけで済み、`Safety.lean` の流儀（構文的 progress/preservation）で証明できる。第一級の参照と効果（継続の捕獲）の組み合わせは健全性の論証が大きくなる
+- **`&A ≡ A`（複製可）**：ジェネリックな `-> &A` が複製可な `A` でそのまま使える
+- **`&mut` は `var` だけ**：「可変なものは `var`」の一つの書き方
+- **自動の構造的 Drop / clone、ユーザー定義なし**：Drop を明示させると資源のコードが増える。ユーザー定義の Drop は暗黙に効果を走らせる
+- **腕の自由変数は複製可**：腕は何度も走る。状態はパラメータか `var` で持ち回せる（「腕と `k`」）
+- **行変数の既定は任意、`<!e: <=1>` で締める**：`each(xs, x => perform choose())` のような ω のコードが注釈なしで書ける
+- **借用閉包は二級**：標準ライブラリの高階関数が `&f` で受け取れば足りる
+- **`fold` と `fold_once` を分ける**：累積値を跨ぐ効果の量を署名に出す必要がある。署名が違うので「書き方は一つ」に反しない
+- **強参照の循環は検査で拒否する（[`shared-levels.md`](shared-levels.md)）**：型が通ればリークしない言語にする。検査はプログラム全体の割当箇所の解析で行い、関数型に印を付けないので署名に漏れない
+- **`Lin` を `HasType` と別の述語にする**：`Safety.lean` を壊さず、トークンの一意性という一つの不変量に証明が集まる
+- **外を借用する `handle` の `k` はその場で呼ぶだけ**：`k` に印を付けると関数型に lifetime を持ち込み署名に漏れる。`<=1` の `k` も値として外に出せるので `ω` だけの禁止では足りない。その場で呼ぶなら継続は腕の間に使い切られ、借用は持ち主より長く生きない
+- **持ち主をセルにして借用をモデル化**：借用を値の複製で表すとトークンを二重にし、`&mut` の書き込みが持ち主に届かない
 
 ### 未決定
 
 1. `no shared`（関数・モジュールに RC が走らないことを宣言で検査させる）を入れるか。
 2. `affine struct File drop ! {io}`（Drop の効果を行に見せる）を入れるか。
 3. `Decimal` の種（`copy` としたが、実装が任意精度なら `shared`）。実装に合わせる。
-4. `let &x = f(&v)` の凍結を「形状を変える更新だけ禁止」に緩めるか。書き味の例が出てから。
-5. 評価順の move の衝突（`map_insert(&mut m, w, map_get(&m, &w) + 1)`）を two-phase borrow で通すか。two-phase borrow はないので、衝突はエラーになり、`let` で先に読む。
+4. `let &x := f(&v)` の凍結を「形状を変える更新だけ禁止」に緩めるか。書き味の例が出てから。
+5. 評価順の move の衝突（`Map::insert(&mut m, w, Map::get(&m, &w) + 1)`）を two-phase borrow で通すか。two-phase borrow はないので、衝突はエラーになり、`let` で先に読む。

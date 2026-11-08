@@ -206,7 +206,7 @@ fn operations_round_the_exact_result() {
     let mut src = String::from(
         "import std::Float\nimport std::FloatReal\nimport std::Rat\n\n\
          fn raw(n: Nat): Float {\n  Float::of_raw(n)\n}\n\n\
-         fn val(n: Nat): Rat {\n  match Float::val(raw(n)): Rat {\n    None => Rat::of_nat(0)\n    Some(r) => r\n  }\n}\n\n",
+         fn val(n: Nat): Rat {\n  ⊢ Rat from match Float::val(raw(n)) {\n    None => Rat::of_nat(0)\n    Some(r) => r\n  }\n}\n\n",
     );
     let mut r = Xorshift(0x9E37_79B9_7F4A_7C15);
     for i in 0..60 {
@@ -281,7 +281,7 @@ fn the_kernel_computes_what_the_hardware_does_in_float32() {
         "import std::Float\nimport std::Float32\nimport std::FloatReal\nimport std::Rat\n\n\
          fn raw(n: Nat): Float32 {\n  Float32::of_raw(n)\n}\n\n\
          fn wide(n: Nat): Float {\n  Float::of_raw(n)\n}\n\n\
-         fn val(n: Nat): Rat {\n  match Float32::val(raw(n)): Rat {\n    None => Rat::of_nat(0)\n    Some(r) => r\n  }\n}\n\n",
+         fn val(n: Nat): Rat {\n  ⊢ Rat from match Float32::val(raw(n)) {\n    None => Rat::of_nat(0)\n    Some(r) => r\n  }\n}\n\n",
     );
     let mut r = Xorshift(0x2545_F491_4F6C_DD1D);
     for i in 0..60 {

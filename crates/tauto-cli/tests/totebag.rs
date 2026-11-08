@@ -181,7 +181,10 @@ fn add_locks_fetches_and_run_reads_the_lock() {
     );
 
     assert_eq!(w.ok(&["run", "--tote", "."]), "answer = 42\n");
-    assert!(w.ok(&["check", "--tote", "."]).contains("0 failed"));
+    assert!(
+        w.ok(&["check", "--tote", ".", "--summary"])
+            .contains("0 failed")
+    );
     let deps = w.ok(&["deps"]);
     assert!(deps.contains("app 0.1.0\n└── greet ("), "{deps}");
     assert!(deps.contains("    └── word (path ../word)"), "{deps}");

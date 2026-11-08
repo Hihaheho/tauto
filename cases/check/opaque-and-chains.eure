@@ -1,0 +1,188 @@
+@ cases.an-opaque-fn-is-its-body-its-name-and-its-equation
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+opaque fn double(n: Nat): Nat => theorem double::eq {
+  match n {
+    Zero => Zero
+    Succ(k) => Succ(Succ(double(k)))
+  }
+}
+```
+
+checks."input/main.taut::double@body" = "ok"
+checks."input/main.taut::double" = "ok"
+checks."input/main.taut::double::eq" = "ok"
+
+@ cases.an-opaque-fn-does-not-unfold-by-conversion
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+opaque fn double(n: Nat): Nat => theorem double::eq {
+  match n {
+    Zero => Zero
+    Succ(k) => Succ(Succ(double(k)))
+  }
+}
+theorem double_one(): double(1) = 2 { Refl }
+```
+
+checks."input/main.taut::double" = "ok"
+checks."input/main.taut::double::eq" = "ok"
+checks."input/main.taut::double_one" = "error: type mismatch"
+
+@ cases.an-opaque-fn-unfolds-by-a-rewrite-with-its-equation
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::Tactic
+opaque fn double(n: Nat): Nat => theorem double::eq {
+  match n {
+    Zero => Zero
+    Succ(k) => Succ(Succ(double(k)))
+  }
+}
+theorem double_one(): double(1) = 2 {
+  by rewrite!(double::eq(1)): double(1) = 2 {
+    ⊢ Eq(Nat, 2, 2) from Refl
+  }
+}
+```
+
+checks."input/main.taut::double::eq" = "ok"
+checks."input/main.taut::double_one" = "ok"
+
+@ cases.a-match-on-text-literals-with-a-named-last-arm-is-checked
+imports = [path`../../std/Text.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn kind(s: Text): Nat {
+  ⊢ Nat from match s {
+    "a" => 1
+    "b" => 2
+    other => List::length(Text::bytes(other))
+  }
+}
+theorem kind_b(): kind("b") = 2 { Refl }
+theorem kind_other(): kind("xyz") = 3 { Refl }
+```
+
+checks."input/main.taut::kind" = "ok"
+checks."input/main.taut::kind_b" = "ok"
+checks."input/main.taut::kind_other" = "ok"
+
+@ cases.a-match-on-text-literals-without-a-last-arm-is-rejected
+imports = [path`../../std/Text.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn kind(s: Text): Nat {
+  ⊢ Nat from match s {
+    "a" => 1
+    "b" => 2
+  }
+}
+```
+
+checks."input/main.taut::kind" = "error: a kernel match lists constructors"
+
+@ cases.a-calc-chain-is-the-transitivity-it-stands-for
+entry = "input/main.taut"
+files."input/main.taut" = ````tauto
+import std::Calc { calc }
+theorem chain(a: Nat, b: Nat, c: Nat, h1: a = b, h2: b = c): a = c {
+  calc!(```
+    $a
+    = $b from $h1
+    = $c from $h2
+    = $c from $Refl
+    ```)
+}
+````
+
+checks."input/main.taut::chain" = "ok"
+
+@ cases.a-calc-step-whose-proof-does-not-fit-is-rejected
+entry = "input/main.taut"
+files."input/main.taut" = ````tauto
+import std::Calc { calc }
+theorem chain(a: Nat, b: Nat, c: Nat, h1: a = b, h2: b = c): a = c {
+  calc!(```
+    $a
+    = $b from $h2
+    = $c from $h2
+    ```)
+}
+````
+
+checks."input/main.taut::chain" = "error: type mismatch: expected `a = b`, found `b = c`"
+
+@ cases.a-context-with-a-box-is-a-function
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn ctx(x1: Bool, y: Bool): (Bool) -> Bool { ⟦Bool::and(Bool::or(x1, □), y)⟧ }
+theorem cg(x1: Bool, y: Bool, a: Bool, b: Bool, h: a = b): Bool::and(Bool::or(x1, a), y) = Bool::and(Bool::or(x1, b), y) {
+  Eq::congr(Bool, Bool, a, b, ⟦Bool::and(Bool::or(x1, □), y)⟧, h)
+}
+```
+
+checks."input/main.taut::ctx" = "ok"
+checks."input/main.taut::cg" = "ok"
+
+@ cases.a-forall-over-several-names-is-nested-foralls
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem fa(): ∀ x: Nat, y: Nat. Nat::add(x, y) = Nat::add(x, y) { (x: Nat, y: Nat) => Refl }
+```
+
+checks."input/main.taut::fa" = "ok"
+
+@ cases.a-product-and-the-unit-are-written-with-hash
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn swap(p: Nat × Nat): Nat × Nat {
+  match p {
+    #(a, b) => #(b, a)
+  }
+}
+theorem swap_ok(): swap(#(1, 2)) = #(2, 1) { Refl }
+fn unit(): Unit { #() }
+```
+
+checks."input/main.taut::swap" = "ok"
+checks."input/main.taut::swap_ok" = "ok"
+checks."input/main.taut::unit" = "ok"
+
+@ cases.a-pattern-names-an-implicit-argument-it-reads
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Vec(A: Type): (Nat) -> Type {
+  VNil: Vec(A, Zero)
+  VCons<n: Nat>(x: A, xs: Vec(A, n)): Vec(A, Succ(n))
+}
+fn vlen(A: Type, k: Nat, v: Vec(A, k)): Nat {
+  ⊢ Nat from match v {
+    VNil => Zero
+    VCons<n: m>(x, xs) => Succ(m)
+  }
+}
+theorem vlen_two(): vlen(Nat, 2, VCons(1, VCons(2, VNil))) = 2 { Refl }
+```
+
+checks."input/main.taut::vlen" = "ok"
+checks."input/main.taut::vlen_two" = "ok"
+
+@ cases.a-pattern-names-an-implicit-argument-the-constructor-does-not-have
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Vec(A: Type): (Nat) -> Type {
+  VNil: Vec(A, Zero)
+  VCons<n: Nat>(x: A, xs: Vec(A, n)): Vec(A, Succ(n))
+}
+fn vlen(A: Type, k: Nat, v: Vec(A, k)): Nat {
+  ⊢ Nat from match v {
+    VNil => Zero
+    VCons<len: m>(x, xs) => Succ(m)
+  }
+}
+```
+
+checks."input/main.taut::vlen" = "error: `main::Vec::VCons` has no implicit argument named `len`"

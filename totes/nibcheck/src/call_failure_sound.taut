@@ -14,25 +14,25 @@ pub fn call_cycle_term(): SurfaceTerm {
 pub fn call_cycle_state(): Checker { ck_st(ck_fresh(checker_new(8))) }
 
 pub theorem self_application_is_rejected(): fuel_has_errors(
-    fuel_errors(
-      ck_st(
-        ck_app_result(
-          call_cycle_state(),
-          call_cycle_term(),
-          call_cycle_name(),
-          Cons(call_cycle_name(), Nil),
-          TyVar(0),
-          None,
-          Cons(TyVar(0), Nil)
-        )
+  fuel_errors(
+    ck_st(
+      ck_app_result(
+        call_cycle_state(),
+        call_cycle_term(),
+        call_cycle_name(),
+        Cons(call_cycle_name(), Nil),
+        TyVar(0),
+        None,
+        Cons(TyVar(0), Nil)
       )
     )
-  ) = true { Refl }
+  )
+) = true { Refl }
 
 // The callee and the argument walk both exhaust their fuel; neither diagnostic
 // may be overwritten by the following polymorphic instantiation.
 pub theorem call_keeps_callee_and_argument_diagnostics(): list_len(
-    fuel_errors(
-      ck_st(ck_app_call_in(1, checker_new(8), call_cycle_term(), call_cycle_name(), Nil, Nil))
-    )
-  ) = 3 { Refl }
+  fuel_errors(
+    ck_st(ck_app_call_in(1, checker_new(8), call_cycle_term(), call_cycle_name(), Nil, Nil))
+  )
+) = 3 { Refl }

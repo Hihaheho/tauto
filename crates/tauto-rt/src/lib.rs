@@ -1,6 +1,5 @@
-//! The run-time library of Rust code generated from tauto. No `unsafe`, and
-//! no dependencies but the HTTP client of the `net` feature and rustls of
-//! the `tls` feature.
+//! The run-time library of Rust code generated from Tauto.
+//! Declaration references share their representation with the compiler.
 
 #![forbid(unsafe_code)]
 
@@ -15,6 +14,8 @@ use std::sync::{Mutex, MutexGuard, TryLockError};
 pub use std::rc::Rc;
 #[cfg(feature = "sync")]
 pub use std::sync::Arc as Rc;
+
+pub use tauto_identity as identity;
 
 pub mod a;
 pub mod budget;
@@ -39,6 +40,7 @@ pub mod probe;
 #[cfg(feature = "reactor")]
 pub mod reactor;
 pub mod show;
+pub mod shutdown;
 pub mod signal;
 pub mod stdlib;
 pub mod tcp;
@@ -128,10 +130,6 @@ impl fmt::Display for Text {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Never {}
-
-/// A product `A × B × …`: its members in the order of the type, as a tuple.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Product<T>(pub T);
 
 /// A name for an operation, and what is shown when nothing handles it.
 pub type OpId = u32;
@@ -292,6 +290,11 @@ pub fn unshare<P: link::Unshare>(rc: &mut P) -> &mut P::Target {
     rc.unshare()
 }
 
+/// A shared cell put back into a shared field.
+pub fn relink<P: link::Relink<To>, To>(p: P) -> To {
+    p.relink()
+}
+
 pub fn unbox<P: link::Unbox>(b: P) -> P::Target {
     b.unbox()
 }
@@ -323,6 +326,7 @@ pub fn swap_steps(n: u64) -> u64 {
 /// Counts one step of a loop or a call that may not stop, outside any
 /// `budget`. With `--allow-div` it counts nothing.
 pub fn host_tick(at: Loc) {
+    shutdown::poll();
     if DIV_UNBOUNDED.load(std::sync::atomic::Ordering::Relaxed) {
         return;
     }
@@ -368,16 +372,25 @@ impl Drop for Bomb {
     }
 }
 
+static DEFAULT_STACK_MB: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1024);
+
+/// Sets the stack [`stack_bytes`] falls back to when `TAUTO_STACK_MB` is not
+/// set: the generated `main` calls it with the tote's `rust.stack-mb`, before
+/// the first thread is made.
+pub fn set_default_stack_mb(mb: usize) {
+    DEFAULT_STACK_MB.store(mb, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The stack of the program's threads, its `main`'s, each task's and each
-/// reactor worker's (`TAUTO_STACK_MB`, 1024 by default): a recursion that
-/// ends on `main` ends in a task too.
+/// reactor worker's (`TAUTO_STACK_MB`, else the tote's `rust.stack-mb`, else
+/// 1024): a recursion that ends on `main` ends in a task too.
 pub fn stack_bytes() -> usize {
     static BYTES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *BYTES.get_or_init(|| {
         let mb = std::env::var("TAUTO_STACK_MB")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(1024);
+            .unwrap_or_else(|| DEFAULT_STACK_MB.load(std::sync::atomic::Ordering::Relaxed));
         mb << 20
     })
 }
@@ -386,8 +399,8 @@ pub fn stack_bytes() -> usize {
 /// `{file}:{line}:{col}: {message}` on the standard error and exits with 1;
 /// any other panic (a Rust extern's) is `interrupted: …`.
 ///
-/// The program runs on a thread with a large stack (`TAUTO_STACK_MB`, 1024 by
-/// default; the memory is only used as it is touched): recursion over a long
+/// The program runs on a thread with a large stack ([`stack_bytes`], 1024 MiB
+/// by default; the memory is only used as it is touched): recursion over a long
 /// list is how tauto walks it, and so is dropping one. A target without
 /// threads (wasm32) runs it on the calling thread, whose stack the linker
 /// sized.

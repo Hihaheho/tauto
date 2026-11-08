@@ -1,0 +1,29 @@
+@ cases.a-pure-later-binding-preserves-an-earlier-recursive-field
+extract = true
+source = ```tauto
+mutual {
+  inductive Node: Type { Mk(first: List(Node), second: List(Node)): Node }
+}
+mutual {
+  fn count_node(node: Node, out: Nat): Nat {
+    ⊢ Nat from match node {
+      Mk(first, second) => count_nodes(second, {
+        let saved := out + 1;
+        count_nodes(first, if saved == 0 { saved } else { saved })
+      })
+    }
+  }
+  fn count_nodes(nodes: List(Node), out: Nat): Nat {
+    ⊢ Nat from match nodes {
+      Nil => out
+      Cons(head, rest) => count_nodes(rest, count_node(head, out))
+    }
+  }
+}
+theorem count(): count_node(Mk(Cons(Mk(Nil, Nil), Nil), Cons(Mk(Nil, Nil), Nil)), 0) = 3 { Refl }
+perform show("count", count_node(Mk(Cons(Mk(Nil, Nil), Nil), Cons(Mk(Nil, Nil), Nil)), 0))
+```
+checks_all = "ok"
+shows = ["count = 3"]
+rust_shows = ["count = 3"]
+javascript_shows = ["count = 3"]

@@ -5,7 +5,7 @@ import "checker.taut"
 import "datas.taut"
 
 pub fn signature_source_cons(head: Option(SurfaceFn), tail: List(SurfaceFn)): List(SurfaceFn) {
-  match head: List(SurfaceFn) {
+  ⊢ List(SurfaceFn) from match head {
     None => tail
     Some(source) => Cons(source, tail)
   }
@@ -13,7 +13,7 @@ pub fn signature_source_cons(head: Option(SurfaceFn), tail: List(SurfaceFn)): Li
 // Source coverage: declarations with bodies occur exactly once in this list,
 // in source order, independently of whether their signatures report errors.
 pub fn signature_statement_source(stmt: SurfaceStmt): Option(SurfaceFn) {
-  match stmt: Option(SurfaceFn) {
+  ⊢ Option(SurfaceFn) from match stmt {
     StLet(name, ty, value, borrow, mutable) => None
     StVar(name, ty, value, borrow) => None
     StModule(name, stmts, start, end) => None
@@ -41,7 +41,7 @@ pub fn signature_statement_source(stmt: SurfaceStmt): Option(SurfaceFn) {
   }
 }
 pub fn signature_program_sources(program: List(SurfaceStmt)): List(SurfaceFn) {
-  match program: List(SurfaceFn) {
+  ⊢ List(SurfaceFn) from match program {
     Nil => Nil
     Cons(Stmt, rest) => signature_source_cons(
       signature_statement_source(Stmt),
@@ -50,13 +50,13 @@ pub fn signature_program_sources(program: List(SurfaceStmt)): List(SurfaceFn) {
   }
 }
 pub fn signature_option_source(item: Option(Pair(SurfaceFn, Scheme))): Option(SurfaceFn) {
-  match item: Option(SurfaceFn) {
+  ⊢ Option(SurfaceFn) from match item {
     None => None
     Some(entry) => Some(entry.fst)
   }
 }
 pub fn signature_list_sources(items: List(Pair(SurfaceFn, Scheme))): List(SurfaceFn) {
-  match items: List(SurfaceFn) {
+  ⊢ List(SurfaceFn) from match items {
     Nil => Nil
     Cons(entry, rest) => Cons(entry.fst, signature_list_sources(rest))
   }

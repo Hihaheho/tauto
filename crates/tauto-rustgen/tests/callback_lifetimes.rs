@@ -5,10 +5,6 @@ use tauto_rustgen::{Bindings, Options, Sources, workspace};
 
 static BUILD_LOCK: Mutex<()> = Mutex::new(());
 
-fn execute(source: &str, tag: &str, expected: &str) {
-    execute_mode(source, tag, expected, false);
-}
-
 fn execute_mode(source: &str, tag: &str, expected: &str, sync: bool) {
     let _build = BUILD_LOCK
         .lock()

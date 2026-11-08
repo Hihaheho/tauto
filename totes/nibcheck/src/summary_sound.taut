@@ -16,7 +16,7 @@ import std::prelude::Ord
 pub theorem summary_within_mem<g: Text, xs: List(
   Text
 )>(m: Mem(Text, g, xs), ys: List(Text), h: texts_within(xs, ys) = true): Mem(Text, g, ys) {
-  match m: Mem(Text, g, ys) {
+  ⊢ Mem(Text, g, ys) from match m {
     MemHere(t) => lht_sound(
       ys,
       g,
@@ -48,9 +48,9 @@ pub theorem summary_ha_k(
   sub: Sub(Text, holds, gs),
   hn: Mem(Text, n, gs)
 ): Sub(Text, ha_k(holds, n, b), gs) {
-  match b: Sub(Text, ha_k(holds, n, b), gs) {
+  ⊢ Sub(Text, ha_k(holds, n, b), gs) from match b {
     true => sub
-    false => g => m => match m: Mem(Text, g, gs) {
+    false => g => m => ⊢ Mem(Text, g, gs) from match m {
       MemHere(t) => hn
       MemThere(x, t, mr) => sub(g, mr)
     }
@@ -80,7 +80,7 @@ pub theorem summary_param(
   eb: list_has_text(gs, n) = b,
   sub: Sub(Text, holds, gs)
 ): Sub(Text, psnd(fkp_k(n, pk, holds, b)), gs) {
-  match b: Sub(Text, psnd(fkp_k(n, pk, holds, b)), gs) {
+  ⊢ Sub(Text, psnd(fkp_k(n, pk, holds, b)), gs) from match b {
     true => summary_ha(holds, n, gs, sub, lht_sound(gs, n, eb))
     false => sub
   }
@@ -108,7 +108,7 @@ pub theorem summary_decl(
     gs
   )
 ): Sub(Text, psnd(fkd_k(d, args, gs, holds, o)), gs) {
-  match o: Sub(Text, psnd(fkd_k(d, args, gs, holds, o)), gs) {
+  ⊢ Sub(Text, psnd(fkd_k(d, args, gs, holds, o)), gs) from match o {
     None => sub
     Some(data) => ih(data)
   }
@@ -125,7 +125,7 @@ pub theorem summary_named(
   sub: Sub(Text, holds, gs),
   ih: Sub(Text, psnd(fkd_k(d, args, gs, holds, datas_decl(d, n))), gs)
 ): Sub(Text, psnd(fkn_k(d, n, args, gs, holds, b)), gs) {
-  match b: Sub(Text, psnd(fkn_k(d, n, args, gs, holds, b)), gs) {
+  ⊢ Sub(Text, psnd(fkn_k(d, n, args, gs, holds, b)), gs) from match b {
     true => summary_ha(
       holds,
       n,
@@ -146,7 +146,7 @@ pub theorem summary_pick(
   sub: Sub(Text, psnd(acc), gs),
   ih: Sub(Text, psnd(field_kind(d, t, gs, psnd(acc))), gs)
 ): Sub(Text, psnd(fkl_pick(d, t, gs, acc, p)), gs) {
-  match p: Sub(Text, psnd(fkl_pick(d, t, gs, acc, p)), gs) {
+  ⊢ Sub(Text, psnd(fkl_pick(d, t, gs, acc, p)), gs) from match p {
     true => ih
     false => sub
   }
@@ -170,7 +170,7 @@ pub theorem summary_list_k(
     Sub(Text, psnd(a), gs)
   ) -> Sub(Text, psnd(field_kind_list(d, rest, every, picks_tail(picks), gs, a)), gs)
 ): Sub(Text, psnd(fkl_k(d, t, rest, every, picks, gs, acc, go)), gs) {
-  match go: Sub(Text, psnd(fkl_k(d, t, rest, every, picks, gs, acc, go)), gs) {
+  ⊢ Sub(Text, psnd(fkl_k(d, t, rest, every, picks, gs, acc, go)), gs) from match go {
     false => sub
     true => ihr(
       fkl_pick(d, t, gs, acc, picks_head(every, picks)),
@@ -189,7 +189,7 @@ mutual {
     acc: Pair(Kind, List(Text)),
     sub: Sub(Text, psnd(acc), gs)
   ): Sub(Text, psnd(field_kind_list(d, ts, every, picks, gs, acc)), gs) {
-    match ts: Sub(Text, psnd(field_kind_list(d, ts, every, picks, gs, acc)), gs) {
+    ⊢ Sub(Text, psnd(field_kind_list(d, ts, every, picks, gs, acc)), gs) from match ts {
       Nil => sub
       Cons(t, rest) => Eq::subst(
         (z: Pair(Kind, List(Text))) => Sub(Text, psnd(z), gs),
@@ -218,7 +218,7 @@ mutual {
     holds: List(Text),
     sub: Sub(Text, holds, gs)
   ): Sub(Text, psnd(field_kind(d, t, gs, holds)), gs) {
-    match t: Sub(Text, psnd(field_kind(d, t, gs, holds)), gs) {
+    ⊢ Sub(Text, psnd(field_kind(d, t, gs, holds)), gs) from match t {
       TyInt(w) => sub
       TyBool => sub
       TyText => sub
@@ -304,7 +304,7 @@ pub theorem summary_fields(
   acc: Pair(Kind, List(Text)),
   sub: Sub(Text, psnd(acc), gs)
 ): Sub(Text, psnd(fields_kind(d, fs, gs, acc)), gs) {
-  match fs: Sub(Text, psnd(fields_kind(d, fs, gs, acc)), gs) {
+  ⊢ Sub(Text, psnd(fields_kind(d, fs, gs, acc)), gs) from match fs {
     Nil => sub
     Cons(f, rest) => summary_fields(
       d,
@@ -323,7 +323,7 @@ pub theorem summary_ctors(
   acc: Pair(Kind, List(Text)),
   sub: Sub(Text, psnd(acc), gs)
 ): Sub(Text, psnd(ctors_kind(d, cs, gs, acc)), gs) {
-  match cs: Sub(Text, psnd(ctors_kind(d, cs, gs, acc)), gs) {
+  ⊢ Sub(Text, psnd(ctors_kind(d, cs, gs, acc)), gs) from match cs {
     Nil => sub
     Cons(c, rest) => summary_ctors(
       d,
@@ -341,7 +341,7 @@ pub def SummaryFloor(
 ): Prop := And(KLe(data_declared_kind(data), dbase(data)), And(RecOk(data), UnmentionedOk(data)))
 
 pub fn summary_unmentioned_k(data: Data, g: Text, rest: List(Text), b: Bool): List(Text) {
-  match b: List(Text) {
+  ⊢ List(Text) from match b {
     true => generics_unmentioned(data, rest)
     false => Cons(g, generics_unmentioned(data, rest))
   }
@@ -351,7 +351,10 @@ pub theorem summary_unmentioned_unf(
   data: Data,
   g: Text,
   rest: List(Text)
-): generics_unmentioned(data, Cons(g, rest)) = summary_unmentioned_k(data, g, rest, data_mentions(data, g)) { Refl }
+): generics_unmentioned(
+  data,
+  Cons(g, rest)
+) = summary_unmentioned_k(data, g, rest, data_mentions(data, g)) { Refl }
 
 pub theorem summary_unmentioned_head(
   data: Data,
@@ -360,7 +363,7 @@ pub theorem summary_unmentioned_head(
   b: Bool,
   e: b = false
 ): Mem(Text, g, summary_unmentioned_k(data, g, rest, b)) {
-  match b: Mem(Text, g, summary_unmentioned_k(data, g, rest, b)) {
+  ⊢ Mem(Text, g, summary_unmentioned_k(data, g, rest, b)) from match b {
     true => False::elim(true_ne_false(e))
     false => MemHere(Text, g, generics_unmentioned(data, rest))
   }
@@ -374,7 +377,7 @@ pub theorem summary_unmentioned_tail(
   g: Text,
   m: Mem(Text, g, generics_unmentioned(data, rest))
 ): Mem(Text, g, summary_unmentioned_k(data, x, rest, b)) {
-  match b: Mem(Text, g, summary_unmentioned_k(data, x, rest, b)) {
+  ⊢ Mem(Text, g, summary_unmentioned_k(data, x, rest, b)) from match b {
     true => m
     false => MemThere(Text, g, x, generics_unmentioned(data, rest), m)
   }
@@ -387,9 +390,9 @@ pub theorem summary_unmentioned(
   m: Mem(Text, g, gs),
   e: data_mentions(data, g) = false
 ): Mem(Text, g, generics_unmentioned(data, gs)) {
-  match gs: Mem(Text, g, generics_unmentioned(data, gs)) {
+  ⊢ Mem(Text, g, generics_unmentioned(data, gs)) from match gs {
     Nil => Mem::nil(Mem(Text, g, generics_unmentioned(data, Nil(Text))), m)
-    Cons(x, rest) => match m: Mem(Text, g, generics_unmentioned(data, Cons(x, rest))) {
+    Cons(x, rest) => ⊢ Mem(Text, g, generics_unmentioned(data, Cons(x, rest))) from match m {
       MemHere(t) => Eq::subst(
         (z: List(Text)) => Mem(Text, x, z),
         Eq::sym(summary_unmentioned_unf(data, x, rest)),
@@ -412,10 +415,10 @@ pub theorem summary_unmentioned(
 }
 
 pub theorem summary_least(data: Data): SummaryFloor(data_least(data)) {
-  match data: SummaryFloor(data_least(data)) {
-    DataMk(n, declared, gs, cs, st, rec, base, holds, builtin, r#view) => match rec: SummaryFloor(
+  ⊢ SummaryFloor(data_least(data)) from match data {
+    DataMk(n, declared, gs, cs, st, rec, base, holds, builtin, r#view) => ⊢ SummaryFloor(
       data_least(DataMk(n, declared, gs, cs, st, rec, base, holds, builtin, r#view))
-    ) {
+    ) from match rec {
       true => AndIntro(
         kle_join_l(
           data_declared_kind(DataMk(n, declared, gs, cs, st, true, base, holds, builtin, r#view)),
@@ -462,7 +465,7 @@ pub theorem summary_floor_grow(
   kb: KLe(dbase(data), base),
   hs: Sub(Text, dholds(data), holds)
 ): SummaryFloor(data_with_summary(data, base, holds)) {
-  match data: SummaryFloor(data_with_summary(data, base, holds)) {
+  ⊢ SummaryFloor(data_with_summary(data, base, holds)) from match data {
     DataMk(n, declared, gs, cs, st, rec, old, oldholds, builtin, r#view) => AndIntro(
       kle_trans(
         data_declared_kind(DataMk(n, declared, gs, cs, st, rec, old, oldholds, builtin, r#view)),
@@ -481,7 +484,7 @@ pub theorem summary_floor_grow(
 
 // Even when fuel runs out, every field is bounded by the top summary.
 pub theorem summary_top(d: Datas, data: Data): DataOk(d, data_top(data)) {
-  match data: DataOk(d, data_top(data)) {
+  ⊢ DataOk(d, data_top(data)) from match data {
     DataMk(n, declared, gs, cs, st, rec, base, holds, builtin, r#view) => AndIntro(
       kle_linear(pfst(ctors_kind(d, cs, gs, Pair { fst: KindLinear, snd: gs }))),
       AndIntro(
@@ -535,7 +538,12 @@ pub theorem summary_test_sound(
     Kind,
     List(Text)
   ) := ctors_kind(d, dctors(data), dgen(data), Pair { fst: dbase(data), snd: dholds(data) })
-  let eqbase: kind_join(dbase(data), pfst(r)) = dbase(data) := kind_rank_inj(
+  let eqbase: kind_join(
+    dbase(data),
+    pfst(r)
+  ) = dbase(
+    data
+  ) := kind_rank_inj(
     kind_join(dbase(data), pfst(r)),
     dbase(data),
     Nat::eq_sound(
@@ -613,7 +621,7 @@ pub fn summary_round_test(
   data: Data,
   b: Bool
 ): Pair(Datas, Bool) {
-  match b: Pair(Datas, Bool) {
+  ⊢ Pair(Datas, Bool) from match b {
     true => datas_round(rest, d, grew)
     false => datas_round(rest, summary_update(d, n, data), true)
   }
@@ -626,7 +634,7 @@ pub fn summary_round_decl(
   n: Text,
   o: Option(Data)
 ): Pair(Datas, Bool) {
-  match o: Pair(Datas, Bool) {
+  ⊢ Pair(Datas, Bool) from match o {
     None => datas_round(rest, d, grew)
     Some(data) => summary_round_test(rest, d, grew, n, data, summary_test(d, data))
   }
@@ -641,7 +649,11 @@ pub theorem summary_round_unf(
   rest: List(Pair(Text, Data)),
   d: Datas,
   grew: Bool
-): datas_round(Cons(e, rest), d, grew) = summary_round_decl(rest, d, grew, summary_key(e), datas_decl(d, summary_key(e))) { Refl }
+): datas_round(
+  Cons(e, rest),
+  d,
+  grew
+) = summary_round_decl(rest, d, grew, summary_key(e), datas_decl(d, summary_key(e))) { Refl }
 
 // A round can never clear an earlier growth flag.
 pub def SummaryFlag(
@@ -658,7 +670,7 @@ pub theorem summary_flag_test(
   b: Bool,
   ih: ∀ dd: Datas. ∀ gg: Bool. SummaryFlag(gg, datas_round(rest, dd, gg))
 ): SummaryFlag(grew, summary_round_test(rest, d, grew, n, data, b)) {
-  match b: SummaryFlag(grew, summary_round_test(rest, d, grew, n, data, b)) {
+  ⊢ SummaryFlag(grew, summary_round_test(rest, d, grew, n, data, b)) from match b {
     true => ih(d, grew)
     false => h => False::elim(true_ne_false(ih(summary_update(d, n, data), true, h)))
   }
@@ -672,7 +684,7 @@ pub theorem summary_flag_decl(
   o: Option(Data),
   ih: ∀ dd: Datas. ∀ gg: Bool. SummaryFlag(gg, datas_round(rest, dd, gg))
 ): SummaryFlag(grew, summary_round_decl(rest, d, grew, n, o)) {
-  match o: SummaryFlag(grew, summary_round_decl(rest, d, grew, n, o)) {
+  ⊢ SummaryFlag(grew, summary_round_decl(rest, d, grew, n, o)) from match o {
     None => ih(d, grew)
     Some(data) => summary_flag_test(rest, d, grew, n, data, summary_test(d, data), ih)
   }
@@ -684,7 +696,7 @@ pub theorem summary_round_flag(
   grew: Bool,
   h: summary_grew(datas_round(es, d, grew)) = false
 ): grew = false {
-  match es: grew = false {
+  ⊢ grew = false from match es {
     Nil => h
     Cons(e, rest) => Eq::subst(
       (z: Pair(Datas, Bool)) => SummaryFlag(grew, z),
@@ -715,9 +727,11 @@ pub theorem summary_unchanged_test(
   b: Bool,
   ih: SummaryUnchanged(d, datas_round(rest, d, grew))
 ): SummaryUnchanged(d, summary_round_test(rest, d, grew, n, data, b)) {
-  match b: SummaryUnchanged(d, summary_round_test(rest, d, grew, n, data, b)) {
+  ⊢ SummaryUnchanged(d, summary_round_test(rest, d, grew, n, data, b)) from match b {
     true => ih
-    false => h => False::elim(true_ne_false(summary_round_flag(rest, summary_update(d, n, data), true, h)))
+    false => h => False::elim(
+      true_ne_false(summary_round_flag(rest, summary_update(d, n, data), true, h))
+    )
   }
 }
 
@@ -729,7 +743,7 @@ pub theorem summary_unchanged_decl(
   o: Option(Data),
   ih: SummaryUnchanged(d, datas_round(rest, d, grew))
 ): SummaryUnchanged(d, summary_round_decl(rest, d, grew, n, o)) {
-  match o: SummaryUnchanged(d, summary_round_decl(rest, d, grew, n, o)) {
+  ⊢ SummaryUnchanged(d, summary_round_decl(rest, d, grew, n, o)) from match o {
     None => ih
     Some(data) => summary_unchanged_test(rest, d, grew, n, data, summary_test(d, data), ih)
   }
@@ -741,7 +755,7 @@ pub theorem summary_round_unchanged(
   grew: Bool,
   h: summary_grew(datas_round(es, d, grew)) = false
 ): summary_result(datas_round(es, d, grew)) = d {
-  match es: summary_result(datas_round(es, d, grew)) = d {
+  ⊢ summary_result(datas_round(es, d, grew)) = d from match es {
     Nil => Refl
     Cons(e, rest) => Eq::subst(
       (z: Pair(Datas, Bool)) => SummaryUnchanged(d, z),
@@ -787,35 +801,28 @@ pub theorem summary_visited_cons<e: Pair(
   d: Datas,
   data: Data,
   hd: datas_decl(d, summary_key(item)) = Some(data),
-  head: ∀ v: Data. (datas_decl(d, summary_key(e)) = Some(v)) -> SummaryStable(
-    d,
-    v
-  ),
+  head: ∀ v: Data. (datas_decl(d, summary_key(e)) = Some(v)) -> SummaryStable(d, v),
   tail: SummaryVisited(es, d)
 ): SummaryStable(d, data) {
-  match m: SummaryStable(d, data) {
+  ⊢ SummaryStable(d, data) from match m {
     MemHere(t) => head(data, hd)
     MemThere(b, t, mr) => tail(item, data, mr, hd)
   }
 }
 
 pub fn summary_some_default(a: Data, o: Option(Data)): Data {
-  match o: Data {
+  ⊢ Data from match o {
     None => a
     Some(v) => v
   }
 }
 pub fn summary_is_some(o: Option(Data)): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     None => false
     Some(v) => true
   }
 }
-pub theorem summary_some_inj(
-  a: Data,
-  b: Data,
-  h: Some(a) = Some(b)
-): a = b {
+pub theorem summary_some_inj(a: Data, b: Data, h: Some(a) = Some(b)): a = b {
   Eq::congr((o: Option(Data)) => summary_some_default(a, o), h)
 }
 pub theorem summary_none_some(data: Data, h: None(Data) = Some(data)): False {
@@ -833,11 +840,11 @@ pub theorem summary_quiet_test(
   eb: summary_test(d, data) = b,
   ih: SummaryQuiet(rest, d, datas_round(rest, d, grew))
 ): SummaryQuiet(Cons(e, rest), d, summary_round_test(rest, d, grew, summary_key(e), data, b)) {
-  match b: SummaryQuiet(
+  ⊢ SummaryQuiet(
     Cons(e, rest),
     d,
     summary_round_test(rest, d, grew, summary_key(e), data, b)
-  ) {
+  ) from match b {
     true => h => item => v => m => hv => summary_visited_cons(
       m,
       d,
@@ -865,7 +872,7 @@ pub theorem summary_quiet_decl(
   eo: datas_decl(d, summary_key(e)) = o,
   ih: SummaryQuiet(rest, d, datas_round(rest, d, grew))
 ): SummaryQuiet(Cons(e, rest), d, summary_round_decl(rest, d, grew, summary_key(e), o)) {
-  match o: SummaryQuiet(Cons(e, rest), d, summary_round_decl(rest, d, grew, summary_key(e), o)) {
+  ⊢ SummaryQuiet(Cons(e, rest), d, summary_round_decl(rest, d, grew, summary_key(e), o)) from match o {
     None => h => item => v => m => hv => summary_visited_cons(
       m,
       d,
@@ -884,7 +891,7 @@ pub theorem summary_round_quiet(
   grew: Bool,
   h: summary_grew(datas_round(es, d, grew)) = false
 ): SummaryVisited(es, d) {
-  match es: SummaryVisited(es, d) {
+  ⊢ SummaryVisited(es, d) from match es {
     Nil => item => data => m => hd => Mem::nil(SummaryStable(d, data), m)
     Cons(e, rest) => Eq::subst(
       (z: Pair(Datas, Bool)) => SummaryQuiet(Cons(e, rest), d, z),
@@ -921,9 +928,7 @@ pub def SummaryOrdered(d: Datas): Prop := Ordmap::ordered(summary_decls(d), Ordm
 pub def SummaryAll(
   m: Ordmap(Text, Data),
   p: (Data) -> Prop
-): Prop := ∀ n: Text. ∀ v: Data. (
-  Ordmap::get(m, n, Ordmap::compare_text) = Some(v)
-) -> p(v)
+): Prop := ∀ n: Text. ∀ v: Data. (Ordmap::get(m, n, Ordmap::compare_text) = Some(v)) -> p(v)
 pub def SummaryPending(
   es: List(Pair(Text, Data)),
   m: Ordmap(Text, Data),
@@ -937,11 +942,8 @@ pub theorem summary_key_skip<n: Text, e: Pair(
   Data
 ), rest: List(
   Pair(Text, Data)
-)>(
-  h: SummaryKey(n, Cons(e, rest)),
-  ne: (n = summary_key(e)) -> False
-): SummaryKey(n, rest) {
-  match h: SummaryKey(n, rest) {
+)>(h: SummaryKey(n, Cons(e, rest)), ne: (n = summary_key(e)) -> False): SummaryKey(n, rest) {
+  ⊢ SummaryKey(n, rest) from match h {
     SummaryKeyHere(v, tail) => False::elim(ne(Refl))
     SummaryKeyThere(item, tail, ht) => ht
   }
@@ -956,7 +958,7 @@ pub theorem summary_key_visit<n: Text, es: List(
   hd: datas_decl(d, n) = Some(data),
   visited: SummaryVisited(es, d)
 ): SummaryStable(d, data) {
-  match h: SummaryStable(d, data) {
+  ⊢ SummaryStable(d, data) from match h {
     SummaryKeyHere(v, rest) => visited(
       Pair { fst: n, snd: v },
       data,
@@ -979,7 +981,7 @@ pub fn summary_list_get_k(
   v: Data,
   o: Ordering
 ): Option(Data) {
-  match o: Option(Data) {
+  ⊢ Option(Data) from match o {
     Equal => Some(v)
     Less => Ordmap::list_get(rest, n, Ordmap::compare_text)
     Greater => Ordmap::list_get(rest, n, Ordmap::compare_text)
@@ -991,7 +993,11 @@ pub theorem summary_list_get_unf(
   v: Data,
   rest: List(Pair(Text, Data)),
   n: Text
-): Ordmap::list_get(Cons(Pair { fst: k, snd: v }, rest), n, Ordmap::compare_text) = summary_list_get_k(rest, n, v, Ordmap::compare_text(n, k)) { Refl }
+): Ordmap::list_get(
+  Cons(Pair { fst: k, snd: v }, rest),
+  n,
+  Ordmap::compare_text
+) = summary_list_get_k(rest, n, v, Ordmap::compare_text(n, k)) { Refl }
 
 pub def SummaryGetKey(
   es: List(Pair(Text, Data)),
@@ -1008,11 +1014,7 @@ pub theorem summary_list_key_k(
   eo: Ordmap::compare_text(n, k) = o,
   ih: SummaryGetKey(rest, n, Ordmap::list_get(rest, n, Ordmap::compare_text))
 ): SummaryGetKey(Cons(Pair { fst: k, snd: v }, rest), n, summary_list_get_k(rest, n, v, o)) {
-  match o: SummaryGetKey(
-    Cons(Pair { fst: k, snd: v }, rest),
-    n,
-    summary_list_get_k(rest, n, v, o)
-  ) {
+  ⊢ SummaryGetKey(Cons(Pair { fst: k, snd: v }, rest), n, summary_list_get_k(rest, n, v, o)) from match o {
     Equal => val => h => Eq::subst(
       (z: Text) => SummaryKey(n, Cons(Pair { fst: z, snd: v }, rest)),
       Ordmap::compare_text_eq(n, k, eo),
@@ -1029,9 +1031,9 @@ pub theorem summary_list_key(
   v: Data,
   h: Ordmap::list_get(es, n, Ordmap::compare_text) = Some(v)
 ): SummaryKey(n, es) {
-  match es: SummaryKey(n, es) {
+  ⊢ SummaryKey(n, es) from match es {
     Nil => False::elim(summary_none_some(v, h))
-    Cons(e, rest) => match e: SummaryKey(n, Cons(e, rest)) {
+    Cons(e, rest) => ⊢ SummaryKey(n, Cons(e, rest)) from match e {
       Pair { fst: k, snd: val } => Eq::subst(
         (z: Option(Data)) => SummaryGetKey(Cons(Pair { fst: k, snd: val }, rest), n, z),
         Eq::sym(summary_list_get_unf(k, val, rest, n)),
@@ -1147,7 +1149,7 @@ pub theorem summary_pending_insert_k(
   eo: Ordmap::compare_text(n, k) = o,
   h: Ordmap::get(Ordmap::insert(m, k, v, Ordmap::compare_text), n, Ordmap::compare_text) = Some(val)
 ): Or(p(val), SummaryKey(n, es)) {
-  match o: Or(p(val), SummaryKey(n, es)) {
+  ⊢ Or(p(val), SummaryKey(n, es)) from match o {
     Equal => OrInl(
       Eq::subst(
         p,
@@ -1157,7 +1159,11 @@ pub theorem summary_pending_insert_k(
           Eq::trans(
             Eq::sym(Ordmap::text_get_insert_same(m, k, v, om)),
             Eq::subst(
-              (z: Text) => Ordmap::get(Ordmap::insert(m, k, v, Ordmap::compare_text), z, Ordmap::compare_text) = Some(val),
+              (z: Text) => Ordmap::get(
+                Ordmap::insert(m, k, v, Ordmap::compare_text),
+                z,
+                Ordmap::compare_text
+              ) = Some(val),
               Ordmap::compare_text_eq(n, k, eo),
               h
             )
@@ -1202,7 +1208,7 @@ pub theorem summary_pending_insert_k(
 }
 
 pub theorem summary_key_nil(n: Text, p: Prop, h: SummaryKey(n, Nil(Pair(Text, Data)))): p {
-  match h: p {
+  ⊢ p from match h {
   }
 }
 
@@ -1218,18 +1224,18 @@ pub theorem summary_map_all(
   Ordmap::ordered(datas_map_decls(es, f, m), Ordmap::compare_text),
   SummaryAll(datas_map_decls(es, f, m), p)
 ) {
-  match es: And(
+  ⊢ And(
     Ordmap::ordered(datas_map_decls(es, f, m), Ordmap::compare_text),
     SummaryAll(datas_map_decls(es, f, m), p)
-  ) {
+  ) from match es {
     Nil => AndIntro(
       om,
       n => v => h => Or::elim(pending(n, v, h), pv => pv, hk => summary_key_nil(n, p(v), hk))
     )
-    Cons(e, rest) => match e: And(
+    Cons(e, rest) => ⊢ And(
       Ordmap::ordered(datas_map_decls(Cons(e, rest), f, m), Ordmap::compare_text),
       SummaryAll(datas_map_decls(Cons(e, rest), f, m), p)
-    ) {
+    ) from match e {
       Pair { fst: k, snd: old } => summary_map_all(
         rest,
         f,
@@ -1360,7 +1366,7 @@ pub theorem summary_ready_test(
     SummaryReady(dd)
   ) -> SummaryReady(summary_result(datas_round(rest, dd, gg)))
 ): SummaryReady(summary_result(summary_round_test(rest, d, grew, n, data, b))) {
-  match b: SummaryReady(summary_result(summary_round_test(rest, d, grew, n, data, b))) {
+  ⊢ SummaryReady(summary_result(summary_round_test(rest, d, grew, n, data, b))) from match b {
     true => ih(d, grew, ready)
     false => ih(summary_update(d, n, data), true, summary_update_ready(d, n, data, ready, hd))
   }
@@ -1378,7 +1384,7 @@ pub theorem summary_ready_decl(
     SummaryReady(dd)
   ) -> SummaryReady(summary_result(datas_round(rest, dd, gg)))
 ): SummaryReady(summary_result(summary_round_decl(rest, d, grew, n, o))) {
-  match o: SummaryReady(summary_result(summary_round_decl(rest, d, grew, n, o))) {
+  ⊢ SummaryReady(summary_result(summary_round_decl(rest, d, grew, n, o))) from match o {
     None => ih(d, grew, ready)
     Some(data) => summary_ready_test(rest, d, grew, n, data, summary_test(d, data), ready, eo, ih)
   }
@@ -1390,7 +1396,7 @@ pub theorem summary_round_ready(
   grew: Bool,
   ready: SummaryReady(d)
 ): SummaryReady(summary_result(datas_round(es, d, grew))) {
-  match es: SummaryReady(summary_result(datas_round(es, d, grew))) {
+  ⊢ SummaryReady(summary_result(datas_round(es, d, grew))) from match es {
     Nil => ready
     Cons(e, rest) => Eq::subst(
       (z: Pair(Datas, Bool)) => SummaryReady(summary_result(z)),
@@ -1475,7 +1481,7 @@ pub theorem summary_exhausted_ok(
 }
 
 pub fn summary_rounds_choice(j: Nat, d: Datas, b: Bool): Datas {
-  match b: Datas {
+  ⊢ Datas from match b {
     true => datas_rounds(j, d)
     false => d
   }
@@ -1484,11 +1490,14 @@ pub fn summary_rounds_choice(j: Nat, d: Datas, b: Bool): Datas {
 pub theorem summary_rounds_unf(
   j: Nat,
   d: Datas
-): datas_rounds(Succ(j), d) = summary_rounds_choice(
-    j,
-    summary_result(datas_round(Ordmap::entries(summary_decls(d)), d, false)),
-    summary_grew(datas_round(Ordmap::entries(summary_decls(d)), d, false))
-  ) { Refl }
+): datas_rounds(
+  Succ(j),
+  d
+) = summary_rounds_choice(
+  j,
+  summary_result(datas_round(Ordmap::entries(summary_decls(d)), d, false)),
+  summary_grew(datas_round(Ordmap::entries(summary_decls(d)), d, false))
+) { Refl }
 
 pub theorem summary_choice_ok(
   j: Nat,
@@ -1497,7 +1506,7 @@ pub theorem summary_choice_ok(
   stopped: (b = false) -> SummaryOk(d),
   next: SummaryOk(datas_rounds(j, d))
 ): SummaryOk(summary_rounds_choice(j, d, b)) {
-  match b: SummaryOk(summary_rounds_choice(j, d, b)) {
+  ⊢ SummaryOk(summary_rounds_choice(j, d, b)) from match b {
     true => next
     false => stopped(Refl)
   }
@@ -1508,7 +1517,7 @@ pub theorem datas_rounds_summary_ok(
   d: Datas,
   ready: SummaryReady(d)
 ): SummaryOk(datas_rounds(k, d)) {
-  match k: SummaryOk(datas_rounds(k, d)) {
+  ⊢ SummaryOk(datas_rounds(k, d)) from match k {
     Zero => summary_exhausted_ok(d, And::left(ready))
     Succ(j) => Eq::subst(
       SummaryOk,

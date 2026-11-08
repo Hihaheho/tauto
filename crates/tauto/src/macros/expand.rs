@@ -54,16 +54,44 @@ pub fn expand_files_resuming(
     from: Option<Saved>,
     save_before: Option<usize>,
 ) -> (Output, Option<Saved>) {
-    tauto_macro::macros::expand::expand_files_resuming(
+    expand_files_resuming_bound(
+        files,
+        opts,
+        seeing,
+        modules,
+        limits,
+        from,
+        save_before,
+        None,
+        Vec::new(),
+    )
+}
+
+pub(crate) fn expand_files_resuming_bound(
+    files: Vec<Vec<Stmt>>,
+    opts: &Options,
+    seeing: Vec<std::collections::HashMap<String, String>>,
+    modules: Vec<String>,
+    limits: Vec<(String, std::time::Duration)>,
+    from: Option<Saved>,
+    save_before: Option<usize>,
+    bindings: Option<tauto_surface::resolve::Resolver>,
+    standard_files: Vec<bool>,
+) -> (Output, Option<Saved>) {
+    tauto_macro::macros::expand::expand_files_resuming_bound(
         files,
         &tauto_macro::macros::expand::Options {
             limits: opts.clone(),
-            checker: std::sync::Arc::new(Checker { limits }),
+            checker: std::sync::Arc::new(Checker {
+                limits,
+                standard_files,
+            }),
         },
         seeing,
         modules,
         from,
         save_before,
+        bindings,
     )
 }
 
@@ -71,12 +99,16 @@ pub fn expand_files_resuming(
 /// of the proof language.
 #[derive(Debug)]
 struct Checker {
+    standard_files: Vec<bool>,
     limits: Vec<(String, std::time::Duration)>,
 }
 
 impl TypedChecker for Checker {
     fn check_in(&self, prefix: &[Stmt], decl: &Stmt) -> Result<Vec<Entry>, String> {
-        crate::check::KernelChecker.check_in(prefix, decl)
+        crate::check::KernelChecker.check_in(&crate::read::prefix_families(prefix), decl)
+    }
+    fn used_later(&self, decl: &Stmt, later: &[Stmt]) -> Vec<Stmt> {
+        crate::check::KernelChecker.used_later(decl, later)
     }
     fn goal_of(
         &self,
@@ -84,17 +116,17 @@ impl TypedChecker for Checker {
         decl: &TheoremDecl,
         term: &SurfaceTerm,
     ) -> Result<(Context, SurfaceTerm), String> {
-        crate::check::KernelChecker.goal_of(prefix, decl, term)
+        crate::check::KernelChecker.goal_of(&crate::read::prefix_families(prefix), decl, term)
     }
     fn prefixed(&self, prefix: &[Stmt]) -> Result<Box<dyn PrefixedChecker>, String> {
-        crate::check::KernelChecker.prefixed(prefix)
+        crate::check::KernelChecker.prefixed(&crate::read::prefix_families(prefix))
     }
     fn elaborator(
         &self,
         prefix: &[Stmt],
-        context: &[(String, SurfaceTerm)],
+        context: &[(crate::surface::Name, SurfaceTerm)],
     ) -> Result<Box<dyn Elaboration>, String> {
-        crate::check::KernelChecker.elaborator(prefix, context)
+        crate::check::KernelChecker.elaborator(&crate::read::prefix_families(prefix), context)
     }
     fn begin_file(&self, index: usize) {
         let limit = self
@@ -103,7 +135,27 @@ impl TypedChecker for Checker {
             .map(|(file, limit)| (file.as_str(), *limit));
         tauto_kernel::check::Kernel::new().set_file_limit(limit);
     }
-    fn executable(&self, prefix: &[Stmt]) -> Option<Result<String, String>> {
-        Some(crate::extract::executable_prefix(prefix))
+    fn executable(
+        &self,
+        prefix: &[Stmt],
+        file_ends: &[usize],
+    ) -> Option<Result<Vec<Stmt>, String>> {
+        let mut standard = std::collections::HashSet::new();
+        let mut start = 0;
+        for (index, &end) in file_ends.iter().enumerate() {
+            if self.standard_files.get(index).copied().unwrap_or(false)
+                || self.limits.get(index).is_some_and(|(path, _)| {
+                    std::path::Path::new(path).starts_with(crate::stdlib::ROOT)
+                })
+            {
+                standard.extend(
+                    crate::bindings::declared_names(&prefix[start..end])
+                        .into_iter()
+                        .cloned(),
+                );
+            }
+            start = end;
+        }
+        Some(crate::extract::executable_prefix(prefix, &standard))
     }
 }

@@ -28,7 +28,11 @@ perform show("state", state.big.a)
         .collect::<String>();
     assert_eq!(evaluated, expected, "evaluator");
     let package = tauto_nir::compile(source).unwrap();
-    let st = package.datas.iter().find(|d| d.name == "State").unwrap();
+    let st = package
+        .datas
+        .iter()
+        .find(|d| d.name.as_str() == "State")
+        .unwrap();
     assert!(
         st.ctors[0]
             .fields

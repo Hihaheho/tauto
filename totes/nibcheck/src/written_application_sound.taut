@@ -36,14 +36,14 @@ pub theorem written_info_arguments<env: Datas, generics: Ordmap(
   SkApp(SurfaceTermIndexedMk(SkVar("Info"), start, end, ast_occurrence), Cons(arg, Nil)),
   ck_val(frame_app_info(c, types))
 ) {
-  match meaning: WrittenKind(
+  ⊢ WrittenKind(
     env,
     generics,
     partial,
     under_borrow,
     SkApp(SurfaceTermIndexedMk(SkVar("Info"), start, end, ast_occurrence), Cons(arg, Nil)),
     ck_val(frame_app_info(c, types))
-  ) {
+  ) from match meaning {
     WrittenTermsCons(first, rest, t, ts, head, tail) => WrittenKindInfo(first, t, start, end, head)
   }
 }
@@ -72,14 +72,14 @@ pub theorem written_generic_arguments<env: Datas, generics: Ordmap(
   SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), Cons(arg, Nil)),
   ck_val(frame_app_generic(c, name, generics, span, types))
 ) {
-  match meaning: WrittenKind(
+  ⊢ WrittenKind(
     env,
     generics,
     partial,
     under_borrow,
     SkApp(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), Cons(arg, Nil)),
     ck_val(frame_app_generic(c, name, generics, span, types))
-  ) {
+  ) from match meaning {
     WrittenTermsCons(gs, Mode, first, rest, t, ts, head, tail) => WrittenKindGeneric(
       env,
       ast_occurrence,
@@ -195,14 +195,14 @@ pub theorem written_nested_arguments(
   SkApp(SurfaceTermIndexedMk(SkApp(function, before), start, end, ast_occurrence), args),
   ck_val(frame_app_nested(c, span, types, inner))
 ) {
-  match inner: WrittenKind(
+  ⊢ WrittenKind(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
     under_borrow,
     SkApp(SurfaceTermIndexedMk(SkApp(function, before), start, end, ast_occurrence), args),
     ck_val(frame_app_nested(c, span, types, inner))
-  ) {
+  ) from match inner {
     TyNamed(name, first) => Eq::subst(
       (t: Ty) => WrittenKind(
         ck_datas_of(c),

@@ -84,7 +84,9 @@ pub theorem data_fields_after_sound(
   ihhead: ∀ clean: DiagnosticClean(
     ck_st(m)
   ). WrittenTerm(ck_datas_of(c), generics, frame_constructor_position(c), false, body, ck_val(m)),
-  ihtail: ∀ next: Checker. ∀ ordinary: frame_under_borrow(next) = false. ∀ clean: DiagnosticClean(
+  ihtail: ∀ next: Checker. ∀ ordinary: frame_under_borrow(
+    next
+  ) = false. ∀ clean: DiagnosticClean(
     ck_st(ck_data_fields(rest, next, generics))
   ). WrittenDataFields(
     ck_datas_of(next),
@@ -101,13 +103,13 @@ pub theorem data_fields_after_sound(
   Cons(SurfaceDataFieldMk(name, body), rest),
   ck_val(data_fields_after(name, rest, generics, m))
 ) {
-  match m: WrittenDataFields(
+  ⊢ WrittenDataFields(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
     Cons(SurfaceDataFieldMk(name, body), rest),
     ck_val(data_fields_after(name, rest, generics, m))
-  ) {
+  ) from match m {
     mut1(t, next) => {
       let tail_clean: DiagnosticClean(
         ck_st(ck_data_fields(rest, next, generics))
@@ -265,7 +267,9 @@ pub theorem data_fields_cons_elaborates(
   c: Checker,
   generics: Ordmap(Text, Ty),
   ordinary: frame_under_borrow(c) = false,
-  ih: ∀ next: Checker. ∀ ordinary_next: frame_under_borrow(next) = false. ∀ clean: DiagnosticClean(
+  ih: ∀ next: Checker. ∀ ordinary_next: frame_under_borrow(
+    next
+  ) = false. ∀ clean: DiagnosticClean(
     ck_st(ck_data_fields(rest, next, generics))
   ). WrittenDataFields(
     ck_datas_of(next),
@@ -282,15 +286,25 @@ pub theorem data_fields_cons_elaborates(
   Cons(field, rest),
   ck_val(registration_fields_cons(field, rest, c, generics))
 ) {
-  match field: WrittenDataFields(
+  ⊢ WrittenDataFields(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
     Cons(field, rest),
     ck_val(registration_fields_cons(field, rest, c, generics))
-  ) {
+  ) from match field {
     SurfaceDataFieldMk(name, body) => {
-      let allowed: term_has_borrow(body) = false := data_fields_checked_allowed(name, body, rest, c, generics, term_has_borrow(body), clean)
+      let allowed: term_has_borrow(
+        body
+      ) = false := data_fields_checked_allowed(
+        name,
+        body,
+        rest,
+        c,
+        generics,
+        term_has_borrow(body),
+        clean
+      )
       Eq::subst(
         (b: Bool) => WrittenDataFields(
           ck_datas_of(c),
@@ -343,13 +357,13 @@ pub theorem ck_data_fields_sound(
   fields,
   ck_val(ck_data_fields(fields, c, generics))
 ) {
-  match fields: WrittenDataFields(
+  ⊢ WrittenDataFields(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
     fields,
     ck_val(ck_data_fields(fields, c, generics))
-  ) {
+  ) from match fields {
     Nil => WrittenDataFieldsNil
     Cons(field, rest) => written_transfer(
       List(DataField),

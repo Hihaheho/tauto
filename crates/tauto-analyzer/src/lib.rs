@@ -148,6 +148,17 @@ impl Workspace {
         self.read_disk(path);
     }
 
+    /// Forgets the kernels and the program kept for `entry` (an editor closed
+    /// it): they are the most of what a workspace holds. Asking about it again
+    /// loads and checks it again.
+    pub fn forget(&mut self, entry: &Path) {
+        let ctx = self.ctx(entry);
+        session::drop_entry(self.id, &ctx.entry);
+        // The queries' answers say what the forgotten session had; they are
+        // made again from the next load.
+        self.reload();
+    }
+
     /// Makes every program load again, for what a load reads without being
     /// told: the grammars of syntax macros.
     pub fn reload(&mut self) {
@@ -162,8 +173,9 @@ impl Workspace {
     }
 
     /// What `tauto check` says of `entry` and what it imports, as of the texts
-    /// the workspace has now.
-    pub fn report(&self, entry: &Path) -> Result<Report, String> {
+    /// the workspace has now. A program that does not load is an error with
+    /// its place, when it has one.
+    pub fn report(&self, entry: &Path) -> Result<Report, tauto::program::LoadError> {
         let ctx = self.ctx(entry);
         let shape = self.ask(LoadShape(ctx.clone()))?;
         if let Some(error) = &shape.error {
@@ -175,6 +187,27 @@ impl Workspace {
             let mut decl = self.ask(query.clone())?;
             let mut delta = moved(stmt.anchor, decl.anchor);
             if decl.positional && delta != 0 {
+                // Placed again from what the kernel said where the statement was, when
+                // the expansions it tells places of were made again; checked again if not.
+                let again = session::with(ctx.ws, &ctx.entry, |s| {
+                    let loaded = s.loaded.as_ref()?;
+                    let &(fi, _) = s.index.get(i)?;
+                    let file = canonical_path(&loaded.files[fi].path);
+                    let placed = decl.moved_entries(loaded, fi, delta)?;
+                    Some(
+                        placed
+                            .into_iter()
+                            .map(|entry| FileEntry {
+                                file: file.clone(),
+                                entry,
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                });
+                if let Some(placed) = again {
+                    entries.extend(placed);
+                    continue;
+                }
                 self.runtime.invalidate(&query);
                 decl = self.ask(query)?;
                 delta = moved(stmt.anchor, decl.anchor);
@@ -187,10 +220,18 @@ impl Workspace {
             .iter()
             .map(|f| (f.path.clone(), (*f.text).clone()))
             .collect();
-        let library = self.ask(Library(ctx))?;
+        let library = self.ask(Library(ctx.clone()))?;
+        let source_names = session::with(ctx.ws, &ctx.entry, |session| {
+            session
+                .loaded
+                .as_ref()
+                .map(|loaded| loaded.source_names())
+                .unwrap_or_default()
+        });
         Ok(
             Report::from_parts(entries, shape.expansions.clone(), sources)
-                .with_library((*library).clone()),
+                .with_library((*library).clone())
+                .with_source_names(source_names),
         )
     }
 
@@ -279,7 +320,7 @@ impl Workspace {
         let accepted = after.as_ref().is_ok_and(|r| {
             !r.entries
                 .iter()
-                .any(|e| e.entry.name == hole.declaration && e.entry.failed())
+                .any(|e| e.entry.name.as_str() == hole.declaration && e.entry.failed())
         });
         if keep && accepted {
             // The candidate stays the text of the file.
@@ -293,7 +334,7 @@ impl Workspace {
                 "analyzer-fill-no-longer-reads",
                 expr = expr,
                 name = name,
-                error = e
+                error = e.to_string()
             )
             .to_string()
         })?;
@@ -324,7 +365,12 @@ fn shifted(e: &FileEntry, delta: i64) -> FileEntry {
     let mut e = e.clone();
     if delta != 0 {
         match &mut e.entry.verdict {
-            Verdict::Failed(d) => d.span = d.span.map(|s| move_span(s, delta)),
+            Verdict::Failed(d) => {
+                d.span = d.span.map(|s| move_span(s, delta));
+                for a in &mut d.also {
+                    a.span = a.span.map(|s| move_span(s, delta));
+                }
+            }
             Verdict::Incomplete { holes, .. } => {
                 for h in holes {
                     h.span = move_span(h.span, delta);

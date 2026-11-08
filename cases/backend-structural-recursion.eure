@@ -1,0 +1,123 @@
+// A function the kernel accepts as structurally recursive does not diverge,
+// so a closure that calls it fits a callable type without `Div`, also when
+// the program's top-level statements run under the host.
+@ cases.closure-call-under-host
+backends = ["rust", "javascript"]
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+import std::prelude::Os
+
+fn after(o: Option(Nat), next: (Nat) -> Option(Nat)): Option(Nat) {
+  ⊢ Option(Nat) from match o {
+    None => None
+    Some(x) => next(x)
+  }
+}
+
+fn count(fuel: Nat, n: Nat): Option(Nat) {
+  ⊢ Option(Nat) from match fuel {
+    Zero => Some(n)
+    Succ(f) => after(Some(n), (x: Nat) => count(f, Succ(x)))
+  }
+}
+
+match count(3, 0) {
+  None => print("none")
+  Some(n) => print(Text::of_nat(n))
+}
+```
+stdout = "3"
+stderr = ""
+exit = 0
+
+@ cases.closure-call-shown
+backends = ["rust", "javascript"]
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn after(o: Option(Nat), next: (Nat) -> Option(Nat)): Option(Nat) {
+  ⊢ Option(Nat) from match o {
+    None => None
+    Some(x) => next(x)
+  }
+}
+
+fn count(fuel: Nat, n: Nat): Option(Nat) {
+  ⊢ Option(Nat) from match fuel {
+    Zero => Some(n)
+    Succ(f) => after(Some(n), (x: Nat) => count(f, Succ(x)))
+  }
+}
+
+perform show("count", count(3, 0))
+```
+rust_shows = ["count = Some(3)"]
+
+// Functions that call one another, each call on a part of the same argument,
+// end as one function does, so a function value of one fits a callable type
+// without `Div` under the host as well.
+@ cases.mutual-functions-as-a-function-value-under-host
+backends = ["rust", "javascript"]
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+import std::prelude::Os
+
+inductive K: Type {
+  Leaf(n: Nat): K
+  Many(xs: List(K)): K
+}
+
+fn find<A>(eq: (A, A) -> Bool, k: A, l: List(A)): Bool {
+  match l {
+    Nil => false
+    Cons(h, t) => match eq(h, k) {
+      true => true
+      false => find(eq, k, t)
+    }
+  }
+}
+
+mutual {
+  fn keq(a: K, b: K): Bool {
+    match a {
+      Leaf(x) => match b {
+        Leaf(y) => x == y
+        Many(_) => false
+      }
+      Many(xs) => match b {
+        Leaf(_) => false
+        Many(ys) => keqs(xs, ys)
+      }
+    }
+  }
+  fn keqs(a: List(K), b: List(K)): Bool {
+    match a {
+      Nil => match b {
+        Nil => true
+        Cons(_, _) => false
+      }
+      Cons(x, xs) => match b {
+        Nil => false
+        Cons(y, ys) => match keq(x, y) {
+          true => keqs(xs, ys)
+          false => false
+        }
+      }
+    }
+  }
+}
+
+fn use_it(l: List(K), k: K): Bool { find(keq, k, l) }
+
+match perform argv() {
+  args => match use_it(Cons(Leaf(1), Nil), Leaf(1)) {
+    true => print("found")
+    false => print("missing")
+  }
+}
+```
+stdout = "found"
+stderr = ""
+exit = 0

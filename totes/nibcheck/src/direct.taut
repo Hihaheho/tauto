@@ -7,9 +7,9 @@ import std::Text
 // `k(e)`, and `k` is nowhere else.
 
 pub fn dir_assigns(stmts: List(SurfaceStmt), name: Text): Bool {
-  match stmts: Bool {
+  ⊢ Bool from match stmts {
     Nil => false
-    Cons(s, rest) => match s: Bool {
+    Cons(s, rest) => ⊢ Bool from match s {
       StAssign(n, n_place, v) => n == name || dir_assigns(rest, name)
       _ => dir_assigns(rest, name)
     }
@@ -17,7 +17,7 @@ pub fn dir_assigns(stmts: List(SurfaceStmt), name: Text): Bool {
 }
 
 pub fn dir_here_mentions(t: SurfaceTerm, name: Text): Bool {
-  match t.kind: Bool {
+  ⊢ Bool from match t.kind {
     SkVar(n) => n == name
     SkBlock(stmts) => dir_assigns(stmts, name)
     _ => false
@@ -25,7 +25,7 @@ pub fn dir_here_mentions(t: SurfaceTerm, name: Text): Bool {
 }
 
 pub fn dir_any_mentions(ts: List(SurfaceTerm), name: Text): Bool {
-  match ts: Bool {
+  ⊢ Bool from match ts {
     Nil => false
     Cons(t, rest) => dir_here_mentions(t, name) || dir_any_mentions(rest, name)
   }
@@ -43,14 +43,14 @@ pub fn dir_stmt_mentions(s: SurfaceStmt, name: Text): Bool {
 }
 
 pub fn dir_init_mentions(stmts: List(SurfaceStmt), name: Text): Bool {
-  match stmts: Bool {
+  ⊢ Bool from match stmts {
     Nil => false
     Cons(s, rest) => dir_stmt_mentions(s, name) || dir_init_mentions(rest, name)
   }
 }
 
 pub fn dir_guard_ok(guard: Option(SurfaceTerm), k: Text): Bool {
-  match guard: Bool {
+  ⊢ Bool from match guard {
     Some(g) => not(dir_mentions(g, k))
     None => true
   }
@@ -58,27 +58,27 @@ pub fn dir_guard_ok(guard: Option(SurfaceTerm), k: Text): Bool {
 
 // A call `k(e)` where `e` does not mention `k`.
 pub fn dir_is_call(f: SurfaceTerm, args: List(SurfaceTerm), k: Text): Bool {
-  match f.kind: Bool {
-    SkVar(n) => n == k && match args: Bool {
-      Cons(a, more) => match more: Bool {
+  ⊢ Bool from match f.kind {
+    SkVar(n) => n == k && (⊢ Bool from match args {
+      Cons(a, more) => ⊢ Bool from match more {
         Nil => not(dir_mentions(a, k))
         Cons(x, y) => false
       }
       Nil => false
-    }
+    })
     _ => false
   }
 }
 
 mutual {
   pub fn dir_is_tail(body: SurfaceTerm, k: Text): Bool {
-    match body: Bool {
+    ⊢ Bool from match body {
       SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => dir_kind_tail(sk, k)
     }
   }
 
   pub fn dir_kind_tail(sk: SurfaceKind, k: Text): Bool {
-    match sk: Bool {
+    ⊢ Bool from match sk {
       SkApp(f, args) => dir_is_call(f, args, k)
       SkBlock(stmts) => dir_block_tail(stmts, k)
       SkIf(c, th, el) => not(dir_mentions(c, k)) && dir_is_tail(th, k) && dir_else_tail(el, k)
@@ -88,7 +88,7 @@ mutual {
   }
 
   pub fn dir_else_tail(el: Option(SurfaceTerm), k: Text): Bool {
-    match el: Bool {
+    ⊢ Bool from match el {
       Some(o) => dir_is_tail(o, k)
       None => false
     }
@@ -96,9 +96,9 @@ mutual {
 
   // The last statement is a tail form, the ones before it do not mention `k`.
   pub fn dir_block_tail(stmts: List(SurfaceStmt), k: Text): Bool {
-    match stmts: Bool {
+    ⊢ Bool from match stmts {
       Nil => false
-      Cons(s, rest) => match rest: Bool {
+      Cons(s, rest) => ⊢ Bool from match rest {
         Nil => dir_last_tail(s, k)
         Cons(x, y) => not(dir_stmt_mentions(s, k)) && dir_block_tail(rest, k)
       }
@@ -106,39 +106,39 @@ mutual {
   }
 
   pub fn dir_last_tail(s: SurfaceStmt, k: Text): Bool {
-    match s: Bool {
+    ⊢ Bool from match s {
       StExpr(e) => dir_is_tail(e, k)
       _ => false
     }
   }
 
   pub fn dir_arms_tail(arms: List(SurfaceArm), k: Text): Bool {
-    match arms: Bool {
+    ⊢ Bool from match arms {
       Nil => true
       Cons(arm, rest) => dir_arm_tail(arm, k) && dir_arms_tail(rest, k)
     }
   }
 
   pub fn dir_arm_tail(arm: SurfaceArm, k: Text): Bool {
-    match arm: Bool {
+    ⊢ Bool from match arm {
       SurfaceArmMk(pattern, guard, goal, body) => dir_guard_ok(guard, k) && dir_is_tail(body, k)
     }
   }
 }
 
 pub fn dir_here_lends(t: SurfaceTerm, name: Text): Bool {
-  match t.kind: Bool {
-    SkBorrow(m, x) => m && match lin_place(x): Bool {
+  ⊢ Bool from match t.kind {
+    SkBorrow(m, x) => m && (⊢ Bool from match lin_place(x) {
       Some(p) => p.fst == name
       None => false
-    }
+    })
     SkBlock(stmts) => dir_assigns(stmts, name)
     _ => false
   }
 }
 
 pub fn dir_any_lends(ts: List(SurfaceTerm), name: Text): Bool {
-  match ts: Bool {
+  ⊢ Bool from match ts {
     Nil => false
     Cons(t, rest) => dir_here_lends(t, name) || dir_any_lends(rest, name)
   }

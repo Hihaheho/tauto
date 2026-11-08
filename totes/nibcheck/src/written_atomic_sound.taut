@@ -14,7 +14,7 @@ import "types_decl.taut"
 import "unify_sound.taut"
 
 pub fn written_name_contains(o: Option(Ty)): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     None => false
     Some(t) => true
   }
@@ -23,13 +23,17 @@ pub theorem written_name_unbound(
   generics: Ordmap(Text, Ty),
   name: Text,
   unbound: Ordmap::get(generics, name, Ordmap::compare_text) = None
-): Ordmap::contains(generics, name, Ordmap::compare_text) = false { Eq::congr(written_name_contains, unbound) }
+): Ordmap::contains(
+  generics,
+  name,
+  Ordmap::compare_text
+) = false { Eq::congr(written_name_contains, unbound) }
 
 pub theorem written_return_state<A: Type>(
   value: A,
   m: Mut1(Unit, Checker)
 ): ck_st(frame_return(value, m)) = ck_st(m) {
-  match m: ck_st(frame_return(value, m)) = ck_st(m) {
+  ⊢ ck_st(frame_return(value, m)) = ck_st(m) from match m {
     mut1(v, next) => Refl
   }
 }
@@ -98,7 +102,7 @@ pub theorem written_return_value<A: Type>(
   value: A,
   m: Mut1(Unit, Checker)
 ): ck_val(frame_return(value, m)) = value {
-  match m: ck_val(frame_return(value, m)) = value {
+  ⊢ ck_val(frame_return(value, m)) = value from match m {
     mut1(v, next) => Refl
   }
 }
@@ -109,7 +113,7 @@ pub theorem written_var_named_value(
   t: Ty,
   found: Bool
 ): ck_val(frame_written_var_named(c, name, span, t, found)) = t {
-  match found: ck_val(frame_written_var_named(c, name, span, t, found)) = t {
+  ⊢ ck_val(frame_written_var_named(c, name, span, t, found)) = t from match found {
     true => Refl
     false => written_return_value(t, ck_arity(c, name, 0, span))
   }
@@ -122,7 +126,7 @@ pub theorem written_var_k_value(
   original: Ty,
   t: Ty
 ): ck_val(frame_written_var_k(c, name, generics, span, original, t)) = original {
-  match t: ck_val(frame_written_var_k(c, name, generics, span, original, t)) = original {
+  ⊢ ck_val(frame_written_var_k(c, name, generics, span, original, t)) = original from match t {
     TyInt(width) => Refl
     TyBool => Refl
     TyText => Refl
@@ -179,7 +183,7 @@ pub theorem written_atomic_from_name(
   value_position: frame_constructor_position(c) = false,
   clean: DiagnosticClean(ck_st(ck_written_var(c, name, generics, span)))
 ): WrittenAtomicType(ck_datas_of(c), generics, name, t) {
-  match meaning: WrittenAtomicType(ck_datas_of(c), generics, name, t) {
+  ⊢ WrittenAtomicType(ck_datas_of(c), generics, name, t) from match meaning {
     WrittenNamePrimitive(ty, builtin) => AtomicPrimitive(ty, builtin)
     WrittenNameParameter(ty, ordinary, bound) => AtomicParameter(ty, ordinary, bound)
     WrittenNameNominal(ordinary, unbound) => AtomicNominal(

@@ -1,0 +1,35 @@
+// A user type may take a name the backends' runtimes also use (`Peek`,
+// `Poll`, `Rc`, `Op`, …), or such a name with a trailing `_`: the
+// generated code still builds and runs.
+@ cases.runtime-name-clash
+extract = true
+source = ```tauto
+inductive Peek: Type { PeekOk: Peek, PeekBad: Peek }
+inductive Poll: Type { Ready: Poll, Pending: Poll }
+inductive Rc: Type { Mk(n: Nat): Rc }
+inductive Rc_: Type { Mk(r: Rc): Rc_ }
+inductive Op: Type { Mk: Op }
+inductive Fut: Type { Mk: Fut }
+inductive FnHandler: Type { Mk: FnHandler }
+inductive Payload: Type { Mk: Payload }
+
+fn score(p: Peek, q: Poll, w: Rc_): Nat {
+  ⊢ Nat from match w { Mk(r) => score_rc(p, q, r) }
+}
+
+fn score_rc(p: Peek, q: Poll, r: Rc): Nat {
+  ⊢ Nat from match p {
+    PeekOk => ⊢ Nat from match q {
+      Ready => ⊢ Nat from match r { Mk(n) => n }
+      Pending => Zero
+    }
+    PeekBad => Succ(Zero)
+  }
+}
+
+perform show("ok", score(PeekOk, Ready, Rc_::Mk(Rc::Mk(Succ(Succ(Zero))))))
+perform show("bad", score(PeekBad, Pending, Rc_::Mk(Rc::Mk(Zero))))
+```
+shows = ['ok = 2', 'bad = 1']
+rust_shows = ['ok = 2', 'bad = 1']
+javascript_shows = ['ok = 2', 'bad = 1']

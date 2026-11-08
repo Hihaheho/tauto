@@ -1523,6 +1523,10 @@ theorem lin_preservation {os sg} (ho : OwnSigOk os sg) (hb : Builtins sg) (hsig 
       intro S S' X ρ h hμ hμ' _ hl hsl
       obtain rfl := hμ'.ctx_eq hμ
       exact ⟨.flt, hsl⟩
+  | float32Arith =>
+      intro S S' X ρ h hμ hμ' _ hl hsl
+      obtain rfl := hμ'.ctx_eq hμ
+      exact ⟨.flt32, hsl⟩
   | toDecimal =>
       intro S S' X ρ h hμ hμ' _ hl hsl
       obtain rfl := hμ'.ctx_eq hμ
@@ -1816,6 +1820,7 @@ mutual
     | .text _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .dec _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .flt _, _, _, _ => by simp [Tm.subst, Tm.occ]
+    | .flt32 _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .prim _ _ _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .ref _ _ _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .var k, τ, m, h1 => by simp only [Tm.subst, Tm.occ]; rw [h1 k]; simp
@@ -1889,6 +1894,7 @@ mutual
     | .text _, _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .dec _, _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .flt _, _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
+    | .flt32 _, _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .prim _ _ _, _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .ref _ _ _, _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .var k, τ, m, j0, h1, h2 => by
@@ -2263,6 +2269,7 @@ mutual
     | .text _, _, _ => by simp [Tm.subst, Tm.occLo]
     | .dec _, _, _ => by simp [Tm.subst, Tm.occLo]
     | .flt _, _, _ => by simp [Tm.subst, Tm.occLo]
+    | .flt32 _, _, _ => by simp [Tm.subst, Tm.occLo]
     | .prim _ _ _, _, _ => by simp [Tm.subst, Tm.occLo]
     | .ref _ _ _, _, _ => by simp [Tm.subst, Tm.occLo]
     | .var k, τ, m => by simp [Tm.subst, Tm.occLo]
@@ -2333,6 +2340,7 @@ mutual
     | .text _, _, _, _, _ => by simp [Tm.subst, Tm.occLo]
     | .dec _, _, _, _, _ => by simp [Tm.subst, Tm.occLo]
     | .flt _, _, _, _, _ => by simp [Tm.subst, Tm.occLo]
+    | .flt32 _, _, _, _, _ => by simp [Tm.subst, Tm.occLo]
     | .prim _ _ _, _, _, _, _ => by simp [Tm.subst, Tm.occLo]
     | .ref _ _ _, _, _, _, _ => by simp [Tm.subst, Tm.occLo]
     | .var k, τ, m, j0, h2 => by
@@ -2754,6 +2762,10 @@ theorem uniq_step {os sg} (ho : OwnSigOk os sg) (hb : Builtins sg) (hsig : SigOk
       obtain rfl := hμ'.ctx_eq hμ
       exact ⟨D, .inl rfl, hu.mono fun m _ _ => by simp [Tm.occ], Kept.of_le fun _ m _ _ => by simp [Tm.occLo, Tms.occLo]⟩
   | floatArith =>
+      intro S S' X ρ D c h hμ hμ' _ hl hsl hu
+      obtain rfl := hμ'.ctx_eq hμ
+      exact ⟨D, .inl rfl, hu.mono fun m _ _ => by simp [Tm.occ], Kept.of_le fun _ m _ _ => by simp [Tm.occLo, Tms.occLo]⟩
+  | float32Arith =>
       intro S S' X ρ D c h hμ hμ' _ hl hsl hu
       obtain rfl := hμ'.ctx_eq hμ
       exact ⟨D, .inl rfl, hu.mono fun m _ _ => by simp [Tm.occ], Kept.of_le fun _ m _ _ => by simp [Tm.occLo, Tms.occLo]⟩

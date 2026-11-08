@@ -18,14 +18,14 @@ pub fn rs_source_atom(atom: rs::Atom::I): rs::Expr::I {
 }
 
 pub fn rs_source_path_rest(parts: List(Text)): List(rs::Path_Rep1::I) {
-  match parts: List(rs::Path_Rep1::I) {
+  ⊢ List(rs::Path_Rep1::I) from match parts {
     Nil => Nil
     Cons(part, rest) => Cons(rs::Path_Rep1::I::Mk("::", part), rs_source_path_rest(rest))
   }
 }
 
 pub fn rs_source_path(parts: List(Text)): rs::Path::I {
-  match parts: rs::Path::I {
+  ⊢ rs::Path::I from match parts {
     Nil => rs::Path::I::Mk("", Nil, None)
     Cons(part, rest) => rs::Path::I::Mk(part, rs_source_path_rest(rest), None)
   }
@@ -52,14 +52,14 @@ pub fn rs_source_unit(): rs::Expr::I {
 }
 
 pub fn rs_source_args_rest(args: List(rs::Expr::I)): List(rs::Arguments_Rep1::I) {
-  match args: List(rs::Arguments_Rep1::I) {
+  ⊢ List(rs::Arguments_Rep1::I) from match args {
     Nil => Nil
     Cons(arg, rest) => Cons(rs::Arguments_Rep1::I::Mk(",", arg), rs_source_args_rest(rest))
   }
 }
 
 pub fn rs_source_args(args: List(rs::Expr::I)): rs::Arguments::I {
-  match args: rs::Arguments::I {
+  ⊢ rs::Arguments::I from match args {
     Nil => rs::Arguments::I::Mk("(", None, ")")
     Cons(arg, rest) => rs::Arguments::I::Mk(
       "(",
@@ -89,7 +89,7 @@ pub fn rs_source_block_expr(block: rs::Block::I): rs::Expr::I {
 }
 
 pub fn rs_source_bind(id: Nat, ty: Option(rs::Ty::I), init: rs::Expr::I): rs::Statement::I {
-  let annotation: Option(rs::Binding_Opt1::I) := match ty: Option(rs::Binding_Opt1::I) {
+  let annotation: Option(rs::Binding_Opt1::I) := ⊢ Option(rs::Binding_Opt1::I) from match ty {
     None => None
     Some(written) => Some(rs::Binding_Opt1::I::Mk(":", written))
   }
@@ -114,7 +114,7 @@ pub fn rs_source_seq(first: rs::Expr::I, second: rs::Expr::I): rs::Expr::I {
 }
 
 pub fn rs_source_reference(kind: RsBorrow, place: rs::Expr::I): rs::Expr::I {
-  let mutability: Option(Text) := match kind: Option(Text) {
+  let mutability: Option(Text) := ⊢ Option(Text) from match kind {
     RsShared => None
     RsUnique => Some("mut")
   }
@@ -202,7 +202,7 @@ pub fn rs_source_positive(value: Nat, signed: Bool, bits: Nat): rs::Expr::I {
 }
 
 pub fn rs_source_integer(value: Int, signed: Bool, bits: Nat): rs::Expr::I {
-  match value: rs::Expr::I {
+  ⊢ rs::Expr::I from match value {
     IntOfNat(n) => rs_source_positive(n, signed, bits)
     IntNegSucc(n) => rs_source_atom(
       Unary_I(rs::Unary::I::Mk("(", Minus_I("-"), rs_source_positive(Succ(n), signed, bits), ")"))
@@ -215,7 +215,7 @@ pub fn rs_source_hex_digit(digit: Nat): Nat {
 }
 
 pub fn rs_source_quote_bytes(bytes: List(Nat)): List(Nat) {
-  match bytes: List(Nat) {
+  ⊢ List(Nat) from match bytes {
     Nil => Nil
     Cons(byte, rest) => if Nat::eq(byte, 34) || Nat::eq(byte, 92) {
       Cons(92, Cons(byte, rs_source_quote_bytes(rest)))
@@ -246,7 +246,7 @@ pub fn rs_source_string(value: Text): rs::Expr::I {
 }
 
 pub fn rs_source_bool(value: Bool): rs::Expr::I {
-  match value: rs::Expr::I {
+  ⊢ rs::Expr::I from match value {
     true => rs_source_atom(KwTrue_I("true"))
     false => rs_source_atom(KwFalse_I("false"))
   }
@@ -260,7 +260,7 @@ pub fn rs_source_named_field(base: rs::Expr::I, field: Text): rs::Expr::I {
 }
 
 pub fn rs_source_selected_field(base: rs::Expr::I, index: Nat, name: Option(Text)): rs::Expr::I {
-  match name: rs::Expr::I {
+  ⊢ rs::Expr::I from match name {
     None => rs_source_field(base, index)
     Some(written) => rs_source_named_field(base, written)
   }
@@ -290,7 +290,7 @@ pub fn rs_source_binding_pattern(id: Nat): rs::Pattern::I {
 }
 
 pub fn rs_source_reference_pattern(kind: RsBorrow, id: Nat): rs::Pattern::I {
-  let mutability: Option(Text) := match kind: Option(Text) {
+  let mutability: Option(Text) := ⊢ Option(Text) from match kind {
     RsShared => None
     RsUnique => Some("mut")
   }
@@ -298,14 +298,14 @@ pub fn rs_source_reference_pattern(kind: RsBorrow, id: Nat): rs::Pattern::I {
 }
 
 pub fn rs_source_type_path_rest(parts: List(Text)): List(rs::TypePath_Rep1::I) {
-  match parts: List(rs::TypePath_Rep1::I) {
+  ⊢ List(rs::TypePath_Rep1::I) from match parts {
     Nil => Nil
     Cons(part, rest) => Cons(rs::TypePath_Rep1::I::Mk("::", part), rs_source_type_path_rest(rest))
   }
 }
 
 pub fn rs_source_type_name(parts: List(Text)): rs::Ty::I {
-  let path: rs::TypePath::I := match parts: rs::TypePath::I {
+  let path: rs::TypePath::I := ⊢ rs::TypePath::I from match parts {
     Nil => rs::TypePath::I::Mk("", Nil, None)
     Cons(part, rest) => rs::TypePath::I::Mk(part, rs_source_type_path_rest(rest), None)
   }
@@ -329,7 +329,7 @@ pub fn rs_source_statements(
 }
 
 pub fn rs_source_pattern_rest(patterns: List(rs::Pattern::I)): List(rs::ConstructorArgs_Rep1::I) {
-  match patterns: List(rs::ConstructorArgs_Rep1::I) {
+  ⊢ List(rs::ConstructorArgs_Rep1::I) from match patterns {
     Nil => Nil
     Cons(pattern, rest) => Cons(
       rs::ConstructorArgs_Rep1::I::Mk(",", pattern),
@@ -341,7 +341,7 @@ pub fn rs_source_pattern_rest(patterns: List(rs::Pattern::I)): List(rs::Construc
 pub fn rs_source_pattern_args(patterns: List(rs::Pattern::I)): rs::ConstructorArgs::I {
   let fields: Option(
     rs::ConstructorArgs_Opt1::I
-  ) := match patterns: Option(rs::ConstructorArgs_Opt1::I) {
+  ) := ⊢ Option(rs::ConstructorArgs_Opt1::I) from match patterns {
     Nil => None
     Cons(pattern, rest) => Some(
       rs::ConstructorArgs_Opt1::I::Mk(pattern, rs_source_pattern_rest(rest), None)
@@ -351,7 +351,7 @@ pub fn rs_source_pattern_args(patterns: List(rs::Pattern::I)): rs::ConstructorAr
 }
 
 pub fn rs_source_qualified_pattern_rest(parts: List(Text)): List(rs::QualifiedCtorPattern_Rep1::I) {
-  match parts: List(rs::QualifiedCtorPattern_Rep1::I) {
+  ⊢ List(rs::QualifiedCtorPattern_Rep1::I) from match parts {
     Nil => Nil
     Cons(part, rest) => Cons(
       rs::QualifiedCtorPattern_Rep1::I::Mk("::", part),
@@ -366,12 +366,12 @@ pub fn rs_source_named_pattern(
   fields: Option(rs::CtorPatternFields::I)
 ): rs::Pattern::I {
   let parts: List(Text) := List::append(family, Cons(variant, Nil))
-  match parts: rs::Pattern::I {
+  ⊢ rs::Pattern::I from match parts {
     Nil => rs_source_wild()
-    Cons(root, rest) => match rest: rs::Pattern::I {
-      Nil => match fields: rs::Pattern::I {
+    Cons(root, rest) => ⊢ rs::Pattern::I from match rest {
+      Nil => ⊢ rs::Pattern::I from match fields {
         None => BindingPat_I(rs::BindingPat::I::Name_I(root))
-        Some(field_syntax) => match field_syntax: rs::Pattern::I {
+        Some(field_syntax) => ⊢ rs::Pattern::I from match field_syntax {
           ConstructorArgs_I(args) => ConstructorPat_I(
             rs::ConstructorPat::I::Mk(root, ConstructorArgs_I(args))
           )
@@ -410,7 +410,7 @@ pub fn rs_source_constructor_pattern(
 }
 
 pub fn rs_source_deref_pattern(kind: RsBorrow, pattern: rs::Pattern::I): rs::Pattern::I {
-  let mutability: Option(Text) := match kind: Option(Text) {
+  let mutability: Option(Text) := ⊢ Option(Text) from match kind {
     RsShared => None
     RsUnique => Some("mut")
   }
@@ -420,17 +420,17 @@ pub fn rs_source_deref_pattern(kind: RsBorrow, pattern: rs::Pattern::I): rs::Pat
 }
 
 pub fn rs_source_tuple_expr_rest(exprs: List(rs::Expr::I)): List(rs::Tuple_Rep1::I) {
-  match exprs: List(rs::Tuple_Rep1::I) {
+  ⊢ List(rs::Tuple_Rep1::I) from match exprs {
     Nil => Nil
     Cons(expr, rest) => Cons(rs::Tuple_Rep1::I::Mk(",", expr), rs_source_tuple_expr_rest(rest))
   }
 }
 
 pub fn rs_source_tuple(exprs: List(rs::Expr::I)): rs::Expr::I {
-  match exprs: rs::Expr::I {
+  ⊢ rs::Expr::I from match exprs {
     Nil => rs_source_unit()
     Cons(first, rest) => {
-      let tail: Option(rs::Tuple_Opt1::I) := match rest: Option(rs::Tuple_Opt1::I) {
+      let tail: Option(rs::Tuple_Opt1::I) := ⊢ Option(rs::Tuple_Opt1::I) from match rest {
         Nil => None
         Cons(second, remaining) => Some(
           rs::Tuple_Opt1::I::Mk(second, rs_source_tuple_expr_rest(remaining), None)
@@ -444,7 +444,7 @@ pub fn rs_source_tuple(exprs: List(rs::Expr::I)): rs::Expr::I {
 pub fn rs_source_tuple_pattern_rest(
   patterns: List(rs::Pattern::I)
 ): List(rs::TuplePattern_Rep1::I) {
-  match patterns: List(rs::TuplePattern_Rep1::I) {
+  ⊢ List(rs::TuplePattern_Rep1::I) from match patterns {
     Nil => Nil
     Cons(pattern, rest) => Cons(
       rs::TuplePattern_Rep1::I::Mk(",", pattern),
@@ -454,10 +454,10 @@ pub fn rs_source_tuple_pattern_rest(
 }
 
 pub fn rs_source_tuple_pattern(patterns: List(rs::Pattern::I)): rs::Pattern::I {
-  match patterns: rs::Pattern::I {
+  ⊢ rs::Pattern::I from match patterns {
     Nil => UnitPattern_I(rs::UnitPattern::I::Mk("(", ")"))
     Cons(first, rest) => {
-      let tail: Option(rs::TuplePattern_Opt1::I) := match rest: Option(rs::TuplePattern_Opt1::I) {
+      let tail: Option(rs::TuplePattern_Opt1::I) := ⊢ Option(rs::TuplePattern_Opt1::I) from match rest {
         Nil => None
         Cons(second, remaining) => Some(
           rs::TuplePattern_Opt1::I::Mk(second, rs_source_tuple_pattern_rest(remaining), None)
@@ -472,9 +472,9 @@ pub fn rs_source_record_fields(
   names: List(Text),
   exprs: List(rs::Expr::I)
 ): List(rs::Initializer::I) {
-  match names: List(rs::Initializer::I) {
+  ⊢ List(rs::Initializer::I) from match names {
     Nil => Nil
-    Cons(name, rest) => match exprs: List(rs::Initializer::I) {
+    Cons(name, rest) => ⊢ List(rs::Initializer::I) from match exprs {
       Nil => Nil
       Cons(expr, remaining) => Cons(
         rs::Initializer::I::Mk(name, ":", expr),
@@ -485,7 +485,7 @@ pub fn rs_source_record_fields(
 }
 
 pub fn rs_source_record_rest(fields: List(rs::Initializer::I)): List(rs::Initializers_Rep1::I) {
-  match fields: List(rs::Initializers_Rep1::I) {
+  ⊢ List(rs::Initializers_Rep1::I) from match fields {
     Nil => Nil
     Cons(field, rest) => Cons(rs::Initializers_Rep1::I::Mk(",", field), rs_source_record_rest(rest))
   }
@@ -498,7 +498,7 @@ pub fn rs_source_record(
 ): rs::Expr::I {
   let fields: Option(
     rs::Initializers_Opt1::I
-  ) := match rs_source_record_fields(names, exprs): Option(rs::Initializers_Opt1::I) {
+  ) := ⊢ Option(rs::Initializers_Opt1::I) from match rs_source_record_fields(names, exprs) {
     Nil => None
     Cons(field, rest) => Some(
       rs::Initializers_Opt1::I::Mk(field, rs_source_record_rest(rest), None)
@@ -513,9 +513,9 @@ pub fn rs_source_record_pattern_fields(
   names: List(Text),
   patterns: List(rs::Pattern::I)
 ): List(rs::RecordPatternField::I) {
-  match names: List(rs::RecordPatternField::I) {
+  ⊢ List(rs::RecordPatternField::I) from match names {
     Nil => Nil
-    Cons(name, rest) => match patterns: List(rs::RecordPatternField::I) {
+    Cons(name, rest) => ⊢ List(rs::RecordPatternField::I) from match patterns {
       Nil => Nil
       Cons(pattern, remaining) => Cons(
         rs::RecordPatternField::I::Mk(name, ":", pattern),
@@ -528,7 +528,7 @@ pub fn rs_source_record_pattern_fields(
 pub fn rs_source_record_pattern_rest(
   fields: List(rs::RecordPatternField::I)
 ): List(rs::RecordPatternArgs_Rep1::I) {
-  match fields: List(rs::RecordPatternArgs_Rep1::I) {
+  ⊢ List(rs::RecordPatternArgs_Rep1::I) from match fields {
     Nil => Nil
     Cons(field, rest) => Cons(
       rs::RecordPatternArgs_Rep1::I::Mk(",", field),
@@ -545,10 +545,10 @@ pub fn rs_source_record_pattern(
 ): rs::Pattern::I {
   let fields: Option(
     rs::RecordPatternArgs_Opt1::I
-  ) := match rs_source_record_pattern_fields(
+  ) := ⊢ Option(rs::RecordPatternArgs_Opt1::I) from match rs_source_record_pattern_fields(
     names,
     patterns
-  ): Option(rs::RecordPatternArgs_Opt1::I) {
+  ) {
     Nil => None
     Cons(field, rest) => Some(
       rs::RecordPatternArgs_Opt1::I::Mk(field, rs_source_record_pattern_rest(rest), None)
@@ -564,7 +564,7 @@ pub fn rs_source_record_pattern(
 }
 
 pub fn rs_source_integer_suffix(value: Int, suffix: Text): rs::Expr::I {
-  match value: rs::Expr::I {
+  ⊢ rs::Expr::I from match value {
     IntOfNat(n) => rs_source_atom(rs::Atom::I::Number_I(Text::concat(Text::of_nat(n), suffix)))
     IntNegSucc(n) => rs_source_atom(
       Unary_I(

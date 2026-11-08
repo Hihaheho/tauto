@@ -1,0 +1,41 @@
+// `tauto eval FILE EXPR` shows the normal form of a term after the
+// declarations of a file, and its type. `evals` maps each term to
+// `value : type` as the command writes them (without the text line).
+
+@ cases.eval-shows-the-normal-form
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn byte_class(c: Nat): Nat {
+  ⊢ Nat from match c {
+    34 => 1
+    92 => 2
+    _ => 0
+  }
+}
+
+fn classes(cs: List(Nat)): List(Nat) {
+  ⊢ List(Nat) from match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(byte_class(c), classes(rest))
+  }
+}
+```
+
+checks_all = "ok"
+evals."classes([34, 7, 92])" = "List::Cons(1, List::Cons(0, List::Cons(2, List::Nil))) : List(Nat)"
+evals."byte_class(Nat::add(30, 4))" = "1 : Nat"
+
+// A name written with its module means in the expression what it means in
+// the file: `M.double` is the function the module declares.
+@ cases.eval-reads-a-name-with-its-module
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+module M {
+  pub fn double(n: Nat): Nat { n + n }
+}
+```
+
+checks_all = "ok"
+evals."M.double(Nat::add(1, 2))" = "6 : Nat"

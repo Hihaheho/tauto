@@ -1,0 +1,86 @@
+import std::Base
+import std::List
+import std::prelude::Shared
+import std::prelude::Par
+import query_flow::codec
+import query_flow::flow
+import query_flow::api
+import query_flow::macros
+import "../src/analysis.taut"
+
+// What the server answers, as queries (totes/query-flow). The texts of the
+// open files are the assets; an answer is made again only when a text it read
+// changed, and asking twice with nothing changed in between answers from the
+// cache. What a file says depends on the files it imports, which may be open
+// too, so each answer reads every open file's text.
+
+// The text of an open file, by its URI.
+fn Source(): AssetKind(Text, Text) {
+  make_asset_kind("Source", Codec::of_text(), Codec::of_text(), (a: Text, b: Text) => a == b)
+}
+
+fn read_all(db: Db): Unit ! {halt, Div} {
+  var rest := Db::list_asset_keys(db, Source())
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(k, more) => {
+        let t := Db::asset(db, Source(), k)
+        rest := more
+      }
+    }
+  }
+}
+
+// The diagnostics of the file at `uri`, a JSON array.
+@query!(Diagnostics) => fn Diagnostics
+fn diagnostics_q(db: Db, uri: Text): Text ! {halt, Div} {
+  read_all(db)
+  diagnostics(uri)
+}
+
+// The answer to the request `method` about `uri` with `params` (JSON).
+@query!(Reply) => fn Reply
+fn answer_q(db: Db, method: Text, uri: Text, params: Text): Text ! {halt, Div} {
+  read_all(db)
+  request(method, uri, params)
+}
+
+pub fn open_text(rt: Runtime, uri: Text, text: Text): Unit ! {Div} {
+  set_text(uri, text)
+  resolve_asset(rt, Source(), uri, text, Volatile)
+}
+
+pub fn close_text(rt: Runtime, uri: Text): Unit ! {Div} {
+  close(uri)
+  remove_asset(rt, Source(), uri)
+}
+
+fn answer_text(a: Answer(Text)): Text {
+  match a {
+    Value(v) => v
+    Error(e) => "{}"
+    Suspended => "{}"
+    Cycle(ks) => "{}"
+    Cancelled => "{}"
+    DependenciesRemoved(ks) => "{}"
+  }
+}
+
+pub fn ask_diagnostics(rt: Runtime, uri: Text): Text ! {Div} {
+  match run(rt, Diagnostics(uri)) {
+    Value(v) => v
+    Error(e) => "[]"
+    Suspended => "[]"
+    Cycle(ks) => "[]"
+    Cancelled => "[]"
+    DependenciesRemoved(ks) => "[]"
+  }
+}
+
+pub fn ask_reply(rt: Runtime, method: Text, uri: Text, params: Text): Text ! {Div} {
+  answer_text(run(rt, Reply(method, uri, params)))
+}

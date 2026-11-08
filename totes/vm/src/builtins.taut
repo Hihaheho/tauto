@@ -5,6 +5,7 @@ import std::UInt
 import std::Int
 import std::prelude::Shared
 import std::Base
+import std::List
 import std::Bytes
 import std::Float
 import std::Float32
@@ -415,6 +416,10 @@ pub fn m_builtin_names(): List(Text) {
 }
 
 pub fn m_host_names(): List(Text) {
+  Cons("Os::on_shutdown", m_host_names_rest())
+}
+
+pub fn m_host_names_rest(): List(Text) {
   Cons(
     "Os::args",
     Cons(
@@ -430,64 +435,106 @@ pub fn m_host_names(): List(Text) {
               Cons(
                 "Os::write_bytes",
                 Cons(
-                  "Os::create_dir",
+                  "Os::read_under",
                   Cons(
-                    "Os::list_dir",
+                    "Os::read_bytes_under",
                     Cons(
-                      "Os::remove",
+                      "Os::create_dir",
                       Cons(
-                        "Os::temp_dir",
+                        "Os::list_dir",
                         Cons(
-                          "Os::run",
+                          "Os::remove",
                           Cons(
-                            "Os::read_line",
+                            "Os::temp_dir",
                             Cons(
-                              "Os::env",
+                              "Os::run",
                               Cons(
-                                "Os::wall_ms",
+                                "Os::read_line",
                                 Cons(
-                                  "Os::monotonic_ns",
+                                  "Os::env",
                                   Cons(
-                                    "Os::random",
+                                    "Os::wall_ms",
                                     Cons(
-                                      "Os::secure_random",
+                                      "Os::monotonic_ns",
                                       Cons(
-                                        "Os::status",
+                                        "Os::random",
                                         Cons(
-                                          "Os::check",
+                                          "Os::secure_random",
                                           Cons(
-                                            "Os::fetch",
+                                            "Os::status",
                                             Cons(
-                                              "Os::resolve",
+                                              "Os::check",
                                               Cons(
-                                                "Os::tcp_listen",
+                                                "Os::fetch",
                                                 Cons(
-                                                  "Os::tcp_accept",
+                                                  "Os::resolve",
                                                   Cons(
-                                                    "Os::tcp_connect",
+                                                    "Os::tcp_listen",
                                                     Cons(
-                                                      "Os::tcp_read",
+                                                      "Os::tcp_accept",
                                                       Cons(
-                                                        "Os::tcp_write",
+                                                        "Os::tcp_connect",
                                                         Cons(
-                                                          "Os::tcp_shutdown",
+                                                          "Os::tcp_read",
                                                           Cons(
-                                                            "Os::tcp_close",
+                                                            "Os::tcp_write",
                                                             Cons(
-                                                              "Os::tcp_unlisten",
+                                                              "Os::tcp_shutdown",
                                                               Cons(
-                                                                "Os::tls_accept",
+                                                                "Os::tcp_close",
                                                                 Cons(
-                                                                  "Os::tls_connect",
+                                                                  "Os::tcp_unlisten",
                                                                   Cons(
-                                                                    "Os::tls_read",
+                                                                    "Os::tls_accept",
                                                                     Cons(
-                                                                      "Os::tls_write",
+                                                                      "Os::tls_connect",
                                                                       Cons(
-                                                                        "Os::tls_shutdown",
+                                                                        "Os::tls_read",
                                                                         Cons(
-                                                                          "Os::tls_close",
-                                                                          Cons("Os::stat", Cons("Os::move_path", Cons("Os::copy_file", Cons("Os::canonicalize", Cons("Os::read_stdin", Cons("Os::flush", Cons("Os::child_spawn", Cons("Os::child_read", Cons("Os::child_write", Cons("Os::child_close_stdin", Cons("Os::child_wait", Cons("Os::child_close", Nil))))))))))))
+                                                                          "Os::tls_write",
+                                                                          Cons(
+                                                                            "Os::tls_shutdown",
+                                                                            Cons(
+                                                                              "Os::tls_close",
+                                                                              Cons(
+                                                                                "Os::stat",
+                                                                                Cons(
+                                                                                  "Os::move_path",
+                                                                                  Cons(
+                                                                                    "Os::copy_file",
+                                                                                    Cons(
+                                                                                      "Os::canonicalize",
+                                                                                      Cons(
+                                                                                        "Os::read_stdin",
+                                                                                        Cons(
+                                                                                          "Os::flush",
+                                                                                          Cons(
+                                                                                            "Os::child_spawn",
+                                                                                            Cons(
+                                                                                              "Os::child_read",
+                                                                                              Cons(
+                                                                                                "Os::child_write",
+                                                                                                Cons(
+                                                                                                  "Os::child_close_stdin",
+                                                                                                  Cons(
+                                                                                                    "Os::child_wait",
+                                                                                                    Cons(
+                                                                                                      "Os::child_close",
+                                                                                                      Cons("Os::read_link", Cons("Os::write_new", Nil))
+                                                                                                    )
+                                                                                                  )
+                                                                                                )
+                                                                                              )
+                                                                                            )
+                                                                                          )
+                                                                                        )
+                                                                                      )
+                                                                                    )
+                                                                                  )
+                                                                                )
+                                                                              )
+                                                                            )
+                                                                          )
                                                                         )
                                                                       )
                                                                     )
@@ -662,13 +709,8 @@ pub fn m_bitwise(bits: Nat, op: Nat, a: Nat, b: Nat): Nat {
       let y := Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))
       let bit := if Nat::eq(op, 0) {
         Nat::mul(x, y)
-      } else {
-        if Nat::eq(
-          op,
-          1
-        ) { if Nat::eq(Nat::add(x, y), 0) { 0 } else { 1 } } else {
-          Nat::rem_nz(Nat::add(x, y), 2, Nat::ne_zero(2, Refl))
-        }
+      } else if Nat::eq(op, 1) { if Nat::eq(Nat::add(x, y), 0) { 0 } else { 1 } } else {
+        Nat::rem_nz(Nat::add(x, y), 2, Nat::ne_zero(2, Refl))
       }
       Nat::add(
         bit,
@@ -698,7 +740,7 @@ pub fn m_bits(bits: Nat, op: Nat, x: Nat, y: Nat): Nat {
   if Nat::lt(op, 3) {
     m_bitwise(bits, op, x, y)
   } else {
-    match Nat::eq(bits, 0) eqn hb: Nat {
+    ⊢ Nat from match Nat::eq(bits, 0) eqn hb {
       // With no bits, every result is taken modulo 1, except `shr` by `y` itself.
       true => if Nat::eq(op, 4) { Nat::div_nz(x, Nat::pow2(y), Nat::pow2_ne_zero(y)) } else { 0 }
       false => m_bits_nz(
@@ -717,20 +759,18 @@ pub fn m_bits_nz(bits: Nat, op: Nat, x: Nat, s: Nat, hb: ¬(bits = 0)): Nat {
   let modulus := Nat::pow2(bits)
   if Nat::eq(op, 3) {
     Nat::rem_nz(Nat::mul(x, Nat::pow2(s)), modulus, Nat::pow2_ne_zero(bits))
+  } else if Nat::eq(op, 4) {
+    Nat::div_nz(x, Nat::pow2(s), Nat::pow2_ne_zero(s))
   } else {
-    if Nat::eq(op, 4) {
-      Nat::div_nz(x, Nat::pow2(s), Nat::pow2_ne_zero(s))
-    } else {
-      let l := if Nat::eq(op, 5) { s } else { Nat::rem_nz(Nat::sub(bits, s), bits, hb) }
-      Nat::rem_nz(
-        Nat::add(
-          Nat::mul(x, Nat::pow2(l)),
-          Nat::div_nz(x, Nat::pow2(Nat::sub(bits, l)), Nat::pow2_ne_zero(Nat::sub(bits, l)))
-        ),
-        modulus,
-        Nat::pow2_ne_zero(bits)
-      )
-    }
+    let l := if Nat::eq(op, 5) { s } else { Nat::rem_nz(Nat::sub(bits, s), bits, hb) }
+    Nat::rem_nz(
+      Nat::add(
+        Nat::mul(x, Nat::pow2(l)),
+        Nat::div_nz(x, Nat::pow2(Nat::sub(bits, l)), Nat::pow2_ne_zero(Nat::sub(bits, l)))
+      ),
+      modulus,
+      Nat::pow2_ne_zero(bits)
+    )
   }
 }
 
@@ -888,9 +928,7 @@ pub fn m_vec_get(ctors: List(MCtor), cx: MCx, r: MVal, i: MVal, index: Bool): MO
     match m_item_ref(cx, r, MpathItem(m_as_nat(i))) {
       Pair { fst: x, snd: cx2 } => MoutVal(if index { x } else { m_some(x) }, cx2)
     }
-  } else {
-    if index { MoutPerform("out_of_bounds") } else { MoutVal(m_none(), cx) }
-  }
+  } else if index { MoutPerform("out_of_bounds") } else { MoutVal(m_none(), cx) }
 }
 
 pub fn m_map_get(ctors: List(MCtor), cx: MCx, r: MVal, k: MVal, index: Bool): MOut {
@@ -1084,28 +1122,19 @@ pub fn m_builtin(ctors: List(MCtor), cx: MCx, b: Nat, a: List(MVal)): MOut {
   let v0 := m_get(ctors, cx, a0)
   let v1 := m_get(ctors, cx, a1)
   let v2 := m_get(ctors, cx, a2)
-  if Nat::lt(b, 30) {
+  if Nat::le(159, b) {
+    m_builtin_signal(cx, b, v0, v1)
+  } else if Nat::lt(b, 30) {
     m_builtin_0(ctors, cx, b, a0, a1, a2, v0, v1, v2)
-  } else {
-    if Nat::lt(b, 60) {
-      m_builtin_30(ctors, cx, b, a0, a1, a2, v0, v1, v2)
-    } else {
-      if Nat::lt(b, 90) {
-        m_builtin_60(ctors, cx, b, a0, a1, a2, v0, v1, v2)
-      } else {
-        if Nat::lt(b, 127) {
-          m_builtin_90(ctors, cx, b, a0, a1, a2, v0, v1, v2)
-        } else {
-          if Nat::lt(b, 154) {
-            m_builtin_float32(cx, b, v0, v1)
-          } else {
-            if Nat::lt(b, 157) { m_builtin_guard(cx, b, v0, v1) } else { m_builtin_weak(cx, b, v0) }
-          }
-        }
-      }
-    }
-  }
-}
+  } else if Nat::lt(b, 60) {
+    m_builtin_30(ctors, cx, b, a0, a1, a2, v0, v1, v2)
+  } else if Nat::lt(b, 90) {
+    m_builtin_60(ctors, cx, b, a0, a1, a2, v0, v1, v2)
+  } else if Nat::lt(b, 127) {
+    m_builtin_90(ctors, cx, b, a0, a1, a2, v0, v1, v2)
+  } else if Nat::lt(b, 154) {
+    m_builtin_float32(cx, b, v0, v1)
+  } else if Nat::lt(b, 157) { m_builtin_guard(cx, b, v0, v1) } else { m_builtin_weak(cx, b, v0) } }
 
 pub fn m_builtin_0(
   ctors: List(MCtor),
@@ -1120,137 +1149,99 @@ pub fn m_builtin_0(
 ): MOut {
   if Nat::eq(b, 0) {
     m_val(v0, cx)
-  } else { if Nat::eq(b, 1) {
-      m_update(ctors, cx, a0, (old: MVal) => a1, (old: MVal) => old)
-    } else { if Nat::eq(b, 2) {
-        m_val(MvBuf(""), cx)
-      } else { if Bool::or(Nat::eq(b, 3), Nat::eq(b, 4)) {
-          m_val(MvBuf(m_as_text(v0)), cx)
-        } else { if Nat::eq(b, 5) {
-            m_update(
-              ctors,
-              cx,
-              a0,
-              (old: MVal) => MvBuf(Text::concat(m_as_text(old), m_as_text(v1))),
-              (old: MVal) => MvUnit
-            )
-          } else { if Nat::eq(b, 6) {
-              m_val(MvText(m_as_text(v0)), cx)
-            } else { if Nat::eq(b, 7) {
-                m_val(MvVec(ms_empty()), cx)
-              } else { if Nat::eq(b, 8) {
-                  m_update(
-                    ctors,
-                    cx,
-                    a0,
-                    (old: MVal) => MvVec(ms_push(m_as_seq(old), a1)),
-                    (old: MVal) => MvUnit
-                  )
-                } else { if Nat::eq(b, 9) {
-                    m_update(
-                      ctors,
-                      cx,
-                      a0,
-                      (old: MVal) => MvVec(ms_init(m_as_seq(old))),
-                      (old: MVal) => m_option(ms_last(MvUnit, m_as_seq(old)))
-                    )
-                  } else { if Bool::or(Nat::eq(b, 10), Bool::or(Nat::eq(b, 11), Nat::eq(b, 12))) {
-                      m_val(m_int(m_items_len(v0)), cx)
-                    } else { if Bool::or(Nat::eq(b, 13), Nat::eq(b, 14)) {
-                        m_val(a0, cx)
-                      } else { if Nat::eq(b, 15) {
-                          m_update(
-                            ctors,
-                            cx,
-                            a0,
-                            (old: MVal) => MvVec(ms_empty()),
-                            (old: MVal) => MvUnit
-                          )
-                        } else { if Nat::eq(b, 16) {
-                            m_update(
-                              ctors,
-                              cx,
-                              a0,
-                              (old: MVal) => MvVec(ms_take(m_as_seq(old), m_as_nat(v1))),
-                              (old: MVal) => MvUnit
-                            )
-                          } else { if Bool::or(
-                            Nat::eq(b, 17),
-                            Bool::or(Nat::eq(b, 18), Nat::eq(b, 19))
-                          ) {
-                              m_vec_get(ctors, cx, a0, v1, false)
-                            } else { if Nat::eq(b, 20) {
-                                let n := m_items_len(v0)
-                                match n {
-                                  Zero => m_val(m_none(), cx)
-                                  Succ(m) => match m_item_ref(cx, a0, MpathItem(m)) {
-                                    Pair { fst: x, snd: cx2 } => m_val(m_some(x), cx2)
-                                  }
-                                }
-                              } else { if Nat::eq(b, 21) {
-                                  m_vec_get(ctors, cx, a0, v1, true)
-                                } else { if Nat::eq(b, 22) {
-                                    let n := m_items_len(v0)
-                                    if Bool::and(
-                                      Bool::and(not(m_is_neg(v1)), Nat::lt(m_as_nat(v1), n)),
-                                      Bool::and(not(m_is_neg(v2)), Nat::lt(m_as_nat(v2), n))
-                                    ) {
-                                      m_update(
-                                        ctors,
-                                        cx,
-                                        a0,
-                                        (old: MVal) => MvVec(
-                                          ms_swap(MvUnit, m_as_seq(old), m_as_nat(v1), m_as_nat(v2))
-                                        ),
-                                        (old: MVal) => MvUnit
-                                      )
-                                    } else {
-                                      MoutPerform("out_of_bounds")
-                                    }
-                                  } else { if Bool::or(Nat::eq(b, 23), Nat::eq(b, 24)) {
-                                      m_val(m_list(m_as_items(v0)), cx)
-                                    } else { if Nat::eq(b, 25) {
-                                        m_val(MvArray(m_as_seq(v0)), cx)
-                                      } else { if Nat::eq(b, 26) {
-                                          m_val(
-                                            MvArray(ms_of_list(m_items(1000000000, ctors, cx, v0))),
-                                            cx
-                                          )
-                                        } else { if Nat::eq(b, 27) {
-                                            let xs := m_as_seq(v0)
-                                            if Bool::and(
-                                              not(m_is_neg(v1)),
-                                              Nat::lt(m_as_nat(v1), ms_len(xs))
-                                            ) {
-                                              m_val(m_some(ms_get_or(MvUnit, xs, m_as_nat(v1))), cx)
-                                            } else {
-                                              m_val(m_none(), cx)
-                                            }
-                                          } else { if Nat::eq(b, 28) {
-                                              match m_all_bytes(m_items(1000000000, ctors, cx, v0)) {
-                                                None => MoutErr(m_too_large())
-                                                Some(bs) => m_val(
-                                                  MvBytes(
-                                                    Bytes::of_list(
-                                                      List::map((n: Nat) => U8::of_byte(n), bs)
-                                                    )
-                                                  ),
-                                                  cx
-                                                )
-                                              }
-                                            } else { if Nat::eq(b, 29) {
-                                                m_val(
-                                                  m_list(
-                                                    List::map(
-                                                      (x: Nat) => m_int(x),
-                                                      Bytes::values(m_as_bytes(v0))
-                                                    )
-                                                  ),
-                                                  cx
-                                                )
-                                              } else {
-                                                MoutErr(m_internal())
-                                              } } } } } } } } } } } } } } } } } } } } } } }
+  } else if Nat::eq(b, 1) {
+    m_update(ctors, cx, a0, (old: MVal) => a1, (old: MVal) => old)
+  } else if Nat::eq(b, 2) {
+    m_val(MvBuf(""), cx)
+  } else if Bool::or(Nat::eq(b, 3), Nat::eq(b, 4)) {
+    m_val(MvBuf(m_as_text(v0)), cx)
+  } else if Nat::eq(b, 5) {
+    m_update(
+      ctors,
+      cx,
+      a0,
+      (old: MVal) => MvBuf(Text::concat(m_as_text(old), m_as_text(v1))),
+      (old: MVal) => MvUnit
+    )
+  } else if Nat::eq(b, 6) {
+    m_val(MvText(m_as_text(v0)), cx)
+  } else if Nat::eq(b, 7) {
+    m_val(MvVec(ms_empty()), cx)
+  } else if Nat::eq(b, 8) {
+    m_update(ctors, cx, a0, (old: MVal) => MvVec(ms_push(m_as_seq(old), a1)), (old: MVal) => MvUnit)
+  } else if Nat::eq(b, 9) {
+    m_update(
+      ctors,
+      cx,
+      a0,
+      (old: MVal) => MvVec(ms_init(m_as_seq(old))),
+      (old: MVal) => m_option(ms_last(MvUnit, m_as_seq(old)))
+    )
+  } else if Bool::or(Nat::eq(b, 10), Bool::or(Nat::eq(b, 11), Nat::eq(b, 12))) {
+    m_val(m_int(m_items_len(v0)), cx)
+  } else if Bool::or(Nat::eq(b, 13), Nat::eq(b, 14)) {
+    m_val(a0, cx)
+  } else if Nat::eq(b, 15) {
+    m_update(ctors, cx, a0, (old: MVal) => MvVec(ms_empty()), (old: MVal) => MvUnit)
+  } else if Nat::eq(b, 16) {
+    m_update(
+      ctors,
+      cx,
+      a0,
+      (old: MVal) => MvVec(ms_take(m_as_seq(old), m_as_nat(v1))),
+      (old: MVal) => MvUnit
+    )
+  } else if Bool::or(Nat::eq(b, 17), Bool::or(Nat::eq(b, 18), Nat::eq(b, 19))) {
+    m_vec_get(ctors, cx, a0, v1, false)
+  } else if Nat::eq(b, 20) {
+    let n := m_items_len(v0)
+    match n {
+      Zero => m_val(m_none(), cx)
+      Succ(m) => match m_item_ref(cx, a0, MpathItem(m)) {
+        Pair { fst: x, snd: cx2 } => m_val(m_some(x), cx2)
+      }
+    }
+  } else if Nat::eq(b, 21) {
+    m_vec_get(ctors, cx, a0, v1, true)
+  } else if Nat::eq(b, 22) {
+    let n := m_items_len(v0)
+    if Bool::and(
+      Bool::and(not(m_is_neg(v1)), Nat::lt(m_as_nat(v1), n)),
+      Bool::and(not(m_is_neg(v2)), Nat::lt(m_as_nat(v2), n))
+    ) {
+      m_update(
+        ctors,
+        cx,
+        a0,
+        (old: MVal) => MvVec(ms_swap(MvUnit, m_as_seq(old), m_as_nat(v1), m_as_nat(v2))),
+        (old: MVal) => MvUnit
+      )
+    } else {
+      MoutPerform("out_of_bounds")
+    }
+  } else if Bool::or(Nat::eq(b, 23), Nat::eq(b, 24)) {
+    m_val(m_list(m_as_items(v0)), cx)
+  } else if Nat::eq(b, 25) {
+    m_val(MvArray(m_as_seq(v0)), cx)
+  } else if Nat::eq(b, 26) {
+    m_val(MvArray(ms_of_list(m_items(1000000000, ctors, cx, v0))), cx)
+  } else if Nat::eq(b, 27) {
+    let xs := m_as_seq(v0)
+    if Bool::and(not(m_is_neg(v1)), Nat::lt(m_as_nat(v1), ms_len(xs))) {
+      m_val(m_some(ms_get_or(MvUnit, xs, m_as_nat(v1))), cx)
+    } else {
+      m_val(m_none(), cx)
+    }
+  } else if Nat::eq(b, 28) {
+    match m_all_bytes(m_items(1000000000, ctors, cx, v0)) {
+      None => MoutErr(m_too_large())
+      Some(bs) => m_val(MvBytes(Bytes::of_list(List::map((n: Nat) => U8::of_byte(n), bs))), cx)
+    }
+  } else if Nat::eq(b, 29) {
+    m_val(m_list(List::map((x: Nat) => m_int(x), Bytes::values(m_as_bytes(v0)))), cx)
+  } else {
+    MoutErr(m_internal())
+  }
 }
 
 pub fn m_builtin_30(
@@ -1266,125 +1257,112 @@ pub fn m_builtin_30(
 ): MOut {
   if Nat::eq(b, 30) {
     m_val(m_int(Bytes::len(m_as_bytes(v0))), cx)
-  } else { if Nat::eq(b, 31) {
-      let bs := m_as_bytes(v0)
-      if Bool::and(not(m_is_neg(v1)), Nat::lt(m_as_nat(v1), Bytes::len(bs))) {
-        m_val(m_some(m_int(match Bytes::get(bs, m_as_nat(v1)) {
+  } else if Nat::eq(b, 31) {
+    let bs := m_as_bytes(v0)
+    if Bool::and(not(m_is_neg(v1)), Nat::lt(m_as_nat(v1), Bytes::len(bs))) {
+      m_val(m_some(m_int(match Bytes::get(bs, m_as_nat(v1)) {
         None => 0
         Some(x) => U8::val(x)
       })), cx)
-      } else {
-        m_val(m_none(), cx)
+    } else {
+      m_val(m_none(), cx)
+    }
+  } else if Nat::eq(b, 32) {
+    let bs := m_as_bytes(v0)
+    if m_range_ok(v1, v2, Bytes::len(bs)) {
+      match Bytes::slice(bs, m_as_nat(v1), m_as_nat(v2)) {
+        None => m_val(m_none(), cx)
+        Some(s) => m_val(m_some(MvBytes(s)), cx)
       }
-    } else { if Nat::eq(b, 32) {
-        let bs := m_as_bytes(v0)
-        if m_range_ok(v1, v2, Bytes::len(bs)) {
-          match Bytes::slice(bs, m_as_nat(v1), m_as_nat(v2)) {
-            None => m_val(m_none(), cx)
-            Some(s) => m_val(m_some(MvBytes(s)), cx)
-          }
-        } else {
-          m_val(m_none(), cx)
-        }
-      } else { if Nat::eq(b, 33) {
-          m_val(MvBytes(Bytes::concat(m_as_bytes(v0), m_as_bytes(v1))), cx)
-        } else { if Nat::eq(b, 34) {
-            m_val(MvBool(Bytes::eq(m_as_bytes(v0), m_as_bytes(v1))), cx)
-          } else { if Nat::eq(b, 35) {
-              m_val(MvBytes(Bytes::of_text(m_as_text(v0))), cx)
-            } else { if Nat::eq(b, 36) {
-                match Text::of_bytes(m_as_bytes(v0)) {
-                  None => m_val(m_none(), cx)
-                  Some(t) => m_val(m_some(MvText(t)), cx)
-                }
-              } else { if Nat::eq(b, 37) {
-                  m_val(MvMap(Nil), cx)
-                } else { if Nat::eq(b, 38) {
-                    m_map_insert(ctors, cx, a0, a1, a2)
-                  } else { if Bool::or(Nat::eq(b, 39), Nat::eq(b, 40)) {
-                      m_map_get(ctors, cx, a0, a1, false)
-                    } else { if Nat::eq(b, 41) {
-                        m_map_get(ctors, cx, a0, a1, true)
-                      } else { if Nat::eq(b, 42) {
-                          m_val(
-                            MvVec(
-                              ms_of_list(
-                                List::map(
-                                  (e: Pair(MVal, MVal)) => m_pair(e.fst, e.snd),
-                                  m_as_entries(v0)
-                                )
-                              )
-                            ),
-                            cx
-                          )
-                        } else { if Nat::eq(b, 43) {
-                            let bs := Text::bytes(m_as_text(v0))
-                            if Bool::and(
-                              not(m_is_neg(v1)),
-                              Nat::lt(m_as_nat(v1), List::length(bs))
-                            ) {
-                              m_val(m_some(m_int(match List::nth(bs, m_as_nat(v1)) {
+    } else {
+      m_val(m_none(), cx)
+    }
+  } else if Nat::eq(b, 33) {
+    m_val(MvBytes(Bytes::concat(m_as_bytes(v0), m_as_bytes(v1))), cx)
+  } else if Nat::eq(b, 34) {
+    m_val(MvBool(Bytes::eq(m_as_bytes(v0), m_as_bytes(v1))), cx)
+  } else if Nat::eq(b, 35) {
+    m_val(MvBytes(Bytes::of_text(m_as_text(v0))), cx)
+  } else if Nat::eq(b, 36) {
+    match Text::of_bytes(m_as_bytes(v0)) {
+      None => m_val(m_none(), cx)
+      Some(t) => m_val(m_some(MvText(t)), cx)
+    }
+  } else if Nat::eq(b, 37) {
+    m_val(MvMap(Nil), cx)
+  } else if Nat::eq(b, 38) {
+    m_map_insert(ctors, cx, a0, a1, a2)
+  } else if Bool::or(Nat::eq(b, 39), Nat::eq(b, 40)) {
+    m_map_get(ctors, cx, a0, a1, false)
+  } else if Nat::eq(b, 41) {
+    m_map_get(ctors, cx, a0, a1, true)
+  } else if Nat::eq(b, 42) {
+    m_val(
+      MvVec(ms_of_list(List::map((e: Pair(MVal, MVal)) => m_pair(e.fst, e.snd), m_as_entries(v0)))),
+      cx
+    )
+  } else if Nat::eq(b, 43) {
+    let bs := Text::bytes(m_as_text(v0))
+    if Bool::and(not(m_is_neg(v1)), Nat::lt(m_as_nat(v1), List::length(bs))) {
+      m_val(m_some(m_int(match List::nth(bs, m_as_nat(v1)) {
         None => 0
         Some(x) => x
       })), cx)
-                            } else {
-                              m_val(m_none(), cx)
-                            }
-                          } else { if Nat::eq(b, 44) {
-                              let bs := Text::bytes(m_as_text(v0))
-                              if m_range_ok(v1, v2, List::length(bs)) {
-                                m_val(m_text_of_utf8(m_slice(bs, m_as_nat(v1), m_as_nat(v2))), cx)
-                              } else {
-                                m_val(m_none(), cx)
-                              }
-                            } else { if Nat::eq(b, 45) {
-                                let t := Text::utf8_of_code_point(m_as_nat(v0))
-                                if Bool::or(m_is_neg(v0), Nat::eq(Text::len(t), 0)) {
-                                  m_val(m_none(), cx)
-                                } else {
-                                  m_val(m_some(MvText(t)), cx)
-                                }
-                              } else { if Nat::eq(b, 46) {
-                                  match m_all_bytes(m_items(1000000000, ctors, cx, v0)) {
-                                    None => m_val(m_none(), cx)
-                                    Some(bs) => m_val(m_text_of_utf8(bs), cx)
-                                  }
-                                } else { if Bool::or(Nat::eq(b, 47), Nat::eq(b, 48)) {
-                                    m_checked_int(1, m_as_int(v0), cx)
-                                  } else { if Nat::eq(b, 49) {
-                                      m_checked_int(0, m_as_int(v0), cx)
-                                    } else { if Nat::eq(b, 50) {
-                                        m_val(v0, cx)
-                                      } else { if Bool::or(
-                                        Nat::eq(b, 51),
-                                        Bool::or(
-                                          Nat::eq(b, 52),
-                                          Bool::or(Nat::eq(b, 53), Nat::eq(b, 54))
-                                        )
-                                      ) {
-                                          m_checked_int(4, m_as_int(v0), cx)
-                                        } else { if Nat::eq(b, 55) {
-                                            m_checked_int(3, m_as_int(v0), cx)
-                                          } else { if Nat::eq(b, 56) {
-                                              m_checked_int(2, m_as_int(v0), cx)
-                                            } else { if Nat::eq(b, 57) {
-                                                match I64::of_int(m_as_int(v0)) {
-                                                  None => MoutErr(m_too_large())
-                                                  Some(n) => m_val(MvFloat(Float::of_i64(n)), cx)
-                                                }
-                                              } else { if Nat::eq(b, 58) {
-                                                  match I64::of_float_checked(m_as_float(v0)) {
-                                                    None => MoutErr(m_too_large())
-                                                    Some(n) => m_val(MvInt(I64::val(n)), cx)
-                                                  }
-                                                } else { if Nat::eq(b, 59) {
-                                                    match Float::of_text(m_as_text(v0)) {
-                                                      None => m_val(m_none(), cx)
-                                                      Some(x) => m_val(m_some(MvFloat(x)), cx)
-                                                    }
-                                                  } else {
-                                                    MoutErr(m_internal())
-                                                  } } } } } } } } } } } } } } } } } } } } } } } } }
+    } else {
+      m_val(m_none(), cx)
+    }
+  } else if Nat::eq(b, 44) {
+    let bs := Text::bytes(m_as_text(v0))
+    if m_range_ok(v1, v2, List::length(bs)) {
+      m_val(m_text_of_utf8(m_slice(bs, m_as_nat(v1), m_as_nat(v2))), cx)
+    } else {
+      m_val(m_none(), cx)
+    }
+  } else if Nat::eq(b, 45) {
+    let t := Text::utf8_of_code_point(m_as_nat(v0))
+    if Bool::or(m_is_neg(v0), Nat::eq(Text::len(t), 0)) {
+      m_val(m_none(), cx)
+    } else {
+      m_val(m_some(MvText(t)), cx)
+    }
+  } else if Nat::eq(b, 46) {
+    match m_all_bytes(m_items(1000000000, ctors, cx, v0)) {
+      None => m_val(m_none(), cx)
+      Some(bs) => m_val(m_text_of_utf8(bs), cx)
+    }
+  } else if Bool::or(Nat::eq(b, 47), Nat::eq(b, 48)) {
+    m_checked_int(1, m_as_int(v0), cx)
+  } else if Nat::eq(b, 49) {
+    m_checked_int(0, m_as_int(v0), cx)
+  } else if Nat::eq(b, 50) {
+    m_val(v0, cx)
+  } else if Bool::or(
+    Nat::eq(b, 51),
+    Bool::or(Nat::eq(b, 52), Bool::or(Nat::eq(b, 53), Nat::eq(b, 54)))
+  ) {
+    m_checked_int(4, m_as_int(v0), cx)
+  } else if Nat::eq(b, 55) {
+    m_checked_int(3, m_as_int(v0), cx)
+  } else if Nat::eq(b, 56) {
+    m_checked_int(2, m_as_int(v0), cx)
+  } else if Nat::eq(b, 57) {
+    match I64::of_int(m_as_int(v0)) {
+      None => MoutErr(m_too_large())
+      Some(n) => m_val(MvFloat(Float::of_i64(n)), cx)
+    }
+  } else if Nat::eq(b, 58) {
+    match I64::of_float_checked(m_as_float(v0)) {
+      None => MoutErr(m_too_large())
+      Some(n) => m_val(MvInt(I64::val(n)), cx)
+    }
+  } else if Nat::eq(b, 59) {
+    match Float::of_text(m_as_text(v0)) {
+      None => m_val(m_none(), cx)
+      Some(x) => m_val(m_some(MvFloat(x)), cx)
+    }
+  } else {
+    MoutErr(m_internal())
+  }
 }
 
 pub fn m_builtin_60(
@@ -1403,53 +1381,48 @@ pub fn m_builtin_60(
   let fl := (x: Float) => m_val(MvFloat(x), cx)
   if Nat::eq(b, 60) {
     m_val(MvText(Text::of_float(a)), cx)
-  } else { if Nat::eq(b, 61) {
-      m_val(m_int(U64::val(Float::bits(a))), cx)
-    } else { if Nat::eq(b, 62) {
-        match U64::of_nat_checked(m_as_nat(v0)) {
-          None => MoutErr(m_too_large())
-          Some(n) => if m_is_neg(v0) { MoutErr(m_too_large()) } else { fl(Float::of_bits(n)) }
-        }
-      } else { if Nat::eq(b, 63) {
-          m_val(MvBool(Float::is_nan(a)), cx)
-        } else { if Nat::eq(b, 64) { fl(Float::abs(a))
-          } else { if Nat::eq(b, 65) { fl(Float::floor(a))
-            } else { if Nat::eq(b, 66) { fl(Float::ceil(a))
-              } else { if Nat::eq(b, 67) { fl(Float::trunc(a))
-                } else { if Nat::eq(b, 68) { fl(Float::round(a))
-                  } else { if Nat::eq(b, 69) { fl(Float::sqrt(a))
-                    } else { if Nat::eq(b, 70) { fl(Float::cbrt(a))
-                      } else { if Nat::eq(b, 71) { fl(Float::exp(a))
-                        } else { if Nat::eq(b, 72) { fl(Float::ln(a))
-                          } else { if Nat::eq(b, 73) { fl(Float::log2(a))
-                            } else { if Nat::eq(b, 74) { fl(Float::log10(a))
-                              } else { if Nat::eq(b, 75) { fl(Float::pow(a, y))
-                                } else { if Nat::eq(b, 76) { fl(Float::sin(a))
-                                  } else { if Nat::eq(b, 77) { fl(Float::cos(a))
-                                    } else { if Nat::eq(b, 78) { fl(Float::tan(a))
-                                      } else { if Nat::eq(b, 79) { fl(Float::asin(a))
-                                        } else { if Nat::eq(b, 80) { fl(Float::acos(a))
-                                          } else { if Nat::eq(b, 81) { fl(Float::atan(a))
-                                            } else { if Nat::eq(b, 82) { fl(Float::atan2(a, y))
-                                              } else { if Nat::eq(b, 83) { fl(Float::sinh(a))
-                                                } else { if Nat::eq(b, 84) { fl(Float::cosh(a))
-                                                  } else { if Nat::eq(b, 85) { fl(Float::tanh(a))
-                                                    } else { if Nat::eq(b, 86) {
-                                                        m_val(
-                                                          m_list(
-                                                            m_words(Text::bytes(m_as_text(v0)), Nil)
-                                                          ),
-                                                          cx
-                                                        )
-                                                      } else { if Nat::eq(b, 87) {
-                                                          m_val(MvAnswer(a0), cx)
-                                                        } else { if Nat::eq(b, 88) {
-                                                            m_val(MvMore(Some(m_as_int(v1))), cx)
-                                                          } else { if Nat::eq(b, 89) {
-                                                              m_val(MvMore(None), cx)
-                                                            } else {
-                                                              MoutErr(m_internal())
-                                                            } } } } } } } } } } } } } } } } } } } } } } } } } } } } } }
+  } else if Nat::eq(b, 61) {
+    m_val(m_int(U64::val(Float::bits(a))), cx)
+  } else if Nat::eq(b, 62) {
+    match U64::of_nat_checked(m_as_nat(v0)) {
+      None => MoutErr(m_too_large())
+      Some(n) => if m_is_neg(v0) { MoutErr(m_too_large()) } else { fl(Float::of_bits(n)) }
+    }
+  } else if Nat::eq(b, 63) {
+    m_val(MvBool(Float::is_nan(a)), cx)
+  } else if Nat::eq(b, 64) { fl(Float::abs(a))
+  } else if Nat::eq(b, 65) { fl(Float::floor(a))
+  } else if Nat::eq(b, 66) { fl(Float::ceil(a))
+  } else if Nat::eq(b, 67) { fl(Float::trunc(a))
+  } else if Nat::eq(b, 68) { fl(Float::round(a))
+  } else if Nat::eq(b, 69) { fl(Float::sqrt(a))
+  } else if Nat::eq(b, 70) { fl(Float::cbrt(a))
+  } else if Nat::eq(b, 71) { fl(Float::exp(a))
+  } else if Nat::eq(b, 72) { fl(Float::ln(a))
+  } else if Nat::eq(b, 73) { fl(Float::log2(a))
+  } else if Nat::eq(b, 74) { fl(Float::log10(a))
+  } else if Nat::eq(b, 75) { fl(Float::pow(a, y))
+  } else if Nat::eq(b, 76) { fl(Float::sin(a))
+  } else if Nat::eq(b, 77) { fl(Float::cos(a))
+  } else if Nat::eq(b, 78) { fl(Float::tan(a))
+  } else if Nat::eq(b, 79) { fl(Float::asin(a))
+  } else if Nat::eq(b, 80) { fl(Float::acos(a))
+  } else if Nat::eq(b, 81) { fl(Float::atan(a))
+  } else if Nat::eq(b, 82) { fl(Float::atan2(a, y))
+  } else if Nat::eq(b, 83) { fl(Float::sinh(a))
+  } else if Nat::eq(b, 84) { fl(Float::cosh(a))
+  } else if Nat::eq(b, 85) { fl(Float::tanh(a))
+  } else if Nat::eq(b, 86) {
+    m_val(m_list(m_words(Text::bytes(m_as_text(v0)), Nil)), cx)
+  } else if Nat::eq(b, 87) {
+    m_val(MvAnswer(a0), cx)
+  } else if Nat::eq(b, 88) {
+    m_val(MvMore(Some(m_as_int(v1))), cx)
+  } else if Nat::eq(b, 89) {
+    m_val(MvMore(None), cx)
+  } else {
+    MoutErr(m_internal())
+  }
 }
 
 pub fn m_builtin_90(
@@ -1468,150 +1441,111 @@ pub fn m_builtin_90(
     let bits := if Nat::lt(b, 97) { 32 } else { 64 }
     let op := if Nat::lt(b, 97) { Nat::sub(b, 90) } else { Nat::sub(b, 97) }
     m_val(m_int(m_bits(bits, op, m_as_nat(v0), m_as_nat(v1))), cx)
-  } else { if Bool::or(Nat::eq(b, 104), Nat::eq(b, 107)) {
-      match cx_alloc(cx, MoCell(v0)) {
-        Pair { fst: c, snd: cx2 } => m_val(MvShared(if Nat::eq(b, 104) { 0 } else { 1 }, c), cx2)
+  } else if Bool::or(Nat::eq(b, 104), Nat::eq(b, 107)) {
+    match cx_alloc(cx, MoCell(v0)) {
+      Pair { fst: c, snd: cx2 } => m_val(MvShared(if Nat::eq(b, 104) { 0 } else { 1 }, c), cx2)
+    }
+  } else if Bool::or(Nat::eq(b, 105), Nat::eq(b, 108)) {
+    m_val(cx_cell(cx, m_id_of(v0)), cx)
+  } else if Nat::eq(b, 106) {
+    m_val(MvUnit, cx_put(cx, m_id_of(v0), MoCell(a1)))
+  } else if Nat::eq(b, 109) {
+    m_val(MvUnit, cx_put(cx, m_id_of(v0), MoCell(v1)))
+  } else if Nat::eq(b, 110) {
+    let c := m_id_of(v0)
+    let old := m_as_nat(cx_cell(cx, c))
+    let new := Nat::rem_nz(
+      Nat::add(old, m_as_nat(v1)),
+      18446744073709551616,
+      Nat::ne_zero(18446744073709551616, Refl)
+    )
+    m_val(m_int(old), cx_put(cx, c, MoCell(m_int(new))))
+  } else if Nat::eq(b, 111) {
+    m_val(MvSecret(a0), cx)
+  } else if Nat::eq(b, 112) {
+    match v0 {
+      MvSecret(x) => m_val(x, cx)
+      _ => m_val(v0, cx)
+    }
+  } else if Nat::eq(b, 113) {
+    if m_fits(2, m_as_int(v0)) { MoutExit(m_as_int(v0)) } else { MoutErr(m_too_large()) }
+  } else if Nat::eq(b, 114) {
+    MoutErr(m_as_text(v0))
+  } else if Nat::eq(b, 115) {
+    // The host says the clock first (`vm_timer` makes the timer).
+    MoutAsk("vm_now", Nil, cx)
+  } else if Bool::or(Nat::eq(b, 116), Nat::eq(b, 117)) {
+    match m_new_pending(cx, MpendRunning, false) {
+      Pair { fst: p, snd: cx2 } => MoutSpawn(v0, p, cx2)
+    }
+  } else if Nat::eq(b, 118) {
+    match m_new_pending(cx, MpendReady(a0), true) {
+      Pair { fst: p, snd: cx2 } => m_val(MvPending(p), cx2)
+    }
+  } else if Nat::eq(b, 119) {
+    let p := m_id_of(v0)
+    match m_ready(cx, p) {
+      Pair { fst: r, snd: cx2 } => match m_pending_of(cx2, p) {
+        Pair { fst: state, snd: s } => match state {
+          MpendReady(x) => m_val(x, cx_put(cx2, p, MoPending(MpendTaken, s)))
+          _ => MoutErr("internal: a result taken before it was there")
+        }
       }
-    } else { if Bool::or(Nat::eq(b, 105), Nat::eq(b, 108)) {
-        m_val(cx_cell(cx, m_id_of(v0)), cx)
-      } else { if Nat::eq(b, 106) {
-          m_val(MvUnit, cx_put(cx, m_id_of(v0), MoCell(a1)))
-        } else { if Nat::eq(b, 109) {
-            m_val(MvUnit, cx_put(cx, m_id_of(v0), MoCell(v1)))
-          } else { if Nat::eq(b, 110) {
-              let c := m_id_of(v0)
-              let old := m_as_nat(cx_cell(cx, c))
-              let new := Nat::rem_nz(
-                Nat::add(old, m_as_nat(v1)),
-                18446744073709551616,
-                Nat::ne_zero(18446744073709551616, Refl)
-              )
-              m_val(m_int(old), cx_put(cx, c, MoCell(m_int(new))))
-            } else { if Nat::eq(b, 111) {
-                m_val(MvSecret(a0), cx)
-              } else { if Nat::eq(b, 112) {
-                  match v0 {
-                    MvSecret(x) => m_val(x, cx)
-                    _ => m_val(v0, cx)
-                  }
-                } else { if Nat::eq(b, 113) {
-                    if m_fits(
-                      2,
-                      m_as_int(v0)
-                    ) { MoutExit(m_as_int(v0)) } else { MoutErr(m_too_large()) }
-                  } else { if Nat::eq(b, 114) {
-                      MoutErr(m_as_text(v0))
-                    } else { if Nat::eq(b, 115) {
-                        // The host says the clock first (`vm_timer` makes the timer).
-                        MoutAsk("vm_now", Nil, cx)
-                      } else { if Bool::or(Nat::eq(b, 116), Nat::eq(b, 117)) {
-                          match m_new_pending(cx, MpendRunning, false) {
-                            Pair { fst: p, snd: cx2 } => MoutSpawn(v0, p, cx2)
-                          }
-                        } else { if Nat::eq(b, 118) {
-                            match m_new_pending(cx, MpendReady(a0), true) {
-                              Pair { fst: p, snd: cx2 } => m_val(MvPending(p), cx2)
-                            }
-                          } else { if Nat::eq(b, 119) {
-                              let p := m_id_of(v0)
-                              match m_ready(cx, p) {
-                                Pair { fst: r, snd: cx2 } => match m_pending_of(cx2, p) {
-                                  Pair { fst: state, snd: s } => match state {
-                                    MpendReady(x) => m_val(
-                                      x,
-                                      cx_put(cx2, p, MoPending(MpendTaken, s))
-                                    )
-                                    _ => MoutErr("internal: a result taken before it was there")
-                                  }
-                                }
-                              }
-                            } else { if Nat::eq(b, 120) {
-                                let p := m_id_of(v0)
-                                match m_ready(cx, p) {
-                                  Pair { fst: r, snd: cx2 } => if r {
-                                    m_val(MvBool(true), cx2)
-                                  } else { MoutYield(p, cx2) }
-                                }
-                              } else { if Nat::eq(b, 121) {
-                                  let p := m_id_of(v0)
-                                  match m_ready(cx, p) {
-                                    Pair { fst: r, snd: cx2 } => match m_pending_of(cx2, p) {
-                                      Pair { fst: state, snd: s } => m_val(MvSignal(s), cx2)
-                                    }
-                                  }
-                                } else { if Nat::eq(b, 122) {
-                                    match cx_alloc(cx, MoMutex(Some(a0), Nil)) {
-                                      Pair { fst: m, snd: cx2 } => m_val(MvMutex(m), cx2)
-                                    }
-                                  } else { if Nat::eq(b, 123) {
-                                      let m := m_id_of(v0)
-                                      match m_mutex_of(cx, m) {
-                                        Pair { fst: value, snd: waiting } => match cx_alloc(
-                                          cx,
-                                          MoSignal(false, None)
-                                        ) {
-                                          Pair { fst: s, snd: cx2 } => match value {
-                                            Some(x) => match waiting {
-                                              Nil => m_val(
-                                                MvSignal(s),
-                                                m_raise(
-                                                  cx_put(cx2, m, MoMutex(None, Nil)),
-                                                  s,
-                                                  Some(x)
-                                                )
-                                              )
-                                              _ => m_val(
-                                                MvSignal(s),
-                                                cx_put(
-                                                  cx2,
-                                                  m,
-                                                  MoMutex(
-                                                    value,
-                                                    List::append(waiting, Cons(s, Nil))
-                                                  )
-                                                )
-                                              )
-                                            }
-                                            None => m_val(
-                                              MvSignal(s),
-                                              cx_put(
-                                                cx2,
-                                                m,
-                                                MoMutex(value, List::append(waiting, Cons(s, Nil)))
-                                              )
-                                            )
-                                          }
-                                        }
-                                      }
-                                    } else { if Nat::eq(b, 124) {
-                                        let s := m_id_of(v1)
-                                        match m_handed(cx, s) {
-                                          None => MoutErr(
-                                            "internal: a mutex's content taken before it was handed"
-                                          )
-                                          Some(x) => m_val(x, cx_put(cx, s, MoSignal(true, None)))
-                                        }
-                                      } else { if Nat::eq(b, 125) {
-                                          let m := m_id_of(v0)
-                                          match m_mutex_of(cx, m) {
-                                            Pair { fst: value, snd: waiting } => match waiting {
-                                              Cons(s, rest) => m_val(
-                                                MvUnit,
-                                                m_raise(
-                                                  cx_put(cx, m, MoMutex(value, rest)),
-                                                  s,
-                                                  Some(a1)
-                                                )
-                                              )
-                                              Nil => m_val(
-                                                MvUnit,
-                                                cx_put(cx, m, MoMutex(Some(a1), Nil))
-                                              )
-                                            }
-                                          }
-                                        } else {
-                                          MoutErr(m_internal())
-                                        } } } } } } } } } } } } } } } } } } } }
+    }
+  } else if Nat::eq(b, 120) {
+    let p := m_id_of(v0)
+    match m_ready(cx, p) {
+      Pair { fst: r, snd: cx2 } => if r {
+        m_val(MvBool(true), cx2)
+      } else { MoutYield(p, cx2) }
+    }
+  } else if Nat::eq(b, 121) {
+    let p := m_id_of(v0)
+    match m_ready(cx, p) {
+      Pair { fst: r, snd: cx2 } => match m_pending_of(cx2, p) {
+        Pair { fst: state, snd: s } => m_val(MvSignal(s), cx2)
+      }
+    }
+  } else if Nat::eq(b, 122) {
+    match cx_alloc(cx, MoMutex(Some(a0), Nil)) {
+      Pair { fst: m, snd: cx2 } => m_val(MvMutex(m), cx2)
+    }
+  } else if Nat::eq(b, 123) {
+    let m := m_id_of(v0)
+    match m_mutex_of(cx, m) {
+      Pair { fst: value, snd: waiting } => match cx_alloc(cx, MoSignal(false, None)) {
+        Pair { fst: s, snd: cx2 } => match value {
+          Some(x) => match waiting {
+            Nil => m_val(MvSignal(s), m_raise(cx_put(cx2, m, MoMutex(None, Nil)), s, Some(x)))
+            _ => m_val(
+              MvSignal(s),
+              cx_put(cx2, m, MoMutex(value, List::append(waiting, Cons(s, Nil))))
+            )
+          }
+          None => m_val(
+            MvSignal(s),
+            cx_put(cx2, m, MoMutex(value, List::append(waiting, Cons(s, Nil))))
+          )
+        }
+      }
+    }
+  } else if Nat::eq(b, 124) {
+    let s := m_id_of(v1)
+    match m_handed(cx, s) {
+      None => MoutErr("internal: a mutex's content taken before it was handed")
+      Some(x) => m_val(x, cx_put(cx, s, MoSignal(true, None)))
+    }
+  } else if Nat::eq(b, 125) {
+    let m := m_id_of(v0)
+    match m_mutex_of(cx, m) {
+      Pair { fst: value, snd: waiting } => match waiting {
+        Cons(s, rest) => m_val(MvUnit, m_raise(cx_put(cx, m, MoMutex(value, rest)), s, Some(a1)))
+        Nil => m_val(MvUnit, cx_put(cx, m, MoMutex(Some(a1), Nil)))
+      }
+    }
+  } else {
+    MoutErr(m_internal())
+  }
 }
 
 // The builtins of `Weak` (157 on). A `Weak` is a `MvShared` of kind 2 on the cell of the `Ref`
@@ -1620,12 +1554,12 @@ pub fn m_builtin_90(
 pub fn m_builtin_weak(cx: MCx, b: Nat, v0: MVal): MOut {
   match v0 {
     MvShared(k, c) => if Nat::eq(b, 157) {
-        m_val(MvShared(2, c), cx)
-      } else { if Nat::eq(b, 158) {
-          m_val(m_some(MvShared(0, c)), cx)
-        } else {
-          MoutErr(m_internal())
-        } }
+      m_val(MvShared(2, c), cx)
+    } else if Nat::eq(b, 158) {
+      m_val(m_some(MvShared(0, c)), cx)
+    } else {
+      MoutErr(m_internal())
+    }
     _ => MoutErr(m_internal())
   }
 }
@@ -1637,64 +1571,64 @@ pub fn m_builtin_float32(cx: MCx, b: Nat, v0: MVal, v1: MVal): MOut {
   let fl := (x: Float32) => m_val(MvFloat32(x), cx)
   if Nat::eq(b, 127) {
     fl(Float32::of_float(m_as_float(v0)))
-  } else { if Nat::eq(b, 128) {
-      m_val(MvFloat(Float::of_float32(a)), cx)
-    } else { if Nat::eq(b, 129) {
-        m_val(m_int(U32::val(Float32::bits(a))), cx)
-      } else { if Nat::eq(b, 130) {
-          match U32::of_nat_checked(m_as_nat(v0)) {
-            None => MoutErr(m_too_large())
-            Some(n) => if m_is_neg(v0) { MoutErr(m_too_large()) } else { fl(Float32::of_bits(n)) }
-          }
-        } else { if Nat::eq(b, 131) {
-            m_val(MvBool(Float32::is_nan(a)), cx)
-          } else { if Nat::eq(b, 132) {
-              fl(Float32::abs(a))
-            } else { if Nat::eq(b, 133) {
-                fl(Float32::floor(a))
-              } else { if Nat::eq(b, 134) {
-                  fl(Float32::ceil(a))
-                } else { if Nat::eq(b, 135) {
-                    fl(Float32::trunc(a))
-                  } else { if Nat::eq(b, 136) {
-                      fl(Float32::round(a))
-                    } else { if Nat::eq(b, 137) {
-                        fl(Float32::sqrt(a))
-                      } else { if Nat::eq(b, 138) {
-                          fl(Float32::cbrt(a))
-                        } else { if Nat::eq(b, 139) {
-                            fl(Float32::exp(a))
-                          } else { if Nat::eq(b, 140) {
-                              fl(Float32::ln(a))
-                            } else { if Nat::eq(b, 141) {
-                                fl(Float32::log2(a))
-                              } else { if Nat::eq(b, 142) {
-                                  fl(Float32::log10(a))
-                                } else { if Nat::eq(b, 143) {
-                                    fl(Float32::pow(a, y))
-                                  } else { if Nat::eq(b, 144) {
-                                      fl(Float32::sin(a))
-                                    } else { if Nat::eq(b, 145) {
-                                        fl(Float32::cos(a))
-                                      } else { if Nat::eq(b, 146) {
-                                          fl(Float32::tan(a))
-                                        } else { if Nat::eq(b, 147) {
-                                            fl(Float32::asin(a))
-                                          } else { if Nat::eq(b, 148) {
-                                              fl(Float32::acos(a))
-                                            } else { if Nat::eq(b, 149) {
-                                                fl(Float32::atan(a))
-                                              } else { if Nat::eq(b, 150) {
-                                                  fl(Float32::atan2(a, y))
-                                                } else { if Nat::eq(b, 151) {
-                                                    fl(Float32::sinh(a))
-                                                  } else { if Nat::eq(b, 152) {
-                                                      fl(Float32::cosh(a))
-                                                    } else { if Nat::eq(b, 153) {
-                                                        fl(Float32::tanh(a))
-                                                      } else {
-                                                        MoutErr(m_internal())
-                                                      } } } } } } } } } } } } } } } } } } } } } } } } } } }
+  } else if Nat::eq(b, 128) {
+    m_val(MvFloat(Float::of_float32(a)), cx)
+  } else if Nat::eq(b, 129) {
+    m_val(m_int(U32::val(Float32::bits(a))), cx)
+  } else if Nat::eq(b, 130) {
+    match U32::of_nat_checked(m_as_nat(v0)) {
+      None => MoutErr(m_too_large())
+      Some(n) => if m_is_neg(v0) { MoutErr(m_too_large()) } else { fl(Float32::of_bits(n)) }
+    }
+  } else if Nat::eq(b, 131) {
+    m_val(MvBool(Float32::is_nan(a)), cx)
+  } else if Nat::eq(b, 132) {
+    fl(Float32::abs(a))
+  } else if Nat::eq(b, 133) {
+    fl(Float32::floor(a))
+  } else if Nat::eq(b, 134) {
+    fl(Float32::ceil(a))
+  } else if Nat::eq(b, 135) {
+    fl(Float32::trunc(a))
+  } else if Nat::eq(b, 136) {
+    fl(Float32::round(a))
+  } else if Nat::eq(b, 137) {
+    fl(Float32::sqrt(a))
+  } else if Nat::eq(b, 138) {
+    fl(Float32::cbrt(a))
+  } else if Nat::eq(b, 139) {
+    fl(Float32::exp(a))
+  } else if Nat::eq(b, 140) {
+    fl(Float32::ln(a))
+  } else if Nat::eq(b, 141) {
+    fl(Float32::log2(a))
+  } else if Nat::eq(b, 142) {
+    fl(Float32::log10(a))
+  } else if Nat::eq(b, 143) {
+    fl(Float32::pow(a, y))
+  } else if Nat::eq(b, 144) {
+    fl(Float32::sin(a))
+  } else if Nat::eq(b, 145) {
+    fl(Float32::cos(a))
+  } else if Nat::eq(b, 146) {
+    fl(Float32::tan(a))
+  } else if Nat::eq(b, 147) {
+    fl(Float32::asin(a))
+  } else if Nat::eq(b, 148) {
+    fl(Float32::acos(a))
+  } else if Nat::eq(b, 149) {
+    fl(Float32::atan(a))
+  } else if Nat::eq(b, 150) {
+    fl(Float32::atan2(a, y))
+  } else if Nat::eq(b, 151) {
+    fl(Float32::sinh(a))
+  } else if Nat::eq(b, 152) {
+    fl(Float32::cosh(a))
+  } else if Nat::eq(b, 153) {
+    fl(Float32::tanh(a))
+  } else {
+    MoutErr(m_internal())
+  }
 }
 
 // The builtins of `MutexGuard`, from 154 on, then those of `Weak`, from 157 on.
@@ -1703,7 +1637,7 @@ pub fn m_builtin_names_guard(): List(Text) {
     "MutexGuard::claimed",
     Cons(
       "MutexGuard::get",
-      Cons("MutexGuard::get_mut", Cons("Weak::of", Cons("Weak::get", Nil)))
+      Cons("MutexGuard::get_mut", Cons("Weak::of", Cons("Weak::get", m_builtin_names_signal())))
     )
   )
 }
@@ -1783,6 +1717,67 @@ pub fn m_builtin_guard(cx: MCx, b: Nat, v0: MVal, v1: MVal): MOut {
     match v0 {
       MvGuard(m, c) => m_val(MvRef(c, MrPath(Nil)), cx)
       _ => MoutErr(m_internal())
+    }
+  }
+}
+
+pub fn m_builtin_names_signal(): List(Text) {
+  Cons(
+    "Signal::fresh",
+    Cons(
+      "Signal::raise",
+      Cons("Signal::is_raised", Cons("Signal::either", Cons("Signal::listen", Nil)))
+    )
+  )
+}
+
+pub fn m_signal_inputs(cx: MCx, id: Nat): List(Nat) {
+  match cx_obj(cx, id) {
+    Some(o) => match o {
+      MoChoice(inputs) => inputs
+      _ => Cons(id, Nil)
+    }
+    None => Nil
+  }
+}
+
+pub fn m_builtin_signal(cx: MCx, b: Nat, v0: MVal, v1: MVal): MOut {
+  if Nat::eq(b, 159) {
+    match cx_alloc(cx, MoSignal(false, None)) {
+      Pair { fst: id, snd: next } => m_val(MvSignal(id), next)
+    }
+  } else if Nat::eq(b, 160) {
+    m_val(MvUnit, m_raise(cx, m_id_of(v0), None))
+  } else if Nat::eq(b, 161) {
+    m_val(MvBool(m_signal_raised(cx, m_signal_inputs(cx, m_id_of(v0)))), cx)
+  } else if Nat::eq(b, 162) {
+    let inputs := m_signal_union(m_signal_inputs(cx, m_id_of(v0)), m_signal_inputs(cx, m_id_of(v1)))
+    match cx_alloc(cx, MoChoice(inputs)) {
+      Pair { fst: id, snd: next } => m_val(MvSignal(id), next)
+    }
+  } else if Nat::eq(b, 163) { m_val(v0, cx) } else { MoutErr(m_internal()) }
+}
+
+pub fn m_signal_raised(cx: MCx, inputs: List(Nat)): Bool {
+  match inputs {
+    Nil => false
+    Cons(first, rest) => match cx_obj(cx, first) {
+      Some(o) => match o {
+        MoSignal(raised, handed) => if raised { true } else { m_signal_raised(cx, rest) }
+        _ => m_signal_raised(cx, rest)
+      }
+      None => m_signal_raised(cx, rest)
+    }
+  }
+}
+
+pub fn m_signal_union(left: List(Nat), right: List(Nat)): List(Nat) {
+  match left {
+    Nil => right
+    Cons(first, rest) => if List::contains(Nat::eq, first, right) {
+      m_signal_union(rest, right)
+    } else {
+      Cons(first, m_signal_union(rest, right))
     }
   }
 }

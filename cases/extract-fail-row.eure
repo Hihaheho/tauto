@@ -1,0 +1,29 @@
+description = "A program that calls a proof-language function from Nib still handles `fail` by its instance."
+
+@ cases.catch-beside-a-call-of-a-proof-function
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn pf(n: Nat): Nat { n }
+fn g(): Nat { pf(3) }
+fn f(): i64 ! {fail(Text)} { perform fail("q") }
+perform show("g", g())
+perform show("x", catch(() => f()))
+```
+shows = ['g = 3', 'x = Err("q")']
+
+@ cases.a-handler-instance-uses-the-extracted-text-type
+extract = true
+backends = ["javascript", "rust", "vm"]
+source = ```tauto
+import std::Text
+
+fn produce(): Bool ! {fail(Text)} { perform fail("q") }
+fn result(): Result(Bool, Text) {
+  handle { Ok(produce()) } with {
+    fail<Text>(why) => Err(why)
+  }
+}
+perform show("result", result())
+```
+shows = ['result = Err("q")']

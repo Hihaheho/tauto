@@ -100,7 +100,7 @@ let d := handle { budget(steps: 3) { 7 } } with {
 再帰呼び出しは、マッチした値の型に現れる引数を除いて、どの引数を変えてもかまいません。
 腕の中でフィールドをさらに `match` した先の値（`Cons(a, Cons(b, rest)) => f(rest)` の `rest`）に対しても再帰できます。
 マッチした引数とは別の引数で再帰するときは、`decreasing_by y` でその引数を書きます（`fn` でも `theorem` でも）。
-`(match x: (H) -> G { … })(h)` のように、仮定を一般化した `match` の中でも再帰できます。
+`(⊢ (H) -> G from match x { … })(h)` のように、仮定を一般化した `match` の中でも再帰できます。
 `mutual` ブロックの中で、同じ型を `match` する関数を二つ以上定義できます。
 
 `crates/tauto-kernel/src/prelude_deq.taut` の `module Nat` から抜粋します。
@@ -138,7 +138,7 @@ pub theorem mul_comm(n: Nat, m: Nat): nat!(`$n * $m = $m * $n`) {
 }
 ```
 
-等式の連鎖は `calc a { = b from p … }` で書けます（[`docs/design/syntax.md`](docs/design/syntax.md)）。
+等式の連鎖は `std/Calc.taut` の `calc!` で書けます（[`docs/design/syntax.md`](docs/design/syntax.md)）。
 
 標準ライブラリのタクティクは三つです（`std/Tactic.taut`）。`rewrite!(e)` は等式で
 書き換えます。`nat_norm!()` は自然数の半環の等式を、Tauto で健全性を証明した
@@ -185,7 +185,7 @@ Tauto は、AI が書き、人間が確かめるための言語です。以下�
   再利用するか、それ自体に意味のある命題のときだけです。
 - 仮定は含意 `P -> Q` にせず、後ろの引数 `h: P` に取ります。`match a` は `a` より
   後ろの引数をすべて一般化し、各腕では精密化された型のまま同じ名前で見えます。
-- 変数でない式での場合分けは `match e eqn h: G { C => ⊢ G' from p … }` と書きます。
+- 変数でない式での場合分けは `⊢ G from match e eqn h { C => ⊢ G' from p … }` と書きます。
   各腕の目標は `G` の `e` を置き換えたもので、それを書き、`h` は等式 `e = C` です。
   型に `e` が出る仮定も、各腕では `e` を `C` に置き換えた型で同じ名前のまま見えます。
 - 反転は添字を単一化する `match` で書きます。等式と射影による反転は、単一化が

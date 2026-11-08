@@ -42,16 +42,23 @@ pub theorem allocation_result_rewrap(
   m: Mut1(Ty, Checker),
   h: AllocationResult(c, m)
 ): AllocationResult(c, ck_rewrap1(m)) {
-  Eq::subst((result: Mut1(Ty, Checker)) => AllocationResult(c, result), Eq::sym(ck_rewrap1_id(m)), h)
+  Eq::subst(
+    (result: Mut1(Ty, Checker)) => AllocationResult(c, result),
+    Eq::sym(ck_rewrap1_id(m)),
+    h
+  )
 }
 pub theorem allocation_result_bind<A: Type>(
   c: Checker,
   k: (A, Checker) -> Mut1(Ty, Checker),
   m: Mut1(A, Checker),
   first: AllocationAdvance(c, m),
-  tail: ∀ value: A. ∀ next: Checker. ∀ advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true. ∀ state: CheckerAllocation(next). AllocationResult(next, k(value, next))
+  tail: ∀ value: A. ∀ next: Checker. ∀ advanced: Nat::le(
+    ck_next_of(c),
+    ck_next_of(next)
+  ) = true. ∀ state: CheckerAllocation(next). AllocationResult(next, k(value, next))
 ): AllocationResult(c, frame_bind(A, Ty, k, m)) {
-  match m: AllocationResult(c, frame_bind(A, Ty, k, m)) {
+  ⊢ AllocationResult(c, frame_bind(A, Ty, k, m)) from match m {
     mut1(value, next) => allocation_result_start(
       c,
       next,
@@ -69,14 +76,17 @@ pub theorem allocation_result_map_bind(
   tail: ∀ map: Ordmap(
     Text,
     Ty
-  ). ∀ next: Checker. ∀ advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true. ∀ state: CheckerAllocation(
+  ). ∀ next: Checker. ∀ advanced: Nat::le(
+    ck_next_of(c),
+    ck_next_of(next)
+  ) = true. ∀ state: CheckerAllocation(
     next
   ). ∀ ordered: Ordmap::ordered(
     map,
     Ordmap::compare_text
   ). ∀ values: GenericMapAllocated(ck_next_of(next), map). AllocationResult(next, k(map, next))
 ): AllocationResult(c, frame_bind(Ordmap(Text, Ty), Ty, k, m)) {
-  match m: AllocationResult(c, frame_bind(Ordmap(Text, Ty), Ty, k, m)) {
+  ⊢ AllocationResult(c, frame_bind(Ordmap(Text, Ty), Ty, k, m)) from match m {
     mut1(map, next) => allocation_result_start(
       c,
       next,

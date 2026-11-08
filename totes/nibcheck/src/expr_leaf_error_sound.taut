@@ -27,7 +27,7 @@ pub theorem leaf_constructor_return_frame_errors(
   args: List(Ty),
   fields: List(DataField)
 ): CkErrorFrame(c, leaf_constructor_return(c, d, args, fields)) {
-  match fields: CkErrorFrame(c, leaf_constructor_return(c, d, args, fields)) { Nil => (
+  ⊢ CkErrorFrame(c, leaf_constructor_return(c, d, args, fields)) from match fields { Nil => (
     clean_errors => clean_errors
   )
     Cons(f, rest) => (clean_errors => clean_errors) }
@@ -59,13 +59,13 @@ pub theorem leaf_constructor_fields_frame_errors(
     (ignored: Unit, c1: Checker) => leaf_constructor_return(c1, d, args, fields),
     frame_error_if(
       c,
-      cat5("`", name, "` is a struct: write `", name, " { field: value }`"),
+      struct_value_message(name),
       span,
       data_is_struct(ck_datas_of(c), d)
     ),
     frame_error_if_ok_errors(
       c,
-      cat5("`", name, "` is a struct: write `", name, " { field: value }`"),
+      struct_value_message(name),
       span,
       data_is_struct(ck_datas_of(c), d)
     ),
@@ -137,7 +137,7 @@ pub theorem leaf_constructor_choice_frame_errors(
   name: Text,
   ambiguous: Bool
 ): CkErrorFrame(c, leaf_constructor_choice(c, d, idx, span, name, ambiguous)) {
-  match ambiguous: CkErrorFrame(c, leaf_constructor_choice(c, d, idx, span, name, ambiguous)) {
+  ⊢ CkErrorFrame(c, leaf_constructor_choice(c, d, idx, span, name, ambiguous)) from match ambiguous {
     true => error_frame_rewrap(
       c,
       ck_defer_constructor(c, name, span),
@@ -179,7 +179,7 @@ pub theorem leaf_lookup_ctor_frame_errors(
   span: TySpan,
   found: Option(Pair(Text, Nat))
 ): CkErrorFrame(c, leaf_lookup_ctor(c, name, env, span, found)) {
-  match found: CkErrorFrame(c, leaf_lookup_ctor(c, name, env, span, found)) {
+  ⊢ CkErrorFrame(c, leaf_lookup_ctor(c, name, env, span, found)) from match found {
     None => error_frame_bind(
       Unit,
       Ty,
@@ -204,7 +204,7 @@ pub theorem leaf_lookup_special_frame_errors(
   span: TySpan,
   special: Bool
 ): CkErrorFrame(c, leaf_lookup_special(c, name, env, span, special)) {
-  match special: CkErrorFrame(c, leaf_lookup_special(c, name, env, span, special)) {
+  ⊢ CkErrorFrame(c, leaf_lookup_special(c, name, env, span, special)) from match special {
     true => error_frame_bind(
       Ty,
       Ty,
@@ -225,7 +225,7 @@ pub theorem leaf_lookup_function_frame_errors(
   span: TySpan,
   found: Option(Scheme)
 ): CkErrorFrame(c, leaf_lookup_function(c, name, env, span, found)) {
-  match found: CkErrorFrame(c, leaf_lookup_function(c, name, env, span, found)) {
+  ⊢ CkErrorFrame(c, leaf_lookup_function(c, name, env, span, found)) from match found {
     Some(s) => error_frame_rewrap(
       c,
       ck_instantiate_scheme(c, name, s, span),
@@ -248,7 +248,7 @@ pub theorem leaf_lookup_frame_errors(
   span: TySpan,
   found: Option(Local)
 ): CkErrorFrame(c, leaf_lookup(c, name, env, span, found)) {
-  match found: CkErrorFrame(c, leaf_lookup(c, name, env, span, found)) {
+  ⊢ CkErrorFrame(c, leaf_lookup(c, name, env, span, found)) from match found {
     Some(l) => (clean_errors => clean_errors)
     None => leaf_lookup_function_frame_errors(
       c,
@@ -280,7 +280,7 @@ pub theorem leaf_literal_parsed_frame_errors(
   t: Ty,
   parsed: Option(Nat)
 ): CkErrorFrame(c, leaf_literal_parsed(c, n, span, t, parsed)) {
-  match parsed: CkErrorFrame(c, leaf_literal_parsed(c, n, span, t, parsed)) {
+  ⊢ CkErrorFrame(c, leaf_literal_parsed(c, n, span, t, parsed)) from match parsed {
     Some(v) => error_frame_rewrap(
       c,
       pattern_literal_record(c, false, v, t, span),

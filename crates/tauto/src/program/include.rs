@@ -16,7 +16,7 @@
 //! a file, is refused by the expander (`macro.include_text`).
 
 use std::path::{Component, Path, PathBuf};
-use tauto_message::msg;
+use tauto_message::{Message, msg};
 
 use tauto_parol::Span;
 
@@ -29,7 +29,7 @@ pub const NAME: &str = tauto_macro::macros::expand::INCLUDE_TEXT;
 #[derive(Default)]
 pub(crate) struct Included {
     /// What went wrong, at the call.
-    pub errors: Vec<(String, Span)>,
+    pub errors: Vec<(Message, Span)>,
     /// The files read, by canonical path, in the order of the calls.
     pub files: Vec<PathBuf>,
     /// Valid local include paths attempted, including missing or unreadable files.
@@ -56,7 +56,7 @@ pub(crate) fn read_includes(
             }
             let made = match &*arg.kind {
                 TermKind::Text(path) => read(file, path, source, &mut out.inputs),
-                _ => Err(msg!("tauto-include-argument", name = NAME).to_string()),
+                _ => Err(msg!("tauto-include-argument", name = NAME)),
             };
             *t = match made {
                 Ok((text, read)) => {
@@ -64,7 +64,7 @@ pub(crate) fn read_includes(
                     SurfaceTerm::new(TermKind::Text(text), t.span)
                 }
                 Err(e) => {
-                    out.errors.push((e, t.span));
+                    out.errors.push((e.into(), t.span));
                     SurfaceTerm::new(TermKind::Other(format!("{NAME}!")), t.span)
                 }
             };
@@ -89,16 +89,16 @@ fn read(
     written: &str,
     source: &Source<'_>,
     inputs: &mut Vec<PathBuf>,
-) -> Result<(String, PathBuf), String> {
+) -> Result<(String, PathBuf), Message> {
     let root = root_of(file);
     let file = canonical_path(file);
     let dir = file.parent().unwrap_or(Path::new("/"));
     let rel = Path::new(written);
     if written.is_empty() {
-        return Err(msg!("tauto-include-empty").to_string());
+        return Err(msg!("tauto-include-empty"));
     }
     if rel.has_root() || rel.is_absolute() {
-        return Err(msg!("tauto-include-absolute-relative", path = written).to_string());
+        return Err(msg!("tauto-include-absolute-relative", path = written));
     }
     let outside = || {
         msg!(
@@ -106,7 +106,6 @@ fn read(
             path = written,
             root = root.display().to_string()
         )
-        .to_string()
     };
     let mut target = dir.to_path_buf();
     for part in rel.components() {
@@ -119,7 +118,7 @@ fn read(
             }
             Component::Normal(p) => target.push(p),
             Component::RootDir | Component::Prefix(_) => {
-                return Err(msg!("tauto-include-absolute", path = written).to_string());
+                return Err(msg!("tauto-include-absolute", path = written));
             }
         }
     }
@@ -135,27 +134,25 @@ fn read(
             "tauto-include-symlink",
             path = written,
             root = root.display().to_string()
-        )
-        .to_string());
+        ));
     }
     let path = on_disk.unwrap_or_else(|| target.clone());
     // Track the written path too: a local symlink can be retargeted.
     inputs.push(target);
     inputs.push(path.clone());
     let text = match source(&path) {
-        Some(given) => given.map_err(|e| read_error(written, e))?,
+        Some(given) => given.map_err(|e| read_error(written, e.to_string()))?,
         None => {
             let bytes = std::fs::read(&path).map_err(|e| read_error(written, e.to_string()))?;
-            String::from_utf8(bytes)
-                .map_err(|_| msg!("tauto-include-not-utf8", path = written).to_string())?
+            String::from_utf8(bytes).map_err(|_| msg!("tauto-include-not-utf8", path = written))?
         }
     };
     Ok((text, path))
 }
 
 /// "include.read: `WRITTEN`: ERROR".
-fn read_error(written: &str, error: String) -> String {
-    msg!("tauto-include-read", path = written, error = error).to_string()
+fn read_error(written: &str, error: String) -> Message {
+    msg!("tauto-include-read", path = written, error = error)
 }
 
 #[cfg(test)]
@@ -165,7 +162,12 @@ mod tests {
     fn errors_of(dir: &Path, entry: &str) -> Vec<String> {
         tauto_messages::install();
         let loaded = crate::program::load(&dir.join(entry)).unwrap();
-        loaded.program.errors.into_iter().map(|(m, _)| m).collect()
+        loaded
+            .program
+            .errors
+            .into_iter()
+            .map(|(m, _)| m.to_string())
+            .collect()
     }
 
     #[cfg(unix)]

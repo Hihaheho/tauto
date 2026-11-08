@@ -11,10 +11,10 @@
 //! This is a check of the form alone; it uses no types.
 
 use crate::surface::walk::{Node, values, values_stmt};
-use crate::surface::{Stmt, SurfaceTerm, TermKind};
+use crate::surface::{Name, Stmt, SurfaceTerm, TermKind};
 
 /// Whether `body` is a tail form for the continuation `k`.
-pub fn is_tail_form(body: &SurfaceTerm, k: &str) -> bool {
+pub fn is_tail_form(body: &SurfaceTerm, k: &Name) -> bool {
     match &*body.kind {
         TermKind::App {
             function,
@@ -51,7 +51,8 @@ pub fn is_tail_form(body: &SurfaceTerm, k: &str) -> bool {
     }
 }
 
-pub fn mentions(t: &SurfaceTerm, name: &str) -> bool {
+/// Whether the name `name` occurs in `t`.
+pub fn mentions(t: &SurfaceTerm, name: &Name) -> bool {
     let mut found = false;
     values(t, &mut |n| {
         if let Node::Term(t) = n
@@ -69,7 +70,7 @@ pub fn mentions(t: &SurfaceTerm, name: &str) -> bool {
     found
 }
 
-fn stmt_mentions(s: &Stmt, name: &str) -> bool {
+fn stmt_mentions(s: &Stmt, name: &Name) -> bool {
     let mut found = false;
     values_stmt(s, &mut |n| {
         if let Node::Term(t) = n
@@ -88,7 +89,7 @@ fn stmt_mentions(s: &Stmt, name: &str) -> bool {
 }
 
 /// Whether `t` lends `name` mutably (`&mut name…`) or assigns it.
-pub fn lends_mutably(t: &SurfaceTerm, name: &str) -> bool {
+pub fn lends_mutably(t: &SurfaceTerm, name: &Name) -> bool {
     let mut found = false;
     values(t, &mut |n| match n {
         Node::Term(t) if matches!(&*t.kind, TermKind::Borrow { mutable: true, .. }) => {
@@ -105,10 +106,30 @@ pub fn lends_mutably(t: &SurfaceTerm, name: &str) -> bool {
     found
 }
 
-fn root_of(t: &SurfaceTerm) -> Option<&str> {
+fn root_of(t: &SurfaceTerm) -> Option<&Name> {
     match &*t.kind {
         TermKind::Var(n) => Some(n),
         TermKind::Field { base, .. } => root_of(base),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod reference_tests {
+    use super::*;
+    use crate::identity::LocalRef;
+
+    #[test]
+    fn continuation_checks_distinguish_equal_display_names() {
+        let continuation = Name::Local(LocalRef::fresh("k"));
+        let other = Name::Local(LocalRef::fresh("k"));
+        let span = Default::default();
+        let argument = SurfaceTerm::new(TermKind::Nat("0".into()), span);
+        let own_call = SurfaceTerm::app(&continuation, vec![argument.clone()], span);
+        let foreign_call = SurfaceTerm::app(&other, vec![argument], span);
+        assert!(is_tail_form(&own_call, &continuation));
+        assert!(!is_tail_form(&foreign_call, &continuation));
+        assert!(!mentions(&foreign_call, &continuation));
+        assert!(mentions(&foreign_call, &other));
     }
 }

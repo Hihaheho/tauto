@@ -62,9 +62,9 @@ pub(open) inductive LrForest(t: LrTables): (List(LrSym), List(LlkTok)) -> Prop {
 
 // The tokens before the end of the input, last first, before `done`.
 pub fn lr_upto(tokens: List(LlkTok), done: List(LlkTok)): List(LlkTok) {
-  match tokens: List(LlkTok) {
+  ⊢ List(LlkTok) from match tokens {
     Nil => done
-    Cons(token, more) => match token.token_type == 0: List(LlkTok) {
+    Cons(token, more) => ⊢ List(LlkTok) from match token.token_type == 0 {
       true => done
       false => lr_upto(more, Cons(token, done))
     }
@@ -72,7 +72,7 @@ pub fn lr_upto(tokens: List(LlkTok), done: List(LlkTok)): List(LlkTok) {
 }
 
 pub fn lr_upto_at(token: LlkTok, more: List(LlkTok), done: List(LlkTok), c: Bool): List(LlkTok) {
-  match c: List(LlkTok) {
+  ⊢ List(LlkTok) from match c {
     true => done
     false => lr_upto(more, Cons(token, done))
   }
@@ -90,14 +90,14 @@ pub theorem lr_option_cases<A: Type>(
   a: (o = None) -> P(None),
   b: ∀ x: A. (o = Some(x)) -> P(Some(x))
 ): P(o) {
-  match o: P(o) {
+  ⊢ P(o) from match o {
     None => a(Refl)
     Some(x) => b(x, Refl)
   }
 }
 
 pub fn lr_unwrap<A>(o: Option(A), d: A): A {
-  match o: A {
+  ⊢ A from match o {
     None => d
     Some(x) => x
   }
@@ -108,17 +108,17 @@ pub theorem lr_some_inj<A: Type>(x: A, y: A, e: Some(x) = Some(y)): x = y {
 }
 
 pub theorem lr_none_ne_some<A: Type>(x: A, e: None = Some(x)): False {
-  match e: False {
+  ⊢ False from match e {
   }
 }
 
 pub theorem lr_sym_eq_sound(a: LrSym, b: LrSym, e: lr_sym_eq(a, b) = true): a = b {
-  match a: a = b {
-    LrT(x) => match b: LrT(x) = b {
+  ⊢ a = b from match a {
+    LrT(x) => ⊢ LrT(x) = b from match b {
       LrT(y) => Eq::congr(LrT, Nat::eq_sound(x, y, e))
       LrN(y) => False::elim(false_ne_true(e))
     }
-    LrN(x) => match b: LrN(x) = b {
+    LrN(x) => ⊢ LrN(x) = b from match b {
       LrT(y) => False::elim(false_ne_true(e))
       LrN(y) => Eq::congr(LrN, Nat::eq_sound(x, y, e))
     }
@@ -126,7 +126,7 @@ pub theorem lr_sym_eq_sound(a: LrSym, b: LrSym, e: lr_sym_eq(a, b) = true): a = 
 }
 
 pub fn lr_pop_at(c: Bool, more: List(LrSym), rest: List(LrSym)): Option(List(LrSym)) {
-  match c: Option(List(LrSym)) {
+  ⊢ Option(List(LrSym)) from match c {
     true => lr_pop(more, rest)
     false => None
   }
@@ -139,18 +139,15 @@ pub theorem lr_pop_sound(
   left: List(LrSym),
   h: lr_pop(pops, syms) = Some(left)
 ): syms = List::append(pops, left) {
-  match pops: syms = List::append(pops, left) {
+  ⊢ syms = List::append(pops, left) from match pops {
     Nil => lr_some_inj(syms, left, h)
-    Cons(p, more) => match syms: syms = List::append(Cons(p, more), left) {
+    Cons(p, more) => ⊢ syms = List::append(Cons(p, more), left) from match syms {
       Nil => False::elim(lr_none_ne_some(left, h))
       Cons(s, ss) => Bool::cases(
         (c: Bool) => Cons(s, ss) = List::append(Cons(p, more), left),
         lr_sym_eq(p, s),
         (q: lr_sym_eq(p, s) = false) => False::elim(
-          lr_none_ne_some(
-            left,
-            Eq::subst((c: Bool) => lr_pop_at(c, more, ss) = Some(left), q, h)
-          )
+          lr_none_ne_some(left, Eq::subst((c: Bool) => lr_pop_at(c, more, ss) = Some(left), q, h))
         ),
         (q: lr_sym_eq(p, s) = true) => Eq::trans(
           Eq::congr((x: LrSym) => Cons(x, ss), Eq::sym(lr_sym_eq_sound(p, s, q))),
@@ -174,9 +171,9 @@ pub theorem lr_upto_end(
   done: List(LlkTok),
   e: Nat::eq(llk_next_type(tokens), 0) = true
 ): done = lr_upto(tokens, done) {
-  match tokens: done = lr_upto(tokens, done) {
+  ⊢ done = lr_upto(tokens, done) from match tokens {
     Nil => Refl
-    Cons(token, more) => match token: done = lr_upto(Cons(token, more), done) {
+    Cons(token, more) => ⊢ done = lr_upto(Cons(token, more), done) from match token {
       Mk(ty, st, en, tr) => Eq::subst(
         (c: Bool) => done = lr_upto_at(LlkTok::Mk(ty, st, en, tr), more, done, c),
         Eq::sym(e),
@@ -187,7 +184,7 @@ pub theorem lr_upto_end(
 }
 
 pub fn lr_is_built(r: LrRun): Bool {
-  match r: Bool {
+  ⊢ Bool from match r {
     LrBuilt(nodes, Root) => true
     LrStuck(e) => false
   }
@@ -202,7 +199,7 @@ pub fn lr_syms_of(c: LrConf): List(LrSym) {
 }
 
 pub fn lr_after(f: Nat, t: LrTables, n: LrNext): LrRun {
-  match n: LrRun {
+  ⊢ LrRun from match n {
     LrGo(c) => lr_run(f, t, c)
     LrEnd(r) => r
   }
@@ -226,7 +223,7 @@ pub theorem lr_stuck_case(
   done: List(LlkTok),
   h: lr_is_built(lr_after(f, t, lr_stuck_at(tokens, expected))) = true
 ): lr_goal(t, tokens, done) {
-  match tokens: lr_goal(t, tokens, done) {
+  ⊢ lr_goal(t, tokens, done) from match tokens {
     Nil => False::elim(false_ne_true(h))
     Cons(token, more) => False::elim(false_ne_true(h))
   }
@@ -248,9 +245,9 @@ pub theorem lr_shift_case(
   d: LrForest(t, syms, done),
   h: lr_is_built(lr_after(f, t, lr_shift(tokens, states, syms, kids, nodes, count, to))) = true
 ): lr_goal(t, tokens, done) {
-  match tokens: lr_goal(t, tokens, done) {
+  ⊢ lr_goal(t, tokens, done) from match tokens {
     Nil => False::elim(false_ne_true(h))
-    Cons(token, more) => match token: lr_goal(t, Cons(token, more), done) {
+    Cons(token, more) => ⊢ lr_goal(t, Cons(token, more), done) from match token {
       Mk(ty, st, en, tr) => Bool::cases(
         (c: Bool) => lr_goal(t, Cons(LlkTok::Mk(ty, st, en, tr), more), done),
         Nat::eq(ty, 0),
@@ -321,9 +318,11 @@ pub theorem lr_goto_case(
   done: List(LlkTok),
   ih: LrIh(f, t),
   d: LrForest(t, Cons(LrN(lhs), rest), done),
-  h: lr_is_built(lr_after(f, t, lr_goto(tokens, states, rest, kids, nodes, count, node, lhs, go))) = true
+  h: lr_is_built(
+    lr_after(f, t, lr_goto(tokens, states, rest, kids, nodes, count, node, lhs, go))
+  ) = true
 ): lr_goal(t, tokens, done) {
-  match go: lr_goal(t, tokens, done) {
+  ⊢ lr_goal(t, tokens, done) from match go {
     Zero => False::elim(false_ne_true(h))
     Succ(to) => ih(
       LrConf {
@@ -358,22 +357,12 @@ pub theorem lr_popped_case(
   d: LrForest(t, syms, done),
   hp: Array::get(lr_productions_of(t), p) = Some(prod),
   h: lr_is_built(
-      lr_after(
-        f,
-        t,
-        lr_reduce_pop(
-          t,
-          tokens,
-          states,
-          kids,
-          nodes,
-          count,
-          p,
-          prod,
-          lr_pop(lr_pops_of(prod), syms)
-        )
-      )
-    ) = true
+    lr_after(
+      f,
+      t,
+      lr_reduce_pop(t, tokens, states, kids, nodes, count, p, prod, lr_pop(lr_pops_of(prod), syms))
+    )
+  ) = true
 ): lr_goal(t, tokens, done) {
   lr_option_cases(
     (o: Option(List(LrSym))) => lr_goal(t, tokens, done),
@@ -382,16 +371,14 @@ pub theorem lr_popped_case(
       false_ne_true(
         Eq::subst(
           (o: Option(List(LrSym))) => lr_is_built(
-              lr_after(f, t, lr_reduce_pop(t, tokens, states, kids, nodes, count, p, prod, o))
-            ) = true,
+            lr_after(f, t, lr_reduce_pop(t, tokens, states, kids, nodes, count, p, prod, o))
+          ) = true,
           q,
           h
         )
       )
     ),
-    (rest: List(LrSym)) => (
-      q: lr_pop(lr_pops_of(prod), syms) = Some(rest)
-    ) => lr_goto_case(
+    (rest: List(LrSym)) => (q: lr_pop(lr_pops_of(prod), syms) = Some(rest)) => lr_goto_case(
       f,
       t,
       tokens,
@@ -422,8 +409,8 @@ pub theorem lr_popped_case(
       ),
       Eq::subst(
         (o: Option(List(LrSym))) => lr_is_built(
-            lr_after(f, t, lr_reduce_pop(t, tokens, states, kids, nodes, count, p, prod, o))
-          ) = true,
+          lr_after(f, t, lr_reduce_pop(t, tokens, states, kids, nodes, count, p, prod, o))
+        ) = true,
         q,
         h
       )
@@ -446,22 +433,12 @@ pub theorem lr_reduce_case(
   ih: LrIh(f, t),
   d: LrForest(t, syms, done),
   h: lr_is_built(
-      lr_after(
-        f,
-        t,
-        lr_reduce(
-          t,
-          tokens,
-          states,
-          syms,
-          kids,
-          nodes,
-          count,
-          p,
-          Array::get(lr_productions_of(t), p)
-        )
-      )
-    ) = true
+    lr_after(
+      f,
+      t,
+      lr_reduce(t, tokens, states, syms, kids, nodes, count, p, Array::get(lr_productions_of(t), p))
+    )
+  ) = true
 ): lr_goal(t, tokens, done) {
   lr_option_cases(
     (o: Option(LrProduction)) => lr_goal(t, tokens, done),
@@ -470,16 +447,14 @@ pub theorem lr_reduce_case(
       false_ne_true(
         Eq::subst(
           (o: Option(LrProduction)) => lr_is_built(
-              lr_after(f, t, lr_reduce(t, tokens, states, syms, kids, nodes, count, p, o))
-            ) = true,
+            lr_after(f, t, lr_reduce(t, tokens, states, syms, kids, nodes, count, p, o))
+          ) = true,
           q,
           h
         )
       )
     ),
-    (prod: LrProduction) => (
-      q: Array::get(lr_productions_of(t), p) = Some(prod)
-    ) => lr_popped_case(
+    (prod: LrProduction) => (q: Array::get(lr_productions_of(t), p) = Some(prod)) => lr_popped_case(
       f,
       t,
       tokens,
@@ -495,7 +470,9 @@ pub theorem lr_reduce_case(
       d,
       q,
       Eq::subst(
-        (o: Option(LrProduction)) => lr_is_built(lr_after(f, t, lr_reduce(t, tokens, states, syms, kids, nodes, count, p, o))) = true,
+        (o: Option(LrProduction)) => lr_is_built(
+          lr_after(f, t, lr_reduce(t, tokens, states, syms, kids, nodes, count, p, o))
+        ) = true,
         q,
         h
       )
@@ -519,43 +496,45 @@ pub theorem lr_whole_case(
   hp: Array::get(lr_productions_of(t), p) = Some(prod),
   hs: syms = List::append(lr_pops_of(prod), Nil),
   h: lr_is_built(
-      lr_after(
-        f,
-        t,
-        lr_accept_at(
-          kids,
-          nodes,
-          count,
-          p,
-          prod,
-          Bool::and(Nat::eq(lr_lhs_of(prod), lr_start_of(t)), Nat::eq(llk_next_type(tokens), 0))
-        )
+    lr_after(
+      f,
+      t,
+      lr_accept_at(
+        kids,
+        nodes,
+        count,
+        p,
+        prod,
+        Bool::and(Nat::eq(lr_lhs_of(prod), lr_start_of(t)), Nat::eq(llk_next_type(tokens), 0))
       )
-    ) = true
+    )
+  ) = true
 ): lr_goal(t, tokens, done) {
   Bool::cases(
     (c: Bool) => lr_goal(t, tokens, done),
     Bool::and(Nat::eq(lr_lhs_of(prod), lr_start_of(t)), Nat::eq(llk_next_type(tokens), 0)),
-    (
-      q: Bool::and(Nat::eq(lr_lhs_of(prod), lr_start_of(t)), Nat::eq(llk_next_type(tokens), 0)) = false
-    ) => False::elim(
+    (q: Bool::and(Nat::eq(lr_lhs_of(prod), lr_start_of(t)), Nat::eq(llk_next_type(tokens), 0)) = false) => False::elim(
       false_ne_true(
         Eq::subst(
-          (c: Bool) => lr_is_built(lr_after(f, t, lr_accept_at(kids, nodes, count, p, prod, c))) = true,
+          (c: Bool) => lr_is_built(
+            lr_after(f, t, lr_accept_at(kids, nodes, count, p, prod, c))
+          ) = true,
           q,
           h
         )
       )
     ),
-    (
-      q: Bool::and(Nat::eq(lr_lhs_of(prod), lr_start_of(t)), Nat::eq(llk_next_type(tokens), 0)) = true
-    ) => Eq::subst(
+    (q: Bool::and(Nat::eq(lr_lhs_of(prod), lr_start_of(t)), Nat::eq(llk_next_type(tokens), 0)) = true) => Eq::subst(
       (l: List(LlkTok)) => LrForest(t, Cons(LrN(lr_start_of(t)), Nil), l),
       lr_upto_end(
         tokens,
         done,
         And::right(
-          Bool::and_split(Nat::eq(lr_lhs_of(prod), lr_start_of(t)), Nat::eq(llk_next_type(tokens), 0), q)
+          Bool::and_split(
+            Nat::eq(lr_lhs_of(prod), lr_start_of(t)),
+            Nat::eq(llk_next_type(tokens), 0),
+            q
+          )
         )
       ),
       Eq::subst(
@@ -593,9 +572,11 @@ pub theorem lr_left_case(
   d: LrForest(t, syms, done),
   hp: Array::get(lr_productions_of(t), p) = Some(prod),
   hs: syms = List::append(lr_pops_of(prod), rest),
-  h: lr_is_built(lr_after(f, t, lr_accept_pop(t, tokens, kids, nodes, count, p, prod, Some(rest)))) = true
+  h: lr_is_built(
+    lr_after(f, t, lr_accept_pop(t, tokens, kids, nodes, count, p, prod, Some(rest)))
+  ) = true
 ): lr_goal(t, tokens, done) {
-  match rest: lr_goal(t, tokens, done) {
+  ⊢ lr_goal(t, tokens, done) from match rest {
     Cons(s, more) => False::elim(false_ne_true(h))
     Nil => lr_whole_case(f, t, tokens, syms, kids, nodes, count, p, prod, done, d, hp, hs, h)
   }
@@ -615,12 +596,12 @@ pub theorem lr_accept_case(
   done: List(LlkTok),
   d: LrForest(t, syms, done),
   h: lr_is_built(
-      lr_after(
-        f,
-        t,
-        lr_accept(t, tokens, syms, kids, nodes, count, p, Array::get(lr_productions_of(t), p))
-      )
-    ) = true
+    lr_after(
+      f,
+      t,
+      lr_accept(t, tokens, syms, kids, nodes, count, p, Array::get(lr_productions_of(t), p))
+    )
+  ) = true
 ): lr_goal(t, tokens, done) {
   lr_option_cases(
     (o: Option(LrProduction)) => lr_goal(t, tokens, done),
@@ -628,33 +609,35 @@ pub theorem lr_accept_case(
     (q: Array::get(lr_productions_of(t), p) = None) => False::elim(
       false_ne_true(
         Eq::subst(
-          (o: Option(LrProduction)) => lr_is_built(lr_after(f, t, lr_accept(t, tokens, syms, kids, nodes, count, p, o))) = true,
+          (o: Option(LrProduction)) => lr_is_built(
+            lr_after(f, t, lr_accept(t, tokens, syms, kids, nodes, count, p, o))
+          ) = true,
           q,
           h
         )
       )
     ),
-    (prod: LrProduction) => (
-      q: Array::get(lr_productions_of(t), p) = Some(prod)
-    ) => lr_option_cases(
+    (prod: LrProduction) => (q: Array::get(lr_productions_of(t), p) = Some(prod)) => lr_option_cases(
       (o: Option(List(LrSym))) => lr_goal(t, tokens, done),
       lr_pop(lr_pops_of(prod), syms),
       (q2: lr_pop(lr_pops_of(prod), syms) = None) => False::elim(
         false_ne_true(
           Eq::subst(
-            (o: Option(List(LrSym))) => lr_is_built(lr_after(f, t, lr_accept_pop(t, tokens, kids, nodes, count, p, prod, o))) = true,
+            (o: Option(List(LrSym))) => lr_is_built(
+              lr_after(f, t, lr_accept_pop(t, tokens, kids, nodes, count, p, prod, o))
+            ) = true,
             q2,
             Eq::subst(
-              (o: Option(LrProduction)) => lr_is_built(lr_after(f, t, lr_accept(t, tokens, syms, kids, nodes, count, p, o))) = true,
+              (o: Option(LrProduction)) => lr_is_built(
+                lr_after(f, t, lr_accept(t, tokens, syms, kids, nodes, count, p, o))
+              ) = true,
               q,
               h
             )
           )
         )
       ),
-      (rest: List(LrSym)) => (
-        q2: lr_pop(lr_pops_of(prod), syms) = Some(rest)
-      ) => lr_left_case(
+      (rest: List(LrSym)) => (q2: lr_pop(lr_pops_of(prod), syms) = Some(rest)) => lr_left_case(
         f,
         t,
         tokens,
@@ -670,10 +653,14 @@ pub theorem lr_accept_case(
         q,
         lr_pop_sound(lr_pops_of(prod), syms, rest, q2),
         Eq::subst(
-          (o: Option(List(LrSym))) => lr_is_built(lr_after(f, t, lr_accept_pop(t, tokens, kids, nodes, count, p, prod, o))) = true,
+          (o: Option(List(LrSym))) => lr_is_built(
+            lr_after(f, t, lr_accept_pop(t, tokens, kids, nodes, count, p, prod, o))
+          ) = true,
           q2,
           Eq::subst(
-            (o: Option(LrProduction)) => lr_is_built(lr_after(f, t, lr_accept(t, tokens, syms, kids, nodes, count, p, o))) = true,
+            (o: Option(LrProduction)) => lr_is_built(
+              lr_after(f, t, lr_accept(t, tokens, syms, kids, nodes, count, p, o))
+            ) = true,
             q,
             h
           )
@@ -697,9 +684,11 @@ pub theorem lr_act_case(
   done: List(LlkTok),
   ih: LrIh(f, t),
   d: LrForest(t, syms, done),
-  h: lr_is_built(lr_after(f, t, lr_act(t, tokens, states, syms, kids, nodes, count, arg, kind))) = true
+  h: lr_is_built(
+    lr_after(f, t, lr_act(t, tokens, states, syms, kids, nodes, count, arg, kind))
+  ) = true
 ): lr_goal(t, tokens, done) {
-  match kind: lr_goal(t, tokens, done) {
+  ⊢ lr_goal(t, tokens, done) from match kind {
     Zero => lr_stuck_case(
       f,
       t,
@@ -708,9 +697,9 @@ pub theorem lr_act_case(
       done,
       h
     )
-    Succ(k) => match k: lr_goal(t, tokens, done) {
+    Succ(k) => ⊢ lr_goal(t, tokens, done) from match k {
       Zero => lr_shift_case(f, t, tokens, states, syms, kids, nodes, count, arg, done, ih, d, h)
-      Succ(k2) => match k2: lr_goal(t, tokens, done) {
+      Succ(k2) => ⊢ lr_goal(t, tokens, done) from match k2 {
         Zero => lr_reduce_case(f, t, tokens, states, syms, kids, nodes, count, arg, done, ih, d, h)
         Succ(k3) => lr_accept_case(f, t, tokens, syms, kids, nodes, count, arg, done, d, h)
       }
@@ -728,9 +717,9 @@ pub theorem lr_run_sound(
   d: LrForest(t, lr_syms_of(c), done),
   h: lr_is_built(lr_run(fuel, t, c)) = true
 ): lr_goal(t, lr_tokens_of(c), done) {
-  match fuel: lr_goal(t, lr_tokens_of(c), done) {
+  ⊢ lr_goal(t, lr_tokens_of(c), done) from match fuel {
     Zero => False::elim(false_ne_true(h))
-    Succ(f) => match c: lr_goal(t, lr_tokens_of(c), done) {
+    Succ(f) => ⊢ lr_goal(t, lr_tokens_of(c), done) from match c {
       Mk(tokens, states, syms, kids, nodes, count) => lr_act_case(
         f,
         t,
@@ -743,9 +732,14 @@ pub theorem lr_run_sound(
         Nat::div_nz(lr_action(t, lr_top(states), llk_next_type(tokens)), 4, Nat::ne_zero(4, Refl)),
         Nat::rem_nz(lr_action(t, lr_top(states), llk_next_type(tokens)), 4, Nat::ne_zero(4, Refl)),
         done,
-        (c2: LrConf) => (done2: List(LlkTok)) => (d2: LrForest(t, lr_syms_of(c2), done2)) => (
-          h2: lr_is_built(lr_run(f, t, c2)) = true
-        ) => lr_run_sound(f, t, c2, done2, d2, h2),
+        (c2: LrConf) => (done2: List(LlkTok)) => (d2: LrForest(t, lr_syms_of(c2), done2)) => (h2: lr_is_built(lr_run(f, t, c2)) = true) => lr_run_sound(
+          f,
+          t,
+          c2,
+          done2,
+          d2,
+          h2
+        ),
         d,
         h
       )
@@ -754,14 +748,14 @@ pub theorem lr_run_sound(
 }
 
 pub fn lr_value1(m: Mut1(LlkResult, Stack(LlkEvent))): LlkResult {
-  match m: LlkResult {
+  ⊢ LlkResult from match m {
     mut1(v, e) => v
   }
 }
 
 // What the body of `lr_parse` makes of its call of `lr_events_of`.
 pub fn lr_rewrap1(m: Mut1(LlkResult, Stack(LlkEvent))): Mut1(LlkResult, Stack(LlkEvent)) {
-  match m: Mut1(LlkResult, Stack(LlkEvent)) {
+  ⊢ Mut1(LlkResult, Stack(LlkEvent)) from match m {
     mut1(v, e) => mut1(v, e)
   }
 }
@@ -769,13 +763,13 @@ pub fn lr_rewrap1(m: Mut1(LlkResult, Stack(LlkEvent))): Mut1(LlkResult, Stack(Ll
 pub theorem lr_rewrap1_value(
   m: Mut1(LlkResult, Stack(LlkEvent))
 ): lr_value1(lr_rewrap1(m)) = lr_value1(m) {
-  match m: lr_value1(lr_rewrap1(m)) = lr_value1(m) {
+  ⊢ lr_value1(lr_rewrap1(m)) = lr_value1(m) from match m {
     mut1(v, e) => Refl
   }
 }
 
 pub theorem lr_failed_ne_parsed(x: LlkError, e: LlkFailed(x) = LlkParsed): False {
-  match e: False {
+  ⊢ False from match e {
   }
 }
 
@@ -787,7 +781,7 @@ pub theorem lr_built_of(
   r: LrRun,
   h: lr_value1(lr_events_of(t, tokens, r, ev)) = LlkParsed
 ): lr_is_built(r) = true {
-  match r: lr_is_built(r) = true {
+  ⊢ lr_is_built(r) = true from match r {
     LrStuck(e) => False::elim(lr_failed_ne_parsed(e, h))
     LrBuilt(nodes, Root) => Refl
   }

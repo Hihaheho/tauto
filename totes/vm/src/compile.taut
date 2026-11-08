@@ -187,6 +187,7 @@ pub fn c_fail(st: CSt, what: Text): CSt {
 
 pub fn c_value(v: CVal): MVal {
   match v {
+    CvDeclaration(slot) => MvDeclaration(slot)
     CvUnit => MvUnit
     CvInt(i) => MvInt(i)
     CvFloat(x) => MvFloat(x)
@@ -247,6 +248,9 @@ mutual {
       CpLit(v) => Pair { fst: MpLit(c_value(v)), snd: Pair { fst: st, snd: ids } }
       CpCtor(c, fields) => match c_pats(fields, st, ids) {
         Pair { fst: ps, snd: rest } => Pair { fst: MpCtor(c, ps), snd: rest }
+      }
+      CpProduct(members) => match c_pats(members, st, ids) {
+        Pair { fst: ps, snd: rest } => Pair { fst: MpProduct(ps), snd: rest }
       }
     }
   }
@@ -583,22 +587,22 @@ mutual {
   ): Pair(Pair(List(MPat), Pair(List(MCode), List(MCode))), CSt) {
     match fuel {
       Zero => Pair {
-        fst: Pair { fst: Nil(MPat), snd: Pair { fst: Nil(MCode), snd: Nil(MCode) } },
+        fst: Pair { fst: Nil(<A: MPat>), snd: Pair { fst: Nil(<A: MCode>), snd: Nil(<A: MCode>) } },
         snd: c_fail(st, "a program nested too deep")
       }
       Succ(f) => match pats {
         Nil => Pair {
-          fst: Pair { fst: Nil(MPat), snd: Pair { fst: Nil(MCode), snd: Nil(MCode) } },
+          fst: Pair { fst: Nil(<A: MPat>), snd: Pair { fst: Nil(<A: MCode>), snd: Nil(<A: MCode>) } },
           snd: st
         }
         Cons(p, ps) => match guards {
           Nil => Pair {
-            fst: Pair { fst: Nil(MPat), snd: Pair { fst: Nil(MCode), snd: Nil(MCode) } },
+            fst: Pair { fst: Nil(<A: MPat>), snd: Pair { fst: Nil(<A: MCode>), snd: Nil(<A: MCode>) } },
             snd: c_fail(st, m_internal())
           }
           Cons(g, gs) => match bodies {
             Nil => Pair {
-              fst: Pair { fst: Nil(MPat), snd: Pair { fst: Nil(MCode), snd: Nil(MCode) } },
+              fst: Pair { fst: Nil(<A: MPat>), snd: Pair { fst: Nil(<A: MCode>), snd: Nil(<A: MCode>) } },
               snd: c_fail(st, m_internal())
             }
             Cons(b, bs) => match c_pat(p, st, Nil) {
@@ -639,28 +643,28 @@ mutual {
   ): Pair(Pair(List(List(MPat)), Pair(List(Nat), List(MCode))), CSt) {
     match fuel {
       Zero => Pair {
-        fst: Pair { fst: Nil(List(MPat)), snd: Pair { fst: Nil(Nat), snd: Nil(MCode) } },
+        fst: Pair { fst: Nil(<A: List(MPat)>), snd: Pair { fst: Nil(<A: Nat>), snd: Nil(<A: MCode>) } },
         snd: c_fail(st, "a program nested too deep")
       }
       Succ(f) => match pats {
         Nil => Pair {
-          fst: Pair { fst: Nil(List(MPat)), snd: Pair { fst: Nil(Nat), snd: Nil(MCode) } },
+          fst: Pair { fst: Nil(<A: List(MPat)>), snd: Pair { fst: Nil(<A: Nat>), snd: Nil(<A: MCode>) } },
           snd: st
         }
         Cons(ps, pss) => match ks {
           Nil => Pair {
-            fst: Pair { fst: Nil(List(MPat)), snd: Pair { fst: Nil(Nat), snd: Nil(MCode) } },
+            fst: Pair { fst: Nil(<A: List(MPat)>), snd: Pair { fst: Nil(<A: Nat>), snd: Nil(<A: MCode>) } },
             snd: c_fail(st, m_internal())
           }
           Cons(kid, kss) => match bodies {
             Nil => Pair {
-              fst: Pair { fst: Nil(List(MPat)), snd: Pair { fst: Nil(Nat), snd: Nil(MCode) } },
+              fst: Pair { fst: Nil(<A: List(MPat)>), snd: Pair { fst: Nil(<A: Nat>), snd: Nil(<A: MCode>) } },
               snd: c_fail(st, m_internal())
             }
             Cons(b, bs) => match c_pats(ps, st, Nil) {
               Pair { fst: mps, snd: r } => match r {
                 Pair { fst: st2, snd: ids } => {
-                  let kr := match kid: Pair(Nat, CSt) {
+                  let kr := ⊢ Pair(Nat, CSt) from match kid {
                     Zero => Pair { fst: 0, snd: st2 }
                     Succ(id) => match c_slot(st2, id) {
                       Pair { fst: s, snd: st3 } => Pair { fst: Succ(s), snd: st3 }

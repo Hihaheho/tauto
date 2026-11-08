@@ -1,34 +1,43 @@
 @ cases.order-and-shared-reads
 source = ```nib
-var values = vec_new()
-vec_push(&mut values, "日本語")
-vec_push(&mut values, "two")
-let array = vec_into_array(values)
-perform show("length", array_len(array))
-perform show("first", array_get(array, 0))
-perform show("second", array_get(array, 1))
-perform show("missing", array_get(array, 2))
+import std::prelude::Affine
+import std::prelude::Shared
+
+var values := Vec::new()
+Vec::push(&mut values, "日本語")
+Vec::push(&mut values, "two")
+let array := Vec::into_array(values)
+perform show("length", Array::len(array))
+perform show("first", Array::get(array, 0))
+perform show("second", Array::get(array, 1))
+perform show("missing", Array::get(array, 2))
 ```
 shows = ["length = 2", "first = Some(\"日本語\")", "second = Some(\"two\")", "missing = None"]
 
 @ cases.empty
 source = ```nib
-let array: Array(i64) = vec_into_array(vec_new())
-perform show("length", array_len(array))
-perform show("missing", array_get(array, 0))
+import std::prelude::Affine
+import std::prelude::Shared
+
+let array: Array(i64) := Vec::into_array(Vec::new())
+perform show("length", Array::len(array))
+perform show("missing", Array::get(array, 0))
 ```
 shows = ["length = 0", "missing = None"]
 
 @ cases.large-flat
 source = ```nib
-var values = vec_new()
-var i: u64 = 0
+import std::prelude::Affine
+import std::prelude::Shared
+
+var values := Vec::new()
+var i: u64 := 0
 while i < 100000 {
-  vec_push(&mut values, i)
+  Vec::push(&mut values, i)
   i := i + 1
 }
-let array = vec_into_array(values)
-perform show("length", array_len(array))
-perform show("last", array_get(array, 99999))
+let array := Vec::into_array(values)
+perform show("length", Array::len(array))
+perform show("last", Array::get(array, 99999))
 ```
 shows = ["length = 100000", "last = Some(99999)"]

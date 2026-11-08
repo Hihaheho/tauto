@@ -1,0 +1,694 @@
+@ cases.bench-native_benchmark_builds_once_and_reports_real_samples
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("sum", 2 + 3)
+```
+shows = ["sum = 5"]
+
+@ cases.budget_diagnostics-ordinary_program_emission_keeps_its_runtime_guard
+rust_shows = ["result = 42"]
+backends = ["rust", "javascript"]
+source = ```tauto
+let result := handle { budget(steps: 0) { 42 } } with { exceeded(info), k => -1 }
+perform show("result", result)
+```
+shows = ["result = -1"]
+
+javascript_shows = ["result = 42"]
+@ cases.build_timings-emit_preserves_stdout_and_observes_generated_source_reuse
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("answer", 42)
+```
+shows = ["answer = 42"]
+
+@ cases.build_timings-output_and_native_failures_are_not_successful_phases
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("answer", 42)
+```
+shows = ["answer = 42"]
+
+@ cases.build_timings-native_host_build_reports_cargo_without_changing_binary_path
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("answer", 42)
+```
+shows = ["answer = 42"]
+
+@ cases.build_timings-javascript_build_targets_do_not_run_the_program_or_claim_native_compilation
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("answer", 42)
+```
+shows = ["answer = 42"]
+
+@ cases.build_timings-tote_loading_reports_its_combined_proof_check_and_extraction_boundary
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("answer", 42)
+```
+shows = ["answer = 42"]
+
+@ cases.doc-package_discovery_obeys_sources_and_never_executes_runtime
+backends = ["rust", "javascript"]
+source = ```tauto
+fn twice(n: i64): i64 { n + n }
+perform show("must-not-run", 1)
+```
+shows = ["must-not-run = 1"]
+
+@ cases.javascript-generation_modes_and_invalid_combinations
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("n", 42)
+```
+shows = ["n = 42"]
+
+@ cases.javascript-declaration_output_is_opt_in_and_matches_esm_entry_points
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("n", 42)
+```
+shows = ["n = 42"]
+
+@ cases.programs-a_run_of_one_file_prints_what_it_showed
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("a", 1 + 2)
+```
+shows = ["a = 3"]
+
+@ cases.test_command-package_sources_are_not_tests_and_order_is_stable
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("answer", 6 * 7)
+```
+shows = ["answer = 42"]
+
+@ cases.totes-a_tote_runs_its_main
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("x", 1)
+```
+shows = ["x = 1"]
+
+@ cases.totes-a_dependencys_main_is_not_read-2
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("a", 0)
+```
+shows = ["a = 0"]
+
+@ cases.totes-the_rust_section_is_ignored
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("x", 1)
+```
+shows = ["x = 1"]
+
+@ cases.totes-dependencies_are_visited_in_name_order-3
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("x", 1)
+```
+shows = ["x = 1"]
+
+@ cases.totes-the_cli_runs_a_tote
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("x", 1)
+```
+shows = ["x = 1"]
+
+@ cases.totes-native_extension_is_rejected_in_tote_sources
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("x", 1)
+```
+shows = ["x = 1"]
+
+@ cases.totes-native_text_functions_need_no_proof_library_import
+backends = ["rust", "javascript"]
+source = ```tauto
+
+fn greeting(): Text { "hello" }
+perform show("text", greeting())
+```
+shows = ["text = \"hello\""]
+
+@ cases.array_match-source
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Affine
+import std::prelude::Shared
+
+
+enum Tree { Leaf(Text), Branch(Text, Tree, Tree) }
+struct Entry { tag: u64, text: Text, tree: Tree }
+enum Store { Stored(Array(Entry)) }
+fn borrowed_length(&store: Store): u64 {
+  match &store { Stored(values) => Array::len(values) }
+}
+fn borrowed_entry(&store: Store, index: u64): Option(Entry) {
+  match &store { Stored(values) => match Array::get(values, index) { None => None, Some(entry) => Some(entry) } }
+}
+fn borrowed_direct(&store: Store, index: u64): Option(Entry) {
+  match &store { Stored(values) => Array::get(values, index) }
+}
+enum Packed { Payload(Text, Text, Text, Text), Fork(Packed, Packed) }
+fn child_projected(values: Array(Packed)): Packed {
+  match Array::get(values, 0) {
+    Some(Fork(child, _)) => child
+    Some(value) => value
+    None => Payload("", "", "", "")
+  }
+}
+fn child_baseline(values: Array(Packed)): Packed {
+  let found := Array::get(values, 0)
+  match found {
+    Some(Fork(child, _)) => child
+    Some(value) => value
+    None => Payload("", "", "", "")
+  }
+}
+fn nested(values: Array(Entry)): u64 {
+  match Array::get(values, 0) {
+    Some(Entry { tag, text: _, tree: _ }) => match Array::get(values, 0) {
+      Some(Entry { tag: second, text: _, tree: _ }) => tag + second
+      None => 0
+    }
+    None => 0
+  }
+}
+fn entries(text: Text): Array(Entry) {
+  var values := Vec::new()
+  Vec::push(&mut values, Entry { tag: 41, text: text,
+    tree: Branch("root", Leaf("left"), Leaf("right")) })
+  Vec::into_array(values)
+}
+fn projected(values: Array(Entry), index: u64): u64 {
+  match Array::get(values, index) {
+    Some(Entry { tag, text: _, tree: _ }) => tag
+    None => 0
+  }
+}
+fn baseline(values: Array(Entry), index: u64): u64 {
+  let found := Array::get(values, index)
+  match found {
+    Some(Entry { tag, text: _, tree: _ }) => tag
+    None => 0
+  }
+}
+fn recursive(values: Array(Entry)): Text {
+  match Array::get(values, 0) {
+    Some(Entry { tree: Branch(_, Leaf("different"), _), tag: _, text: _ }) => "wrong"
+    Some(Entry { tree: Branch(_, Leaf(text), _), tag: _, text: _ }) => text
+    Some(_) => "other"
+    None => "missing"
+  }
+}
+fn whole(values: Array(Entry)): Entry {
+  match Array::get(values, 0) {
+    Some(item) => item
+    None => Entry { tag: 0, text: "empty", tree: Leaf("empty") }
+  }
+}
+fn owned(values: Array(Entry)): Option(Entry) { Array::get(values, 0) }
+fn with_callback(values: Array(Entry), &f: (u64) -> u64): u64 {
+  match Array::get(values, 0) {
+    Some(Entry { tag, text: _, tree: _ }) => f(tag)
+    None => 0
+  }
+}
+fn capture(values: Array(Entry)): (() -> Text) {
+  match Array::get(values, 0) {
+    Some(Entry { text, tag: _, tree: _ }) => () => text
+    None => () => "missing"
+  }
+}
+var original := entries("old")
+let selected := match Array::get(original, { original := entries("new"); 0 }) {
+  Some(Entry { text, tag: _, tree: _ }) => { original := entries("body"); text }
+  None => "missing"
+}
+perform show("snapshot", selected)
+perform show("current", whole(original).text)
+perform show("temporary", projected(entries("temporary"), 0))
+perform show("recursive", recursive(original))
+perform show("past-end", projected(original, 1))
+let captured := capture(entries("captured"))
+perform show("captured", captured())
+```
+shows = ["snapshot = \"old\"", "current = \"body\"", "temporary = 41", "recursive = \"left\"", "past-end = 0", "captured = \"captured\""]
+
+@ cases.budget_diagnostics-eligible_report_agrees_with_generated_guard
+rust_shows = ["r = 42"]
+backends = ["rust", "javascript"]
+source = ```tauto
+let r := handle { budget(steps: 0) { 42 } } with { exceeded(info), k => -1 }
+perform show("r", r)
+```
+shows = ["r = -1"]
+
+javascript_shows = ["r = 42"]
+@ cases.nonresuming_budget-unknown_generic_values_and_body_returns_keep_the_future_path
+rust_shows = ["result = 42"]
+backends = ["rust", "javascript"]
+source = ```tauto
+fn choose<T>(value: T, n: i64): T ! {Div} {
+          var i := 0
+          while i < n { i := i + 1 }
+          value
+        }
+        let result := handle { budget(steps: 20) { choose(42, 3) } } with { exceeded(info), k => -1 }
+        perform show("result", result)
+```
+shows = ["result = -1"]
+
+javascript_shows = ["result = 42"]
+@ cases.nonresuming_budget-unknown_generic_values_and_body_returns_keep_the_future_path-2
+backend_known_failure.rust = "build: expected `Pin<Box<dyn Future<Output = Never>>>`"
+backends = ["rust", "javascript"]
+source = ```tauto
+fn body_return(): i64 {
+          handle { budget(steps: 20) { return 7
+ 1 } } with { exceeded(info), k => -1 }
+        }
+        perform show("result", body_return())
+```
+shows = ["result = 7"]
+
+@ cases.nonresuming_budget-host_added_drop_on_generated_noncopy_data_keeps_original_order
+backends = ["rust", "javascript"]
+source = ```tauto
+struct Held { text: Text }
+fn hold(value: Held, n: i64): Held ! {Div} {
+  var i := 0
+  while i < n { i := i + 1 }
+  value
+}
+fn run(steps: i64): Held {
+  handle { budget(steps: steps) { hold(Held { text: "body" }, 5) } } with {
+    exceeded(info), k => { let temporary := Held { text: "arm" }
+      Held { text: "handler" } }
+  }
+}
+perform show("result", run(1))
+```
+shows = ["result = Held { text: \"handler\" }"]
+
+@ cases.build_timings-failures_keep_exit_codes_and_diagnostics_before_final_json
+source = ```tauto
+let answer: Bool := 42
+```
+types = "error: i64 does not fit Bool"
+compile_errors.rust = "front: i64 does not fit Bool"
+compile_errors.javascript = "front: i64 does not fit Bool"
+
+@ cases.checked_extraction-recursive_runtime_callbacks_and_forged_markers_remain_divergent
+source = ```tauto
+fn spin(): i64 { spin() }
+fn use_callback(f: () -> i64 ! {}): i64 { f() }
+perform show("value", use_callback(spin))
+```
+rows = "error: a function value may perform Div but its type permits {}"
+compile_errors.rust = "front: a function value may perform Div but its type permits {}"
+compile_errors.javascript = "front: a function value may perform Div but its type permits {}"
+
+@ cases.checked_extraction-recursive_runtime_callbacks_and_forged_markers_remain_divergent-2
+source = ```tauto
+fn spin(): i64 ! {} { let again := spin
+ again() }
+```
+rows = "error: `spin` may perform Div but its row is {}"
+compile_errors.rust = "front: `spin` may perform Div but its row is {}"
+compile_errors.javascript = "front: `spin` may perform Div but its row is {}"
+
+@ cases.checked_extraction-recursive_runtime_callbacks_and_forged_markers_remain_divergent-3
+source = ```tauto
+fn make(): (() -> i64 ! {}) ! {} { spin }
+fn spin(): i64 ! {} { make()() }
+```
+rows = "error: `make` may perform Div but its row is {}"
+compile_errors.rust = "front: `make` may perform Div but its row is {}"
+compile_errors.javascript = "front: `make` may perform Div but its row is {}"
+
+@ cases.test_command-incomplete_and_runtime_failure_are_failures-2
+source = ```tauto
+let x: i64 := true
+perform show("x", x)
+```
+types = "error: Bool does not fit i64"
+compile_errors.rust = "front: Bool does not fit i64"
+compile_errors.javascript = "front: Bool does not fit i64"
+
+@ cases.array_match-borrowed_results_are_still_rejected
+source = ```tauto
+fn invalid(values: Array(Text)): &Text { match Array::get(values, 0) { Some(text) => text, None => "missing" } }
+```
+types = "error: -> &Text needs a borrowed parameter"
+compile_errors.rust = "front: -> &Text needs a borrowed parameter"
+compile_errors.javascript = "front: -> &Text needs a borrowed parameter"
+
+@ cases.array_match-borrowed_results_are_still_rejected-2
+source = ```tauto
+enum Tree { Leaf(Text), Branch(Tree, Tree) }
+fn invalid(values: Array(Tree)): &Tree { match Array::get(values, 0) { Some(tree) => tree, None => Leaf("missing") } }
+```
+types = "error: -> &Tree needs a borrowed parameter"
+compile_errors.rust = "front: -> &Tree needs a borrowed parameter"
+compile_errors.javascript = "front: -> &Tree needs a borrowed parameter"
+
+@ cases.budget_closures-unsupported-1
+source = ```tauto
+fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+let f := (n) => visit(n)
+let r := handle { budget(steps: 0) { f(3)
+true } } with { exceeded(info), k => false }
+```
+compile_errors.rust = "unsupported: created outside a budget"
+compile_errors.javascript = "unsupported: created outside a budget"
+
+@ cases.budget_closures-unsupported-2
+source = ```tauto
+fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+let f := (n) => visit(n)
+let r := handle { budget(steps: 0) { each(Cons(3, Nil), &f)
+true } } with { exceeded(info), k => false }
+```
+compile_errors.rust = "front: f is borrowed in a budget, whose stopped body may outlive it"
+compile_errors.javascript = "front: f is borrowed in a budget, whose stopped body may outlive it"
+
+@ cases.budget_closures-unsupported-3
+source = ```tauto
+fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+let r := handle { budget(steps: 0) { each(Cons(3, Nil), visit)
+true } } with { exceeded(info), k => false }
+```
+compile_errors.rust = "unsupported: divergent named function"
+compile_errors.javascript = "unsupported: divergent named function"
+
+@ cases.budget_closures-unused_owned_closure
+backends = ["rust", "javascript"]
+source = ```tauto
+fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+let r := handle { budget(steps: 0) { let f := (n) => visit(n)
+true } } with { exceeded(info), k => false }
+perform show("r", r)
+```
+// What counts as a step is up to each implementation: the evaluator counts
+// every step of its machine, so a zero budget runs out on its `let`, while the
+// compiled backends take no step until the closure is called.
+rust_shows = ["r = true"]
+javascript_shows = ["r = true"]
+
+@ cases.budget_closures-unsupported-5
+source = ```tauto
+fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+fn wrap(&f: (i64) -> Unit ! {Div}): Bool { handle { budget(steps: 0) { f(3)
+true } } with { exceeded(info), k => false } }
+perform show("r", wrap((n) => visit(n)))
+```
+compile_errors.rust = "unsupported: created outside a budget"
+compile_errors.javascript = "unsupported: created outside a budget"
+
+@ cases.budget_closures-unsupported-6
+source = ```tauto
+fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+fn wrap<!e>(&f: (i64) -> Unit ! e): Bool ! e { handle { budget(steps: 0) { f(3)
+true } } with { exceeded(info), k => false } }
+perform show("r", wrap((n) => visit(n)))
+```
+compile_errors.rust = "unsupported: created outside a budget"
+compile_errors.javascript = "unsupported: created outside a budget"
+
+@ cases.budget_closures-unsupported-7
+source = ```tauto
+fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+effect choose(): Bool resume ω
+let r := handle { budget(steps: 0) { each(Cons(3, Nil), (n) => { if perform choose() { visit(n) } })
+true } } with { exceeded(info), k => false
+choose(), k => k(true) }
+```
+compile_errors.rust = "unsupported: multi-shot closure"
+compile_errors.javascript = "unsupported: multi-shot closure"
+
+@ cases.budget_closures-unsupported-8
+source = ```tauto
+fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+fn outer(): Bool { let f := (n) => visit(n)
+fn inner(): Unit ! {Div} { f(3) }
+handle { budget(steps: 0) { inner()
+true } } with { exceeded(info), k => false } }
+perform show("r", outer())
+```
+compile_errors.rust = "unsupported: not a plain name"
+compile_errors.javascript = "unsupported: not a plain name"
+
+@ cases.budget_closures-unsupported-9
+source = ```tauto
+fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+fn apply_div(&f: (i64) -> Unit ! {Div}): Unit ! {Div} { f(3) }
+let r := handle { budget(steps: 10) { let f := (n) => #()
+apply_div(&f)
+true } } with { exceeded(info), k => false }
+```
+compile_errors.rust = "unsupported: synchronous function value"
+compile_errors.javascript = "unsupported: synchronous function value"
+
+@ cases.budget_closures-unsupported-10
+source = ```tauto
+fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+extern { fn native(&f: (i64) -> Unit ! {Div}): Unit }
+let r := handle { budget(steps: 10) { native((n) => #())
+true } } with { exceeded(info), k => false }
+```
+compile_errors.rust = "unsupported: callback through an extern"
+compile_errors.javascript = "unsupported: callback through an extern"
+
+@ cases.budget_closures-unsupported-11
+source = ```tauto
+fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+fn ignore_div(&f: (i64) -> Unit ! {Div}, n: i64): Unit { #() }
+let r := handle { budget(steps: 10) { each(Cons(1, Nil), (n) => ignore_div((k) => #(), n))
+true } } with { exceeded(info), k => false }
+```
+compile_errors.rust = "unsupported: absent from the helper's effect row"
+compile_errors.javascript = "unsupported: absent from the helper's effect row"
+
+@ cases.budget_closures-unsupported-12
+source = ```tauto
+fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+fn ignore<!e>(&f: (i64) -> Unit ! e, n: i64): Unit { #() }
+let r := handle { budget(steps: 10) { each(Cons(1, Nil), (n) => ignore((k) => visit(k), n))
+true } } with { exceeded(info), k => false }
+```
+compile_errors.rust = "unsupported: absent from the helper's effect row"
+compile_errors.javascript = "unsupported: absent from the helper's effect row"
+
+@ cases.constructor_resolution-shared_names-forward
+backends = ["rust", "javascript"]
+source = ```tauto
+enum Left { Same(i64), Empty, Wildcard { n: i64 } }
+enum Right { Same(Text), Empty, Wildcard { text: Text } }
+
+fn left_value(x: Left): i64 {
+  match x { Same(n) => n, Empty => 0, Wildcard { n } => n }
+}
+fn right_value(x: Right): Text {
+  match x { Same(text) => text, Empty => "empty", Wildcard { text } => text }
+}
+fn make_left(): Left { Same(21) }
+fn make_right(): Right { Same("日本語") }
+let a: Left := Same(42)
+let b: Right := Same("right")
+let empty_left: Left := Empty
+let empty_right: Right := Empty
+let record_left: Left := Wildcard { n: 7 }
+let record_right: Right := Wildcard { text: "record" }
+perform show("a", left_value(a))
+perform show("b", right_value(b))
+perform show("function_left", left_value(make_left()))
+perform show("function_right", right_value(make_right()))
+perform show("arg_left", left_value(Same(12)))
+perform show("arg_right", right_value(Same("argument")))
+perform show("empty_left", left_value(empty_left))
+perform show("empty_right", right_value(empty_right))
+perform show("record_left", left_value(record_left))
+perform show("record_right", right_value(record_right))
+perform show("qualified_left", left_value(Left::Same(13)))
+perform show("qualified_right", right_value(Right::Same("qualified")))
+```
+shows = ["a = 42", "b = \"right\"", "function_left = 21", "function_right = \"日本語\"", "arg_left = 12", "arg_right = \"argument\"", "empty_left = 0", "empty_right = \"empty\"", "record_left = 7", "record_right = \"record\"", "qualified_left = 13", "qualified_right = \"qualified\""]
+
+@ cases.constructor_resolution-shared_names-reverse
+backends = ["rust", "javascript"]
+source = ```tauto
+enum Right { Same(Text), Empty, Wildcard { text: Text } }
+enum Left { Same(i64), Empty, Wildcard { n: i64 } }
+
+fn left_value(x: Left): i64 {
+  match x { Same(n) => n, Empty => 0, Wildcard { n } => n }
+}
+fn right_value(x: Right): Text {
+  match x { Same(text) => text, Empty => "empty", Wildcard { text } => text }
+}
+fn make_left(): Left { Same(21) }
+fn make_right(): Right { Same("日本語") }
+let a: Left := Same(42)
+let b: Right := Same("right")
+let empty_left: Left := Empty
+let empty_right: Right := Empty
+let record_left: Left := Wildcard { n: 7 }
+let record_right: Right := Wildcard { text: "record" }
+perform show("a", left_value(a))
+perform show("b", right_value(b))
+perform show("function_left", left_value(make_left()))
+perform show("function_right", right_value(make_right()))
+perform show("arg_left", left_value(Same(12)))
+perform show("arg_right", right_value(Same("argument")))
+perform show("empty_left", left_value(empty_left))
+perform show("empty_right", right_value(empty_right))
+perform show("record_left", left_value(record_left))
+perform show("record_right", right_value(record_right))
+perform show("qualified_left", left_value(Left::Same(13)))
+perform show("qualified_right", right_value(Right::Same("qualified")))
+```
+shows = ["a = 42", "b = \"right\"", "function_left = 21", "function_right = \"日本語\"", "arg_left = 12", "arg_right = \"argument\"", "empty_left = 0", "empty_right = \"empty\"", "record_left = 7", "record_right = \"record\"", "qualified_left = 13", "qualified_right = \"qualified\""]
+
+@ cases.constructor-struct-owner-order-1
+source = ```tauto
+struct P { n: i64 }
+enum Other { P(Text) }
+let p: P := P { n: 42 }
+let other: Other := P("other")
+perform show("struct", p.n)
+perform show("enum", match other { P(t) => t })
+```
+backends = ["rust", "javascript"]
+shows = ["struct = 42", "enum = \"other\""]
+
+@ cases.constructor-struct-owner-order-2
+source = ```tauto
+enum Other { P(Text) }
+struct P { n: i64 }
+let p: P := P { n: 42 }
+let other: Other := P("other")
+perform show("struct", p.n)
+perform show("enum", match other { P(t) => t })
+```
+backends = ["rust", "javascript"]
+shows = ["struct = 42", "enum = \"other\""]
+
+@ cases.constructor-linear-owner-order-1
+source = ```tauto
+linear struct Token {}
+enum Left { Same(Token) }
+enum Right { Same(i64) }
+fn bad(x: Left): i64 { match x { Same(_) => 0 } }
+```
+types = "ok"
+lin = "error: drops a linear Token"
+compile_errors.rust = "front: drops a linear Token"
+compile_errors.javascript = "front: drops a linear Token"
+
+@ cases.constructor-linear-owner-order-2
+source = ```tauto
+linear struct Token {}
+enum Right { Same(i64) }
+enum Left { Same(Token) }
+fn bad(x: Left): i64 { match x { Same(_) => 0 } }
+```
+types = "ok"
+lin = "error: drops a linear Token"
+compile_errors.rust = "front: drops a linear Token"
+compile_errors.javascript = "front: drops a linear Token"
+
+@ cases.os-print-is-captured
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Os
+
+print("a")
+print("b")
+eprint("e")
+```
+stdout = "ab"
+stderr = "e"
+exit = 0
+
+@ cases.os-exit-code
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Os
+
+print("a")
+perform exit(3)
+print("b")
+```
+stdout = "a"
+stderr = ""
+exit = 3
+
+@ cases.os-exit-out-of-range
+backends = ["rust", "javascript"]
+source = ```tauto
+perform exit(300)
+```
+run_error = "the number is too large"
+
+@ cases.os-cli-prints-and-exits
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Os
+
+print("out")
+eprint("err")
+perform exit(3)
+```
+stdout = "out"
+stderr = "err"
+exit = 3
+
+@ cases.bench-failing-program-exit
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Os
+
+perform exit(7)
+```
+stdout = ""
+stderr = ""
+exit = 7
+
+@ cases.test-command-program-exit
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Os
+
+perform exit(7)
+```
+stdout = ""
+stderr = ""
+exit = 7
+
+@ cases.os-arguments
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Os
+
+perform show("a", perform argv())
+```
+args = ["a", "b"]
+shows = ["a = Cons(\"a\", Cons(\"b\", Nil))"]
+
+@ cases.os-empty-arguments
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Os
+
+perform show("a", perform argv())
+```
+args = []
+shows = ["a = Nil"]

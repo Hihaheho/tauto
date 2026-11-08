@@ -17,6 +17,7 @@ mutual
     | .text _ => 0
     | .dec _ => 0
     | .flt _ => 0
+    | .flt32 _ => 0
     | .prim _ _ _ => 0
     | .lam ps b => b.bor (a.up ps.length)
     | .app f args => f.bor a + Tms.bor a args
@@ -63,6 +64,7 @@ mutual
     | .text _, _ => by simp [Tm.ren, Tm.bor]
     | .dec _, _ => by simp [Tm.ren, Tm.bor]
     | .flt _, _ => by simp [Tm.ren, Tm.bor]
+    | .flt32 _, _ => by simp [Tm.ren, Tm.bor]
     | .prim _ _ _, _ => by simp [Tm.ren, Tm.bor]
     | .lam ps b, ξ => by simp only [Tm.ren, Tm.bor, Item.up_loc]; exact Tm.bor_ren_loc l b _
     | .app f args, ξ => by simp only [Tm.ren, Tm.bor]; rw [Tm.bor_ren_loc l f, Tms.bor_ren_loc l args]
@@ -119,6 +121,7 @@ mutual
     | .text _, _, _, _ => by simp [Tm.ren, Tm.bor]
     | .dec _, _, _, _ => by simp [Tm.ren, Tm.bor]
     | .flt _, _, _, _ => by simp [Tm.ren, Tm.bor]
+    | .flt32 _, _, _, _ => by simp [Tm.ren, Tm.bor]
     | .prim _ _ _, _, _, _ => by simp [Tm.ren, Tm.bor]
     | .lam ps b, ξ, hξ, i => by
         simp only [Tm.ren, Tm.bor, Item.up_var]
@@ -205,6 +208,7 @@ mutual
     | .text _, _, _, _, _, _ => by simp [Tm.subst, Tm.bor]
     | .dec _, _, _, _, _, _ => by simp [Tm.subst, Tm.bor]
     | .flt _, _, _, _, _, _ => by simp [Tm.subst, Tm.bor]
+    | .flt32 _, _, _, _, _, _ => by simp [Tm.subst, Tm.bor]
     | .prim _ _ _, _, _, _, _, _ => by simp [Tm.subst, Tm.bor]
     | .ref _ _ _, _, _, _, _, _ => by simp [Tm.subst, Tm.bor]
     | .loc _, _, _, _, _, _ => by simp [Tm.subst, Tm.bor]
@@ -354,6 +358,7 @@ mutual
     | .text _, _ => by simp [Tm.inst, Tm.bor]
     | .dec _, _ => by simp [Tm.inst, Tm.bor]
     | .flt _, _ => by simp [Tm.inst, Tm.bor]
+    | .flt32 _, _ => by simp [Tm.inst, Tm.bor]
     | .prim _ _ _, _ => by simp [Tm.inst, Tm.bor]
     | .ref _ _ _, _ => by simp [Tm.inst, Tm.bor]
     | .var _, _ => by simp [Tm.inst, Tm.bor]
@@ -440,6 +445,7 @@ mutual
     | .text _, _, _, _ => by simp [Tm.ren, Tm.bor]
     | .dec _, _, _, _ => by simp [Tm.ren, Tm.bor]
     | .flt _, _, _, _ => by simp [Tm.ren, Tm.bor]
+    | .flt32 _, _, _, _ => by simp [Tm.ren, Tm.bor]
     | .prim _ _ _, _, _, _ => by simp [Tm.ren, Tm.bor]
     | .ref _ _ _, _, _, _ => by simp [Tm.ren, Tm.bor]
     | .var _, ξ, j, h =>  by simp [Tm.ren, Tm.bor]
@@ -610,6 +616,7 @@ mutual
     | .text => False
     | .decimal => False
     | .float => False
+    | .float32 => False
     | .never => False
     | .fn _ _ _ => False
     | .cell _ => False
@@ -680,6 +687,7 @@ mutual
     | .text => by simp [Ty.inst, Ty.Bv]
     | .decimal => by simp [Ty.inst, Ty.Bv]
     | .float => by simp [Ty.inst, Ty.Bv]
+    | .float32 => by simp [Ty.inst, Ty.Bv]
     | .never => by simp [Ty.inst, Ty.Bv]
     | .fn _ _ _ => by simp [Ty.inst, Ty.Bv]
     | .cell _ => by simp [Ty.inst, Ty.Bv]
@@ -775,6 +783,7 @@ mutual
     | text {S Γ C P s} : BLin os sg Fr S Γ C P (.text s)
     | dec {S Γ C P q} : BLin os sg Fr S Γ C P (.dec q)
     | flt {S Γ C P f} : BLin os sg Fr S Γ C P (.flt f)
+    | flt32 {S Γ C P f} : BLin os sg Fr S Γ C P (.flt32 f)
     | prim {S Γ C P p T ρ} : ¬ p.IsView → BLin os sg Fr S Γ C P (.prim p T ρ)
     /-- A call of a function whose result is a view of its borrowed
     arguments (`reborrow`): the call is itself a borrow, so it is no `Bare`
@@ -1132,6 +1141,7 @@ mutual
     | .text => rw [Tm.ren]; exact .text
     | .dec => rw [Tm.ren]; exact .dec
     | .flt => rw [Tm.ren]; exact .flt
+    | .flt32 => rw [Tm.ren]; exact .flt32
     | .prim hv => rw [Tm.ren]; exact .prim hv
     | .viewApp hv hva ha hu hs =>
         simp only [Tm.ren]
@@ -1264,11 +1274,13 @@ end
 /-- `t` names no place past `S`, used or borrowed. -/
 def NoHighB (S : Ctx) (t : Tm) : Prop := ∀ l, S.length ≤ l → t.occ (.loc l) = 0 ∧ t.bor (.loc l) = 0
 
+-- The match over every rule of `BLin` takes more than the default budget.
+set_option maxHeartbeats 400000 in
 mutual
   theorem BLin.noHigh {os sg S Γ C P t} (h : BLin os sg Fr S Γ C P t) : NoHighB S t := by
     intro l hl
     match h with
-    | .var | .int | .bool | .unit | .text | .dec | .flt | .prim _ | .ref _ _ => simp [Tm.occ, Tm.bor]
+    | .var | .int | .bool | .unit | .text | .dec | .flt | .flt32 | .prim _ | .ref _ _ => simp [Tm.occ, Tm.bor]
     | .viewApp _ _ ha _ _ =>
         obtain ⟨a2, b2⟩ := ha.noHigh l hl
         simp only [Tm.occ, Tm.bor]; omega
@@ -1403,6 +1415,7 @@ mutual
     | .text => exact .text
     | .dec => exact .dec
     | .flt => exact .flt
+    | .flt32 => exact .flt32
     | .prim hv => exact .prim hv
     | .viewApp hv hva ha hu hs => exact .viewApp hv hva (ha.ext x) hu (hs.ext x ha.noHigh_mem)
     | .ref hf hv => exact .ref hf hv
@@ -1525,6 +1538,7 @@ mutual
     | .text _, _, _ => by simp [Tm.subst, Tm.occ]
     | .dec _, _, _ => by simp [Tm.subst, Tm.occ]
     | .flt _, _, _ => by simp [Tm.subst, Tm.occ]
+    | .flt32 _, _, _ => by simp [Tm.subst, Tm.occ]
     | .prim _ _ _, _, _ => by simp [Tm.subst, Tm.occ]
     | .ref _ _ _, _, _ => by simp [Tm.subst, Tm.occ]
     | .loc _, _, _ => by simp [Tm.subst, Tm.occ]
@@ -1632,6 +1646,7 @@ mutual
     | .text _, _, _, _, h => by simp [Tm.occ] at h
     | .dec _, _, _, _, h => by simp [Tm.occ] at h
     | .flt _, _, _, _, h => by simp [Tm.occ] at h
+    | .flt32 _, _, _, _, h => by simp [Tm.occ] at h
     | .prim _ _ _, _, _, _, h => by simp [Tm.occ] at h
     | .ref _ _ _, _, _, _, h => by simp [Tm.occ] at h
     | .loc _, _, _, _, h => by simp [Tm.occ] at h
@@ -2247,6 +2262,7 @@ mutual
     | .text => rw [Tm.subst]; exact .text
     | .dec => rw [Tm.subst]; exact .dec
     | .flt => rw [Tm.subst]; exact .flt
+    | .flt32 => rw [Tm.subst]; exact .flt32
     | .prim hv => rw [Tm.subst]; exact .prim hv
     | .viewApp (args := args) hv hva ha hu hseq =>
         have hla : LocOks os S σ args := LocOkF.mono hl (fun l => by simp only [Tm.occ]; omega) (fun l => by simp only [Tm.bor]; omega)
@@ -2593,6 +2609,7 @@ mutual
     | .text => rw [Tm.inst]; exact .text
     | .dec => rw [Tm.inst]; exact .dec
     | .flt => rw [Tm.inst]; exact .flt
+    | .flt32 => rw [Tm.inst]; exact .flt32
     | .prim hv => rw [Tm.inst]; exact .prim hv
     | .viewApp hv hva ha hu hseq =>
         simp only [Tm.inst]

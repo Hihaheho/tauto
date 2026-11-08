@@ -1,0 +1,1064 @@
+@ cases.effect_rows-holder_pure
+backends = ["rust", "javascript"]
+source = ```tauto
+struct Holder { read: () -> Text ! {} }
+fn read_holder(h: Holder): Text ! {} {
+  let read: () -> Text ! {} := h.read
+  read()
+}
+let h := Holder { read: () => "ok" }
+perform show("value", read_holder(h))
+```
+shows = ["value = \"ok\""]
+
+@ cases.effect_rows-alias_pure
+backends = ["rust", "javascript"]
+source = ```tauto
+fn read_alias<!e>(source: () -> Text ! {}): Text ! {} {
+  let read: () -> Text ! {} := source
+  read()
+}
+perform show("value", read_alias(() => "ok"))
+```
+shows = ["value = \"ok\""]
+
+@ cases.effect_rows-holder_effect
+backends = ["rust", "javascript"]
+source = ```tauto
+effect ask(): Text
+struct Holder { read: () -> Text ! {ask} }
+fn read_holder(h: Holder): Text ! {ask} {
+  let read: () -> Text ! {ask} := h.read
+  read()
+}
+let h := Holder { read: () => perform ask() }
+let result := handle { read_holder(h) } with {
+  ask(), k => k("ok")
+  return value => value
+}
+perform show("value", result)
+```
+shows = ["value = \"ok\""]
+
+@ cases.effect_rows-alias_row
+backends = ["rust", "javascript"]
+source = ```tauto
+effect ask(): Text
+fn read_alias<!e>(source: () -> Text ! e): Text ! e {
+  let read: () -> Text ! e := source
+  read()
+}
+let result := handle { read_alias(() => perform ask()) } with {
+  ask(), k => k("ok")
+  return value => value
+}
+perform show("value", result)
+```
+shows = ["value = \"ok\""]
+
+@ cases.effect_rows-direct_field
+backends = ["rust", "javascript"]
+source = ```tauto
+struct Holder { read: () -> Text ! {} }
+fn read_holder(h: Holder): Text ! {} { h.read() }
+perform show("value", read_holder(Holder { read: () => "ok" }))
+```
+shows = ["value = \"ok\""]
+
+@ cases.effect_rows-returned_pure
+backends = ["rust", "javascript"]
+source = ```tauto
+fn make_read(): (() -> Text ! {}) ! {} { () => "ok" }
+fn read_returned(): Text ! {} {
+  let read: () -> Text ! {} := make_read()
+  read()
+}
+perform show("value", read_returned())
+```
+shows = ["value = \"ok\""]
+
+@ cases.effect_rows-param_pure
+backends = ["rust", "javascript"]
+source = ```tauto
+fn read_direct<!e>(read: () -> Text ! {}): Text ! {} {
+  read()
+}
+perform show("value", read_direct(() => "ok"))
+```
+shows = ["value = \"ok\""]
+
+@ cases.effect_rows-param_row
+backends = ["rust", "javascript"]
+source = ```tauto
+effect ask(): Text
+fn read_direct<!e>(read: () -> Text ! e): Text ! e {
+  read()
+}
+let result := handle { read_direct(() => perform ask()) } with {
+  ask(), k => k("ok")
+  return value => value
+}
+perform show("value", result)
+```
+shows = ["value = \"ok\""]
+
+@ cases.effect_rows-function_annotations_and_unknown_calls_remain_rejected
+compile_errors.rust = "front: a function value may perform ask but its type permits {}"
+compile_errors.javascript = "front: a function value may perform ask but its type permits {}"
+source = ```tauto
+effect ask(): Text
+fn bad(): Text ! {} {
+    let read: () -> Text ! {} := () => perform ask()
+    read()
+}
+```
+rows = "error: a function value may perform ask but its type permits {}"
+
+@ cases.effect_rows-function_annotations_and_unknown_calls_remain_rejected-2
+compile_errors.rust = "front: i64 is not a function"
+compile_errors.javascript = "front: i64 is not a function"
+source = ```tauto
+fn number(): i64 { 1 }
+fn bad(): i64 ! {} { let read := number(); read() }
+```
+rows = "error: cannot follow the effects of calling `read` in `bad`"
+
+@ cases.javascript-arithmetic_and_text
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Shared
+
+perform show("big", 9007199254740993 + 2)
+perform show("text", concat("hello", " world"))
+perform show("cmp", 2 < 3)
+perform show("div", div(-7, 3))
+perform show("mod", mod(-7, 3))
+```
+shows = ["big = 9007199254740995", "text = \"hello world\"", "cmp = true", "div = -2", "mod = -1"]
+
+@ cases.javascript-recursion_and_early_return
+backends = ["rust", "javascript"]
+source = ```tauto
+fn fact(n: i64): i64 ! {Div} { if n == 0 { return 1 }; n * fact(n - 1) }
+perform show("fact", fact(10))
+```
+shows = ["fact = 3628800"]
+
+@ cases.javascript-mutation_and_loop
+backends = ["rust", "javascript"]
+source = ```tauto
+var n := 0
+while n < 5 { n := n + 1 }
+perform show("n", n)
+```
+shows = ["n = 5"]
+
+@ cases.javascript-data_and_match
+backends = ["rust", "javascript"]
+source = ```tauto
+shared enum Choice { Empty, Value(i64) }
+let a := Value(42)
+perform show("a", a)
+perform show("v", match a { Empty => 0, Value(n) => n })
+```
+shows = ["a = Value(42)", "v = 42"]
+
+@ cases.javascript-direct_handler
+backends = ["rust", "javascript"]
+source = ```tauto
+effect get(): i64 direct
+let v := handle { perform get() + 1 } with { get(), k => k(41) }
+perform show("v", v)
+```
+shows = ["v = 42"]
+
+@ cases.javascript-secure_random
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Os
+import std::prelude::Secret
+import std::prelude::Shared
+
+perform show("n", match perform secure_random(32) { Ok(s) => Bytes::len(expose(s)), Err(_) => 0 })
+let fixed := handle { perform secure_random(3) } with { secure_random(n), k => k(Ok(secret(Bytes::of_list(Cons(7, Nil))))) }
+perform show("fixed", match fixed { Ok(s) => Bytes::len(expose(s)), Err(_) => 0 })
+```
+shows = ["n = 32", "fixed = 1"]
+
+@ cases.javascript-abort_handler
+backend_known_failure.rust = "build: expected `Never`, found `i64`"
+backends = ["rust", "javascript"]
+source = ```tauto
+effect stop(): Never resume 0
+let v := handle { perform stop(); 99 } with { stop() => 42 }
+perform show("v", v)
+```
+shows = ["v = 42"]
+
+@ cases.javascript-cli_build_run_and_errors
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("n", 42)
+```
+shows = ["n = 42"]
+
+@ cases.javascript-cli_build_run_and_errors-2
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("n", 9223372036854775807 + 1)
+```
+run_error = "the number is too large"
+
+@ cases.javascript-nested_handlers_and_return_arm_scope
+backends = ["rust", "javascript"]
+source = ```tauto
+effect get(): i64 direct
+let x := handle {
+  handle { perform get() } with {
+    get(), k => k(2)
+    return n => n + perform get()
+  }
+} with { get(), k => k(10) }
+perform show("x", x)
+effect stop(): Never resume 0
+fn guard(n: i64): i64 ! {stop} { if n > 3 { perform stop() } else { n } }
+let y := handle { guard(10) } with {
+  stop() => 7
+  return n => n + 100
+}
+perform show("y", y)
+```
+shows = ["x = 12", "y = 7"]
+
+@ cases.javascript-records_and_function_values
+backends = ["rust", "javascript"]
+source = ```tauto
+copy struct Point { x: i64, y: i64 }
+let p := Point { y: 2, x: 1 }
+perform show("p", p)
+perform show("x", p.x)
+perform show("eq", p == Point { x: 1, y: 2 })
+fn inc(x: i64): i64 { x + 1 }
+let f := inc
+perform show("f", f(41))
+```
+shows = ["p = Point { x: 1, y: 2 }", "x = 1", "eq = true", "f = 42"]
+
+@ cases.javascript-short_circuit_does_not_perform_rhs
+backends = ["rust", "javascript"]
+source = ```tauto
+effect stop(): Never resume 0
+let v := handle { false && { perform stop(); true } } with { stop() => true }
+perform show("v", v)
+```
+shows = ["v = false"]
+
+@ cases.javascript-suspending_effects
+backends = ["rust", "javascript"]
+source = ```tauto
+effect ask(): i64 resume 1
+let x := handle { perform ask() + 1 } with { ask(), k => k(41) }
+perform show("x", x)
+```
+shows = ["x = 42"]
+
+@ cases.javascript-text_unicode_and_escaping
+backends = ["rust", "javascript"]
+source = ```tauto
+perform show("unicode", Text::compare("𐀀", ""))
+perform show("bytes", Text::len("あ😀"))
+perform show("text", "a\n\t\"\\")
+```
+shows = ["unicode = 1", "bytes = 7", "text = \"a\\n\\t\\\"\\\\\""]
+
+@ cases.javascript-multi_shot_effects
+backends = ["rust", "javascript"]
+source = ```tauto
+effect choose(): Bool resume ω
+let x := handle { if perform choose() { 10 } else { 20 } } with {
+  choose(), k => k(true) + k(false)
+}
+perform show("x", x)
+```
+shows = ["x = 30"]
+
+@ cases.javascript-forwarding_and_nested_resumption
+backends = ["rust", "javascript"]
+source = ```tauto
+effect ask(): i64 resume 1
+effect choose(): Bool resume ω
+let x := handle {
+  handle { if perform choose() { perform ask() } else { 2 } } with {
+    ask(), k => k(10)
+    return n => n + 1
+  }
+} with { choose(), k => k(true) + k(false) }
+perform show("x", x)
+```
+shows = ["x = 14"]
+
+@ cases.javascript-capturing_closure
+backends = ["rust", "javascript"]
+source = ```tauto
+let n := 40
+let f: (i64) -> i64 := (x) => x + n
+perform show("x", f(2))
+```
+shows = ["x = 42"]
+
+@ cases.javascript-deep_recursion_uses_trampoline
+backends = ["rust", "javascript"]
+source = ```tauto
+fn count(n: i64): i64 ! {Div} { if n == 0 { 0 } else { count(n - 1) + 1 } }
+perform show("n", count(20000))
+```
+rust_shows = ["n = 20000"]
+
+@ cases.javascript-return_exits_function_across_multi_shot_handler
+backends = ["rust", "javascript"]
+source = ```tauto
+effect choose(): Bool resume ω
+fn pick(): i64 {
+  let r := handle {
+    let b := perform choose()
+    if b { return 100 }
+    1
+  } with { choose(), k => k(true) + k(false) }
+  r + 1000
+}
+perform show("p", pick())
+```
+shows = ["p = 100"]
+
+@ cases.javascript-shared_mutable_closure
+backends = ["rust", "javascript"]
+source = ```tauto
+var n := 0
+let bump := () => { n := n + 1 }
+bump()
+bump()
+perform show("n", n)
+```
+shows = ["n = 2"]
+
+@ cases.javascript-optional_resume_can_abort
+backends = ["rust", "javascript"]
+source = ```tauto
+effect ask(): i64 resume <=1
+let n := handle { perform ask() + 100 } with { ask(), k => 7 }
+perform show("n", n)
+```
+shows = ["n = 7"]
+
+@ cases.javascript_lifetimes-generated_deep_borrowed_list_traversal
+backends = ["rust", "javascript"]
+source = ```tauto
+fn length(&items: List(i64)): i64 ! {Div} {
+    match items { Nil => 0, Cons(head, tail) => 1 + length(&tail) }
+}
+var items: List(i64) := Nil
+var index := 0
+while index < 20000 { items := Cons(index, items); index := index + 1 }
+perform show("length", length(&items))
+```
+rust_shows = ["length = 20000"]
+
+@ cases.javascript_lifetimes-generated_deep_aggregate_drop_after_output
+backends = ["rust", "javascript"]
+source = ```tauto
+var items: List(i64) := Nil
+var index := 0
+while index < 6000 { items := Cons(index, items); index := index + 1 }
+perform show("built", index)
+```
+rust_shows = ["built = 6000"]
+
+@ cases.javascript_lifetimes-generated_nested_temporary_borrow_matches_named_and_evaluator
+backends = ["rust", "javascript"]
+source = ```tauto
+copy struct Record { value: i64 }
+fn make_record(): Record { Record { value: 7 } }
+fn read_record(&record: Record): i64 { record.value }
+fn inspect_record(&record: Record): i64 {
+    let first := read_record(&record);
+    first + record.value
+}
+perform show("temporary", inspect_record(&make_record()))
+let saved := make_record()
+perform show("named", inspect_record(&saved))
+```
+shows = ["temporary = 14", "named = 14"]
+
+@ cases.javascript_lifetimes-generated_temporary_survives_multi_shot_resumptions
+backend_known_failure.rust = "build: temporary value dropped while borrowed"
+backends = ["rust", "javascript"]
+source = ```tauto
+copy struct Record { value: i64 }
+effect choose(): Bool resume ω
+fn make_record(): Record { Record { value: 7 } }
+fn read_record(&record: Record): i64 { record.value }
+fn inspect_record(&record: Record): i64 ! {choose} {
+    let first := read_record(&record);
+    if perform choose() { first + record.value } else { record.value }
+}
+let result := handle { inspect_record(&make_record()) } with { choose(), k => k(true) + k(false) }
+perform show("result", result)
+```
+shows = ["result = 21"]
+
+@ cases.javascript_lifetimes-generated_returned_projection_keeps_its_temporary_root
+backends = ["rust", "javascript"]
+source = ```tauto
+copy struct Inner { value: i64 }
+copy struct Holder { child: Inner }
+fn get_child(&holder: Holder): &Inner { &holder.child }
+fn read_child(&inner: Inner): i64 { inner.value }
+perform show("child", read_child(get_child(&Holder { child: Inner { value: 7 } })))
+```
+shows = ["child = 7"]
+
+@ cases.budget_closures-divergent_callbacks_preserve_budgets_captures_and_resumption
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Shared
+
+
+fn visit(n: i64): Unit ! {Div} {
+  if n > 0 { visit(n - 1) }
+}
+fn apply<!e>(&f: (i64) -> Unit ! e, n: i64): Unit ! e {
+  each(Cons(n, Nil), &f)
+}
+fn apply_div(&f: (i64) -> Unit ! {Div}, n: i64): Unit ! {Div} {
+  f(n)
+}
+fn concrete(steps: i64): Bool {
+  handle { budget(steps: steps) {
+    apply_div((n) => visit(n), 3)
+    true
+  } } with { exceeded(info), k => false }
+}
+fn borrowed_parameter(steps: i64): Bool {
+  handle { budget(steps: steps) {
+    apply_div((&n) => visit(n), 3)
+    true
+  } } with { exceeded(info), k => false }
+}
+fn borrowed_parameter_resume(): i64 {
+  var count := 0
+  handle { budget(steps: 0) {
+    apply_div((&n) => {
+      count := count + 1
+      visit(n)
+    }, 3)
+    count
+  } } with { exceeded(info), k => info.more(2) }
+}
+fn run(steps: i64): Bool {
+  handle { budget(steps: steps) {
+    each(Cons(3, Nil), (n) => visit(n))
+    true
+  } } with { exceeded(info), k => false }
+}
+fn captured(steps: i64): Bool {
+  let offset := 4
+  handle { budget(steps: steps) {
+    apply((n) => visit(n + offset), 3)
+    true
+  } } with { exceeded(info), k => false }
+}
+fn resume_more(): i64 {
+  var count := 0
+  handle { budget(steps: 0) {
+    each(Cons(3, Cons(2, Nil)), (n) => {
+      count := count + 1
+      visit(n)
+    })
+    count
+  } } with { exceeded(info), k => info.more(2) }
+}
+fn resume_unbounded(): i64 {
+  var count := 0
+  handle { budget(steps: 0) {
+    each(Cons(3, Cons(2, Nil)), (n) => {
+      count := count + 1
+      visit(n)
+    })
+    count
+  } } with { exceeded(info), k => info.unbounded() }
+}
+fn loop_callback(steps: i64): Bool {
+  var count := 0
+  handle { budget(steps: steps) {
+    each(Cons(8, Nil), (n) => {
+      while count < n { count := count + 1 }
+    })
+    count == 8
+  } } with { exceeded(info), k => false }
+}
+fn inner_zero(): Bool {
+  handle { budget(steps: 1000) {
+    budget(steps: 0) {
+      each(Cons(8, Nil), (n) => visit(n))
+      true
+    }
+  } } with { exceeded(info), k => false }
+}
+fn nested(steps: i64): Bool {
+  handle { budget(steps: steps) {
+    budget(steps: 1000) {
+      apply((n) => visit(n), 10)
+      true
+    }
+    true
+  } } with { exceeded(info), k => false }
+}
+apply((n) => visit(n), 2)
+perform show("large", run(1000))
+perform show("zero", run(0))
+perform show("small", run(1))
+perform show("captured", captured(1000))
+perform show("captured_zero", captured(0))
+perform show("more", resume_more())
+perform show("unbounded", resume_unbounded())
+perform show("nested", nested(1000))
+perform show("nested_zero", nested(0))
+perform show("inner_zero", inner_zero())
+perform show("loop", loop_callback(1000))
+perform show("loop_zero", loop_callback(0))
+let pure := handle { budget(steps: 1000) {
+  each(Cons(3, Nil), (n) => #())
+  true
+} } with { exceeded(info), k => false }
+perform show("pure", pure)
+perform show("concrete", concrete(1000))
+perform show("concrete_zero", concrete(0))
+perform show("borrowed_parameter", borrowed_parameter(1000))
+perform show("borrowed_parameter_zero", borrowed_parameter(0))
+perform show("borrowed_parameter_resume", borrowed_parameter_resume())
+let widened := handle { budget(steps: 1000) {
+  apply_div((n) => #(), 3)
+  true
+} } with { exceeded(info), k => false }
+perform show("widened", widened)
+
+```
+shows = ["large = true", "zero = false", "small = false", "captured = true", "captured_zero = false", "more = 2", "unbounded = 2", "nested = true", "nested_zero = false", "inner_zero = false", "loop = true", "loop_zero = false", "pure = true", "concrete = true", "concrete_zero = false", "borrowed_parameter = true", "borrowed_parameter_zero = false", "borrowed_parameter_resume = 1", "widened = true"]
+
+@ cases.budget_closures-owned_divergent_callbacks_and_closures
+backends = ["rust", "javascript"]
+source = ```tauto
+
+fn spin(): i64 {
+  while true { }
+  0
+}
+fn visit(n: i64): Unit ! {Div} {
+  if n > 0 { visit(n - 1) }
+}
+fn twice(f: (i64) -> i64 ! {Div}, x: i64): i64 {
+  f(f(x))
+}
+fn owned_callback(steps: i64): i64 {
+  handle { budget(steps: steps) {
+    twice((x) => { visit(x)
+      x + 1 }, 3)
+  } } with { exceeded(info), k => 0 - 1 }
+}
+fn owned_callback_spins(): i64 {
+  handle { budget(steps: 1000) {
+    twice((x) => x + spin(), 3)
+  } } with { exceeded(info), k => 7 }
+}
+fn owned_callback_resumes(): i64 {
+  handle { budget(steps: 0) {
+    twice((x) => {
+      visit(x)
+      x * 2
+    }, 3)
+  } } with { exceeded(info), k => info.unbounded() }
+}
+fn owned_closure(steps: i64): i64 {
+  let offset := 4
+  handle { budget(steps: steps) {
+    let g := (x) => { visit(x)
+      x + offset }
+    g(g(1))
+  } } with { exceeded(info), k => 0 - 1 }
+}
+fn owned_closure_answers(): i64 {
+  handle { budget(steps: 1000) {
+    let g := (x) => x + spin()
+    g(5)
+  } } with { exceeded(info), k => 9 }
+}
+perform show("callback", owned_callback(1000))
+perform show("callback_zero", owned_callback(0))
+perform show("callback_spins", owned_callback_spins())
+perform show("callback_resumes", owned_callback_resumes())
+perform show("closure", owned_closure(1000))
+perform show("closure_zero", owned_closure(0))
+perform show("closure_answers", owned_closure_answers())
+```
+shows = ["callback = 5", "callback_zero = -1", "callback_spins = 7", "callback_resumes = 12", "closure = 9", "closure_zero = -1", "closure_answers = 9"]
+
+@ cases.constructor_resolution-equality_keeps_nominal_owner_inside_unions
+backends = ["rust", "javascript"]
+source = ```tauto
+
+enum Left { Same(i64) }
+enum Right { Same(i64) }
+let a := if true { Left::Same(1) } else { Right::Same(1) }
+let b := if false { Left::Same(1) } else { Right::Same(1) }
+perform show("different", a == b)
+perform show("same", a == a)
+```
+shows = ["different = false", "same = true"]
+
+@ cases.constructor_resolution-generic_recursive_shared_constructors
+backends = ["rust", "javascript"]
+source = ```tauto
+
+enum Left(A: Type) { Same(A), Next(Left(A)), Empty }
+enum Right(A: Type) { Same(A), Next(Right(A)), Empty }
+fn left(x: Left(i64)): i64 {
+    match x { Same(n) => n, Next(rest) => left(rest), Empty => 0 }
+}
+fn right(x: Right(Text)): Text {
+    match x { Same(text) => text, Next(rest) => right(rest), Empty => "empty" }
+}
+let l: Left(i64) := Next(Same(42))
+let r: Right(Text) := Next(Same("recursive"))
+perform show("left", left(l))
+perform show("right", right(r))
+```
+shows = ["left = 42", "right = \"recursive\""]
+
+@ cases.nonresuming_budget-local_resume_zero_and_budget_exhaustion_use_original_handler_arms
+rust_budget_steps = 34
+rust_shows = ["result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Ok(3)", "result = Ok(3)", "result = Ok(3)", "result = Ok(3)", "result = Ok(3)", "result = Ok(3)"]
+backends = ["rust", "javascript"]
+source = ```tauto
+effect stop(value: i64): Never resume 0
+fn stop_at(n: i64): i64 ! {stop} { perform stop(n) }
+fn visit(n: i64): i64 ! {Div, stop} {
+  var i := 0
+  while i < n { i := i + 1 }
+  stop_at(i)
+}
+fn run(steps: i64): Result(i64, Text) {
+  handle { budget(steps: steps) { Ok(visit(3)) } } with {
+    stop(value) => Ok(value)
+    exceeded(info), k => Err("exhausted")
+  }
+}
+var fuel := 0
+while fuel < 10 { perform show("result", run(fuel))
+  fuel := fuel + 1 }
+```
+shows = ["result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")"]
+
+javascript_shows = ["result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Ok(3)", "result = Ok(3)", "result = Ok(3)", "result = Ok(3)", "result = Ok(3)", "result = Ok(3)"]
+@ cases.nonresuming_budget-closed_shared_callback_alone_keeps_exact_fuel_and_invocation_counts
+rust_budget_steps = 57
+rust_shows = ["result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Ok(10)", "result = Ok(10)", "result = Ok(10)", "result = Ok(10)", "result = Ok(10)", "result = Ok(10)"]
+backends = ["rust", "javascript"]
+source = ```tauto
+fn value(index: u64): u64 { index + 1 }
+fn sum(&read: (u64) -> u64, size: u64): u64 ! {Div} {
+  var index: u64 := 0
+  var total: u64 := 0
+  while index < size { total := total + read(index)
+    index := index + 1 }
+  total
+}
+fn forward(&read: (u64) -> u64, size: u64): u64 ! {Div} {
+  sum(&(index) => read(index), size)
+}
+fn run(steps: i64): Result(u64, Text) {
+  handle { budget(steps: steps) { Ok(forward(&(index) => value(index), 4)) } } with {
+    exceeded(info), k => Err("exhausted")
+  }
+}
+var fuel := 0
+while fuel < 12 { perform show("result", run(fuel))
+  fuel := fuel + 1 }
+```
+shows = ["result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")"]
+
+javascript_shows = ["result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Err(\"exhausted\")", "result = Ok(10)", "result = Ok(10)", "result = Ok(10)", "result = Ok(10)", "result = Ok(10)", "result = Ok(10)"]
+@ cases.nonresuming_budget-closed_shared_callbacks_forward_through_helpers_and_compose_with_abort
+rust_budget_steps = 107
+rust_shows = ["abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")", "abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")", "abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")", "abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")", "abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")", "abort = Ok(3)", "normal = Err(\"exhausted\")", "abort = Ok(3)", "normal = Ok(10)", "abort = Ok(3)", "normal = Ok(10)", "abort = Ok(3)", "normal = Ok(10)", "abort = Ok(3)", "normal = Ok(10)", "abort = Ok(3)", "normal = Ok(10)", "abort = Ok(3)", "normal = Ok(10)"]
+backends = ["rust", "javascript"]
+source = ```tauto
+effect stop(value: u64): Never resume 0
+fn value(index: u64): u64 { index + 1 }
+fn scan(&read: (u64) -> u64, size: u64, abort_at: u64): u64 ! {Div, stop} {
+  var index: u64 := 0
+  var total: u64 := 0
+  while index < size {
+    if index == abort_at { perform stop(total) }
+    total := total + read(index)
+    index := index + 1
+  }
+  total
+}
+fn forward(&read: (u64) -> u64, size: u64, abort_at: u64): u64 ! {Div, stop} {
+  scan(&(index) => read(index), size, abort_at)
+}
+fn run(steps: i64, abort_at: u64): Result(u64, Text) {
+  handle { budget(steps: steps) { Ok(forward(&value, 4, abort_at)) } } with {
+    stop(total) => Ok(total)
+    exceeded(info), k => Err("exhausted")
+  }
+}
+var fuel := 0
+while fuel < 12 {
+  perform show("abort", run(fuel, 2))
+  perform show("normal", run(fuel, 9))
+  fuel := fuel + 1
+}
+```
+shows = ["abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")", "abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")", "abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")", "abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")", "abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")", "abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")", "abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")", "abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")", "abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")", "abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")", "abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")", "abort = Err(\"exhausted\")", "normal = Err(\"exhausted\")"]
+
+backend_known_failure.javascript = "runtime: Cannot read properties of undefined (reading 'tautoNative')"
+@ cases.nonresuming_budget-captured_refcell_temporaries_keep_the_future_path
+backend_known_failure.rust = "build: the type `Rc` does not implement `Copy`"
+backends = ["rust", "javascript"]
+source = ```tauto
+fn count(n: i64): i64 ! {Div} {
+  var i := 0
+  while i < n { i := i + 1 }
+  i
+}
+fn first(label: Text, value: i64): i64 { value }
+var text := "before"
+let saved := () => text
+let result := handle { budget(steps: 0) {
+  first(text, count(5))
+} } with {
+  exceeded(info), discarded => {
+    text := "after"
+    -9
+  }
+}
+perform show("result", result)
+perform show("text", saved())
+```
+shows = ["result = -9", "text = \"after\""]
+
+@ cases.nonresuming_budget-mutual_recursion_and_function_local_returns_preserve_steps
+rust_shows = ["result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = 1", "result = 1", "result = 1"]
+backends = ["rust", "javascript"]
+source = ```tauto
+fn even(n: i64): i64 ! {Div} {
+      if n == 0 { return 1 }
+      odd(n - 1)
+    }
+    fn odd(n: i64): i64 ! {Div} {
+      if n == 0 { return 0 }
+      even(n - 1)
+    }
+    fn run(steps: i64): i64 {
+      handle { budget(steps: steps) { even(6) } } with { exceeded(info), k => -1 }
+    }
+    var fuel := 0
+    while fuel < 10 { perform show("result", run(fuel))
+ fuel := fuel + 1 }
+
+```
+shows = ["result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = -1"]
+
+javascript_shows = ["result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = 1", "result = 1", "result = 1"]
+@ cases.nonresuming_budget-noncopy_host_augmentable_data_keeps_array_projection_but_not_sync_budget
+rust_shows = ["result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = 35", "result = 35", "result = 35"]
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Affine
+import std::prelude::Shared
+
+struct Entry { tag: i64, payload: Text }
+fn scan(values: Array(Entry), n: i64): i64 ! {Div} {
+  var i := 0
+  var total := 0
+  while i < n {
+    total := total + match Array::get(values, 0) {
+      Some(Entry { tag, payload: _ }) => tag
+      None => 0
+    }
+    i := i + 1
+  }
+  total
+}
+fn run(steps: i64): i64 {
+  var entries := Vec::new()
+  Vec::push(&mut entries, Entry { tag: 7, payload: "kept" })
+  let values := Vec::into_array(entries)
+  handle { budget(steps: steps) { scan(values, 5) } } with { exceeded(info), k => -1 }
+}
+var fuel := 0
+while fuel < 9 { perform show("result", run(fuel))
+ fuel := fuel + 1 }
+```
+shows = ["result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = -1"]
+
+javascript_shows = ["result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = -1", "result = 35", "result = 35", "result = 35"]
+@ cases.nonresuming_budget-nested_synchronous_helper_preserves_original_result_or_diagnostic
+rust_error = "tauto: a budget ran out outside its driver"
+backends = ["rust", "javascript"]
+source = ```tauto
+fn count(n: i64): i64 ! {Div} {
+  var i := 0
+  while i < n { i := i + 1 }
+  i
+}
+fn inner(steps: i64): i64 {
+  handle { budget(steps: steps) { count(5) } } with { exceeded(info), discarded => -9 }
+}
+let result := handle { budget(steps: 0) { inner(100) } } with { exceeded(info), resume_outer => info.more(2) }
+perform show("result", result)
+```
+shows = ["result = -9"]
+
+javascript_shows = ["result = 5"]
+@ cases.nonresuming_budget-runtime_error_location_and_negative_fuel_match_original_path
+rust_error = "input.taut:1:36: division by zero"
+backends = ["rust", "javascript"]
+source = ```tauto
+fn divide(n: i64): i64 ! {Div} { div(1, n) }
+let result := handle { budget(steps: 10) { divide(0) } } with { exceeded(info), k => -1 }
+perform show("result", result)
+```
+shows = ["result = -1"]
+
+javascript_error = "division by zero"
+@ cases.nonresuming_budget-suspended_step_expression_rechecks_the_surrounding_budget
+backends = ["rust", "javascript"]
+source = ```tauto
+effect request_steps(): i64 resume <=1
+fn count(n: i64): i64 ! {Div} {
+  var i := 0
+  while i < n { i := i + 1 }
+  i
+}
+fn inner(): i64 ! {request_steps} {
+  handle { budget(steps: perform request_steps()) { count(5) } } with {
+    exceeded(info), discarded => -9
+  }
+}
+let result := handle { inner() } with {
+  request_steps(), resume_inner => handle { budget(steps: 0) { resume_inner(100) } } with {
+    exceeded(info), discarded_outer => -77
+  }
+}
+perform show("result", result)
+```
+shows = ["result = -77"]
+
+@ cases.vec_into_array-conversion_checks_and_lowers_without_a_list
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Affine
+import std::prelude::Shared
+
+
+fn freeze(values: Vec(u64)): Array(u64) { Vec::into_array(values) }
+var values := Vec::new()
+Vec::push(&mut values, "日本語")
+Vec::push(&mut values, "two")
+let array := Vec::into_array(values)
+perform show("length", Array::len(array))
+perform show("first", Array::get(array, 0))
+perform show("second", Array::get(array, 1))
+perform show("missing", Array::get(array, 2))
+let empty: Array(i64) := Vec::into_array(Vec::new())
+perform show("empty", Array::len(empty))
+```
+shows = ["length = 2", "first = Some(\"日本語\")", "second = Some(\"two\")", "missing = None", "empty = 0"]
+
+@ cases.vec_into_array-conversion_consumes_the_vec_and_requires_shared_elements
+compile_errors.rust = "front: v is frozen by slice"
+compile_errors.javascript = "front: v is frozen by slice"
+source = ```tauto
+var v := Vec::new()
+Vec::push(&mut v, 1)
+let &slice := Vec::as_slice(&v)
+let a := Vec::into_array(v)
+perform show("length", Slice::len(&slice))
+```
+lin = "error: v is frozen by slice"
+
+@ cases.vec_into_array-conversion_consumes_the_vec_and_requires_shared_elements-2
+compile_errors.rust = "front: v is borrowed after move"
+compile_errors.javascript = "front: v is borrowed after move"
+source = ```tauto
+var v := Vec::new()
+Vec::push(&mut v, 1)
+let a := Vec::into_array(v)
+perform show("length", Vec::len(&v))
+```
+lin = "error: v is borrowed after move"
+
+@ cases.vec_into_array-conversion_consumes_the_vec_and_requires_shared_elements-3
+compile_errors.rust = "front: affine does not fit shared: Buf for a type parameter"
+compile_errors.javascript = "front: affine does not fit shared: Buf for a type parameter"
+source = ```tauto
+var v := Vec::new()
+Vec::push(&mut v, Buf::of("x"))
+let a := Vec::into_array(v)
+```
+types = "error: affine does not fit shared: Buf for a type parameter"
+
+@ cases.vec_into_array-evaluator_rejects_an_incorrect_resource_type
+compile_errors.rust = "front: an argument: Buf does not fit Vec(_)"
+compile_errors.javascript = "front: an argument: Buf does not fit Vec(_)"
+source = ```tauto
+
+let a := Vec::into_array(Buf::new())
+perform show("length", Array::len(a))
+```
+types = "error: an argument: Buf does not fit Vec(_)"
+
+@ cases.javascript-direct_forms_agree_with_the_evaluator
+backends = ["rust", "javascript"]
+source = ```tauto
+fn fib(n: u64): u64 { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
+fn total(n: u64): u64 {
+  var s := 0
+  var i := 0
+  while i < n {
+    let d := i * 2
+    s := s + d
+    i := i + 1
+  }
+  s
+}
+fn build(n: u64, acc: List(u64)): List(u64) { if n == 0 { acc } else { build(n - 1, Cons(n, acc)) } }
+fn insert(x: u64, l: List(u64)): List(u64) {
+  match l {
+    Nil => Cons(x, Nil)
+    Cons(y, t) => if x <= y { Cons(x, Cons(y, t)) } else { Cons(y, insert(x, t)) }
+  }
+}
+fn sort(l: List(u64)): List(u64) {
+  match l {
+    Nil => Nil
+    Cons(x, t) => insert(x, sort(t))
+  }
+}
+fn length(&l: List(u64)): u64 {
+  match l {
+    Nil => 0
+    Cons(_, t) => 1 + length(&t)
+  }
+}
+fn first_big(l: List(u64)): u64 {
+  match l {
+    Nil => 0
+    Cons(x, t) if x > 3 => x
+    Cons(_, t) => first_big(t)
+  }
+}
+fn name(t: Text): u64 {
+  match t {
+    "one" => 1
+    other => 0
+  }
+}
+perform show("fib", fib(15))
+perform show("total", total(100))
+let l := sort(Cons(5, Cons(1, Cons(4, build(3, Nil)))))
+perform show("length", length(&l))
+perform show("first_big", first_big(l))
+perform show("name", name("one") + name("two"))
+```
+shows = ["fib = 610", "total = 9900", "length = 6", "first_big = 4", "name = 1"]
+
+@ cases.javascript-deep_direct_recursion_falls_back_to_continuations
+backends = ["rust", "javascript"]
+source = ```tauto
+fn tri(n: u64): u64 { if n == 0 { 0 } else { n + tri(n - 1) } }
+perform show("tri", tri(30000))
+```
+shows = ["tri = 450015000"]
+
+@ cases.nested_array-struct_field_shows
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Affine
+import std::prelude::Shared
+
+struct Grid { rows: Array(Array(u64)) }
+var row := Vec::new()
+Vec::push(&mut row, 1)
+Vec::push(&mut row, 2)
+var rows := Vec::new()
+Vec::push(&mut rows, Vec::into_array(row))
+let g := Grid { rows: Vec::into_array(rows) }
+perform show("grid", g)
+```
+shows = ["grid = Grid { rows: Array[Array[1, 2]] }"]
+
+@ cases.copy_element-let_ref_binds_vec_get_result
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Affine
+
+var v := Vec::new()
+Vec::push(&mut v, true)
+var w := Vec::new()
+Vec::push(&mut w, 7)
+match Vec::get(&v, 0) {
+  Some(x) => {
+    let &y := x
+    perform show("bool", y)
+  }
+  None => #()
+}
+match Vec::get(&w, 0) {
+  Some(x) => {
+    let &y := x
+    perform show("u64", y)
+  }
+  None => #()
+}
+```
+shows = ["bool = true", "u64 = 7"]
+
+// The bytecode machine runs the standard effects through the prelude's
+// handler, which answers `secure_random` with a `Secret`: a program that
+// uses only `fs_read` needs `secret` too.
+@ cases.vm-std_effects_with_secret
+backends = ["vm"]
+files."b.txt" = "hello"
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Secret
+import std::prelude::Shared
+
+match perform argv() {
+  Cons(path, Nil) => perform show("x", perform fs_read(path))
+  _ => #()
+}
+perform show("n", match perform secure_random(32) { Ok(s) => Bytes::len(expose(s)), Err(_) => 0 })
+perform show("s", secret(1))
+```
+permissions = ["--allow-read={dir}"]
+args = ["{dir}/b.txt"]
+shows = ["x = Ok(\"hello\")", "n = 32", "s = Secret"]
+
+@ cases.product-named-pair-pattern
+extract = true
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::Map
+import std::Base
+let table := Ordmap::insert(Ordmap::empty(), 1, 4, Ordmap::compare_nat)
+let result := match Ordmap::floor(table, 3, Ordmap::compare_nat) {
+  None => 0
+  Some(entry) => match entry { Pair { fst: start, snd: last } => Nat::add(start, last) }
+}
+perform show("result", result)
+```
+shows = ["result = 5"]

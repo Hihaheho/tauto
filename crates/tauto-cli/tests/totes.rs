@@ -237,7 +237,7 @@ fn a_tote_imports_each_source_once() {
         ],
     );
     let loaded = load_tote(&a).unwrap();
-    assert_eq!(names(&loaded), ["a.taut"]);
+    assert_eq!(names(&loaded), ["a.taut", "main.taut"]);
 }
 
 #[test]

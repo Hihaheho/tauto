@@ -1,0 +1,71 @@
+// Closed numbers past u128 (2^255 - 19) inside terms the kernel compares.
+// The comparison must look at the terms as written before computing them:
+// a sum past u128 taken one `Succ` at a time does not end, and comparing
+// `x + n` with `y + n` one `Succ` at a time goes `n` deep.
+
+@ cases.a-name-is-compared-with-its-value-without-computing-a-big-modulus
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn two_pow(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => 1
+    Succ(k) => 2 * two_pow(k)
+  }
+}
+fn p(): Nat { Nat::sub(two_pow(255), 19) }
+fn nsub(a: Nat, b: Nat, hp: ¬(p() = 0)): Nat { Nat::rem_nz(Nat::sub(a + p(), b), p(), hp) }
+theorem nsub_def(x: Nat, hp: ¬(p() = 0)): nsub(x, two_pow(130), hp) = Nat::rem_nz(Nat::sub(x + p(), two_pow(130)), p(), hp) {
+  Refl
+}
+theorem congr_mod(x: Nat, hp: ¬(p() = 0), h: two_pow(130) = x): Nat::rem_nz(two_pow(130), p(), hp) = Nat::rem_nz(x, p(), hp) {
+  Eq::congr((z: Nat) => Nat::rem_nz(z, p(), hp), h)
+}
+```
+
+checks_all = "ok"
+
+@ cases.a-sum-past-u128-is-left-as-it-is-and-said
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn two_pow(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => 1
+    Succ(k) => 2 * two_pow(k)
+  }
+}
+fn p(): Nat { Nat::sub(two_pow(255), 19) }
+fn nsub(a: Nat, b: Nat, hp: ¬(p() = 0)): Nat { Nat::rem_nz(Nat::sub(a + p(), b), p(), hp) }
+theorem wrong(x: Nat, hp: ¬(p() = 0), hq: ¬(two_pow(255) = 0)): Nat::rem_nz(x, p(), hp) = Nat::rem_nz(x, two_pow(255), hq) {
+  Refl
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::wrong" = "error: "
+
+// `Nat::lt(x + n, m)` ends in a numeral too, but it is not a sum: reading a
+// `Succ` off it runs `lt` down `n` steps. Only sums are taken apart, and the
+// two calls of `lt` are compared by their arguments.
+@ cases.a-comparison-of-sums-with-a-big-bound-is-not-run-down
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem lt_of_sum(x: Nat, h: Nat::lt(x + (4503599627370496 + 4503599627370496), 9218868437227405312) = true): Nat::lt(x + 9007199254740992, 9218868437227405312) = true {
+  h
+}
+```
+
+checks_all = "ok"
+
+// A name defined as a sum (`add(a, b)` is `a + b`) against the sum written
+// out: the two are compared by their operands. Reducing them instead takes
+// `Nat::sub(g, n)` apart one `Succ` of `n` at a time, `n` deep.
+@ cases.a-sum-by-name-and-the-sum-written-out-are-compared-by-their-operands
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn add(a: Nat, b: Nat): Nat { a + b }
+theorem named_sum(g: Nat, e: g = add(4503599627370496, Nat::sub(g, 4503599627370496))): g = 4503599627370496 + Nat::sub(g, 4503599627370496) {
+  e
+}
+```
+
+checks_all = "ok"

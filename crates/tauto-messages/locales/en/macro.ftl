@@ -1,6 +1,8 @@
 # Macro expansion (`tauto-macro`). The error code (`macro.unknown`) is
 # written before the message, outside it.
 
+# An error with its code before it: `macro.unknown: …`.
+macro-coded = { $code }: { $message }
 macro-reserved = { $name } is the reader's own `{ $name }!`; a macro cannot take its name
 macro-duplicate = macro { $name } is declared twice
 macro-dollar-outside-quote = $ is written only inside quote
@@ -90,6 +92,8 @@ macro-elab-unknown-op = { $op } is not an operation of the checker
 # Steps of a proof.
 macro-step-mutual = a step is not written in a `mutual` block
 macro-step-fragment = a step is written in a theorem, a `def` or a function of the kernel's language
+macro-step-nested = a tactic's output has no step: it makes a term with a hole for each arm
+macro-step-typed-argument = a step is in the argument of a typed macro's call, and the argument is not where the steps put it
 macro-step-library = the files before this one have errors, so tactics do not run ({ $problem })
 macro-step-context = the declaration does not check with the step left out: { $message }
 macro-step-no-goal = the step's place has no goal
@@ -107,3 +111,16 @@ macro-step-not-checked = not checked
 macro-step-not-tactic = macro { $name } is not a tactic: its function does not take a ProofStep and make a SynExpr
 macro-step-write-before = write the goal the step starts from: `by t!(…): G {"{"} … {"}"}`
 macro-step-arm-before = the arm's goal is the goal of the step that proves it; leave out `: …`
+
+# A text that is not of a syntax (`macro.syntax_error`).
+
+macro-syntax-not-a-token = in { $syntax }: this text is not a token of the syntax
+macro-syntax-expected-found = in { $syntax }: expected { $expected }, found { $found }
+macro-syntax-expected-end = in { $syntax }: expected { $expected }, found the end of the text
+macro-syntax-limit = in { $syntax }: { $detail }
+macro-syntax-schema = { $detail }
+macro-syntax-tables = in { $syntax }: the tables do not read: { $detail }
+macro-syntax-embedded = in an embedded expression: { $detail }
+macro-syntax-terminal = { $name }
+macro-syntax-or = { $first } or { $rest }
+macro-syntax-something-else = something else

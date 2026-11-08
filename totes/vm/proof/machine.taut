@@ -20,15 +20,15 @@ pub theorem mcontinue_correct(
   fuel: Nat,
   r: MStep,
   ih: (s: MState) -> mrun(p, fuel, s) = meval(p, fuel, s)
-): match r: MStep {
+): (⊢ MStep from match r {
   MstepNext(s2) => match s2 {
     Mstate(c2, sl2, st2, fr2, cx2) => mexec(p, fuel, c2, sl2, st2, fr2, cx2)
   }
   other => other
-} = match r: MStep {
+}) = (⊢ MStep from match r {
   MstepNext(s2) => meval(p, fuel, s2)
   other => other
-} {
+}) {
   match r {
     MstepNext(s2) => ih(s2)
     MstepDone => Refl
@@ -36,6 +36,8 @@ pub theorem mcontinue_correct(
     MstepShow(n, v, s2) => Refl
     MstepAsk(n, args, s2) => Refl
     MstepSleep(t, cx2) => Refl
+    MstepStart(n, args, q, cx2) => Refl
+    MstepIdle(cx2) => Refl
     MstepError(m) => Refl
   }
 }
@@ -49,7 +51,7 @@ pub theorem mop_continue_correct(
   st: List(MVal),
   fr: List(MFrame),
   ih: (s: MState) -> mrun(p, fuel, s) = meval(p, fuel, s)
-): match o: MStep {
+): (⊢ MStep from match o {
   MoutVal(v, cx2) => mexec(p, fuel, k, slots, Cons(v, st), fr, cx2)
   out => match m_out(p, out, k, slots, st, fr) {
     MstepNext(s2) => match s2 {
@@ -57,10 +59,10 @@ pub theorem mop_continue_correct(
     }
     result => result
   }
-} = match m_out(p, o, k, slots, st, fr): MStep {
+}) = (⊢ MStep from match m_out(p, o, k, slots, st, fr) {
   MstepNext(s2) => meval(p, fuel, s2)
   other => other
-} {
+}) {
   match o {
     MoutVal(v, cx2) => ih(Mstate(k, slots, Cons(v, st), fr, cx2))
     MoutErr(m) => Refl
@@ -92,7 +94,7 @@ pub theorem mop_pop_correct(
   fr: List(MFrame),
   cx: MCx,
   ih: (s: MState) -> mrun(p, fuel, s) = meval(p, fuel, s)
-): match popped: MStep {
+): (⊢ MStep from match popped {
   None => MstepError("internal: the bytecode is malformed")
   Some(r) => match r {
     Pair { fst: args, snd: rest } => match m_op(p_ctors(p), cx, op, args) {
@@ -105,15 +107,15 @@ pub theorem mop_pop_correct(
       }
     }
   }
-} = match (match popped: MStep {
+}) = (⊢ MStep from match (⊢ MStep from match popped {
     None => MstepError("internal: the bytecode is malformed")
     Some(r) => match r {
       Pair { fst: args, snd: rest } => m_out(p, m_op(p_ctors(p), cx, op, args), k, slots, rest, fr)
     }
-  }): MStep {
+  }) {
   MstepNext(s2) => meval(p, fuel, s2)
   other => other
-} {
+}) {
   match popped {
     None => Refl
     Some(r) => match r {
@@ -143,22 +145,22 @@ pub theorem mcond_continue_correct(
   fr: List(MFrame),
   cx: MCx,
   ih: (s: MState) -> mrun(p, fuel, s) = meval(p, fuel, s)
-): match g: MStep {
+): (⊢ MStep from match g {
   MvBool(go) => match go {
     true => mexec(p, fuel, b, slots, Nil, Cons(MfBody(c, b, k, st), fr), cx)
     false => mexec(p, fuel, k, slots, Cons(MvUnit, st), fr, cx)
   }
   _ => MstepError("internal: the bytecode is malformed")
-} = match (match g: MStep {
+}) = (⊢ MStep from match (⊢ MStep from match g {
     MvBool(go) => match go {
       true => m_go(b, slots, Nil, Cons(MfBody(c, b, k, st), fr), cx)
       false => m_go(k, slots, Cons(MvUnit, st), fr, cx)
     }
     _ => MstepError("internal: the bytecode is malformed")
-  }): MStep {
+  }) {
   MstepNext(s2) => meval(p, fuel, s2)
   other => other
-} {
+}) {
   match g {
     MvBool(go) => match go {
       true => ih(Mstate(b, slots, Nil, Cons(MfBody(c, b, k, st), fr), cx))
@@ -206,7 +208,7 @@ pub theorem mexec_correct(
               MfBlock(k, st2) => ih(Mstate(k, slots, Cons(v, st2), rest, cx))
               MfBody(c, b, k, st2) => ih(Mstate(McWhile(c, b, k), slots, st2, rest, cx))
               MfCond(c, b, k, st2) => {
-                let g: MVal := match m_is_ref(v): MVal {
+                let g: MVal := ⊢ MVal from match m_is_ref(v) {
                   true => m_get(p_ctors(p), cx, v)
                   false => v
                 }

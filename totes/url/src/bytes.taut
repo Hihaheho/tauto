@@ -5,14 +5,14 @@ import std::Base
 // Whether `p` holds for every number below `n`: a fact about all bytes is
 // checked by computing `below(256, p)`.
 pub fn below(n: Nat, p: (Nat) -> Bool): Bool {
-  match n: Bool {
+  ⊢ Bool from match n {
     Zero => true
     Succ(k) => Bool::and(p(k), below(k, p))
   }
 }
 
 pub fn all_bytes(p: (Nat) -> Bool, l: List(Nat)): Bool {
-  match l: Bool {
+  ⊢ Bool from match l {
     Nil => true
     Cons(b, t) => Bool::and(p(b), all_bytes(p, t))
   }
@@ -24,9 +24,9 @@ pub fn is_byte(b: Nat): Bool {
 
 // The bytes before the first `c` and the bytes after it.
 pub fn cut(c: Nat, l: List(Nat)): Option(Pair(List(Nat), List(Nat))) {
-  match l: Option(Pair(List(Nat), List(Nat))) {
+  ⊢ Option(Pair(List(Nat), List(Nat))) from match l {
     Nil => None
-    Cons(b, t) => match Nat::eq(b, c): Option(Pair(List(Nat), List(Nat))) {
+    Cons(b, t) => ⊢ Option(Pair(List(Nat), List(Nat))) from match Nat::eq(b, c) {
       true => Some(Pair { fst: Nil, snd: t })
       false => cut_after(b, cut(c, t))
     }
@@ -37,7 +37,7 @@ pub fn cut_after(
   b: Nat,
   o: Option(Pair(List(Nat), List(Nat)))
 ): Option(Pair(List(Nat), List(Nat))) {
-  match o: Option(Pair(List(Nat), List(Nat))) {
+  ⊢ Option(Pair(List(Nat), List(Nat))) from match o {
     None => None
     Some(p) => Some(Pair { fst: Cons(b, p.fst), snd: p.snd })
   }
@@ -45,7 +45,7 @@ pub fn cut_after(
 
 // The bytes before the last `c` and the bytes after it.
 pub fn rcut(c: Nat, l: List(Nat)): Option(Pair(List(Nat), List(Nat))) {
-  match l: Option(Pair(List(Nat), List(Nat))) {
+  ⊢ Option(Pair(List(Nat), List(Nat))) from match l {
     Nil => None
     Cons(b, t) => rcut_step(c, b, t, rcut(c, t))
   }
@@ -57,8 +57,8 @@ pub fn rcut_step(
   t: List(Nat),
   o: Option(Pair(List(Nat), List(Nat)))
 ): Option(Pair(List(Nat), List(Nat))) {
-  match o: Option(Pair(List(Nat), List(Nat))) {
-    None => match Nat::eq(b, c): Option(Pair(List(Nat), List(Nat))) {
+  ⊢ Option(Pair(List(Nat), List(Nat))) from match o {
+    None => ⊢ Option(Pair(List(Nat), List(Nat))) from match Nat::eq(b, c) {
       true => Some(Pair { fst: Nil, snd: t })
       false => None
     }
@@ -68,9 +68,9 @@ pub fn rcut_step(
 
 // The pieces of `l` between the bytes `c`: one more piece than there are `c`.
 pub fn split_all(c: Nat, l: List(Nat)): List(List(Nat)) {
-  match l: List(List(Nat)) {
+  ⊢ List(List(Nat)) from match l {
     Nil => Cons(Nil, Nil)
-    Cons(b, t) => match Nat::eq(b, c): List(List(Nat)) {
+    Cons(b, t) => ⊢ List(List(Nat)) from match Nat::eq(b, c) {
       true => Cons(Nil, split_all(c, t))
       false => push_front(b, split_all(c, t))
     }
@@ -78,7 +78,7 @@ pub fn split_all(c: Nat, l: List(Nat)): List(List(Nat)) {
 }
 
 pub fn push_front(b: Nat, ps: List(List(Nat))): List(List(Nat)) {
-  match ps: List(List(Nat)) {
+  ⊢ List(List(Nat)) from match ps {
     Nil => Cons(Cons(b, Nil), Nil)
     Cons(p, rest) => Cons(Cons(b, p), rest)
   }
@@ -86,21 +86,21 @@ pub fn push_front(b: Nat, ps: List(List(Nat))): List(List(Nat)) {
 
 // The pieces with `c` between them; undoes `split_all`.
 pub fn join(c: Nat, ps: List(List(Nat))): List(Nat) {
-  match ps: List(Nat) {
+  ⊢ List(Nat) from match ps {
     Nil => Nil
     Cons(p, rest) => join_rest(c, p, rest)
   }
 }
 
 pub fn join_rest(c: Nat, p: List(Nat), rest: List(List(Nat))): List(Nat) {
-  match rest: List(Nat) {
+  ⊢ List(Nat) from match rest {
     Nil => p
     Cons(q, more) => List::append(p, Cons(c, join_rest(c, q, more)))
   }
 }
 
 pub fn starts_with(c: Nat, l: List(Nat)): Bool {
-  match l: Bool {
+  ⊢ Bool from match l {
     Nil => false
     Cons(b, t) => Nat::eq(b, c)
   }
@@ -124,7 +124,7 @@ pub fn is_digit(b: Nat): Bool {
 
 // An ASCII upper-case letter in lower case; every other byte as it is.
 pub fn lower_byte(b: Nat): Nat {
-  match is_upper(b): Nat {
+  ⊢ Nat from match is_upper(b) {
     true => Nat::add(b, 32)
     false => b
   }
@@ -135,12 +135,12 @@ pub fn lower(l: List(Nat)): List(Nat) {
 }
 
 pub fn bytes_eq(a: List(Nat), b: List(Nat)): Bool {
-  match a: Bool {
-    Nil => match b: Bool {
+  ⊢ Bool from match a {
+    Nil => ⊢ Bool from match b {
       Nil => true
       Cons(y, u) => false
     }
-    Cons(x, t) => match b: Bool {
+    Cons(x, t) => ⊢ Bool from match b {
       Nil => false
       Cons(y, u) => Bool::and(Nat::eq(x, y), bytes_eq(t, u))
     }
@@ -148,21 +148,21 @@ pub fn bytes_eq(a: List(Nat), b: List(Nat)): Bool {
 }
 
 pub fn is_empty(l: List(Nat)): Bool {
-  match l: Bool {
+  ⊢ Bool from match l {
     Nil => true
     Cons(b, t) => false
   }
 }
 
 pub fn all_pieces(p: (Nat) -> Bool, ps: List(List(Nat))): Bool {
-  match ps: Bool {
+  ⊢ Bool from match ps {
     Nil => true
     Cons(x, rest) => Bool::and(all_bytes(p, x), all_pieces(p, rest))
   }
 }
 
 pub fn is_empty_list(l: List(List(Nat))): Bool {
-  match l: Bool {
+  ⊢ Bool from match l {
     Nil => true
     Cons(x, t) => false
   }

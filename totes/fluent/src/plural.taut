@@ -14,7 +14,7 @@ pub(open) inductive Category: Type {
 }
 
 pub fn category_name(c: Category): List(Nat) {
-  match c: List(Nat) {
+  ⊢ List(Nat) from match c {
     CZero => Cons(122, Cons(101, Cons(114, Cons(111, Nil))))
     COne => Cons(111, Cons(110, Cons(101, Nil)))
     CTwo => Cons(116, Cons(119, Cons(111, Nil)))
@@ -48,25 +48,31 @@ pub fn in_two_four(d: Nat): Bool {
 
 // `n` is 2, 3 or 4 modulo 10 and not 12, 13 or 14 modulo 100.
 pub fn few_slavic(n: Nat): Bool {
-  Bool::and(in_two_four(Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl))), not(in_two_four(Nat::sub(Nat::rem_nz(n, 100, Nat::ne_zero(100, Refl)), 10))))
+  Bool::and(
+    in_two_four(Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl))),
+    not(in_two_four(Nat::sub(Nat::rem_nz(n, 100, Nat::ne_zero(100, Refl)), 10)))
+  )
 }
 
 // `n` ends in 1 but not in 11.
 pub fn ends_in_one(n: Nat): Bool {
-  Bool::and(Nat::eq(Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl)), 1), not(Nat::eq(Nat::rem_nz(n, 100, Nat::ne_zero(100, Refl)), 11)))
+  Bool::and(
+    Nat::eq(Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl)), 1),
+    not(Nat::eq(Nat::rem_nz(n, 100, Nat::ne_zero(100, Refl)), 11))
+  )
 }
 
 pub fn one_or_other(one: Bool): Category {
-  match one: Category {
+  ⊢ Category from match one {
     true => COne
     false => COther
   }
 }
 
 pub fn slavic(one: Bool, few: Bool): Category {
-  match one: Category {
+  ⊢ Category from match one {
     true => COne
-    false => match few: Category {
+    false => ⊢ Category from match few {
       true => CFew
       false => CMany
     }
@@ -74,7 +80,7 @@ pub fn slavic(one: Bool, few: Bool): Category {
 }
 
 pub fn is_other(c: Category): Bool {
-  match c: Bool {
+  ⊢ Bool from match c {
     CZero => false
     COne => false
     CTwo => false
@@ -85,37 +91,40 @@ pub fn is_other(c: Category): Bool {
 }
 
 pub fn rule_category(r: Rule, n: Nat): Category {
-  match r: Category {
+  ⊢ Category from match r {
     ROther => COther
     ROne => one_or_other(Nat::eq(n, 1))
-    RZeroOne => match Nat::le(n, 1): Category {
+    RZeroOne => ⊢ Category from match Nat::le(n, 1) {
       true => COne
       false => COther
     }
     RSlavic => slavic(ends_in_one(n), few_slavic(n))
-    RPolish => match Nat::eq(n, 1): Category {
+    RPolish => ⊢ Category from match Nat::eq(n, 1) {
       true => COne
-      false => match few_slavic(n): Category {
+      false => ⊢ Category from match few_slavic(n) {
         true => CFew
         false => CMany
       }
     }
-    RCzech => match Nat::eq(n, 1): Category {
+    RCzech => ⊢ Category from match Nat::eq(n, 1) {
       true => COne
-      false => match in_two_four(n): Category {
+      false => ⊢ Category from match in_two_four(n) {
         true => CFew
         false => COther
       }
     }
-    RArabic => match Nat::eq(n, 0): Category {
+    RArabic => ⊢ Category from match Nat::eq(n, 0) {
       true => CZero
-      false => match Nat::eq(n, 1): Category {
+      false => ⊢ Category from match Nat::eq(n, 1) {
         true => COne
-        false => match Nat::eq(n, 2): Category {
+        false => ⊢ Category from match Nat::eq(n, 2) {
           true => CTwo
-          false => match Bool::and(Nat::le(3, Nat::rem_nz(n, 100, Nat::ne_zero(100, Refl))), Nat::le(Nat::rem_nz(n, 100, Nat::ne_zero(100, Refl)), 10)): Category {
+          false => ⊢ Category from match Bool::and(
+            Nat::le(3, Nat::rem_nz(n, 100, Nat::ne_zero(100, Refl))),
+            Nat::le(Nat::rem_nz(n, 100, Nat::ne_zero(100, Refl)), 10)
+          ) {
             true => CFew
-            false => match Nat::le(11, Nat::rem_nz(n, 100, Nat::ne_zero(100, Refl))): Category {
+            false => ⊢ Category from match Nat::le(11, Nat::rem_nz(n, 100, Nat::ne_zero(100, Refl))) {
               true => CMany
               false => COther
             }
@@ -128,11 +137,11 @@ pub fn rule_category(r: Rule, n: Nat): Category {
 
 // The language of a locale: the letters before `-` or `_`, in lower case.
 pub fn language(s: List(Nat)): List(Nat) {
-  match s: List(Nat) {
+  ⊢ List(Nat) from match s {
     Nil => Nil
-    Cons(c, t) => match Bool::and(Nat::le(65, c), Nat::le(c, 90)): List(Nat) {
+    Cons(c, t) => ⊢ List(Nat) from match Bool::and(Nat::le(65, c), Nat::le(c, 90)) {
       true => Cons(Nat::add(c, 32), language(t))
-      false => match Bool::and(Nat::le(97, c), Nat::le(c, 122)): List(Nat) {
+      false => ⊢ List(Nat) from match Bool::and(Nat::le(97, c), Nat::le(c, 122)) {
         true => Cons(c, language(t))
         false => Nil
       }
@@ -145,11 +154,11 @@ pub fn two(a: Nat, b: Nat): List(Nat) {
 }
 
 pub fn lang_is(l: List(Nat), a: Nat, b: Nat): Bool {
-  match l: Bool {
+  ⊢ Bool from match l {
     Nil => false
-    Cons(c, t) => match t: Bool {
+    Cons(c, t) => ⊢ Bool from match t {
       Nil => false
-      Cons(d, u) => match u: Bool {
+      Cons(d, u) => ⊢ Bool from match u {
         Cons(e, v) => false
         Nil => Bool::and(Nat::eq(c, a), Nat::eq(d, b))
       }
@@ -158,11 +167,11 @@ pub fn lang_is(l: List(Nat), a: Nat, b: Nat): Bool {
 }
 
 pub fn lang_in(l: List(Nat), codes: List(List(Nat))): Bool {
-  match codes: Bool {
+  ⊢ Bool from match codes {
     Nil => false
-    Cons(code, rest) => match code: Bool {
+    Cons(code, rest) => ⊢ Bool from match code {
       Nil => lang_in(l, rest)
-      Cons(a, t) => match t: Bool {
+      Cons(a, t) => ⊢ Bool from match t {
         Nil => lang_in(l, rest)
         Cons(b, u) => Bool::or(lang_is(l, a, b), lang_in(l, rest))
       }
@@ -257,17 +266,17 @@ pub fn czech_langs(): List(List(Nat)) {
 }
 
 pub fn rule_of_language(l: List(Nat)): Rule {
-  match lang_in(l, one_langs()): Rule {
+  ⊢ Rule from match lang_in(l, one_langs()) {
     true => ROne
-    false => match lang_in(l, zero_one_langs()): Rule {
+    false => ⊢ Rule from match lang_in(l, zero_one_langs()) {
       true => RZeroOne
-      false => match lang_in(l, slavic_langs()): Rule {
+      false => ⊢ Rule from match lang_in(l, slavic_langs()) {
         true => RSlavic
-        false => match lang_is(l, 112, 108): Rule {
+        false => ⊢ Rule from match lang_is(l, 112, 108) {
           true => RPolish
-          false => match lang_in(l, czech_langs()): Rule {
+          false => ⊢ Rule from match lang_in(l, czech_langs()) {
             true => RCzech
-            false => match lang_is(l, 97, 114): Rule {
+            false => ⊢ Rule from match lang_is(l, 97, 114) {
               true => RArabic
               false => ROther
             }

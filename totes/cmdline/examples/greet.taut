@@ -1,0 +1,130 @@
+import std::Text
+import "../src/cmdline.taut"
+import "../src/laws.taut"
+import "../src/render.taut"
+import "../src/cli.taut"
+
+cli!(
+  ```cli
+  Greet "greet" "Greet someone" version "1.0.0" {
+    loud -l: switch "Shout"
+    verbose -v: count "Say more"
+    times -n <N>: nat = 1 "How many times"
+    out -o <FILE>: text "Where to write"
+    tag -t: text... "A tag; give it more than once for more"
+    name: arg text "Who to greet"
+    rest: arg text... "Anything after the name"
+  }
+  ```
+) =>
+  inductive Greet, fn Greet::spec, fn Greet::checks, fn Greet::of, fn Greet::parse, fn Greet::help, fn Greet::message, theorem Greet::renderable, theorem Greet::round_trip, fn Greet::loud, theorem Greet::loud::reads, fn Greet::verbose, theorem Greet::verbose::reads, fn Greet::times, theorem Greet::times::reads, fn Greet::out, theorem Greet::out::reads, fn Greet::tag, theorem Greet::tag::reads, fn Greet::name, theorem Greet::name::reads, fn Greet::rest, theorem Greet::rest::reads
+
+// A command line read as a `Greet`: short switches clustered and counted, a
+// value glued with `=`, a separated one, a repeated option, the name, and the
+// rest after `--`.
+theorem parse_everything(): Greet::parse(Cons("-lvv", Cons("--times=3", Cons("-o", Cons("a.txt", Cons("-tx", Cons("--tag", Cons("y", Cons("Ryo", Cons("--", Cons("-z", Nil))))))))))) = Ok(Greet::Mk(true, 2, 3, Some("a.txt"), Cons("x", Cons("y", Nil)), "Ryo", Cons("-z", Nil))) {
+  Refl
+}
+
+// Only the name: the defaults.
+theorem parse_name_only(): Greet::parse(Cons("Ryo", Nil)) = Ok(Greet::Mk(false, 0, 1, None, Nil, "Ryo", Nil)) {
+  Refl
+}
+
+theorem parse_missing_name(): Greet::parse(Cons("--loud", Nil)) = Failed(MissingArg(0)) {
+  Refl
+}
+
+theorem parse_unknown(): Greet::parse(Cons("--lod", Cons("Ryo", Nil))) = Failed(Unknown("--lod")) {
+  Refl
+}
+
+theorem parse_unknown_short(): Greet::parse(Cons("-lx", Cons("Ryo", Nil))) = Failed(Unknown("-x")) {
+  Refl
+}
+
+theorem parse_bad_number(): Greet::parse(Cons("-n", Cons("abc", Cons("Ryo", Nil)))) = Failed(BadValue(2, "abc")) {
+  Refl
+}
+
+theorem parse_twice(): Greet::parse(Cons("-l", Cons("--loud", Cons("Ryo", Nil)))) = Failed(Repeated(0)) {
+  Refl
+}
+
+theorem parse_no_value(): Greet::parse(Cons("Ryo", Cons("--out", Nil))) = Failed(NeedsValue(3)) {
+  Refl
+}
+
+// A value does not look like an option: `--out -l` is a missing value.
+theorem parse_value_is_option(): Greet::parse(Cons("--out", Cons("-l", Cons("Ryo", Nil)))) = Failed(NeedsValue(3)) {
+  Refl
+}
+
+theorem parse_switch_value(): Greet::parse(Cons("--loud=yes", Cons("Ryo", Nil))) = Failed(NoValue(0, "yes")) {
+  Refl
+}
+
+// `--help` and `-V` win over what is missing.
+theorem parse_help(): Greet::parse(Cons("--help", Nil)) = Failed(AskedHelp) {
+  Refl
+}
+
+theorem parse_version(): Greet::parse(Cons("-V", Nil)) = Failed(AskedVersion) {
+  Refl
+}
+
+theorem version_message(): Greet::message(AskedVersion) = "greet 1.0.0\n" {
+  Refl
+}
+
+theorem help_text(): Greet::help() = "Greet someone\n\nUsage: greet [OPTIONS] <NAME> [REST]...\n\nArguments:\n  <NAME>            Who to greet\n  [REST]...         Anything after the name\n\nOptions:\n  -l, --loud        Shout\n  -v, --verbose     Say more\n  -n, --times <N>   How many times [default: 1]\n  -o, --out <FILE>  Where to write\n  -t, --tag <TAG>   A tag; give it more than once for more\n  -h, --help        Print help\n  -V, --version     Print version\n" {
+  Refl
+}
+
+theorem unknown_message(): Greet::message(Unknown("--lod")) = "error: unexpected argument '--lod' found\n\n  tip: a similar argument exists: '--loud'\n\nUsage: greet [OPTIONS] <NAME> [REST]...\n\nFor more information, try '--help'.\n" {
+  Refl
+}
+
+theorem bad_value_message(): Greet::message(BadValue(2, "abc")) = "error: invalid value 'abc' for '--times <N>'\n\nUsage: greet [OPTIONS] <NAME> [REST]...\n\nFor more information, try '--help'.\n" {
+  Refl
+}
+
+theorem missing_message(): Greet::message(MissingArg(0)) = "error: the following required arguments were not provided:\n  <NAME>\n\nUsage: greet [OPTIONS] <NAME> [REST]...\n\nFor more information, try '--help'.\n" {
+  Refl
+}
+
+// What any parse read, the rules of `Reads` allow; and each field is what its
+// reader reads from it: `times` is the number after `--times` or `-n`, 1 when
+// there is none.
+theorem times_is_read(
+  args: List(Text),
+  items: List(Item),
+  g: Greet,
+  el: Lex::cmd(spec_opts(Greet::spec()), spec_subs(Greet::spec()), args) = LexOk(items),
+  e: Greet::parse(args) = Ok(g)
+): read_or(items, 2, conv_nat, 1) = Ok(Greet::times(g)) {
+  Greet::times::reads(args, items, g, el, e)
+}
+
+theorem greet_reads(
+  args: List(Text),
+  items: List(Item),
+  el: Lex::cmd(spec_opts(Greet::spec()), spec_subs(Greet::spec()), args) = LexOk(items)
+): Reads(spec_opts(Greet::spec()), None, args, items) {
+  Lex::sound(
+    spec_opts(Greet::spec()),
+    args,
+    items,
+    Eq::trans(Eq::sym(Lex::cmd_no_subs(spec_opts(Greet::spec()), args)), el)
+  )
+}
+
+// Writing what was read as a command line and reading it back gives it again:
+// `Greet::round_trip` for every list of option items that fits the declaration.
+theorem render_text(): render(spec_opts(Greet::spec()), Cons(ItemOpt(0, None), Cons(ItemOpt(3, Some("-x")), Nil)), Cons("--Ryo", Nil)) = Cons("--loud", Cons("--out=-x", Cons("--", Cons("--Ryo", Nil)))) {
+  Refl
+}
+
+theorem render_reads_back(): Lex::cmd(spec_opts(Greet::spec()), spec_subs(Greet::spec()), Cons("--loud", Cons("--out=-x", Cons("--", Cons("--Ryo", Nil))))) = LexOk(Cons(ItemOpt(0, None), Cons(ItemOpt(3, Some("-x")), Cons(ItemPos("--Ryo"), Nil)))) {
+  Greet::round_trip(Cons(ItemOpt(0, None), Cons(ItemOpt(3, Some("-x")), Nil)), Cons("--Ryo", Nil), Refl)
+}

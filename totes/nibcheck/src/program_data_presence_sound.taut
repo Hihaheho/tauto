@@ -50,7 +50,7 @@ pub theorem registered_after_prefix(
     )
   )
 ) {
-  match m: RegisteredData(
+  ⊢ RegisteredData(
     d,
     ck_st(
       frame_bind(
@@ -60,7 +60,7 @@ pub theorem registered_after_prefix(
         m
       )
     )
-  ) {
+  ) from match m {
     mut1(v, next) => And::right(
       registration_rewrap_existing(
         registration_name(d),
@@ -96,7 +96,10 @@ pub theorem registered_enum(
   Eq::subst(
     (m: Mut1(Unit, Checker)) => RegisteredData(d, ck_st(m)),
     Eq::sym(
-      Eq::trans(registration_program_StEnum_unf(d, c), ck_rewrap1_id(ck_declare_data(c, d, false, false)))
+      Eq::trans(
+        registration_program_StEnum_unf(d, c),
+        ck_rewrap1_id(ck_declare_data(c, d, false, false))
+      )
     ),
     ck_declare_data_present(c, d, false, false, ordered)
   )
@@ -161,7 +164,7 @@ pub theorem registered_cons(
     )
   )
 ) {
-  match h: RegisteredData(
+  ⊢ RegisteredData(
     d,
     ck_st(
       frame_bind(
@@ -171,7 +174,7 @@ pub theorem registered_cons(
         ck_program_data_one(c, s)
       )
     )
-  ) {
+  ) from match h {
     DeclaresDataStruct(decl, tail) => registered_after_prefix(
       tail,
       decl,
@@ -205,8 +208,8 @@ pub theorem ck_program_data_registers(
   ordered: CkDatasOrdered(c),
   h: DeclaresData(ss, d)
 ): RegisteredData(d, ck_st(ck_program_data(ss, c))) {
-  match ss: RegisteredData(d, ck_st(ck_program_data(ss, c))) {
-    Nil => match h: RegisteredData(d, ck_st(ck_program_data(Nil, c))) {
+  ⊢ RegisteredData(d, ck_st(ck_program_data(ss, c))) from match ss {
+    Nil => ⊢ RegisteredData(d, ck_st(ck_program_data(Nil, c))) from match h {
     }
     Cons(s, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => RegisteredData(d, ck_st(m)),
@@ -231,7 +234,7 @@ pub theorem registration_finish_after_present(
   ordered: CkDatasOrdered(ck_st(m)),
   present: RegisteredData(d, ck_st(m))
 ): RegisteredData(d, ck_st(registration_finish_after(program, m))) {
-  match m: RegisteredData(d, ck_st(registration_finish_after(program, m))) {
+  ⊢ RegisteredData(d, ck_st(registration_finish_after(program, m))) from match m {
     mut1(ignored, next) => Eq::subst(
       (z: Mut1(Unit, Checker)) => RegisteredData(d, ck_st(z)),
       Eq::sym(ck_rewrap1_id(ck_finish_datas(next, program))),
@@ -247,7 +250,7 @@ pub theorem registration_program_after_present(
   ordered: CkDatasOrdered(ck_st(m)),
   h: DeclaresData(program, d)
 ): RegisteredData(d, ck_st(registration_program_after(program, m))) {
-  match m: RegisteredData(d, ck_st(registration_program_after(program, m))) {
+  ⊢ RegisteredData(d, ck_st(registration_program_after(program, m))) from match m {
     mut1(ignored, next) => registration_finish_after_present(
       program,
       d,

@@ -25,12 +25,10 @@ pub fn mt_get<A>(fuel: Nat, t: MTrie(A), n: Nat): Option(A) {
       MtLeaf => None
       MtNode(v, l, r) => if Nat::eq(n, 0) {
         v
+      } else if Nat::eq(Nat::rem_nz(n, 2, Nat::ne_zero(2, Refl)), 1) {
+        mt_get(f, l, Nat::div_nz(n, 2, Nat::ne_zero(2, Refl)))
       } else {
-        if Nat::eq(Nat::rem_nz(n, 2, Nat::ne_zero(2, Refl)), 1) {
-          mt_get(f, l, Nat::div_nz(n, 2, Nat::ne_zero(2, Refl)))
-        } else {
-          mt_get(f, r, Nat::sub(Nat::div_nz(n, 2, Nat::ne_zero(2, Refl)), 1))
-        }
+        mt_get(f, r, Nat::sub(Nat::div_nz(n, 2, Nat::ne_zero(2, Refl)), 1))
       }
     }
   }
@@ -40,7 +38,7 @@ pub fn mt_set<A>(fuel: Nat, t: MTrie(A), n: Nat, x: Option(A)): MTrie(A) {
   match fuel {
     Zero => t
     Succ(f) => {
-      let parts := match t: Pair(Option(A), Pair(MTrie(A), MTrie(A))) {
+      let parts := ⊢ Pair(Option(A), Pair(MTrie(A), MTrie(A))) from match t {
         MtLeaf => Pair { fst: None, snd: Pair { fst: MtLeaf, snd: MtLeaf } }
         MtNode(v, l, r) => Pair { fst: v, snd: Pair { fst: l, snd: r } }
       }
@@ -48,12 +46,10 @@ pub fn mt_set<A>(fuel: Nat, t: MTrie(A), n: Nat, x: Option(A)): MTrie(A) {
         Pair { fst: v, snd: lr } => match lr {
           Pair { fst: l, snd: r } => if Nat::eq(n, 0) {
             MtNode(x, l, r)
+          } else if Nat::eq(Nat::rem_nz(n, 2, Nat::ne_zero(2, Refl)), 1) {
+            MtNode(v, mt_set(f, l, Nat::div_nz(n, 2, Nat::ne_zero(2, Refl)), x), r)
           } else {
-            if Nat::eq(Nat::rem_nz(n, 2, Nat::ne_zero(2, Refl)), 1) {
-              MtNode(v, mt_set(f, l, Nat::div_nz(n, 2, Nat::ne_zero(2, Refl)), x), r)
-            } else {
-              MtNode(v, l, mt_set(f, r, Nat::sub(Nat::div_nz(n, 2, Nat::ne_zero(2, Refl)), 1), x))
-            }
+            MtNode(v, l, mt_set(f, r, Nat::sub(Nat::div_nz(n, 2, Nat::ne_zero(2, Refl)), 1), x))
           }
         }
       }
@@ -88,6 +84,7 @@ pub fn mr_extend(path: MRefPath, suffix: List(MPath)): MRefPath {
 }
 
 pub(open) inductive MVal: Type {
+  MvDeclaration(slot: Nat): MVal
   MvUnit: MVal
   MvBool(b: Bool): MVal
   MvInt(i: Int): MVal
@@ -135,6 +132,7 @@ pub(open) inductive MPat: Type {
   MpBind(slot: Nat, borrow: Bool): MPat
   MpLit(v: MVal): MPat
   MpCtor(ctor: Nat, fields: List(MPat)): MPat
+  MpProduct(members: List(MPat)): MPat
 }
 
 // The widths of integers: 0 `i32`, 1 `i64`, 2 `u8`, 3 `u32`, 4 `u64`, 5 `nat`. A result
@@ -299,6 +297,7 @@ pub(open) inductive MObj: Type {
   MoCell(v: MVal): MObj
   MoCont(code: MCode, slots: List(MVal), st: List(MVal), fr: List(MFrame)): MObj
   MoSignal(raised: Bool, handed: Option(MVal)): MObj
+  MoChoice(inputs: List(Nat)): MObj
   MoPending(state: MPend, signal: Nat): MObj
   MoMutex(value: Option(MVal), waiting: List(Nat)): MObj
 }
@@ -414,10 +413,7 @@ pub fn m_bytes_cmp(a: List(Nat), b: List(Nat)): Nat {
     }
     Cons(x, xs) => match b {
       Nil => 2
-      Cons(y, ys) => if Nat::lt(
-        x,
-        y
-      ) { 0 } else { if Nat::lt(y, x) { 2 } else { m_bytes_cmp(xs, ys) } }
+      Cons(y, ys) => if Nat::lt(x, y) { 0 } else if Nat::lt(y, x) { 2 } else { m_bytes_cmp(xs, ys) }
     }
   }
 }
@@ -455,24 +451,14 @@ pub fn m_fits(w: Nat, i: Int): Bool {
   match i {
     IntNegSucc(n) => if Nat::eq(w, 0) {
       Nat::lt(n, 2147483648)
-    } else {
-      if Nat::eq(w, 1) { Nat::lt(n, 9223372036854775808) } else { false }
-    }
+    } else if Nat::eq(w, 1) { Nat::lt(n, 9223372036854775808) } else { false }
     IntOfNat(n) => if Nat::eq(w, 0) {
       Nat::lt(n, 2147483648)
-    } else {
-      if Nat::eq(w, 1) {
-        Nat::lt(n, 9223372036854775808)
-      } else {
-        if Nat::eq(w, 2) { Nat::lt(n, 256) } else {
-          if Nat::eq(w, 3) {
-            Nat::lt(n, 4294967296)
-          } else {
-            if Nat::eq(w, 4) { Nat::lt(n, Nat::mul(4294967296, 4294967296)) } else { true }
-          }
-        }
-      }
-    }
+    } else if Nat::eq(w, 1) {
+      Nat::lt(n, 9223372036854775808)
+    } else if Nat::eq(w, 2) { Nat::lt(n, 256) } else if Nat::eq(w, 3) {
+      Nat::lt(n, 4294967296)
+    } else if Nat::eq(w, 4) { Nat::lt(n, Nat::mul(4294967296, 4294967296)) } else { true }
   }
 }
 
@@ -798,6 +784,10 @@ mutual {
           None => match m_inj(b) {
             Some(y) => m_eq_fuel(f, ctors, cx, a, y)
             None => match a {
+              MvDeclaration(x) => match b {
+                MvDeclaration(y) => Nat::eq(x, y)
+                _ => false
+              }
               MvUnit => match b {
                 MvUnit => true
                 _ => false
@@ -962,32 +952,20 @@ pub fn m_hex(fuel: Nat, n: Nat, acc: List(Nat)): List(Nat) {
 pub fn m_escape(b: Nat): List(Nat) {
   if Nat::eq(b, 34) {
     Cons(92, Cons(34, Nil))
+  } else if Nat::eq(b, 92) {
+    Cons(92, Cons(92, Nil))
+  } else if Nat::eq(b, 10) {
+    Cons(92, Cons(110, Nil))
+  } else if Nat::eq(b, 13) {
+    Cons(92, Cons(114, Nil))
+  } else if Nat::eq(b, 9) {
+    Cons(92, Cons(116, Nil))
+  } else if Nat::eq(b, 0) {
+    Cons(92, Cons(48, Nil))
+  } else if Bool::or(Nat::lt(b, 32), Nat::eq(b, 127)) {
+    List::append(Cons(92, Cons(117, Cons(123, Nil))), m_hex(4, b, Cons(125, Nil)))
   } else {
-    if Nat::eq(b, 92) {
-      Cons(92, Cons(92, Nil))
-    } else {
-      if Nat::eq(b, 10) {
-        Cons(92, Cons(110, Nil))
-      } else {
-        if Nat::eq(b, 13) {
-          Cons(92, Cons(114, Nil))
-        } else {
-          if Nat::eq(b, 9) {
-            Cons(92, Cons(116, Nil))
-          } else {
-            if Nat::eq(b, 0) {
-              Cons(92, Cons(48, Nil))
-            } else {
-              if Bool::or(Nat::lt(b, 32), Nat::eq(b, 127)) {
-                List::append(Cons(92, Cons(117, Cons(123, Nil))), m_hex(4, b, Cons(125, Nil)))
-              } else {
-                Cons(b, Nil)
-              }
-            }
-          }
-        }
-      }
-    }
+    Cons(b, Nil)
   }
 }
 
@@ -1024,6 +1002,7 @@ mutual {
     match fuel {
       Zero => "…"
       Succ(f) => match m_get(ctors, cx, v0) {
+        MvDeclaration(_) => "<declaration reference>"
         MvUnit => "()"
         MvBool(b) => m_bool_text(b)
         MvInt(i) => m_text_of_int(i)

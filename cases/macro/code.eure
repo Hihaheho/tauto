@@ -2,53 +2,53 @@
 
 @ cases.unroll-a-power
 files."unroll.nib" = ````nib
-fn pow(x: i64, n: u64) -> i64 ! {Div} {
+import std::prelude::Macro
+
+pub fn pow(x: i64, n: u64): i64 ! {Div} {
   if n == 0 { 1 } else { x * pow(x, n - 1) }
 }
 
-fn is_pow_call(f: Code) -> Bool {
-  match code_view(f) {
+pub fn is_pow_call(f: Judgement): Bool {
+  match Judgement::open(f) {
     VConst(name) => name == "pow"
     _ => false
   }
 }
 
-fn unroll_pow(c: Code) -> SynExpr ! {macro_error, elab} {
-  match code_view(c) {
+pub macro fn unroll(c: Judgement): SynExpr ! {macro_error, elab} {
+  match Judgement::open(c) {
     VApp(f, args) => match args {
       Cons(x, Cons(n, Nil)) => if is_pow_call(f) {
-        match code_view(n) {
+        match Judgement::open(n) {
           VInt(text) => unroll_times(x, text)
-          _ => code_term(c)
+          _ => Judgement::term(c)
         }
-      } else { code_term(c) }
-      _ => code_term(c)
+      } else { Judgement::term(c) }
+      _ => Judgement::term(c)
     }
-    _ => code_term(c)
+    _ => Judgement::term(c)
   }
 }
 
-fn unroll_times(x: Code, text: Text) -> SynExpr ! {macro_error} {
+pub fn unroll_times(x: Judgement, text: Text): SynExpr ! {macro_error} {
   if text == "3" {
     quote {
-      let t = $x
+      let t := $x
       t * t * t
     }
-  } else { syn_error(code_span(x), "unroll handles only the exponent 3 in this example") }
+  } else { Syn::error(Judgement::span(x), "unroll handles only the exponent 3 in this example") }
 }
-
-macro unroll = unroll_pow
 ````
 files."main.nib" = ````nib
 import "unroll.nib"
-fn cube(x: i64) -> i64 ! {Div} { unroll!(pow(x, 3)) }
+fn cube(x: i64): i64 ! {Div} { unroll!(pow(x, 3)) }
 perform show("c", cube(3))
 ````
 shows = ["c = 27"]
 trace = ["unroll"]
 expands = ```nib
-fn cube(x: i64) -> i64 ! {Div} {
-  let t#1 = x
+fn cube(x: i64): i64 ! {Div} {
+  let t#1 := x
   t#1 * t#1 * t#1
 }
 perform show("c", cube(3))
@@ -56,133 +56,150 @@ perform show("c", cube(3))
 
 @ cases.a-macro-may-not-add-an-effect
 files."lib.nib" = ````nib
-fn trace_calls(c: Code) -> SynExpr {
+pub macro fn traced(c: Judgement): SynExpr {
   quote {
-    let r = $c
+    let r := $c
     perform show("value", r)
     r
   }
 }
-macro traced = trace_calls
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn area(w: i64, h: i64) -> i64 { traced!(w * h) }
+fn area(w: i64, h: i64): i64 { traced!(w * h) }
 ````
 macro_error = "macro.row_grew"
 
 @ cases.a-macro-may-not-change-the-type
 files."lib.nib" = ````nib
-fn to_text(c: Code) -> SynExpr { quote { "no" } }
-macro to_text = to_text
+pub macro fn to_text(c: Judgement): SynExpr { quote { "no" } }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn f(w: i64) -> i64 { to_text!(w + 1) }
+fn f(w: i64): i64 { to_text!(w + 1) }
 ````
 macro_error = "macro.output_ill_typed"
 
 @ cases.an-atom-cannot-be-forged
 files."lib.nib" = ````nib
-fn forge(c: Code) -> SynExpr { ExAtom(999, code_span(c)) }
-macro forge = forge
+pub macro fn forge(c: Judgement): SynExpr { ExAtom(999, Judgement::span(c)) }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn f(w: i64) -> i64 { forge!(w + 1) }
+fn f(w: i64): i64 { forge!(w + 1) }
 ````
 macro_error = "macro.unknown_atom"
 
 @ cases.an-input-that-does-not-check-runs-no-macro
 files."lib.nib" = ````nib
-fn same(c: Code) -> SynExpr { code_term(c) }
-macro same = same
+import std::prelude::Macro
+
+pub macro fn same(c: Judgement): SynExpr { Judgement::term(c) }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn f(w: i64) -> i64 { same!(w + true) }
+fn f(w: i64): i64 { same!(w + true) }
 ````
 trace = []
 
 
 @ cases.unroll-leaves-a-variable-exponent
 files."lib.nib" = ````nib
-fn pow(x: i64, n: u64) -> i64 ! {Div} {
+import std::prelude::Macro
+
+pub fn pow(x: i64, n: u64): i64 ! {Div} {
   if n == 0 { 1 } else { x * pow(x, n - 1) }
 }
 
-fn is_pow_call(f: Code) -> Bool {
-  match code_view(f) {
+pub fn is_pow_call(f: Judgement): Bool {
+  match Judgement::open(f) {
     VConst(name) => name == "pow"
     _ => false
   }
 }
 
-fn unroll_pow(c: Code) -> SynExpr ! {macro_error} {
-  match code_view(c) {
+pub macro fn unroll(c: Judgement): SynExpr ! {macro_error} {
+  match Judgement::open(c) {
     VApp(f, args) => match args {
       Cons(x, Cons(n, Nil)) => if is_pow_call(f) {
-        match code_view(n) {
-          VInt(text) => syn_error(code_span(c), "a literal exponent")
-          _ => code_term(c)
+        match Judgement::open(n) {
+          VInt(text) => Syn::error(Judgement::span(c), "a literal exponent")
+          _ => Judgement::term(c)
         }
-      } else { code_term(c) }
-      _ => code_term(c)
+      } else { Judgement::term(c) }
+      _ => Judgement::term(c)
     }
-    _ => code_term(c)
+    _ => Judgement::term(c)
   }
 }
-
-macro unroll = unroll_pow
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn power(x: i64, n: u64) -> i64 ! {Div} { unroll!(pow(x, n)) }
+fn power(x: i64, n: u64): i64 ! {Div} { unroll!(pow(x, n)) }
 ````
 expands = ```nib
-fn power(x: i64, n: u64) -> i64 ! {Div} { pow(x, n) }
+fn power(x: i64, n: u64): i64 ! {Div} { pow(x, n) }
+```
+
+@ cases.a-quote-hole-names-a-raw-identifier
+// A hole is named like any name: `$r#view` and `${r#view}` are the hole of
+// `r#view`, and `${c}` is `$c`.
+files."lib.nib" = ````nib
+import std::prelude::Macro
+
+pub macro fn sum3(c: Judgement): SynExpr {
+  let r#view := c
+  quote { $r#view + ${r#view} + ${c} }
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn triple(x: i64): i64 { sum3!(x) }
+````
+expands = ```nib
+fn triple(x: i64): i64 { x + x + x }
 ```
 
 @ cases.eta-reduces-a-lambda-it-can-open
 files."lib.nib" = ````nib
-fn eta(c: Code) -> SynExpr {
-  match code_view(c) {
-    VLam(n, ty, body) => match code_view(body) {
+import std::prelude::Macro
+
+pub macro fn eta_reduce(c: Judgement): SynExpr {
+  match Judgement::open(c) {
+    VLam(n, ty, body) => match Judgement::open(body) {
       VApp(f, args) => match args {
-        Cons(a, Nil) => if code_same_atom(a, n) && !code_mentions(f, n) { code_term(f) } else { code_term(c) }
-        _ => code_term(c)
+        Cons(a, Nil) => if Judgement::same_atom(a, n) && not(Judgement::mentions(f, n)) { Judgement::term(f) } else { Judgement::term(c) }
+        _ => Judgement::term(c)
       }
-      _ => code_term(c)
+      _ => Judgement::term(c)
     }
-    _ => code_term(c)
+    _ => Judgement::term(c)
   }
 }
-macro eta_reduce = eta
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn mk(g: (i64) -> i64) -> (i64) -> i64 { eta_reduce!((y: i64) => g(y)) }
-fn keep(g: (i64) -> i64) -> (i64) -> i64 { eta_reduce!((y: i64) => g(y) + 1) }
+fn mk(g: (i64) -> i64): (i64) -> i64 { eta_reduce!((y: i64) => g(y)) }
+fn keep(g: (i64) -> i64): (i64) -> i64 { eta_reduce!((y: i64) => g(y) + 1) }
 ````
 expands = ```nib
-fn mk(g: (i64) -> i64) -> (i64) -> i64 { g }
-fn keep(g: (i64) -> i64) -> (i64) -> i64 { y => g(y) + 1 }
+fn mk(g: (i64) -> i64): (i64) -> i64 { g }
+fn keep(g: (i64) -> i64): (i64) -> i64 { (y: i64) => g(y) + 1 }
 ```
 
 @ cases.an-atom-cannot-leave-the-binder-that-opened-it
 files."lib.nib" = ````nib
-fn bad(c: Code) -> SynExpr {
-  match code_view(c) {
-    VLam(n, ty, body) => code_term(body)
-    _ => code_term(c)
+pub macro fn bad_eta(c: Judgement): SynExpr {
+  match Judgement::open(c) {
+    VLam(n, ty, body) => Judgement::term(body)
+    _ => Judgement::term(c)
   }
 }
-macro bad_eta = bad
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn f(g: (i64) -> i64) -> i64 {
-  let h = bad_eta!((y: i64) => g(y))
+fn f(g: (i64) -> i64): i64 {
+  let h := bad_eta!((y: i64) => g(y))
   h(1)
 }
 ````
@@ -190,75 +207,72 @@ macro_error = "macro.scope_extrusion"
 
 @ cases.a-macro-may-not-change-the-signature-it-inferred
 files."lib.nib" = ````nib
-fn pow(x: i64, n: u64) -> i64 ! {Div} {
+pub fn pow(x: i64, n: u64): i64 ! {Div} {
   if n == 0 { 1 } else { x * pow(x, n - 1) }
 }
-fn cube(c: Code) -> SynExpr { quote { 0 } }
-macro cube = cube
+pub macro fn cube(c: Judgement): SynExpr { quote { 0 } }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn f(x: i64) -> i64 { cube!(pow(x, 3)) }
+fn f(x: i64): i64 { cube!(pow(x, 3)) }
 ````
 macro_error = "macro.signature_changed"
 
 @ cases.a-macro-may-not-use-an-affine-value-twice
 files."lib.nib" = ````nib
-affine struct Ticket {}
-fn redeem(t: Ticket) -> u64 { 1 }
-fn twice(c: Code) -> SynExpr { quote { $c + $c } }
-macro dup = twice
+pub(open) affine struct Ticket {}
+pub fn redeem(t: Ticket): u64 { 1 }
+pub macro fn dup(c: Judgement): SynExpr { quote { $c + $c } }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn bad(t: Ticket) -> u64 { dup!(redeem(t)) }
+fn bad(t: Ticket): u64 { dup!(redeem(t)) }
 ````
 macro_error = "macro.ownership_rejected"
 
 @ cases.a-macro-may-not-drop-a-linear-value
 files."lib.nib" = ````nib
-linear struct Handshake {}
-fn finish(h: Handshake) -> u64 { match h { Handshake {} => 2 } }
-fn drop_it(c: Code) -> SynExpr { quote { 0 } }
-macro drop_it = drop_it
+pub(open) linear struct Handshake {}
+pub fn finish(h: Handshake): u64 { match h { Handshake {} => 2 } }
+pub macro fn drop_it(c: Judgement): SynExpr { quote { 0 } }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn bad(h: Handshake) -> u64 { drop_it!(finish(h)) }
+fn bad(h: Handshake): u64 { drop_it!(finish(h)) }
 ````
 macro_error = "macro.ownership_rejected"
 
 @ cases.a-macro-may-not-nest-typed-calls
 files."lib.nib" = ````nib
-fn same(c: Code) -> SynExpr { code_term(c) }
-macro same = same
+pub macro fn same(c: Judgement): SynExpr { Judgement::term(c) }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn f(w: i64) -> i64 { same!(same!(w)) }
+fn f(w: i64): i64 { same!(same!(w)) }
 ````
 macro_error = "macro.nested_typed"
 
 @ cases.a-macro-reads-how-a-value-is-used
 files."lib.nib" = ````nib
-affine struct Ticket {}
-fn redeem(t: Ticket) -> u64 { match t { Ticket {} => 1 } }
-fn uses_of(c: Code) -> SynExpr {
-  match code_usage(c) {
+import std::prelude::Macro
+
+pub(open) affine struct Ticket {}
+pub fn redeem(t: Ticket): u64 { match t { Ticket {} => 1 } }
+pub macro fn how(c: Judgement): SynExpr {
+  match Judgement::usage(c) {
     Cons(u, _) => if u.how == "moved" { quote { 1 } } else { quote { 0 } }
     Nil => quote { 0 }
   }
 }
-macro how = uses_of
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn moved(t: Ticket) -> u64 { how!(redeem(t)) }
-fn not_used(x: u64) -> u64 { how!(x + 1) }
+fn moved(t: Ticket): u64 { how!(redeem(t)) }
+fn not_used(x: u64): u64 { how!(x + 1) }
 ````
 expands = ```nib
-fn moved(t: Ticket) -> u64 { 1 }
-fn not_used(x: u64) -> u64 { 0 }
+fn moved(t: Ticket): u64 { 1 }
+fn not_used(x: u64): u64 { 0 }
 ```
 
 // Type preservation is not preservation of meaning: `$c * $c * $c` has the
@@ -266,24 +280,25 @@ fn not_used(x: u64) -> u64 { 0 }
 // it once with `let`).
 @ cases.a-splice-used-three-times-runs-its-effect-three-times
 files."lib.nib" = ````nib
-fn naive(c: Code) -> SynExpr { quote { $c * $c * $c } }
-macro naive = naive
+import std::prelude::Macro
+
+pub macro fn naive(c: Judgement): SynExpr { quote { $c * $c * $c } }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn two() -> i64 ! {show} {
+fn two(): i64 ! {∀ A. show(A)} {
   perform show("x", 2)
   2
 }
-fn cube() -> i64 ! {show} { naive!(two()) }
+fn cube(): i64 ! {∀ A. show(A)} { naive!(two()) }
 perform show("cube", cube())
 ````
 expands = ```nib
-fn two() -> i64 ! {show} {
+fn two(): i64 ! {show} {
   perform show("x", 2)
   2
 }
-fn cube() -> i64 ! {show} { two() * two() * two() }
+fn cube(): i64 ! {show} { two() * two() * two() }
 perform show("cube", cube())
 ```
 shows = ["x = 2", "x = 2", "x = 2", "cube = 8"]
@@ -292,35 +307,35 @@ shows = ["x = 2", "x = 2", "x = 2", "cube = 8"]
 // one written on the function.
 @ cases.a-macro-may-not-add-an-effect-the-function-allows
 files."lib.nib" = ````nib
-fn trace_calls(c: Code) -> SynExpr {
+pub macro fn traced(c: Judgement): SynExpr {
   quote {
-    let r = $c
+    let r := $c
     perform show("value", r)
     r
   }
 }
-macro traced = trace_calls
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn area(w: i64, h: i64) -> i64 ! {show} { traced!(w * h) }
+fn area(w: i64, h: i64): i64 ! {∀ A. show(A)} { traced!(w * h) }
 ````
 macro_error = "macro.row_grew: the macro added the effect show to the expression"
 
-// `code_type` and `elab_check` read the type; `elab_defeq` compares.
+// `Judgement::type_of` and `Elab::check` read the type; `Elab::defeq` compares.
 @ cases.a-macro-branches-on-the-type
 files."lib.nib" = ````nib
-fn is_type(c: Code, t: SynExpr) -> Bool ! {elab} {
-  match elab_check(t, c, None) {
-    Ok(tc) => elab_defeq(code_type(c), tc)
+import std::prelude::Macro
+
+pub fn is_type(c: Judgement, t: SynExpr): Bool ! {elab} {
+  match Elab::check(t, c, None) {
+    Ok(tc) => Elab::defeq(Judgement::type_of(c), tc)
     Err(d) => false
   }
 }
 
-fn bump(c: Code) -> SynExpr ! {macro_error, elab} {
-  if is_type(c, quote { Nat }) { quote { succ($c) } } else { code_term(c) }
+pub macro fn bump(c: Judgement): SynExpr ! {macro_error, elab} {
+  if is_type(c, quote { Nat }) { quote { Succ($c) } } else { Judgement::term(c) }
 }
-macro bump = bump
 ````
 files."main.nib" = ````nib
 import "lib.nib"
@@ -328,31 +343,30 @@ theorem n1(n: Nat): Nat { bump!(n) }
 theorem b1(b: Bool): Bool { bump!(b) }
 ````
 expands = ```nib
-theorem n1(n: Nat): Nat { succ(n) }
+theorem n1(n: Nat): Nat { Succ(n) }
 theorem b1(b: Bool): Bool { b }
 ```
 
 @ cases.a-macro-branches-on-a-type-of-the-program
-unimplemented = "elab_check answers only in the kernel's fragment; i32 is not in it, so is_type is false"
+unimplemented = "Elab::check answers only in the kernel's fragment; i32 is not in it, so is_type is false"
 files."lib.nib" = ````nib
-fn is_type(c: Code, t: SynExpr) -> Bool ! {elab} {
-  match elab_check(t, c, None) {
-    Ok(tc) => elab_defeq(code_type(c), tc)
+pub fn is_type(c: Judgement, t: SynExpr): Bool ! {elab} {
+  match Elab::check(t, c, None) {
+    Ok(tc) => Elab::defeq(Judgement::type_of(c), tc)
     Err(d) => false
   }
 }
 
-fn widen_sum(c: Code) -> SynExpr ! {macro_error, elab} {
+pub macro fn widen_sum(c: Judgement): SynExpr ! {macro_error, elab} {
   if is_type(c, quote { i32 }) {
-    quote { i64_of_i32($c) }
-  } else { code_term(c) }
+    quote { I64::of_i32($c) }
+  } else { Judgement::term(c) }
 }
-macro widen_sum = widen_sum
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn f(a: i32, b: i32) -> u64 {
-  let s = widen_sum!(a + b)
+fn f(a: i32, b: i32): u64 {
+  let s := widen_sum!(a + b)
   1
 }
 ````
@@ -360,155 +374,148 @@ macro_error = "macro.type_changed: the macro changed the type of the expression 
 
 @ cases.a-macro-may-not-change-the-type-of-a-let
 files."lib.nib" = ````nib
-fn to_true(c: Code) -> SynExpr { quote { true } }
-macro tt = to_true
+pub macro fn Tt(c: Judgement): SynExpr { quote { true } }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn g(n: Nat) -> u64 {
-  let b = tt!(n)
+fn g(n: Nat): u64 {
+  let b := Tt!(n)
   1
 }
 ````
 macro_error = "macro.type_changed: the macro changed the type of the expression from Nat to Bool"
 
-// `plus` recurses on its first argument: `plus(zero, m) ≡ m`, and
-// `plus(n, zero)` does not reduce.
+// `plus` recurses on its first argument: `plus(Zero, m) ≡ m`, and
+// `plus(n, Zero)` does not reduce.
 @ cases.a-definitionally-equal-output-is-accepted-in-a-proof
 files."lib.nib" = ````nib
-fn plus(n: Nat, m: Nat) -> Nat {
-  match n -> Nat {
-    zero => m
-    succ(k) => succ(plus(k, m))
+pub fn plus(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
   }
 }
 
-theorem plus_n_zero(n: Nat): Eq(Nat, plus(n, zero), n) {
-  match n -> Eq(Nat, plus(n, zero), n) {
-    zero => refl(Nat, zero)
-    succ(k) => Eq_congr(x => succ(x), plus_n_zero(k))
+pub theorem plus_n_zero(n: Nat): (plus(n, Zero) = n) {
+  ⊢ (plus(n, Zero) = n) from match n {
+    Zero => Refl(Nat, Zero)
+    Succ(k) => Eq::congr(x => Succ(x), plus_n_zero(k))
   }
 }
 
-fn is_const(c: Code, name: Text) -> Bool {
-  match code_view(c) {
+pub fn is_const(c: Judgement, name: Text): Bool {
+  match Judgement::open(c) {
     VConst(n) => n == name
     _ => false
   }
 }
 
-fn drop_zero_left(c: Code) -> SynExpr {
-  match code_view(c) {
+pub macro fn dzl(c: Judgement): SynExpr {
+  match Judgement::open(c) {
     VApp(f, args) => match args {
-      Cons(z, Cons(m, Nil)) => if is_const(f, "plus") && is_const(z, "zero") { code_term(m) } else { code_term(c) }
-      _ => code_term(c)
+      Cons(z, Cons(m, Nil)) => if is_const(f, "plus") && is_const(z, "Zero") { Judgement::term(m) } else { Judgement::term(c) }
+      _ => Judgement::term(c)
     }
-    _ => code_term(c)
+    _ => Judgement::term(c)
   }
 }
-macro dzl = drop_zero_left
 
-fn drop_zero_right(c: Code) -> SynExpr {
-  match code_view(c) {
+pub macro fn dzr(c: Judgement): SynExpr {
+  match Judgement::open(c) {
     VApp(f, args) => match args {
-      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "zero") { code_term(m) } else { code_term(c) }
-      _ => code_term(c)
+      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "Zero") { Judgement::term(m) } else { Judgement::term(c) }
+      _ => Judgement::term(c)
     }
-    _ => code_term(c)
+    _ => Judgement::term(c)
   }
 }
-macro dzr = drop_zero_right
 
-fn simp_zero(c: Code) -> Proved ! {macro_error, elab} {
-  match code_view(c) {
+pub macro fn simp0(c: Judgement): Proved ! {macro_error, elab} {
+  match Judgement::open(c) {
     VApp(f, args) => match args {
-      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "zero") {
-        let mt = code_term(m)
+      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "Zero") {
+        let mt := Judgement::term(m)
         Proved { term: mt, proof: quote { plus_n_zero($mt) } }
-      } else { syn_error(code_span(c), "simp_zero: not plus(_, zero)") }
-      _ => syn_error(code_span(c), "simp_zero: not plus(_, zero)")
+      } else { Syn::error(Judgement::span(c), "simp_zero: not plus(_, Zero)") }
+      _ => Syn::error(Judgement::span(c), "simp_zero: not plus(_, Zero)")
     }
-    _ => syn_error(code_span(c), "simp_zero: not plus(_, zero)")
+    _ => Syn::error(Judgement::span(c), "simp_zero: not plus(_, Zero)")
   }
 }
-macro simp0 = simp_zero
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-theorem t1(n: Nat): Eq(Nat, plus(zero, n), n) {
-  refl(Nat, dzl!(plus(zero, n)))
+theorem t1(n: Nat): (plus(Zero, n) = n) {
+  Refl(Nat, dzl!(plus(Zero, n)))
 }
 ````
 expands = ```nib
-theorem t1(n: Nat): Eq(Nat, plus(zero, n), n) { refl(Nat, n) }
+theorem t1(n: Nat): plus(Zero, n) = n { Eq::Refl(Nat, n) }
 ```
 checks.t1 = "ok"
 
-// The type of the position is kept (`Nat`), but the type of `refl(…)`
-// depends on the term, and `n` is not `plus(n, zero)` by conversion.
+// The type of the position is kept (`Nat`), but the type of `Refl(…)`
+// depends on the term, and `n` is not `plus(n, Zero)` by conversion.
 @ cases.an-output-that-is-not-definitionally-equal-breaks-a-dependent-use
 files."lib.nib" = ````nib
-fn plus(n: Nat, m: Nat) -> Nat {
-  match n -> Nat {
-    zero => m
-    succ(k) => succ(plus(k, m))
+pub fn plus(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
   }
 }
 
-theorem plus_n_zero(n: Nat): Eq(Nat, plus(n, zero), n) {
-  match n -> Eq(Nat, plus(n, zero), n) {
-    zero => refl(Nat, zero)
-    succ(k) => Eq_congr(x => succ(x), plus_n_zero(k))
+pub theorem plus_n_zero(n: Nat): (plus(n, Zero) = n) {
+  ⊢ (plus(n, Zero) = n) from match n {
+    Zero => Refl(Nat, Zero)
+    Succ(k) => Eq::congr(x => Succ(x), plus_n_zero(k))
   }
 }
 
-fn is_const(c: Code, name: Text) -> Bool {
-  match code_view(c) {
+pub fn is_const(c: Judgement, name: Text): Bool {
+  match Judgement::open(c) {
     VConst(n) => n == name
     _ => false
   }
 }
 
-fn drop_zero_left(c: Code) -> SynExpr {
-  match code_view(c) {
+pub macro fn dzl(c: Judgement): SynExpr {
+  match Judgement::open(c) {
     VApp(f, args) => match args {
-      Cons(z, Cons(m, Nil)) => if is_const(f, "plus") && is_const(z, "zero") { code_term(m) } else { code_term(c) }
-      _ => code_term(c)
+      Cons(z, Cons(m, Nil)) => if is_const(f, "plus") && is_const(z, "Zero") { Judgement::term(m) } else { Judgement::term(c) }
+      _ => Judgement::term(c)
     }
-    _ => code_term(c)
+    _ => Judgement::term(c)
   }
 }
-macro dzl = drop_zero_left
 
-fn drop_zero_right(c: Code) -> SynExpr {
-  match code_view(c) {
+pub macro fn dzr(c: Judgement): SynExpr {
+  match Judgement::open(c) {
     VApp(f, args) => match args {
-      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "zero") { code_term(m) } else { code_term(c) }
-      _ => code_term(c)
+      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "Zero") { Judgement::term(m) } else { Judgement::term(c) }
+      _ => Judgement::term(c)
     }
-    _ => code_term(c)
+    _ => Judgement::term(c)
   }
 }
-macro dzr = drop_zero_right
 
-fn simp_zero(c: Code) -> Proved ! {macro_error, elab} {
-  match code_view(c) {
+pub macro fn simp0(c: Judgement): Proved ! {macro_error, elab} {
+  match Judgement::open(c) {
     VApp(f, args) => match args {
-      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "zero") {
-        let mt = code_term(m)
+      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "Zero") {
+        let mt := Judgement::term(m)
         Proved { term: mt, proof: quote { plus_n_zero($mt) } }
-      } else { syn_error(code_span(c), "simp_zero: not plus(_, zero)") }
-      _ => syn_error(code_span(c), "simp_zero: not plus(_, zero)")
+      } else { Syn::error(Judgement::span(c), "simp_zero: not plus(_, Zero)") }
+      _ => Syn::error(Judgement::span(c), "simp_zero: not plus(_, Zero)")
     }
-    _ => syn_error(code_span(c), "simp_zero: not plus(_, zero)")
+    _ => Syn::error(Judgement::span(c), "simp_zero: not plus(_, Zero)")
   }
 }
-macro simp0 = simp_zero
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-theorem t2(n: Nat): Eq(Nat, plus(n, zero), plus(n, zero)) {
-  refl(Nat, dzr!(plus(n, zero)))
+theorem t2(n: Nat): plus(n, Zero) = plus(n, Zero) {
+  Refl(Nat, dzr!(plus(n, Zero)))
 }
 ````
 macro_error = "macro.dependent_use"
@@ -517,71 +524,68 @@ macro_error = "macro.dependent_use"
 // after the change (`f(n) ≡ n` by δ).
 @ cases.a-proved-change-is-used-by-what-follows
 files."lib.nib" = ````nib
-fn plus(n: Nat, m: Nat) -> Nat {
-  match n -> Nat {
-    zero => m
-    succ(k) => succ(plus(k, m))
+pub fn plus(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
   }
 }
 
-theorem plus_n_zero(n: Nat): Eq(Nat, plus(n, zero), n) {
-  match n -> Eq(Nat, plus(n, zero), n) {
-    zero => refl(Nat, zero)
-    succ(k) => Eq_congr(x => succ(x), plus_n_zero(k))
+pub theorem plus_n_zero(n: Nat): (plus(n, Zero) = n) {
+  ⊢ (plus(n, Zero) = n) from match n {
+    Zero => Refl(Nat, Zero)
+    Succ(k) => Eq::congr(x => Succ(x), plus_n_zero(k))
   }
 }
 
-fn is_const(c: Code, name: Text) -> Bool {
-  match code_view(c) {
+pub fn is_const(c: Judgement, name: Text): Bool {
+  match Judgement::open(c) {
     VConst(n) => n == name
     _ => false
   }
 }
 
-fn drop_zero_left(c: Code) -> SynExpr {
-  match code_view(c) {
+pub macro fn dzl(c: Judgement): SynExpr {
+  match Judgement::open(c) {
     VApp(f, args) => match args {
-      Cons(z, Cons(m, Nil)) => if is_const(f, "plus") && is_const(z, "zero") { code_term(m) } else { code_term(c) }
-      _ => code_term(c)
+      Cons(z, Cons(m, Nil)) => if is_const(f, "plus") && is_const(z, "Zero") { Judgement::term(m) } else { Judgement::term(c) }
+      _ => Judgement::term(c)
     }
-    _ => code_term(c)
+    _ => Judgement::term(c)
   }
 }
-macro dzl = drop_zero_left
 
-fn drop_zero_right(c: Code) -> SynExpr {
-  match code_view(c) {
+pub macro fn dzr(c: Judgement): SynExpr {
+  match Judgement::open(c) {
     VApp(f, args) => match args {
-      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "zero") { code_term(m) } else { code_term(c) }
-      _ => code_term(c)
+      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "Zero") { Judgement::term(m) } else { Judgement::term(c) }
+      _ => Judgement::term(c)
     }
-    _ => code_term(c)
+    _ => Judgement::term(c)
   }
 }
-macro dzr = drop_zero_right
 
-fn simp_zero(c: Code) -> Proved ! {macro_error, elab} {
-  match code_view(c) {
+pub macro fn simp0(c: Judgement): Proved ! {macro_error, elab} {
+  match Judgement::open(c) {
     VApp(f, args) => match args {
-      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "zero") {
-        let mt = code_term(m)
+      Cons(m, Cons(z, Nil)) => if is_const(f, "plus") && is_const(z, "Zero") {
+        let mt := Judgement::term(m)
         Proved { term: mt, proof: quote { plus_n_zero($mt) } }
-      } else { syn_error(code_span(c), "simp_zero: not plus(_, zero)") }
-      _ => syn_error(code_span(c), "simp_zero: not plus(_, zero)")
+      } else { Syn::error(Judgement::span(c), "simp_zero: not plus(_, Zero)") }
+      _ => Syn::error(Judgement::span(c), "simp_zero: not plus(_, Zero)")
     }
-    _ => syn_error(code_span(c), "simp_zero: not plus(_, zero)")
+    _ => Syn::error(Judgement::span(c), "simp_zero: not plus(_, Zero)")
   }
 }
-macro simp0 = simp_zero
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn f(n: Nat) -> Nat { simp0!(plus(n, zero)) }
-theorem f_is_id(n: Nat): Eq(Nat, f(n), n) { refl(Nat, n) }
+fn f(n: Nat): Nat { simp0!(plus(n, Zero)) }
+theorem f_is_id(n: Nat): (f(n) = n) { Refl(Nat, n) }
 ````
 expands = ```nib
-fn f(n: Nat) -> Nat { n }
-theorem f_is_id(n: Nat): Eq(Nat, f(n), n) { refl(Nat, n) }
+fn f(n: Nat): Nat { n }
+theorem f_is_id(n: Nat): f(n) = n { Eq::Refl(Nat, n) }
 ```
 checks.f_is_id = "ok"
 
@@ -589,36 +593,38 @@ checks.f_is_id = "ok"
 // is accepted. When it is dropped is a change of meaning, not checked.
 @ cases.a-macro-may-drop-an-affine-value
 files."lib.nib" = ````nib
-affine struct Ticket {}
-fn redeem(t: Ticket) -> u64 { match t { Ticket {} => 1 } }
-fn const_fold(c: Code) -> SynExpr { quote { 1 } }
-macro cf = const_fold
+import std::prelude::Macro
+
+pub(open) affine struct Ticket {}
+pub fn redeem(t: Ticket): u64 { match t { Ticket {} => 1 } }
+pub macro fn cf(c: Judgement): SynExpr { quote { 1 } }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn keep(t: Ticket) -> u64 { cf!(redeem(t)) }
+fn keep(t: Ticket): u64 { cf!(redeem(t)) }
 perform show("keep", keep(Ticket {}))
 ````
 expands = ```nib
-fn keep(t: Ticket) -> u64 { 1 }
-perform show("keep", keep(Ticket { }))
+fn keep(t: Ticket): u64 { 1 }
+perform show("keep", keep(Ticket::Mk {  }))
 ```
 shows = ["keep = 1"]
 
-// Copying a `Code` copies the handle, not the value: splicing a copy value
+// Copying a `Judgement` copies the handle, not the value: splicing a copy value
 // twice is accepted (an affine one is not, above).
 @ cases.a-macro-may-splice-a-copy-value-twice
 files."lib.nib" = ````nib
-fn twice(c: Code) -> SynExpr { quote { $c + $c } }
-macro dup = twice
+import std::prelude::Macro
+
+pub macro fn dup(c: Judgement): SynExpr { quote { $c + $c } }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn double(x: u64) -> u64 { dup!(x + 1) }
+fn double(x: u64): u64 { dup!(x + 1) }
 perform show("double", double(2))
 ````
 expands = ```nib
-fn double(x: u64) -> u64 { x + 1 + (x + 1) }
+fn double(x: u64): u64 { x + 1 + (x + 1) }
 perform show("double", double(2))
 ```
 shows = ["double = 6"]
@@ -627,24 +633,23 @@ shows = ["double = 6"]
 // is then live across `choose`, which may resume more than once.
 @ cases.a-macro-may-not-move-an-affine-use-across-a-multi-shot-effect
 files."lib.nib" = ````nib
-affine struct Ticket {}
-effect choose: () -> Bool resume ω
-fn redeem(t: Ticket) -> u64 { match t { Ticket {} => 1 } }
+pub(open) affine struct Ticket {}
+pub(open) effect choose(): Bool resume ω
+pub fn redeem(t: Ticket): u64 { match t { Ticket {} => 1 } }
 
-// { let x = e; if c { x } else { d } } as if c { e } else { d }
-fn sink_let(c: Code) -> SynExpr {
-  match code_term(c) {
+// { let x := e; if c { x } else { d } } as if c { e } else { d }
+pub macro fn sink(c: Judgement): SynExpr {
+  match Judgement::term(c) {
     ExBlock(Cons(StLet(x, ty, e, a, b, s), Cons(StExpr(ExIf(cond, ExVar(y), d, sp)), Nil)), bs) => ExIf(cond, e, d, sp)
-    _ => code_term(c)
+    _ => Judgement::term(c)
   }
 }
-macro sink = sink_let
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn pick(t: Ticket) -> u64 ! {choose} {
+fn pick(t: Ticket): u64 ! {choose} {
   sink!({
-    let n = redeem(t)
+    let n := redeem(t)
     if perform choose() { n } else { 0 }
   })
 }
@@ -655,18 +660,54 @@ macro_error = "macro.ownership_rejected: what the macro made breaks ownership: t
 // resumes once, so the path that moves `t` would run twice.
 @ cases.a-macro-may-not-resume-a-one-shot-continuation-twice
 files."lib.nib" = ````nib
-affine struct Ticket {}
-effect ask: () -> Bool resume 1
-fn redeem(t: Ticket) -> u64 { match t { Ticket {} => 1 } }
-fn guard(c: Code) -> SynExpr {
+pub(open) affine struct Ticket {}
+pub(open) effect ask(): Bool resume 1
+pub fn redeem(t: Ticket): u64 { match t { Ticket {} => 1 } }
+pub macro fn guard(c: Judgement): SynExpr {
   quote { handle { $c } with { ask(), k => k(true) + k(false) } }
 }
-macro guard = guard
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn g(t: Ticket) -> u64 ! {ask} {
+fn g(t: Ticket): u64 ! {ask} {
   guard!(if perform ask() { redeem(t) } else { 0 })
 }
 ````
 macro_error = "macro.ownership_rejected: what the macro made breaks ownership: k#1 is used after move"
+
+// The macro stage runs the function, so the rows written in the library hold
+// there as they do in a run: a helper that may perform macro_error under a row
+// that leaves it out is refused before it runs.
+@ cases.a-macro-function-holds-the-rows-it-declares
+files."lib.nib" = ````nib
+pub fn check(c: Judgement): Judgement ! {macro_error, Div} {
+  Syn::error(Judgement::span(c), "never")
+}
+pub fn quiet(c: Judgement): Judgement ! {Div} { check(c) }
+pub macro fn wrap(c: Judgement): SynExpr ! {macro_error, Div} {
+  let d := quiet(c)
+  quote { $d }
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+fn f(w: i64): i64 { wrap!(w + 1) }
+````
+macro_error = "macro.row"
+
+@ cases.typed-input-keeps-selected-constructor-reference
+files."lib.nib" = ```nib
+import std::prelude::Macro
+pub macro fn keep(c: Judgement): SynExpr { Judgement::term(c) }
+```
+files."main.nib" = ```nib
+import "lib.nib"
+enum Left { Same(i64) }
+enum Right { Same(Text) }
+fn left(): Left { keep!(Same(17)) }
+fn right(): Right { keep!(Same("right")) }
+perform show("left", left())
+perform show("right", right())
+```
+shows = ["left = Same(17)", "right = Same(\"right\")"]
+backends = ["rust", "javascript"]

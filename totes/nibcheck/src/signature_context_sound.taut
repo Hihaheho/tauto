@@ -66,7 +66,7 @@ pub theorem ck_sig_params_context(
   borrows: List(Option(Bool)),
   map: Ordmap(Text, Ty)
 ): CkContextFrame(c, ck_sig_params(pts, c, borrows, map)) {
-  match pts: CkContextFrame(c, ck_sig_params(pts, c, borrows, map)) {
+  ⊢ CkContextFrame(c, ck_sig_params(pts, c, borrows, map)) from match pts {
     Nil => ordinary => Refl
     Cons(p, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => CkContextFrame(c, z),
@@ -96,14 +96,14 @@ pub theorem signature_result_type(
   source,
   ck_val(signature_result_k(c, generics, source))
 ) {
-  match source: SignatureType(
+  ⊢ SignatureType(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
     frame_under_borrow(c),
     source,
     ck_val(signature_result_k(c, generics, source))
-  ) {
+  ) from match source {
     None => SignatureTypeInferred(signature_fresh_index(c))
     Some(term) => ck_sig_written_sound(Some(term), c, generics, clean)
   }

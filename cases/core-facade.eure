@@ -1,0 +1,151 @@
+
+@ cases.swap-holes
+source = ```tauto
+theorem swap<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
+  AndIntro(?l, ?r)
+}
+```
+checks.swap = "incomplete: ?l, ?r"
+holes = [{ declaration => "swap", name => "l", goal => "B", context => ["A: Prop", "B: Prop", "p: And(A, B)"] }, { declaration => "swap", name => "r", goal => "A", context => ["A: Prop", "B: Prop", "p: And(A, B)"] }]
+
+@ cases.swap-left-filled
+source = ```tauto
+theorem swap<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
+  AndIntro(And::right(p), ?r)
+}
+```
+checks.swap = "incomplete: ?r"
+
+@ cases.swap-filled
+source = ```tauto
+theorem swap<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
+  AndIntro(And::right(p), And::left(p))
+}
+```
+checks.swap = "ok"
+
+@ cases.swap-wrong-candidate
+source = ```tauto
+theorem swap<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
+  AndIntro(And::left(p), ?r)
+}
+```
+checks.swap = "error: cannot infer the generic `B` of `And::AndIntro`: neither its arguments nor the expected type fix it; write the generics as its first arguments, `And::AndIntro(A, B, …)`"
+
+@ cases.trusted-extern
+source = ```tauto
+affine struct File {}
+affine struct IoError {}
+extern {
+  fn file_open(&path: Text): Result(File, IoError)
+}
+```
+types = "ok"
+
+@ cases.include-cache-before
+files."main.tauto" = ```tauto
+import std::Text
+theorem t(): Eq(Text, include_text!("d.txt"), "a") { Refl }
+```
+files."d.txt" = 'a'
+checks.t = "checked"
+entry = "main.tauto"
+
+@ cases.include-cache-after
+files."main.tauto" = ```tauto
+import std::Text
+theorem t(): Eq(Text, include_text!("d.txt"), "a") { Refl }
+```
+files."d.txt" = 'b'
+checks.t = "error: mismatch"
+entry = "main.tauto"
+
+@ cases.extract-skips-unused-imports
+source = ```tauto
+import std::TextOps
+fn next(c: Nat): Nat { Nat::add(c, 1) }
+```
+parses = true
+
+@ cases.extract-value-record
+source = ```tauto
+inductive RuntimeRecord: Type {
+  Mk(kind: Nat): RuntimeRecord
+}
+fn read_kind(r: RuntimeRecord): Nat { r.kind }
+```
+checks.RuntimeRecord = "checked"
+checks.read_kind = "checked"
+
+@ cases.extract-proof-record
+source = ```tauto
+inductive RuntimeRecord: Type {
+  Mk(kind: Nat): RuntimeRecord
+}
+fn read_kind(r: RuntimeRecord): Nat { r.kind }
+
+inductive ProofRecord: Prop {
+  Mk(kind: Nat): ProofRecord
+}
+```
+checks.RuntimeRecord = "checked"
+checks.read_kind = "checked"
+checks.ProofRecord = "checked"
+
+@ cases.extract-record-field-named-like-global
+files."main.tauto" = ```tauto
+import std::Text
+inductive Token: Type {
+  Mk(width: Nat, text: Text): Token
+}
+fn token_text(t: Token): Text { t.text }
+fn make_token(s: Text): Token { Token { width: 1, text: s } }
+```
+entry = "main.tauto"
+checks.Token = "checked"
+checks.token_text = "checked"
+checks.make_token = "checked"
+
+@ cases.include-inside-symlink
+files."main.nib" = ```tauto
+let a := include_text!("in.txt")
+```
+files."in.txt" = 'yes'
+expands = ```tauto
+let a := "yes"
+```
+@ cases.include-source-overlay
+files."main.nib" = ```tauto
+let a := include_text!("d.txt")
+```
+files."d.txt" = 'buffer'
+expands = ```tauto
+let a := "buffer"
+```
+@ cases.checked-extraction-snapshot
+files."main.tauto" = ```tauto
+fn twice(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(k) => Succ(Succ(twice(k)))
+  }
+}
+fn message(): Text { include_text!("message.txt") }
+perform show("value", twice(2))
+```
+files."message.txt" = 'checked text'
+imports = [path`../std/Base.taut`]
+entry = "main.tauto"
+checks.twice = "checked"
+
+@ cases.unchecked-extraction-replacement
+source = ```tauto
+fn twice(n: Nat): Nat { twice(n) }
+```
+checks.twice = "error: calls itself"
+
+@ cases.differential-id-nat
+source = ```tauto
+fn id_nat(n: Nat): Nat { n }
+```
+checks.id_nat = "checked"

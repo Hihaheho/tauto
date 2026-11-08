@@ -17,7 +17,7 @@ pub fn sdump_hex_digit(n: Nat): Text {
 }
 
 pub fn sdump_hex_bytes(bytes: List(Nat)): List(Text) {
-  match bytes: List(Text) {
+  ⊢ List(Text) from match bytes {
     Nil => Nil
     Cons(b, rest) => Cons(
       sdump_hex_digit(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl))),
@@ -27,7 +27,7 @@ pub fn sdump_hex_bytes(bytes: List(Nat)): List(Text) {
 }
 
 pub fn sdump_hex(t: Text): Text {
-  match Text::len(t) == 0: Text {
+  ⊢ Text from match Text::len(t) == 0 {
     true => "-"
     false => Text::concat_all(sdump_hex_bytes(Text::bytes(t)))
   }
@@ -38,7 +38,7 @@ pub fn sdump_count(n: Nat): Text {
 }
 
 pub fn sdump_names_from(items: List(Text)): List(Text) {
-  match items: List(Text) {
+  ⊢ List(Text) from match items {
     Nil => Nil
     Cons(i, rest) => Cons(" ", Cons(i, sdump_names_from(rest)))
   }
@@ -64,7 +64,7 @@ pub fn sdump_name(depth: Nat, field: Text, value: Text, out: List(Text)): List(T
 }
 
 pub fn sdump_bool(v: Bool): Text {
-  match v: Text {
+  ⊢ Text from match v {
     true => "true"
     false => "false"
   }
@@ -72,7 +72,7 @@ pub fn sdump_bool(v: Bool): Text {
 
 // The dump with the goal where one is written, and without it where none is.
 pub fn sdump_pick(goal: Option(SurfaceTerm), written: List(Text), plain: List(Text)): List(Text) {
-  match goal: List(Text) {
+  ⊢ List(Text) from match goal {
     None => plain
     Some(_) => written
   }
@@ -80,14 +80,14 @@ pub fn sdump_pick(goal: Option(SurfaceTerm), written: List(Text), plain: List(Te
 
 // `binder` is in the dump only where it is written.
 pub fn sdump_binder(binder: Option(Text), depth: Nat, out: List(Text)): List(Text) {
-  match binder: List(Text) {
+  ⊢ List(Text) from match binder {
     None => out
     Some(h) => sdump_name(depth, "binder", h, out)
   }
 }
 
 pub fn sdump_opt_name(depth: Nat, field: Text, value: Option(Text), out: List(Text)): List(Text) {
-  match value: List(Text) {
+  ⊢ List(Text) from match value {
     None => sdump_line(depth, Text::concat(field, " None"), out)
     Some(v) => sdump_line(depth, Text::concat_all(Cons(field, Cons(" Some ", Cons(v, Nil)))), out)
   }
@@ -102,9 +102,9 @@ pub fn sdump_counted(depth: Nat, field: Text, n: Nat, out: List(Text)): List(Tex
 }
 
 pub fn sdump_borrow(b: Option(Bool)): Text {
-  match b: Text {
+  ⊢ Text from match b {
     None => "-"
-    Some(mutable) => match mutable: Text {
+    Some(mutable) => ⊢ Text from match mutable {
       true => "&mut"
       false => "&"
     }
@@ -112,28 +112,28 @@ pub fn sdump_borrow(b: Option(Bool)): Text {
 }
 
 pub fn sdump_borrows(items: List(Option(Bool))): List(Text) {
-  match items: List(Text) {
+  ⊢ List(Text) from match items {
     Nil => Nil
     Cons(b, rest) => Cons(sdump_borrow(b), sdump_borrows(rest))
   }
 }
 
 pub fn sdump_effects(depth: Nat, effects: Option(List(Text)), out: List(Text)): List(Text) {
-  match effects: List(Text) {
+  ⊢ List(Text) from match effects {
     None => sdump_line(depth, "effects None", out)
     Some(e) => sdump_line(depth, Text::concat("effects Some ", sdump_names(e)), out)
   }
 }
 
 pub fn sdump_bounds_from(depth: Nat, items: List(Option(Text)), out: List(Text)): List(Text) {
-  match items: List(Text) {
+  ⊢ List(Text) from match items {
     Nil => out
     Cons(x, rest) => sdump_bounds_from(depth, rest, sdump_opt_name(depth, "bound", x, out))
   }
 }
 
 pub fn sdump_int(negative: Bool, magnitude: Nat): Text {
-  match negative && magnitude > 0: Text {
+  ⊢ Text from match negative && magnitude > 0 {
     true => Text::concat("-", Text::of_nat(magnitude))
     false => Text::of_nat(magnitude)
   }
@@ -141,7 +141,7 @@ pub fn sdump_int(negative: Bool, magnitude: Nat): Text {
 
 // A `true` flag, written only when it is set.
 pub fn sdump_flag(set: Bool, depth: Nat, field: Text, out: List(Text)): List(Text) {
-  match set: List(Text) {
+  ⊢ List(Text) from match set {
     true => sdump_name(depth, field, "true", out)
     false => out
   }
@@ -153,22 +153,33 @@ pub fn sdump_kind_line(depth: Nat, kind: Text, at: Text, out: List(Text)): List(
 
 // `None`, or `Some` and what is below it, after `label` when there is one.
 pub fn sdump_opt_label(label: Text, what: Text): Text {
-  match label == "": Text {
+  ⊢ Text from match label == "" {
     true => what
     false => Text::concat_all(Cons(label, Cons(" ", Cons(what, Nil))))
   }
 }
 
+// Whether a generic's type is written as anything but `Type`.
+pub fn sdump_has_term_generic(types: List(SurfaceTerm)): Bool {
+  ⊢ Bool from match types {
+    Nil => false
+    Cons(ty, rest) => ⊢ Bool from match ty.kind {
+      SkVar(name) => if name == "Type" { sdump_has_term_generic(rest) } else { true }
+      _ => true
+    }
+  }
+}
+
 mutual {
   fn sdump_place(place: Option(SurfaceTerm), depth: Nat, out: List(Text)): List(Text) {
-    match place: List(Text) {
+    ⊢ List(Text) from match place {
       None => out
       Some(t) => sdump_term(t, depth + 1, sdump_line(depth, "place", out))
     }
   }
 
   pub fn sdump_term(t: SurfaceTerm, depth: Nat, out: List(Text)): List(Text) {
-    match t: List(Text) {
+    ⊢ List(Text) from match t {
       SurfaceTermIndexedMk(kind, start, end, ast_occurrence) => sdump_kind(
         kind,
         depth,
@@ -185,8 +196,8 @@ mutual {
     depth: Nat,
     out: List(Text)
   ): List(Text) {
-    match types: List(Text) {
-      Nil => match binds: List(Text) {
+    ⊢ List(Text) from match types {
+      Nil => ⊢ List(Text) from match binds {
         Nil => out
         Cons(f, rest) => sdump_counted(
           depth,
@@ -213,35 +224,35 @@ mutual {
   }
 
   pub fn sdump_terms(items: List(SurfaceTerm), depth: Nat, out: List(Text)): List(Text) {
-    match items: List(Text) {
+    ⊢ List(Text) from match items {
       Nil => out
       Cons(t, rest) => sdump_terms(rest, depth, sdump_term(t, depth, out))
     }
   }
 
   pub fn sdump_opt(t: Option(SurfaceTerm), depth: Nat, label: Text, out: List(Text)): List(Text) {
-    match t: List(Text) {
+    ⊢ List(Text) from match t {
       None => sdump_line(depth, sdump_opt_label(label, "None"), out)
       Some(x) => sdump_term(x, depth + 1, sdump_line(depth, sdump_opt_label(label, "Some"), out))
     }
   }
 
   pub fn sdump_opts(items: List(Option(SurfaceTerm)), depth: Nat, out: List(Text)): List(Text) {
-    match items: List(Text) {
+    ⊢ List(Text) from match items {
       Nil => out
       Cons(t, rest) => sdump_opts(rest, depth, sdump_opt(t, depth + 1, "", out))
     }
   }
 
   pub fn sdump_params(items: List(SurfaceParam), depth: Nat, out: List(Text)): List(Text) {
-    match items: List(Text) {
+    ⊢ List(Text) from match items {
       Nil => out
       Cons(p, rest) => sdump_params(rest, depth, sdump_param(p, depth, out))
     }
   }
 
   pub fn sdump_param(p: SurfaceParam, depth: Nat, out: List(Text)): List(Text) {
-    match p: List(Text) {
+    ⊢ List(Text) from match p {
       SurfaceParamMk(name, ty) => sdump_term(
         ty,
         depth + 1,
@@ -251,33 +262,33 @@ mutual {
   }
 
   pub fn sdump_fields(items: List(SurfaceField), depth: Nat, out: List(Text)): List(Text) {
-    match items: List(Text) {
+    ⊢ List(Text) from match items {
       Nil => out
       Cons(f, rest) => sdump_fields(rest, depth, sdump_field(f, depth, out))
     }
   }
 
   pub fn sdump_field(f: SurfaceField, depth: Nat, out: List(Text)): List(Text) {
-    match f: List(Text) {
+    ⊢ List(Text) from match f {
       SurfaceFieldMk(name, value) => sdump_term(value, depth + 2, sdump_line(depth + 1, name, out))
     }
   }
 
   pub fn sdump_named_list(items: List(SurfaceNamed), depth: Nat, out: List(Text)): List(Text) {
-    match items: List(Text) {
+    ⊢ List(Text) from match items {
       Nil => out
       Cons(x, rest) => sdump_named_list(rest, depth, sdump_named(x, depth, out))
     }
   }
 
   pub fn sdump_named(x: SurfaceNamed, depth: Nat, out: List(Text)): List(Text) {
-    match x: List(Text) {
+    ⊢ List(Text) from match x {
       SurfaceNamedMk(name, ty) => sdump_term(ty, depth + 2, sdump_line(depth + 1, name, out))
     }
   }
 
   pub fn sdump_kind(kind: SurfaceKind, depth: Nat, at: Text, out: List(Text)): List(Text) {
-    match kind: List(Text) {
+    ⊢ List(Text) from match kind {
       SkVar(n) => sdump_name(depth + 1, "name", n, sdump_kind_line(depth, "Var", at, out))
       SkNat(n) => sdump_name(depth + 1, "value", n, sdump_kind_line(depth, "Nat", at, out))
       SkFloat(n) => sdump_name(depth + 1, "value", n, sdump_kind_line(depth, "Float", at, out))
@@ -482,7 +493,7 @@ mutual {
               "steps",
               sdump_kind_line(
                 depth,
-                match memory: Text {
+                ⊢ Text from match memory {
                   true => "BudgetMemory"
                   false => "Budget"
                 },
@@ -619,7 +630,7 @@ mutual {
         sdump_name(
           depth + 1,
           "name",
-          match name: Text {
+          ⊢ Text from match name {
             Some(n) => n
             None => "-"
           },
@@ -630,7 +641,7 @@ mutual {
   }
 
   pub fn sdump_pattern(p: SurfacePattern, depth: Nat, out: List(Text)): List(Text) {
-    match p: List(Text) {
+    ⊢ List(Text) from match p {
       PtWild => sdump_line(depth, "Pattern.Wild", out)
       PtBind(n) => sdump_name(depth + 1, "name", n, sdump_line(depth, "Pattern.Bind", out))
       PtInt(negative, magnitude) => sdump_name(
@@ -676,7 +687,7 @@ mutual {
   }
 
   pub fn sdump_patterns(items: List(SurfacePattern), depth: Nat, out: List(Text)): List(Text) {
-    match items: List(Text) {
+    ⊢ List(Text) from match items {
       Nil => out
       Cons(p, rest) => sdump_patterns(rest, depth, sdump_pattern(p, depth, out))
     }
@@ -687,14 +698,14 @@ mutual {
     depth: Nat,
     out: List(Text)
   ): List(Text) {
-    match items: List(Text) {
+    ⊢ List(Text) from match items {
       Nil => out
       Cons(f, rest) => sdump_pattern_fields(rest, depth, sdump_pattern_field(f, depth, out))
     }
   }
 
   pub fn sdump_pattern_field(f: SurfacePatternField, depth: Nat, out: List(Text)): List(Text) {
-    match f: List(Text) {
+    ⊢ List(Text) from match f {
       SurfacePatternFieldMk(name, Pattern) => sdump_pattern(
         Pattern,
         depth + 2,
@@ -704,14 +715,14 @@ mutual {
   }
 
   pub fn sdump_step_arms(items: List(SurfaceStepArm), depth: Nat, out: List(Text)): List(Text) {
-    match items: List(Text) {
+    ⊢ List(Text) from match items {
       Nil => out
       Cons(a, rest) => sdump_step_arms(rest, depth, sdump_step_arm(a, depth, out))
     }
   }
 
   pub fn sdump_step_arm(a: SurfaceStepArm, depth: Nat, out: List(Text)): List(Text) {
-    match a: List(Text) {
+    ⊢ List(Text) from match a {
       SurfaceStepArmMk(Binders, goal, body, start, end) => sdump_term(
         body,
         depth + 2,
@@ -742,14 +753,14 @@ mutual {
   }
 
   pub fn sdump_arms(items: List(SurfaceArm), depth: Nat, out: List(Text)): List(Text) {
-    match items: List(Text) {
+    ⊢ List(Text) from match items {
       Nil => out
       Cons(a, rest) => sdump_arms(rest, depth, sdump_arm(a, depth, out))
     }
   }
 
   pub fn sdump_arm(a: SurfaceArm, depth: Nat, out: List(Text)): List(Text) {
-    match a: List(Text) {
+    ⊢ List(Text) from match a {
       SurfaceArmMk(Pattern, Guard, goal, body) => sdump_term(
         body,
         depth + 2,
@@ -782,14 +793,14 @@ mutual {
   }
 
   pub fn sdump_handlers(items: List(SurfaceHandler), depth: Nat, out: List(Text)): List(Text) {
-    match items: List(Text) {
+    ⊢ List(Text) from match items {
       Nil => out
       Cons(h, rest) => sdump_handlers(rest, depth, sdump_handler(h, depth, out))
     }
   }
 
   pub fn sdump_handler(h: SurfaceHandler, depth: Nat, out: List(Text)): List(Text) {
-    match h: List(Text) {
+    ⊢ List(Text) from match h {
       HdReturn(Pattern, body) => sdump_term(
         body,
         depth + 2,
@@ -841,14 +852,14 @@ mutual {
   }
 
   pub fn sdump_stmts(items: List(SurfaceStmt), depth: Nat, out: List(Text)): List(Text) {
-    match items: List(Text) {
+    ⊢ List(Text) from match items {
       Nil => out
       Cons(s, rest) => sdump_stmts(rest, depth, sdump_stmt(s, depth, out))
     }
   }
 
   pub fn sdump_stmt(s: SurfaceStmt, depth: Nat, out: List(Text)): List(Text) {
-    match s: List(Text) {
+    ⊢ List(Text) from match s {
       StLet(name, ty, value, borrow, borrow_mut) => sdump_flag(
         borrow_mut,
         depth + 1,
@@ -948,19 +959,8 @@ mutual {
       StEffect(e) => sdump_effect(e, depth + 1, sdump_line(depth, "Stmt.Effect", out))
       StStruct(x) => sdump_data(x, depth + 1, sdump_line(depth, "Stmt.Struct", out))
       StEnum(x) => sdump_data(x, depth + 1, sdump_line(depth, "Stmt.Enum", out))
-      StClass(x) => sdump_line(
-        depth,
-        Text::concat(Text::concat("Stmt.Class ", x.name), Text::concat(" ", sdump_at(x.start, x.end))),
-        out
-      )
-      StInstance(x) => sdump_line(
-        depth,
-        Text::concat(
-          Text::concat("Stmt.Instance ", x.r#class),
-          Text::concat(" ", sdump_at(x.start, x.end))
-        ),
-        out
-      )
+      StClass(x) => sdump_class(x, depth, out)
+      StInstance(x) => sdump_instance_stmt(x, depth, out)
       StExtern(language, fns, start, end) => sdump_fns(
         fns,
         depth + 2,
@@ -1041,71 +1041,157 @@ mutual {
   }
 
   pub fn sdump_fns(items: List(SurfaceFn), depth: Nat, out: List(Text)): List(Text) {
-    match items: List(Text) {
+    ⊢ List(Text) from match items {
       Nil => out
       Cons(f, rest) => sdump_fns(rest, depth, sdump_fn(f, depth, out))
     }
   }
 
-  pub fn sdump_fn(f: SurfaceFn, depth: Nat, out: List(Text)): List(Text) {
-    match f: List(Text) {
-      SurfaceFnMk(
-        name,
-        generics,
-        bounds,
-        params,
-        borrows,
-        ParamTypes,
-        result,
-        effects,
-        Wheres,
-        start,
-        end,
-        body
-      ) => sdump_term(
-        body,
-        depth + 2,
+  // A class, an instance, and a constraint are matched here, not read by
+  // field: their parts are then parts of the statement for the recursion.
+  pub fn sdump_class(x: SurfaceClass, depth: Nat, out: List(Text)): List(Text) {
+    ⊢ List(Text) from match x {
+      SurfaceClassMk(name, param, arity, bound, methods, laws, start, end, parameters) => sdump_class_parameters(
+        parameters,
+        depth + 1,
         sdump_line(
+          depth,
+          Text::concat(Text::concat("Stmt.Class ", name), Text::concat(" ", sdump_at(start, end))),
+          out
+        )
+      )
+    }
+  }
+
+  pub fn sdump_instance_stmt(x: SurfaceInstance, depth: Nat, out: List(Text)): List(Text) {
+    ⊢ List(Text) from match x {
+      SurfaceInstanceMk(generics, bounds, cls, head, wheres, methods, laws, start, end, generic_types, arguments) => sdump_generic_types(
+        generic_types,
+        depth + 1,
+        sdump_tail_arguments(
+          arguments,
           depth + 1,
-          "body",
-          sdump_effects(
+          sdump_line(
+            depth,
+            Text::concat(Text::concat("Stmt.Instance ", cls), Text::concat(" ", sdump_at(start, end))),
+            out
+          )
+        )
+      )
+    }
+  }
+
+  pub fn sdump_constraint(w: SurfaceConstraint, depth: Nat, out: List(Text)): List(Text) {
+    ⊢ List(Text) from match w {
+      SurfaceConstraintMk(cls, ty, start, end, arguments) => if List::length(arguments) > 0 {
+        sdump_tail_arguments(arguments, depth, sdump_name(depth, "constraint", cls, out))
+      } else { out }
+    }
+  }
+
+  pub fn sdump_class_parameters(
+    parameters: List(SurfaceNamed),
+    depth: Nat,
+    out: List(Text)
+  ): List(Text) {
+    if List::length(parameters) > 1 || sdump_has_term_generic(surface_named_types(parameters)) {
+      sdump_named_list(
+        parameters,
+        depth,
+        sdump_counted(depth, "parameters", List::length(parameters), out)
+      )
+    } else { out }
+  }
+
+  pub fn sdump_tail_arguments(
+    arguments: List(SurfaceTerm),
+    depth: Nat,
+    out: List(Text)
+  ): List(Text) {
+    if List::length(arguments) > 0 {
+      sdump_terms(
+        arguments,
+        depth + 1,
+        sdump_counted(depth, "arguments", List::length(arguments), out)
+      )
+    } else { out }
+  }
+
+  pub fn sdump_constraint_arguments(
+    wheres: List(SurfaceConstraint),
+    depth: Nat,
+    out: List(Text)
+  ): List(Text) {
+    ⊢ List(Text) from match wheres {
+      Nil => out
+      Cons(w, rest) => sdump_constraint_arguments(rest, depth, sdump_constraint(w, depth, out))
+    }
+  }
+
+  pub fn sdump_generic_types(types: List(SurfaceTerm), depth: Nat, out: List(Text)): List(Text) {
+    if sdump_has_term_generic(types) {
+      sdump_terms(types, depth + 1, sdump_counted(depth, "generic_types", List::length(types), out))
+    } else { out }
+  }
+
+  pub fn sdump_fn(f: SurfaceFn, depth: Nat, out: List(Text)): List(Text) {
+    ⊢ List(Text) from match f {
+      SurfaceFnMk(name, generics, bounds, params, borrows, ParamTypes, result, effects, Wheres, start, end, body, generic_types) => sdump_constraint_arguments(
+        Wheres,
+        depth + 1,
+        sdump_term(
+          body,
+          depth + 2,
+          sdump_line(
             depth + 1,
-            effects,
-            sdump_opt(
-              result,
+            "body",
+            sdump_effects(
               depth + 1,
-              "result",
-              sdump_opts(
-                ParamTypes,
+              effects,
+              sdump_opt(
+                result,
                 depth + 1,
-                sdump_counted(
+                "result",
+                sdump_opts(
+                  ParamTypes,
                   depth + 1,
-                  "param_types",
-                  List::length(ParamTypes),
-                  sdump_names_field(
+                  sdump_counted(
                     depth + 1,
-                    "borrows",
-                    sdump_borrows(borrows),
+                    "param_types",
+                    List::length(ParamTypes),
                     sdump_names_field(
                       depth + 1,
-                      "params",
-                      params,
-                      sdump_bounds_from(
-                        depth + 2,
-                        bounds,
-                        sdump_counted(
-                          depth + 1,
-                          "bounds",
-                          List::length(bounds),
-                          sdump_names_field(
+                      "borrows",
+                      sdump_borrows(borrows),
+                      sdump_names_field(
+                        depth + 1,
+                        "params",
+                        params,
+                        sdump_bounds_from(
+                          depth + 2,
+                          bounds,
+                          sdump_counted(
                             depth + 1,
-                            "generics",
-                            generics,
-                            sdump_name(
+                            "bounds",
+                            List::length(bounds),
+                            sdump_generic_types(
+                              generic_types,
                               depth + 1,
-                              "name",
-                              name,
-                              sdump_line(depth, Text::concat("FnDecl ", sdump_at(start, end)), out)
+                              sdump_names_field(
+                                depth + 1,
+                                "generics",
+                                generics,
+                                sdump_name(
+                                  depth + 1,
+                                  "name",
+                                  name,
+                                  sdump_line(
+                                    depth,
+                                    Text::concat("FnDecl ", sdump_at(start, end)),
+                                    out
+                                  )
+                                )
+                              )
                             )
                           )
                         )
@@ -1122,7 +1208,7 @@ mutual {
   }
 
   pub fn sdump_theorem(t: SurfaceTheorem, depth: Nat, out: List(Text)): List(Text) {
-    match t: List(Text) {
+    ⊢ List(Text) from match t {
       SurfaceTheoremMk(name, Implicit, params, ty, body, start, end) => sdump_opt(
         body,
         depth + 1,
@@ -1160,7 +1246,7 @@ mutual {
   }
 
   pub fn sdump_inductive(i: SurfaceInductive, depth: Nat, out: List(Text)): List(Text) {
-    match i: List(Text) {
+    ⊢ List(Text) from match i {
       SurfaceInductiveMk(name, params, Sort, constructors, start, end) => sdump_ctors(
         constructors,
         depth + 2,
@@ -1197,14 +1283,14 @@ mutual {
   }
 
   pub fn sdump_ctors(items: List(SurfaceCtor), depth: Nat, out: List(Text)): List(Text) {
-    match items: List(Text) {
+    ⊢ List(Text) from match items {
       Nil => out
       Cons(x, rest) => sdump_ctors(rest, depth, sdump_ctor(x, depth, out))
     }
   }
 
   pub fn sdump_ctor(x: SurfaceCtor, depth: Nat, out: List(Text)): List(Text) {
-    match x: List(Text) {
+    ⊢ List(Text) from match x {
       SurfaceCtorMk(name, Implicit, params, result) => sdump_term(
         result,
         depth + 2,
@@ -1232,7 +1318,7 @@ mutual {
   }
 
   pub fn sdump_effect(e: SurfaceEffect, depth: Nat, out: List(Text)): List(Text) {
-    match e: List(Text) {
+    ⊢ List(Text) from match e {
       SurfaceEffectMk(name, generics, params, result, r#resume, start, end, set) => sdump_opt_name(
         depth + 1,
         "resume",
@@ -1267,7 +1353,7 @@ mutual {
   }
 
   pub fn sdump_data(x: SurfaceData, depth: Nat, out: List(Text)): List(Text) {
-    match x: List(Text) {
+    ⊢ List(Text) from match x {
       SurfaceDataMk(kind, name, generics, constructors, start, end) => sdump_data_ctors(
         constructors,
         depth + 2,
@@ -1297,14 +1383,14 @@ mutual {
   }
 
   pub fn sdump_data_ctors(items: List(SurfaceDataCtor), depth: Nat, out: List(Text)): List(Text) {
-    match items: List(Text) {
+    ⊢ List(Text) from match items {
       Nil => out
       Cons(x, rest) => sdump_data_ctors(rest, depth, sdump_data_ctor(x, depth, out))
     }
   }
 
   pub fn sdump_data_ctor(x: SurfaceDataCtor, depth: Nat, out: List(Text)): List(Text) {
-    match x: List(Text) {
+    ⊢ List(Text) from match x {
       SurfaceDataCtorMk(name, fields) => sdump_data_fields(
         fields,
         depth + 2,
@@ -1319,14 +1405,14 @@ mutual {
   }
 
   pub fn sdump_data_fields(items: List(SurfaceDataField), depth: Nat, out: List(Text)): List(Text) {
-    match items: List(Text) {
+    ⊢ List(Text) from match items {
       Nil => out
       Cons(f, rest) => sdump_data_fields(rest, depth, sdump_data_field(f, depth, out))
     }
   }
 
   pub fn sdump_data_field(f: SurfaceDataField, depth: Nat, out: List(Text)): List(Text) {
-    match f: List(Text) {
+    ⊢ List(Text) from match f {
       SurfaceDataFieldMk(name, ty) => sdump_term(
         ty,
         depth + 1,

@@ -13,7 +13,7 @@ import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub theorem argument_types_refl(c: Checker, args: List(Ty)): ArgumentTypes(c, args, args) {
-  match args: ArgumentTypes(c, args, args) {
+  ⊢ ArgumentTypes(c, args, args) from match args {
     Nil => TysubNil
     Cons(a, rest) => TysubCons(sub_of_eq(c, a, a, TyeqRefl(a)), argument_types_refl(c, rest))
   }
@@ -48,7 +48,7 @@ pub theorem call_after_unify_sound(
   equal: CallUnified(next, f, args, result, matched),
   clean: DiagnosticClean(ck_st(call_after_unify(next, function, result, matched)))
 ): CallResult(c, f, args, call_after_unify(next, function, result, matched)) {
-  match matched: CallResult(c, f, args, call_after_unify(next, function, result, matched)) {
+  ⊢ CallResult(c, f, args, call_after_unify(next, function, result, matched)) from match matched {
     true => AndIntro(
       grows,
       CallConvert(equal(Refl), CallFunction(KindShared, argument_types_refl(next, args)))
@@ -86,7 +86,7 @@ pub theorem call_unifying_sound(
   ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(call_unifying_result(function, result, m)))
 ): CallResult(c, f, args, call_unifying_result(function, result, m)) {
-  match m: CallResult(c, f, args, call_unifying_result(function, result, m)) {
+  ⊢ CallResult(c, f, args, call_unifying_result(function, result, m)) from match m {
     mut1(matched, next) => call_after_unify_sound(
       c,
       next,
@@ -130,7 +130,7 @@ pub theorem call_fresh_sound(
   grows: Grows(c, ck_st(m)),
   clean: DiagnosticClean(ck_st(call_fresh_result(function, f, args, m)))
 ): CallResult(c, f, args, call_fresh_result(function, f, args, m)) {
-  match m: CallResult(c, f, args, call_fresh_result(function, f, args, m)) {
+  ⊢ CallResult(c, f, args, call_fresh_result(function, f, args, m)) from match m {
     mut1(result, next) => {
       let h: CallResult(
         next,
@@ -177,7 +177,15 @@ pub theorem call_variable_unf(
   args: List(Ty),
   variable: Nat,
   shape: ty_unborrowed(ck_resolve(c, f)) = TyVar(variable)
-): ck_app_result(c, term, function, arguments, f, known, args) = call_fresh_result(function, f, args, ck_fresh(c)) {
+): ck_app_result(
+  c,
+  term,
+  function,
+  arguments,
+  f,
+  known,
+  args
+) = call_fresh_result(function, f, args, ck_fresh(c)) {
   Eq::trans(
     application_fn_unf(c, term, function, arguments, f, known, args),
     Eq::congr(

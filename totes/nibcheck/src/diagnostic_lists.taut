@@ -29,7 +29,7 @@ pub fn diagnostic_after(
   k: (Checker) -> Mut1(Unit, Checker),
   m: Mut1(Unit, Checker)
 ): Mut1(Unit, Checker) {
-  match m: Mut1(Unit, Checker) { mut1(v, next) => ck_rewrap1(k(next)) }
+  ⊢ Mut1(Unit, Checker) from match m { mut1(v, next) => ck_rewrap1(k(next)) }
 }
 pub theorem diagnostic_items_cons_accepts<A: Type>(
   p: (Checker, A) -> Prop,
@@ -38,13 +38,11 @@ pub theorem diagnostic_items_cons_accepts<A: Type>(
   c: Checker,
   m: Mut1(Unit, Checker),
   k: (Checker) -> Mut1(Unit, Checker),
-  first: ∀ clean: DiagnosticClean(
-    ck_st(m)
-  ). And(p(c, x), m = mut1(Star, c)),
+  first: ∀ clean: DiagnosticClean(ck_st(m)). And(p(c, x), m = mut1(Star, c)),
   ih: DiagnosticTail(p, xs, k),
   clean: DiagnosticClean(ck_st(diagnostic_after(k, m)))
 ): DiagnosticItemsResult(p, Cons(x, xs), c, diagnostic_after(k, m)) {
-  match m: DiagnosticItemsResult(p, Cons(x, xs), c, diagnostic_after(k, m)) {
+  ⊢ DiagnosticItemsResult(p, Cons(x, xs), c, diagnostic_after(k, m)) from match m {
     mut1(v, next) => {
       let remaining: DiagnosticItemsResult(
         p,
@@ -59,7 +57,9 @@ pub theorem diagnostic_items_cons_accepts<A: Type>(
           clean
         )
       )
-      let tail_equal: ck_rewrap1(k(next)) = mut1(Star, next) := Eq::trans(ck_rewrap1_id(k(next)), And::right(remaining))
+      let tail_equal: ck_rewrap1(
+        k(next)
+      ) = mut1(Star, next) := Eq::trans(ck_rewrap1_id(k(next)), And::right(remaining))
       let clean_next: DiagnosticClean(
         next
       ) := Eq::subst(
@@ -67,15 +67,16 @@ pub theorem diagnostic_items_cons_accepts<A: Type>(
         Eq::congr((z: Mut1(Unit, Checker)) => ck_st(z), tail_equal),
         clean
       )
-      let head: And(
-        p(c, x),
-        mut1(v, next) = mut1(Star, c)
-      ) := first(clean_next)
+      let head: And(p(c, x), mut1(v, next) = mut1(Star, c)) := first(clean_next)
       let same: next = c := Eq::congr((z: Mut1(Unit, Checker)) => ck_st(z), And::right(head))
       AndIntro(
         DiagnosticItemsCons(
           And::left(head),
-          Eq::subst((state: Checker) => DiagnosticItems(A, p, state, xs), same, And::left(remaining))
+          Eq::subst(
+            (state: Checker) => DiagnosticItems(A, p, state, xs),
+            same,
+            And::left(remaining)
+          )
         ),
         Eq::trans(tail_equal, Eq::congr((state: Checker) => mut1(Star, state), same))
       )

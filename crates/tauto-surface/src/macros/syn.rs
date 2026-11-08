@@ -9,7 +9,7 @@ use super::node::Node;
 use super::scope::{self, flip, mark};
 use crate::surface::{
     BudgetLimit, Constructor, DataConstructor, DataDecl, EffectDecl, FnDecl, Handler,
-    InductiveDecl, Instance, MatchArm, Pattern, Stmt, SurfaceTerm, SyntaxLit, TermKind,
+    InductiveDecl, Instance, MatchArm, Name, Pattern, Stmt, SurfaceTerm, SyntaxLit, TermKind,
     TheoremDecl,
 };
 
@@ -17,7 +17,7 @@ type R<T> = Result<T, String>;
 
 fn st(name: &str, fields: Vec<(&str, Node)>) -> Node {
     Node::Ctor(
-        name.to_string(),
+        name.into(),
         fields
             .into_iter()
             .map(|(n, f)| (Some(n.to_string()), f))
@@ -38,14 +38,12 @@ fn pt(ctor: &str, fields: Vec<Node>) -> Node {
 }
 
 fn param(name: Node, ty: Node) -> Node {
-    Node::product(vec![(None, "SynExpr", ty), (None, "SynIdent", name)])
+    Node::product(vec![ty, name])
 }
 
+/// The two members of `p`, which is the product `a × b`.
 fn members<'n>(p: &'n Node, a: &str, b: &str) -> Result<(&'n Node, &'n Node), String> {
-    match (p.member(None, a), p.member(None, b)) {
-        (Some(x), Some(y)) => Ok((x, y)),
-        _ => Err(format!("expected {a} × {b}")),
-    }
+    p.pair().ok_or_else(|| format!("expected {a} × {b}"))
 }
 
 fn list(items: Vec<Node>) -> Node {
@@ -53,7 +51,7 @@ fn list(items: Vec<Node>) -> Node {
 }
 
 /// The generics as a macro sees them: a row variable keeps its `!`, `!e`.
-fn generic_texts(names: &[String], rows: &[bool]) -> Node {
+fn generic_texts(names: &[crate::identity::Name], rows: &[bool]) -> Node {
     let written: Vec<String> = names
         .iter()
         .enumerate()
@@ -61,7 +59,7 @@ fn generic_texts(names: &[String], rows: &[bool]) -> Node {
             if rows.get(i).copied().unwrap_or(false) {
                 format!("!{n}")
             } else {
-                n.clone()
+                n.to_string()
             }
         })
         .collect();
@@ -69,18 +67,18 @@ fn generic_texts(names: &[String], rows: &[bool]) -> Node {
 }
 
 /// The names and the row flags of generics read back from `generic_texts`.
-fn split_generics(items: Vec<String>) -> (Vec<String>, Vec<bool>) {
+fn split_generics(items: Vec<String>) -> (Vec<crate::identity::Name>, Vec<bool>) {
     items
         .into_iter()
         .map(|g| match g.strip_prefix('!') {
-            Some(name) => (name.to_string(), true),
-            None => (g, false),
+            Some(name) => (name.into(), true),
+            None => (g.into(), false),
         })
         .unzip()
 }
 
-fn texts(items: &[String]) -> Node {
-    list(items.iter().map(|t| Node::text(t)).collect())
+fn texts<N: AsRef<str>>(items: &[N]) -> Node {
+    list(items.iter().map(|t| Node::text(t.as_ref())).collect())
 }
 
 fn span_node(at: u32) -> Node {
@@ -111,7 +109,7 @@ pub struct Lift<'a> {
     pub scopes: &'a [u64],
     pub quote: bool,
     /// Variables of a typed macro's context, by name: written as their atom.
-    pub atoms: Option<&'a std::collections::HashMap<String, u64>>,
+    pub atoms: Option<&'a std::collections::HashMap<crate::identity::Name, u64>>,
     /// When given, every node gets a span of its own, found again by the
     /// number: the position, and in the high bits which of the nodes that start there.
     pub spans: Option<&'a std::cell::RefCell<SpanTable>>,
@@ -164,22 +162,34 @@ impl Lift<'_> {
     }
 
     /// A name: the value of the name after `$`, when it is one.
-    fn ident(&self, name: &str, span: Span) -> Node {
+    fn ident(&self, name: &Name, span: Span) -> Node {
         self.ident_at(name, span, self.span(span))
     }
 
-    fn ident_at(&self, name: &str, span: Span, syntax_span: Node) -> Node {
+    fn ident_at(&self, name: &Name, span: Span, syntax_span: Node) -> Node {
         if self.quote
             && let Some(var) = name.strip_prefix('$')
         {
             return Node::Splice(Box::new(SurfaceTerm::var(var, span)));
         }
+        let reference = name.as_global().cloned().map(Node::Declaration);
+        let display = match name.as_global() {
+            Some(reference)
+                if matches!(
+                    reference.generation(),
+                    Some(crate::identity::Generation::Constructor(_))
+                ) =>
+            {
+                name.rsplit("::").next().unwrap()
+            }
+            _ => name.as_str(),
+        };
         let (name, ctx) = match self.reflip {
             Some(scope) => {
-                let (base, _) = scope::split(name);
+                let (base, _) = scope::split(display);
                 (base, self.ctx_of(&flip(&scope::scopes_of(name), scope)))
             }
-            None => (name, self.ctx()),
+            None => (display, self.ctx()),
         };
         st(
             "SynIdent",
@@ -187,6 +197,7 @@ impl Lift<'_> {
                 ("name", Node::text(name)),
                 ("ctx", ctx),
                 ("span", syntax_span),
+                ("declaration", Node::opt(reference)),
             ],
         )
     }
@@ -227,7 +238,7 @@ impl Lift<'_> {
         Some(Node::SpliceList(Box::new(SurfaceTerm::var(xs, span))))
     }
 
-    fn binder(&self, name: &str, ty: Option<Node>, span: Span) -> Node {
+    fn binder(&self, name: &Name, ty: Option<Node>, span: Span) -> Node {
         Node::ctor(
             "SynBinder::BName",
             vec![self.ident(name, span), Node::opt(ty)],
@@ -237,9 +248,12 @@ impl Lift<'_> {
     pub fn expr(&self, t: &SurfaceTerm) -> R<Node> {
         let span = self.span_for(t.span, Some(t.id()));
         Ok(match &*t.kind {
+            TermKind::Declaration(_) => {
+                return Err("a declaration capability has no quoted source expression".into());
+            }
             TermKind::Var(n) => {
                 if self.quote && spread(n).is_some() {
-                    return Err(msg!("surface-quote-spread-expr", name = n).to_string());
+                    return Err(msg!("surface-quote-spread-expr", name = n.as_str()).to_string());
                 } else if self.quote && n.starts_with('$') {
                     // A name or an expression: `syn_expr_of` takes either.
                     let inner = SurfaceTerm::var(&n[1..], t.span);
@@ -270,9 +284,7 @@ impl Lift<'_> {
             TermKind::App {
                 function,
                 arguments,
-            } if arguments.is_empty()
-                && matches!(&*function.kind, TermKind::Var(f) if f == "Tuple") =>
-            {
+            } if arguments.is_empty() && crate::surface::is_tuple_head(function) => {
                 ex("ExUnit", vec![span])
             }
             TermKind::App {
@@ -350,6 +362,7 @@ impl Lift<'_> {
                 ],
             ),
             TermKind::Union(items) => ex("ExUnion", vec![self.exprs(items)?, span]),
+            TermKind::Product(items) => ex("ExProduct", vec![self.exprs(items)?, span]),
             TermKind::Tagged { tag, term } => ex(
                 "ExTagged",
                 vec![self.ident_text(tag), self.expr(term)?, span],
@@ -423,24 +436,19 @@ impl Lift<'_> {
                 );
             }
             // `#(a, b)` is quoted as the record of the prelude's `Pair` it is read as
-            // where it is elaborated.
+            // where it is elaborated, and read back from syntax as `#(a, b)` again.
             TermKind::Tuple(_) => {
-                let pair = format!(
-                    "{}{}Pair",
-                    crate::surface::qualify::PRELUDE_MODULE,
-                    crate::surface::qualify::SEPARATOR
-                );
-                return self.expr(&crate::surface::qualify::tuple_as_pairs(t, &pair));
+                return self.expr(&crate::surface::qualify::tuple_as_pairs(t, &quoted_pair()));
             }
             TermKind::Record { name, fields, .. } => {
                 let mut fs = Vec::new();
                 for (n, v) in fields {
-                    fs.push(Node::product(vec![
-                        (None, "SynExpr", self.expr(v)?),
-                        (None, "Text", self.ident_text(n)),
-                    ]));
+                    fs.push(Node::product(vec![self.expr(v)?, self.ident_text(n)]));
                 }
-                ex("ExRecord", vec![self.ident(name, t.span), list(fs), span])
+                ex(
+                    "ExRecord",
+                    vec![self.ident(&name.clone().into(), t.span), list(fs), span],
+                )
             }
             TermKind::Borrow { mutable, term } => ex(
                 "ExBorrow",
@@ -469,14 +477,18 @@ impl Lift<'_> {
                 TermKind::SyntaxLit(lit) => ex(
                     "ExMacroCall",
                     vec![
-                        self.ident(name, t.span),
+                        self.ident(&name.clone().into(), t.span),
                         Node::text(&lit.text),
                         span_node(lit.start),
                     ],
                 ),
                 _ => ex(
                     "ExMacroExpr",
-                    vec![self.ident(name, t.span), self.expr(arg)?, span],
+                    vec![
+                        self.ident(&name.clone().into(), t.span),
+                        self.expr(arg)?,
+                        span,
+                    ],
                 ),
             },
             TermKind::Quote { .. } => return Err(msg!("surface-quote-in-quote").to_string()),
@@ -484,12 +496,40 @@ impl Lift<'_> {
                 return Err(msg!("surface-quote-syntax-literal").to_string());
             }
             TermKind::Hole(name) => ex("ExHole", vec![Node::text(name), span]),
-            TermKind::Step(_) => return Err(msg!("surface-quote-step").to_string()),
+            // A step is passed on as syntax; the expander runs its tactic where
+            // the output is put (`docs/design/macro-steps.md`).
+            TermKind::Step(step) => {
+                let mut arms = Vec::new();
+                for arm in &step.arms {
+                    let mut binders = Vec::new();
+                    for (name, ty) in &arm.binders {
+                        binders.push(self.binder(name, Some(self.expr(ty)?), arm.span));
+                    }
+                    arms.push(st(
+                        "SynStepArm",
+                        vec![
+                            ("binders", list(binders)),
+                            ("goal", self.expr(&arm.goal)?),
+                            ("body", self.expr(&arm.body)?),
+                        ],
+                    ));
+                }
+                ex(
+                    "ExStep",
+                    vec![
+                        self.ident(&step.tactic.clone().into(), step.call),
+                        self.expr(&step.arg)?,
+                        self.opt_expr(&step.before)?,
+                        list(arms),
+                        span,
+                    ],
+                )
+            }
             TermKind::Row(_) => {
                 return Err(msg!("surface-quote-row").to_string());
             }
-            TermKind::Product(_) | TermKind::Ascribe { .. } => {
-                return Err(msg!("surface-quote-product").to_string());
+            TermKind::Ascribe { .. } => {
+                return Err(msg!("surface-quote-ascribe").to_string());
             }
             TermKind::Other(n) => return Err(msg!("surface-quote-other", what = n).to_string()),
         })
@@ -574,7 +614,7 @@ impl Lift<'_> {
                     stm(
                         "StMacroCall",
                         vec![
-                            self.ident(name, t.span),
+                            self.ident(&name.clone().into(), t.span),
                             Node::text(&lit.text),
                             span_node(lit.start),
                         ],
@@ -618,6 +658,15 @@ impl Lift<'_> {
             vec![
                 ("name", self.ident(&f.name, f.span)),
                 ("generics", generic_texts(&f.generics, &f.rows)),
+                (
+                    "generic_types",
+                    list(
+                        f.generic_types
+                            .iter()
+                            .map(|ty| self.expr(ty))
+                            .collect::<R<Vec<_>>>()?,
+                    ),
+                ),
                 (
                     "bounds",
                     list(
@@ -684,7 +733,7 @@ impl Lift<'_> {
         ))
     }
 
-    fn params(&self, params: &[(String, SurfaceTerm)], span: Span) -> R<Node> {
+    fn params(&self, params: &[(crate::identity::Name, SurfaceTerm)], span: Span) -> R<Node> {
         let mut out = Vec::new();
         for (n, t) in params {
             out.push(param(self.ident(n, span), self.expr(t)?));
@@ -721,12 +770,8 @@ impl Lift<'_> {
         let mut fields = Vec::new();
         for (n, t) in &c.fields {
             fields.push(Node::product(vec![
-                (
-                    None,
-                    "Option(SynIdent)",
-                    Node::opt(n.as_ref().map(|n| self.ident(n, span))),
-                ),
-                (None, "SynExpr", self.expr(t)?),
+                Node::opt(n.as_ref().map(|n| self.ident(&n.clone().into(), span))),
+                self.expr(t)?,
             ]));
         }
         Ok(st(
@@ -763,7 +808,7 @@ impl Lift<'_> {
         Ok(match p {
             Pattern::Wild => pt("PtWild", vec![]),
             Pattern::Bind(n) if self.quote && spread(n).is_some() => {
-                return Err(msg!("surface-quote-spread-pattern", name = n).to_string());
+                return Err(msg!("surface-quote-spread-pattern", name = n.as_str()).to_string());
             }
             Pattern::Bind(n) => pt("PtBind", vec![self.ident(n, span)]),
             Pattern::Int(i) => pt("PtInt", vec![Node::Int(*i)]),
@@ -782,10 +827,7 @@ impl Lift<'_> {
             Pattern::Record { name, fields } => {
                 let mut a = Vec::new();
                 for (n, x) in fields {
-                    a.push(Node::product(vec![
-                        (None, "SynPattern", self.pattern(x, span)?),
-                        (None, "Text", Node::text(n)),
-                    ]));
+                    a.push(Node::product(vec![self.pattern(x, span)?, Node::text(n)]));
                 }
                 pt("PtRecord", vec![self.ident(name, span), list(a)])
             }
@@ -881,10 +923,10 @@ pub struct Lower<'a> {
     /// The names made with `syn_ident_like`, for the trace.
     pub captures: Vec<String>,
     /// The atoms of the call's `Judgement`, and the names they stand for.
-    pub atoms: &'a std::collections::HashMap<u64, String>,
+    pub atoms: &'a std::collections::HashMap<u64, crate::identity::Name>,
     /// The atoms of binders `Judgement::open` opened, bound by the binder of the output
     /// that uses them, innermost last.
-    pub opened: Vec<(u64, String)>,
+    pub opened: Vec<(u64, crate::identity::Name)>,
 }
 
 /// An atom `Judgement::open` makes for the binder it opens is at least this; the
@@ -927,7 +969,18 @@ impl Lower<'_> {
     }
 
     /// A name, marked with the scopes after the flip.
-    fn ident(&mut self, n: &Node) -> R<String> {
+    fn ident(&mut self, n: &Node) -> R<Name> {
+        let declaration = n
+            .named("declaration")
+            .ok_or("a SynIdent has a declaration option")?;
+        match declaration
+            .as_option()
+            .ok_or("a declaration is an Option")?
+        {
+            Some(Node::Declaration(reference)) => return Ok(reference.clone().into()),
+            Some(_) => return Err("a declaration reference cannot be made from syntax".into()),
+            None => {}
+        }
         let name = self.text(n.named("name").ok_or("a SynIdent has a name")?)?;
         let ctx = n.named("ctx").ok_or("a SynIdent has a ctx")?;
         let scopes = ctx
@@ -939,7 +992,17 @@ impl Lower<'_> {
             .filter_map(Node::as_int)
             .map(|i| i as u64)
             .collect();
-        Ok(mark(&name, &flip(&scopes, self.scope)))
+        Ok(mark(&name, &flip(&scopes, self.scope)).into())
+    }
+
+    fn local_ident(&mut self, n: &Node) -> R<Name> {
+        let name = self.ident(n)?;
+        if name.as_global().is_some() {
+            return Err(
+                "macro.binding: a declaration reference cannot bind a local variable".into(),
+            );
+        }
+        Ok(name)
     }
 
     fn ident_span(&mut self, n: &Node) -> R<Span> {
@@ -996,7 +1059,7 @@ impl Lower<'_> {
             ),
             "ExUnit" => {
                 let span = sp(self, 0)?;
-                SurfaceTerm::app("Tuple", Vec::new(), span)
+                SurfaceTerm::unit(span)
             }
             "ExApp" => {
                 let function = self.expr(self.field(n, 0)?)?;
@@ -1013,7 +1076,7 @@ impl Lower<'_> {
                 let mut params = Vec::new();
                 for p in self.list(self.field(n, 0)?)?.to_vec() {
                     let name = match p.named("name").ok_or("a SynParam has a name")?.as_option() {
-                        Some(Some(id)) => Some(self.ident(id)?),
+                        Some(Some(id)) => Some(self.local_ident(id)?),
                         _ => None,
                     };
                     params.push((
@@ -1023,7 +1086,10 @@ impl Lower<'_> {
                 }
                 let result = self.expr(self.field(n, 1)?)?;
                 let effects = self.opt(self.field(n, 2)?, &mut |this, e| {
-                    this.list(e)?.iter().map(|t| this.text(t)).collect()
+                    this.list(e)?
+                        .iter()
+                        .map(|t| this.text(t).map(crate::identity::Name::from))
+                        .collect()
                 })?;
                 term(
                     TermKind::Pi {
@@ -1094,7 +1160,13 @@ impl Lower<'_> {
                 let id = self.field(n, 0)?;
                 let effect = self.ident(id)?;
                 let args = self.exprs(self.field(n, 1)?)?;
-                term(TermKind::Perform { effect, args }, sp(self, 2)?)
+                term(
+                    TermKind::Perform {
+                        effect: effect,
+                        args,
+                    },
+                    sp(self, 2)?,
+                )
             }
             "ExHandle" => {
                 let body = self.expr(self.field(n, 0)?)?;
@@ -1134,10 +1206,10 @@ impl Lower<'_> {
                 for a in self.list(self.field(n, 2)?)?.to_vec() {
                     arms.push(self.arm(&a)?);
                 }
-                let binder = self.opt(self.field(n, 3)?, &mut |this, x| this.ident(x))?;
+                let binder = self.opt(self.field(n, 3)?, &mut |this, x| this.local_ident(x))?;
                 term(
                     TermKind::Match {
-                        binder,
+                        binder: binder.map(crate::identity::Name::from),
                         scrutinee: Box::new(scrutinee),
                         result: result.map(Box::new),
                         arms,
@@ -1150,12 +1222,27 @@ impl Lower<'_> {
                 let name = self.ident(id)?;
                 let mut fields = Vec::new();
                 for p in self.list(self.field(n, 1)?)?.to_vec() {
-                    let (k, v) = members(&p, "Text", "SynExpr")?;
+                    let (v, k) = members(&p, "SynExpr", "Text")?;
                     fields.push((self.text(k)?, self.expr(v)?));
+                }
+                // The record a quoted `#(a, b)` was quoted as (spelled as the prelude's
+                // `Pair`, with the quote's scope mark) is read back as the `#(a, b)` it
+                // was, so a product written in a quote is checked as the product it is
+                // outside one, each member against the member expected in its place.
+                if let Name::Spelled(spelled) = &name
+                    && scope::split(spelled).0 == quoted_pair()
+                    && fields.len() == 2
+                    && fields[0].0 == "fst"
+                    && fields[1].0 == "snd"
+                {
+                    let mut fields = fields;
+                    let snd = fields.pop().expect("two").1;
+                    let fst = fields.pop().expect("two").1;
+                    return Ok(term(TermKind::Tuple(vec![fst, snd]), sp(self, 2)?));
                 }
                 term(
                     TermKind::Record {
-                        name,
+                        name: name,
                         fields,
                         base: None,
                     },
@@ -1176,6 +1263,10 @@ impl Lower<'_> {
             "ExUnion" => {
                 let items = self.exprs(self.field(n, 0)?)?;
                 term(TermKind::Union(items), sp(self, 1)?)
+            }
+            "ExProduct" => {
+                let items = self.exprs(self.field(n, 0)?)?;
+                term(TermKind::Product(items), sp(self, 1)?)
             }
             "ExTagged" => {
                 let tag = self.text(self.field(n, 0)?)?;
@@ -1238,7 +1329,7 @@ impl Lower<'_> {
                     .unwrap_or(0) as u32;
                 term(
                     TermKind::MacroCall {
-                        name,
+                        name: name.to_string(),
                         arg: Box::new(term(
                             TermKind::SyntaxLit(Box::new(SyntaxLit {
                                 name: None,
@@ -1261,24 +1352,72 @@ impl Lower<'_> {
                 let arg = self.expr(self.field(n, 1)?)?;
                 term(
                     TermKind::MacroCall {
-                        name,
+                        name: name.to_string(),
                         arg: Box::new(arg),
                     },
                     span,
                 )
             }
             "ExHole" => term(TermKind::Hole(self.text(self.field(n, 0)?)?), sp(self, 1)?),
+            "ExStep" => {
+                let id = self.field(n, 0)?;
+                // The tactic is found by the name it is registered under.
+                let tactic = self.text(id.named("name").ok_or("a SynIdent has a name")?)?;
+                let call = self.ident_span(id)?;
+                let arg = self.expr(self.field(n, 1)?)?;
+                let before = self.opt(self.field(n, 2)?, &mut |this, e| this.expr(e))?;
+                let mut arms = Vec::new();
+                for a in self.list(self.field(n, 3)?)?.to_vec() {
+                    let depth = self.opened.len();
+                    let mut binders = Vec::new();
+                    for b in self
+                        .list(a.named("binders").ok_or("a SynStepArm has binders")?)?
+                        .to_vec()
+                    {
+                        let ty = match b.ctor_name() {
+                            Some("BName") => {
+                                self.opt(self.field(&b, 1)?, &mut |this, e| this.expr(e))?
+                            }
+                            _ => None,
+                        }
+                        .ok_or("the variable of a step's arm has a type")?;
+                        binders.push((self.binder(&b)?, ty));
+                    }
+                    let goal = self.expr(a.named("goal").ok_or("a SynStepArm has a goal")?)?;
+                    let body = self.expr(a.named("body").ok_or("a SynStepArm has a body")?)?;
+                    self.opened.truncate(depth);
+                    let span = Span::new(goal.span.start, body.span.end.max(goal.span.end));
+                    arms.push(crate::surface::StepArm {
+                        binders,
+                        goal,
+                        body,
+                        span,
+                    });
+                }
+                term(
+                    TermKind::Step(Box::new(crate::surface::Step {
+                        tactic: tactic.to_string(),
+                        arg,
+                        call,
+                        before,
+                        arms,
+                    })),
+                    sp(self, 4)?,
+                )
+            }
             other => return Err(format!("{other} is not a SynExpr")),
         })
     }
 
-    fn binder(&mut self, n: &Node) -> R<String> {
+    fn binder(&mut self, n: &Node) -> R<crate::identity::Name> {
         match n.ctor_name() {
-            Some("BName") => self.ident(self.field(n, 0)?),
+            Some("BName") => self.local_ident(self.field(n, 0)?),
             Some("BAtom") => {
                 let atom = self.field(n, 0)?.as_int().ok_or("an atom is a number")? as u64;
                 if atom >= OPEN_ATOM {
-                    let name = format!("_a{atom}");
+                    let name = crate::identity::Name::Local(crate::identity::LocalRef::fresh(
+                        format!("_a{atom}"),
+                    ));
                     self.opened.push((atom, name.clone()));
                     return Ok(name);
                 }
@@ -1304,14 +1443,14 @@ impl Lower<'_> {
         };
         Ok(match ctor {
             "StLet" => Stmt::Let {
-                name: self.ident(self.field(n, 0)?)?,
+                name: self.local_ident(self.field(n, 0)?)?,
                 ty: opt_expr(self, 1)?,
                 value: self.expr(self.field(n, 2)?)?,
                 borrow: self.boolean(self.field(n, 3)?)?,
                 borrow_mut: self.boolean(self.field(n, 4)?)?,
             },
             "StVar" => Stmt::Var {
-                name: self.ident(self.field(n, 0)?)?,
+                name: self.local_ident(self.field(n, 0)?)?,
                 ty: opt_expr(self, 1)?,
                 value: self.expr(self.field(n, 2)?)?,
                 borrow: self.boolean(self.field(n, 3)?)?,
@@ -1364,13 +1503,20 @@ impl Lower<'_> {
                 .map(|t| self.text(t))
                 .collect::<R<Vec<_>>>()?,
         );
+        let mut generic_types = Vec::new();
+        for ty in self.list(get("generic_types")?)?.to_vec() {
+            generic_types.push(self.expr(&ty)?);
+        }
+        if !generic_types.is_empty() && generic_types.len() != generics.len() {
+            return Err("SynFn.generic_types must be empty or match generics".into());
+        }
         let mut bounds = Vec::new();
         for b in self.list(get("bounds")?)?.to_vec() {
             bounds.push(self.opt(&b, &mut |this, x| this.text(x))?);
         }
         let mut params = Vec::new();
         for p in self.list(get("params")?)?.to_vec() {
-            params.push(self.ident(&p)?);
+            params.push(self.local_ident(&p)?);
         }
         let mut borrows = Vec::new();
         for b in self.list(get("borrows")?)?.to_vec() {
@@ -1382,7 +1528,10 @@ impl Lower<'_> {
         }
         let result = self.opt(get("result")?, &mut |this, x| this.expr(x))?;
         let effects = self.opt(get("effects")?, &mut |this, x| {
-            this.list(x)?.iter().map(|t| this.text(t)).collect()
+            this.list(x)?
+                .iter()
+                .map(|t| this.text(t).map(crate::identity::Name::from))
+                .collect()
         })?;
         let body = self.expr(get("body")?)?;
         Ok(FnDecl {
@@ -1391,10 +1540,11 @@ impl Lower<'_> {
             opaque: false,
             decreasing_by: None,
             generates: None,
-            name,
+            name: name,
+            generic_types,
             generics,
             rows,
-            bounds,
+            bounds: bounds.into_iter().map(|b| b.map(Into::into)).collect(),
             bound_spans: Vec::new(),
             params,
             borrows,
@@ -1414,8 +1564,8 @@ impl Lower<'_> {
         let implicit = get("implicit")?.as_int().unwrap_or(0) as usize;
         let mut params = Vec::new();
         for p in self.list(get("params")?)?.to_vec() {
-            let (k, v) = members(&p, "SynIdent", "SynExpr")?;
-            params.push((self.ident(k)?, self.expr(v)?));
+            let (v, k) = members(&p, "SynExpr", "SynIdent")?;
+            params.push((self.local_ident(k)?, self.expr(v)?));
         }
         let ty = self.expr(get("ty")?)?;
         let body = self.opt(get("body")?, &mut |this, x| this.expr(x))?;
@@ -1423,7 +1573,7 @@ impl Lower<'_> {
             budget: None,
             vis: crate::surface::Vis::Open,
             decreasing_by: None,
-            name,
+            name: name,
             implicit,
             params,
             ty,
@@ -1432,11 +1582,11 @@ impl Lower<'_> {
         })
     }
 
-    fn params(&mut self, n: &Node) -> R<Vec<(String, SurfaceTerm)>> {
+    fn params(&mut self, n: &Node) -> R<Vec<(crate::identity::Name, SurfaceTerm)>> {
         let mut params = Vec::new();
         for p in self.list(n)?.to_vec() {
-            let (k, v) = members(&p, "SynIdent", "SynExpr")?;
-            params.push((self.ident(k)?, self.expr(v)?));
+            let (v, k) = members(&p, "SynExpr", "SynIdent")?;
+            params.push((self.local_ident(k)?, self.expr(v)?));
         }
         Ok(params)
     }
@@ -1460,7 +1610,7 @@ impl Lower<'_> {
         Ok(InductiveDecl {
             vis: crate::surface::Vis::Open,
             generates: Default::default(),
-            name,
+            name: name,
             params,
             sort,
             constructors,
@@ -1488,7 +1638,7 @@ impl Lower<'_> {
                 .to_vec()
             {
                 let (k, v) = members(&f, "Option(SynIdent)", "SynExpr")?;
-                let key = self.opt(k, &mut |this, x| this.ident(x))?;
+                let key = self.opt(k, &mut |this, x| this.ident(x).map(|name| name.to_string()))?;
                 fields.push((key, self.expr(v)?));
             }
             constructors.push(DataConstructor {
@@ -1499,7 +1649,7 @@ impl Lower<'_> {
         Ok(DataDecl {
             vis: crate::surface::Vis::Open,
             kind,
-            name,
+            name: name,
             generics,
             rows,
             constructors,
@@ -1526,7 +1676,7 @@ impl Lower<'_> {
         let span = self.span_of(get("span")?)?;
         Ok(EffectDecl {
             vis: crate::surface::Vis::Open,
-            name,
+            name: name,
             generics,
             rows,
             params,
@@ -1542,7 +1692,7 @@ impl Lower<'_> {
         let (ctor, _) = self.ctor(n, "SynPattern")?;
         Ok(match ctor {
             "PtWild" => Pattern::Wild,
-            "PtBind" => Pattern::Bind(self.ident(self.field(n, 0)?)?),
+            "PtBind" => Pattern::Bind(self.local_ident(self.field(n, 0)?)?),
             "PtInt" => Pattern::Int(self.field(n, 0)?.as_int().ok_or("expected an i64")?),
             "PtBool" => Pattern::Bool(self.boolean(self.field(n, 0)?)?),
             "PtText" => Pattern::Text(self.text(self.field(n, 0)?)?),
@@ -1552,16 +1702,16 @@ impl Lower<'_> {
                 for a in self.list(self.field(n, 1)?)?.to_vec() {
                     args.push(self.pattern(&a)?);
                 }
-                Pattern::Ctor { name, args }
+                Pattern::Ctor { name: name, args }
             }
             "PtRecord" => {
                 let name = self.ident(self.field(n, 0)?)?;
                 let mut fields = Vec::new();
                 for p in self.list(self.field(n, 1)?)?.to_vec() {
-                    let (k, v) = members(&p, "Text", "SynPattern")?;
+                    let (v, k) = members(&p, "SynPattern", "Text")?;
                     fields.push((self.text(k)?, self.pattern(v)?));
                 }
-                Pattern::Record { name, fields }
+                Pattern::Record { name: name, fields }
             }
             other => return Err(format!("{other} is not a SynPattern")),
         })
@@ -1590,12 +1740,12 @@ impl Lower<'_> {
                 for p in self.list(self.field(n, 1)?)?.to_vec() {
                     patterns.push(self.pattern(&p)?);
                 }
-                let cont = self.opt(self.field(n, 2)?, &mut |this, x| this.ident(x))?;
+                let cont = self.opt(self.field(n, 2)?, &mut |this, x| this.local_ident(x))?;
                 let guard = self.opt(self.field(n, 3)?, &mut |this, x| this.expr(x))?;
                 let body = self.expr(self.field(n, 4)?)?;
                 let mut forall = Vec::new();
                 for t in self.list(self.field(n, 5)?)?.to_vec() {
-                    forall.push(self.text(&t)?);
+                    forall.push(crate::identity::Name::Spelled(self.text(&t)?));
                 }
                 let mut args = Vec::new();
                 for t in self.list(self.field(n, 6)?)?.to_vec() {
@@ -1603,10 +1753,10 @@ impl Lower<'_> {
                 }
                 let instance = Instance { forall, args };
                 Handler::Operation {
-                    effect,
+                    effect: effect,
                     instance,
                     patterns,
-                    cont,
+                    cont: cont.map(crate::identity::Name::from),
                     guard,
                     body,
                 }
@@ -1618,4 +1768,127 @@ impl Lower<'_> {
 
 pub fn is_marked(name: &str) -> bool {
     !scope::split(name).1.is_empty()
+}
+
+#[cfg(test)]
+mod reference_tests {
+    use super::*;
+    use crate::identity::{LocalRef, Name};
+    use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn global_syntax_roundtrip_preserves_identity_even_if_display_is_edited() {
+        let first = Name::Global(crate::identity::DeclRef::fresh("value"));
+        let second = Name::Global(crate::identity::DeclRef::fresh("value"));
+        let lift = Lift {
+            scopes: &[1],
+            quote: false,
+            atoms: None,
+            spans: None,
+            reflip: None,
+        };
+        let atoms = HashMap::new();
+        let mut fresh = |at| Span::new(at, at + 1);
+        let mut lower = Lower {
+            scope: 7,
+            fresh: &mut fresh,
+            captures: vec![],
+            atoms: &atoms,
+            opened: vec![],
+        };
+        for reference in [first, second] {
+            let mut ident = lift.ident(&reference, Span::new(0, 1));
+            let Node::Ctor(_, fields) = &mut ident else {
+                panic!("identifier")
+            };
+            fields
+                .iter_mut()
+                .find(|(label, _)| label.as_deref() == Some("name"))
+                .unwrap()
+                .1 = Node::text("different");
+            assert_eq!(lower.ident(&ident).unwrap(), reference);
+            let variable = ex("ExVar", vec![ident]);
+            assert_eq!(variable.open_var("different", 99), Some(variable.clone()));
+            let restored = lower.expr(&variable).unwrap();
+            let output = scope::resolve(vec![Stmt::Expr(restored)], &HashSet::new());
+            let Stmt::Expr(restored) = &output[0] else {
+                panic!("expression")
+            };
+            assert!(matches!(&*restored.kind, TermKind::Var(name) if name == &reference));
+        }
+    }
+
+    #[test]
+    fn identifier_payload_does_not_accept_text_or_integers_as_a_reference() {
+        let lift = Lift {
+            scopes: &[],
+            quote: false,
+            atoms: None,
+            spans: None,
+            reflip: None,
+        };
+        let atoms = HashMap::new();
+        let mut fresh = |at| Span::new(at, at + 1);
+        let mut lower = Lower {
+            scope: 7,
+            fresh: &mut fresh,
+            captures: vec![],
+            atoms: &atoms,
+            opened: vec![],
+        };
+        for forged in [Node::text("value"), Node::Int(1)] {
+            let mut ident = lift.ident(&Name::from("value"), Span::new(0, 1));
+            let Node::Ctor(_, fields) = &mut ident else {
+                panic!("identifier")
+            };
+            fields
+                .iter_mut()
+                .find(|(label, _)| label.as_deref() == Some("declaration"))
+                .unwrap()
+                .1 = Node::some(forged);
+            assert!(lower.ident(&ident).is_err());
+        }
+    }
+
+    #[test]
+    fn atoms_preserve_distinct_references_with_the_same_display() {
+        let first = Name::Local(LocalRef::fresh("value"));
+        let second = Name::Local(LocalRef::fresh("value"));
+        let names = HashMap::from([(first.clone(), 1), (second.clone(), 2)]);
+        let atoms = HashMap::from([(1, first.clone()), (2, second.clone())]);
+        let lift = Lift {
+            scopes: &[],
+            quote: false,
+            atoms: Some(&names),
+            spans: None,
+            reflip: None,
+        };
+        let mut fresh = |at| Span::new(at, at + 1);
+        let mut lower = Lower {
+            scope: 7,
+            fresh: &mut fresh,
+            captures: Vec::new(),
+            atoms: &atoms,
+            opened: Vec::new(),
+        };
+        for reference in [first, second] {
+            let term = SurfaceTerm::var(&reference, Span::new(0, 1));
+            let node = lift.expr(&term).unwrap();
+            let restored = lower.expr(&node).unwrap();
+            let output = scope::resolve(vec![Stmt::Expr(restored)], &HashSet::new());
+            let Stmt::Expr(restored) = &output[0] else {
+                panic!("expression");
+            };
+            assert!(matches!(&*restored.kind, TermKind::Var(name) if name == &reference));
+        }
+    }
+}
+
+/// The spelling of the prelude's `Pair` that a quoted `#(a, b)` is a record of.
+fn quoted_pair() -> String {
+    format!(
+        "{}{}Pair",
+        crate::surface::qualify::PRELUDE_MODULE,
+        crate::surface::qualify::SEPARATOR
+    )
 }

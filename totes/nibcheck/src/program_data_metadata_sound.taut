@@ -12,10 +12,7 @@ import "unify_sound.taut"
 pub def NoDeclarationName(
   n: Text,
   ss: List(SurfaceStmt)
-): Prop := ∀ d: SurfaceData. ∀ member: DeclaresData(
-  ss,
-  d
-). (n = registration_name(d)) -> False
+): Prop := ∀ d: SurfaceData. ∀ member: DeclaresData(ss, d). (n = registration_name(d)) -> False
 
 pub theorem ck_program_data_one_protected(
   n: Text,
@@ -26,7 +23,7 @@ pub theorem ck_program_data_one_protected(
   rest: List(SurfaceStmt),
   no_name: NoDeclarationName(n, Cons(s, rest))
 ): ProtectedData(n, expected, ck_st(ck_program_data_one(c, s))) {
-  match s: ProtectedData(n, expected, ck_st(ck_program_data_one(c, s))) {
+  ⊢ ProtectedData(n, expected, ck_st(ck_program_data_one(c, s))) from match s {
     StLet(name, ty, value, borrow, mutable) => ordered
     StVar(name, ty, value, borrow) => ordered
     StModule(name, stmts, start, end) => ordered
@@ -98,7 +95,7 @@ pub theorem ck_program_data_protected(
   ready: ProtectedData(n, expected, c),
   no_name: NoDeclarationName(n, ss)
 ): ProtectedData(n, expected, ck_st(ck_program_data(ss, c))) {
-  match ss: ProtectedData(n, expected, ck_st(ck_program_data(ss, c))) {
+  ⊢ ProtectedData(n, expected, ck_st(ck_program_data(ss, c))) from match ss {
     Nil => ready
     Cons(s, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => ProtectedData(n, expected, ck_st(m)),

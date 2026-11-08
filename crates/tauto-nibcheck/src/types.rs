@@ -31,17 +31,22 @@
 //! Not checked here: `Decimal` and `Float` arithmetic beyond `+ - * /`, and
 //! `budget`s whose `exceeded` escapes through a call.
 
+use crate::surface::Name;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 
 use crate::surface::qualify::written;
+use tauto_message::{Message, msg};
 use tauto_parol::Span;
 
 mod operation_instances;
+mod references;
+mod type_functions;
 use operation_instances::{ArmObservation, BodyOperations};
 pub use operation_instances::{CheckedOperationInstance, OperationAdmission, OperationFacts};
+pub use type_functions::expand_type_functions;
 
 use crate::surface::{
     BudgetLimit, DataDecl, EffectDecl, FnDecl, Handler, MatchArm, Pattern, Program, Stmt,
@@ -192,13 +197,11 @@ pub enum Ty {
     Fn(Vec<Ty>, Box<Ty>, Kind),
     /// Two or more members, flattened, sorted and without repeats.
     Union(Vec<Ty>),
-    /// Two or more members, flattened, sorted and without repeats; `()` is
-    /// the product of none.
-    Product(Vec<Ty>),
     /// A non-empty set of tags on a type that is not tagged itself.
     Tagged(BTreeSet<String>, Box<Ty>),
     /// A declared type, or a type nothing declares.
-    Named(String, Vec<Ty>),
+    Named(Name, Vec<Ty>),
+    /// A type parameter inside its declaration, with its bound.
     Param(Param, Kind),
     /// What an `exceeded` arm receives; `more` and `unbounded` give the type.
     Info(Box<Ty>),
@@ -259,13 +262,27 @@ impl fmt::Display for Ty {
                 write!(f, ") -> {r}")
             }
             Ty::Union(ts) => list(f, ts, " | "),
-            Ty::Product(ts) => {
-                for (i, t) in ts.iter().enumerate() {
+            // `Pair(A, B)` is `A × B`, and `Pair(A, Pair(B, C))` is `A × B × C`.
+            Ty::Named(n, args) if is_pair_name(n) && args.len() == 2 => {
+                let mut members = vec![&args[0]];
+                let mut rest = &args[1];
+                while let Ty::Named(n, args) = rest
+                    && is_pair_name(n)
+                    && args.len() == 2
+                {
+                    members.push(&args[0]);
+                    rest = &args[1];
+                }
+                members.push(rest);
+                for (i, t) in members.iter().enumerate() {
                     if i > 0 {
                         write!(f, " × ")?;
                     }
                     match t {
                         Ty::Union(_) | Ty::Fn(..) => write!(f, "({t})")?,
+                        Ty::Named(n, args) if is_pair_name(n) && args.len() == 2 => {
+                            write!(f, "({t})")?
+                        }
                         _ => write!(f, "{t}")?,
                     }
                 }
@@ -276,6 +293,20 @@ impl fmt::Display for Ty {
                     write!(f, "@{tag} ")?;
                 }
                 write!(f, "{t}")
+            }
+            // A record without a name, `@record.a.b(A, B)`, as it is written: `{ a: A, b: B }`.
+            Ty::Named(n, args)
+                if let Some(fields) = tauto_surface::records::fields_of(&written(n))
+                    && fields.len() == args.len() =>
+            {
+                write!(f, "{{ ")?;
+                for (i, (field, t)) in fields.iter().zip(args).enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{field}: {t}")?;
+                }
+                write!(f, " }}")
             }
             Ty::Named(n, args) if args.is_empty() => write!(f, "{}", written(n)),
             Ty::Named(n, args) => {
@@ -299,7 +330,7 @@ impl fmt::Display for Ty {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeError {
-    pub message: String,
+    pub message: tauto_message::Message,
     pub span: Span,
 }
 
@@ -312,9 +343,9 @@ impl fmt::Display for TypeError {
 /// A declared `struct` (one constructor, named as the type) or `enum`.
 #[derive(Debug, Clone)]
 pub struct Data {
-    pub name: String,
+    pub name: Name,
     pub declared: Option<Kind>,
-    pub generics: Vec<String>,
+    pub generics: Vec<Name>,
     pub constructors: Vec<DataCtor>,
     pub is_struct: bool,
     /// It holds itself, directly or through other declarations.
@@ -322,7 +353,7 @@ pub struct Data {
     /// `kind(D(args))` is `base` joined with the kinds of the arguments for
     /// the generics in `holds` ([`Datas::summarize`]).
     pub base: Kind,
-    pub holds: Vec<String>,
+    pub holds: Vec<Name>,
     /// Declared by the prelude and implemented by the evaluator (`Buf`,
     /// `Vec`, `HashMap`): its clone copies what it holds.
     pub builtin: bool,
@@ -332,28 +363,28 @@ pub struct Data {
 
 #[derive(Debug, Clone)]
 pub struct DataCtor {
-    pub name: String,
+    pub name: Name,
     /// Field types over the declaration's generics, as [`Ty::Param`]s.
     pub fields: Vec<(Option<String>, Ty)>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct Datas {
-    pub decls: HashMap<String, Data>,
+    pub decls: HashMap<Name, Data>,
     /// A constructor's name (`Some`, `Shape::Circle`) to its type and index.
-    pub ctors: HashMap<String, (String, usize)>,
+    pub ctors: HashMap<Name, (Name, usize)>,
     /// All owners of an ambiguous unqualified constructor name.
-    pub ambiguous_ctors: HashMap<String, Vec<(String, usize)>>,
+    pub ambiguous_ctors: HashMap<Name, Vec<(Name, usize)>>,
 }
 
 impl Datas {
     /// Resolve a constructor by its owning result type, never declaration order.
     pub fn resolve_ctor(
         &self,
-        name: &str,
+        name: &Name,
         expected: Option<&Ty>,
-    ) -> Result<&(String, usize), String> {
-        fn owner(t: &Ty) -> Option<&str> {
+    ) -> Result<&(Name, usize), Message> {
+        fn owner(t: &Ty) -> Option<&Name> {
             match t.unborrowed() {
                 Ty::Named(n, _) => Some(n),
                 Ty::Fn(_, r, _) => owner(r),
@@ -363,18 +394,51 @@ impl Datas {
         if let Some(c) = self.ctors.get(name) {
             return Ok(c);
         }
+        if let Name::Selection(selection) = name {
+            let candidates = selection
+                .candidates()
+                .iter()
+                .filter_map(|reference| self.ctors.get(&Name::Global(reference.clone())))
+                .collect::<Vec<_>>();
+            let candidates: Vec<_> = match expected.and_then(owner) {
+                Some(expected) => candidates
+                    .into_iter()
+                    .filter(|(family, _)| family == expected)
+                    .collect(),
+                None => candidates,
+            };
+            return match candidates.as_slice() {
+                [candidate] => Ok(candidate),
+                [] => Err(msg!("nibcheck-not-a-constructor", name = name.to_string())),
+                _ => {
+                    let mut names: Vec<_> = candidates
+                        .iter()
+                        .map(|(owner, index)| {
+                            self.decls[owner].constructors[*index].name.to_string()
+                        })
+                        .collect();
+                    names.sort();
+                    names.dedup();
+                    Err(msg!(
+                        "nibcheck-ambiguous-constructor",
+                        name = name.to_string(),
+                        candidates = names.join(" or ")
+                    ))
+                }
+            };
+        }
         // A constructor written alone is one of the expected type's, as the kernel reads it: a
         // type declared in a module (`m::T`) has its constructors under its full name, `m::T::C`.
-        if !name.contains("::") {
+        if matches!(name, Name::Spelled(_)) && !name.contains("::") {
             if let Some(c) = expected
                 .and_then(owner)
-                .and_then(|n| self.ctors.get(&format!("{n}::{name}")))
+                .and_then(|n| self.ctors.get(&format!("{n}::{name}").into()))
             {
                 return Ok(c);
             }
         }
         let Some(candidates) = self.ambiguous_ctors.get(name) else {
-            return Err(format!("{name} is not a constructor"));
+            return Err(msg!("nibcheck-not-a-constructor", name = name.to_string()));
         };
         if let Some(n) = expected.and_then(owner) {
             if let Some(c) = candidates.iter().find(|(d, _)| d == n) {
@@ -386,42 +450,60 @@ impl Datas {
             .map(|(d, _)| format!("{}::{name}", written(d)))
             .collect();
         names.sort();
-        Err(format!(
-            "ambiguous constructor `{name}`: use a type annotation or {}",
-            names.join(" or ")
+        Err(msg!(
+            "nibcheck-ambiguous-constructor",
+            name = name.to_string(),
+            candidates = names.join(" or ")
         ))
     }
 
-    pub fn has_ctor(&self, name: &str) -> bool {
-        self.ctors.contains_key(name) || self.ambiguous_ctors.contains_key(name)
+    pub fn has_ctor(&self, name: &Name) -> bool {
+        self.ctors.contains_key(name)
+            || self.ambiguous_ctors.contains_key(name)
+            || matches!(name, Name::Selection(selection) if selection.candidates().iter().any(|reference| self.ctors.contains_key(&Name::Global(reference.clone()))))
     }
 
-    pub fn nullary(&self, name: &str, expected: Option<&Ty>) -> bool {
-        let is_nullary = |(d, c): &(String, usize)| {
+    pub fn nullary(&self, name: &Name, expected: Option<&Ty>) -> bool {
+        let is_nullary = |(d, c): &(Name, usize)| {
             self.decls[d].constructors[*c].fields.is_empty() && !self.decls[d].is_struct
         };
         match self.resolve_ctor(name, expected) {
             Ok(c) => is_nullary(c),
-            Err(_) => self
-                .ambiguous_ctors
-                .get(name)
-                .is_some_and(|cs| cs.iter().any(is_nullary)),
+            Err(_) => match name {
+                Name::Selection(selection) => selection.candidates().iter().any(|reference| {
+                    self.ctors
+                        .get(&Name::Global(reference.clone()))
+                        .is_some_and(is_nullary)
+                }),
+                _ => self
+                    .ambiguous_ctors
+                    .get(name)
+                    .is_some_and(|cs| cs.iter().any(is_nullary)),
+            },
         }
     }
 
     /// Every constructor `name` may be is one without fields: `name()` is
     /// then its value, as `name` is.
-    pub fn only_nullary(&self, name: &str) -> bool {
-        let is_nullary = |(d, c): &(String, usize)| {
+    pub fn only_nullary(&self, name: &Name) -> bool {
+        let is_nullary = |(d, c): &(Name, usize)| {
             self.decls[d].constructors[*c].fields.is_empty() && !self.decls[d].is_struct
         };
+        if let Name::Selection(selection) = name {
+            let candidates: Vec<_> = selection
+                .candidates()
+                .iter()
+                .filter_map(|reference| self.ctors.get(&Name::Global(reference.clone())))
+                .collect();
+            return !candidates.is_empty() && candidates.into_iter().all(is_nullary);
+        }
         match self.ambiguous_ctors.get(name) {
             Some(cs) => cs.iter().all(is_nullary),
             None => self.ctors.get(name).is_some_and(is_nullary),
         }
     }
 
-    fn register_ctor(&mut self, name: String, owner: String, index: usize) {
+    fn register_ctor(&mut self, name: Name, owner: Name, index: usize) {
         let c = (owner, index);
         if let Some(cs) = self.ambiguous_ctors.get_mut(&name) {
             if let Some(old) = cs.iter_mut().find(|(d, _)| d == &c.0) {
@@ -452,7 +534,10 @@ impl Datas {
                 if self.decls.get(n).is_some_and(|d| d.view) {
                     return Some(true);
                 }
-                if matches!(n.as_str(), "Option" | "Result" | "Pair") {
+                if ["Option", "Result", "Pair"]
+                    .iter()
+                    .any(|native| tauto_surface::bindings::is_library(n, native))
+                {
                     let mut found = None;
                     for a in args {
                         if let Some(m) = self.view_borrow(a) {
@@ -474,7 +559,7 @@ impl Datas {
 
     /// Whether `class` (a structural one: `PartialEq`, `DecEq`, `Hash`) holds
     /// of `t`, given the `(class, parameter)` pairs that are assumed.
-    pub fn structural(&self, class: &str, t: &Ty, assume: &[(String, Param)]) -> bool {
+    pub fn structural(&self, class: &str, t: &Ty, assume: &[(Name, Param)]) -> bool {
         self.structural_in(class, t, assume, &mut Vec::new())
     }
 
@@ -482,7 +567,7 @@ impl Datas {
         &self,
         class: &str,
         t: &Ty,
-        assume: &[(String, Param)],
+        assume: &[(Name, Param)],
         visiting: &mut Vec<Ty>,
     ) -> bool {
         match t {
@@ -493,17 +578,20 @@ impl Datas {
             Ty::Fn(..) | Ty::Info(_) | Ty::Poly(..) => false,
             // `F(X)`: nothing is known of what `F` makes.
             Ty::App(..) => false,
-            Ty::Union(ts) | Ty::Product(ts) => ts
+            Ty::Union(ts) => ts
                 .iter()
                 .all(|t| self.structural_in(class, t, assume, visiting)),
             Ty::Tagged(_, t) | Ty::Borrow(t, _) => self.structural_in(class, t, assume, visiting),
-            Ty::Param(n, _) => assume
-                .iter()
-                .any(|(c, g)| g == n && (c == class || (class == "PartialEq" && c == "DecEq"))),
+            Ty::Param(n, _) => assume.iter().any(|(c, g)| {
+                g == n
+                    && (tauto_surface::bindings::is_library(c, class)
+                        || (class == "PartialEq"
+                            && tauto_surface::bindings::is_library(&c, "DecEq")))
+            }),
             // Not known yet: checked when it is.
             Ty::Var(_) => true,
             Ty::Named(n, args) => {
-                if n == "Buf" {
+                if tauto_surface::bindings::is_library(&n, "Buf") {
                     return true;
                 }
                 let Some(d) = self.decls.get(n) else {
@@ -551,9 +639,7 @@ impl Datas {
                 Ty::Param(_, k) => *k,
                 _ => Kind::Copy,
             },
-            Ty::Union(ts) | Ty::Product(ts) => {
-                ts.iter().fold(Kind::Copy, |k, t| k.join(self.kind_in(t)))
-            }
+            Ty::Union(ts) => ts.iter().fold(Kind::Copy, |k, t| k.join(self.kind_in(t))),
             Ty::Tagged(_, t) | Ty::Borrow(t, _) => self.kind_in(t),
             Ty::Param(_, k) => *k,
             Ty::Info(_) => Kind::Affine,
@@ -581,7 +667,7 @@ impl Datas {
                 Ty::Param(_, k) => (*k, *k),
                 _ => (Kind::Copy, Kind::Linear),
             },
-            Ty::Union(ts) | Ty::Product(ts) => ts
+            Ty::Union(ts) => ts
                 .iter()
                 .fold((Kind::Copy, Kind::Copy), |k, t| join(k, self.kind_range(t))),
             Ty::Tagged(_, t) | Ty::Borrow(t, _) => self.kind_range(t),
@@ -610,7 +696,7 @@ impl Datas {
     /// other arguments (`enum W(A) { Leaf(A), Node(W(F)) }`), which the least
     /// solution counts.
     pub fn summarize(&mut self) {
-        let mut names: Vec<String> = self.decls.keys().cloned().collect();
+        let mut names: Vec<Name> = self.decls.keys().cloned().collect();
         names.sort();
         for d in self.decls.values_mut() {
             let mut base = d.declared.unwrap_or(Kind::Copy);
@@ -651,14 +737,14 @@ impl Datas {
 
     /// The kind of field type `t` over `generics`, but for the arguments:
     /// the generics whose arguments count go into `holds`.
-    fn field_kind(&self, t: &Ty, generics: &[Param], holds: &mut Vec<String>) -> Kind {
+    fn field_kind(&self, t: &Ty, generics: &[Param], holds: &mut Vec<Name>) -> Kind {
         match t {
             Ty::Param(n, k) => {
                 if !generics.contains(n) {
                     return *k;
                 }
-                if !holds.iter().any(|g| g == n.name()) {
-                    holds.push(n.name().to_string());
+                if !holds.contains(&n.name) {
+                    holds.push(n.name.clone());
                 }
                 Kind::Copy
             }
@@ -666,7 +752,7 @@ impl Datas {
             Ty::App(h, x) => self
                 .field_kind(h, generics, holds)
                 .join(self.field_kind(x, generics, holds)),
-            Ty::Union(ts) | Ty::Product(ts) => ts.iter().fold(Kind::Copy, |k, t| {
+            Ty::Union(ts) => ts.iter().fold(Kind::Copy, |k, t| {
                 k.join(self.field_kind(t, generics, holds))
             }),
             Ty::Tagged(_, t) | Ty::Borrow(t, _) => self.field_kind(t, generics, holds),
@@ -726,9 +812,7 @@ impl Datas {
                 visiting.pop();
                 why
             }
-            Ty::Union(ts) | Ty::Product(ts) => {
-                ts.iter().find_map(|t| self.no_clone_in(t, visiting))
-            }
+            Ty::Union(ts) => ts.iter().find_map(|t| self.no_clone_in(t, visiting)),
             Ty::Tagged(_, t) => self.no_clone_in(t, visiting),
             Ty::Param(..) => Some(format!("{t} has no clone")),
             _ => Some(format!("{t} has no clone")),
@@ -738,15 +822,19 @@ impl Datas {
     /// A record pattern's patterns in the order of the struct's fields.
     pub fn positional(
         &self,
-        name: &str,
+        name: &Name,
         fields: &[(String, Pattern)],
         expected: Option<&Ty>,
-    ) -> Result<Vec<Pattern>, String> {
+    ) -> Result<Vec<Pattern>, Message> {
         let (d, c) = self.resolve_ctor(name, expected)?;
         let declared = &self.decls[d].constructors[*c].fields;
         for (f, _) in fields {
             if !declared.iter().any(|(n, _)| n.as_deref() == Some(f)) {
-                return Err(format!("{name} has no field `{f}`"));
+                return Err(msg!(
+                    "nibcheck-no-field",
+                    name = name.to_string(),
+                    field = f.as_str()
+                ));
             }
         }
         declared
@@ -757,12 +845,13 @@ impl Datas {
                     .iter()
                     .find(|(f, _)| f == n)
                     .map(|(_, p)| p.clone())
-                    .ok_or_else(|| format!("field `{n}` is missing from the pattern"))
+                    .ok_or_else(|| msg!("nibcheck-pattern-field-missing", field = n))
             })
             .collect()
     }
 
-    pub fn fields(&self, d: &str, c: usize, args: &[Ty]) -> Vec<(Option<String>, Ty)> {
+    /// The field types of constructor `c` of `d` at the type arguments.
+    pub fn fields(&self, d: &Name, c: usize, args: &[Ty]) -> Vec<(Option<String>, Ty)> {
         let Some(data) = self.decls.get(d) else {
             return Vec::new();
         };
@@ -786,7 +875,7 @@ impl Data {
             .collect()
     }
 
-    fn mentions(&self, generic: &str) -> bool {
+    fn mentions(&self, generic: &Name) -> bool {
         let Some(index) = self.generics.iter().position(|g| g == generic) else {
             return false;
         };
@@ -815,8 +904,11 @@ pub struct TypeReport {
     pub lets: Vec<(String, String)>,
     /// The type of each name a program binds, keyed by the name and where it
     /// is bound (see [`site`]).
-    pub locals: HashMap<(String, TermId), Ty>,
+    pub locals: HashMap<(Name, TermId), Ty>,
+    /// The type of each expression, by occurrence identity.
     pub terms: HashMap<TermId, Ty>,
+    /// The declaration selected at each type reference occurrence.
+    pub type_references: HashMap<TermId, Name>,
     /// The declaration's own type arguments at each named function use.
     /// Captured outer parameters are not instantiated by that use.
     pub instantiations: HashMap<TermId, HashMap<ParamId, Ty>>,
@@ -827,18 +919,21 @@ pub struct TypeReport {
     /// value to (the `E` of `catch`): what a caller performs fixes them.
     pub effect_generics: HashSet<ParamId>,
     pub datas: Datas,
-    pub quants: HashMap<String, Quant>,
+    /// Each operation's resume quantity.
+    pub quants: HashMap<Name, Quant>,
     /// Every function's type (the prelude's, the `extern`s', the program's).
-    pub schemes: HashMap<String, Scheme>,
+    pub schemes: HashMap<Name, Scheme>,
     /// The functions written inside a body whose name no other function
     /// has (not scoped: for a backend that lifts them to the top).
-    pub local_schemes: HashMap<String, Scheme>,
-    pub effects: HashMap<String, EffectSig>,
+    pub local_schemes: HashMap<Name, Scheme>,
+    /// Every operation's signature.
+    pub effects: HashMap<Name, EffectSig>,
     /// For each use of a function that has class constraints, the evidence
     /// for each of them in the order of the function's `preds`, by the identity
     /// of the use.
     pub evidence: HashMap<TermId, Vec<Ev>>,
-    pub classes: HashMap<String, crate::surface::ClassDecl>,
+    /// The classes, as declared, by name.
+    pub classes: HashMap<Name, crate::surface::ClassDecl>,
     /// The terms, by their spans, whose product value is taken to fewer
     /// members (`A × B <: A`), with the type it is taken to. Taking one twice
     /// gives the same value.
@@ -862,7 +957,7 @@ pub struct TypeReport {
 struct NominalFacts {
     program: Program,
     occurrences: Vec<TermId>,
-    owners: HashMap<TermId, String>,
+    owners: HashMap<TermId, Name>,
 }
 
 fn value_occurrences(program: &Program) -> Vec<TermId> {
@@ -880,10 +975,10 @@ fn value_occurrences(program: &Program) -> Vec<TermId> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ev {
     /// The `where` of the function the use is in: the class and the generic.
-    Assume(String, Param),
+    Assume(Name, Param),
     /// An instance of the class for the type constructor, the types its
     /// generics were matched to, and the evidence for its `where`.
-    Inst(String, String, Vec<Ty>, Vec<Ev>),
+    Inst(Name, Name, Vec<Ty>, Vec<Ev>),
     /// A structural predicate: no run-time value.
     Structural,
     /// Not found: an error was reported.
@@ -902,6 +997,20 @@ pub fn prelude_report() -> &'static TypeReport {
     })
 }
 
+pub fn prelude_report_for(program: &Program) -> &'static TypeReport {
+    let library = prelude_for(program);
+    if std::ptr::eq(library, prelude()) {
+        return prelude_report();
+    }
+    static REPORT: OnceLock<TypeReport> = OnceLock::new();
+    REPORT.get_or_init(|| {
+        CHECKING_PRELUDE.set(true);
+        let report = check_program(library);
+        CHECKING_PRELUDE.set(false);
+        report
+    })
+}
+
 thread_local! {
     /// Set while [`prelude_report`] is being made, which cannot read itself.
     static CHECKING_PRELUDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -912,7 +1021,7 @@ impl TypeReport {
     /// Function types contribute only their nominal result owner, never a
     /// callable contract or an effect row. Reused expression IDs contribute
     /// no owner. Public type-table edits cannot alter these sealed facts.
-    pub fn nominal_owners_for(&self, program: &Program) -> Option<&HashMap<TermId, String>> {
+    pub fn nominal_owners_for(&self, program: &Program) -> Option<&HashMap<TermId, Name>> {
         let facts = self.nominal_facts.as_ref()?;
         if !self.errors.is_empty()
             || &facts.program != program
@@ -958,14 +1067,27 @@ impl TypeReport {
 
     /// A function's scheme: a top-level function's, or a local one's whose
     /// name is not used twice.
-    pub fn scheme(&self, name: &str) -> Option<&Scheme> {
+    pub fn scheme(&self, name: &Name) -> Option<&Scheme> {
         self.schemes
             .get(name)
             .or_else(|| self.local_schemes.get(name))
     }
 
-    pub fn with_prelude(mut self) -> Self {
-        let lib = prelude_report();
+    /// Adds what the prelude's report knows of its own functions.
+    pub fn with_prelude(self) -> Self {
+        self.with_library_report(prelude_report())
+    }
+
+    pub fn with_prelude_for(self, program: &Program) -> Self {
+        self.with_library_report(prelude_report_for(program))
+    }
+
+    fn with_library_report(mut self, lib: &TypeReport) -> Self {
+        self.type_references.extend(
+            lib.type_references
+                .iter()
+                .map(|(id, name)| (*id, name.clone())),
+        );
         self.terms
             .extend(lib.terms.iter().map(|(k, v)| (*k, v.clone())));
         self.locals
@@ -973,11 +1095,14 @@ impl TypeReport {
         self.instantiations
             .extend(lib.instantiations.iter().map(|(k, v)| (*k, v.clone())));
         self.widths.extend(lib.widths.iter().map(|(k, v)| (*k, *v)));
+        self.product_fits
+            .extend(lib.product_fits.iter().map(|(k, v)| (*k, v.clone())));
         self
     }
 
-    pub fn local(&self, name: &str, site: TermId) -> Option<&Ty> {
-        self.locals.get(&(name.to_string(), site))
+    /// The type of the name `name` bound at `site`.
+    pub fn local(&self, name: &Name, site: TermId) -> Option<&Ty> {
+        self.locals.get(&(name.clone(), site))
     }
 
     pub fn term(&self, t: &SurfaceTerm) -> Option<&Ty> {
@@ -998,9 +1123,9 @@ pub fn site(t: &SurfaceTerm) -> TermId {
 
 /// What the class-aware check found in a program whose classes could not be
 /// expanded (`expand_loaded`), or `None` for one that expanded.
-pub fn unexpanded_errors(program: &Program) -> Option<&[(String, Span)]> {
+pub fn unexpanded_errors(program: &Program) -> Option<&[(tauto_message::Message, Span)]> {
     match program.errors.split_first() {
-        Some(((m, _), rest)) if m == expand::UNEXPANDED => Some(rest),
+        Some(((m, _), rest)) if m.as_text() == Some(expand::UNEXPANDED) => Some(rest),
         _ => None,
     }
 }
@@ -1015,7 +1140,7 @@ pub fn check_program(program: &Program) -> TypeReport {
         }
         return c.finish();
     }
-    let mut report = check_program_in(program, prelude());
+    let mut report = check_program_in(program, prelude_for(program));
     // A program still using a class did not expand: what the class-aware
     // check finds kept it from expanding, and the rest (`Ord is not defined`)
     // follows from that.
@@ -1043,6 +1168,20 @@ pub fn check_program_in(program: &Program, prelude: &Program) -> TypeReport {
     report
 }
 
+/// [`check_program_in`] reading the rows given to row parameters as types
+/// (`Checker::rows_as_types`), for the index expansion to infer from. Its
+/// errors are not the program's.
+pub(crate) fn check_program_rows_as_types(program: &Program, prelude: &Program) -> TypeReport {
+    let mut c = Checker {
+        rows_as_types: true,
+        ..Checker::default()
+    };
+    c.run(program, prelude);
+    let mut report = c.finish();
+    report.seal_operation_instances(program);
+    report
+}
+
 /// The report as text, for `totes/nibcheck` to write the same: the errors in
 /// order, the top-level lets, and then the locals, terms, widths, quantities,
 /// declarations and constructors, each sorted. A type is written with
@@ -1051,8 +1190,8 @@ pub fn check_program_in(program: &Program, prelude: &Program) -> TypeReport {
 pub fn dump_types(report: &TypeReport) -> String {
     let mut out = String::new();
     for e in &report.errors {
-        let mut message = e.message.clone();
-        if let Some(rest) = message.strip_prefix("not supported yet: ") {
+        let mut message = e.message.to_string();
+        if let Some(rest) = message.clone().strip_prefix("not supported yet: ") {
             let name = rest.split(['(', ' ']).next().unwrap_or("");
             message = format!("not supported yet: {name}");
         }
@@ -1109,7 +1248,11 @@ pub fn dump_types(report: &TypeReport) -> String {
             d.recursive,
             d.is_struct,
             d.builtin,
-            d.generics.join(","),
+            d.generics
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
             ctors.join(";")
         ));
     }
@@ -1142,7 +1285,6 @@ pub fn dump_ty(t: &Ty) -> String {
         Ty::Float32 => "Float32".into(),
         Ty::Fn(ps, r, k) => format!("Fn({},{},{k})", list(ps), dump_ty(r)),
         Ty::Union(ts) => format!("Union({})", list(ts)),
-        Ty::Product(ts) => format!("Product({})", list(ts)),
         Ty::Tagged(tags, t) => {
             let tags: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
             format!("Tagged([{}],{})", tags.join(","), dump_ty(t))
@@ -1164,6 +1306,46 @@ pub fn dump_ty(t: &Ty) -> String {
 /// and the affine standard library. A program's own
 /// declaration of a name hides the prelude's.
 static PRELUDE: OnceLock<Program> = OnceLock::new();
+
+fn has_references(program: &Program) -> bool {
+    let mut resolved = tauto_surface::bindings::declared_names(&program.stmts)
+        .iter()
+        .any(|n| n.is_resolved());
+    if !resolved {
+        for statement in &program.stmts {
+            let mut statement = statement.clone();
+            crate::surface::walk::stmt(&mut statement, &mut |term| match &*term.kind {
+                TermKind::Var(name) | TermKind::Perform { effect: name, .. } => {
+                    resolved |= name.is_resolved()
+                }
+                _ => {}
+            });
+            if resolved {
+                break;
+            }
+        }
+    }
+    resolved
+}
+
+pub fn prelude_for(program: &Program) -> &'static Program {
+    let resolved = has_references(program);
+    if !resolved {
+        return prelude();
+    }
+    static RESOLVED: OnceLock<Program> = OnceLock::new();
+    RESOLVED.get_or_init(|| {
+        let mut program = expand::expand_prelude(
+            resolved_prelude_source().clone(),
+            crate::surface::PRELUDE_BASE + (1 << 30),
+        );
+        tauto_surface::resolve::Resolver::new(
+            tauto_surface::bindings::library_definition_bindings(),
+        )
+        .statements(&mut program.stmts);
+        program
+    })
+}
 
 pub fn prelude() -> &'static Program {
     PRELUDE.get_or_init(|| {
@@ -1212,6 +1394,29 @@ pub fn prelude_source() -> &'static Program {
     })
 }
 
+fn resolved_prelude_source() -> &'static Program {
+    static SOURCE: OnceLock<Program> = OnceLock::new();
+    SOURCE.get_or_init(|| {
+        let mut program = prelude_source().clone();
+        for statement in &mut program.stmts {
+            crate::surface::walk::stmt(statement, &mut SurfaceTerm::freshen);
+        }
+        tauto_surface::resolve::Resolver::new(
+            tauto_surface::bindings::library_definition_bindings(),
+        )
+        .statements(&mut program.stmts);
+        program
+    })
+}
+
+pub(super) fn prelude_source_for(program: &Program) -> &'static Program {
+    if has_references(program) {
+        resolved_prelude_source()
+    } else {
+        prelude_source()
+    }
+}
+
 const OPERATORS: &[&str] = &[
     "+", "-", "*", "/", "==", "!=", "<", ">", "<=", ">=", "&&", "||",
 ];
@@ -1225,7 +1430,7 @@ pub enum ParamId {
         index: usize,
     },
     Data {
-        data: String,
+        data: Name,
         index: usize,
     },
     Effect {
@@ -1233,7 +1438,7 @@ pub enum ParamId {
         index: usize,
     },
     Instance {
-        class: String,
+        class: Name,
         head: TermId,
         index: usize,
     },
@@ -1251,7 +1456,7 @@ pub enum ParamId {
 /// and path distinguish declarations even when their bodies share a term.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FunctionOwner {
-    name: String,
+    name: Name,
     body: TermId,
     parent: Option<Box<FunctionOwner>>,
     site: Vec<usize>,
@@ -1259,7 +1464,7 @@ pub struct FunctionOwner {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct EffectOwner {
-    name: String,
+    name: Name,
     occurrence: TermId,
     function: Option<FunctionOwner>,
     site: Vec<usize>,
@@ -1267,7 +1472,7 @@ pub struct EffectOwner {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct StableFunctionOwner {
-    name: String,
+    name: Name,
     parent: Option<Box<StableFunctionOwner>>,
     site: Vec<usize>,
 }
@@ -1285,11 +1490,11 @@ impl FunctionOwner {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum StableParamKey {
     Function(StableFunctionOwner, usize),
-    Data(String, usize),
-    Effect(Option<StableFunctionOwner>, String, Vec<usize>, usize),
-    Instance(String, u32, usize),
+    Data(Name, usize),
+    Effect(Option<StableFunctionOwner>, Name, Vec<usize>, usize),
+    Instance(Name, u32, usize),
     Poly(u32, usize),
-    Skolem(String),
+    Skolem(Name),
     KindWitness(Kind),
 }
 
@@ -1298,11 +1503,11 @@ enum StableParamKey {
 #[derive(Debug, Clone)]
 pub struct Param {
     id: ParamId,
-    name: String,
+    name: Name,
 }
 
 impl Param {
-    fn new(id: ParamId, name: impl Into<String>) -> Self {
+    fn new(id: ParamId, name: impl Into<Name>) -> Self {
         Self {
             id,
             name: name.into(),
@@ -1312,11 +1517,14 @@ impl Param {
     pub fn id(&self) -> &ParamId {
         &self.id
     }
+    pub fn reference(&self) -> &Name {
+        &self.name
+    }
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    fn data(data: &str, index: usize, name: &str) -> Self {
+    fn data(data: &Name, index: usize, name: &Name) -> Self {
         Self::new(
             ParamId::Data {
                 data: data.into(),
@@ -1326,7 +1534,7 @@ impl Param {
         )
     }
 
-    fn effect(owner: &EffectOwner, index: usize, name: &str) -> Self {
+    fn effect(owner: &EffectOwner, index: usize, name: &Name) -> Self {
         Self::new(
             ParamId::Effect {
                 owner: owner.clone(),
@@ -1404,7 +1612,8 @@ pub struct Scheme {
     /// A [`Ty::Fn`]: the parameters (a borrowed one a [`Ty::Borrow`]), the
     /// result.
     pub ty: Ty,
-    pub preds: Vec<(String, Param)>,
+    /// The `where` constraints: the class and the generic it constrains.
+    pub preds: Vec<(Name, Param)>,
     /// The generics that are type constructors, with the kind each takes;
     /// the kind in `generics` is the one it makes.
     pub ctors: Vec<(Param, Kind)>,
@@ -1412,7 +1621,7 @@ pub struct Scheme {
 
 mod classes;
 mod expand;
-mod indices;
+pub(crate) mod indices;
 pub(crate) use classes::Unresolved;
 pub use expand::{expand_classes, expand_loaded, expansion_errors, index_expansion_errors};
 
@@ -1422,10 +1631,10 @@ pub const STRUCTURAL: &[&str] = &["PartialEq", "DecEq", "Hash"];
 /// A constraint to check once the types are known: `ty` has the `class` the
 /// use of `what` asks for, given what the enclosing function assumes.
 struct Pending {
-    class: String,
+    class: Name,
     ty: Ty,
     what: String,
-    assume: Vec<(String, Param)>,
+    assume: Vec<(Name, Param)>,
     span: Span,
     /// Which constraint of which use this is: the occurrence, its index
     /// among the function's constraints, and how many there are.
@@ -1449,7 +1658,7 @@ enum Instantiation {
 
 #[derive(Clone)]
 struct Local {
-    name: String,
+    name: Name,
     /// A named local function is instantiated at each use; other values are not.
     scheme: Option<Scheme>,
     instantiation: Instantiation,
@@ -1459,11 +1668,20 @@ struct Local {
     view: bool,
 }
 
+/// The name of the type a row is read as (`Checker::rows_as_types`). No
+/// program can write it.
+pub(crate) const ROW_TYPE: &str = "!row";
+/// A row's tail inside a [`ROW_TYPE`] type.
+pub(crate) const ROW_TAIL: &str = "!tail";
+
 #[derive(Default)]
 struct Checker {
-    classes: HashMap<String, classes::ClassInfo>,
+    /// Whether the program being checked names its declarations by reference.
+    resolved_names: bool,
+    type_references: HashMap<TermId, Name>,
+    classes: HashMap<Name, classes::ClassInfo>,
     /// By class and the constructor at the head of the instance.
-    instances: HashMap<(String, String), classes::InstanceInfo>,
+    instances: HashMap<(Name, Name), classes::InstanceInfo>,
     subst: Vec<Option<Ty>>,
     /// While an argument is checked against a general type: the first variable
     /// made for the argument itself; none otherwise.
@@ -1476,63 +1694,72 @@ struct Checker {
     constructor_position: bool,
     /// How many rigid generics `fits` has made, for their names.
     rigids: usize,
-    fns: HashMap<String, Scheme>,
+    fns: HashMap<Name, Scheme>,
     /// The prelude's functions that only its own code calls: the externs
     /// that answer the standard effects, each marked by the effect in its
     /// row, and the functions of `module Host` that wrap them
     /// (`std/prelude/Os.taut`).
-    host_only: HashSet<String>,
-    local_fns: Vec<(String, Scheme)>,
-    effects: HashMap<String, EffectSig>,
+    host_only: HashSet<Name>,
+    local_fns: Vec<(Name, Scheme)>,
+    effects: HashMap<Name, EffectSig>,
     builtin_show_owner: Option<EffectOwner>,
     operation_performs: Vec<(TermId, CheckedOperationInstance)>,
     operation_arms: Vec<ArmObservation>,
-    quants: HashMap<String, Quant>,
+    quants: HashMap<Name, Quant>,
     datas: Datas,
     errors: Vec<TypeError>,
-    constructor_uses: Vec<(String, Ty, Span)>,
-    constructor_records: Vec<(String, Ty, Vec<(String, Ty, Span)>, Span)>,
+    constructor_uses: Vec<(Name, Ty, Span)>,
+    /// What each `$x` and `$(e)` of a `quote` fills an expression with
+    /// (`Syn::expr_of`'s argument): checked in [`Checker::finish`] to be
+    /// a `SynExpr`, a `SynIdent` or a `Judgement`.
+    splices: Vec<(TermId, Span)>,
+    constructor_records: Vec<(Name, Ty, Vec<(String, Ty, Span)>, Span)>,
     ops: Vec<(TermId, Ty)>,
     literals: Vec<(Span, i128, Ty)>,
     /// The result type a `return` gives, innermost function last.
     returns: Vec<Ty>,
     /// The body type of the budgets the nearest `exceeded` arm answers.
     exceeded: Vec<Ty>,
-    lets: Vec<(String, Ty)>,
+    lets: Vec<(Name, Ty)>,
     /// A type that must fit a bound: an instantiated type parameter.
     bounds: Vec<(Ty, Kind, Span)>,
     /// What the function being checked may assume: its `where`.
-    assume: Vec<(String, Param)>,
+    assume: Vec<(Name, Param)>,
     /// The current function's own type binders for local annotations.
-    type_params: HashMap<String, Ty>,
+    type_params: HashMap<Name, Ty>,
     function_owner: Option<FunctionOwner>,
     declaration_path: Vec<usize>,
     term_path: Vec<usize>,
     term_children: Vec<usize>,
     /// Constraints of the uses, checked in [`Checker::finish`].
     pending: Vec<Pending>,
-    locals: Vec<((String, TermId), Ty)>,
+    locals: Vec<((Name, TermId), Ty)>,
     terms: Vec<(TermId, Ty)>,
     instantiations: Vec<(TermId, HashMap<ParamId, Ty>)>,
     /// The effects a row names with type arguments, and the arguments each
     /// `perform` and arm of one of them is checked with.
-    indexed: HashSet<String>,
+    indexed: HashSet<Name>,
     effect_args: Vec<(TermId, Vec<Ty>)>,
     /// By function, the generics its rows use as an index.
-    index_generics: HashMap<String, HashSet<String>>,
+    index_generics: HashMap<Name, HashSet<Name>>,
     /// The generics a function's own row names as its tail (`! e`): rows,
     /// which these types do not follow, even where a type mentions them as
     /// an argument (`Handlers(e)`).
     row_generics: HashSet<ParamId>,
     /// Each use of a generic function with the type arguments it was given,
     /// by the generics' names: checked in [`Checker::finish`] to be determined.
-    undetermined: Vec<(TermId, String, Vec<(Param, Ty)>)>,
+    undetermined: Vec<(TermId, Name, Vec<(Param, Ty)>)>,
     /// The variables a handler arm stands for its operation's generics with.
     arm_generics: Vec<usize>,
     /// The positions of each data type's row parameters. The row check
     /// (`rows`) reads what is given there; to the types it is `()`, so that a
     /// row says nothing a type must agree on.
-    row_params: HashMap<String, Vec<usize>>,
+    row_params: HashMap<Name, Vec<usize>>,
+    /// Read a row given to a row parameter as a type (`ROW_TYPE`) instead of
+    /// `()`. Only the index expansion's inference (`indices.rs`) asks for it.
+    rows_as_types: bool,
+    /// The generics of effects that are declared row variables, `<!e>`.
+    effect_rows: HashSet<ParamId>,
     /// [`TypeReport::effect_generics`] of the prelude, whose bodies are not
     /// checked with the program.
     prelude_effect_generics: HashSet<ParamId>,
@@ -1541,7 +1768,8 @@ struct Checker {
     closure_results: Vec<(Ty, Span)>,
     /// Owned captures and the function kind fixed at their declaration.
     /// Inference may not later grant the function weaker ownership.
-    capture_kinds: Vec<(Vec<(String, Ty)>, Kind, Span)>,
+    capture_kinds: Vec<(Vec<(Name, Ty)>, Kind, Span)>,
+    /// The expected type of the lambda being checked.
     hint: Option<Ty>,
     /// The type the next term is checked against, when it is in a result
     /// position: a function's body, a `return`, and their tails. A call
@@ -1562,7 +1790,7 @@ struct Checker {
 }
 
 impl Checker {
-    fn error(&mut self, message: impl Into<String>, span: Span) {
+    fn error(&mut self, message: impl Into<tauto_message::Message>, span: Span) {
         self.errors.push(TypeError {
             message: message.into(),
             span,
@@ -1594,7 +1822,6 @@ impl Checker {
                 *k,
             ),
             Ty::Union(ts) => union(ts.iter().map(|t| self.resolve(t)).collect()),
-            Ty::Product(ts) => product(ts.iter().map(|t| self.resolve(t)).collect()),
             Ty::Tagged(tags, t) => tagged(tags.clone(), self.resolve(t)),
             Ty::Named(n, args) => {
                 Ty::Named(n.clone(), args.iter().map(|a| self.resolve(a)).collect())
@@ -1615,7 +1842,7 @@ impl Checker {
         match self.resolve(t) {
             Ty::Var(i) => i == v,
             Ty::Fn(ps, r, _) => ps.iter().any(|p| self.occurs(v, p)) || self.occurs(v, &r),
-            Ty::Union(ts) | Ty::Product(ts) => ts.iter().any(|t| self.occurs(v, t)),
+            Ty::Union(ts) => ts.iter().any(|t| self.occurs(v, t)),
             Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) | Ty::Poly(_, t) => {
                 self.occurs(v, &t)
             }
@@ -1650,7 +1877,6 @@ impl Checker {
     /// function are the same here: they differ only at run time.
     fn unify(&mut self, a: &Ty, b: &Ty) -> Result<(), ()> {
         let (a, b) = (self.resolve(a), self.resolve(b));
-        // `Pair(A, B)` is the inductive `Pair`, never the product `A × B`.
         match (&a, &b) {
             (Ty::Var(v), _) => self.bind(*v, b),
             (_, Ty::Var(v)) => self.bind(*v, a),
@@ -1687,7 +1913,9 @@ impl Checker {
                 }
                 self.unify(ra, rb)
             }
-            (Ty::Named(na, xa), Ty::Named(nb, xb)) if na == nb && xa.len() == xb.len() => {
+            (Ty::Named(na, xa), Ty::Named(nb, xb))
+                if (na == nb || (is_pair_name(na) && is_pair_name(nb))) && xa.len() == xb.len() =>
+            {
                 for (x, y) in xa.iter().zip(xb) {
                     self.unify(x, y)?;
                 }
@@ -1696,32 +1924,6 @@ impl Checker {
             (Ty::Info(x), Ty::Info(y)) => self.unify(x, y),
             (Ty::Borrow(x, ma), Ty::Borrow(y, mb)) if ma == mb => self.unify(x, y),
             (Ty::Tagged(ta, x), Ty::Tagged(tb, y)) if ta == tb => self.unify(x, y),
-            // Members stand in the order written.
-            (Ty::Product(xa), Ty::Product(xb)) if xa.len() == xb.len() => {
-                for (x, y) in xa.iter().zip(xb) {
-                    self.unify(x, y)?;
-                }
-                Ok(())
-            }
-            // `A × B × C` is `A × (B × C)`: a product whose last member is unknown takes
-            // the members of a longer product in order, and that last member stands for
-            // the product of the rest (`_ × _` is `i64 × (i64 × i64)` for `i64 × i64 × i64`).
-            (Ty::Product(xa), Ty::Product(xb)) if xa.len() != xb.len() => {
-                let (short, long) = if xa.len() < xb.len() {
-                    (xa, xb)
-                } else {
-                    (xb, xa)
-                };
-                let n = short.len() - 1;
-                let last = self.resolve(&short[n]);
-                if !matches!(last, Ty::Var(v) if !self.ints.contains(&v)) {
-                    return Err(());
-                }
-                for (x, y) in short[..n].iter().zip(long) {
-                    self.unify(x, y)?;
-                }
-                self.unify(&last, &product(long[n..].to_vec()))
-            }
             (Ty::Union(xa), Ty::Union(xb)) if xa.len() == xb.len() => {
                 for (x, y) in xa.iter().zip(xb) {
                     self.unify(x, y)?;
@@ -1730,49 +1932,6 @@ impl Checker {
             }
             _ if a == b => Ok(()),
             _ => Err(()),
-        }
-    }
-
-    /// The members of `t`, a `Pair` nested to the right, in their places.
-    fn pair_members(&self, t: &Ty) -> Vec<Ty> {
-        let mut out = Vec::new();
-        let mut at = self.resolve(t);
-        loop {
-            match at {
-                Ty::Named(n, args) if is_pair_name(&n) && args.len() == 2 => {
-                    out.push(self.resolve(&args[0]));
-                    at = self.resolve(&args[1]);
-                }
-                t => {
-                    out.push(t);
-                    return out;
-                }
-            }
-        }
-    }
-
-    /// `t` as a product: a `Pair(A, B)` (nested to the right) is `A × B`.
-    fn as_product(&self, t: &Ty) -> Option<Ty> {
-        fn members(c: &Checker, t: Ty, out: &mut Vec<Ty>) {
-            match t {
-                Ty::Named(n, args) if is_pair_name(&n) && args.len() == 2 => {
-                    out.push(c.resolve(&args[0]));
-                    members(c, c.resolve(&args[1]), out);
-                }
-                t => out.push(t),
-            }
-        }
-        match t {
-            Ty::Product(_) => Some(t.clone()),
-            Ty::Named(n, args) if is_pair_name(n) && args.len() == 2 => {
-                let mut out = Vec::new();
-                members(self, t.clone(), &mut out);
-                match out.len() {
-                    0 | 1 => None,
-                    _ => Some(Ty::Product(out)),
-                }
-            }
-            _ => None,
         }
     }
 
@@ -1827,7 +1986,7 @@ impl Checker {
             Ty::Fn(ps, r, _) => {
                 ps.iter().any(|p| self.mentions(names, p)) || self.mentions(names, &r)
             }
-            Ty::Union(ts) | Ty::Product(ts) => ts.iter().any(|t| self.mentions(names, t)),
+            Ty::Union(ts) => ts.iter().any(|t| self.mentions(names, t)),
             Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) | Ty::Poly(_, t) => {
                 self.mentions(names, &t)
             }
@@ -1853,7 +2012,7 @@ impl Checker {
             Ty::Fn(ps, r, _) => {
                 ps.iter().any(|p| self.has_open_vars(p, except)) || self.has_open_vars(&r, except)
             }
-            Ty::Union(ts) | Ty::Product(ts) => ts.iter().any(|t| self.has_open_vars(t, except)),
+            Ty::Union(ts) => ts.iter().any(|t| self.has_open_vars(t, except)),
             Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) | Ty::Poly(_, t) => {
                 self.has_open_vars(&t, except)
             }
@@ -1867,12 +2026,23 @@ impl Checker {
         match self.resolve(t) {
             Ty::Var(_) => true,
             Ty::Fn(ps, r, _) => ps.iter().any(|p| self.has_vars(p)) || self.has_vars(&r),
-            Ty::Union(ts) | Ty::Product(ts) => ts.iter().any(|t| self.has_vars(t)),
+            Ty::Union(ts) => ts.iter().any(|t| self.has_vars(t)),
             Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) | Ty::Poly(_, t) => self.has_vars(&t),
             Ty::App(h, x) => self.has_vars(&h) || self.has_vars(&x),
             Ty::Named(_, args) => args.iter().any(|a| self.has_vars(a)),
             _ => false,
         }
+    }
+
+    /// Whether `f` succeeds, undoing what it bound either way.
+    fn probe(&mut self, f: impl FnOnce(&mut Self) -> Result<(), ()>) -> bool {
+        let (subst, ints) = (self.subst.clone(), self.ints.clone());
+        let note = self.product_note.take();
+        let r = f(self);
+        self.subst = subst;
+        self.ints = ints;
+        self.product_note = note;
+        r.is_ok()
     }
 
     /// Tries `f`, undoing what it bound when it fails.
@@ -1884,15 +2054,6 @@ impl Checker {
             self.ints = ints;
         }
         r
-    }
-
-    /// Whether `f` succeeds; what it bound is undone either way.
-    fn probe(&mut self, f: impl FnOnce(&mut Self) -> Result<(), ()>) -> bool {
-        let (subst, ints) = (self.subst.clone(), self.ints.clone());
-        let r = f(self);
-        self.subst = subst;
-        self.ints = ints;
-        r.is_ok()
     }
 
     /// A value of type `a` may stand where `b` is expected.
@@ -1959,18 +2120,21 @@ impl Checker {
             // Tags are forgotten, never added.
             (Ty::Tagged(ta, x), Ty::Tagged(tb, y)) if tb.is_subset(ta) => self.fits(x, y),
             (Ty::Tagged(_, x), _) if !matches!(b, Ty::Tagged(..)) => self.fits(x, &b),
-            // A product is written by position. Where a type is expected, its members are
-            // matched to that type's by their types (`A × B <: A`, `A × B <: B × A`), but only
-            // where both sides are closed and the members of each side differ.
-            (Ty::Product(xs), _) if self.widen_products && !matches!(b, Ty::Union(_)) => {
+            // A product is a `Pair` nested to the right. Where a type is expected, its members
+            // are matched to that type's by their types (`A × B <: A`, `A × B <: B × A`), but
+            // only where both sides are closed and the members of each side differ.
+            (Ty::Named(n, args), _)
+                if is_pair_name(n)
+                    && args.len() == 2
+                    && self.widen_products
+                    && !matches!(b, Ty::Union(_)) =>
+            {
                 if self.attempt(|c| c.unify(&a, &b)).is_ok() {
                     return Ok(());
                 }
-                let ys = match &b {
-                    Ty::Product(ys) => ys.clone(),
-                    other => vec![other.clone()],
-                };
-                self.fit_by_types(xs, &ys)
+                let xs = self.product_members(&a);
+                let ys = self.product_members(&b);
+                self.fit_by_types(&xs, &ys)
             }
             (Ty::Fn(pa, ra, ka), Ty::Fn(pb, rb, kb)) if pa.len() == pb.len() && ka.fits(*kb) => {
                 // Inside a function type a product keeps its members: nothing
@@ -2022,7 +2186,7 @@ impl Checker {
         if xs
             .iter()
             .chain(&ys)
-            .any(|t| !literal(&*self, t) && (self.has_vars(t) || has_param(t)))
+            .any(|t| !literal(&*self, t) && self.has_vars(t))
         {
             self.product_note = Some(ProductNote::Open);
             return Err(());
@@ -2052,52 +2216,7 @@ impl Checker {
         Ok(())
     }
 
-    /// The members of the `Pair` `have` that `want` takes, when `want` is
-    /// not `have` itself: each member of `want` is found by its type in
-    /// exactly one member of `have`, as the kernel reads `(e: T)`.
-    fn pair_members_taken(&mut self, have: &Ty, want: &Ty) -> Option<(Vec<usize>, usize)> {
-        fn members(t: Ty, out: &mut Vec<Ty>, resolve: &mut impl FnMut(&Ty) -> Ty) {
-            match t {
-                // Only a product has members to take; a `Pair` is one value.
-                Ty::Product(ms) => out.extend(ms.iter().map(|m| resolve(m))),
-                t => out.push(t),
-            }
-        }
-        let have = self.resolve(have).unborrowed().clone();
-        let want = self.resolve(want).unborrowed().clone();
-        if have == want || self.has_vars(&have) || self.has_vars(&want) {
-            return None;
-        }
-        let (mut from, mut to) = (Vec::new(), Vec::new());
-        members(have, &mut from, &mut |t| self.resolve(t));
-        members(want.clone(), &mut to, &mut |t| self.resolve(t));
-        if from.len() < 2 {
-            return None;
-        }
-        // `want` is one member of `have` as a whole, as `(p: Pair(A, B))` takes
-        // the left of a `Pair(Pair(A, B), C)`.
-        let whole: Vec<usize> = (0..from.len())
-            .filter(|&i| from[i] == want || self.probe(|c| c.unify(&from[i], &want)))
-            .collect();
-        if let [i] = whole[..] {
-            return Some((vec![i], from.len()));
-        }
-        let mut taken = Vec::new();
-        for m in &to {
-            match from
-                .iter()
-                .enumerate()
-                .filter(|(_, f)| *f == m)
-                .collect::<Vec<_>>()[..]
-            {
-                [(i, _)] if !taken.contains(&i) => taken.push(i),
-                _ => return None,
-            }
-        }
-        Some((taken, from.len()))
-    }
-
-    fn expect(&mut self, a: &Ty, b: &Ty, span: Span, what: &str) {
+    fn expect(&mut self, a: &Ty, b: &Ty, span: Span, what: Message) {
         self.product_note = None;
         let widen = std::mem::replace(&mut self.widen_products, true);
         let mut fitted = self.fits(a, b);
@@ -2111,21 +2230,22 @@ impl Checker {
         }
         self.widen_products = widen;
         if fitted.is_ok()
-            && let Ty::Product(_) = self.resolve(a).unborrowed()
+            && is_pair_ty(self.resolve(a).unborrowed())
             && self.resolve(a).unborrowed() != self.resolve(b).unborrowed()
         {
-            let (have, want) = (self.resolve(a), self.resolve(b));
-            let Ty::Product(have) = have.unborrowed().clone() else {
-                unreachable!()
-            };
-            let want = match want.unborrowed().clone() {
-                Ty::Product(want) => want,
-                t => vec![t],
-            };
+            let have = self.product_members(&self.resolve(a).unborrowed().clone());
+            let want = self.product_members(&self.resolve(b).unborrowed().clone());
             for m in have.iter().filter(|m| !want.contains(m)) {
                 if self.kind(m) == Kind::Linear {
                     let m = self.shown(m);
-                    self.error(format!("{what}: this forgets the linear member {m}"), span);
+                    self.error(
+                        msg!(
+                            "nibcheck-forgets-linear-member",
+                            what = what.clone(),
+                            member = m.to_string()
+                        ),
+                        span,
+                    );
                 }
             }
             self.product_fits.push((span, b.clone()));
@@ -2134,30 +2254,72 @@ impl Checker {
         if fitted.is_err() {
             let (a, b) = (self.shown(a), self.shown(b));
             let message = match (a.unborrowed(), b.unborrowed()) {
-                (Ty::Product(_), _) if matches!(note, Some(ProductNote::Open)) => format!(
-                    "{what}: {a} and {b} are matched by the types of their members only where neither mentions a type parameter or an unknown type; write the members in the same order, or tell them apart with tags"
+                (p, _) if is_pair_ty(p) && matches!(note, Some(ProductNote::Open)) => msg!(
+                    "nibcheck-mismatch-open-product",
+                    what = what,
+                    found = a.to_string(),
+                    expected = b.to_string()
                 ),
-                (Ty::Product(_), _) if matches!(note, Some(ProductNote::Clash(_))) => {
+                (p, _) if is_pair_ty(p) && matches!(note, Some(ProductNote::Clash(_))) => {
                     let Some(ProductNote::Clash(m)) = &note else {
                         unreachable!()
                     };
                     let m = self.shown(m);
-                    format!(
-                        "{what}: two members of a product have the type {m}, so the members cannot be matched by their types; write the members by position, or tell them apart with tags"
+                    msg!(
+                        "nibcheck-mismatch-product-clash",
+                        what = what,
+                        member = m.to_string()
                     )
                 }
                 (Ty::Fn(pa, _, ka), Ty::Fn(pb, _, kb)) if pa.len() == pb.len() && !ka.fits(*kb) => {
-                    format!("{what}: an {ka} closure where {kb} is expected")
+                    msg!(
+                        "nibcheck-mismatch-closure-kind",
+                        what = what,
+                        found = ka.to_string(),
+                        expected = kb.to_string()
+                    )
                 }
                 (Ty::App(..), other) | (other, Ty::App(..))
                     if !matches!(other, Ty::App(..) | Ty::Var(_) | Ty::Named(..)) =>
                 {
-                    format!("{other} is not an application of a type constructor")
+                    msg!("nibcheck-not-an-application", ty = other.to_string())
+                }
+                // `nat` and a machine integer are two types, not one type
+                // of two sizes: the kernel's `Nat` is `nat`, and the type of
+                // the width it sees is `U64` of `std::UInt` (`I64` of
+                // `std::SInt`), which runs as `u64`.
+                (Ty::Int(x), Ty::Int(y)) if (*x == Width::Nat) != (*y == Width::Nat) => {
+                    let machine = if *x == Width::Nat { y } else { x };
+                    let (checked, module) = match machine {
+                        Width::U8 => ("U8", "UInt"),
+                        Width::U32 => ("U32", "UInt"),
+                        Width::U64 => ("U64", "UInt"),
+                        Width::W32 => ("I32", "SInt"),
+                        Width::W64 | Width::Nat => ("I64", "SInt"),
+                    };
+                    msg!(
+                        "nibcheck-mismatch-number",
+                        what = what,
+                        found = a.to_string(),
+                        expected = b.to_string(),
+                        checked = checked,
+                        module = module
+                    )
                 }
                 _ if matches!(b, Ty::Borrow(..)) && !matches!(a, Ty::Borrow(..)) => {
-                    format!("{what}: {a} does not fit {b}: lend it with `&`")
+                    msg!(
+                        "nibcheck-mismatch-lend",
+                        what = what,
+                        found = a.to_string(),
+                        expected = b.to_string()
+                    )
                 }
-                _ => format!("{what}: {a} does not fit {b}"),
+                _ => msg!(
+                    "nibcheck-mismatch",
+                    what = what,
+                    found = a.to_string(),
+                    expected = b.to_string()
+                ),
             };
             self.error(message, span);
         }
@@ -2173,7 +2335,6 @@ impl Checker {
                 k,
             ),
             Ty::Union(ts) => union(ts.iter().map(|t| self.shown(t)).collect()),
-            Ty::Product(ts) => product(ts.iter().map(|t| self.shown(t)).collect()),
             Ty::Tagged(tags, t) => tagged(tags, self.shown(&t)),
             Ty::Named(n, args) => Ty::Named(n, args.iter().map(|a| self.shown(a)).collect()),
             Ty::Info(t) => Ty::Info(Box::new(self.shown(&t))),
@@ -2209,6 +2370,32 @@ impl Checker {
         union(vec![a, b])
     }
 
+    /// A `quote` fills an expression only with a `SynExpr`, a `SynIdent` or
+    /// a `Judgement`: anything else is a type error where it is written,
+    /// not a failure when the macro runs.
+    fn check_splices(&mut self) {
+        let splices = std::mem::take(&mut self.splices);
+        if splices.is_empty() {
+            return;
+        }
+        let types: HashMap<TermId, Ty> = self.terms.iter().cloned().collect();
+        for (id, span) in splices {
+            let Some(t) = types.get(&id) else { continue };
+            let t = self.resolve(t);
+            let fits = matches!(&t, Ty::Named(name, args) if args.is_empty()
+                && ["SynExpr", "SynIdent", "Judgement"]
+                    .iter()
+                    .any(|n| tauto_surface::bindings::is_library(name, n)));
+            if !fits {
+                let shown = self.shown(&t);
+                self.error(
+                    format!("a `$` in an expression of a `quote` takes a SynExpr, a SynIdent or a Judgement, not {shown}"),
+                    span,
+                );
+            }
+        }
+    }
+
     fn finish(mut self) -> TypeReport {
         let mut pending = std::mem::take(&mut self.constructor_uses);
         let mut records = std::mem::take(&mut self.constructor_records);
@@ -2227,7 +2414,12 @@ impl Checker {
                             .collect();
                         let declared = self.datas.fields(&d, c, &args);
                         self.check_record_fields(&name, &values, &declared, span);
-                        self.expect(&Ty::Named(d, args), &ty, span, "a record constructor");
+                        self.expect(
+                            &Ty::Named(d, args),
+                            &ty,
+                            span,
+                            msg!("nibcheck-what-record-constructor"),
+                        );
                     }
                     Err(_) => remaining_records.push((name, ty, values, span)),
                 }
@@ -2240,7 +2432,7 @@ impl Checker {
                 match self.datas.resolve_ctor(&name, Some(&expected)).cloned() {
                     Ok((d, c)) => {
                         let actual = self.constructor(&d, c, span, &name);
-                        self.expect(&actual, &ty, span, "a constructor");
+                        self.expect(&actual, &ty, span, msg!("nibcheck-what-constructor"));
                     }
                     Err(_) => next.push((name, ty, span)),
                 }
@@ -2281,7 +2473,14 @@ impl Checker {
             match self.resolve(&ty) {
                 Ty::Int(w) => {
                     if !w.fits(n) {
-                        self.error(format!("{n} does not fit {}", Ty::Int(w)), span);
+                        self.error(
+                            msg!(
+                                "nibcheck-literal-does-not-fit",
+                                literal = n.to_string(),
+                                ty = Ty::Int(w).to_string()
+                            ),
+                            span,
+                        );
                     }
                 }
                 _ => self.error("an integer literal has no integer type", span),
@@ -2320,7 +2519,7 @@ impl Checker {
                 if !self
                     .errors
                     .iter()
-                    .any(|e| e.span == span && e.message == message)
+                    .any(|e| e.span == span && e.message.as_text() == Some(message.as_str()))
                 {
                     self.error(message, span);
                 }
@@ -2336,7 +2535,12 @@ impl Checker {
             if !k.fits(bound) {
                 let t = self.shown(&t);
                 self.error(
-                    format!("{k} does not fit {bound}: {t} for a type parameter"),
+                    msg!(
+                        "nibcheck-kind-does-not-fit-bound",
+                        kind = k.to_string(),
+                        bound = bound.to_string(),
+                        ty = t.to_string()
+                    ),
                     span,
                 );
             }
@@ -2357,6 +2561,7 @@ impl Checker {
                 );
             }
         }
+        self.check_splices();
         let mut evidence: HashMap<TermId, Vec<Ev>> = HashMap::new();
         for p in std::mem::take(&mut self.pending) {
             let t = self.resolve(&p.ty);
@@ -2414,7 +2619,7 @@ impl Checker {
         report.lets = self
             .lets
             .iter()
-            .map(|(n, t)| (n.clone(), self.resolve(t).to_string()))
+            .map(|(n, t)| (n.to_string(), self.resolve(t).to_string()))
             .collect();
         report.locals = std::mem::take(&mut self.locals)
             .into_iter()
@@ -2428,6 +2633,7 @@ impl Checker {
             .into_iter()
             .map(|(span, t)| (span, self.resolve(&t)))
             .collect();
+        report.type_references = std::mem::take(&mut self.type_references);
         report.terms = std::mem::take(&mut self.terms)
             .into_iter()
             .map(|(k, t)| (k, self.resolve(&t)))
@@ -2460,7 +2666,7 @@ impl Checker {
                         && !self
                             .index_generics
                             .get(&name)
-                            .is_some_and(|gs| gs.contains(g.name()))
+                            .is_some_and(|gs| gs.contains(&g.name))
                         && self.has_open_vars(t, &arm)
                 })
                 .map(|(g, _)| g.name.as_str())
@@ -2498,7 +2704,7 @@ impl Checker {
                 (n, Scheme { ty, ..s })
             })
             .collect();
-        let mut counts: HashMap<String, usize> = HashMap::new();
+        let mut counts: HashMap<Name, usize> = HashMap::new();
         for (n, _) in &self.local_fns {
             *counts.entry(n.clone()).or_insert(0) += 1;
         }
@@ -2519,7 +2725,7 @@ impl Checker {
 
     /// A declared type is written with all its arguments, except where a
     /// type constructor is wanted.
-    fn arity(&mut self, name: &str, given: usize, span: Span) {
+    fn arity(&mut self, name: &Name, given: usize, span: Span) {
         if self.constructor_position {
             return;
         }
@@ -2531,10 +2737,79 @@ impl Checker {
         }
     }
 
-    fn written(&mut self, t: &SurfaceTerm, generics: &HashMap<String, Ty>) -> Ty {
+    /// A row given to a row parameter as a type: `Named(ROW_TYPE, entries)`
+    /// with the entries sorted, or the row variable's own type. An entry
+    /// `res(A)` is `Named(res, [A])`; a tail `| e` is `Named(ROW_TAIL, [e])`.
+    fn row_as_type(&mut self, a: &SurfaceTerm, generics: &HashMap<Name, Ty>) -> Ty {
+        let TermKind::Row(names) = &*a.kind else {
+            return self.written(a, generics);
+        };
+        let mut members: Vec<Ty> = names
+            .iter()
+            .map(|n| {
+                match n
+                    .strip_prefix('|')
+                    .map(Name::from)
+                    .or_else(|| generics.contains_key(n).then(|| n.clone()))
+                {
+                    Some(var) => match generics.get(&var) {
+                        Some(t) => Ty::Named(Name::from(ROW_TAIL), vec![t.clone()]),
+                        None => Ty::Named(Name::from(ROW_TAIL), vec![self.fresh()]),
+                    },
+                    None => match indices::application(n) {
+                        Some((head, args)) => Ty::Named(
+                            head,
+                            args.iter().map(|a| self.row_as_type(a, generics)).collect(),
+                        ),
+                        None => Ty::Named(n.clone(), Vec::new()),
+                    },
+                }
+            })
+            .collect();
+        members.sort_by_key(|m| format!("{m}"));
+        members.dedup();
+        match members.as_slice() {
+            [Ty::Named(tail, only)] if tail.as_str() == ROW_TAIL => only[0].clone(),
+            _ => Ty::Named(Name::from(ROW_TYPE), members),
+        }
+    }
+
+    fn written(&mut self, t: &SurfaceTerm, generics: &HashMap<Name, Ty>) -> Ty {
+        let head = match &*t.kind {
+            TermKind::App { function, .. } => function.as_ref(),
+            _ => t,
+        };
+        if let TermKind::Var(Name::Selection(selection)) = &*head.kind {
+            let families: Vec<_> = selection
+                .candidates()
+                .iter()
+                .map(|r| Name::Global(r.clone()))
+                .filter(|name| self.datas.decls.contains_key(name))
+                .collect();
+            if let [family] = families.as_slice() {
+                self.type_references.insert(head.id(), family.clone());
+                let kind = match &*t.kind {
+                    TermKind::App {
+                        function,
+                        arguments,
+                    } => TermKind::App {
+                        function: Box::new(
+                            function.with_kind(TermKind::Var(family.clone()), function.span),
+                        ),
+                        arguments: arguments.clone(),
+                    },
+                    _ => TermKind::Var(family.clone()),
+                };
+                return self.written(&t.with_kind(kind, t.span), generics);
+            }
+        }
         let under_borrow = std::mem::take(&mut self.under_borrow);
         match &*t.kind {
-            TermKind::Var(n) => match n.as_str() {
+            TermKind::Var(n) => match if tauto_surface::bindings::is_library(n, n.as_str()) {
+                n.as_str()
+            } else {
+                ""
+            } {
                 "i32" => Ty::Int(Width::W32),
                 "i64" => Ty::Int(Width::W64),
                 "u8" => Ty::Int(Width::U8),
@@ -2560,8 +2835,14 @@ impl Checker {
                 function,
                 arguments,
             } => match &*function.kind {
-                TermKind::Var(n) if n == "Tuple" && arguments.is_empty() => Ty::Unit,
-                TermKind::Var(n) if n == "Info" && arguments.len() == 1 => {
+                TermKind::Var(n)
+                    if tauto_surface::bindings::is_library(&n, "Tuple") && arguments.is_empty() =>
+                {
+                    Ty::Unit
+                }
+                TermKind::Var(n)
+                    if tauto_surface::bindings::is_library(&n, "Info") && arguments.len() == 1 =>
+                {
                     Ty::Info(Box::new(self.written(&arguments[0], generics)))
                 }
                 TermKind::Var(n) if generics.contains_key(n) => {
@@ -2591,8 +2872,8 @@ impl Checker {
                     );
                     self.written(&flat, generics)
                 }
-                TermKind::Var(n) if n != "Tuple" => {
-                    if n == "Slice" && !under_borrow {
+                TermKind::Var(n) if !tauto_surface::bindings::is_library(n, "Tuple") => {
+                    if tauto_surface::bindings::is_library(&n, "Slice") && !under_borrow {
                         self.error("Slice(A) can only be borrowed", t.span);
                     }
                     let rows = self.row_params.get(n).cloned().unwrap_or_default();
@@ -2609,7 +2890,11 @@ impl Checker {
                                         a.span,
                                     );
                                 }
-                                Ty::Unit
+                                if self.rows_as_types {
+                                    self.row_as_type(a, generics)
+                                } else {
+                                    Ty::Unit
+                                }
                             }
                             TermKind::Row(_) => {
                                 self.error(
@@ -2651,7 +2936,7 @@ impl Checker {
                     .collect();
                 let mut inner = generics.clone();
                 for (n, k) in &binders {
-                    inner.insert(n.name().to_string(), Ty::Param(n.clone(), *k));
+                    inner.insert(n.name.clone(), Ty::Param(n.clone(), *k));
                 }
                 let fun = Ty::Fn(
                     params[binders.len()..]
@@ -2680,10 +2965,16 @@ impl Checker {
             }
             TermKind::Union(ts) => union(ts.iter().map(|t| self.written(t, generics)).collect()),
             TermKind::Product(ts) => {
-                product(ts.iter().map(|t| self.written(t, generics)).collect())
+                let members = ts.iter().map(|t| self.written(t, generics)).collect();
+                self.product(members)
             }
             TermKind::Tagged { tag, term } => {
                 tagged(BTreeSet::from([tag.clone()]), self.written(term, generics))
+            }
+            // What the reader could not read, said as it says it (`a record writes …`).
+            TermKind::Other(what) if what.starts_with('`') => {
+                self.error(what.clone(), t.span);
+                self.fresh()
             }
             _ => {
                 self.error("not a type of a program", t.span);
@@ -2692,7 +2983,10 @@ impl Checker {
         }
     }
 
-    fn effect_owner(&self, name: &str, span: Span) -> EffectOwner {
+    // ---------------------------------------------------------------------
+    // Declarations
+
+    fn effect_owner(&self, name: &Name, span: Span) -> EffectOwner {
         EffectOwner {
             name: name.into(),
             occurrence: TermId::fresh(span),
@@ -2703,7 +2997,7 @@ impl Checker {
 
     fn declare_effect(&mut self, e: &EffectDecl) {
         let owner = self.effect_owner(&e.name, e.span);
-        let generics: HashMap<String, Ty> = e
+        let generics: HashMap<Name, Ty> = e
             .generics
             .iter()
             .enumerate()
@@ -2714,6 +3008,11 @@ impl Checker {
                 )
             })
             .collect();
+        for (index, g) in e.generics.iter().enumerate() {
+            if e.rows.get(index) == Some(&true) {
+                self.effect_rows.insert(Param::effect(&owner, index, g).id);
+            }
+        }
         let params = e
             .params
             .iter()
@@ -2770,7 +3069,7 @@ impl Checker {
                 self.error(why, at);
             }
         }
-        let generics: HashMap<String, Ty> = d
+        let generics: HashMap<Name, Ty> = d
             .generics
             .iter()
             .enumerate()
@@ -2800,16 +3099,23 @@ impl Checker {
             .collect::<Vec<_>>();
         for (i, c) in constructors.iter().enumerate() {
             self.datas.register_ctor(c.name.clone(), d.name.clone(), i);
-            self.datas
-                .ctors
-                .insert(format!("{}::{}", d.name, c.name), (d.name.clone(), i));
+            if c.name.is_resolved() {
+                continue;
+            }
+            self.datas.ctors.insert(
+                format!("{}::{}", d.name, c.name).into(),
+                (d.name.clone(), i),
+            );
             // `T::C` for a constructor renamed to its full name (`m.T.C`).
             let written = c.name.rsplit("::").next().unwrap_or(&c.name);
-            if written != c.name {
+            if written != c.name.as_str() {
                 self.datas
                     .ctors
-                    .insert(format!("{}::{written}", d.name), (d.name.clone(), i));
+                    .insert(format!("{}::{written}", d.name).into(), (d.name.clone(), i));
             }
+        }
+        if is_struct && constructors.len() == 1 {
+            self.datas.ctors.insert(d.name.clone(), (d.name.clone(), 0));
         }
         self.datas.decls.insert(
             d.name.clone(),
@@ -2831,7 +3137,7 @@ impl Checker {
     /// Which declarations hold themselves, and whether a written kind is
     /// looser than what the fields give.
     fn finish_datas(&mut self, program: &Program) {
-        let names: Vec<String> = self.datas.decls.keys().cloned().collect();
+        let names: Vec<Name> = self.datas.decls.keys().cloned().collect();
         for n in &names {
             let recursive = reaches(&self.datas, n, n, &mut HashSet::new());
             if let Some(d) = self.datas.decls.get_mut(n) {
@@ -2901,8 +3207,46 @@ impl Checker {
     fn signature_in(&mut self, f: &FnDecl, owner: FunctionOwner) -> Scheme {
         let mut generics: Vec<(Param, Kind)> = Vec::new();
         let mut ctors: Vec<(Param, Kind)> = Vec::new();
-        let mut map: HashMap<String, Ty> = HashMap::new();
+        let mut map: HashMap<Name, Ty> = HashMap::new();
         for (i, g) in f.generics.iter().enumerate() {
+            // Native Nib has type and row generics only. A checked term
+            // telescope must first be lowered to ordinary value parameters;
+            // ignoring its domain here would silently erase an argument.
+            fn native_kind(ty: &SurfaceTerm) -> bool {
+                match &*ty.kind {
+                    TermKind::Var(name) => name.sort_symbol().is_some_and(|sort| {
+                        matches!(sort, tauto_surface::identity::SortSymbol::Type(_))
+                    }),
+                    TermKind::App { function, .. } => matches!(&*function.kind,
+                        TermKind::Var(name) if name.sort_symbol().is_some_and(|sort| matches!(sort, tauto_surface::identity::SortSymbol::Type(_)))),
+                    TermKind::Pi {
+                        params,
+                        result,
+                        effects,
+                    } => {
+                        effects.as_ref().is_none_or(Vec::is_empty)
+                            && params.iter().all(|(_, ty)| native_kind(ty))
+                            && native_kind(result)
+                    }
+                    _ => false,
+                }
+            }
+            if f.rows.get(i) != Some(&true)
+                && (f.generic_types.get(i).is_some_and(|ty| !native_kind(ty))
+                    || f.bounds
+                        .get(i)
+                        .and_then(|bound| bound.as_deref())
+                        .is_some_and(|bound| {
+                            Kind::parse(bound).is_none() && Kind::parse_ctor(bound).is_none()
+                        }))
+            {
+                self.error(
+                    format!(
+                        "term generic `{g}` requires checked extraction before native compilation"
+                    ),
+                    f.bound_spans.get(i).copied().unwrap_or(f.span),
+                );
+            }
             let param = Param::new(
                 ParamId::Function {
                     owner: owner.clone(),
@@ -2968,16 +3312,23 @@ impl Checker {
                 self.error(format!("-> {shown} needs a borrowed parameter"), span);
             }
         }
-        let mut preds: Vec<(String, Param)> = Vec::new();
+        let mut preds: Vec<(Name, Param)> = Vec::new();
         for c in &f.where_ {
+            if !c.arguments.is_empty() {
+                self.error(
+                    "value-indexed constraints require checked dictionary extraction",
+                    c.span,
+                );
+                continue;
+            }
             if !STRUCTURAL.contains(&c.class.as_str()) && !self.classes.contains_key(&c.class) {
                 self.error(format!("{} is not a class", c.class), c.span);
                 continue;
             }
             let generic = match &*c.ty.kind {
-                TermKind::Var(g) if generics.iter().any(|(n, _)| n.name() == g) => generics
+                TermKind::Var(g) if generics.iter().any(|(n, _)| &n.name == g) => generics
                     .iter()
-                    .find(|(n, _)| n.name() == g)
+                    .find(|(n, _)| &n.name == g)
                     .unwrap()
                     .0
                     .clone(),
@@ -3009,7 +3360,7 @@ impl Checker {
     /// the types are known.
     fn instantiate_scheme(
         &mut self,
-        name: &str,
+        name: &Name,
         s: &Scheme,
         id: TermId,
         instantiation: Instantiation,
@@ -3040,7 +3391,7 @@ impl Checker {
                 .filter(|(g, _)| param_in(&ty, g) && !self.row_generics.contains(g.id()))
                 .map(|(g, _)| (g.clone(), arguments[g.id()].clone()))
                 .collect();
-            self.undetermined.push((id, name.to_string(), generics));
+            self.undetermined.push((id, name.clone(), generics));
         }
         self.instantiations.push((id, arguments.clone()));
         for (n, (class, g)) in s.preds.iter().enumerate() {
@@ -3064,7 +3415,9 @@ impl Checker {
             Ty::Borrow(..) => true,
             Ty::Named(n, args) => {
                 self.datas.decls.get(&n).is_some_and(|d| d.view)
-                    || (matches!(n.as_str(), "Option" | "Result" | "Pair")
+                    || (["Option", "Result", "Pair"]
+                        .iter()
+                        .any(|native| tauto_surface::bindings::is_library(&n, native))
                         && args.iter().any(|a| self.is_view(a)))
             }
             _ => false,
@@ -3077,7 +3430,7 @@ impl Checker {
         match self.resolve(t) {
             Ty::Borrow(..) | Ty::Var(_) => true,
             Ty::Fn(..) => false,
-            Ty::Union(ts) | Ty::Product(ts) => ts.iter().any(|t| self.holds_borrow(t)),
+            Ty::Union(ts) => ts.iter().any(|t| self.holds_borrow(t)),
             Ty::Tagged(_, t) | Ty::Info(t) | Ty::Poly(_, t) => self.holds_borrow(&t),
             Ty::App(h, x) => self.holds_borrow(&h) || self.holds_borrow(&x),
             Ty::Named(_, args) => args.iter().any(|a| self.holds_borrow(a)),
@@ -3117,14 +3470,14 @@ impl Checker {
     fn bind_local(
         &mut self,
         env: &mut Vec<Local>,
-        name: &str,
+        name: &Name,
         ty: Ty,
         mutable: bool,
         site: TermId,
     ) {
-        self.locals.push(((name.to_string(), site), ty.clone()));
+        self.locals.push(((name.clone(), site), ty.clone()));
         env.push(Local {
-            name: name.to_string(),
+            name: name.clone(),
             scheme: None,
             instantiation: Instantiation::Fresh,
             ty,
@@ -3161,7 +3514,7 @@ impl Checker {
         let type_params = scheme
             .generics
             .iter()
-            .map(|(g, k)| (g.name().to_string(), Ty::Param(g.clone(), *k)))
+            .map(|(g, k)| (g.name.clone(), Ty::Param(g.clone(), *k)))
             .collect();
         let outer_types = std::mem::replace(&mut self.type_params, type_params);
         self.result_hint = Some((**result).clone());
@@ -3177,7 +3530,7 @@ impl Checker {
             &body,
             result,
             f.body.span,
-            &format!("the result of `{}`", f.name),
+            msg!("nibcheck-what-result-of", name = f.name.to_string()),
         );
     }
 
@@ -3185,21 +3538,33 @@ impl Checker {
         for (message, span) in &program.errors {
             self.error(message.clone(), *span);
         }
-        let show_owner = self.effect_owner("show", Span::new(0, 0));
+        self.resolved_names = has_references(program);
+        let resolved = tauto_surface::bindings::declared_names(&prelude.stmts)
+            .iter()
+            .any(|n| n.is_resolved());
+        let intrinsic = |name: &str| {
+            if resolved {
+                tauto_surface::bindings::library_name(name)
+            } else {
+                Name::from(name)
+            }
+        };
+        let show = intrinsic("show");
+        let show_owner = self.effect_owner(&show, Span::new(0, 0));
         self.builtin_show_owner = Some(show_owner.clone());
         self.effects.insert(
-            "show".into(),
+            show.clone(),
             EffectSig {
-                generics: vec![Param::effect(&show_owner, 0, "A")],
+                generics: vec![Param::effect(&show_owner, 0, &"A".into())],
                 params: vec![
                     Ty::Text,
-                    Ty::Param(Param::effect(&show_owner, 0, "A"), Kind::Linear),
+                    Ty::Param(Param::effect(&show_owner, 0, &"A".into()), Kind::Linear),
                 ],
                 result: Ty::Unit,
             },
         );
-        self.quants.insert("show".into(), Quant::Direct);
-        self.quants.insert("exceeded".into(), Quant::AtMostOne);
+        self.quants.insert(show, Quant::Direct);
+        self.quants.insert(intrinsic("exceeded"), Quant::AtMostOne);
         self.row_params = crate::surface::row_parameters_of(
             prelude
                 .stmts
@@ -3228,13 +3593,13 @@ impl Checker {
         self.index_generics = indices::index_generics(prelude);
         self.index_generics.extend(indices::index_generics(program));
         // The prelude's declarations, unless the program declares the name.
-        let own: HashSet<&str> = program
+        let own: HashSet<&Name> = program
             .stmts
             .iter()
             .filter_map(|s| match s {
-                Stmt::Struct(d) | Stmt::Enum(d) => Some(d.name.as_str()),
-                Stmt::Fn(f) => Some(f.name.as_str()),
-                Stmt::Effect(e) => Some(e.name.as_str()),
+                Stmt::Struct(d) | Stmt::Enum(d) => Some(&d.name),
+                Stmt::Fn(f) => Some(&f.name),
+                Stmt::Effect(e) => Some(&e.name),
                 _ => None,
             })
             .collect();
@@ -3244,14 +3609,17 @@ impl Checker {
                 // answers that effect (`HOST_EFFECTS`).
                 Stmt::Extern { fns, .. } => {
                     for f in fns {
-                        if crate::host::is_host_primitive(f) && !own.contains(f.name.as_str()) {
+                        if crate::host::is_host_primitive(f) && !own.contains(&f.name) {
                             self.host_only.insert(f.name.clone());
                         }
                     }
                 }
                 // `module Host` wraps those externs with the permission
                 // check and the waiting.
-                Stmt::Fn(f) if f.name.starts_with("Host::") && !own.contains(f.name.as_str()) => {
+                Stmt::Fn(f)
+                    if tauto_surface::bindings::is_host_module_fn(&f.name)
+                        && !own.contains(&f.name) =>
+                {
                     self.host_only.insert(f.name.clone());
                 }
                 _ => {}
@@ -3259,14 +3627,12 @@ impl Checker {
         }
         for s in &prelude.stmts {
             match s {
-                Stmt::Struct(d) if !own.contains(d.name.as_str()) => {
+                Stmt::Struct(d) if !own.contains(&d.name) => {
                     let opaque = d.constructors.iter().all(|c| c.fields.is_empty());
                     self.declare_data(d, true, opaque)
                 }
-                Stmt::Enum(d) if !own.contains(d.name.as_str()) => {
-                    self.declare_data(d, false, false)
-                }
-                Stmt::Effect(e) if !own.contains(e.name.as_str()) => self.declare_effect(e),
+                Stmt::Enum(d) if !own.contains(&d.name) => self.declare_data(d, false, false),
+                Stmt::Effect(e) if !own.contains(&e.name) => self.declare_effect(e),
                 _ => {}
             }
         }
@@ -3275,12 +3641,8 @@ impl Checker {
         let mut declared = HashSet::new();
         for s in &program.stmts {
             match s {
-                Stmt::Struct(d) if declared.insert(d.name.as_str()) => {
-                    self.declare_data(d, true, false)
-                }
-                Stmt::Enum(d) if declared.insert(d.name.as_str()) => {
-                    self.declare_data(d, false, false)
-                }
+                Stmt::Struct(d) if declared.insert(&d.name) => self.declare_data(d, true, false),
+                Stmt::Enum(d) if declared.insert(&d.name) => self.declare_data(d, false, false),
                 _ => {}
             }
         }
@@ -3293,7 +3655,7 @@ impl Checker {
                 Stmt::Struct(d) | Stmt::Enum(d) => Some(d),
                 _ => None,
             })
-            .find(|d| !data_names.insert(d.name.as_str()));
+            .find(|d| !data_names.insert(&d.name));
         if let Some(d) = duplicate_data {
             self.error(format!("type {} is declared twice", d.name), d.span);
         }
@@ -3306,7 +3668,7 @@ impl Checker {
                 Stmt::Extern { fns, .. } => fns.iter().collect(),
                 _ => Vec::new(),
             })
-            .find(|f| !function_names.insert(f.name.as_str()));
+            .find(|f| !function_names.insert(&f.name));
         if let Some(f) = duplicate {
             self.error(format!("function {} is declared twice", f.name), f.span);
         }
@@ -3315,7 +3677,7 @@ impl Checker {
             let (Stmt::Struct(d) | Stmt::Enum(d)) = stmt else {
                 continue;
             };
-            let generics: HashMap<String, Ty> = d
+            let generics: HashMap<Name, Ty> = d
                 .generics
                 .iter()
                 .enumerate()
@@ -3333,7 +3695,7 @@ impl Checker {
             }
         }
         if !CHECKING_PRELUDE.get() && PRELUDE.get().is_some_and(|p| std::ptr::eq(prelude, p)) {
-            self.prelude_effect_generics = prelude_report().effect_generics.clone();
+            self.prelude_effect_generics = prelude_report_for(program).effect_generics.clone();
         }
         let synthesized = self.declare_classes(program, prelude);
         for (i, s) in prelude.stmts.iter().enumerate() {
@@ -3345,7 +3707,7 @@ impl Checker {
             for (j, f) in fns
                 .into_iter()
                 .enumerate()
-                .filter(|(_, f)| !own.contains(f.name.as_str()))
+                .filter(|(_, f)| !own.contains(&f.name))
             {
                 self.declaration_path = vec![0, i, j];
                 let scheme = self.signature(f);
@@ -3419,7 +3781,12 @@ impl Checker {
                 let v = self.infer(value, env);
                 let mut t = match written {
                     Some(t) => {
-                        self.expect(&v, &t, value.span, &format!("`{name}`"));
+                        self.expect(
+                            &v,
+                            &t,
+                            value.span,
+                            msg!("nibcheck-what-named", name = name.to_string()),
+                        );
                         t
                     }
                     None => v,
@@ -3475,7 +3842,12 @@ impl Checker {
                 let t = match ty {
                     Some(ty) => {
                         let t = self.written(ty, &self.type_params.clone());
-                        self.expect(&v, &t, value.span, &format!("`{name}`"));
+                        self.expect(
+                            &v,
+                            &t,
+                            value.span,
+                            msg!("nibcheck-what-named", name = name.to_string()),
+                        );
                         t
                     }
                     None => v,
@@ -3514,8 +3886,11 @@ impl Checker {
                 value,
             } => {
                 let v = self.infer(value, env);
-                let target = format!("`{}`", crate::surface::print::print_term(place));
-                match env.iter().rev().find(|l| &l.name == name) {
+                let target = msg!(
+                    "nibcheck-what-named",
+                    name = crate::surface::print::print_term(place)
+                );
+                match env.iter().rev().find(|l| l.name == *name) {
                     Some(l) if l.view => {
                         self.error("a field of a view var cannot be assigned", value.span);
                         return Ty::Unit;
@@ -3537,7 +3912,7 @@ impl Checker {
                 // would give.
                 let ty = self.infer(place, env);
                 let ty = self.resolve(&ty).unborrowed().clone();
-                self.expect(&v, &ty, value.span, &target);
+                self.expect(&v, &ty, value.span, target);
                 Ty::Unit
             }
             Stmt::Assign { name, value, .. } => {
@@ -3545,7 +3920,7 @@ impl Checker {
                 let found = env
                     .iter()
                     .rev()
-                    .find(|l| &l.name == name)
+                    .find(|l| l.name == *name)
                     .cloned()
                     .map(|mut l| {
                         l.ty = self.resolve(&l.ty);
@@ -3553,13 +3928,21 @@ impl Checker {
                     });
                 match found {
                     Some(l) if l.view => self.error("a view var cannot be reassigned", value.span),
-                    Some(l) if l.mutable => {
-                        self.expect(&v, &l.ty, value.span, &format!("`{name}`"))
-                    }
+                    Some(l) if l.mutable => self.expect(
+                        &v,
+                        &l.ty,
+                        value.span,
+                        msg!("nibcheck-what-named", name = name.to_string()),
+                    ),
                     Some(Local {
                         ty: Ty::Borrow(inner, true),
                         ..
-                    }) => self.expect(&v, &inner, value.span, &format!("`{name}`")),
+                    }) => self.expect(
+                        &v,
+                        &inner,
+                        value.span,
+                        msg!("nibcheck-what-named", name = name.to_string()),
+                    ),
                     Some(_) => self.error(format!("`{name}` is not a var"), value.span),
                     None => self.error(format!("{name} is not defined"), value.span),
                 }
@@ -3593,7 +3976,12 @@ impl Checker {
             }
             Stmt::While { condition, body } => {
                 let c = self.infer(condition, env);
-                self.expect(&c, &Ty::Bool, condition.span, "a `while` condition");
+                self.expect(
+                    &c,
+                    &Ty::Bool,
+                    condition.span,
+                    msg!("nibcheck-what-while-condition"),
+                );
                 self.infer(body, &mut env.clone());
                 Ty::Unit
             }
@@ -3606,7 +3994,7 @@ impl Checker {
                     None => (Ty::Unit, Span::new(0, 0)),
                 };
                 match self.returns.last().cloned() {
-                    Some(r) => self.expect(&t, &r, span, "the returned value"),
+                    Some(r) => self.expect(&t, &r, span, msg!("nibcheck-what-returned-value")),
                     None => self.error("`return` outside a function", span),
                 }
                 Ty::Never
@@ -3641,9 +4029,14 @@ impl Checker {
         }
     }
 
-    fn lookup(&mut self, name: &str, env: &[Local], id: TermId) -> Ty {
+    fn lookup(&mut self, name: &Name, env: &[Local], id: TermId) -> Ty {
         let span = id.span();
-        if let Some(l) = env.iter().rev().find(|l| l.name == name) {
+        if let Some(l) = env.iter().rev().find(|l| l.name == *name) {
+            if let Name::Selection(selection) = name {
+                if let Some(binding) = selection.binding() {
+                    self.type_references.insert(id, binding.clone().into());
+                }
+            }
             return match &l.scheme {
                 Some(scheme) => self.instantiate_scheme(name, scheme, id, l.instantiation),
                 None => l.ty.clone(),
@@ -3660,19 +4053,24 @@ impl Checker {
             }
             return self.instantiate_scheme(name, &s, id, Instantiation::Fresh);
         }
-        if name == "div" || name == "mod" {
+        if tauto_surface::bindings::is_library(&name, "div")
+            || tauto_surface::bindings::is_library(&name, "mod")
+        {
             let i = self.fresh_int();
             // Its width decides where `div` overflows.
             self.ops.push((id, i.clone()));
             return Ty::Fn(vec![i.clone(), i.clone()], Box::new(i), Kind::Shared);
         }
-        if let Some((d, c)) = self.datas.ctors.get(name).cloned() {
+        if let Some((d, c)) = self.datas.resolve_ctor(name, None).ok().cloned() {
+            if matches!(name, Name::Selection(_)) {
+                self.type_references
+                    .insert(id, self.datas.decls[&d].constructors[c].name.clone());
+            }
             return self.constructor(&d, c, span, name);
         }
-        if self.datas.ambiguous_ctors.contains_key(name) {
+        if self.datas.has_ctor(name) {
             let t = self.fresh();
-            self.constructor_uses
-                .push((name.to_string(), t.clone(), span));
+            self.constructor_uses.push((name.clone(), t.clone(), span));
             return t;
         }
         self.error(format!("{name} is not defined"), span);
@@ -3681,16 +4079,13 @@ impl Checker {
 
     /// A constructor used as a value: a nullary one is its value, one with
     /// fields a function from them.
-    fn constructor(&mut self, d: &str, c: usize, span: Span, name: &str) -> Ty {
+    fn constructor(&mut self, d: &Name, c: usize, span: Span, name: &Name) -> Ty {
         let data = self.datas.decls[d].clone();
         let args: Vec<Ty> = data.generics.iter().map(|_| self.fresh()).collect();
         let fields = self.datas.fields(d, c, &args);
-        let result = Ty::Named(d.to_string(), args);
+        let result = Ty::Named(d.clone(), args);
         if data.is_struct {
-            self.error(
-                format!("`{name}` is a struct: write `{name} {{ field: value }}`"),
-                span,
-            );
+            self.error(struct_value_message(name), span);
         }
         if fields.is_empty() {
             result
@@ -3727,7 +4122,7 @@ impl Checker {
                 if let Some(h) = &hint
                     && let Ty::Named(name, args) = self.resolve(h)
                     && args.is_empty()
-                    && (name == "Nat" || name.ends_with("::Nat"))
+                    && tauto_surface::bindings::is_library(&name, "Nat")
                 {
                     if n.parse::<u128>().is_err() {
                         self.error(format!("{n} is not a Nat"), span);
@@ -3747,6 +4142,10 @@ impl Checker {
                 }
                 Ty::Float
             }
+            TermKind::Declaration(_) => Ty::Named(
+                tauto_surface::bindings::library_name("SynDeclaration"),
+                vec![],
+            ),
             TermKind::Text(_) => Ty::Text,
             TermKind::Bool(_) => Ty::Bool,
             TermKind::Var(name) => self.lookup(name, env, term.id()),
@@ -3776,15 +4175,22 @@ impl Checker {
                 arguments,
             } => {
                 if let TermKind::Var(name) = &*function.kind
-                    && !env.iter().any(|l| &l.name == name)
+                    && !env.iter().any(|l| l.name == *name)
                 {
-                    if name == "Tuple" && arguments.is_empty() {
+                    if tauto_surface::bindings::is_library(&name, "Tuple") && arguments.is_empty() {
                         return Ty::Unit;
                     }
                     if OPERATORS.contains(&name.as_str()) {
                         return self.operator(name, arguments, env, term.id());
                     }
-                    if name == "clone" && !self.fns.contains_key(name) {
+                    if tauto_surface::bindings::is_library(&name, "Syn::expr_of")
+                        && let [filled] = arguments.as_slice()
+                    {
+                        self.splices.push((filled.id(), filled.span));
+                    }
+                    if tauto_surface::bindings::is_library(&name, "clone")
+                        && !self.fns.contains_key(name)
+                    {
                         return self.clone_of(arguments, env, span);
                     }
                     // A constructor without fields is written without
@@ -3832,13 +4238,21 @@ impl Checker {
                 for (i, a) in arguments.iter().enumerate() {
                     if matches!(&*a.kind, TermKind::Lam { .. } | TermKind::BorrowLam { .. }) {
                         self.hint = known.as_ref().map(|ps| ps[i].clone());
+                    } else {
+                        // The parameter's type is what the argument is checked
+                        // against, so a call in the argument fixes its instance
+                        // from it first: in `JArr(Cons(q, Nil))` with `q: Text`,
+                        // `Cons` is a `List(Json)` one, and the mismatch is at
+                        // `q`, the part that does not fit, not at the whole
+                        // `Cons(…)` (which may be a macro's, `q` the user's).
+                        self.result_hint = known.as_ref().map(|ps| ps[i].clone());
                     }
                     let mark = self.subst.len();
                     let t = self.infer(a, env);
                     self.hint = None;
                     if let Some(ps) = &known {
                         self.local_from = Some(mark);
-                        self.expect(&t, &ps[i], a.span, "an argument");
+                        self.expect(&t, &ps[i], a.span, msg!("nibcheck-what-argument"));
                         self.local_from = None;
                     }
                     args.push(t);
@@ -3857,7 +4271,7 @@ impl Checker {
                             );
                         } else {
                             for ((a, p), at) in args.iter().zip(&ps).zip(arguments) {
-                                self.expect(a, p, at.span, "an argument");
+                                self.expect(a, p, at.span, msg!("nibcheck-what-argument"));
                             }
                         }
                         *r
@@ -3883,8 +4297,13 @@ impl Checker {
                     && !env.iter().any(|l| &l.name == c)
                     && self.classes.contains_key(c)
                 {
-                    let full = format!("{c}::{name}");
-                    if self.fns.contains_key(&full) {
+                    let class = &self.classes[c].decl;
+                    if class
+                        .methods
+                        .iter()
+                        .any(|method| method.name.as_str() == name)
+                    {
+                        let full = classes::member_fn(class, name);
                         return self.lookup(&full, env, term.id());
                     }
                     self.error(format!("{c} has no method {name}"), span);
@@ -3896,9 +4315,16 @@ impl Checker {
                     && !env.iter().any(|l| &l.name == d)
                     && self.datas.decls.contains_key(d)
                 {
-                    let full = format!("{d}::{name}");
-                    if let Some((d, c)) = self.datas.ctors.get(&full).cloned() {
-                        return self.constructor(&d, c, span, &full);
+                    let selected = self.datas.decls[d]
+                        .constructors
+                        .iter()
+                        .enumerate()
+                        .find(|(_, constructor)| {
+                            constructor.name.rsplit("::").next() == Some(name.as_str())
+                        })
+                        .map(|(index, constructor)| (index, constructor.name.clone()));
+                    if let Some((index, reference)) = selected {
+                        return self.constructor(d, index, span, &reference);
                     }
                 }
                 let b = self.infer(base, env);
@@ -3930,31 +4356,50 @@ impl Checker {
                     }
                 }
             }
-            // `#(a, b)`: the product of its members' types. A member that is a product
-            // gives its members and one of type `Unit` none: `#(#(a, b), c)` is an
-            // `A × B × C`, `#(a, #())` an `A`.
+            // `#(a, b)`: the product of its members' types, as [`product`] puts them:
+            // `#(a, #(b, c))` is an `A × B × C`, `#(#(a, b), c)` an `(A × B) × C`, and
+            // `#(a, #())` an `A`.
             TermKind::Tuple(members) => {
                 // Where a product of as many members is expected, each member is checked
                 // against the member in its place (`#(1, 2)` where `Nat × Nat` is expected).
                 let hints = match hint.as_ref().map(|h| self.resolve(h)) {
-                    Some(Ty::Product(hs)) if hs.len() == members.len() => Some(hs),
+                    Some(h) if is_pair_ty(&h) => {
+                        Some(self.product_members(&h)).filter(|hs| hs.len() == members.len())
+                    }
                     _ => None,
                 };
                 let mut types = Vec::new();
                 for (i, m) in members.iter().enumerate() {
                     self.result_hint = hints.as_ref().map(|hs| hs[i].clone());
                     let t = self.infer(m, env);
-                    match self.resolve(&t) {
-                        Ty::Product(inner) => types.extend(inner),
-                        Ty::Unit => {}
-                        t => types.push(t),
+                    types.push(self.resolve(&t));
+                }
+                // A member that fits neither the member expected in its place nor the
+                // place of another member that does not fit its own is the part that
+                // does not fit: the mismatch is at it (`#(k, q)` with `q: Text` where
+                // `Text × Json` is expected), not at the whole `#(…)`, which may be a
+                // macro's and `q` the user's. Members that only trade places are left
+                // to the product's match by member types.
+                if let Some(hs) = &hints {
+                    let misfits: Vec<usize> = (0..types.len())
+                        .filter(|&i| !self.probe(|c| c.fits(&types[i], &hs[i])))
+                        .collect();
+                    for &i in &misfits {
+                        let elsewhere = misfits
+                            .iter()
+                            .any(|&j| j != i && self.probe(|c| c.fits(&types[i], &hs[j])));
+                        if !elsewhere {
+                            self.expect(
+                                &types[i],
+                                &hs[i],
+                                members[i].span,
+                                msg!("nibcheck-what-product-member"),
+                            );
+                            types[i] = self.resolve(&hs[i]);
+                        }
                     }
                 }
-                match types.len() {
-                    0 => Ty::Unit,
-                    1 => types.pop().expect("one"),
-                    _ => Ty::Product(types),
-                }
+                self.product(types)
             }
             // `×` is a type operator: a product value is `#(…)`.
             TermKind::Product(members) => {
@@ -3975,7 +4420,7 @@ impl Checker {
                 match self.resolve(&b) {
                     // A member of a borrowed product is borrowed, but a copy.
                     Ty::Borrow(inner, _) if !matches!(want, Ty::Borrow(..)) => {
-                        self.expect(&inner, &want, base.span, "a type ascription");
+                        self.expect(&inner, &want, base.span, msg!("nibcheck-what-ascription"));
                         let want = self.resolve(&want);
                         if self.kind(&want).dup() {
                             want
@@ -3984,7 +4429,7 @@ impl Checker {
                         }
                     }
                     _ => {
-                        self.expect(&b, &want, base.span, "a type ascription");
+                        self.expect(&b, &want, base.span, msg!("nibcheck-what-ascription"));
                         want
                     }
                 }
@@ -3995,7 +4440,12 @@ impl Checker {
                 otherwise,
             } => {
                 let c = self.infer(condition, env);
-                self.expect(&c, &Ty::Bool, condition.span, "an `if` condition");
+                self.expect(
+                    &c,
+                    &Ty::Bool,
+                    condition.span,
+                    msg!("nibcheck-what-if-condition"),
+                );
                 self.result_hint = hint.clone();
                 let t = self.infer(then, &mut env.clone());
                 match otherwise {
@@ -4046,7 +4496,7 @@ impl Checker {
                 if let Some(want) = &want {
                     for (g, arm) in goals.iter().zip(arms) {
                         if let (Some(g), Some(written)) = (g, &arm.goal) {
-                            self.expect(g, want, written.span, "the goal of an arm");
+                            self.expect(g, want, written.span, msg!("nibcheck-what-arm-goal"));
                         }
                     }
                 }
@@ -4054,12 +4504,12 @@ impl Checker {
                     self.match_arms(scrutinee, arms, env, span, want.clone().or(hint));
                 for ((g, arm), body) in goals.iter().zip(arms).zip(bodies) {
                     if let Some(g) = g {
-                        self.expect(&body, g, arm.body.span, "the body of an arm");
+                        self.expect(&body, g, arm.body.span, msg!("nibcheck-what-arm-body"));
                     }
                 }
                 match want {
                     Some(want) => {
-                        self.expect(&got, &want, span, "the result of the `match`");
+                        self.expect(&got, &want, span, msg!("nibcheck-what-match-result"));
                         want
                     }
                     None => got,
@@ -4093,7 +4543,7 @@ impl Checker {
                     );
                 } else {
                     for ((a, p), at) in types.iter().zip(&ps).zip(args) {
-                        self.expect(a, p, at.span, "an argument");
+                        self.expect(a, p, at.span, msg!("nibcheck-what-argument"));
                     }
                 }
                 r
@@ -4102,8 +4552,8 @@ impl Checker {
             TermKind::Budget { limit, steps, body } => {
                 let s = self.infer(steps, env);
                 let what = match limit {
-                    BudgetLimit::Steps => "a budget's steps",
-                    BudgetLimit::Memory => "a budget's memory",
+                    BudgetLimit::Steps => msg!("nibcheck-what-budget-steps"),
+                    BudgetLimit::Memory => msg!("nibcheck-what-budget-memory"),
                 };
                 self.expect(&s, &Ty::Int(Width::W64), steps.span, what);
                 let t = self.infer(body, env);
@@ -4127,6 +4577,11 @@ impl Checker {
             | TermKind::MacroCall { .. }
             | TermKind::Quote { .. }
             | TermKind::Splice(_) => self.fresh(),
+            // What the surface reader refused (`a = b = c`) says why.
+            TermKind::Other(what) if what.starts_with('`') => {
+                self.error(what.clone(), span);
+                self.fresh()
+            }
             other => {
                 self.error(format!("not supported yet: {other:?}"), span);
                 self.fresh()
@@ -4187,18 +4642,18 @@ impl Checker {
         self.returns.push(r.clone());
         let b = self.infer(body, &mut inner);
         self.returns.pop();
-        self.expect(&b, &r, body.span, "the result of a function");
+        self.expect(&b, &r, body.span, msg!("nibcheck-what-function-result"));
         self.closure_results.push((r.clone(), body.span));
         Ty::Fn(ps, Box::new(r), kind)
     }
 
     /// The join of owned captures. Borrowed values and mutable cells are
     /// tracked by the lifetime and ownership checks instead.
-    fn capture_kind(&mut self, free: &[String], env: &[Local], floor: Kind, span: Span) -> Kind {
+    fn capture_kind(&mut self, free: &[Name], env: &[Local], floor: Kind, span: Span) -> Kind {
         let mut kind = floor;
         let mut captures = Vec::new();
         for name in free {
-            let Some(l) = env.iter().rev().find(|l| &l.name == name) else {
+            let Some(l) = env.iter().rev().find(|l| l.name == *name) else {
                 continue;
             };
             if l.mutable {
@@ -4249,52 +4704,75 @@ impl Checker {
 
     fn record(
         &mut self,
-        name: &str,
+        name: &Name,
         fields: &[(String, SurfaceTerm)],
         env: &mut Vec<Local>,
         span: Span,
     ) -> Ty {
         // `Pair { fst: a, snd: b }` written by its name is a value of the inductive `Pair`,
         // not the product `#(a, b)`: a member that is a `Pair` or `Unit` stays one member.
-        if is_pair_name(name) && fields.len() == 2 && fields[0].0 == "fst" && fields[1].0 == "snd" {
+        if tauto_surface::bindings::is_pair_record(name, fields.iter().map(|f| f.0.as_str())) {
             let a = self.infer(&fields[0].1, env);
             let b = self.infer(&fields[1].1, env);
             let (a, b) = (self.resolve(&a), self.resolve(&b));
             let args = vec![a, b];
-            let d = match self
+            let d = self
                 .datas
                 .ctors
                 .get(name)
-                .or_else(|| self.datas.ctors.get("Pair"))
-            {
-                Some((d, _)) => d.clone(),
-                None => "Pair".to_string(),
-            };
+                .map(|(family, _)| family.clone())
+                // `Pair` written by its spelling is the declared `Pair`, which the written
+                // type `Pair(nat, nat)` names.
+                .or_else(|| self.datas.decls.keys().find(|d| is_pair_name(d)).cloned())
+                .unwrap_or_else(|| name.clone());
             return Ty::Named(d, args);
         }
         // Report an unknown constructor before inferring fields without a schema.
         let ctor = self.datas.ctors.get(name).cloned();
-        if ctor.is_none() && !self.datas.ambiguous_ctors.contains_key(name) {
+        if ctor.is_none() && !self.datas.has_ctor(name) {
             self.error(format!("{name} is not a struct"), span);
             return self.fresh();
         }
+        // As with a call's arguments, the fields are checked in the order
+        // written, and a lambda learns its parameters' types from its
+        // field's, with what the fields before it fixed.
+        let schema = ctor.clone().map(|(d, c)| {
+            let generics = self.datas.decls[&d].generics.clone();
+            let args: Vec<Ty> = generics.iter().map(|_| self.fresh()).collect();
+            let declared = self.datas.fields(&d, c, &args);
+            (d, args, declared)
+        });
         let mut values = Vec::new();
         for (field, value) in fields {
+            let want = schema.as_ref().and_then(|(_, _, declared)| {
+                declared
+                    .iter()
+                    .find(|(n, _)| n.as_deref() == Some(field))
+                    .map(|(_, t)| t.clone())
+            });
+            if matches!(
+                &*value.kind,
+                TermKind::Lam { .. } | TermKind::BorrowLam { .. }
+            ) {
+                self.hint = want.clone();
+            }
             let v = self.infer(value, env);
+            self.hint = None;
             if matches!(&*value.kind, TermKind::Borrow { .. }) {
                 self.error("a borrow cannot be a field", value.span);
             }
+            // A mismatch is reported once, with the others, below.
+            if let Some(want) = &want {
+                let _ = self.attempt(|c| c.unify(&v, want));
+            }
             values.push((field.clone(), v, value.span));
         }
-        let Some((d, c)) = ctor else {
+        let Some((d, args, declared)) = schema else {
             let ty = self.fresh();
             self.constructor_records
-                .push((name.to_string(), ty.clone(), values, span));
+                .push((name.clone(), ty.clone(), values, span));
             return ty;
         };
-        let data = self.datas.decls[&d].clone();
-        let args: Vec<Ty> = data.generics.iter().map(|_| self.fresh()).collect();
-        let declared = self.datas.fields(&d, c, &args);
         self.check_record_fields(name, &values, &declared, span);
         Ty::Named(d, args)
     }
@@ -4312,7 +4790,12 @@ impl Checker {
                 self.error(format!("field `{field}` is given twice"), *at);
             }
             match declared.iter().find(|(n, _)| n.as_deref() == Some(field)) {
-                Some((_, t)) => self.expect(v, t, *at, &format!("field `{field}`")),
+                Some((_, t)) => self.expect(
+                    v,
+                    t,
+                    *at,
+                    msg!("nibcheck-what-field", field = field.to_string()),
+                ),
                 None => self.error(format!("{name} has no field `{field}`"), *at),
             }
         }
@@ -4351,8 +4834,18 @@ impl Checker {
                 a.clone()
             }
             ("&&" | "||", [a, b]) => {
-                self.expect(a, &Ty::Bool, arguments[0].span, &format!("`{op}`"));
-                self.expect(b, &Ty::Bool, arguments[1].span, &format!("`{op}`"));
+                self.expect(
+                    a,
+                    &Ty::Bool,
+                    arguments[0].span,
+                    msg!("nibcheck-what-named", name = op.to_string()),
+                );
+                self.expect(
+                    b,
+                    &Ty::Bool,
+                    arguments[1].span,
+                    msg!("nibcheck-what-named", name = op.to_string()),
+                );
                 Ty::Bool
             }
             (_, [a, b]) => {
@@ -4493,6 +4986,19 @@ impl Checker {
                 }
                 return;
             }
+            // `#()`: the unit, which `Unit` has as its one value.
+            Pattern::Ctor { name, args }
+                if args.is_empty()
+                    && (tauto_surface::bindings::is_library(name, "Star")
+                        || name
+                            .spelling()
+                            .is_some_and(|n| n == "Unit::Star" || n.ends_with("::Unit::Star"))) =>
+            {
+                if self.unify(&Ty::Unit, &resolved).is_err() {
+                    self.error(format!("`#()` does not match {resolved}"), span);
+                }
+                return;
+            }
             Pattern::Ctor { name, args } => {
                 self.ctor_pattern(name, args, t, borrowed, env, span, at);
                 return;
@@ -4505,7 +5011,10 @@ impl Checker {
                 self.pair_pattern(p, t, borrowed, env, span, at);
                 return;
             }
-            Pattern::Tuple(_) if !matches!(resolved.unborrowed(), Ty::Named(..)) => {
+            Pattern::Tuple(_)
+                if !matches!(resolved.unborrowed(), Ty::Named(..))
+                    || is_pair_ty(resolved.unborrowed()) =>
+            {
                 self.pair_pattern(p, t, borrowed, env, span, at);
                 return;
             }
@@ -4547,11 +5056,21 @@ impl Checker {
     ) {
         let pats = pair_pattern_members(p);
         let target = self.resolve(t).unborrowed().clone();
+        let labelled = pats.iter().all(|q| q.label().is_some());
         let members: Vec<Ty> = match &target {
-            Ty::Product(ms) => ms.clone(),
+            t if is_pair_ty(t) => {
+                let mut ms = self.product_members(t);
+                // `#(p, q)` on `A × B × C` takes `A` and `B × C`, as `Pair { fst, snd }` does.
+                if !labelled && pats.len() >= 2 && pats.len() < ms.len() {
+                    let rest = self.product(ms.split_off(pats.len() - 1));
+                    ms.push(rest);
+                }
+                ms
+            }
             Ty::Var(_) => {
                 let ms: Vec<Ty> = pats.iter().map(|_| self.fresh()).collect();
-                let _ = self.unify(&target, &Ty::Product(ms.clone()));
+                let product = self.product(ms.clone());
+                let _ = self.unify(&target, &product);
                 ms
             }
             other => {
@@ -4601,7 +5120,7 @@ impl Checker {
     #[allow(clippy::too_many_arguments)]
     fn ctor_pattern(
         &mut self,
-        name: &str,
+        name: &Name,
         args: &[Pattern],
         t: &Ty,
         borrowed: Option<bool>,
@@ -4718,7 +5237,7 @@ impl Checker {
             self.pattern(&arm.pattern, &s, &mut inner, arm.body.span, site(&arm.body));
             if let Some(g) = &arm.guard {
                 let gt = self.infer(g, &mut inner);
-                self.expect(&gt, &Ty::Bool, g.span, "a guard");
+                self.expect(&gt, &Ty::Bool, g.span, msg!("nibcheck-what-guard"));
             }
             self.result_hint = hint.clone();
             let b = self.infer(&arm.body, &mut inner);
@@ -4847,7 +5366,9 @@ impl Checker {
             q[0] = strip(&q[0]);
             return self.covers_within(&tys, &rows, &q);
         }
-        if let Ty::Product(ms) = t {
+        if let Some(ms) = self.product_pattern_members(t, rows.iter().map(|r| &r[0]).chain([&q[0]]))
+        {
+            let ms = &ms;
             let tys = [ms.clone(), rest.to_vec()].concat();
             let spread = |r: &[Pattern]| {
                 self.product_columns(ms, &r[0])
@@ -4878,9 +5399,10 @@ impl Checker {
             Ty::Named(d, args) => self.datas.decls.get(d).map(|data| (d, args, data)),
             _ => None,
         };
-        let specialize = |d: &String, args: &[Ty], c: usize| -> (Vec<Ty>, Vec<Vec<Pattern>>) {
+        // The rows for constructor `c` of the data, its fields in place of the column.
+        let specialize = |d: &Name, args: &[Ty], c: usize| -> (Vec<Ty>, Vec<Vec<Pattern>>) {
             let fields = self.datas.fields(d, c, args);
-            let this = |n: &str| {
+            let this = |n: &Name| {
                 self.datas
                     .resolve_ctor(n, Some(t))
                     .is_ok_and(|(dd, cc)| dd == d && *cc == c)
@@ -4984,19 +5506,66 @@ impl Checker {
         match p {
             Pattern::Wild => Some(vec![Pattern::Wild; ms.len()]),
             Pattern::Bind(n) if !self.datas.has_ctor(n) => Some(vec![Pattern::Wild; ms.len()]),
-            Pattern::Record { name, .. } if is_pair_name(name) => {
-                let pats = pair_pattern_members(p);
+            Pattern::Record { name, .. } if is_pair_ctor(name) => {
+                let pats = self.regroup(ms.len(), pair_pattern_members(p));
                 self.tuple_columns(ms, pats)
             }
-            Pattern::Tuple(_) => self.tuple_columns(ms, pair_pattern_members(p)),
+            Pattern::Tuple(_) => {
+                self.tuple_columns(ms, self.regroup(ms.len(), pair_pattern_members(p)))
+            }
+            Pattern::Ctor { name, args } if is_pair_ctor(name) && args.len() == 2 => {
+                self.tuple_columns(ms, args.clone())
+            }
             _ => None,
         }
+    }
+
+    /// The columns the `#(…)` patterns `pats` put their patterns on in the product `t`: its
+    /// members read flat where a pattern names them all by labels (`#(@b q, @a p)`), else its
+    /// first member and the product of the rest, as the `Pair`s a tuple pattern nests to.
+    fn product_pattern_members<'p>(
+        &self,
+        t: &Ty,
+        mut pats: impl Iterator<Item = &'p Pattern>,
+    ) -> Option<Vec<Ty>> {
+        if !is_pair_ty(t) {
+            return None;
+        }
+        let mut ms = self.product_members(t);
+        let labelled = |p: &Pattern| {
+            matches!(p, Pattern::Tuple(items)
+                if items.len() == ms.len() && items.iter().all(|q| q.label().is_some()))
+        };
+        if !pats.any(labelled) {
+            let rest = self.product(ms.split_off(1));
+            ms.push(rest);
+        }
+        Some(ms)
+    }
+
+    /// The patterns `pats` of a tuple put on `columns` columns: where there are more and
+    /// the columns are two, the first and `#(…)` of the rest.
+    fn regroup(&self, columns: usize, mut pats: Vec<Pattern>) -> Vec<Pattern> {
+        if columns == 2 && pats.len() > 2 && !pats.iter().all(|q| q.label().is_some()) {
+            let rest = Pattern::Tuple(pats.split_off(1));
+            pats.push(rest);
+        }
+        pats
     }
 
     fn tuple_columns(&self, ms: &[Ty], pats: Vec<Pattern>) -> Option<Vec<Pattern>> {
         if pats.len() != ms.len() {
             return None;
         }
+        // `#()` on a `Unit` member takes its one value.
+        let pats: Vec<Pattern> = pats
+            .into_iter()
+            .zip(ms)
+            .map(|(q, m)| match (&q, m) {
+                (Pattern::Ctor { args, .. }, Ty::Unit) if args.is_empty() => Pattern::Wild,
+                _ => q,
+            })
+            .collect();
         let tags: Option<Vec<&str>> = pats.iter().map(|q| q.label().map(|(l, _)| l)).collect();
         match tags {
             None => Some(pats),
@@ -5044,7 +5613,8 @@ impl Checker {
                 .collect();
             return self.covers_rows(&tys, rows);
         }
-        if let Ty::Product(ms) = t {
+        if let Some(ms) = self.product_pattern_members(t, rows.iter().map(|r| &r[0])) {
+            let ms = &ms;
             let tys = [ms.clone(), rest.to_vec()].concat();
             let rows: Vec<Vec<Pattern>> = rows
                 .iter()
@@ -5093,7 +5663,7 @@ impl Checker {
         };
         (0..data.constructors.len()).all(|c| {
             let fields = self.datas.fields(d, c, args);
-            let this = |n: &str| {
+            let this = |n: &Name| {
                 self.datas
                     .resolve_ctor(n, Some(t))
                     .is_ok_and(|(dd, cc)| dd == d && *cc == c)
@@ -5125,7 +5695,7 @@ impl Checker {
     fn handle(&mut self, body: &SurfaceTerm, handlers: &[Handler], env: &mut Vec<Local>) -> Ty {
         let answers_exceeded = handlers
             .iter()
-            .any(|h| matches!(h, Handler::Operation { effect, .. } if effect == "exceeded"));
+            .any(|h| matches!(h, Handler::Operation { effect, .. } if tauto_surface::bindings::is_library(&effect, "exceeded")));
         let budget_ty = self.fresh();
         if answers_exceeded {
             self.exceeded.push(budget_ty.clone());
@@ -5196,7 +5766,7 @@ impl Checker {
             // choice, so it reads the generics as types no other is equal to.
             let mut rigid = HashMap::new();
             let mut bound = Vec::new();
-            let (params, answer) = if effect == "exceeded" {
+            let (params, answer) = if tauto_surface::bindings::is_library(&effect, "exceeded") {
                 (vec![Ty::Info(Box::new(result.clone()))], budget_ty.clone())
             } else {
                 match self.effects.get(effect).cloned() {
@@ -5218,7 +5788,19 @@ impl Checker {
                                     .any(|t| param_in(t, g))
                             })
                             .collect();
-                        let written = match arm_instance(effect, instance, &typed) {
+                        let row_arm = self.rows_as_types
+                            && !typed.is_empty()
+                            && instance.args.is_empty()
+                            && instance.forall.is_empty()
+                            && typed.iter().all(|g| self.effect_rows.contains(&g.id));
+                        // Reading rows as types: an arm that writes no instance of an
+                        // effect whose generics are all rows answers the one instance
+                        // its body requests, which the types then fix.
+                        let written = match if row_arm {
+                            Ok(Some(&[][..]))
+                        } else {
+                            arm_instance(effect, instance, &typed)
+                        } {
                             Ok(written) => Ok(written),
                             Err(why) => {
                                 // Reported once: the arms are checked twice.
@@ -5331,7 +5913,7 @@ impl Checker {
             }
             let quant = self.quants.get(effect).copied().unwrap_or(Quant::AtMostOne);
             if quant == Quant::Direct {
-                let tail = cont.as_deref().is_some_and(|k| {
+                let tail = cont.as_ref().is_some_and(|k| {
                     crate::direct::is_tail_form(body, k)
                         && guard
                             .as_ref()
@@ -5372,7 +5954,7 @@ impl Checker {
             self.type_params.extend(bound);
             if let Some(g) = guard {
                 let gt = self.infer(g, &mut inner);
-                self.expect(&gt, &Ty::Bool, g.span, "a guard");
+                self.expect(&gt, &Ty::Bool, g.span, msg!("nibcheck-what-guard"));
             }
             let a = self.infer(body, &mut inner);
             self.type_params = outer;
@@ -5406,7 +5988,7 @@ impl Checker {
                         _ => false,
                     };
                 if !fits {
-                    self.expect(&a, result, body.span, "a handler arm");
+                    self.expect(&a, result, body.span, msg!("nibcheck-what-handler-arm"));
                 }
                 continue;
             };
@@ -5453,11 +6035,12 @@ impl Checker {
     }
 }
 
-fn reaches(datas: &Datas, from: &str, target: &str, seen: &mut HashSet<String>) -> bool {
+/// Whether declaration `from` holds `target` through its fields.
+fn reaches(datas: &Datas, from: &Name, target: &Name, seen: &mut HashSet<Name>) -> bool {
     let Some(d) = datas.decls.get(from) else {
         return false;
     };
-    if !seen.insert(from.to_string()) {
+    if !seen.insert(from.clone()) {
         return false;
     }
     let mut names = Vec::new();
@@ -5471,28 +6054,16 @@ fn reaches(datas: &Datas, from: &str, target: &str, seen: &mut HashSet<String>) 
         .any(|n| n == target || reaches(datas, n, target, seen))
 }
 
-fn named_in(t: &Ty, out: &mut Vec<String>) {
+fn named_in(t: &Ty, out: &mut Vec<Name>) {
     match t {
         Ty::Named(n, args) => {
             out.push(n.clone());
             args.iter().for_each(|a| named_in(a, out));
         }
-        Ty::Union(ts) | Ty::Product(ts) => ts.iter().for_each(|t| named_in(t, out)),
+        Ty::Union(ts) => ts.iter().for_each(|t| named_in(t, out)),
         Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) => named_in(t, out),
         // A function holds no value of its parameters' or result's types.
         _ => {}
-    }
-}
-
-fn has_param(t: &Ty) -> bool {
-    match t {
-        Ty::Param(..) => true,
-        Ty::Named(_, args) => args.iter().any(has_param),
-        Ty::Fn(ps, r, _) => ps.iter().any(has_param) || has_param(r),
-        Ty::Union(ts) | Ty::Product(ts) => ts.iter().any(has_param),
-        Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) | Ty::Poly(_, t) => has_param(t),
-        Ty::App(h, x) => has_param(h) || has_param(x),
-        _ => false,
     }
 }
 
@@ -5503,25 +6074,32 @@ fn arm_instance<'a>(
     effect: &str,
     instance: &'a crate::surface::Instance,
     typed: &[Param],
-) -> Result<Option<&'a [SurfaceTerm]>, String> {
+) -> Result<Option<&'a [SurfaceTerm]>, Message> {
     let n = typed.len();
     let args = &instance.args;
     if n == 0 {
         if args.is_empty() && instance.forall.is_empty() {
             return Ok(None);
         }
-        return Err(format!("`{effect}` takes no type arguments"));
+        return Err(msg!(
+            "nibcheck-effect-takes-no-type-arguments",
+            effect = effect
+        ));
     }
     let every = format!("`∀ {}. {effect}<{}>(…)`", names(typed), names(typed));
     if args.is_empty() {
-        return Err(format!(
-            "write the instance the arm of `{effect}` answers: `{effect}<…>(…)`, or {every} for every one"
+        return Err(msg!(
+            "nibcheck-arm-write-instance",
+            effect = effect,
+            every = every
         ));
     }
     if args.len() != n {
-        return Err(format!(
-            "`{effect}` takes {n} type arguments, given {}",
-            args.len()
+        return Err(msg!(
+            "nibcheck-effect-type-argument-count",
+            effect = effect,
+            expected = n,
+            given = args.len()
         ));
     }
     if instance.forall.is_empty() {
@@ -5536,16 +6114,14 @@ fn arm_instance<'a>(
     if binds_each {
         Ok(None)
     } else {
-        Err(format!(
-            "an arm for every instance binds each type argument in order: {every}"
-        ))
+        Err(msg!("nibcheck-arm-binds-each-type-argument", every = every))
     }
 }
 
 fn names(generics: &[Param]) -> String {
     generics
         .iter()
-        .map(|g| g.name.clone())
+        .map(|g| g.name.to_string())
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -5555,7 +6131,7 @@ fn param_in(t: &Ty, generic: &Param) -> bool {
         Ty::Param(n, _) => n == generic,
         Ty::Named(_, args) => args.iter().any(|a| param_in(a, generic)),
         Ty::Fn(ps, r, _) => ps.iter().any(|p| param_in(p, generic)) || param_in(r, generic),
-        Ty::Union(ts) | Ty::Product(ts) => ts.iter().any(|t| param_in(t, generic)),
+        Ty::Union(ts) => ts.iter().any(|t| param_in(t, generic)),
         Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) => param_in(t, generic),
         _ => false,
     }
@@ -5564,7 +6140,7 @@ fn param_in(t: &Ty, generic: &Param) -> bool {
 /// `p`'s name for a message, when it is a name or a field path.
 fn place_name(p: &SurfaceTerm) -> Option<String> {
     match &*p.kind {
-        TermKind::Var(n) => Some(n.clone()),
+        TermKind::Var(n) => Some(n.to_string()),
         TermKind::Field { base, name } => Some(format!("{}.{name}", place_name(base)?)),
         _ => None,
     }
@@ -5606,7 +6182,6 @@ fn substitute(t: &Ty, map: &HashMap<ParamId, Ty>) -> Ty {
             *k,
         ),
         Ty::Union(ts) => union(ts.iter().map(|t| substitute(t, map)).collect()),
-        Ty::Product(ts) => product(ts.iter().map(|t| substitute(t, map)).collect()),
         Ty::Tagged(tags, t) => tagged(tags.clone(), substitute(t, map)),
         Ty::Info(t) => Ty::Info(Box::new(substitute(t, map))),
         Ty::Borrow(t, m) => Ty::Borrow(Box::new(substitute(t, map)), *m),
@@ -5654,10 +6229,10 @@ fn pair_pattern_members(p: &Pattern) -> Vec<Pattern> {
     loop {
         match at {
             Pattern::Record { name, fields }
-                if is_pair_name(name)
-                    && fields.len() == 2
-                    && fields[0].0 == "fst"
-                    && fields[1].0 == "snd" =>
+                if tauto_surface::bindings::is_pair_record(
+                    name,
+                    fields.iter().map(|f| f.0.as_str()),
+                ) =>
             {
                 out.push(fields[0].1.clone());
                 at = &fields[1].1;
@@ -5679,8 +6254,13 @@ fn tuple_head_as_pair(r: &[Pattern]) -> Vec<Pattern> {
     r
 }
 
-fn is_pair_name(n: &str) -> bool {
-    n == "Pair" || n.ends_with("::Pair")
+fn is_pair_name(n: &Name) -> bool {
+    tauto_surface::bindings::is_library(n, "Pair")
+}
+
+/// `n` names the `Pair` or its one constructor.
+fn is_pair_ctor(n: &Name) -> bool {
+    is_pair_name(n) || tauto_surface::bindings::is_library(n, "Pair::Mk")
 }
 
 /// Why [`Checker::fit_by_types`] did not match the members of two products.
@@ -5692,22 +6272,82 @@ enum ProductNote {
     Clash(Ty),
 }
 
-/// The product of `ts`: its members in the order written; a member that is a product
-/// gives its members and `()` none.
-fn product(ts: Vec<Ty>) -> Ty {
-    let mut members = Vec::new();
-    for t in ts {
-        match t {
-            Ty::Product(inner) => members.extend(inner),
-            Ty::Unit => {}
-            t => members.push(t),
+/// The product of `ts`: its members in the order written, and `()` none. `×` nests to the
+/// right, so a last member that is a product gives its members (`A × (B × C)` is
+/// `A × B × C`, as the kernel's `Prod(A, Prod(B, C))` is one term); any other member that
+/// is a product stays one member (`(A × B) × C` is not `A × B × C`), so a product means the
+/// same whether its members are written or substituted.
+fn product_of(pair: &Name, ts: Vec<Ty>) -> Ty {
+    let mut members = ts;
+    let Some(mut tail) = members.pop() else {
+        return Ty::Unit;
+    };
+    while let Some(head) = members.pop() {
+        tail = Ty::Named(pair.clone(), vec![head, tail]);
+    }
+    tail
+}
+
+impl Checker {
+    /// The name `Pair` is declared under, which a `Pair` type is named by.
+    fn pair_name(&self) -> Name {
+        // The prelude's `Pair` may be declared by spelling and by reference at once (a program
+        // checked against the prelude as written and as resolved): the one the program names
+        // its declarations by.
+        let mut found = self.datas.decls.keys().filter(|d| is_pair_name(d));
+        let first = found
+            .clone()
+            .find(|d| d.is_resolved() == self.resolved_names);
+        first
+            .or_else(|| found.next())
+            .cloned()
+            .unwrap_or_else(|| tauto_surface::bindings::library_name("Pair"))
+    }
+
+    /// The product of `ts`: its members in the order written, `Pair`s nested to the
+    /// right, and `()` none.
+    fn product(&self, ts: Vec<Ty>) -> Ty {
+        product_of(&self.pair_name(), ts)
+    }
+
+    /// The members of the product `t`: its first, then those of its second where that is a
+    /// `Pair` too (`A × (B × C)` is `A × B × C`). Another type is the one member.
+    fn product_members(&self, t: &Ty) -> Vec<Ty> {
+        let mut out = Vec::new();
+        let mut at = self.resolve(t);
+        loop {
+            match at {
+                Ty::Named(n, mut args) if is_pair_name(&n) && args.len() == 2 => {
+                    let rest = args.pop().unwrap();
+                    out.push(self.resolve(&args[0]));
+                    at = self.resolve(&rest);
+                }
+                last => {
+                    out.push(last);
+                    return out;
+                }
+            }
         }
     }
-    match members.len() {
-        0 => Ty::Unit,
-        1 => members.pop().unwrap(),
-        _ => Ty::Product(members),
+}
+
+/// The members of a product already resolved: see [`Checker::product_members`].
+pub(crate) fn pair_spine(t: &Ty) -> Vec<Ty> {
+    let mut out = Vec::new();
+    let mut at = t;
+    while let Ty::Named(n, args) = at
+        && is_pair_name(n)
+        && args.len() == 2
+    {
+        out.push(args[0].clone());
+        at = &args[1];
     }
+    out.push(at.clone());
+    out
+}
+
+pub(crate) fn is_pair_ty(t: &Ty) -> bool {
+    matches!(t, Ty::Named(n, args) if is_pair_name(n) && args.len() == 2)
 }
 
 /// Canonical presentation order, independent of allocated occurrence identities.
@@ -5724,9 +6364,8 @@ enum StableTypeKey {
     Float32,
     Fn(Vec<StableTypeKey>, Box<StableTypeKey>, Kind),
     Union(Vec<StableTypeKey>),
-    Product(Vec<StableTypeKey>),
     Tagged(BTreeSet<String>, Box<StableTypeKey>),
-    Named(String, Vec<StableTypeKey>),
+    Named(Name, Vec<StableTypeKey>),
     Param(StableParamKey, Kind),
     Info(Box<StableTypeKey>),
     Borrow(Box<StableTypeKey>, bool),
@@ -5749,7 +6388,6 @@ fn stable_type_key(t: &Ty) -> StableTypeKey {
         Ty::Float32 => StableTypeKey::Float32,
         Ty::Fn(ps, r, k) => StableTypeKey::Fn(list(ps), boxed(r), *k),
         Ty::Union(ts) => StableTypeKey::Union(list(ts)),
-        Ty::Product(ts) => StableTypeKey::Product(list(ts)),
         Ty::Tagged(tags, t) => StableTypeKey::Tagged(tags.clone(), boxed(t)),
         Ty::Named(n, args) => StableTypeKey::Named(n.clone(), list(args)),
         Ty::Param(p, k) => StableTypeKey::Param(p.stable_key(), *k),
@@ -5781,15 +6419,64 @@ fn tagged(mut tags: BTreeSet<String>, t: Ty) -> Ty {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn view_wrappers_require_the_designated_declaration() {
+        let datas = Datas::default();
+        for spelling in ["Option", "Result", "Pair"] {
+            let args = vec![Ty::Borrow(Box::new(Ty::Unit), true)];
+            let native = Ty::Named(
+                tauto_surface::bindings::library_name(spelling),
+                args.clone(),
+            );
+            let foreign = Ty::Named(
+                tauto_surface::identity::DeclRef::fresh(spelling).into(),
+                args,
+            );
+            assert_eq!(datas.view_borrow(&native), Some(true));
+            assert_eq!(datas.view_borrow(&foreign), None);
+        }
+    }
+
+    #[test]
+    fn primitive_type_display_does_not_authorize_a_foreign_declaration() {
+        let mut checker = Checker::default();
+        for spelling in ["i64", "Bool", "Text", "Unit", "Never", "Decimal", "Float"] {
+            let foreign = Name::Global(tauto_surface::identity::DeclRef::fresh(spelling));
+            let syntax = SurfaceTerm::var(&foreign, Span::new(0, 1));
+            assert_eq!(
+                checker.written(&syntax, &HashMap::new()),
+                Ty::Named(foreign, vec![])
+            );
+        }
+        let builtin = SurfaceTerm::var(
+            &tauto_surface::bindings::library_name("Text"),
+            Span::new(0, 1),
+        );
+        assert_eq!(checker.written(&builtin, &HashMap::new()), Ty::Text);
+    }
+
+    #[test]
+    fn a_held_parameter_is_not_inserted_again_by_its_display() {
+        let owner = Name::Global(tauto_surface::identity::DeclRef::fresh("Container"));
+        let name = Name::Local(tauto_surface::identity::LocalRef::fresh("Element"));
+        let parameter = Param::data(&owner, 0, &name);
+        let mut held = vec![name.clone()];
+        let data = Datas::default();
+        data.field_kind(
+            &Ty::Param(parameter.clone(), Kind::Shared),
+            &[parameter],
+            &mut held,
+        );
+        assert_eq!(held, vec![name]);
+    }
+
     fn check_types(source: &str) -> Result<TypeReport, String> {
         let program = expand_classes(crate::surface::parse_program_as_written(source)?, 1 << 30);
         Ok(check_program(&program))
     }
     use super::*;
 
-    /// The prelude's functions check with its classes, so that their class
-    /// methods expand, and their `(e: T)` on a `Pair` is written as `.fst`
-    /// and `.snd`.
+    /// The prelude's functions check with its classes and expand class methods.
     #[test]
     fn the_prelude_checks_and_expands() {
         let program = prelude();
@@ -5797,17 +6484,14 @@ mod tests {
         for s in program.stmts.iter().filter(|s| matches!(s, Stmt::Fn(_))) {
             let mut s = s.clone();
             crate::surface::walk::stmt(&mut s, &mut |t| match &*t.kind {
-                TermKind::Field { base, name } if matches!(&*base.kind, TermKind::Var(c) if c == "ToText" || c == "Ord") => {
+                TermKind::Field { base, name } if matches!(&*base.kind, TermKind::Var(c) if tauto_surface::bindings::is_library(c, "ToText") || tauto_surface::bindings::is_library(c, "Ord")) => {
                     left.push(name.clone())
                 }
                 TermKind::Var(n)
                     if (n.starts_with("ToText::") || n.starts_with("Ord::"))
                         && !n.contains('@') =>
                 {
-                    left.push(n.clone())
-                }
-                TermKind::Ascribe { term, .. } if matches!(&*term.kind, TermKind::Var(n) if n == "got") => {
-                    left.push("(got: _)".into())
+                    left.push(n.to_string())
                 }
                 _ => {}
             });
@@ -5857,9 +6541,9 @@ mod tests {
         // After every constructor, and an arm taken by an earlier one.
         assert_eq!(
             redundant(&format!(
-                "{shape}fn f(s: Shape): i64 {{ match s {{ Pair(true, _) => 0\n Dot => 1\n Line(_) => 2\n Pair(_, _) => 3\n Pair(true, false) => 4\n _ => 5\n }} }}"
+                "{shape}fn f(s: Shape): i64 {{ match s {{ Pair(true, _) => 0\n Dot => 1\n Line(_) => 2\n Pair(_, _) => 3\n Pair(true, false) => 4\n }} }}"
             )),
-            ["4", "5"]
+            ["4"]
         );
         // Jointly: `true` and `false` take every `Bool`.
         assert_eq!(
@@ -5868,10 +6552,10 @@ mod tests {
             )),
             ["2"]
         );
-        // A guarded arm takes nothing for the arms after it, numbers only with `_`.
+        // A guarded arm takes nothing for the arms after it, literal matches retain a named rest arm.
         assert_eq!(
             redundant(
-                "fn f(n: i64): i64 { match n { 0 => 0\n 1 => 1\n m if m > 5 => 2\n 0 => 3\n _ => 4\n } }"
+                "fn f(n: i64): i64 { match n { 0 => 0\n 1 => 1\n m if m > 5 => 2\n 0 => 3\n other => 4\n } }"
             ),
             ["3"]
         );
@@ -5883,13 +6567,13 @@ mod tests {
             .unwrap()
             .errors
             .into_iter()
-            .map(|e| e.message)
+            .map(|e| e.message.to_string())
             .collect()
     }
 
     #[test]
     fn a_rigid_generic_does_not_escape() {
-        let generic = |g: &str| Param::data(g, 0, g);
+        let generic = |g: &str| Param::data(&Name::from(g), 0, &Name::from(g));
         let poly = |g: &str, t: Ty| Ty::Poly(vec![(generic(g), Kind::Shared)], Box::new(t));
         let param = |g: &str| Ty::Param(generic(g), Kind::Shared);
         let mut c = Checker::default();
@@ -5934,8 +6618,8 @@ perform show("answer", outer("text"))"#
             .to_string();
         let report = check_types(&source).unwrap();
         assert!(report.errors.is_empty(), "{:?}", report.errors);
-        let own = &report.local_schemes["repeat"].generics[0].0;
-        let outer = &report.schemes["outer"].generics[0].0;
+        let own = &report.local_schemes[&Name::from("repeat")].generics[0].0;
+        let outer = &report.schemes[&Name::from("outer")].generics[0].0;
         let self_uses: Vec<_> = report
             .instantiations
             .iter()
@@ -5965,8 +6649,8 @@ perform show("answer", outer("text"))"#
         let program = crate::surface::parse_program_as_written(&source).unwrap();
         let report = check_program(&program);
         assert!(report.errors.is_empty(), "{:?}", report.errors);
-        let own = &report.local_schemes["repeat"].generics[0].0;
-        let outer = &report.schemes["outer"].generics[0].0;
+        let own = &report.local_schemes[&Name::from("repeat")].generics[0].0;
+        let outer = &report.schemes[&Name::from("outer")].generics[0].0;
         assert_ne!(own.id(), outer.id());
         let self_uses: Vec<_> = report
             .instantiations
@@ -5997,12 +6681,18 @@ let value: Reader := Read("original")"#
             panic!("constructor binding")
         };
         let id = value.id();
-        assert_eq!(report.nominal_owners_for(&program).unwrap()[&id], "Reader");
+        assert_eq!(
+            report.nominal_owners_for(&program).unwrap()[&id].as_str(),
+            "Reader"
+        );
         assert!(report.nominal_owners_for(&program.clone()).is_some());
         report
             .terms
             .insert(id, Ty::Named("Number".into(), Vec::new()));
-        assert_eq!(report.nominal_owners_for(&program).unwrap()[&id], "Reader");
+        assert_eq!(
+            report.nominal_owners_for(&program).unwrap()[&id].as_str(),
+            "Reader"
+        );
         let fresh = crate::surface::parse_program_as_written(&source).unwrap();
         assert_eq!(program, fresh);
         assert!(report.nominal_owners_for(&fresh).is_none());
@@ -6014,7 +6704,10 @@ let value: Reader := Read("original")"#
         value.kind = std::sync::Arc::new(TermKind::Text("edited".into()));
         assert!(report.nominal_owners_for(&edited).is_none());
         let report = report.with_prelude();
-        assert_eq!(report.nominal_owners_for(&program).unwrap()[&id], "Reader");
+        assert_eq!(
+            report.nominal_owners_for(&program).unwrap()[&id].as_str(),
+            "Reader"
+        );
         let custom = check_program_in(&program, prelude());
         assert!(custom.errors.is_empty());
         assert!(custom.nominal_owners_for(&program).is_none());
@@ -6077,7 +6770,7 @@ fn outer(): Reader ! {} {
         for stmt in &program.stmts {
             crate::surface::walk::values_stmt(stmt, &mut |node| {
                 if let crate::surface::walk::Node::Term(t) = node
-                    && matches!(&*t.kind, TermKind::Var(name) if name == "Read")
+                    && matches!(&*t.kind, TermKind::Var(name) if name.as_str() == "Read")
                 {
                     aliases.push(t.id());
                 }
@@ -6086,7 +6779,10 @@ fn outer(): Reader ! {} {
         assert!(!aliases.is_empty());
         for id in aliases {
             assert!(matches!(report.terms.get(&id), Some(Ty::Fn(..))));
-            assert_eq!(report.nominal_owners_for(&program).unwrap()[&id], "Reader");
+            assert_eq!(
+                report.nominal_owners_for(&program).unwrap()[&id].as_str(),
+                "Reader"
+            );
         }
     }
 
@@ -6149,15 +6845,15 @@ perform show("answer", outer("text"))"#
             .to_string();
         let report = check_types(&source).unwrap();
         assert!(report.errors.is_empty(), "{:?}", report.errors);
-        let outer = &report.schemes["outer"].generics[0].0;
-        let inner = &report.local_schemes["inner"].generics[0].0;
+        let outer = &report.schemes[&Name::from("outer")].generics[0].0;
+        let inner = &report.local_schemes[&Name::from("inner")].generics[0].0;
         assert_eq!(outer.name(), inner.name());
         assert_ne!(outer.id(), inner.id());
         let locals = |name: &str| {
             report
                 .locals
                 .iter()
-                .filter(|((n, _), _)| n == name)
+                .filter(|((n, _), _)| n.as_str() == name)
                 .map(|(_, t)| t.clone())
                 .collect::<Vec<_>>()
         };
@@ -6254,7 +6950,7 @@ linear struct LinearBox(A: Type) { item: A }"#
             .to_string();
         let report = check_types(&source).unwrap();
         assert!(report.errors.is_empty(), "{:?}", report.errors);
-        assert!(report.datas.decls["Phantom"].holds.is_empty());
+        assert!(report.datas.decls[&Name::from("Phantom")].holds.is_empty());
         assert_eq!(
             report
                 .datas
@@ -6289,7 +6985,7 @@ fn outer(token: Token): Unit {
         let expected = r#"error: the kind of capture `value` is not determined; add a type annotation to the captured binding"#.to_string();
         assert_eq!(report.errors.len(), 1);
         assert_eq!(
-            report.errors[0].message,
+            report.errors[0].message.to_string(),
             expected.strip_prefix("error: ").unwrap()
         );
     }
@@ -6311,12 +7007,16 @@ fn outer(token: Token): Unit {
             assert!(report.errors.is_empty(), "{name}: {:?}", report.errors);
             assert!(
                 matches!(
-                    report.local_schemes["consume"].ty,
+                    report.local_schemes[&Name::from("consume")].ty,
                     Ty::Fn(_, _, Kind::Affine)
                 ),
                 "{name}"
             );
-            for (_, ty) in report.locals.iter().filter(|((n, _), _)| n == "consume") {
+            for (_, ty) in report
+                .locals
+                .iter()
+                .filter(|((n, _), _)| n.as_str() == "consume")
+            {
                 assert!(matches!(ty, Ty::Fn(_, _, Kind::Affine)), "{name}");
             }
             let found = crate::lin::check_lin_program(&program)
@@ -6367,8 +7067,10 @@ perform show("second", outer("text"))"#
         assert!(second.errors.is_empty(), "{:?}", second.errors);
         assert_eq!(dump_types(&first), dump_types(&second));
         let ordered = |report: &TypeReport| {
-            let outer = report.schemes["outer"].generics[0].0.clone();
-            let inner = report.local_schemes["inner"].generics[0].0.clone();
+            let outer = report.schemes[&Name::from("outer")].generics[0].0.clone();
+            let inner = report.local_schemes[&Name::from("inner")].generics[0]
+                .0
+                .clone();
             stable_type_key(&union(vec![
                 Ty::Param(inner, Kind::Shared),
                 Ty::Param(outer, Kind::Shared),
@@ -6388,7 +7090,7 @@ perform show("second", outer("text"))"#
                 report
                     .errors
                     .iter()
-                    .any(|e| { e.message == "an integer literal has no integer type" })
+                    .any(|e| { e.message.to_string() == "an integer literal has no integer type" })
             );
         }
     }
@@ -6556,5 +7258,15 @@ perform show("answer", outer())"#
     #[allow(dead_code)]
     pub fn expected(file: &str, name: &str, input: &str) -> String {
         expected_static(file, name, input).to_string()
+    }
+}
+
+/// A struct used as a value. A record type `{ x: A }` is the struct
+/// `@record.x`, which is never written, so it gets its own message.
+fn struct_value_message(name: &Name) -> String {
+    if name.starts_with("@record.") {
+        "a record type `{ … }` is not a value: write a record without a name as `#{ … }`".to_string()
+    } else {
+        format!("`{name}` is a struct: write `{name} {{ field: value }}`")
     }
 }

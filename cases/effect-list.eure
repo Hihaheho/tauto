@@ -1,0 +1,91 @@
+@ cases.a-list-of-shared-callback-records-specializes-an-empty-row
+source = ```tauto
+import std::prelude::Shared
+
+shared struct Stored(!e) { run: (value: u64) -> u64 ! {Div} ∪ e }
+fn invoke<!e>(values: List(Stored(!e)), arg: u64): u64 ! {Div} ∪ e {
+  match values {
+    Nil => 0
+    Cons(value, rest) => (value.run)(arg)
+  }
+}
+fn plus_one(value: u64): u64 ! {Div} { value + 1 }
+perform show("result", invoke([Stored { run: plus_one }], 1))
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["result = 2"]
+rust_shows = ["result = 2"]
+javascript_shows = ["result = 2"]
+
+@ cases.a-list-of-shared-callback-records-preserves-a-handled-row
+source = ```tauto
+import std::prelude::Shared
+
+shared struct Stored(!e) { run: (value: u64) -> u64 ! {Div} ∪ e }
+fn invoke<!e>(values: List(Stored(!e)), arg: u64): u64 ! {Div} ∪ e {
+  match values {
+    Nil => 0
+    Cons(value, rest) => (value.run)(arg)
+  }
+}
+effect request(): u64 direct
+fn queried(value: u64): u64 ! {Div, request} { value + perform request() }
+let result := handle { invoke([Stored { run: queried }], 1) } with {
+  request(), k => k(4)
+  return value => value
+}
+perform show("result", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["result = 5"]
+rust_shows = ["result = 5"]
+javascript_shows = ["result = 5"]
+
+@ cases.a-list-callback-cannot-erase-an-unhandled-effect
+source = ```tauto
+import std::prelude::Shared
+
+shared struct Stored(!e) { run: (value: u64) -> u64 ! {Div} ∪ e }
+fn invoke<!e>(values: List(Stored(!e)), arg: u64): u64 ! {Div} ∪ e {
+  match values {
+    Nil => 0
+    Cons(value, rest) => (value.run)(arg)
+  }
+}
+effect request(): u64 direct
+fn queried(value: u64): u64 ! {Div, request} { value + perform request() }
+fn pure(): u64 ! {Div} { invoke([Stored { run: queried }], 1) }
+```
+types = "ok"
+rows = "error: `pure` may perform request but its row is {Div}"
+
+@ cases.a-forwarded-list-preserves-its-callers-row
+source = ```tauto
+import std::prelude::Shared
+
+shared struct Stored(!e) { run: (value: u64) -> u64 ! {Div} ∪ e }
+fn invoke<!e>(values: List(Stored(!e)), arg: u64): u64 ! {Div} ∪ e {
+  match values {
+    Nil => 0
+    Cons(value, rest) => (value.run)(arg)
+  }
+}
+fn forward<!e>(values: List(Stored(!e)), arg: u64): u64 ! {Div} ∪ e { invoke(values, arg) }
+effect request(): u64 direct
+fn queried(value: u64): u64 ! {Div, request} { value + perform request() }
+let result := handle { forward([Stored { run: queried }], 2) } with {
+  request(), k => k(5)
+  return value => value
+}
+perform show("result", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["result = 7"]
+rust_shows = ["result = 7"]
+javascript_shows = ["result = 7"]

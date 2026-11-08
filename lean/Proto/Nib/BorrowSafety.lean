@@ -745,6 +745,13 @@ theorem bstep {os sg} (ho : OwnSigOk os sg) (hb : Builtins sg) (hsig : SigOk sg)
       refine ⟨D', hD, hu', pure_close (store_noHigh hsl) hB hu hu' hD hFr hctx hL hsB .flt (by bare_lit)
         (fun m _ h1 => by simp [Tm.occ] at h1) (fun m h1 => by simp [Tm.bor] at h1)
         (fun l _ hm => (hm.none (by simp) fun F u e => Frame.plug_app e .prim (vals2 .flt .flt)).elim)⟩
+  | float32Arith hc =>
+      intro S S' X ρ D c Fr bb h hμ hμ' x hl hsl hu hB hsB hFr hctx hL
+      obtain rfl := hμ'.ctx_eq hμ
+      obtain ⟨D', hD, hu', -⟩ := uniq_step ho hb hsig hd hdl (.float32Arith hc) h hμ hμ x hl hsl hu
+      refine ⟨D', hD, hu', pure_close (store_noHigh hsl) hB hu hu' hD hFr hctx hL hsB .flt32 (by bare_lit)
+        (fun m _ h1 => by simp [Tm.occ] at h1) (fun m h1 => by simp [Tm.bor] at h1)
+        (fun l _ hm => (hm.none (by simp) fun F u e => Frame.plug_app e .prim (vals2 .flt32 .flt32)).elim)⟩
   | concat =>
       intro S S' X ρ D c Fr bb h hμ hμ' x hl hsl hu hB hsB hFr hctx hL
       obtain rfl := hμ'.ctx_eq hμ

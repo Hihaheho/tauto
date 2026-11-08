@@ -1,0 +1,738 @@
+
+@ cases.export_selection_helpers
+source = ```tauto
+
+fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+fn safe(steps: i64): Bool {
+  handle { budget(steps: steps) { visit(2); true } } with { exceeded(info), k => false }
+}
+fn unused(n: i64): i64 { n + 1 }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.exports_explicit_invalid_exports_are_errors
+source = ```tauto
+fn run(f: () -> i64): i64 { f() }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.exports_explicit_invalid_exports_are_errors_2
+source = ```tauto
+fn identity<A>(x: A): A { x }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.exports_unselected_helpers_are_still_checked
+source = ```tauto
+fn safe(): i64 { 1 }
+fn broken(): i64 { true }
+```
+types = "error: the result of `broken`: Bool does not fit i64"
+
+@ cases.exports_propositions_are_checked_despite_runtime_constructor_names
+source = ```tauto
+
+enum Token { True, False }
+inductive Box: Type { Mk(value: Nat): Box }
+fn Valid(b: Option(Box), n: Nat): Prop {
+  ⊢ Prop from match b { None => False, Some(v) => n = Zero }
+}
+theorem box_zero(): Valid(Some(Box::Mk(Zero)), Zero) { Refl }
+```
+checks."Box" = "ok"
+checks."Valid" = "ok"
+checks."box_zero" = "ok"
+
+@ cases.exports_borrowed_callback_facade_is_explicit_and_effect_free
+source = ```tauto
+fn apply(&f: (u64) -> u64, value: u64): u64 { f(value) }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.exports_borrowed_callback_facade_is_explicit_and_effect_free_2
+source = ```tauto
+fn apply(&mut f: (u64) -> u64, value: u64): u64 { f(value) }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.exports_borrowed_callback_facade_is_explicit_and_effect_free_3
+source = ```tauto
+fn apply(&f: (u64) -> u64 ! {∀ A. show(A)}, value: u64): u64 { handle { f(value) } with { ∀ A. show<A>(name, text), k => k(#()) } }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.exports_borrowed_callback_facade_is_explicit_and_effect_free_4
+source = ```tauto
+fn apply(&f: (() -> u64) -> u64): u64 { 0 }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.exports_borrowed_callback_facade_is_explicit_and_effect_free_5
+source = ```tauto
+fn apply(&f: () -> (() -> u64)): u64 { 0 }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.exports_borrowed_callback_facade_is_explicit_and_effect_free_6
+source = ```tauto
+struct Holder { callback: () -> u64 }
+fn apply(&f: (Holder) -> u64): u64 { 0 }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.exports_borrowed_callbacks_cannot_supply_borrowed_or_function_results
+source = ```tauto
+fn apply(&f: (&Text) -> &Text, value: u64): u64 { value }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.exports_borrowed_callbacks_cannot_supply_borrowed_or_function_results_2
+source = ```tauto
+struct Holder { callback: () -> u64 }
+fn apply(&f: () -> Holder, value: u64): u64 { value }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.exports_borrowed_callbacks_cannot_supply_borrowed_or_function_results_3
+source = ```tauto
+fn apply(&f: (u64) -> u64): ((u64) -> u64) { (value) => f(value) }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.exports_a_budget_cannot_export_a_callback_result
+source = ```tauto
+
+fn leak(&read: (u64) -> u64): ((u64) -> u64) {
+  handle { budget(steps: 1000) { (i) => read(i) } } with { exceeded(info), k => (j) => 0 }
+}
+```
+types = "ok"
+rows = "error: cannot follow the effects of a function value required by its type"
+
+@ cases.exports_nonresuming_entries_reject_missing_unselected_and_unsupported_targets
+source = ```tauto
+fn run(read: (u64) -> u64): u64 { read(0) }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.exports_nonresuming_entries_reject_missing_unselected_and_unsupported_targets_2
+source = ```tauto
+fn identity<A>(value: A): A { value }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.exports_nonresuming_entries_are_additive_to_the_selected_callback_facade
+source = ```tauto
+fn run(&read: (u64) -> u64, value: u64): u64 {
+      handle { budget(steps: 10) { read(value) } } with { exceeded(info), k => 0 }
+    }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.borrowed_callback_budget
+source = ```tauto
+
+fn sum(&read: (u64) -> u64, size: u64): u64 ! {Div} {
+  var i: u64 := 0
+  var total: u64 := 0
+  while i < size {
+    total := total + read(i)
+    i := i + 1
+  }
+  total
+}
+
+fn run(&read: (u64) -> u64, size: u64): Result(u64, Text) {
+  handle {
+    budget(steps: 1000) {
+      Ok(sum(&(i) => read(i), size))
+    }
+  } with {
+    exceeded(info), k => Err("exhausted")
+  }
+}
+
+fn run_array(values: Array(u64)): Result(u64, Text) {
+  handle {
+    budget(steps: 1000) {
+      Ok(sum(
+        &(i) => match Array::get(values, i) {
+          None => 0,
+          Some(v) => v
+        },
+        Array::len(values)
+      ))
+    }
+  } with {
+    exceeded(info), k => Err("exhausted")
+  }
+}
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.build_rs_borrowed_budget_callback_cannot_escape_in_owned_data
+source = ```tauto
+
+struct Holder { callback: (u64) -> u64 ! {} }
+fn leak(&read: (u64) -> u64 ! {}): Holder {
+  Holder { callback: (i) => handle { budget(steps: 1000) { read(i) } } with { exceeded(info), k => 0 } }
+}
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.build_rs_host_crate
+source = ```tauto
+extern {
+  fn upper(&t: Text): Text
+}
+fn exported_identity(n: Nat): Nat { n }
+fn identity(n: Nat): Nat { n }
+theorem identity_zero(): identity(Zero) = Zero { Refl }
+fn checked_value(n: u64): u64 { U64::of_nat(identity(Nat::of_u64(n))) }
+fn add_one(n: i64): i64 { n + 1 }
+fn shouted(&t: Text): Text { upper(&t) }
+```
+checks."exported_identity" = "ok"
+checks."identity" = "ok"
+checks."identity_zero" = "ok"
+checks."checked_value" = "skipped"
+checks."add_one" = "skipped"
+checks."shouted" = "skipped"
+
+@ cases.build_rs_selected_budget_wrapper_is_callable_without_helper_warnings
+source = ```tauto
+
+fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+fn parse_with_budget(steps: i64): Result(i64, Text) {
+  handle { budget(steps: steps) { visit(2); Ok(42) } } with { exceeded(info), k => Err("exceeded") }
+}
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.build_rs_rust_borrows_callbacks_for_one_call_without_static_captures
+source = ```tauto
+
+fn names(callback: u64, &arg0: (u64) -> u64): u64 { arg0(callback) }
+fn apply(&f: (u64) -> u64, value: u64): u64 { f(value) }
+fn read_first(&f: (u64) -> u64): u64 { f(0) }
+fn read_if(&f: (u64) -> u64, enabled: Bool): u64 { if enabled { f(0) } else { 0 } }
+fn twice(&f: (u64) -> u64, value: u64): u64 { f(value) + f(value) }
+fn both(&left: (u64) -> u64, &right: (u64, u64) -> u64): u64 { right(left(0), left(1)) }
+fn produce(&f: () -> u64): u64 { f() }
+fn notify(&f: () -> Unit, value: u64): u64 { f(); value }
+fn text_value(&f: (Option(Text)) -> Option(Text), value: Option(Text)): Option(Text) { f(value) }
+fn borrow_text(&f: (&Text) -> Text, &value: Text): Text { f(&value) }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.borrowed_callback_budget_lifetimes
+source = ```tauto
+
+fn sum(&read: (u64) -> u64, size: u64): u64 ! {Div} {
+  var i: u64 := 0
+  var total: u64 := 0
+  while i < size {
+    total := total + read(i)
+    i := i + 1
+  }
+  total
+}
+
+fn run(&read: (u64) -> u64, size: u64): Result(u64, Text) {
+  handle {
+    budget(steps: 1000) {
+      Ok(sum(&(i) => read(i), size))
+    }
+  } with {
+    exceeded(info), k => Err("exhausted")
+  }
+}
+
+fn run_array(values: Array(u64)): Result(u64, Text) {
+  handle {
+    budget(steps: 1000) {
+      Ok(sum(
+        &(i) => match Array::get(values, i) {
+          None => 0,
+          Some(v) => v
+        },
+        Array::len(values)
+      ))
+    }
+  } with {
+    exceeded(info), k => Err("exhausted")
+  }
+}
+
+fn r#direct(&read: (u64) -> u64, size: u64): Result(u64, Text) {
+  handle { budget(steps: 1000) { Ok(sum(read, size)) } } with { exceeded(info), k => Err("exhausted") }
+}
+fn direct_loop(&read: (u64) -> u64, size: u64): Result(u64, Text) {
+  handle { budget(steps: 1000) {
+    var i: u64 := 0
+    var total: u64 := 0
+    while i < size {
+      total := total + read(i)
+      i := i + 1
+    }
+    Ok(total)
+  } } with { exceeded(info), k => Err("exhausted") }
+}
+fn apply(&f: (u64) -> u64, value: u64): u64 { f(value) }
+fn nested(&read: (u64) -> u64, size: u64): Result(u64, Text) {
+  handle { budget(steps: 1000) {
+    Ok(sum(&(i) => apply((j) => read(i + j), 0), size))
+  } } with { exceeded(info), k => Err("exhausted") }
+}
+fn sum_text(&read: (&Text) -> u64, size: u64): u64 ! {Div} {
+  var i: u64 := 0
+  var total: u64 := 0
+  while i < size {
+    let text := concat("local", " text")
+    total := total + read(&text)
+    i := i + 1
+  }
+  total
+}
+fn sum_owned_text(&read: (Text) -> u64, size: u64): u64 ! {Div} {
+  var i: u64 := 0
+  var total: u64 := 0
+  while i < size {
+    total := total + read(concat("local", " text"))
+    i := i + 1
+  }
+  total
+}
+fn text_owned(&read: (&Text) -> u64, size: u64): Result(u64, Text) {
+  handle { budget(steps: 1000) {
+    Ok(sum_owned_text((&text) => read(&text), size))
+  } } with { exceeded(info), k => Err("exhausted") }
+}
+fn text_direct(&read: (&Text) -> u64, size: u64): Result(u64, Text) {
+  handle { budget(steps: 1000) { Ok(sum_text(read, size)) } } with { exceeded(info), k => Err("exhausted") }
+}
+fn text_forwarded(&read: (&Text) -> u64, size: u64): Result(u64, Text) {
+  handle { budget(steps: 1000) {
+    Ok(sum_text((&text) => read(&text), size))
+  } } with { exceeded(info), k => Err("exhausted") }
+}
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.constructor_index_rejected
+source = ```tauto
+
+enum Token { True, False }
+inductive Box: Type { Mk(value: Nat): Box }
+fn Valid(b: Option(Box), n: Nat): Prop {
+  ⊢ Prop from match b { None => False, Some(v) => n = Zero }
+}
+theorem box_zero(): Valid(Some(Box::Mk(Zero)), Succ(Zero)) { Refl }
+```
+checks."Box" = "ok"
+checks."Valid" = "ok"
+checks."box_zero" = "error: type mismatch: expected `Succ(Zero) = Zero`, found `Succ(Zero) = Succ(Zero)`\n  differing part: expected `Zero`, found `Succ(Zero)`"
+diagnostics = [{ "name" => "box_zero", "message" => "type mismatch: expected `Succ(Zero) = Zero`, found `Succ(Zero) = Succ(Zero)`\n  differing part: expected `Zero`, found `Succ(Zero)`", "span" => "«Refl»" }]
+
+@ cases.constructor_missing_predicate
+source = ```tauto
+
+enum Token { True, False }
+inductive Box: Type { Mk(value: Nat): Box }
+fn Valid(b: Option(Box), n: Nat): Prop {
+  ⊢ Prop from match b { None => missing_predicate, Some(v) => n = Zero }
+}
+theorem box_zero(): Valid(Some(Box::Mk(Zero)), Zero) { Refl }
+```
+checks."Box" = "ok"
+checks."Valid" = "error: `missing_predicate` is not defined"
+checks."box_zero" = "error: uses `Valid`, which did not check; what follows may come from that: cannot infer the generic `A` of `Eq::Refl`: neither its arguments nor the expected type fix it; write the generics as its first arguments, `Eq::Refl(A, a, …)`"
+diagnostics = [{ "name" => "Valid", "message" => "`missing_predicate` is not defined", "span" => "«missing_predicate»" }, { "name" => "box_zero", "message" => "uses `Valid`, which did not check; what follows may come from that: cannot infer the generic `A` of `Eq::Refl`: neither its arguments nor the expected type fix it; write the generics as its first arguments, `Eq::Refl(A, a, …)`", "span" => "«Refl»" }]
+
+@ cases.borrowed_callback_budget_outputs
+source = ```tauto
+import std::prelude::Affine
+import std::prelude::Shared
+
+
+fn sum(&read: (u64) -> u64, size: u64): u64 ! {Div} {
+  var i: u64 := 0
+  var total: u64 := 0
+  while i < size {
+    total := total + read(i)
+    i := i + 1
+  }
+  total
+}
+
+fn run(&read: (u64) -> u64, size: u64): Result(u64, Text) {
+  handle {
+    budget(steps: 1000) {
+      Ok(sum(&(i) => read(i), size))
+    }
+  } with {
+    exceeded(info), k => Err("exhausted")
+  }
+}
+
+fn run_array(values: Array(u64)): Result(u64, Text) {
+  handle {
+    budget(steps: 1000) {
+      Ok(sum(
+        &(i) => match Array::get(values, i) {
+          None => 0,
+          Some(v) => v
+        },
+        Array::len(values)
+      ))
+    }
+  } with {
+    exceeded(info), k => Err("exhausted")
+  }
+}
+
+var calls: u64 := 0
+let read := (index: u64) => { calls := calls + 1; (index + 1) * 10 }
+perform show("empty", run(read, 0))
+perform show("calls-empty", calls)
+perform show("sum", run(read, 3))
+perform show("calls-sum", calls)
+calls := 0
+perform show("exhausted", run(read, 10000))
+perform show("calls-bounded", calls > 0 && calls < 10000)
+perform show("recovered", run(read, 3))
+perform show("array-empty", run_array(Array::of_list(Nil)))
+perform show("array", run_array(Array::of_list(Cons(10, Cons(20, Cons(30, Nil))))))
+var items := Vec::new()
+var index: u64 := 0
+while index < 10000 { Vec::push(&mut items, 1); index := index + 1 }
+perform show("array-exhausted", run_array(Vec::into_array(items)))
+```
+shows = ["empty = Ok(0)", "calls-empty = 0", "sum = Ok(60)", "calls-sum = 3", "exhausted = Err(\"exhausted\")", "calls-bounded = true", "recovered = Ok(60)", "array-empty = Ok(0)", "array = Ok(60)", "array-exhausted = Err(\"exhausted\")"]
+backends = ["rust", "javascript"]
+
+@ cases.borrowed_callback_lifetime_outputs
+source = ```tauto
+import std::prelude::Shared
+
+
+fn sum(&read: (u64) -> u64, size: u64): u64 ! {Div} {
+  var i: u64 := 0
+  var total: u64 := 0
+  while i < size {
+    total := total + read(i)
+    i := i + 1
+  }
+  total
+}
+
+fn run(&read: (u64) -> u64, size: u64): Result(u64, Text) {
+  handle {
+    budget(steps: 1000) {
+      Ok(sum(&(i) => read(i), size))
+    }
+  } with {
+    exceeded(info), k => Err("exhausted")
+  }
+}
+
+fn run_array(values: Array(u64)): Result(u64, Text) {
+  handle {
+    budget(steps: 1000) {
+      Ok(sum(
+        &(i) => match Array::get(values, i) {
+          None => 0,
+          Some(v) => v
+        },
+        Array::len(values)
+      ))
+    }
+  } with {
+    exceeded(info), k => Err("exhausted")
+  }
+}
+
+fn r#direct(&read: (u64) -> u64, size: u64): Result(u64, Text) {
+  handle { budget(steps: 1000) { Ok(sum(read, size)) } } with { exceeded(info), k => Err("exhausted") }
+}
+fn direct_loop(&read: (u64) -> u64, size: u64): Result(u64, Text) {
+  handle { budget(steps: 1000) {
+    var i: u64 := 0
+    var total: u64 := 0
+    while i < size {
+      total := total + read(i)
+      i := i + 1
+    }
+    Ok(total)
+  } } with { exceeded(info), k => Err("exhausted") }
+}
+fn apply(&f: (u64) -> u64, value: u64): u64 { f(value) }
+fn nested(&read: (u64) -> u64, size: u64): Result(u64, Text) {
+  handle { budget(steps: 1000) {
+    Ok(sum(&(i) => apply((j) => read(i + j), 0), size))
+  } } with { exceeded(info), k => Err("exhausted") }
+}
+fn sum_text(&read: (&Text) -> u64, size: u64): u64 ! {Div} {
+  var i: u64 := 0
+  var total: u64 := 0
+  while i < size {
+    let text := concat("local", " text")
+    total := total + read(&text)
+    i := i + 1
+  }
+  total
+}
+fn sum_owned_text(&read: (Text) -> u64, size: u64): u64 ! {Div} {
+  var i: u64 := 0
+  var total: u64 := 0
+  while i < size {
+    total := total + read(concat("local", " text"))
+    i := i + 1
+  }
+  total
+}
+fn text_owned(&read: (&Text) -> u64, size: u64): Result(u64, Text) {
+  handle { budget(steps: 1000) {
+    Ok(sum_owned_text((&text) => read(&text), size))
+  } } with { exceeded(info), k => Err("exhausted") }
+}
+fn text_direct(&read: (&Text) -> u64, size: u64): Result(u64, Text) {
+  handle { budget(steps: 1000) { Ok(sum_text(read, size)) } } with { exceeded(info), k => Err("exhausted") }
+}
+fn text_forwarded(&read: (&Text) -> u64, size: u64): Result(u64, Text) {
+  handle { budget(steps: 1000) {
+    Ok(sum_text((&text) => read(&text), size))
+  } } with { exceeded(info), k => Err("exhausted") }
+}
+
+perform show("direct-sum", r#direct(&(i) => (i + 1) * 10, 3))
+perform show("direct-exhausted", r#direct(&(i) => (i + 1) * 10, 10000))
+perform show("direct_loop-sum", direct_loop(&(i) => (i + 1) * 10, 3))
+perform show("direct_loop-exhausted", direct_loop(&(i) => (i + 1) * 10, 10000))
+perform show("nested-sum", nested(&(i) => (i + 1) * 10, 3))
+perform show("nested-exhausted", nested(&(i) => (i + 1) * 10, 10000))
+perform show("text_direct-sum", text_direct((&text) => Text::len(text), 3))
+perform show("text_direct-exhausted", text_direct((&text) => Text::len(text), 10000))
+perform show("text_forwarded-sum", text_forwarded((&text) => Text::len(text), 3))
+perform show("text_forwarded-exhausted", text_forwarded((&text) => Text::len(text), 10000))
+perform show("text_owned-sum", text_owned((&text) => Text::len(text), 3))
+perform show("text_owned-exhausted", text_owned((&text) => Text::len(text), 10000))
+```
+shows = ["direct-sum = Ok(60)", "direct-exhausted = Err(\"exhausted\")", "direct_loop-sum = Ok(60)", "direct_loop-exhausted = Err(\"exhausted\")", "nested-sum = Ok(60)", "nested-exhausted = Err(\"exhausted\")", "text_direct-sum = Ok(30)", "text_direct-exhausted = Err(\"exhausted\")", "text_forwarded-sum = Ok(30)", "text_forwarded-exhausted = Err(\"exhausted\")", "text_owned-sum = Ok(30)", "text_owned-exhausted = Err(\"exhausted\")"]
+backends = ["rust", "javascript"]
+
+@ cases.selected_budget_outputs
+source = ```tauto
+
+fn visit(n: i64): Unit ! {Div} { if n > 0 { visit(n - 1) } }
+fn parse_with_budget(steps: i64): Result(i64, Text) {
+  handle { budget(steps: steps) { visit(2); Ok(42) } } with { exceeded(info), k => Err("exceeded") }
+}
+
+perform show("enough", parse_with_budget(1000))
+perform show("empty", parse_with_budget(0))
+```
+shows = ["enough = Ok(42)", "empty = Err(\"exceeded\")"]
+backends = ["rust", "javascript"]
+
+@ cases.runtime_syntax_declarations
+files."main.tauto" = ````tauto
+import std::prelude::Macro
+
+syntax!(ident, ```par
+%start Decl
+%title "ident"
+%%
+Decl: Name Equals Value;
+Name: /[\p{L}_][\p{L}\p{N}_]*/;
+Equals: '=';
+Value: /[0-9]+/;
+```) => struct Decl, fn parse
+syntax!(keywords, ```par
+%start Root
+%title "keyword fields"
+%%
+Root: '['^ Value ']'^;
+Value: 'true' | 'false';
+```) => struct Root, enum Value, fn parse
+````
+entry = "main.tauto"
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.runtime_syntax_unicode_diagnostics
+files."main.tauto" = ````tauto
+import std::prelude::Macro
+
+syntax!(ident, ```par
+%start Decl
+%title "ident"
+%%
+Decl: Name Equals Value;
+Name: /[\p{L}_][\p{L}\p{N}_]*/;
+Equals: '=';
+Value: /[0-9]+/;
+```) => struct Decl, fn parse
+
+match ident::parse("日本語=12") {
+  Ok(ast) => {
+    perform show("name", ast.name.text)
+    perform show("name-at", ast.name.span.id)
+    perform show("value", ast.value.text)
+    perform show("value-at", ast.value.span.id)
+  }
+  Err(diag) => perform show("unexpected", diag.message)
+}
+match ident::parse("日本語=@") {
+  Err(diag) => {
+    perform show("bad-at", diag.at)
+    perform show("bad-code", diag.code)
+    perform show("bad-message", diag.message)
+    perform show("bad-expected", diag.expected)
+  }
+  Ok(ast) => perform show("unexpected", ast.name.text)
+}
+match ident::parse("日本語=") {
+  Err(diag) => { perform show("eof-at", diag.at); perform show("eof-expected", diag.expected) }
+  Ok(ast) => perform show("unexpected", ast.name.text)
+}
+````
+entry = "main.tauto"
+shows = ["name = \"日本語\"", "name-at = 0", "value = \"12\"", "value-at = 10", "bad-at = 10", "bad-code = \"macro.syntax_error\"", "bad-message = \"macro-syntax-not-a-token\"", "bad-expected = Nil", "eof-at = 10", "eof-expected = Cons(\"Value\", Nil)"]
+backends = ["rust", "javascript"]
+
+@ cases.borrowed_callback_host_equivalent_outputs
+source = ```tauto
+import std::prelude::Shared
+
+
+fn names(callback: u64, &arg0: (u64) -> u64): u64 { arg0(callback) }
+fn apply(&f: (u64) -> u64, value: u64): u64 { f(value) }
+fn read_first(&f: (u64) -> u64): u64 { f(0) }
+fn read_if(&f: (u64) -> u64, enabled: Bool): u64 { if enabled { f(0) } else { 0 } }
+fn twice(&f: (u64) -> u64, value: u64): u64 { f(value) + f(value) }
+fn both(&left: (u64) -> u64, &right: (u64, u64) -> u64): u64 { right(left(0), left(1)) }
+fn produce(&f: () -> u64): u64 { f() }
+fn notify(&f: () -> Unit, value: u64): u64 { f(); value }
+fn text_value(&f: (Option(Text)) -> Option(Text), value: Option(Text)): Option(Text) { f(value) }
+fn borrow_text(&f: (&Text) -> Text, &value: Text): Text { f(&value) }
+
+let values := Array::of_list(Cons(10, Cons(20, Cons(30, Nil))))
+let read := (index: u64) => match Array::get(values, index) { Some(value) => value, None => 0 }
+perform show("names", names(1, read))
+perform show("apply-one", apply(read, 1))
+perform show("apply-two", apply(read, 2))
+perform show("twice", twice(read, 0))
+perform show("both", both(read, (a, b) => a + b))
+var calls: u64 := 0
+let lazy := (index: u64) => { calls := calls + 1; read(index) }
+perform show("disabled", read_if(lazy, false))
+perform show("calls-disabled", calls)
+perform show("first", read_first(lazy))
+perform show("calls-first", calls)
+perform show("produced", produce(() => 20))
+perform show("notified", notify(() => #(), 1))
+perform show("text", text_value((value) => value, Some("日本語")))
+perform show("no-text", text_value((value) => value, None))
+```
+shows = ["names = 20", "apply-one = 20", "apply-two = 30", "twice = 20", "both = 30", "disabled = 0", "calls-disabled = 0", "first = 10", "calls-first = 1", "produced = 20", "notified = 1", "text = Some(\"日本語\")", "no-text = None"]
+backends = ["rust", "javascript"]
+
+@ cases.runtime_syntax_keyword_fields
+files."main.tauto" = ````tauto
+syntax!(ident, ```par
+%start Decl
+%title "ident"
+%%
+Decl: Name Equals Value;
+Name: /[\p{L}_][\p{L}\p{N}_]*/;
+Equals: '=';
+Value: /[0-9]+/;
+```) => struct Decl, fn parse
+syntax!(keywords, ```par
+%start Root
+%title "keyword fields"
+%%
+Root: '['^ Value ']'^;
+Value: 'true' | 'false';
+```) => struct Root, enum Value, fn parse
+
+fn token(input: Text): Pair(Text, u64) {
+  match keywords::parse(input) {
+    Ok(tree) => match tree.value {
+      keywords::Value::True { span: _, true_field } => Pair { fst: true_field.text, snd: true_field.span.id }
+      keywords::Value::False { span: _, false_field } => Pair { fst: false_field.text, snd: false_field.span.id }
+    }
+    Err(diag) => Pair { fst: diag.code, snd: diag.at }
+  }
+}
+perform show("true", token("[true]"))
+perform show("false", token("[false]"))
+perform show("invalid", match keywords::parse("[maybe]") { Ok(tree) => false, Err(diag) => true })
+````
+entry = "main.tauto"
+shows = ["true = #(\"true\", 1)", "false = #(\"false\", 1)", "invalid = true"]
+backends = ["rust", "javascript"]
+
+@ cases.borrowed_text_callback_host_equivalent_output
+source = ```tauto
+fn borrow_text(&f: (&Text) -> Text, &value: Text): Text { f(&value) }
+let text := "日本語"
+perform show("borrowed", borrow_text((&value) => value, &text))
+```
+shows = ["borrowed = \"日本語\""]
+backends = ["rust", "javascript"]
+backend_known_failure = { "rust" => "build: expected `&Text`, found `Text`" }
+
+@ cases.exports_uniffi
+source = ```tauto
+
+fn greet(name: Text, times: i64): Text { if times > 0 { name } else { "nobody" } }
+fn first(names: Vec(Text)): Option(Text) { None }
+fn twice(n: i64): i64 { n + n }
+fn keep(u: Unit): i64 { 1 }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"

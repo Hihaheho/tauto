@@ -43,7 +43,7 @@ rejected by the type checker
 > if true then 1 else false
 rejected by the type checker
 > 1 + * 2
-syntax error: macro.syntax_error: in tl: expected Num or KwTrue or KwFalse or LParen, found Error
+syntax error: this text is not a token of the syntax
 > 2 + 3
 5 : Nat
 > :quit

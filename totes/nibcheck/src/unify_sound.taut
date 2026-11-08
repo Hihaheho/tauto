@@ -18,13 +18,13 @@ import "ty.taut"
 // it only binds variables that were not bound and only records more.
 
 pub fn ck_val<A>(m: Mut1(A, Checker)): A {
-  match m: A {
+  ⊢ A from match m {
     mut1(v, c) => v
   }
 }
 
 pub fn ck_st<A>(m: Mut1(A, Checker)): Checker {
-  match m: Checker {
+  ⊢ Checker from match m {
     mut1(v, c) => c
   }
 }
@@ -50,19 +50,19 @@ pub fn ck_bounds_of(c: Checker): List(TyBound) {
 }
 
 pub fn ck_rewrap1<A, S>(m: Mut1(A, S)): Mut1(A, S) {
-  match m: Mut1(A, S) {
+  ⊢ Mut1(A, S) from match m {
     mut1(v, x) => mut1(v, x)
   }
 }
 
 pub theorem ck_rewrap1_id<A: Type, S: Type>(m: Mut1(A, S)): (ck_rewrap1(m) = m) {
-  match m: (ck_rewrap1(m) = m) {
+  ⊢ (ck_rewrap1(m) = m) from match m {
     mut1(v, x) => Refl
   }
 }
 
 pub theorem ck_none_ne_some<A: Type>(x: A, e: None = Some(x)): False {
-  match e: False {
+  ⊢ False from match e {
   }
 }
 
@@ -124,13 +124,22 @@ pub fn ck_deferred_view(
   Pair {fst: ck_stable_view(c), snd: Pair {fst: c.pending, snd: c.ctor_bounds}}
 }
 pub fn ck_deferred_stable(
-  r#view: Pair(Pair(List(TyLiteral), Ordmap(Text, Scheme)), Pair(List(TyPending), List(TyCtorBound)))
+  r#view: Pair(
+    Pair(List(TyLiteral), Ordmap(Text, Scheme)),
+    Pair(List(TyPending), List(TyCtorBound))
+  )
 ): Pair(List(TyLiteral), Ordmap(Text, Scheme)) { r#view.fst }
 pub fn ck_deferred_pending(
-  r#view: Pair(Pair(List(TyLiteral), Ordmap(Text, Scheme)), Pair(List(TyPending), List(TyCtorBound)))
+  r#view: Pair(
+    Pair(List(TyLiteral), Ordmap(Text, Scheme)),
+    Pair(List(TyPending), List(TyCtorBound))
+  )
 ): List(TyPending) { r#view.snd.fst }
 pub fn ck_deferred_ctors(
-  r#view: Pair(Pair(List(TyLiteral), Ordmap(Text, Scheme)), Pair(List(TyPending), List(TyCtorBound)))
+  r#view: Pair(
+    Pair(List(TyLiteral), Ordmap(Text, Scheme)),
+    Pair(List(TyPending), List(TyCtorBound))
+  )
 ): List(TyCtorBound) { r#view.snd.snd }
 
 pub def CkFixed(
@@ -140,10 +149,7 @@ pub def CkFixed(
   ck_datas_of(c) = ck_datas_of(c2),
   And(
     BoundsExt(ck_bounds_of(c), ck_bounds_of(c2)),
-    And(
-      ck_errors_of(c) = ck_errors_of(c2),
-      ck_deferred_view(c) = ck_deferred_view(c2)
-    )
+    And(ck_errors_of(c) = ck_errors_of(c2), ck_deferred_view(c) = ck_deferred_view(c2))
   )
 )
 
@@ -175,15 +181,10 @@ pub def UOk(
   m: Mut1(Bool, Checker),
   a: Ty,
   b: Ty
-): Prop := (
-  CkOrdered(c)
-) -> And(Grows(c, ck_st(m)), (ck_val(m) = true) -> TyEqAt(ck_st(m), a, b))
+): Prop := (CkOrdered(c)) -> And(Grows(c, ck_st(m)), (ck_val(m) = true) -> TyEqAt(ck_st(m), a, b))
 
 pub theorem fixed_refl(c: Checker): CkFixed(c, c) {
-  AndIntro(
-    Refl,
-    AndIntro((x: TyBound, h: BoundIn(ck_bounds_of(c), x)) => h, AndIntro(Refl, Refl))
-  )
+  AndIntro(Refl, AndIntro((x: TyBound, h: BoundIn(ck_bounds_of(c), x)) => h, AndIntro(Refl, Refl)))
 }
 
 pub theorem fixed_trans(
@@ -211,19 +212,9 @@ pub theorem grows_refl(c: Checker, o: CkOrdered(c)): Grows(c, c) {
   AndIntro(
     o,
     AndIntro(
-      (
-        i: Nat,
-        t: Ty,
-        e: Ordmap::get(ck_subst_of(c), i, Ordmap::compare_nat) = Some(t)
-      ) => e,
+      (i: Nat, t: Ty, e: Ordmap::get(ck_subst_of(c), i, Ordmap::compare_nat) = Some(t)) => e,
       AndIntro(
-        (
-          gs: List(Pair(Text, Kind)),
-          r: Ordmap(Text, Ty),
-          a: Ty,
-          b: Ty,
-          h: KeptIn(ck_kept_of(c), gs, r, a, b)
-        ) => h,
+        (gs: List(Pair(Text, Kind)), r: Ordmap(Text, Ty), a: Ty, b: Ty, h: KeptIn(ck_kept_of(c), gs, r, a, b)) => h,
         fixed_refl(c)
       )
     )
@@ -240,19 +231,11 @@ pub theorem grows_trans(
   AndIntro(
     And::left(g2),
     AndIntro(
-      (
-        i: Nat,
-        t: Ty,
-        e: Ordmap::get(ck_subst_of(c1), i, Ordmap::compare_nat) = Some(t)
-      ) => And::left(And::right(g2))(i, t, And::left(And::right(g1))(i, t, e)),
+      (i: Nat, t: Ty, e: Ordmap::get(ck_subst_of(c1), i, Ordmap::compare_nat) = Some(t)) => And::left(
+        And::right(g2)
+      )(i, t, And::left(And::right(g1))(i, t, e)),
       AndIntro(
-        (
-          gs: List(Pair(Text, Kind)),
-          r: Ordmap(Text, Ty),
-          a: Ty,
-          b: Ty,
-          h: KeptIn(ck_kept_of(c1), gs, r, a, b)
-        ) => And::left(
+        (gs: List(Pair(Text, Kind)), r: Ordmap(Text, Ty), a: Ty, b: Ty, h: KeptIn(ck_kept_of(c1), gs, r, a, b)) => And::left(
           And::right(And::right(g2))
         )(gs, r, a, b, And::left(And::right(And::right(g1)))(gs, r, a, b, h)),
         fixed_trans(
@@ -321,20 +304,14 @@ pub def CkSame(
       ck_datas_of(c) = ck_datas_of(c2),
       And(
         ck_bounds_of(c) = ck_bounds_of(c2),
-        And(
-          ck_errors_of(c) = ck_errors_of(c2),
-          ck_deferred_view(c) = ck_deferred_view(c2)
-        )
+        And(ck_errors_of(c) = ck_errors_of(c2), ck_deferred_view(c) = ck_deferred_view(c2))
       )
     )
   )
 )
 
 pub theorem ck_same_refl(c: Checker): CkSame(c, c) {
-  AndIntro(
-    Refl,
-    AndIntro(Refl, AndIntro(Refl, AndIntro(Refl, AndIntro(Refl, Refl))))
-  )
+  AndIntro(Refl, AndIntro(Refl, AndIntro(Refl, AndIntro(Refl, AndIntro(Refl, Refl)))))
 }
 
 pub theorem ck_same_trans(
@@ -376,23 +353,17 @@ pub theorem grows_same(c: Checker, c2: Checker, o: CkOrdered(c), hs: CkSame(c, c
   AndIntro(
     Eq::subst((z: Ordmap(Nat, Ty)) => Ordmap::ordered(z, Ordmap::compare_nat), And::left(hs), o),
     AndIntro(
-      (
-        i: Nat,
-        t: Ty,
-        e: Ordmap::get(ck_subst_of(c), i, Ordmap::compare_nat) = Some(t)
-      ) => Eq::subst(
+      (i: Nat, t: Ty, e: Ordmap::get(ck_subst_of(c), i, Ordmap::compare_nat) = Some(t)) => Eq::subst(
         (z: Ordmap(Nat, Ty)) => Ordmap::get(z, i, Ordmap::compare_nat) = Some(t),
         And::left(hs),
         e
       ),
       AndIntro(
-        (
-          gs: List(Pair(Text, Kind)),
-          r: Ordmap(Text, Ty),
-          a: Ty,
-          b: Ty,
-          h: KeptIn(ck_kept_of(c), gs, r, a, b)
-        ) => Eq::subst((z: List(TyKept)) => KeptIn(z, gs, r, a, b), And::left(And::right(hs)), h),
+        (gs: List(Pair(Text, Kind)), r: Ordmap(Text, Ty), a: Ty, b: Ty, h: KeptIn(ck_kept_of(c), gs, r, a, b)) => Eq::subst(
+          (z: List(TyKept)) => KeptIn(z, gs, r, a, b),
+          And::left(And::right(hs)),
+          h
+        ),
         AndIntro(
           And::left(And::right(And::right(hs))),
           AndIntro(
@@ -425,12 +396,12 @@ pub theorem subst_ext_insert(
   o: Ordmap::ordered(s, Ordmap::compare_nat),
   hn: Ordmap::get(s, v, Ordmap::compare_nat) = None
 ): SubstExt(s, Ordmap::insert(s, v, t, Ordmap::compare_nat)) {
-  (
-    i: Nat,
-    t2: Ty,
-    e: Ordmap::get(s, i, Ordmap::compare_nat) = Some(t2)
-  ) => Ordering::cases(
-    (x: Ordering) => Ordmap::get(Ordmap::insert(s, v, t, Ordmap::compare_nat), i, Ordmap::compare_nat) = Some(t2),
+  (i: Nat, t2: Ty, e: Ordmap::get(s, i, Ordmap::compare_nat) = Some(t2)) => Ordering::cases(
+    (x: Ordering) => Ordmap::get(
+      Ordmap::insert(s, v, t, Ordmap::compare_nat),
+      i,
+      Ordmap::compare_nat
+    ) = Some(t2),
     Ordmap::compare_nat(i, v),
     (ej: Ordmap::compare_nat(i, v) = Less) => Eq::trans(
       Ordmap::get_insert_other(
@@ -490,13 +461,7 @@ pub theorem grows_set(
     AndIntro(
       subst_ext_insert(ck_subst_of(c), v, t, o, hn),
       AndIntro(
-        (
-          gs: List(Pair(Text, Kind)),
-          r: Ordmap(Text, Ty),
-          a: Ty,
-          b: Ty,
-          h: KeptIn(ck_kept_of(c), gs, r, a, b)
-        ) => h,
+        (gs: List(Pair(Text, Kind)), r: Ordmap(Text, Ty), a: Ty, b: Ty, h: KeptIn(ck_kept_of(c), gs, r, a, b)) => h,
         fixed_refl(c)
       )
     )
@@ -530,13 +495,13 @@ pub theorem uok_no(c: Checker, a: Ty, b: Ty): UOk(c, mut1(false, c), a, b) {
 }
 
 pub fn ck_k_true(m: Mut1(Unit, Checker)): Mut1(Bool, Checker) {
-  match m: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match m {
     mut1(x, c2) => mut1(true, c2)
   }
 }
 
 pub fn ck_bind_value_k(c: Checker, v: Nat, t: Ty, x: Bool): Mut1(Bool, Checker) {
-  match x: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match x {
     true => mut1(false, c)
     false => ck_k_true(ck_set_subst(c, v, t))
   }
@@ -560,7 +525,7 @@ pub theorem ck_bind_value_ok(
 }
 
 pub fn ck_bind_other_k(c: Checker, v: Nat, t: Ty, x: Bool): Mut1(Bool, Checker) {
-  match x: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match x {
     true => mut1(false, c)
     false => ck_rewrap1(ck_bind_value(c, v, t))
   }
@@ -587,20 +552,20 @@ pub theorem ck_bind_other_ok(
 }
 
 pub fn ck_int_k(c: Checker, w: Nat, x: Bool): Mut1(Unit, Checker) {
-  match x: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match x {
     true => ck_rewrap1(ck_add_int(c, w))
     false => mut1(Star, c)
   }
 }
 
 pub fn ck_var_set(v: Nat, w: Nat, m: Mut1(Unit, Checker)): Mut1(Bool, Checker) {
-  match m: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match m {
     mut1(x, c2) => ck_k_true(ck_set_subst(c2, v, TyVar(w)))
   }
 }
 
 pub fn ck_bind_var_k(c: Checker, v: Nat, w: Nat, x: Bool): Mut1(Bool, Checker) {
-  match x: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match x {
     true => mut1(true, c)
     false => ck_var_set(v, w, ck_int_k(c, w, ck_is_int(c, v)))
   }
@@ -608,7 +573,7 @@ pub fn ck_bind_var_k(c: Checker, v: Nat, w: Nat, x: Bool): Mut1(Bool, Checker) {
 
 // Marking a variable an integer leaves the substitution and the records.
 pub theorem ck_int_k_same(c: Checker, w: Nat, x: Bool): CkSame(c, ck_st(ck_int_k(c, w, x))) {
-  match x: CkSame(c, ck_st(ck_int_k(c, w, x))) {
+  ⊢ CkSame(c, ck_st(ck_int_k(c, w, x))) from match x {
     true => ck_same_refl(c)
     false => ck_same_refl(c)
   }
@@ -622,7 +587,7 @@ pub theorem ck_var_set_ok(
   hs: CkSame(c, ck_st(m)),
   hn: Ordmap::get(ck_subst_of(c), v, Ordmap::compare_nat) = None
 ): UOk(c, ck_var_set(v, w, m), TyVar(v), TyVar(w)) {
-  match m: UOk(c, ck_var_set(v, w, m), TyVar(v), TyVar(w)) {
+  ⊢ UOk(c, ck_var_set(v, w, m), TyVar(v), TyVar(w)) from match m {
     mut1(x, c2) => (o: CkOrdered(c)) => AndIntro(
       grows_trans(
         c,
@@ -680,7 +645,7 @@ pub theorem ck_bind_unbound_ok(
   t: Ty,
   hn: Ordmap::get(ck_subst_of(c), v, Ordmap::compare_nat) = None
 ): UOk(c, ck_bind_unbound(c, v, t), TyVar(v), t) {
-  match t: UOk(c, ck_bind_unbound(c, v, t), TyVar(v), t) {
+  ⊢ UOk(c, ck_bind_unbound(c, v, t), TyVar(v), t) from match t {
     TyVar(i) => uok_rewrap(c, ck_bind_var(c, v, i), TyVar(v), TyVar(i), ck_bind_var_ok(c, v, i, hn))
     TyFn(ps, r, fk) => uok_rewrap(
       c,
@@ -805,14 +770,14 @@ pub theorem ck_bind_unbound_ok(
 }
 
 pub fn ck_bind_k(c: Checker, v: Nat, t: Ty, x: Bool): Mut1(Bool, Checker) {
-  match x: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match x {
     true => mut1(false, c)
     false => ck_rewrap1(ck_bind_unbound(c, v, t))
   }
 }
 
 pub fn ck_bound_bool(o: Option(Ty)): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     None => false
     Some(x) => true
   }
@@ -824,7 +789,7 @@ pub theorem ck_option_cases<A: Type>(
   a: (o = None) -> P(None),
   b: ∀ x: A. (o = Some(x)) -> P(Some(x))
 ): P(o) {
-  match o: P(o) {
+  ⊢ P(o) from match o {
     None => a(Refl)
     Some(x) => b(x, Refl)
   }
@@ -842,21 +807,22 @@ pub theorem ck_bind_ok(c: Checker, v: Nat, t: Ty): UOk(c, ck_bind(c, v, t), TyVa
       t,
       ck_bind_unbound_ok(c, v, t, hn)
     ),
-    (
-      x: Ty,
-      hs: Ordmap::get(ck_subst_of(c), v, Ordmap::compare_nat) = Some(x)
-    ) => uok_no(c, TyVar(v), t)
+    (x: Ty, hs: Ordmap::get(ck_subst_of(c), v, Ordmap::compare_nat) = Some(x)) => uok_no(
+      c,
+      TyVar(v),
+      t
+    )
   )
 }
 
 pub fn tk_first(g: Pair(Text, Kind)): Text {
-  match g: Text {
+  ⊢ Text from match g {
     Pair { fst: a, snd: b } => a
   }
 }
 
 pub fn tk_second(g: Pair(Text, Kind)): Kind {
-  match g: Kind {
+  ⊢ Kind from match g {
     Pair { fst: a, snd: b } => b
   }
 }
@@ -874,7 +840,7 @@ pub fn ck_rigid_k(
   t: Ty,
   m: Mut1(Ordmap(Text, Ty), Checker)
 ): Mut1(Ordmap(Text, Ty), Checker) {
-  match m: Mut1(Ordmap(Text, Ty), Checker) {
+  ⊢ Mut1(Ordmap(Text, Ty), Checker) from match m {
     mut1(x, c2) => mut1(Ordmap::insert(x, tk_first(g), t, Ordmap::compare_text), c2)
   }
 }
@@ -886,7 +852,7 @@ pub theorem ck_rigid_k_same(
   m: Mut1(Ordmap(Text, Ty), Checker),
   h: CkSame(c, ck_st(m))
 ): CkSame(c, ck_st(ck_rigid_k(g, t, m))) {
-  match m: CkSame(c, ck_st(ck_rigid_k(g, t, m))) {
+  ⊢ CkSame(c, ck_st(ck_rigid_k(g, t, m))) from match m {
     mut1(x, c2) => h
   }
 }
@@ -896,7 +862,7 @@ pub theorem ck_rigid_same(
   gs: List(Pair(Text, Kind)),
   c: Checker
 ): CkSame(c, ck_st(ck_rigid(gs, c))) {
-  match gs: CkSame(c, ck_st(ck_rigid(gs, c))) {
+  ⊢ CkSame(c, ck_st(ck_rigid(gs, c))) from match gs {
     Nil => ck_same_refl(c)
     Cons(g, rest) => ck_rigid_k_same(
       c,
@@ -920,7 +886,7 @@ pub fn ck_keep_k(
   b: Ty,
   x: Bool
 ): Mut1(Bool, Checker) {
-  match x: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match x {
     true => ck_k_true(ck_set_kept(c, Cons(TyKeptMk(gs, rigid, a, b), ck_kept_of(c))))
     false => mut1(false, c)
   }
@@ -957,19 +923,12 @@ pub theorem ck_keep_ok(
       AndIntro(
         o,
         AndIntro(
-          (
-            i: Nat,
-            t: Ty,
-            e2: Ordmap::get(ck_subst_of(c), i, Ordmap::compare_nat) = Some(t)
-          ) => e2,
+          (i: Nat, t: Ty, e2: Ordmap::get(ck_subst_of(c), i, Ordmap::compare_nat) = Some(t)) => e2,
           AndIntro(
-            (
-              gs2: List(Pair(Text, Kind)),
-              r: Ordmap(Text, Ty),
-              a2: Ty,
-              b2: Ty,
-              h: KeptIn(ck_kept_of(c), gs2, r, a2, b2)
-            ) => KeptThere(TyKeptMk(gs, rigid, a, b), h),
+            (gs2: List(Pair(Text, Kind)), r: Ordmap(Text, Ty), a2: Ty, b2: Ty, h: KeptIn(ck_kept_of(c), gs2, r, a2, b2)) => KeptThere(
+              TyKeptMk(gs, rigid, a, b),
+              h
+            ),
             fixed_refl(c)
           )
         )
@@ -993,14 +952,14 @@ pub def Mono(
 ): Prop := ∀ c1: Checker. ∀ c2: Checker. (Grows(c1, c2)) -> (q(c1)) -> q(c2)
 
 pub fn ck_and_k(k: (Checker) -> Mut1(Bool, Checker), c2: Checker, v: Bool): Mut1(Bool, Checker) {
-  match v: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match v {
     true => ck_rewrap1(k(c2))
     false => mut1(false, c2)
   }
 }
 
 pub fn ck_and(k: (Checker) -> Mut1(Bool, Checker), m: Mut1(Bool, Checker)): Mut1(Bool, Checker) {
-  match m: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match m {
     mut1(v, c2) => ck_and_k(k, c2, v)
   }
 }
@@ -1024,7 +983,7 @@ pub theorem post_and_k(
   h1: (v = true) -> q1(c2),
   h2: Post(c2, k(c2), q2)
 ): PostAnd(c, ck_and_k(k, c2, v), q1, q2) {
-  match v: PostAnd(c, ck_and_k(k, c2, v), q1, q2) {
+  ⊢ PostAnd(c, ck_and_k(k, c2, v), q1, q2) from match v {
     false => AndIntro(g, (y: false = true) => False::elim(true_ne_false(Eq::sym(y))))
     true => Eq::subst(
       (z: Mut1(Bool, Checker)) => PostAnd(c, z, q1, q2),
@@ -1051,8 +1010,19 @@ pub theorem post_and(
   h2: ∀ c2: Checker. Post(c2, k(c2), q2),
   o: CkOrdered(c)
 ): PostAnd(c, ck_and(k, m), q1, q2) {
-  match m: PostAnd(c, ck_and(k, m), q1, q2) {
-    mut1(v, c2) => post_and_k(c, c2, v, q1, k, q2, mono1, And::left(h1(o)), And::right(h1(o)), h2(c2))
+  ⊢ PostAnd(c, ck_and(k, m), q1, q2) from match m {
+    mut1(v, c2) => post_and_k(
+      c,
+      c2,
+      v,
+      q1,
+      k,
+      q2,
+      mono1,
+      And::left(h1(o)),
+      And::right(h1(o)),
+      h2(c2)
+    )
   }
 }
 
@@ -1119,9 +1089,14 @@ pub def TyEqLenAt(
 ): Prop := (Nat::eq(list_len(xs), list_len(ys)) = true) -> TyEqListAt(c, xs, ys)
 
 pub theorem mono_len(xs: List(Ty), ys: List(Ty)): Mono((c: Checker) => TyEqLenAt(c, xs, ys)) {
-  (c1: Checker, c2: Checker, g: Grows(c1, c2), h: TyEqLenAt(c1, xs, ys)) => (
-    e: Nat::eq(list_len(xs), list_len(ys)) = true
-  ) => tyeq_list_at_move(c1, c2, g, xs, ys, h(e))
+  (c1: Checker, c2: Checker, g: Grows(c1, c2), h: TyEqLenAt(c1, xs, ys)) => (e: Nat::eq(list_len(xs), list_len(ys)) = true) => tyeq_list_at_move(
+    c1,
+    c2,
+    g,
+    xs,
+    ys,
+    h(e)
+  )
 }
 
 pub theorem post_of_and(
@@ -1218,27 +1193,23 @@ pub theorem pairs_step(
   xs: List(Ty),
   ys: List(Ty)
 ): Post(c, ck_unify_pairs_in(Succ(j), c, xs, ys), (c2: Checker) => TyEqLenAt(c2, xs, ys)) {
-  match xs: Post(
-    c,
-    ck_unify_pairs_in(Succ(j), c, xs, ys),
-    (c2: Checker) => TyEqLenAt(c2, xs, ys)
-  ) {
-    Nil => match ys: Post(
+  ⊢ Post(c, ck_unify_pairs_in(Succ(j), c, xs, ys), (c2: Checker) => TyEqLenAt(c2, xs, ys)) from match xs {
+    Nil => ⊢ Post(
       c,
       ck_unify_pairs_in(Succ(j), c, Nil, ys),
       (c2: Checker) => TyEqLenAt(c2, Nil, ys)
-    ) {
+    ) from match ys {
       Nil => (o: CkOrdered(c)) => AndIntro(
         grows_refl(c, o),
         (y: true = true) => (e: true = true) => TyeqNil
       )
       Cons(y, yr) => post_true_len(c, Nil, Cons(y, yr), Refl)
     }
-    Cons(x, xr) => match ys: Post(
+    Cons(x, xr) => ⊢ Post(
       c,
       ck_unify_pairs_in(Succ(j), c, Cons(x, xr), ys),
       (c2: Checker) => TyEqLenAt(c2, Cons(x, xr), ys)
-    ) {
+    ) from match ys {
       Nil => post_true_len(c, Cons(x, xr), Nil, Refl)
       Cons(y, yr) => uok_and(
         c,
@@ -1250,16 +1221,17 @@ pub theorem pairs_step(
         (c2: Checker) => TyEqLenAt(c2, Cons(x, xr), Cons(y, yr)),
         hu(c, x, y),
         (c2: Checker) => hp(c2, xr, yr),
-        (c2: Checker, h1: TyEqAt(c2, x, y), h2: TyEqLenAt(c2, xr, yr)) => (
-          e: Nat::eq(list_len(xr), list_len(yr)) = true
-        ) => TyeqCons(h1, h2(e))
+        (c2: Checker, h1: TyEqAt(c2, x, y), h2: TyEqLenAt(c2, xr, yr)) => (e: Nat::eq(list_len(xr), list_len(yr)) = true) => TyeqCons(
+          h1,
+          h2(e)
+        )
       )
     }
   }
 }
 
 pub fn ck_opt_or<A>(d: A, o: Option(A)): A {
-  match o: A {
+  ⊢ A from match o {
     None => d
     Some(x) => x
   }
@@ -1270,19 +1242,19 @@ pub theorem ck_some_inj<A: Type>(x: A, y: A, e: Some(x) = Some(y)): (x = y) {
 }
 
 pub fn pair_fst_lt(p: Pair(List(Ty), Ty)): List(Ty) {
-  match p: List(Ty) {
+  ⊢ List(Ty) from match p {
     Pair { fst: a, snd: b } => a
   }
 }
 
 pub fn pair_snd_lt(p: Pair(List(Ty), Ty)): Ty {
-  match p: Ty {
+  ⊢ Ty from match p {
     Pair { fst: a, snd: b } => b
   }
 }
 
 pub fn ck_split_k(a: Ty, o: Option(Pair(List(Ty), Ty))): Option(Pair(List(Ty), Ty)) {
-  match o: Option(Pair(List(Ty), Ty)) {
+  ⊢ Option(Pair(List(Ty), Ty)) from match o {
     None => Some(Pair { fst: Nil, snd: a })
     Some(q) => Some(Pair { fst: Cons(a, pair_fst_lt(q)), snd: pair_snd_lt(q) })
   }
@@ -1293,28 +1265,25 @@ pub theorem ck_split_k_some(
   o: Option(Pair(List(Ty), Ty)),
   e: ck_split_k(a, o) = None
 ): False {
-  match o: (ck_split_k(a, o) = None) -> False {
-    None => (
-      e2: Some(Pair { fst: Nil(Ty), snd: a }) = None
-    ) => ck_none_ne_some(Pair { fst: Nil(Ty), snd: a }, Eq::sym(e2))
-    Some(q) => (
-      e2: Some(Pair { fst: Cons(a, pair_fst_lt(q)), snd: pair_snd_lt(q) }) = None
-    ) => ck_none_ne_some(Pair { fst: Cons(a, pair_fst_lt(q)), snd: pair_snd_lt(q) }, Eq::sym(e2))
-  }(e)
+  (⊢ (ck_split_k(a, o) = None) -> False from match o {
+    None => (e2: Some(Pair { fst: Nil(Ty), snd: a }) = None) => ck_none_ne_some(
+      Pair { fst: Nil(Ty), snd: a },
+      Eq::sym(e2)
+    )
+    Some(q) => (e2: Some(Pair { fst: Cons(a, pair_fst_lt(q)), snd: pair_snd_lt(q) }) = None) => ck_none_ne_some(
+      Pair { fst: Cons(a, pair_fst_lt(q)), snd: pair_snd_lt(q) },
+      Eq::sym(e2)
+    )
+  })(e)
 }
 
-pub theorem ck_split_none(
-  args: List(Ty),
-  e: ty_split_last(args) = None
-): (args = Nil) {
-  match args: (
-    ty_split_last(args) = None
-  ) -> (args = Nil) {
+pub theorem ck_split_none(args: List(Ty), e: ty_split_last(args) = None): (args = Nil) {
+  (⊢ (ty_split_last(args) = None) -> (args = Nil) from match args {
     Nil => (e2: Eq(Option(Pair(List(Ty), Ty)), None, None)) => Refl
-    Cons(a, rest) => (
-      e2: ck_split_k(a, ty_split_last(rest)) = None
-    ) => False::elim(ck_split_k_some(a, ty_split_last(rest), e2))
-  }(e)
+    Cons(a, rest) => (e2: ck_split_k(a, ty_split_last(rest)) = None) => False::elim(
+      ck_split_k_some(a, ty_split_last(rest), e2)
+    )
+  })(e)
 }
 
 pub def SplitOk(
@@ -1338,20 +1307,16 @@ pub theorem ck_split_cons(
   ih: SplitOk(rest),
   o: Option(Pair(List(Ty), Ty))
 ): SplitKOk(a, rest, o) {
-  match o: SplitKOk(a, rest, o) {
-    None => (eo: ty_split_last(rest) = None) => (
-      p: Pair(List(Ty), Ty),
-      e: ck_split_k(a, ty_split_last(rest)) = Some(p)
-    ) => Eq::subst(
-      (z: Pair(List(Ty), Ty)) => List::append(pair_fst_lt(z), Cons(pair_snd_lt(z), Nil)) = Cons(a, rest),
+  ⊢ SplitKOk(a, rest, o) from match o {
+    None => (eo: ty_split_last(rest) = None) => (p: Pair(List(Ty), Ty), e: ck_split_k(a, ty_split_last(rest)) = Some(p)) => Eq::subst(
+      (z: Pair(List(Ty), Ty)) => List::append(
+        pair_fst_lt(z),
+        Cons(pair_snd_lt(z), Nil)
+      ) = Cons(a, rest),
       ck_some_inj(
         Pair { fst: Nil, snd: a },
         p,
-        Eq::subst(
-          (w: Option(Pair(List(Ty), Ty))) => ck_split_k(a, w) = Some(p),
-          eo,
-          e
-        )
+        Eq::subst((w: Option(Pair(List(Ty), Ty))) => ck_split_k(a, w) = Some(p), eo, e)
       ),
       Eq::subst(
         (r: List(Ty)) => Cons(Ty, a, Nil(Ty)) = Cons(Ty, a, r),
@@ -1359,22 +1324,22 @@ pub theorem ck_split_cons(
         Refl
       )
     )
-    Some(q) => (eo: ty_split_last(rest) = Some(q)) => (
-      p: Pair(List(Ty), Ty),
-      e: ck_split_k(a, ty_split_last(rest)) = Some(p)
-    ) => Eq::subst(
-      (z: Pair(List(Ty), Ty)) => List::append(pair_fst_lt(z), Cons(pair_snd_lt(z), Nil)) = Cons(a, rest),
+    Some(q) => (eo: ty_split_last(rest) = Some(q)) => (p: Pair(List(Ty), Ty), e: ck_split_k(a, ty_split_last(rest)) = Some(p)) => Eq::subst(
+      (z: Pair(List(Ty), Ty)) => List::append(
+        pair_fst_lt(z),
+        Cons(pair_snd_lt(z), Nil)
+      ) = Cons(a, rest),
       ck_some_inj(
         Pair { fst: Cons(a, pair_fst_lt(q)), snd: pair_snd_lt(q) },
         p,
-        Eq::subst(
-          (w: Option(Pair(List(Ty), Ty))) => ck_split_k(a, w) = Some(p),
-          eo,
-          e
-        )
+        Eq::subst((w: Option(Pair(List(Ty), Ty))) => ck_split_k(a, w) = Some(p), eo, e)
       ),
       Eq::subst(
-        (r: List(Ty)) => Cons(Ty, a, List::append(Ty, pair_fst_lt(q), Cons(Ty, pair_snd_lt(q), Nil(Ty)))) = Cons(Ty, a, r),
+        (r: List(Ty)) => Cons(
+          Ty,
+          a,
+          List::append(Ty, pair_fst_lt(q), Cons(Ty, pair_snd_lt(q), Nil(Ty)))
+        ) = Cons(Ty, a, r),
         ih(q, eo),
         Refl
       )
@@ -1383,10 +1348,8 @@ pub theorem ck_split_cons(
 }
 
 pub theorem ck_split_last_ok(args: List(Ty)): SplitOk(args) {
-  match args: SplitOk(args) {
-    Nil => (p: Pair(List(Ty), Ty), e: None = Some(p)) => False::elim(
-      ck_none_ne_some(p, e)
-    )
+  ⊢ SplitOk(args) from match args {
+    Nil => (p: Pair(List(Ty), Ty), e: None = Some(p)) => False::elim(ck_none_ne_some(p, e))
     Cons(a, rest) => ck_split_cons(a, rest, ck_split_last_ok(rest), ty_split_last(rest))(Refl)
   }
 }
@@ -1399,7 +1362,7 @@ pub fn ck_app_k(
   n: Text,
   o: Option(Pair(List(Ty), Ty))
 ): Mut1(Bool, Checker) {
-  match o: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match o {
     None => mut1(false, c)
     Some(p) => ck_and(
       (c2: Checker) => ck_unify_in(j, c2, x, pair_snd_lt(p)),
@@ -1430,12 +1393,8 @@ pub theorem ck_app_k_ok(
   args: List(Ty),
   o: Option(Pair(List(Ty), Ty))
 ): AppKOk(j, c, h, x, n, args, o) {
-  match o: AppKOk(j, c, h, x, n, args, o) {
-    None => (e: ty_split_last(args) = None) => uok_no(
-      c,
-      TyApp(h, x),
-      TyNamed(n, args)
-    )
+  ⊢ AppKOk(j, c, h, x, n, args, o) from match o {
+    None => (e: ty_split_last(args) = None) => uok_no(c, TyApp(h, x), TyNamed(n, args))
     Some(p) => (e: ty_split_last(args) = Some(p)) => uok_and(
       c,
       ck_unify_in(j, c, h, TyNamed(n, pair_fst_lt(p))),
@@ -1446,11 +1405,7 @@ pub theorem ck_app_k_ok(
       (c2: Checker) => TyEqAt(c2, TyApp(h, x), TyNamed(n, args)),
       hu(c, h, TyNamed(n, pair_fst_lt(p))),
       (c2: Checker) => hu(c2, x, pair_snd_lt(p)),
-      (
-        c2: Checker,
-        h1: TyEqAt(c2, h, TyNamed(n, pair_fst_lt(p))),
-        h2: TyEqAt(c2, x, pair_snd_lt(p))
-      ) => TyeqTrans(
+      (c2: Checker, h1: TyEqAt(c2, h, TyNamed(n, pair_fst_lt(p))), h2: TyEqAt(c2, x, pair_snd_lt(p))) => TyeqTrans(
         TyeqApp(h1, h2),
         TyeqTrans(
           TyeqAppNorm(TyNamed(n, pair_fst_lt(p)), pair_snd_lt(p)),
@@ -1488,7 +1443,7 @@ pub fn ck_steps_of(c: Checker): Nat {
 }
 
 pub fn ck_unify_k(j: Nat, c: Checker, b: Ty, a1: Ty, a: Ty): Mut1(Bool, Checker) {
-  match a: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match a {
     TyVar(v) => ck_rewrap1(ck_bind(c, v, b))
     _ => ck_rewrap1(ck_unify_rest_in(j, c, a1, b))
   }
@@ -1510,7 +1465,7 @@ pub theorem ck_unify_k_ok(
   a1: Ty,
   a: Ty
 ): UnifyKOk(j, c, b, a1, a) {
-  match a: UnifyKOk(j, c, b, a1, a) {
+  ⊢ UnifyKOk(j, c, b, a1, a) from match a {
     TyVar(v) => (e: a1 = TyVar(v)) => Eq::subst(
       (z: Ty) => UOk(c, ck_rewrap1(ck_bind(c, v, b)), z, b),
       Eq::sym(e),
@@ -1548,17 +1503,17 @@ pub theorem unify_step(
 }
 
 pub theorem ck_bool_and_left(a: Bool, b: Bool, e: Bool::and(a, b) = true): (a = true) {
-  match a: (Bool::and(a, b) = true) -> (a = true) {
+  (⊢ (Bool::and(a, b) = true) -> (a = true) from match a {
     false => (e2: false = true) => e2
     true => (e2: b = true) => Refl
-  }(e)
+  })(e)
 }
 
 pub theorem ck_bool_and_right(a: Bool, b: Bool, e: Bool::and(a, b) = true): (b = true) {
-  match a: (Bool::and(a, b) = true) -> (b = true) {
+  (⊢ (Bool::and(a, b) = true) -> (b = true) from match a {
     false => (e2: false = true) => False::elim(false_ne_true(e2))
     true => (e2: b = true) => e2
-  }(e)
+  })(e)
 }
 
 pub theorem ck_step_equal(o: Ordering, e: ty_eq_step(o) = true): (o = Equal) {
@@ -1605,9 +1560,7 @@ pub theorem kind_same_of(
   Bool::cases(
     (x: Bool) => KindSameIf(a, b, x),
     kind_eq(a, b),
-    (q: kind_eq(a, b) = false) => (
-      e2: Bool::and(kind_dup(a), kind_dup(b)) = true
-    ) => KindSameDup(
+    (q: kind_eq(a, b) = false) => (e2: Bool::and(kind_dup(a), kind_dup(b)) = true) => KindSameDup(
       ck_bool_and_left(kind_dup(a), kind_dup(b), e2),
       ck_bool_and_right(kind_dup(a), kind_dup(b), e2)
     ),
@@ -1690,7 +1643,7 @@ pub fn ck_poly_k(
   tb: Ty,
   m: Mut1(Ordmap(Text, Ty), Checker)
 ): Mut1(Bool, Checker) {
-  match m: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match m {
     mut1(rigid, c2) => ck_and(
       (c3: Checker) => ck_keep(c3, ga, rigid, TyPoly(ga, ta), TyPoly(gb, tb)),
       ck_unify_in(j, c2, ty_substitute(ta, rigid), ty_substitute(tb, ty_poly_map(gb, ga, rigid)))
@@ -1707,7 +1660,7 @@ pub fn ck_poly_c(
   tb: Ty,
   x: Bool
 ): Mut1(Bool, Checker) {
-  match x: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match x {
     true => ck_poly_k(j, ga, ta, gb, tb, ck_rigid(ga, c))
     false => mut1(ty_eq(TyPoly(ga, ta), TyPoly(gb, tb)), c)
   }
@@ -1736,7 +1689,7 @@ pub theorem ck_poly_k_ok(
   hk: ty_kinds_match(ga, gb) = true,
   m: Mut1(Ordmap(Text, Ty), Checker)
 ): PolyKOk(j, c, ga, ta, gb, tb, m) {
-  match m: PolyKOk(j, c, ga, ta, gb, tb, m) {
+  ⊢ PolyKOk(j, c, ga, ta, gb, tb, m) from match m {
     mut1(rigid, c2) => (hs: CkSame(c, c2)) => post_pre(
       c,
       c2,
@@ -1764,11 +1717,14 @@ pub theorem ck_poly_k_ok(
           TyPoly(gb, tb),
           o3
         ),
-        (
-          c4: Checker,
-          h1: TyEqAt(c4, ty_substitute(ta, rigid), ty_substitute(tb, ty_poly_map(gb, ga, rigid))),
-          h2: KeptIn(ck_kept_of(c4), ga, rigid, TyPoly(ga, ta), TyPoly(gb, tb))
-        ) => TyeqPoly(ga, gb, rigid, hk, h2, h1)
+        (c4: Checker, h1: TyEqAt(c4, ty_substitute(ta, rigid), ty_substitute(tb, ty_poly_map(gb, ga, rigid))), h2: KeptIn(ck_kept_of(c4), ga, rigid, TyPoly(ga, ta), TyPoly(gb, tb))) => TyeqPoly(
+          ga,
+          gb,
+          rigid,
+          hk,
+          h2,
+          h1
+        )
       )
     )
   }
@@ -1812,7 +1768,7 @@ pub fn ck_fn_c(
   kb: Kind,
   x: Bool
 ): Mut1(Bool, Checker) {
-  match x: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match x {
     true => ck_and((c2: Checker) => ck_unify_in(j, c2, ra, rb), ck_unify_pairs_in(j, c, pa, pb))
     false => mut1(ty_eq(TyFn(pa, ra, ka), TyFn(pb, rb, kb)), c)
   }
@@ -1849,23 +1805,22 @@ pub theorem fn_ok(
   TyFn(pb, rb, kb)
 ) {
   Bool::cases(
-    (x: Bool) => UOk(c, ck_fn_c(j, c, pa, ra, ka, pb, rb, kb, x), TyFn(pa, ra, ka), TyFn(pb, rb, kb)),
+    (x: Bool) => UOk(
+      c,
+      ck_fn_c(j, c, pa, ra, ka, pb, rb, kb, x),
+      TyFn(pa, ra, ka),
+      TyFn(pb, rb, kb)
+    ),
     Bool::and(
       Nat::eq(list_len(pa), list_len(pb)),
       Bool::or(kind_eq(ka, kb), Bool::and(kind_dup(ka), kind_dup(kb)))
     ),
-    (
-      q: Bool::and(
-          Nat::eq(list_len(pa), list_len(pb)),
-          Bool::or(kind_eq(ka, kb), Bool::and(kind_dup(ka), kind_dup(kb)))
-        ) = false
-    ) => uok_tyeq(c, TyFn(pa, ra, ka), TyFn(pb, rb, kb)),
-    (
-      q: Bool::and(
-          Nat::eq(list_len(pa), list_len(pb)),
-          Bool::or(kind_eq(ka, kb), Bool::and(kind_dup(ka), kind_dup(kb)))
-        ) = true
-    ) => post_seq(
+    (q: Bool::and(Nat::eq(list_len(pa), list_len(pb)), Bool::or(kind_eq(ka, kb), Bool::and(kind_dup(ka), kind_dup(kb)))) = false) => uok_tyeq(
+      c,
+      TyFn(pa, ra, ka),
+      TyFn(pb, rb, kb)
+    ),
+    (q: Bool::and(Nat::eq(list_len(pa), list_len(pb)), Bool::or(kind_eq(ka, kb), Bool::and(kind_dup(ka), kind_dup(kb)))) = true) => post_seq(
       c,
       ck_unify_pairs_in(j, c, pa, pb),
       (c2: Checker) => TyEqLenAt(c2, pa, pb),
@@ -1907,7 +1862,7 @@ pub fn ck_named_c(
   xb: List(Ty),
   x: Bool
 ): Mut1(Bool, Checker) {
-  match x: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match x {
     true => ck_rewrap1(ck_unify_pairs_in(j, c, xa, xb))
     false => mut1(ty_eq(TyNamed(na, xa), TyNamed(nb, xb)), c)
   }
@@ -1923,7 +1878,15 @@ pub theorem named_ok(
   xb: List(Ty)
 ): UOk(
   c,
-  ck_named_c(j, c, na, xa, nb, xb, Bool::and(Text::eq(na, nb), Nat::eq(list_len(xa), list_len(xb)))),
+  ck_named_c(
+    j,
+    c,
+    na,
+    xa,
+    nb,
+    xb,
+    Bool::and(Text::eq(na, nb), Nat::eq(list_len(xa), list_len(xb)))
+  ),
   TyNamed(na, xa),
   TyNamed(nb, xb)
 ) {
@@ -1947,15 +1910,26 @@ pub theorem named_ok(
           nb,
           ck_bool_and_left(Text::eq(na, nb), Nat::eq(list_len(xa), list_len(xb)), q)
         ),
-        TyeqNamed(na, h(ck_bool_and_right(Text::eq(na, nb), Nat::eq(list_len(xa), list_len(xb)), q)))
+        TyeqNamed(
+          na,
+          h(ck_bool_and_right(Text::eq(na, nb), Nat::eq(list_len(xa), list_len(xb)), q))
+        )
       ),
       hp(c, xa, xb)
     )
   )
 }
 
-pub fn ck_borrow_c(j: Nat, c: Checker, x: Ty, ma: Bool, y: Ty, mb: Bool, e: Bool): Mut1(Bool, Checker) {
-  match e: Mut1(Bool, Checker) {
+pub fn ck_borrow_c(
+  j: Nat,
+  c: Checker,
+  x: Ty,
+  ma: Bool,
+  y: Ty,
+  mb: Bool,
+  e: Bool
+): Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match e {
     true => ck_rewrap1(ck_unify_in(j, c, x, y))
     false => mut1(ty_eq(TyBorrow(x, ma), TyBorrow(y, mb)), c)
   }
@@ -1998,7 +1972,7 @@ pub fn ck_tagged_c(
   y: Ty,
   e: Bool
 ): Mut1(Bool, Checker) {
-  match e: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match e {
     true => ck_rewrap1(ck_unify_in(j, c, x, y))
     false => mut1(ty_eq(TyTagged(ta, x), TyTagged(tb, y)), c)
   }
@@ -2033,7 +2007,7 @@ pub theorem tagged_ok(
 }
 
 pub fn ck_union_c(j: Nat, c: Checker, xa: List(Ty), xb: List(Ty), e: Bool): Mut1(Bool, Checker) {
-  match e: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match e {
     true => ck_rewrap1(ck_unify_pairs_in(j, c, xa, xb))
     false => mut1(ty_eq(TyUnion(xa), TyUnion(xb)), c)
   }
@@ -2062,7 +2036,7 @@ pub theorem union_ok(
 }
 
 pub fn ck_product_c(j: Nat, c: Checker, xa: List(Ty), xb: List(Ty), e: Bool): Mut1(Bool, Checker) {
-  match e: Mut1(Bool, Checker) {
+  ⊢ Mut1(Bool, Checker) from match e {
     true => ck_rewrap1(ck_unify_pairs_in(j, c, xa, xb))
     false => mut1(ty_eq(TyProduct(xa), TyProduct(xb)), c)
   }
@@ -2083,11 +2057,7 @@ pub theorem product_ok(
   Bool::cases(
     (v: Bool) => UOk(c, ck_product_c(j, c, xa, xb, v), TyProduct(xa), TyProduct(xb)),
     Nat::eq(list_len(xa), list_len(xb)),
-    (q: Nat::eq(list_len(xa), list_len(xb)) = false) => uok_tyeq(
-      c,
-      TyProduct(xa),
-      TyProduct(xb)
-    ),
+    (q: Nat::eq(list_len(xa), list_len(xb)) = false) => uok_tyeq(c, TyProduct(xa), TyProduct(xb)),
     (q: Nat::eq(list_len(xa), list_len(xb)) = true) => post_map(
       c,
       ck_unify_pairs_in(j, c, xa, xb),
@@ -2140,7 +2110,7 @@ pub theorem rest_step_eqs(
   ea: a1 = a,
   eb: b1 = b
 ): UOk(c, ck_unify_rest_in(Succ(j), c, a, b), a1, b1) {
-  match b: UOk(c, ck_unify_rest_in(Succ(j), c, a, b), a1, b1) {
+  ⊢ UOk(c, ck_unify_rest_in(Succ(j), c, a, b), a1, b1) from match b {
     TyVar(v) => uok_eqs(
       c,
       ck_rewrap1(ck_bind(c, v, a)),
@@ -2156,7 +2126,7 @@ pub theorem rest_step_eqs(
         uok_sym(c, ck_bind(c, v, a), TyVar(v), a, ck_bind_ok(c, v, a))
       )
     )
-    TyApp(hb, xb) => match a: UOk(c, ck_unify_rest_in(Succ(j), c, a, TyApp(hb, xb)), a1, b1) {
+    TyApp(hb, xb) => ⊢ UOk(c, ck_unify_rest_in(Succ(j), c, a, TyApp(hb, xb)), a1, b1) from match a {
       TyApp(ha, xa) => uok_eqs(
         c,
         ck_and((c2: Checker) => ck_unify_in(j, c2, xa, xb), ck_unify_in(j, c, ha, hb)),
@@ -2200,7 +2170,7 @@ pub theorem rest_step_eqs(
       )
       _ => uok_no(c, a1, b1)
     }
-    TyPoly(gb, tb) => match a: UOk(c, ck_unify_rest_in(Succ(j), c, a, TyPoly(gb, tb)), a1, b1) {
+    TyPoly(gb, tb) => ⊢ UOk(c, ck_unify_rest_in(Succ(j), c, a, TyPoly(gb, tb)), a1, b1) from match a {
       TyPoly(ga, ta) => uok_eqs(
         c,
         ck_poly_c(j, c, ga, ta, gb, tb, ty_kinds_match(ga, gb)),
@@ -2212,12 +2182,7 @@ pub theorem rest_step_eqs(
       )
       _ => uok_no(c, a1, b1)
     }
-    TyFn(pb, rb, kb) => match a: UOk(
-      c,
-      ck_unify_rest_in(Succ(j), c, a, TyFn(pb, rb, kb)),
-      a1,
-      b1
-    ) {
+    TyFn(pb, rb, kb) => ⊢ UOk(c, ck_unify_rest_in(Succ(j), c, a, TyFn(pb, rb, kb)), a1, b1) from match a {
       TyFn(pa, ra, ka) => uok_eqs(
         c,
         ck_fn_c(
@@ -2242,7 +2207,7 @@ pub theorem rest_step_eqs(
       )
       _ => uok_no(c, a1, b1)
     }
-    TyNamed(nb, xb) => match a: UOk(c, ck_unify_rest_in(Succ(j), c, a, TyNamed(nb, xb)), a1, b1) {
+    TyNamed(nb, xb) => ⊢ UOk(c, ck_unify_rest_in(Succ(j), c, a, TyNamed(nb, xb)), a1, b1) from match a {
       TyNamed(na, xa) => uok_eqs(
         c,
         ck_named_c(
@@ -2277,7 +2242,7 @@ pub theorem rest_step_eqs(
       )
       _ => uok_no(c, a1, b1)
     }
-    TyInfo(y) => match a: UOk(c, ck_unify_rest_in(Succ(j), c, a, TyInfo(y)), a1, b1) {
+    TyInfo(y) => ⊢ UOk(c, ck_unify_rest_in(Succ(j), c, a, TyInfo(y)), a1, b1) from match a {
       TyInfo(x) => uok_eqs(
         c,
         ck_rewrap1(ck_unify_in(j, c, x, y)),
@@ -2296,7 +2261,7 @@ pub theorem rest_step_eqs(
       )
       _ => uok_no(c, a1, b1)
     }
-    TyBorrow(y, mb) => match a: UOk(c, ck_unify_rest_in(Succ(j), c, a, TyBorrow(y, mb)), a1, b1) {
+    TyBorrow(y, mb) => ⊢ UOk(c, ck_unify_rest_in(Succ(j), c, a, TyBorrow(y, mb)), a1, b1) from match a {
       TyBorrow(x, ma) => uok_eqs(
         c,
         ck_borrow_c(j, c, x, ma, y, mb, Bool::eq(ma, mb)),
@@ -2308,7 +2273,7 @@ pub theorem rest_step_eqs(
       )
       _ => uok_no(c, a1, b1)
     }
-    TyTagged(tb, y) => match a: UOk(c, ck_unify_rest_in(Succ(j), c, a, TyTagged(tb, y)), a1, b1) {
+    TyTagged(tb, y) => ⊢ UOk(c, ck_unify_rest_in(Succ(j), c, a, TyTagged(tb, y)), a1, b1) from match a {
       TyTagged(ta, x) => uok_eqs(
         c,
         ck_tagged_c(j, c, ta, x, tb, y, text_list_eq(ta, tb)),
@@ -2320,7 +2285,7 @@ pub theorem rest_step_eqs(
       )
       _ => uok_no(c, a1, b1)
     }
-    TyUnion(xb) => match a: UOk(c, ck_unify_rest_in(Succ(j), c, a, TyUnion(xb)), a1, b1) {
+    TyUnion(xb) => ⊢ UOk(c, ck_unify_rest_in(Succ(j), c, a, TyUnion(xb)), a1, b1) from match a {
       TyUnion(xa) => uok_eqs(
         c,
         ck_union_c(j, c, xa, xb, Nat::eq(list_len(xa), list_len(xb))),
@@ -2332,7 +2297,7 @@ pub theorem rest_step_eqs(
       )
       _ => uok_no(c, a1, b1)
     }
-    TyProduct(xb) => match a: UOk(c, ck_unify_rest_in(Succ(j), c, a, TyProduct(xb)), a1, b1) {
+    TyProduct(xb) => ⊢ UOk(c, ck_unify_rest_in(Succ(j), c, a, TyProduct(xb)), a1, b1) from match a {
       TyProduct(xa) => uok_eqs(
         c,
         ck_product_c(j, c, xa, xb, Nat::eq(list_len(xa), list_len(xb))),
@@ -2363,7 +2328,7 @@ pub theorem rest_step(
 pub def UnifyAt(k: Nat): Prop := And(UnifyU(k), And(UnifyR(k), And(UnifyP(k), UnifyA(k))))
 
 pub theorem unify_at(k: Nat): UnifyAt(k) {
-  match k: UnifyAt(k) {
+  ⊢ UnifyAt(k) from match k {
     Zero => AndIntro(
       (c: Checker, a: Ty, b: Ty) => uok_no(c, a, b),
       AndIntro(

@@ -55,19 +55,17 @@ pub fn sc_atoms(p: Text): List(Text) {
   var at: u64 := 0
   while at < std::prelude::Text::len(p) {
     match lk_decode(p, at) {
-      Some(#(@code code, @len len)) => {
-        if code == 92 {
-          match lk_decode(p, at + len) {
-            Some(#(@code _, @len escape_len)) => {
-              out := sc_snoc(out, lk_slice(p, at, at + len + escape_len))
-              at := at + len + escape_len
-            }
-            None => par_die("a block comment end has a dangling escape")
+      Some(#(@code code, @len len)) => if code == 92 {
+        match lk_decode(p, at + len) {
+          Some(#(@code _, @len escape_len)) => {
+            out := sc_snoc(out, lk_slice(p, at, at + len + escape_len))
+            at := at + len + escape_len
           }
-        } else {
-          out := sc_snoc(out, lk_slice(p, at, at + len))
-          at := at + len
+          None => par_die("a block comment end has a dangling escape")
         }
+      } else {
+        out := sc_snoc(out, lk_slice(p, at, at + len))
+        at := at + len
       }
       None => par_die("not UTF-8")
     }
@@ -641,7 +639,10 @@ pub fn sc_expr_words(e: PExpr): List(Text) {
     if e.a_state { "1" } else { "0" },
     Cons(
       Text::of_u64(e.a),
-      Cons(Text::of_u64(e.op), Cons(if e.b_state { "1" } else { "0" }, Cons(Text::of_u64(e.b), Nil)))
+      Cons(
+        Text::of_u64(e.op),
+        Cons(if e.b_state { "1" } else { "0" }, Cons(Text::of_u64(e.b), Nil))
+      )
     )
   )
 }

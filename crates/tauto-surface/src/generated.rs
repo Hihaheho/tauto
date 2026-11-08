@@ -63,15 +63,15 @@ fn show(items: &[(String, String)]) -> String {
 }
 
 pub fn mismatch(
-    start: &str,
+    start: Message,
     listed: &[(String, String)],
     made: &[(String, String)],
-) -> Option<String> {
+) -> Option<Message> {
     let (extra, missing) = difference(listed, made);
     if extra.is_empty() && missing.is_empty() {
         return None;
     }
-    let mut why = Message::text(start);
+    let mut why = start;
     if !extra.is_empty() {
         why = msg!(
             "surface-made-not-listed",
@@ -86,7 +86,7 @@ pub fn mismatch(
             items = show(&missing)
         );
     }
-    Some(why.to_string())
+    Some(why)
 }
 
 /// `=> fn a, theorem b` for `made`, broken into lines after commas when it is long and `breaks`

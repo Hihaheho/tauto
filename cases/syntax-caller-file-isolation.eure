@@ -1,0 +1,201 @@
+description = "An expression embedded in syntax keeps the caller file’s bindings when a macro imports a same-named function."
+@ cases.control
+entry = "src/main.taut"
+backends = ["rust", "javascript", "vm"]
+files."Tauto.eure" = 'package { name = "view-caller-name" version = "0.1.0" }'
+files."src/library.taut" = `pub fn element(): i64 { 0 }`
+files."src/syntax-defs.taut" = ````tauto
+import std::prelude::Macro
+import "library.taut"
+syntax!(caller, ```par
+{{par:caller_expression}}```) => struct Root, fn parse
+macro fn caller(e: caller::Root): SynExpr {
+  let body := e.tauto_expr
+  quote { (() => $body)() }
+}
+````
+files."src/main.taut" = ````tauto
+import std::prelude::Macro
+import "syntax-defs.taut"
+fn element(): i64 { 42 }
+perform show("answer", element())
+````
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["answer = 42"]
+
+@ cases.without-import
+entry = "src/main.taut"
+backends = ["rust", "javascript", "vm"]
+files."Tauto.eure" = 'package { name = "view-caller-name" version = "0.1.0" }'
+files."src/library.taut" = `pub fn element(): i64 { 0 }`
+files."src/syntax-defs.taut" = ````tauto
+import std::prelude::Macro
+syntax!(caller, ```par
+{{par:caller_expression}}```) => struct Root, fn parse
+macro fn caller(e: caller::Root): SynExpr {
+  let body := e.tauto_expr
+  quote { (() => $body)() }
+}
+````
+files."src/main.taut" = ````tauto
+import std::prelude::Macro
+import "syntax-defs.taut"
+fn element(): i64 { 42 }
+perform show("answer", caller!(```caller
+  (${element()})
+```))
+````
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["answer = 42"]
+
+@ cases.with-import
+entry = "src/main.taut"
+backends = ["rust", "javascript", "vm"]
+files."Tauto.eure" = 'package { name = "view-caller-name" version = "0.1.0" }'
+files."src/library.taut" = `pub fn element(): i64 { 0 }`
+files."src/syntax-defs.taut" = ````tauto
+import std::prelude::Macro
+import "library.taut"
+syntax!(caller, ```par
+{{par:caller_expression}}```) => struct Root, fn parse
+macro fn caller(e: caller::Root): SynExpr {
+  let body := e.tauto_expr
+  quote { (() => $body)() }
+}
+````
+files."src/main.taut" = ````tauto
+import std::prelude::Macro
+import "syntax-defs.taut"
+fn element(): i64 { 42 }
+perform show("answer", caller!(```caller
+  (${element()})
+```))
+````
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["answer = 42"]
+
+@ cases.with-typed-call
+entry = "src/main.taut"
+backends = ["rust", "javascript", "vm"]
+files."Tauto.eure" = 'package { name = "view-caller-name" version = "0.1.0" }'
+files."src/library.taut" = `pub fn element(): i64 { 0 }`
+files."src/syntax-defs.taut" = ````tauto
+import std::prelude::Macro
+import "library.taut"
+syntax!(caller, ```par
+{{par:caller_expression}}```) => struct Root, fn parse
+macro fn caller(e: caller::Root): SynExpr {
+  let body := e.tauto_expr
+  quote { (() => $body)() }
+}
+macro fn identity(e: Judgement): SynExpr { Judgement::term(e) }
+````
+files."src/main.taut" = ````tauto
+import std::prelude::Macro
+import "syntax-defs.taut"
+fn element(): i64 { 42 }
+perform show("answer", identity!(caller!(```caller
+  (${element()})
+```)))
+````
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["answer = 42"]
+
+@ cases.local-binder
+entry = "src/main.taut"
+backends = ["rust", "javascript", "vm"]
+files."Tauto.eure" = 'package { name = "view-caller-name" version = "0.1.0" }'
+files."src/library.taut" = `pub fn element(): i64 { 0 }`
+files."src/syntax-defs.taut" = ````tauto
+import std::prelude::Macro
+import "library.taut"
+syntax!(caller, ```par
+{{par:caller_expression}}```) => struct Root, fn parse
+macro fn caller(e: caller::Root): SynExpr {
+  let body := e.tauto_expr
+  quote { (() => $body)() }
+}
+````
+files."src/main.taut" = ````tauto
+import std::prelude::Macro
+import "syntax-defs.taut"
+fn read(element: i64): i64 {
+  caller!(```caller
+    (${element})
+  ```)
+}
+perform show("answer", read(42))
+````
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["answer = 42"]
+
+@ cases.definition-reference
+entry = "src/main.taut"
+backends = ["rust", "javascript", "vm"]
+files."Tauto.eure" = 'package { name = "view-caller-name" version = "0.1.0" }'
+files."src/library.taut" = `pub fn element(): i64 { 0 }`
+files."src/syntax-defs.taut" = ````tauto
+import std::prelude::Macro
+import "library.taut"
+syntax!(caller, ```par
+{{par:caller_expression}}```) => struct Root, fn parse
+macro fn caller(e: caller::Root): SynExpr {
+  let body := e.tauto_expr
+  quote { (() => $body)() }
+}
+macro fn defined(e: SynExpr): SynExpr { quote { element() } }
+````
+files."src/main.taut" = ````tauto
+import std::prelude::Macro
+import "syntax-defs.taut"
+fn element(): i64 { 42 }
+perform show("answer", caller!(```caller
+  (${element()})
+```))
+perform show("definition", defined!(true))
+````
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["answer = 42", "definition = 0"]
+
+@ cases.annotated-lambda
+description = "A lambda with a typed parameter written in an embedded expression is run as the macro makes it again."
+entry = "src/main.taut"
+backends = ["javascript", "vm"]
+files."Tauto.eure" = 'package { name = "view-caller-name" version = "0.1.0" }'
+files."src/syntax-defs.taut" = ````tauto
+import std::prelude::Macro
+syntax!(caller, ```par
+{{par:caller_expression}}```) => struct Root, fn parse
+macro fn caller(e: caller::Root): SynExpr {
+  let body := e.tauto_expr
+  quote { ($body)(one()) }
+}
+pub fn one(): Nat { 1 }
+````
+files."src/main.taut" = ````tauto
+import std::prelude::Macro
+import "syntax-defs.taut"
+fn key(k: Nat): u64 { 7 }
+fn run(): u64 {
+  caller!(```caller
+    (${(k: Nat) => key(k)})
+  ```)
+}
+perform show("answer", run())
+````
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["answer = 7"]

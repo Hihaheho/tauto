@@ -119,7 +119,8 @@ package { name = "logic"
 rust { exports = ["direct", "direct_loop", "nested", "text_direct", "text_forwarded", "text_owned"] }
 "#,
     );
-    let source = r#"
+    let source = r#"import std::prelude::Shared
+
 fn sum(&read: (u64) -> u64, size: u64): u64 ! {Div} {
   var i: u64 := 0
   var total: u64 := 0
@@ -458,8 +459,8 @@ fn main() {
     assert!(format!("{diag:?}").contains(&*diag.message));
     assert_eq!(diag.at, 10);
     assert_eq!(&*diag.code, "macro.syntax_error");
-    assert_eq!(&*diag.message, "macro.syntax_error: in ident: expected Value, found Error");
-    match diag.expected { logic::List::Cons(name, _) => assert_eq!(&*name, "Value"), _ => panic!("expected terminal") }
+    assert_eq!(&*diag.message, "macro-syntax-not-a-token");
+    assert!(matches!(diag.expected, logic::List::Nil));
     let eof = tauto_rt::Text::from("日本語=");
     let diag = match logic::ident__parse(eof) { Err(diag) => diag, Ok(_) => panic!("missing value") };
     assert_eq!(diag.at, 10);

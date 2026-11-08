@@ -1,0 +1,37 @@
+// `check.axioms` in `Tauto.eure` lists the axioms a file may depend on
+// (`docs/design/check-time.md`「許す公理」).
+
+@ cases.a-listed-axiom-may-be-used
+entry = "input/src/main.taut"
+files."input/Tauto.eure" = ```eure
+package { name = "axiom-listed" version = "0.1.0" }
+check { axioms { "src/main.taut" = ["choice"] } }
+```
+files."input/src/main.taut" = ```tauto
+axiom choice(): Nat
+theorem uses(): Eq(Nat, choice(), choice()) { Refl }
+```
+checks."uses" = "checked"
+
+@ cases.an-unlisted-axiom-fails-the-declaration-that-uses-it
+entry = "input/src/main.taut"
+files."input/Tauto.eure" = ```eure
+package { name = "axiom-unlisted" version = "0.1.0" }
+check { axioms {} }
+```
+files."input/src/main.taut" = ```tauto
+axiom choice(): Nat
+theorem uses(): Eq(Nat, choice(), choice()) { Refl }
+```
+checks."uses" = "error: does not list"
+
+@ cases.without-the-list-an-axiom-is-only-reported
+entry = "input/src/main.taut"
+files."input/Tauto.eure" = ```eure
+package { name = "axiom-free-to-use" version = "0.1.0" }
+```
+files."input/src/main.taut" = ```tauto
+axiom choice(): Nat
+theorem uses(): Eq(Nat, choice(), choice()) { Refl }
+```
+checks."uses" = "checked"

@@ -1,0 +1,153 @@
+// Syntax macros over LALR(1) grammars (`%grammar_type 'LALR(1)'`). A
+// `{{par:NAME}}` is the grammar in `grammars/NAME.par`; its tables are in
+// `.tauto-syntax`, made by `scripts/generate-syntax-fixtures.sh`.
+
+// A left recursive rule makes the same kind of typed tree as any rule: an enum
+// with a variant for each alternative, and the declarations listed are the
+// ones made.
+@ cases.a-left-recursive-rule-makes-a-typed-tree
+files."main.nib" = ````nib
+import std::prelude::Macro
+
+syntax!(lalr_sum, ```par
+{{par:lalr_sum}}```) => struct Eqn, struct Paren, enum Sum, enum Term, fn parse
+````
+expands = ```nib
+module lalr_sum {
+  pub(open) struct Eqn {
+    span: SynSpan, sum: lalr_sum::Sum, equals: SynToken, sum_2: lalr_sum::Sum
+  }
+  pub(open) struct Paren {
+    span: SynSpan, l_paren: SynToken, sum: lalr_sum::Sum, r_paren: SynToken
+  }
+  pub(open) enum Sum {
+    SumPlusTerm { span: SynSpan, sum: lalr_sum::Sum, plus: SynToken, term: lalr_sum::Term }
+    Term(lalr_sum::Term)
+  }
+  pub(open) enum Term {
+    Num(SynToken)
+    Paren(lalr_sum::Paren)
+  }
+  pub(open) fn parse(t: Text): Result(lalr_sum::Eqn, SynDiag) { Syn::parse("lalr_sum", "217889452ee1a277575c49ee08ae56b240d90c7c465b87bcd93390a2d40b2068", t) }
+}
+```
+
+// The list of the declarations made must be what the grammar makes.
+@ cases.the-declarations-of-an-lalr-grammar-are-listed-in-full
+files."main.nib" = ````nib
+import std::prelude::Macro
+
+syntax!(lalr_sum, ```par
+{{par:lalr_sum}}```) => struct Eqn, struct Paren, enum Term, fn parse
+````
+diagnostics[] {
+  stage = "types"
+  message = "enum Sum"
+}
+
+// A macro reads the left recursive tree: `1 + 2 + 3` is `(1 + 2) + 3`.
+@ cases.a-macro-folds-a-left-recursive-tree
+files."lalr.nib" = ````nib
+import std::prelude::Macro
+syntax!(lalr_sum, ```par
+{{par:lalr_sum}}```) => struct Eqn, struct Paren, enum Sum, enum Term, fn parse
+pub fn ls_term(t: lalr_sum::Term): SynExpr ! {macro_error, Div} {
+  match t {
+    Num(tok) => Syn::nat(tok)
+    Paren(p) => ls_sum(p.sum)
+  }
+}
+
+pub fn ls_sum(s: lalr_sum::Sum): SynExpr ! {macro_error, Div} {
+  match s {
+    SumPlusTerm(span, left, plus, term) => {
+      let l := ls_sum(left)
+      let r := ls_term(term)
+      quote { $l + $r }
+    }
+    Term(t) => ls_term(t)
+  }
+}
+
+pub macro fn lalr_sum(e: lalr_sum::Eqn): SynExpr ! {macro_error, Div} {
+  let l := ls_sum(e.sum)
+  let r := ls_sum(e.sum_2)
+  quote { Eq(Nat, $l, $r) }
+}
+````
+files."main.nib" = ````nib
+import "lalr.nib"
+theorem sums(): lalr_sum!(`1 + 2 + 3 = 6`) { Refl(Nat, 6) }
+theorem nested(): lalr_sum!(`(1 + 2) + 3 + 4 = 10`) { Refl(Nat, 10) }
+````
+expands = ```nib
+theorem sums(): 1 + 2 + 3 = 6 { Eq::Refl(Nat, 6) }
+theorem nested(): 1 + 2 + 3 + 4 = 10 { Eq::Refl(Nat, 10) }
+```
+
+// The parser runs at run time: the tree of `1 + 2 + 3` has the sum of
+// `1 + 2` on its left, and a syntax error says what was expected.
+@ cases.an-lalr-parser-runs
+entry = "main.taut"
+backends = ["rust", "javascript"]
+shows = ["depth = 2", "first = \"1\"", "last = \"3\"", "rhs = \"6\"", "paren_depth = 1", "paren_first = \"paren\"", "error = \"macro-syntax-expected-found\"", "missing = \"macro-syntax-expected-end\""]
+files."main.taut" = ````tauto
+import std::prelude::Macro
+
+syntax!(lalr_sum, ```par
+{{par:lalr_sum}}```) => struct Eqn, struct Paren, enum Sum, enum Term, fn parse
+
+fn term_text(t: lalr_sum::Term): Text {
+  match t {
+    Num(tok) => tok.text
+    Paren(p) => "paren"
+  }
+}
+
+// The sums nest on the left: the number of `+` above the first term.
+fn depth(s: lalr_sum::Sum): u64 {
+  match s {
+    SumPlusTerm(span, left, plus, term) => depth(left) + 1
+    Term(t) => 0
+  }
+}
+
+fn first(s: lalr_sum::Sum): Text {
+  match s {
+    SumPlusTerm(span, left, plus, term) => first(left)
+    Term(t) => term_text(t)
+  }
+}
+
+fn last(s: lalr_sum::Sum): Text {
+  match s {
+    SumPlusTerm(span, left, plus, term) => term_text(term)
+    Term(t) => term_text(t)
+  }
+}
+
+match lalr_sum::parse("1 + 2 + 3 = 6") {
+  Ok(e) => {
+    perform show("depth", depth(e.sum))
+    perform show("first", first(e.sum))
+    perform show("last", last(e.sum))
+    perform show("rhs", last(e.sum_2))
+  }
+  Err(d) => perform show("unexpected", d.message)
+}
+match lalr_sum::parse("(1 + 2) + 3 = 3") {
+  Ok(e) => {
+    perform show("paren_depth", depth(e.sum))
+    perform show("paren_first", first(e.sum))
+  }
+  Err(d) => perform show("unexpected", d.message)
+}
+match lalr_sum::parse("1 + = 3") {
+  Ok(e) => perform show("unexpected", e.equals.text)
+  Err(d) => perform show("error", d.message)
+}
+match lalr_sum::parse("1 + 2") {
+  Ok(e) => perform show("unexpected", e.equals.text)
+  Err(d) => perform show("missing", d.message)
+}
+````

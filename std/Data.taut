@@ -4,42 +4,42 @@ module Option {
   // `Option` and `Pair` (`Std.taut`): the usual functions and their laws.
 
   pub fn map<A, B>(f: (A) -> B, o: Option(A)): Option(B) {
-    match o: Option(B) {
+    ⊢ Option(B) from match o {
       None => None
       Some(a) => Some(f(a))
     }
   }
 
   pub fn bind<A, B>(o: Option(A), f: (A) -> Option(B)): Option(B) {
-    match o: Option(B) {
+    ⊢ Option(B) from match o {
       None => None
       Some(a) => f(a)
     }
   }
 
   pub fn unwrap_or<A>(o: Option(A), d: A): A {
-    match o: A {
+    ⊢ A from match o {
       None => d
       Some(a) => a
     }
   }
 
   pub fn is_some<A>(o: Option(A)): Bool {
-    match o: Bool {
+    ⊢ Bool from match o {
       None => false
       Some(_) => true
     }
   }
 
   pub fn or<A>(o: Option(A), p: Option(A)): Option(A) {
-    match o: Option(A) {
+    ⊢ Option(A) from match o {
       None => p
       Some(a) => o
     }
   }
 
-  pub theorem map_id<A: Type>(o: Option(A)): map((x: A) => x, o) = o {
-    match o: map((x: A) => x, o) = o {
+  pub theorem map_id<A: Type>(o: Option(A)): Option::map((x: A) => x, o) = o {
+    ⊢ Option::map((x: A) => x, o) = o from match o {
       None => Refl
       Some(_) => Refl
     }
@@ -49,15 +49,15 @@ module Option {
     f: (A) -> B,
     g: (B) -> C,
     o: Option(A)
-  ): map(g, map(f, o)) = map((x: A) => g(f(x)), o) {
-    match o: map(g, map(f, o)) = map((x: A) => g(f(x)), o) {
+  ): Option::map(g, Option::map(f, o)) = Option::map((x: A) => g(f(x)), o) {
+    ⊢ Option::map(g, Option::map(f, o)) = Option::map((x: A) => g(f(x)), o) from match o {
       None => Refl
       Some(_) => Refl
     }
   }
 
   pub theorem bind_some<A: Type>(o: Option(A)): bind(o, (x: A) => Some(x)) = o {
-    match o: bind(o, (x: A) => Some(x)) = o {
+    ⊢ bind(o, (x: A) => Some(x)) = o from match o {
       None => Refl
       Some(_) => Refl
     }
@@ -72,7 +72,7 @@ module Option {
   }
 
   pub theorem or_none_right<A: Type>(o: Option(A)): or(o, None) = o {
-    match o: or(o, None) = o {
+    ⊢ or(o, None) = o from match o {
       None => Refl
       Some(_) => Refl
     }
@@ -80,41 +80,39 @@ module Option {
 }
 
 module Pair {
-  pub fn fst<A, B>(p: Pair(A, B)): A {
-    match p: A {
-      Pair { fst: a, snd: b } => a
+  pub fn fst<A, B>(p: A × B): A {
+    ⊢ A from match p {
+      #(a, b) => a
     }
   }
 
-  pub fn snd<A, B>(p: Pair(A, B)): B {
-    match p: B {
-      Pair { fst: a, snd: b } => b
+  pub fn snd<A, B>(p: A × B): B {
+    ⊢ B from match p {
+      #(a, b) => b
     }
   }
 
-  pub fn swap<A, B>(p: Pair(A, B)): Pair(B, A) {
-    match p: Pair(B, A) {
-      Pair { fst: a, snd: b } => Pair { fst: b, snd: a }
+  pub fn swap<A, B>(p: A × B): B × A {
+    ⊢ (B × A) from match p {
+      #(a, b) => #(b, a)
     }
   }
 
-  pub fn map<A, B, C, D>(f: (A) -> C, g: (B) -> D, p: Pair(A, B)): Pair(C, D) {
-    match p: Pair(C, D) {
-      Pair { fst: a, snd: b } => Pair { fst: f(a), snd: g(b) }
+  pub fn map<A, B, C, D>(f: (A) -> C, g: (B) -> D, p: A × B): C × D {
+    ⊢ (C × D) from match p {
+      #(a, b) => #(f(a), g(b))
     }
   }
 
-  pub theorem swap_swap<A: Type, B: Type>(p: Pair(A, B)): swap(swap(p)) = p {
-    match p: swap(swap(p)) = p {
-      Pair { fst: a, snd: b } => Refl
+  pub theorem swap_swap<A: Type, B: Type>(p: A × B): swap(swap(p)) = p {
+    ⊢ swap(swap(p)) = p from match p {
+      #(a, b) => Refl
     }
   }
 
-  pub theorem eta<A: Type, B: Type>(
-    p: Pair(A, B)
-  ): Eq(Pair(A, B), Pair { fst: Pair::fst(p), snd: Pair::snd(p) }, p) {
-    match p: Eq(Pair(A, B), Pair { fst: Pair::fst(p), snd: Pair::snd(p) }, p) {
-      Pair { fst: a, snd: b } => Refl
+  pub theorem eta<A: Type, B: Type>(p: A × B): Eq(A × B, #(Pair::fst(p), Pair::snd(p)), p) {
+    ⊢ Eq(A × B, #(Pair::fst(p), Pair::snd(p)), p) from match p {
+      #(a, b) => Refl
     }
   }
 }

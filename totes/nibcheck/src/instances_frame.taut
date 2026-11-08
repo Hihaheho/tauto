@@ -38,7 +38,7 @@ pub fn inf_law_duplicate(
   decl: SurfaceClass,
   bad: Bool
 ): Mut1(Unit, Checker) {
-  match bad: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match bad {
     true => frame_bind(
       Unit,
       Unit,
@@ -65,7 +65,7 @@ pub theorem inf_law_duplicate_frame(
     Text
   ). ∀ next: Checker. CkReadFrame(next, ck_instance_laws(rest, ns, next, i, decl))
 ): CkReadFrame(c, inf_law_duplicate(l, rest, seen, c, i, decl, bad)) {
-  match bad: CkReadFrame(c, inf_law_duplicate(l, rest, seen, c, i, decl, bad)) {
+  ⊢ CkReadFrame(c, inf_law_duplicate(l, rest, seen, c, i, decl, bad)) from match bad {
     true => frame_bind_ok(
       Unit,
       Unit,
@@ -100,7 +100,7 @@ pub fn inf_law_missing(
   decl: SurfaceClass,
   bad: Bool
 ): Mut1(Unit, Checker) {
-  match bad: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match bad {
     true => frame_bind(
       Unit,
       Unit,
@@ -123,7 +123,7 @@ pub theorem inf_law_missing_frame(
     Text
   ). ∀ next: Checker. CkReadFrame(next, ck_instance_laws(rest, ns, next, i, decl))
 ): CkReadFrame(c, inf_law_missing(l, rest, seen, c, i, decl, bad)) {
-  match bad: CkReadFrame(c, inf_law_missing(l, rest, seen, c, i, decl, bad)) {
+  ⊢ CkReadFrame(c, inf_law_missing(l, rest, seen, c, i, decl, bad)) from match bad {
     true => frame_bind_ok(
       Unit,
       Unit,
@@ -153,7 +153,21 @@ pub theorem inf_laws_unf(
   c: Checker,
   i: SurfaceInstance,
   decl: SurfaceClass
-): ck_instance_laws(Cons(l, rest), seen, c, i, decl) = inf_law_missing(l, rest, seen, c, i, decl, not(law_named(cf_class_laws(decl), cf_law_name(l)))) { Refl }
+): ck_instance_laws(
+  Cons(l, rest),
+  seen,
+  c,
+  i,
+  decl
+) = inf_law_missing(
+  l,
+  rest,
+  seen,
+  c,
+  i,
+  decl,
+  not(law_named(cf_class_laws(decl), cf_law_name(l)))
+) { Refl }
 
 pub theorem ck_instance_laws_frame(
   ls: List(SurfaceLaw),
@@ -162,7 +176,7 @@ pub theorem ck_instance_laws_frame(
   i: SurfaceInstance,
   decl: SurfaceClass
 ): CkReadFrame(c, ck_instance_laws(ls, seen, c, i, decl)) {
-  match ls: CkReadFrame(c, ck_instance_laws(ls, seen, c, i, decl)) {
+  ⊢ CkReadFrame(c, ck_instance_laws(ls, seen, c, i, decl)) from match ls {
     Nil => Refl
     Cons(l, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
@@ -244,7 +258,7 @@ pub theorem ck_instance_extra_frame(
   i: SurfaceInstance,
   decl: SurfaceClass
 ): CkReadFrame(c, ck_instance_extra(ms, c, i, decl)) {
-  match ms: CkReadFrame(c, ck_instance_extra(ms, c, i, decl)) {
+  ⊢ CkReadFrame(c, ck_instance_extra(ms, c, i, decl)) from match ms {
     Nil => Refl
     Cons(m, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
@@ -281,10 +295,11 @@ pub fn inf_want(
     wheres: i.wheres,
     start: expected.start,
     end: expected.end,
-    body: expected.body
+    body: expected.body,
+    generic_types: List::append(surface_type_generics(i.generics), expected.generic_types)
   } }
 
-pub fn inf_wanted_params(wanted: Scheme): List(Ty) { match wanted.ty: List(Ty) {
+pub fn inf_wanted_params(wanted: Scheme): List(Ty) { ⊢ List(Ty) from match wanted.ty {
     TyFn(ps, r, k) => ps
     TyInt(w) => Nil
     TyBool => Nil
@@ -385,7 +400,15 @@ pub theorem inf_same_unf(
   expected: SurfaceFn,
   param: Text,
   head: Text
-): ck_same_signature(c, i, got, scheme, expected, param, head) = inf_same(c, i, got, scheme, expected, head, inf_want(i, got, expected, param)) { Refl }
+): ck_same_signature(
+  c,
+  i,
+  got,
+  scheme,
+  expected,
+  param,
+  head
+) = inf_same(c, i, got, scheme, expected, head, inf_want(i, got, expected, param)) { Refl }
 
 pub theorem ck_same_signature_frame(
   c: Checker,
@@ -418,7 +441,8 @@ pub fn inf_method_fn(i: SurfaceInstance, ctor: Text, m: SurfaceFn): SurfaceFn { 
     wheres: i.wheres,
     start: m.start,
     end: m.end,
-    body: m.body
+    body: m.body,
+    generic_types: List::append(surface_type_generics(i.generics), m.generic_types)
   } }
 
 pub fn inf_method_found(
@@ -552,7 +576,7 @@ pub fn inf_method_get(
   out: List(SurfaceFn),
   o: Option(SurfaceFn)
 ): Mut1(List(SurfaceFn), Checker) {
-  match o: Mut1(List(SurfaceFn), Checker) {
+  ⊢ Mut1(List(SurfaceFn), Checker) from match o {
     None => frame_bind(
       Unit,
       List(SurfaceFn),
@@ -589,7 +613,7 @@ pub theorem inf_method_get_frame(
     SurfaceFn
   ). CkReadFrame(next, ck_instance_methods(rest, next, i, decl, ctor, shown, fs))
 ): CkReadFrame(c, inf_method_get(e, rest, c, i, decl, ctor, shown, out, o)) {
-  match o: CkReadFrame(c, inf_method_get(e, rest, c, i, decl, ctor, shown, out, o)) {
+  ⊢ CkReadFrame(c, inf_method_get(e, rest, c, i, decl, ctor, shown, out, o)) from match o {
     None => frame_bind_ok(
       Unit,
       List(SurfaceFn),
@@ -649,17 +673,25 @@ pub theorem inf_methods_unf(
   ctor: Text,
   shown: Text,
   out: List(SurfaceFn)
-): ck_instance_methods(Cons(e, rest), c, i, decl, ctor, shown, out) = inf_method_get(
-    e,
-    rest,
-    c,
-    i,
-    decl,
-    ctor,
-    shown,
-    out,
-    method_named(inf_methods(i), signature_name(e))
-  ) { Refl }
+): ck_instance_methods(
+  Cons(e, rest),
+  c,
+  i,
+  decl,
+  ctor,
+  shown,
+  out
+) = inf_method_get(
+  e,
+  rest,
+  c,
+  i,
+  decl,
+  ctor,
+  shown,
+  out,
+  method_named(inf_methods(i), signature_name(e))
+) { Refl }
 
 pub theorem ck_instance_methods_frame(
   expected: List(SurfaceFn),
@@ -670,7 +702,7 @@ pub theorem ck_instance_methods_frame(
   shown: Text,
   out: List(SurfaceFn)
 ): CkReadFrame(c, ck_instance_methods(expected, c, i, decl, ctor, shown, out)) {
-  match expected: CkReadFrame(c, ck_instance_methods(expected, c, i, decl, ctor, shown, out)) {
+  ⊢ CkReadFrame(c, ck_instance_methods(expected, c, i, decl, ctor, shown, out)) from match expected {
     Nil => Refl
     Cons(e, rest) => Eq::subst(
       (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
@@ -700,7 +732,7 @@ pub fn inf_preds_dup(
   g: Text,
   dup: Bool
 ): Mut1(List(Pair(Text, Text)), Checker) {
-  match dup: Mut1(List(Pair(Text, Text)), Checker) {
+  ⊢ Mut1(List(Pair(Text, Text)), Checker) from match dup {
     true => frame_bind(
       Unit,
       List(Pair(Text, Text)),
@@ -734,7 +766,7 @@ pub theorem inf_preds_dup_frame(
     Pair(Text, Text)
   ). CkReadFrame(next, ck_instance_preds(rest, next, gs, ps))
 ): CkReadFrame(c, inf_preds_dup(w, rest, c, gs, preds, g, dup)) {
-  match dup: CkReadFrame(c, inf_preds_dup(w, rest, c, gs, preds, g, dup)) {
+  ⊢ CkReadFrame(c, inf_preds_dup(w, rest, c, gs, preds, g, dup)) from match dup {
     true => frame_bind_ok(
       Unit,
       List(Pair(Text, Text)),
@@ -774,7 +806,7 @@ pub fn inf_preds_has(
   g: Text,
   has: Bool
 ): Mut1(List(Pair(Text, Text)), Checker) {
-  match has: Mut1(List(Pair(Text, Text)), Checker) {
+  ⊢ Mut1(List(Pair(Text, Text)), Checker) from match has {
     true => inf_preds_dup(
       w,
       rest,
@@ -805,7 +837,7 @@ pub theorem inf_preds_has_frame(
     Pair(Text, Text)
   ). CkReadFrame(next, ck_instance_preds(rest, next, gs, ps))
 ): CkReadFrame(c, inf_preds_has(w, rest, c, gs, preds, g, has)) {
-  match has: CkReadFrame(c, inf_preds_has(w, rest, c, gs, preds, g, has)) {
+  ⊢ CkReadFrame(c, inf_preds_has(w, rest, c, gs, preds, g, has)) from match has {
     true => inf_preds_dup_frame(
       w,
       rest,
@@ -840,7 +872,7 @@ pub fn inf_preds_kind(
   preds: List(Pair(Text, Text)),
   k: SurfaceKind
 ): Mut1(List(Pair(Text, Text)), Checker) {
-  match k: Mut1(List(Pair(Text, Text)), Checker) {
+  ⊢ Mut1(List(Pair(Text, Text)), Checker) from match k {
     SkVar(g) => inf_preds_has(w, rest, c, gs, preds, g, text_list_has(gs, g))
     SkNat(digits) => frame_bind(
       Unit,
@@ -1042,7 +1074,7 @@ pub theorem inf_preds_kind_frame(
     Pair(Text, Text)
   ). CkReadFrame(next, ck_instance_preds(rest, next, gs, ps))
 ): CkReadFrame(c, inf_preds_kind(w, rest, c, gs, preds, k)) {
-  match k: CkReadFrame(c, inf_preds_kind(w, rest, c, gs, preds, k)) {
+  ⊢ CkReadFrame(c, inf_preds_kind(w, rest, c, gs, preds, k)) from match k {
     SkVar(g) => inf_preds_has_frame(w, rest, c, gs, preds, g, text_list_has(gs, g), ih)
     SkNat(digits) => frame_bind_ok(
       Unit,
@@ -1450,7 +1482,7 @@ pub theorem inf_preds_kind_frame(
   }
 }
 
-pub fn inf_pred_kind(w: SurfaceConstraint): SurfaceKind { w.ty.kind }
+pub fn inf_pred_kind(w: SurfaceConstraint): SurfaceKind { constraint_single_type(w).kind }
 
 pub fn inf_preds_missing(
   w: SurfaceConstraint,
@@ -1460,7 +1492,7 @@ pub fn inf_preds_missing(
   preds: List(Pair(Text, Text)),
   missing: Bool
 ): Mut1(List(Pair(Text, Text)), Checker) {
-  match missing: Mut1(List(Pair(Text, Text)), Checker) {
+  ⊢ Mut1(List(Pair(Text, Text)), Checker) from match missing {
     true => frame_bind(
       Unit,
       List(Pair(Text, Text)),
@@ -1486,7 +1518,7 @@ pub theorem inf_preds_missing_frame(
     Pair(Text, Text)
   ). CkReadFrame(next, ck_instance_preds(rest, next, gs, ps))
 ): CkReadFrame(c, inf_preds_missing(w, rest, c, gs, preds, missing)) {
-  match missing: CkReadFrame(c, inf_preds_missing(w, rest, c, gs, preds, missing)) {
+  ⊢ CkReadFrame(c, inf_preds_missing(w, rest, c, gs, preds, missing)) from match missing {
     true => frame_bind_ok(
       Unit,
       List(Pair(Text, Text)),
@@ -1514,7 +1546,12 @@ pub theorem inf_preds_unf(
   c: Checker,
   gs: List(Text),
   preds: List(Pair(Text, Text))
-): ck_instance_preds(Cons(w, rest), c, gs, preds) = inf_preds_missing(w, rest, c, gs, preds, signature_class_missing(c, w)) { Refl }
+): ck_instance_preds(
+  Cons(w, rest),
+  c,
+  gs,
+  preds
+) = inf_preds_missing(w, rest, c, gs, preds, signature_class_missing(c, w)) { Refl }
 
 pub theorem ck_instance_preds_frame(
   ws: List(SurfaceConstraint),
@@ -1522,7 +1559,7 @@ pub theorem ck_instance_preds_frame(
   gs: List(Text),
   preds: List(Pair(Text, Text))
 ): CkReadFrame(c, ck_instance_preds(ws, c, gs, preds)) {
-  match ws: CkReadFrame(c, ck_instance_preds(ws, c, gs, preds)) {
+  ⊢ CkReadFrame(c, ck_instance_preds(ws, c, gs, preds)) from match ws {
     Nil => Refl
     Cons(w, rest) => Eq::subst(
       (z: Mut1(List(Pair(Text, Text)), Checker)) => CkReadFrame(c, z),
@@ -1589,7 +1626,7 @@ pub fn inf_rest_duplicate(
   shown: Text,
   bad: Bool
 ): Mut1(List(SurfaceFn), Checker) {
-  match bad: Mut1(List(SurfaceFn), Checker) {
+  ⊢ Mut1(List(SurfaceFn), Checker) from match bad {
     true => frame_bind(
       Unit,
       List(SurfaceFn),
@@ -1644,10 +1681,10 @@ pub theorem inf_rest_duplicate_frame(
   c,
   inf_rest_duplicate(c, i, info, own_classes, own_types, out, g, head, ctor, shown, bad)
 ) {
-  match bad: CkReadFrame(
+  ⊢ CkReadFrame(
     c,
     inf_rest_duplicate(c, i, info, own_classes, own_types, out, g, head, ctor, shown, bad)
-  ) {
+  ) from match bad {
     true => frame_bind_ok(
       Unit,
       List(SurfaceFn),
@@ -1768,7 +1805,7 @@ pub fn inf_rest_orphan(
   shown: Text,
   bad: Bool
 ): Mut1(List(SurfaceFn), Checker) {
-  match bad: Mut1(List(SurfaceFn), Checker) {
+  ⊢ Mut1(List(SurfaceFn), Checker) from match bad {
     true => frame_bind(
       Unit,
       List(SurfaceFn),
@@ -1817,10 +1854,10 @@ pub theorem inf_rest_orphan_frame(
   c,
   inf_rest_orphan(c, i, info, own_classes, own_types, out, g, head, ctor, shown, bad)
 ) {
-  match bad: CkReadFrame(
+  ⊢ CkReadFrame(
     c,
     inf_rest_orphan(c, i, info, own_classes, own_types, out, g, head, ctor, shown, bad)
-  ) {
+  ) from match bad {
     true => frame_bind_ok(
       Unit,
       List(SurfaceFn),
@@ -1877,19 +1914,30 @@ pub theorem inf_rest_unf(
   head: Ty,
   ctor: Text,
   shown: Text
-): ck_declare_instance_rest(c, i, info, own_classes, own_types, out, g, head, ctor, shown) = inf_rest_orphan(
-    c,
-    i,
-    info,
-    own_classes,
-    own_types,
-    out,
-    g,
-    head,
-    ctor,
-    shown,
-    Bool::and(not(text_list_has(own_classes, inf_class(i))), not(text_list_has(own_types, ctor)))
-  ) { Refl }
+): ck_declare_instance_rest(
+  c,
+  i,
+  info,
+  own_classes,
+  own_types,
+  out,
+  g,
+  head,
+  ctor,
+  shown
+) = inf_rest_orphan(
+  c,
+  i,
+  info,
+  own_classes,
+  own_types,
+  out,
+  g,
+  head,
+  ctor,
+  shown,
+  Bool::and(not(text_list_has(own_classes, inf_class(i))), not(text_list_has(own_types, ctor)))
+) { Refl }
 
 pub theorem ck_declare_instance_rest_frame(
   c: Checker,
@@ -1920,10 +1968,7 @@ pub theorem ck_declare_instance_rest_frame(
       head,
       ctor,
       shown,
-      Bool::and(
-        not(text_list_has(own_classes, inf_class(i))),
-        not(text_list_has(own_types, ctor))
-      )
+      Bool::and(not(text_list_has(own_classes, inf_class(i))), not(text_list_has(own_types, ctor)))
     )
   )
 }
@@ -1950,7 +1995,7 @@ pub fn inf_head_message(
   ctor: Text,
   message: Option(Pair(Text, TySpan))
 ): Mut1(List(SurfaceFn), Checker) {
-  match message: Mut1(List(SurfaceFn), Checker) {
+  ⊢ Mut1(List(SurfaceFn), Checker) from match message {
     None => ck_rewrap1(
       ck_declare_instance_rest(
         c,
@@ -1985,10 +2030,10 @@ pub theorem inf_head_message_frame(
   ctor: Text,
   message: Option(Pair(Text, TySpan))
 ): CkReadFrame(c, inf_head_message(c, i, info, own_classes, own_types, out, head, ctor, message)) {
-  match message: CkReadFrame(
+  ⊢ CkReadFrame(
     c,
     inf_head_message(c, i, info, own_classes, own_types, out, head, ctor, message)
-  ) {
+  ) from match message {
     None => frame_rewrap(
       c,
       ck_declare_instance_rest(
@@ -2038,7 +2083,7 @@ pub fn inf_head_ctor(
   head: Ty,
   found: Option(Text)
 ): Mut1(List(SurfaceFn), Checker) {
-  match found: Mut1(List(SurfaceFn), Checker) {
+  ⊢ Mut1(List(SurfaceFn), Checker) from match found {
     None => frame_bind(
       Unit,
       List(SurfaceFn),
@@ -2069,10 +2114,7 @@ pub theorem inf_head_ctor_frame(
   head: Ty,
   found: Option(Text)
 ): CkReadFrame(c, inf_head_ctor(c, i, info, own_classes, own_types, out, head, found)) {
-  match found: CkReadFrame(
-    c,
-    inf_head_ctor(c, i, info, own_classes, own_types, out, head, found)
-  ) {
+  ⊢ CkReadFrame(c, inf_head_ctor(c, i, info, own_classes, own_types, out, head, found)) from match found {
     None => frame_bind_ok(
       Unit,
       List(SurfaceFn),
@@ -2105,7 +2147,7 @@ pub fn inf_head_missing(
   out: List(SurfaceFn),
   missing: Option(Text)
 ): Mut1(List(SurfaceFn), Checker) {
-  match missing: Mut1(List(SurfaceFn), Checker) {
+  ⊢ Mut1(List(SurfaceFn), Checker) from match missing {
     Some(name) => frame_bind(
       Unit,
       List(SurfaceFn),
@@ -2139,10 +2181,7 @@ pub theorem inf_head_missing_frame(
   out: List(SurfaceFn),
   missing: Option(Text)
 ): CkReadFrame(c, inf_head_missing(c, i, info, own_classes, own_types, out, missing)) {
-  match missing: CkReadFrame(
-    c,
-    inf_head_missing(c, i, info, own_classes, own_types, out, missing)
-  ) {
+  ⊢ CkReadFrame(c, inf_head_missing(c, i, info, own_classes, own_types, out, missing)) from match missing {
     Some(name) => frame_bind_ok(
       Unit,
       List(SurfaceFn),
@@ -2185,7 +2224,11 @@ pub theorem inf_head_missing_frame(
           head,
           ty_constructor(head)
         ),
-        ck_written(frame_set_constructor_position(c, true), inf_head(i), signature_map(inf_gens(i))),
+        ck_written(
+          frame_set_constructor_position(c, true),
+          inf_head(i),
+          signature_map(inf_gens(i))
+        ),
         ck_written_frame(
           frame_set_constructor_position(c, true),
           inf_head(i),
@@ -2230,7 +2273,7 @@ pub fn inf_head_shape(
   out: List(SurfaceFn),
   bad: Bool
 ): Mut1(List(SurfaceFn), Checker) {
-  match bad: Mut1(List(SurfaceFn), Checker) {
+  ⊢ Mut1(List(SurfaceFn), Checker) from match bad {
     true => frame_bind(
       Unit,
       List(SurfaceFn),
@@ -2258,7 +2301,7 @@ pub theorem inf_head_shape_frame(
   out: List(SurfaceFn),
   bad: Bool
 ): CkReadFrame(c, inf_head_shape(c, i, info, own_classes, own_types, out, bad)) {
-  match bad: CkReadFrame(c, inf_head_shape(c, i, info, own_classes, own_types, out, bad)) {
+  ⊢ CkReadFrame(c, inf_head_shape(c, i, info, own_classes, own_types, out, bad)) from match bad {
     true => frame_bind_ok(
       Unit,
       List(SurfaceFn),
@@ -2287,15 +2330,14 @@ pub theorem inf_at_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instance_at(c, i, info, own_classes, own_types, out) = inf_head_shape(
-    c,
-    i,
-    info,
-    own_classes,
-    own_types,
-    out,
-    not(head_shape_ok(inf_head(i), inf_generics(i)))
-  ) { Refl }
+): ck_declare_instance_at(
+  c,
+  i,
+  info,
+  own_classes,
+  own_types,
+  out
+) = inf_head_shape(c, i, info, own_classes, own_types, out, not(instance_legacy_shape(i))) { Refl }
 
 pub theorem ck_declare_instance_at_frame(
   c: Checker,
@@ -2308,15 +2350,7 @@ pub theorem ck_declare_instance_at_frame(
   Eq::subst(
     (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
     Eq::sym(inf_at_unf(c, i, info, own_classes, own_types, out)),
-    inf_head_shape_frame(
-      c,
-      i,
-      info,
-      own_classes,
-      own_types,
-      out,
-      not(head_shape_ok(inf_head(i), inf_generics(i)))
-    )
+    inf_head_shape_frame(c, i, info, own_classes, own_types, out, not(instance_legacy_shape(i)))
   )
 }
 
@@ -2333,7 +2367,7 @@ pub fn inf_class_lookup(
   out: List(SurfaceFn),
   o: Option(ClassInfo)
 ): Mut1(List(SurfaceFn), Checker) {
-  match o: Mut1(List(SurfaceFn), Checker) {
+  ⊢ Mut1(List(SurfaceFn), Checker) from match o {
     None => frame_bind(
       Unit,
       List(SurfaceFn),
@@ -2352,7 +2386,7 @@ pub theorem inf_class_lookup_frame(
   out: List(SurfaceFn),
   o: Option(ClassInfo)
 ): CkReadFrame(c, inf_class_lookup(c, i, own_classes, own_types, out, o)) {
-  match o: CkReadFrame(c, inf_class_lookup(c, i, own_classes, own_types, out, o)) {
+  ⊢ CkReadFrame(c, inf_class_lookup(c, i, own_classes, own_types, out, o)) from match o {
     None => frame_bind_ok(
       Unit,
       List(SurfaceFn),
@@ -2378,7 +2412,7 @@ pub fn inf_class_structural(
   out: List(SurfaceFn),
   structural: Bool
 ): Mut1(List(SurfaceFn), Checker) {
-  match structural: Mut1(List(SurfaceFn), Checker) {
+  ⊢ Mut1(List(SurfaceFn), Checker) from match structural {
     true => frame_bind(
       Unit,
       List(SurfaceFn),
@@ -2397,10 +2431,10 @@ pub theorem inf_class_structural_frame(
   out: List(SurfaceFn),
   structural: Bool
 ): CkReadFrame(c, inf_class_structural(c, i, own_classes, own_types, out, structural)) {
-  match structural: CkReadFrame(
+  ⊢ CkReadFrame(
     c,
     inf_class_structural(c, i, own_classes, own_types, out, structural)
-  ) {
+  ) from match structural {
     true => frame_bind_ok(
       Unit,
       List(SurfaceFn),
@@ -2424,7 +2458,20 @@ pub theorem inf_declare_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instance(c, i, own_classes, own_types, out) = inf_class_structural(c, i, own_classes, own_types, out, class_is_structural(inf_class(i))) { Refl }
+): ck_declare_instance(
+  c,
+  i,
+  own_classes,
+  own_types,
+  out
+) = inf_class_structural(
+  c,
+  i,
+  own_classes,
+  own_types,
+  out,
+  class_is_structural(inf_class(i))
+) { Refl }
 
 pub theorem ck_declare_instance_frame(
   c: Checker,
@@ -2498,12 +2545,12 @@ pub theorem inf_list_StLet_unf(
   own_types: List(Text),
   out: List(SurfaceFn)
 ): ck_declare_instances(
-    Cons(StLet(name, ty, value, borrow, mutable), rest),
-    c,
-    own_classes,
-    own_types,
-    out
-  ) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+  Cons(StLet(name, ty, value, borrow, mutable), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StVar_unf(
   name: Text,
@@ -2515,7 +2562,13 @@ pub theorem inf_list_StVar_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StVar(name, ty, value, borrow), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StVar(name, ty, value, borrow), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StModule_unf(
   name: Text,
@@ -2528,12 +2581,12 @@ pub theorem inf_list_StModule_unf(
   own_types: List(Text),
   out: List(SurfaceFn)
 ): ck_declare_instances(
-    Cons(StModule(name, stmts, start, end), rest),
-    c,
-    own_classes,
-    own_types,
-    out
-  ) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+  Cons(StModule(name, stmts, start, end), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StAssign_unf(
   name: Text,
@@ -2545,12 +2598,12 @@ pub theorem inf_list_StAssign_unf(
   own_types: List(Text),
   out: List(SurfaceFn)
 ): ck_declare_instances(
-    Cons(StAssign(name, name_place, value), rest),
-    c,
-    own_classes,
-    own_types,
-    out
-  ) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+  Cons(StAssign(name, name_place, value), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StCalled_unf(
   name_generates: List(Text),
@@ -2560,7 +2613,13 @@ pub theorem inf_list_StCalled_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StCalled(name_generates, value), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StCalled(name_generates, value), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StFn_unf(
   f: SurfaceFn,
@@ -2569,7 +2628,13 @@ pub theorem inf_list_StFn_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StFn(f), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StFn(f), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StTheorem_unf(
   t: SurfaceTheorem,
@@ -2578,7 +2643,13 @@ pub theorem inf_list_StTheorem_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StTheorem(t), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StTheorem(t), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StDef_unf(
   t: SurfaceTheorem,
@@ -2587,7 +2658,13 @@ pub theorem inf_list_StDef_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StDef(t), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StDef(t), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StMutual_unf(
   stmts: List(SurfaceStmt),
@@ -2598,7 +2675,13 @@ pub theorem inf_list_StMutual_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StMutual(stmts, start, end), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StMutual(stmts, start, end), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StImport_unf(
   path: Text,
@@ -2609,7 +2692,13 @@ pub theorem inf_list_StImport_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StImport(path, start, end), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StImport(path, start, end), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StInductive_unf(
   i: SurfaceInductive,
@@ -2618,7 +2707,13 @@ pub theorem inf_list_StInductive_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StInductive(i), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StInductive(i), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StEffect_unf(
   e: SurfaceEffect,
@@ -2627,7 +2722,13 @@ pub theorem inf_list_StEffect_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StEffect(e), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StEffect(e), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StStruct_unf(
   d: SurfaceData,
@@ -2636,7 +2737,13 @@ pub theorem inf_list_StStruct_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StStruct(d), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StStruct(d), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StEnum_unf(
   d: SurfaceData,
@@ -2645,7 +2752,13 @@ pub theorem inf_list_StEnum_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StEnum(d), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StEnum(d), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StExtern_unf(
   abi: Text,
@@ -2657,7 +2770,13 @@ pub theorem inf_list_StExtern_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StExtern(abi, fns, start, end), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StExtern(abi, fns, start, end), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StClass_unf(
   cl: SurfaceClass,
@@ -2666,7 +2785,13 @@ pub theorem inf_list_StClass_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StClass(cl), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StClass(cl), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StInstance_unf(
   i: SurfaceInstance,
@@ -2675,7 +2800,13 @@ pub theorem inf_list_StInstance_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StInstance(i), rest), c, own_classes, own_types, out) = inf_list_cons(i, rest, c, own_classes, own_types, out) { Refl }
+): ck_declare_instances(
+  Cons(StInstance(i), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = inf_list_cons(i, rest, c, own_classes, own_types, out) { Refl }
 
 pub theorem inf_list_StWhile_unf(
   cond: SurfaceTerm,
@@ -2685,7 +2816,13 @@ pub theorem inf_list_StWhile_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StWhile(cond, body), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StWhile(cond, body), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StReturn_unf(
   value: Option(SurfaceTerm),
@@ -2694,7 +2831,13 @@ pub theorem inf_list_StReturn_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StReturn(value), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StReturn(value), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StExpr_unf(
   value: SurfaceTerm,
@@ -2703,7 +2846,13 @@ pub theorem inf_list_StExpr_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StExpr(value), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StExpr(value), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StOther_unf(
   what: Text,
@@ -2714,7 +2863,13 @@ pub theorem inf_list_StOther_unf(
   own_classes: List(Text),
   own_types: List(Text),
   out: List(SurfaceFn)
-): ck_declare_instances(Cons(StOther(what, start, end), rest), c, own_classes, own_types, out) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+): ck_declare_instances(
+  Cons(StOther(what, start, end), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StMacro_unf(
   name: Text,
@@ -2727,12 +2882,12 @@ pub theorem inf_list_StMacro_unf(
   own_types: List(Text),
   out: List(SurfaceFn)
 ): ck_declare_instances(
-    Cons(StMacro(name, function, start, end), rest),
-    c,
-    own_classes,
-    own_types,
-    out
-  ) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+  Cons(StMacro(name, function, start, end), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StAttributed_unf(
   attr_name: Text,
@@ -2745,12 +2900,12 @@ pub theorem inf_list_StAttributed_unf(
   own_types: List(Text),
   out: List(SurfaceFn)
 ): ck_declare_instances(
-    Cons(StAttributed(attr_name, attr_arg, attr_generates, attr_stmt), rest),
-    c,
-    own_classes,
-    own_types,
-    out
-  ) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+  Cons(StAttributed(attr_name, attr_arg, attr_generates, attr_stmt), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_StSyntax_unf(
   name: Text,
@@ -2763,12 +2918,12 @@ pub theorem inf_list_StSyntax_unf(
   own_types: List(Text),
   out: List(SurfaceFn)
 ): ck_declare_instances(
-    Cons(StSyntax(name, grammar, start, end), rest),
-    c,
-    own_classes,
-    own_types,
-    out
-  ) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
+  Cons(StSyntax(name, grammar, start, end), rest),
+  c,
+  own_classes,
+  own_types,
+  out
+) = ck_rewrap1(ck_declare_instances(rest, c, own_classes, own_types, out)) { Refl }
 
 pub theorem inf_list_step(
   s: SurfaceStmt,
@@ -2781,7 +2936,7 @@ pub theorem inf_list_step(
     SurfaceFn
   ). CkReadFrame(next, ck_declare_instances(rest, next, own_classes, own_types, fs))
 ): CkReadFrame(c, ck_declare_instances(Cons(s, rest), c, own_classes, own_types, out)) {
-  match s: CkReadFrame(c, ck_declare_instances(Cons(s, rest), c, own_classes, own_types, out)) {
+  ⊢ CkReadFrame(c, ck_declare_instances(Cons(s, rest), c, own_classes, own_types, out)) from match s {
     StLet(name, ty, value, borrow, mutable) => Eq::subst(
       (z: Mut1(List(SurfaceFn), Checker)) => CkReadFrame(c, z),
       Eq::sym(
@@ -2930,7 +3085,7 @@ pub theorem ck_declare_instances_frame(
   own_types: List(Text),
   out: List(SurfaceFn)
 ): CkReadFrame(c, ck_declare_instances(ss, c, own_classes, own_types, out)) {
-  match ss: CkReadFrame(c, ck_declare_instances(ss, c, own_classes, own_types, out)) {
+  ⊢ CkReadFrame(c, ck_declare_instances(ss, c, own_classes, own_types, out)) from match ss {
     Nil => Refl
     Cons(s, rest) => inf_list_step(
       s,
@@ -2944,10 +3099,7 @@ pub theorem ck_declare_instances_frame(
   }
 }
 
-pub fn inf_declare_classes(
-  c: Checker,
-  program: List(SurfaceStmt)
-): Mut1(List(SurfaceFn), Checker) {
+pub fn inf_declare_classes(c: Checker, program: List(SurfaceStmt)): Mut1(List(SurfaceFn), Checker) {
   frame_bind(
     List(SurfaceClass),
     List(SurfaceFn),

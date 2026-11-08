@@ -26,7 +26,8 @@ This is an experimental source release: the Rust compiler and CLI, tools
 written in Tauto, and the Lean formalization. The language and command-line
 interface may change; this is not a stable release. Source files may use
 `.taut` or `.tauto`; this repository uses `.taut`. The design documents are in
-[`docs/design/`](docs/design/).
+[`docs/design/`](docs/design/); if you come from Lean 4, start with
+[`docs/guide/from-lean.md`](docs/guide/from-lean.md).
 
 ## A taste of the language
 
@@ -154,6 +155,8 @@ Keep the checkout for the examples and library sources. See
 - `crates/tauto-cli`: the `tauto` command, including `tauto lsp`.
 - `crates/tauto-cli-totes`: the totes the `tauto` command runs (the bytecode
   machine and the table generator), compiled to Rust when the command is built.
+  Each tote is compiled by a crate of its own (`crates/tauto-cli-tote-<name>`),
+  so the totes are compiled side by side and only a changed one again.
 - `crates/tauto-vm`: a bytecode machine that runs checked Tauto programs.
 - `crates/tauto-cache`: the build cache: what build steps made, kept under what
   they were made from.
@@ -242,12 +245,12 @@ tauto add --git URL [NAME] | --path DIR   # depend on a tote; Tauto.eure and Tau
 tauto remove NAME | update [NAME…] | lock [--check] | fetch | deps  # the totes a tote depends on
 tauto index sync | status | check | new | observe | decide | publish  # the indexes Trust.eure trusts, and one's own
 tauto fmt [--check] FILE…                 # formatter
-tauto lint [--json] PATH…                 # files, or the .taut files under a directory; rejects holes and other things std/ and meta/ avoid; --json: [{file, line, col, message, kind}]
+tauto lint [--json] [--fix] PATH…         # files, or the .taut files under a directory; rejects holes and other things std/ and meta/ avoid; --json: [{file, line, col, message, kind}]; --fix: writes the import lists and the `=> …` lists
 tauto extract FILE…                       # the Nib that `run` makes of the programs, for reading
 tauto goals | try | fill | suggest | expand | library FILE …  # proofs a step at a time
 tauto test [PATH] [--filter TEXT] [--json] # the perform test statements in the sources
 tauto bench PATH [OPTIONS]                # release binary whole-process wall time
-tauto doc PATH [-o DIR]                    # checked proof status and local API HTML
+tauto doc PATH [-o DIR]                    # highlighted, linked source pages as HTML
 tauto build [--release] [-o DIR] FILE     # compile to Rust (also a tote directory)
 tauto bind CRATE --config FILE            # declarations for a Rust crate
 tauto syntax gen | show | source          # the table files of `syntax` grammars
@@ -311,6 +314,7 @@ tauto expand  FILE --hole NAME --by intro|match(x)|induction(x)|'NAME!(arg)' [--
 tauto library FILE [--json]            # the constants a proof may use, with their types
 tauto assumptions FILE [NAME] [--json] # per declaration: the axioms it rests on, the extern functions it reaches, its holes; exit 0, 3, 1 as check
 tauto elaborate FILE [NAME] [--json]   # the term the kernel checks for each body: implicit arguments, instances and motives written out
+tauto proof FILE [NAME] [--format block|node|tree|tree-html|natural|json] [--full] [--output FILE] # read-only proof views; natural is the default
 tauto proof-status [PATH] [--json]     # counts over the .taut files under PATH: ok, incomplete, holes, failed, axioms used, externs
 tauto eval  FILE EXPR                  # EXPR in normal form after FILE's declarations, and its type (a `Text` also as its characters); only shown, a proof states it as a `Refl` theorem
 ```
@@ -491,7 +495,7 @@ are theorems about the program. A field that holds a function is an error, and s
 a field the kernel has no type for (`i16`, a plain `enum`); a plain `struct` or `enum`
 stays a program's type only ([`docs/design/program-data.md`](docs/design/program-data.md)).
 
-`match x: T { c(a) => e … }` on a parameter is compiled to the eliminator
+`⊢ T from match x { c(a) => e … }` on a parameter is compiled to the eliminator
 with an explicit motive (`T` may mention `x`), and a call on a field of the
 matched value becomes the induction hypothesis. The motive generalizes the
 other parameters, so a recursive call may change any of them except those the
@@ -501,7 +505,7 @@ f(rest)`): the function is then compiled with a motive that pairs each value
 with the values at its parts (`And`, or the prelude's `BelowPair` for data),
 for a single family that eliminates into types and whose indices are
 variables. The match may be applied to arguments that its motive
-generalizes, `(match x: (H) -> G { c(a) => h => … f(a, h2) … })(h)`; a
+generalizes, `(⊢ (H) -> G from match x { c(a) => h => … f(a, h2) … })(h)`; a
 recursive call is then the induction hypothesis applied to them. A
 recursion on another parameter than the one matched names it with
 `decreasing_by y` (on a `fn` or a `theorem`): the body becomes a `match y`
@@ -701,9 +705,9 @@ system's hygiene (`totes/macros`) and the table generator (`totes/llkgen`,
 which writes, character for character, the tables of the generator of
 `crates/tauto-parol`) are written in Nib.
 
-Equation chains in proofs are written with `calc a { = b from p … }`, a chain
-of `=` or `↔` whose lines each give the relation, the next expression and its
-proof ([`docs/design/syntax.md`](docs/design/syntax.md)); a typed `let` per step
+Equation chains in proofs are written with the `calc!` macro of `std/Calc.taut`,
+a chain of `=` or `↔` whose lines each give the relation, the next expression and
+its proof ([`docs/design/syntax.md`](docs/design/syntax.md)); a typed `let` per step
 with `Eq::trans` also works (see `examples/nat`).
 
 ## Editor support

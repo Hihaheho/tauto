@@ -9,10 +9,10 @@ import std::Base
 import std::Text
 
 pub fn rustgen_no_borrows(borrows: List(Option(Bool))): Bool {
-  match borrows: Bool {
+  ⊢ Bool from match borrows {
     Nil => true
 
-    Cons(borrow, rest) => match borrow: Bool {
+    Cons(borrow, rest) => ⊢ Bool from match borrow {
       None => rustgen_no_borrows(rest)
 
       Some(mutable) => false
@@ -21,7 +21,7 @@ pub fn rustgen_no_borrows(borrows: List(Option(Bool))): Bool {
 }
 
 pub fn rustgen_no_effects(effects: Option(List(Text))): Bool {
-  match effects: Bool {
+  ⊢ Bool from match effects {
     None => true
 
     Some(names) => false
@@ -33,25 +33,29 @@ pub fn rustgen_parameters(
   types: List(Option(SurfaceTerm)),
   done: List(RustgenBinding)
 ): RustgenResult(List(RustgenBinding)) {
-  match names: RustgenResult(List(RustgenBinding)) {
-    Nil => match types: RustgenResult(List(RustgenBinding)) {
+  ⊢ RustgenResult(List(RustgenBinding)) from match names {
+    Nil => ⊢ RustgenResult(List(RustgenBinding)) from match types {
       Nil => RustgenOk(List::reverse(done))
 
       Cons(extra, rest) => RustgenErr("parameter lists differ")
     }
 
-    Cons(name, more) => match rustgen_find(name, done): RustgenResult(List(RustgenBinding)) {
+    Cons(name, more) => ⊢ RustgenResult(List(RustgenBinding)) from match rustgen_find(name, done) {
 
       Some(existing) => RustgenErr("duplicate parameter")
-      None => match types: RustgenResult(List(RustgenBinding)) {
+      None => ⊢ RustgenResult(List(RustgenBinding)) from match types {
         Nil => RustgenErr("parameter type required")
 
-        Cons(written, rest) => match written: RustgenResult(List(RustgenBinding)) {
+        Cons(written, rest) => ⊢ RustgenResult(List(RustgenBinding)) from match written {
           None => RustgenErr("parameter type required")
 
-          Some(term) => match rustgen_written(term): RustgenResult(List(RustgenBinding)) {
+          Some(term) => ⊢ RustgenResult(List(RustgenBinding)) from match rustgen_written(term) {
             RustgenErr(Message) => RustgenErr(Message)
-            RustgenOk(ty) => rustgen_parameters(more, rest, Cons(RustgenBinding::Mk(name, ty), done))
+            RustgenOk(ty) => rustgen_parameters(
+              more,
+              rest,
+              Cons(RustgenBinding::Mk(name, ty), done)
+            )
           }
         }
       }
@@ -60,9 +64,9 @@ pub fn rustgen_parameters(
 }
 
 pub fn rustgen_no_bounds(bounds: List(Option(Text))): Bool {
-  match bounds: Bool {
+  ⊢ Bool from match bounds {
     Nil => true
-    Cons(b, rest) => match b: Bool {
+    Cons(b, rest) => ⊢ Bool from match b {
       None => rustgen_no_bounds(rest)
       Some(name) => false
     }
@@ -80,27 +84,27 @@ pub fn rustgen_signature(f: SurfaceFn): RustgenResult(RustgenFunction) {
   ) || not(
     rustgen_no_effects(f.effects)
   ) { RustgenErr("borrows and effects are unsupported") } else {
-    match f.result: RustgenResult(RustgenFunction) {
+    ⊢ RustgenResult(RustgenFunction) from match f.result {
       None => RustgenErr("an explicit result type is required")
-      Some(written) => match rustgen_written(written): RustgenResult(RustgenFunction) {
+      Some(written) => ⊢ RustgenResult(RustgenFunction) from match rustgen_written(written) {
         RustgenErr(Message) => RustgenErr(Message)
-        RustgenOk(raw_result) => match rustgen_vars(
+        RustgenOk(raw_result) => ⊢ RustgenResult(RustgenFunction) from match rustgen_vars(
           10000,
           raw_result,
           f.generics
-        ): RustgenResult(RustgenFunction) {
+        ) {
           RustgenErr(Message) => RustgenErr(Message)
-          RustgenOk(result) => match rustgen_parameters(
+          RustgenOk(result) => ⊢ RustgenResult(RustgenFunction) from match rustgen_parameters(
             f.params,
             f.param_types,
             Nil
-          ): RustgenResult(RustgenFunction) {
+          ) {
             RustgenErr(Message) => RustgenErr(Message)
-            RustgenOk(raw_params) => match rustgen_vars_bindings(
+            RustgenOk(raw_params) => ⊢ RustgenResult(RustgenFunction) from match rustgen_vars_bindings(
               10000,
               raw_params,
               f.generics
-            ): RustgenResult(RustgenFunction) {
+            ) {
               RustgenErr(Message) => RustgenErr(Message)
               RustgenOk(params) => RustgenOk(
                 RustgenFunction::Mk(f.name, params, result, f.body, 0, f.generics)
@@ -118,19 +122,16 @@ pub fn rustgen_declarations_in(
   stmts: List(SurfaceStmt),
   done: List(RustgenFunction)
 ): RustgenResult(List(RustgenFunction)) {
-  match k: RustgenResult(List(RustgenFunction)) {
+  ⊢ RustgenResult(List(RustgenFunction)) from match k {
     Zero => RustgenErr("declaration depth exceeded")
-    Succ(j) => match stmts: RustgenResult(List(RustgenFunction)) {
+    Succ(j) => ⊢ RustgenResult(List(RustgenFunction)) from match stmts {
       Nil => RustgenOk(List::reverse(done))
 
-      Cons(stmt, rest) => match stmt: RustgenResult(List(RustgenFunction)) {
-        StFn(f) => match rustgen_find_function(
-          f.name,
-          done
-        ): RustgenResult(List(RustgenFunction)) {
+      Cons(stmt, rest) => ⊢ RustgenResult(List(RustgenFunction)) from match stmt {
+        StFn(f) => ⊢ RustgenResult(List(RustgenFunction)) from match rustgen_find_function(f.name, done) {
 
           Some(existing) => RustgenErr("duplicate function")
-          None => match rustgen_signature(f): RustgenResult(List(RustgenFunction)) {
+          None => ⊢ RustgenResult(List(RustgenFunction)) from match rustgen_signature(f) {
             RustgenErr(Message) => RustgenErr(Message)
             RustgenOk(function) => rustgen_declarations_in(j, rest, Cons(function, done))
           }
@@ -148,7 +149,7 @@ pub fn rustgen_declarations_in(
         StDef(unused0) => RustgenErr("unsupported declaration: StDef")
         StMutual(items, start, end) => rustgen_declarations_in(j, List::append(items, rest), done)
         StImport(unused0, unused1, unused2) => RustgenErr("unsupported declaration: StImport")
-        StInductive(d) => match rustgen_inductive(d, done): RustgenResult(List(RustgenFunction)) {
+        StInductive(d) => ⊢ RustgenResult(List(RustgenFunction)) from match rustgen_inductive(d, done) {
           RustgenErr(Message) => RustgenErr(Message)
           RustgenOk(next) => rustgen_declarations_in(j, rest, next)
         }
@@ -184,7 +185,7 @@ pub fn rustgen_declarations(
 ): RustgenResult(List(RustgenFunction)) { rustgen_declarations_in(10000, stmts, done) }
 
 pub fn rustgen_parameter_code(params: List(RustgenBinding)): List(Text) {
-  match params: List(Text) {
+  ⊢ List(Text) from match params {
     Nil => Nil
     Cons(param, rest) => Cons(
       Text::concat_all(
@@ -200,30 +201,30 @@ pub fn rustgen_functions(
   all: List(RustgenFunction),
   remaining: List(RustgenFunction)
 ): RustgenResult(List(Text)) {
-  match remaining: RustgenResult(List(Text)) {
+  ⊢ RustgenResult(List(Text)) from match remaining {
     Nil => RustgenOk(Nil)
     Cons(f, rest) => if not(
       rustgen_signature_known(f, all)
     ) { RustgenErr("unknown declared type") } else if f.kind != 0 {
-      match rustgen_functions(source, all, rest): RustgenResult(List(Text)) {
+      ⊢ RustgenResult(List(Text)) from match rustgen_functions(source, all, rest) {
         RustgenErr(Message) => RustgenErr(Message)
         RustgenOk(more) => RustgenOk(Cons(rustgen_data_code(f, all), more))
       }
-    } else { match rustgen_expr_as(
+    } else { ⊢ RustgenResult(List(Text)) from match rustgen_expr_as(
       10000,
       source,
       rustgen_with_scope(f.generics, all),
       f.params,
       f.body,
       Some(f.result)
-    ): RustgenResult(List(Text)) {
+    ) {
         RustgenErr(Message) => RustgenErr(
           Text::concat_all(Cons(f.name, Cons(": ", Cons(Message, Nil))))
         )
         RustgenOk(value) => if not(
           rustgen_fits(value.ty, f.result)
         ) { RustgenErr("function result type mismatch") } else {
-          match rustgen_functions(source, all, rest): RustgenResult(List(Text)) {
+          ⊢ RustgenResult(List(Text)) from match rustgen_functions(source, all, rest) {
             RustgenErr(Message) => RustgenErr(Message)
             RustgenOk(more) => RustgenOk(
               Cons(
@@ -266,18 +267,18 @@ pub fn rustgen_functions(
 }
 
 pub fn rustgen_program(source: Text, stmts: List(SurfaceStmt), entry: Text): RustgenResult(Text) {
-  match rustgen_declarations(stmts, rustgen_builtin_declarations()): RustgenResult(Text) {
+  ⊢ RustgenResult(Text) from match rustgen_declarations(stmts, rustgen_builtin_declarations()) {
     RustgenErr(Message) => RustgenErr(Message)
     RustgenOk(declared) => {
       let functions := rustgen_builtin_pair(declared)
-      match rustgen_find_function(entry, functions): RustgenResult(Text) {
+      ⊢ RustgenResult(Text) from match rustgen_find_function(entry, functions) {
         None => RustgenErr("entry function not found")
         Some(f) => if f.kind != 0 || not(
           rustgen_printable(f.result)
         ) || List::length(
           f.params
         ) != 0 { RustgenErr("entry function must have no parameters") } else {
-          match rustgen_functions(source, functions, functions): RustgenResult(Text) {
+          ⊢ RustgenResult(Text) from match rustgen_functions(source, functions, functions) {
             RustgenErr(Message) => RustgenErr(Message)
             RustgenOk(parts) => RustgenOk(
               Text::concat_all(

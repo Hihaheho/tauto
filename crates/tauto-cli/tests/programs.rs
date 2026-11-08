@@ -66,7 +66,7 @@ perform show("x", two())"#
         .program
         .stmts
         .iter()
-        .filter(|s| matches!(s, tauto::surface::Stmt::Fn(f) if f.name == "one"))
+        .filter(|s| matches!(s, tauto::surface::Stmt::Fn(f) if f.name.as_str() == "one"))
         .count();
     assert_eq!(fns, 1);
 }
@@ -213,7 +213,7 @@ perform show("a", Nat::add(plus2(1), 2))
     assert!(ok, "{err}");
     assert_eq!(out, "a = 5\n");
     let (out, err, ok) = tauto(&["test", d.to_str().unwrap()]);
-    assert!(ok, "{out}{err}");
+    assert!(!ok && err.contains("no tests selected"), "{out}{err}");
 }
 
 // What `tauto run` prints for code with effects and handlers is what the
@@ -246,7 +246,7 @@ fn running_and_proving_effects_agree() {
             .map(|(n, v)| format!("theorem {n}_is(): Eq(Nat, {n}(), {v}) {{ Refl }}\n"))
             .collect();
         fs::write(&file, format!("{source}{theorems}")).unwrap();
-        tauto(&["check", file.to_str().unwrap()])
+        tauto(&["check", file.to_str().unwrap(), "--summary"])
     };
     let (out, err, ok) = check(&values);
     assert!(
@@ -343,7 +343,7 @@ fn text_of_bytes_in_a_function_value_runs() {
         &f,
         "import std::Text\n\
          fn then_<A, B>(o: Option(A), f: (x: A) -> Option(B)): Option(B) {\n\
-         match o: Option(B) {\n None => None\n Some(a) => f(a)\n }\n}\n\
+         ⊢ Option(B) from match o {\n None => None\n Some(a) => f(a)\n }\n}\n\
          fn mk(o: Option(List(Nat))): Option(Text) {\n\
          then_(o, (bs: List(Nat)) => Some(Text::Mk(bs)))\n}\n\
          fn go(): Option(Text) { mk(Some(Cons(104, Cons(105, Nil)))) }\n\
@@ -362,7 +362,7 @@ fn an_undefined_name_in_a_checked_function_is_given_by_line_and_column() {
     let f = d.join("e.taut");
     fs::write(
         &f,
-        "fn ones(n: Nat): Nat {\n    match n: Nat {\n        Zero => 0\n        Succ(rest) => nope(rest)\n    }\n}\nperform show(\"x\", ones(2))\n",
+        "fn ones(n: Nat): Nat {\n    ⊢ Nat from match n {\n        Zero => 0\n        Succ(rest) => nope(rest)\n    }\n}\nperform show(\"x\", ones(2))\n",
     )
     .unwrap();
     let (_, err, ok) = tauto(&["run", f.to_str().unwrap()]);

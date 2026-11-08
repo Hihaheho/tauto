@@ -1,0 +1,727 @@
+import "../../surface/src/surface.taut"
+import "../../text/src/text.taut"
+import "../../kernel/src/data.taut"
+import "../../kernel/src/kernel.taut"
+import std::List
+import std::Map
+import std::Text
+import std::Base
+
+// Nested patterns, as the host reads them: `S(S(m)) => e` is a `match` on the
+// field of `S`, inside the arm of `S`. The arms become an exact case tree of
+// plain matches, each without a written result type (it is the arm's goal),
+// which `elab_match` then elaborates as if they were written by hand.
+//
+// A field is split only when every written arm that reaches it splits it,
+// so no two written arms are ordered; the one arm for "the other cases" is a
+// last `_ =>`, which must stand for at least one case. Numerals and `true`
+// and `false` are read as the constructors of `Nat` and `Bool` they are.
+
+// One arm on its way down the tree: the patterns the fields still have to
+// match, each by the name its field is bound to (`""` for a field not named
+// yet), and the arm's body. `default` marks the last arm `_ =>`.
+pub(open) inductive ElabRow: Type {
+  Mk(cols: List(Pair(Text, SurfacePattern)), body: SurfaceTerm, default: Bool): ElabRow
+}
+
+// A rewrite's result, with the count of fresh names made so far and whether
+// the default arm has become the body of a case.
+pub(open) inductive ElabNested(A: Type): Type {
+  NestOk(value: A, fresh: Nat, used: Bool): ElabNested(A)
+  NestErr(message: Text): ElabNested(A)
+}
+
+// The largest numeral a pattern may be: `n` is `n` nested `Succ`s, so the case
+// tree it makes is `n` matches deep. The host has the same bound.
+pub fn elab_numeral_max(): Nat { 1024 }
+
+pub fn elab_ends_with(t: Text, suffix: Text): Bool {
+  if Text::len(t) < Text::len(suffix) { false } else {
+    ⊢ Bool from match Text::slice(t, Text::len(t) - Text::len(suffix), Text::len(t)) {
+      Some(s) => s == suffix
+      None => false
+    }
+  }
+}
+
+pub fn elab_ctor_suffixed(cs: List(Text × Pair(Text, Nat)), suffix: Text): List(Text) {
+  ⊢ List(Text) from match cs {
+    Nil => Nil
+    // `BelowPair` is known to the kernel only for the host's compiled
+    // recursions; no source name refers to its constructor.
+    Cons(#(key, at), rest) => if elab_ends_with(key, suffix) && text_starts_with(key, "BelowPair::", 0) == false { Cons(key, elab_ctor_suffixed(rest, suffix)) } else {
+      elab_ctor_suffixed(rest, suffix)
+    }
+  }
+}
+
+// The constructors a pattern name may denote: the one of that full name, or
+// those whose last segment it is.
+pub fn elab_ctor_candidates(core: KernelCore, name: Text): List(Text) {
+  ⊢ List(Text) from match kernel_ctor_get(core, name) {
+    Some(found) => Cons(name, Nil)
+    None => elab_ctor_suffixed(Ordmap::entries(core.constructors), Text::concat("::", name))
+  }
+}
+
+// `c(…)`, or a bare name that is a constructor: its candidates and fields.
+pub fn elab_as_ctor(core: KernelCore, p: SurfacePattern): Option(Pair(List(Text), List(SurfacePattern))) {
+  ⊢ Option(Pair(List(Text), List(SurfacePattern))) from match p {
+    PtCtor(name, args) => Some(Pair { fst: elab_ctor_candidates(core, name), snd: args })
+    PtBind(name) => ⊢ Option(Pair(List(Text), List(SurfacePattern))) from match elab_ctor_candidates(core, name) {
+      Nil => None
+      Cons(c, rest) => Some(Pair { fst: Cons(c, rest), snd: Nil })
+    }
+    _ => None
+  }
+}
+
+pub fn elab_is_ctor(core: KernelCore, p: SurfacePattern): Bool {
+  ⊢ Bool from match elab_as_ctor(core, p) {
+    None => false
+    Some(c) => true
+  }
+}
+
+pub fn elab_any_ctor(core: KernelCore, ps: List(SurfacePattern)): Bool {
+  ⊢ Bool from match ps {
+    Nil => false
+    Cons(p, rest) => elab_is_ctor(core, p) || elab_any_ctor(core, rest)
+  }
+}
+
+pub fn elab_is_nested(core: KernelCore, p: SurfacePattern): Bool {
+  ⊢ Bool from match p {
+    PtCtor(name, args) => elab_any_ctor(core, args)
+    _ => false
+  }
+}
+
+pub fn elab_any_nested(core: KernelCore, arms: List(SurfaceArm)): Bool {
+  ⊢ Bool from match arms {
+    Nil => false
+    Cons(a, rest) => elab_is_nested(core, a.pattern) || elab_any_nested(core, rest)
+  }
+}
+
+pub fn elab_succs(n: Nat): SurfacePattern {
+  ⊢ SurfacePattern from match n {
+    Zero => PtBind("Nat::Zero")
+    Succ(m) => PtCtor("Nat::Succ", Cons(elab_succs(m), Nil))
+  }
+}
+
+mutual {
+  pub fn elab_has_numeral(k: Nat, p: SurfacePattern): Bool {
+    ⊢ Bool from match k {
+      Zero => true
+      Succ(j) => ⊢ Bool from match p {
+        PtInt(negative, magnitude) => true
+        PtBool(value) => true
+        PtCtor(name, args) => elab_has_numerals(j, args)
+        PtRecord(name, fields) => elab_has_numeral_fields(j, fields)
+        _ => false
+      }
+    }
+  }
+
+  pub fn elab_has_numerals(k: Nat, ps: List(SurfacePattern)): Bool {
+    ⊢ Bool from match k {
+      Zero => true
+      Succ(j) => ⊢ Bool from match ps {
+        Nil => false
+        Cons(p, rest) => elab_has_numeral(j, p) || elab_has_numerals(j, rest)
+      }
+    }
+  }
+
+  pub fn elab_has_numeral_fields(k: Nat, fs: List(SurfacePatternField)): Bool {
+    ⊢ Bool from match k {
+      Zero => true
+      Succ(j) => ⊢ Bool from match fs {
+        Nil => false
+        Cons(f, rest) => elab_has_numeral(j, f.pattern) || elab_has_numeral_fields(j, rest)
+      }
+    }
+  }
+
+  // The pattern with each numeral read as `Nat` constructors and each
+  // boolean as the `Bool` constructor it is.
+  pub fn elab_numerals(k: Nat, p: SurfacePattern): ElabNested(SurfacePattern) {
+    ⊢ ElabNested(SurfacePattern) from match k {
+      Zero => NestErr("elaboration exhausted")
+      Succ(j) => ⊢ ElabNested(SurfacePattern) from match p {
+        PtInt(negative, magnitude) => if negative {
+          NestErr("a negative numeral is not a pattern of `Nat`")
+        } else if magnitude > elab_numeral_max() {
+          NestErr("a numeral pattern is larger than 1024")
+        } else { NestOk(elab_succs(magnitude), 0, false) }
+        PtBool(value) => NestOk(PtBind(if value { "Bool::true" } else { "Bool::false" }), 0, false)
+        PtCtor(name, args) => ⊢ ElabNested(SurfacePattern) from match elab_numerals_all(j, args) {
+          NestErr(e) => NestErr(e)
+          NestOk(xs, f, u) => NestOk(PtCtor(name, xs), 0, false)
+        }
+        PtRecord(name, fields) => ⊢ ElabNested(SurfacePattern) from match elab_numeral_fields(j, fields) {
+          NestErr(e) => NestErr(e)
+          NestOk(xs, f, u) => NestOk(PtRecord(name, xs), 0, false)
+        }
+        _ => NestOk(p, 0, false)
+      }
+    }
+  }
+
+  pub fn elab_numerals_all(k: Nat, ps: List(SurfacePattern)): ElabNested(List(SurfacePattern)) {
+    ⊢ ElabNested(List(SurfacePattern)) from match k {
+      Zero => NestErr("elaboration exhausted")
+      Succ(j) => ⊢ ElabNested(List(SurfacePattern)) from match ps {
+        Nil => NestOk(Nil, 0, false)
+        Cons(p, rest) => ⊢ ElabNested(List(SurfacePattern)) from match elab_numerals(j, p) {
+          NestErr(e) => NestErr(e)
+          NestOk(q, f, u) => ⊢ ElabNested(List(SurfacePattern)) from match elab_numerals_all(j, rest) {
+            NestErr(e) => NestErr(e)
+            NestOk(qs, g, v) => NestOk(Cons(q, qs), 0, false)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn elab_numeral_fields(k: Nat, fs: List(SurfacePatternField)): ElabNested(List(SurfacePatternField)) {
+    ⊢ ElabNested(List(SurfacePatternField)) from match k {
+      Zero => NestErr("elaboration exhausted")
+      Succ(j) => ⊢ ElabNested(List(SurfacePatternField)) from match fs {
+        Nil => NestOk(Nil, 0, false)
+        Cons(fd, rest) => ⊢ ElabNested(List(SurfacePatternField)) from match elab_numerals(j, fd.pattern) {
+          NestErr(e) => NestErr(e)
+          NestOk(q, f, u) => ⊢ ElabNested(List(SurfacePatternField)) from match elab_numeral_fields(j, rest) {
+            NestErr(e) => NestErr(e)
+            NestOk(qs, g, v) => NestOk(Cons(SurfacePatternField::SurfacePatternFieldMk(fd.name, q), qs), 0, false)
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_arms_numeral(k: Nat, arms: List(SurfaceArm)): Bool {
+  ⊢ Bool from match arms {
+    Nil => false
+    Cons(a, rest) => elab_has_numeral(k, a.pattern) || elab_arms_numeral(k, rest)
+  }
+}
+
+pub fn elab_arms_numerals(k: Nat, arms: List(SurfaceArm)): ElabNested(List(SurfaceArm)) {
+  ⊢ ElabNested(List(SurfaceArm)) from match arms {
+    Nil => NestOk(Nil, 0, false)
+    Cons(a, rest) => ⊢ ElabNested(List(SurfaceArm)) from match elab_numerals(k, a.pattern) {
+      NestErr(e) => NestErr(e)
+      NestOk(p, f, u) => ⊢ ElabNested(List(SurfaceArm)) from match elab_arms_numerals(k, rest) {
+        NestErr(e) => NestErr(e)
+        NestOk(more, g, v) => NestOk(Cons(SurfaceArm::SurfaceArmMk(p, a.guard, a.goal, a.body), more), 0, false)
+      }
+    }
+  }
+}
+
+pub fn elab_is_wild(p: SurfacePattern): Bool {
+  ⊢ Bool from match p {
+    PtWild => true
+    _ => false
+  }
+}
+
+// The rows of the written arms; a guard, or a `_ =>` before the last arm, is
+// an error.
+pub fn elab_rows(arms: List(SurfaceArm)): ElabNested(List(ElabRow)) {
+  ⊢ ElabNested(List(ElabRow)) from match arms {
+    Nil => NestOk(Nil, 0, false)
+    Cons(a, rest) => ⊢ ElabNested(List(ElabRow)) from match a.guard {
+      Some(g) => NestErr("nested patterns cannot have guards")
+      None => if elab_is_wild(a.pattern) && List::length(rest) != 0 {
+        NestErr("the arm `_ =>` among nested patterns must be the last")
+      } else {
+        ⊢ ElabNested(List(ElabRow)) from match elab_rows(rest) {
+          NestErr(e) => NestErr(e)
+          NestOk(rows, f, u) => NestOk(
+            Cons(ElabRow::Mk(Cons(Pair { fst: "#x", snd: a.pattern }, Nil), a.body, elab_is_wild(a.pattern)), rows),
+            0,
+            false
+          )
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_written(rows: List(ElabRow)): List(ElabRow) {
+  ⊢ List(ElabRow) from match rows {
+    Nil => Nil
+    Cons(r, rest) => if r.default { elab_written(rest) } else { Cons(r, elab_written(rest)) }
+  }
+}
+
+pub fn elab_has_default(rows: List(ElabRow)): Bool {
+  ⊢ Bool from match rows {
+    Nil => false
+    Cons(r, rest) => r.default || elab_has_default(rest)
+  }
+}
+
+pub fn elab_col_at(cols: List(Pair(Text, SurfacePattern)), at: Nat): Option(Pair(Text, SurfacePattern)) {
+  ⊢ Option(Pair(Text, SurfacePattern)) from match cols {
+    Nil => None
+    Cons(c, rest) => ⊢ Option(Pair(Text, SurfacePattern)) from match at {
+      Zero => Some(c)
+      Succ(m) => elab_col_at(rest, m)
+    }
+  }
+}
+
+pub fn elab_without_col(cols: List(Pair(Text, SurfacePattern)), at: Nat): List(Pair(Text, SurfacePattern)) {
+  ⊢ List(Pair(Text, SurfacePattern)) from match cols {
+    Nil => Nil
+    Cons(c, rest) => ⊢ List(Pair(Text, SurfacePattern)) from match at {
+      Zero => rest
+      Succ(m) => Cons(c, elab_without_col(rest, m))
+    }
+  }
+}
+
+pub fn elab_col_splits(core: KernelCore, rows: List(ElabRow), at: Nat): Bool {
+  ⊢ Bool from match rows {
+    Nil => true
+    Cons(r, rest) => ⊢ Bool from match elab_col_at(r.cols, at) {
+      None => false
+      Some(c) => elab_is_ctor(core, c.snd) && elab_col_splits(core, rest, at)
+    }
+  }
+}
+
+// The first column every written row splits.
+pub fn elab_split_col(core: KernelCore, rows: List(ElabRow), at: Nat, cols: List(Pair(Text, SurfacePattern))): Option(Nat) {
+  ⊢ Option(Nat) from match cols {
+    Nil => None
+    Cons(c, rest) => if elab_col_splits(core, rows, at) { Some(at) } else { elab_split_col(core, rows, at + 1, rest) }
+  }
+}
+
+pub fn elab_cols_ctor(core: KernelCore, cols: List(Pair(Text, SurfacePattern))): Bool {
+  ⊢ Bool from match cols {
+    Nil => false
+    Cons(c, rest) => elab_is_ctor(core, c.snd) || elab_cols_ctor(core, rest)
+  }
+}
+
+pub fn elab_rows_ctor(core: KernelCore, rows: List(ElabRow)): Bool {
+  ⊢ Bool from match rows {
+    Nil => false
+    Cons(r, rest) => elab_cols_ctor(core, r.cols) || elab_rows_ctor(core, rest)
+  }
+}
+
+pub fn elab_var(name: Text, at: SurfaceTerm): SurfaceTerm {
+  SurfaceTerm { occurrence: None, kind: SkVar(name), start: at.start, end: at.end }
+}
+
+// The `let`s that give each name a pattern binds the field it binds.
+pub fn elab_aliases(cols: List(Pair(Text, SurfacePattern)), body: SurfaceTerm): ElabNested(List(SurfaceStmt)) {
+  ⊢ ElabNested(List(SurfaceStmt)) from match cols {
+    Nil => NestOk(Nil, 0, false)
+    Cons(c, rest) => ⊢ ElabNested(List(SurfaceStmt)) from match elab_aliases(rest, body) {
+      NestErr(e) => NestErr(e)
+      NestOk(lets, f, u) => ⊢ ElabNested(List(SurfaceStmt)) from match c.snd {
+        PtWild => NestOk(lets, 0, false)
+        PtBind(n) => if n == c.fst { NestOk(lets, 0, false) } else {
+          NestOk(Cons(StLet(n, None, elab_var(c.fst, body), false, false), lets), 0, false)
+        }
+        _ => NestErr("a nested pattern binds a variable, `_`, or a constructor")
+      }
+    }
+  }
+}
+
+// The arm's body, under the names its patterns give the fields.
+pub fn elab_leaf(row: ElabRow, fresh: Nat, used: Bool): ElabNested(SurfaceTerm) {
+  ⊢ ElabNested(SurfaceTerm) from match elab_aliases(row.cols, row.body) {
+    NestErr(e) => NestErr(e)
+    NestOk(lets, f, u) => ⊢ ElabNested(SurfaceTerm) from match lets {
+      Nil => NestOk(row.body, fresh, used)
+      Cons(l, more) => NestOk(
+        SurfaceTerm {
+          occurrence: None,
+          kind: SkBlock(List::append(lets, Cons(StExpr(row.body), Nil))),
+          start: row.body.start,
+          end: row.body.end
+        },
+        fresh,
+        used
+      )
+    }
+  }
+}
+
+// The groups of rows by constructor, in the order they are first written.
+pub(open) inductive ElabGroup: Type {
+  Mk(ctor: Text, rows: List(ElabRow)): ElabGroup
+}
+
+pub fn elab_group_add(groups: List(ElabGroup), c: Text, row: ElabRow): ElabNested(List(ElabGroup)) {
+  ⊢ ElabNested(List(ElabGroup)) from match groups {
+    Nil => NestOk(Cons(ElabGroup::Mk(c, Cons(row, Nil)), Nil), 0, false)
+    Cons(g, rest) => if g.ctor == c {
+      ⊢ ElabNested(List(ElabGroup)) from match g.rows {
+        Nil => NestOk(Cons(ElabGroup::Mk(c, Cons(row, Nil)), rest), 0, false)
+        Cons(first, more) => if List::length(first.cols) != List::length(row.cols) {
+          NestErr(Text::concat_all(Cons("the patterns of `", Cons(c, Cons("` have different numbers of fields", Nil)))))
+        } else { NestOk(Cons(ElabGroup::Mk(c, List::append(g.rows, Cons(row, Nil))), rest), 0, false) }
+      }
+    } else {
+      ⊢ ElabNested(List(ElabGroup)) from match elab_group_add(rest, c, row) {
+        NestErr(e) => NestErr(e)
+        NestOk(gs, f, u) => NestOk(Cons(g, gs), 0, false)
+      }
+    }
+  }
+}
+
+pub fn elab_unnamed(ps: List(SurfacePattern)): List(Pair(Text, SurfacePattern)) {
+  ⊢ List(Pair(Text, SurfacePattern)) from match ps {
+    Nil => Nil
+    Cons(p, rest) => Cons(Pair { fst: "", snd: p }, elab_unnamed(rest))
+  }
+}
+
+pub fn elab_wilds(n: Nat): List(Pair(Text, SurfacePattern)) {
+  ⊢ List(Pair(Text, SurfacePattern)) from match n {
+    Zero => Nil
+    Succ(m) => Cons(Pair { fst: "", snd: PtWild }, elab_wilds(m))
+  }
+}
+
+// Sorts the rows into groups by the constructor in column `col`, and the
+// default rows apart, each without that column.
+pub fn elab_group_rows(
+  core: KernelCore,
+  rows: List(ElabRow),
+  col: Nat,
+  groups: List(ElabGroup),
+  defaults: List(ElabRow)
+): ElabNested(Pair(List(ElabGroup), List(ElabRow))) {
+  ⊢ ElabNested(Pair(List(ElabGroup), List(ElabRow))) from match rows {
+    Nil => NestOk(Pair { fst: groups, snd: defaults }, 0, false)
+    Cons(r, rest) => {
+      let others := elab_without_col(r.cols, col)
+      if r.default {
+        elab_group_rows(core, rest, col, groups, List::append(defaults, Cons(ElabRow::Mk(others, r.body, true), Nil)))
+      } else {
+        ⊢ ElabNested(Pair(List(ElabGroup), List(ElabRow))) from match elab_col_at(r.cols, col) {
+          None => NestErr("a nested pattern has too few fields")
+          Some(here) => ⊢ ElabNested(Pair(List(ElabGroup), List(ElabRow))) from match elab_as_ctor(core, here.snd) {
+            None => NestErr("every nested arm must name a constructor where another arm does")
+            Some(found) => ⊢ ElabNested(Pair(List(ElabGroup), List(ElabRow))) from match found.fst {
+              Nil => NestErr("an unknown constructor in a nested pattern")
+              Cons(c, more) => if List::length(more) != 0 {
+                NestErr("an ambiguous constructor in a nested pattern")
+              } else {
+                ⊢ ElabNested(Pair(List(ElabGroup), List(ElabRow))) from match elab_group_add(groups, c, ElabRow::Mk(List::append(elab_unnamed(found.snd), others), r.body, false)) {
+                  NestErr(e) => NestErr(e)
+                  NestOk(gs, f, u) => elab_group_rows(core, rest, col, gs, defaults)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_group_named(groups: List(ElabGroup), c: Text): Bool {
+  ⊢ Bool from match groups {
+    Nil => false
+    Cons(g, rest) => g.ctor == c || elab_group_named(rest, c)
+  }
+}
+
+// With a default, the constructors no row names get a group of it alone.
+pub fn elab_missing_groups(groups: List(ElabGroup), ctors: List(KernelCtorInfo)): List(ElabGroup) {
+  ⊢ List(ElabGroup) from match ctors {
+    Nil => groups
+    Cons(c, rest) => if elab_group_named(groups, c.name) { elab_missing_groups(groups, rest) } else {
+      elab_missing_groups(List::append(groups, Cons(ElabGroup::Mk(c.name, Nil), Nil)), rest)
+    }
+  }
+}
+
+pub fn elab_ctor_info(core: KernelCore, c: Text): Option(KernelCtorInfo) {
+  ⊢ Option(KernelCtorInfo) from match kernel_ctor_get(core, c) {
+    None => None
+    Some(at) => ⊢ Option(KernelCtorInfo) from match kernel_ind_get(core, at.fst) {
+      None => None
+      Some(info) => elab_ctor_nth(info.constructors, at.snd)
+    }
+  }
+}
+
+pub fn elab_ctor_nth(cs: List(KernelCtorInfo), at: Nat): Option(KernelCtorInfo) {
+  ⊢ Option(KernelCtorInfo) from match cs {
+    Nil => None
+    Cons(c, rest) => ⊢ Option(KernelCtorInfo) from match at {
+      Zero => Some(c)
+      Succ(m) => elab_ctor_nth(rest, m)
+    }
+  }
+}
+
+pub fn elab_fields_of(cols: List(Pair(Text, SurfacePattern))): Nat {
+  ⊢ Nat from match cols {
+    Nil => 0
+    Cons(c, rest) => if c.fst == "" { 1 + elab_fields_of(rest) } else { 0 }
+  }
+}
+
+pub fn elab_with_defaults(rows: List(ElabRow), defaults: List(ElabRow), width: Nat): List(ElabRow) {
+  ⊢ List(ElabRow) from match defaults {
+    Nil => rows
+    Cons(d, rest) => elab_with_defaults(List::append(rows, Cons(ElabRow::Mk(List::append(elab_wilds(width), d.cols), d.body, true), Nil)), rest, width)
+  }
+}
+
+// The name a written row's pattern gives column `at`, when it is a variable.
+pub fn elab_bind_at(core: KernelCore, r: ElabRow, at: Nat): Option(Text) {
+  ⊢ Option(Text) from match elab_col_at(r.cols, at) {
+    None => None
+    Some(c) => ⊢ Option(Text) from match c.snd {
+      PtBind(n) => if elab_is_ctor(core, c.snd) { None } else { Some(n) }
+      _ => None
+    }
+  }
+}
+
+pub fn elab_all_bind(core: KernelCore, rows: List(ElabRow), at: Nat, n: Text): Bool {
+  ⊢ Bool from match rows {
+    Nil => true
+    Cons(r, rest) => ⊢ Bool from match elab_bind_at(core, r, at) {
+      None => false
+      Some(m) => m == n && elab_all_bind(core, rest, at, n)
+    }
+  }
+}
+
+pub fn elab_rename_col(cols: List(Pair(Text, SurfacePattern)), at: Nat, name: Text): List(Pair(Text, SurfacePattern)) {
+  ⊢ List(Pair(Text, SurfacePattern)) from match cols {
+    Nil => Nil
+    Cons(c, rest) => ⊢ List(Pair(Text, SurfacePattern)) from match at {
+      Zero => Cons(Pair { fst: name, snd: c.snd }, rest)
+      Succ(m) => Cons(c, elab_rename_col(rest, m, name))
+    }
+  }
+}
+
+pub fn elab_rename_rows(rows: List(ElabRow), at: Nat, name: Text): List(ElabRow) {
+  ⊢ List(ElabRow) from match rows {
+    Nil => Nil
+    Cons(r, rest) => Cons(ElabRow::Mk(elab_rename_col(r.cols, at, name), r.body, r.default), elab_rename_rows(rest, at, name))
+  }
+}
+
+// Names the fields `at` to `width` of a group: the variable every written row
+// binds there, or a fresh name no source can spell.
+pub fn elab_name_fields(
+  core: KernelCore,
+  rows: List(ElabRow),
+  at: Nat,
+  left: Nat,
+  fresh: Nat
+): Pair(Pair(List(ElabRow), List(Text)), Nat) {
+  ⊢ Pair(Pair(List(ElabRow), List(Text)), Nat) from match left {
+    Zero => Pair { fst: Pair { fst: rows, snd: Nil }, snd: fresh }
+    Succ(m) => {
+      let written := elab_written(rows)
+      let chosen := ⊢ Option(Text) from match written {
+        Nil => None
+        Cons(first, more) => ⊢ Option(Text) from match elab_bind_at(core, first, at) {
+          None => None
+          Some(n) => if elab_all_bind(core, more, at, n) { Some(n) } else { None }
+        }
+      }
+      let name := ⊢ Text from match chosen {
+        Some(n) => n
+        None => Text::concat("#f", Text::of_nat(fresh))
+      }
+      let next := ⊢ Nat from match chosen {
+        Some(n) => fresh
+        None => fresh + 1
+      }
+      let rest := elab_name_fields(core, elab_rename_rows(rows, at, name), at + 1, m, next)
+      Pair { fst: Pair { fst: rest.fst.fst, snd: Cons(name, rest.fst.snd) }, snd: rest.snd }
+    }
+  }
+}
+
+pub fn elab_binds(names: List(Text)): List(SurfacePattern) {
+  ⊢ List(SurfacePattern) from match names {
+    Nil => Nil
+    Cons(n, rest) => Cons(PtBind(n), elab_binds(rest))
+  }
+}
+
+mutual {
+  // The body that matches what the rows still have to match.
+  pub fn elab_tree(k: Nat, core: KernelCore, rows: List(ElabRow), fresh: Nat, used: Bool): ElabNested(SurfaceTerm) {
+    ⊢ ElabNested(SurfaceTerm) from match k {
+      Zero => NestErr("elaboration exhausted")
+      Succ(j) => {
+        let written := elab_written(rows)
+        let col := ⊢ Option(Nat) from match written {
+          Nil => None
+          Cons(first, more) => elab_split_col(core, written, 0, first.cols)
+        }
+        ⊢ ElabNested(SurfaceTerm) from match col {
+          None => if elab_rows_ctor(core, written) {
+            NestErr("nested arms overlap: no field is split by every arm that reaches it")
+          } else if List::length(written) > 1 {
+            NestErr("two nested arms match the same values")
+          } else {
+            ⊢ ElabNested(SurfaceTerm) from match written {
+              Cons(row, more) => elab_leaf(row, fresh, used)
+              Nil => ⊢ ElabNested(SurfaceTerm) from match rows {
+                Nil => NestErr("a case of a nested match has no arm")
+                Cons(row, more) => elab_leaf(row, fresh, true)
+              }
+            }
+          }
+          Some(at) => ⊢ ElabNested(SurfaceTerm) from match elab_split(j, core, rows, at, fresh, used) {
+            NestErr(e) => NestErr(e)
+            NestOk(split, f, u) => ⊢ ElabNested(SurfaceTerm) from match rows {
+              Nil => NestErr("a case of a nested match has no arm")
+              Cons(row, more) => NestOk(
+                SurfaceTerm {
+                  occurrence: None,
+                  kind: SkMatch(elab_var(split.fst, row.body), None, split.snd, None),
+                  start: row.body.start,
+                  end: row.body.end
+                },
+                f,
+                u
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Splits the rows on column `col`: one arm per constructor, each binding
+  // the constructor's fields.
+  pub fn elab_split(
+    k: Nat,
+    core: KernelCore,
+    rows: List(ElabRow),
+    col: Nat,
+    fresh: Nat,
+    used: Bool
+  ): ElabNested(Pair(Text, List(SurfaceArm))) {
+    ⊢ ElabNested(Pair(Text, List(SurfaceArm))) from match k {
+      Zero => NestErr("elaboration exhausted")
+      Succ(j) => ⊢ ElabNested(Pair(Text, List(SurfaceArm))) from match rows {
+        Nil => NestErr("a case of a nested match has no arm")
+        Cons(first, more) => ⊢ ElabNested(Pair(Text, List(SurfaceArm))) from match elab_col_at(first.cols, col) {
+          None => NestErr("a nested pattern has too few fields")
+          Some(here) => ⊢ ElabNested(Pair(Text, List(SurfaceArm))) from match elab_group_rows(core, rows, col, Nil, Nil) {
+            NestErr(e) => NestErr(e)
+            NestOk(sorted, f, u) => {
+              let groups := ⊢ List(ElabGroup) from match sorted.snd {
+                Nil => sorted.fst
+                Cons(d, ds) => ⊢ List(ElabGroup) from match sorted.fst {
+                  Nil => sorted.fst
+                  Cons(g, gs) => ⊢ List(ElabGroup) from match kernel_ctor_get(core, g.ctor) {
+                    None => sorted.fst
+                    Some(at) => ⊢ List(ElabGroup) from match kernel_ind_get(core, at.fst) {
+                      None => sorted.fst
+                      Some(info) => elab_missing_groups(sorted.fst, info.constructors)
+                    }
+                  }
+                }
+              }
+              ⊢ ElabNested(Pair(Text, List(SurfaceArm))) from match elab_arms_of(j, core, groups, sorted.snd, fresh, used) {
+                NestErr(e) => NestErr(e)
+                NestOk(arms, g, v) => NestOk(Pair { fst: here.fst, snd: arms }, g, v)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn elab_arms_of(
+    k: Nat,
+    core: KernelCore,
+    groups: List(ElabGroup),
+    defaults: List(ElabRow),
+    fresh: Nat,
+    used: Bool
+  ): ElabNested(List(SurfaceArm)) {
+    ⊢ ElabNested(List(SurfaceArm)) from match k {
+      Zero => NestErr("elaboration exhausted")
+      Succ(j) => ⊢ ElabNested(List(SurfaceArm)) from match groups {
+        Nil => NestOk(Nil, fresh, used)
+        Cons(g, rest) => {
+          let given := ⊢ Nat from match g.rows {
+            Nil => 0
+            Cons(r, more) => elab_fields_of(r.cols)
+          }
+          let width := ⊢ Nat from match defaults {
+            Nil => given
+            Cons(d, ds) => ⊢ Nat from match elab_ctor_info(core, g.ctor) {
+              None => given
+              Some(info) => info.nargs
+            }
+          }
+          let wrong := ⊢ Bool from match g.rows {
+            Nil => false
+            Cons(r, more) => given != width
+          }
+          if wrong {
+            NestErr(Text::concat_all(Cons("a pattern of `", Cons(g.ctor, Cons("` has the wrong number of fields", Nil)))))
+          } else {
+            let named := elab_name_fields(core, elab_with_defaults(g.rows, defaults, width), 0, width, fresh)
+            ⊢ ElabNested(List(SurfaceArm)) from match elab_tree(j, core, named.fst.fst, named.snd, used) {
+              NestErr(e) => NestErr(e)
+              NestOk(body, f, u) => ⊢ ElabNested(List(SurfaceArm)) from match elab_arms_of(j, core, rest, defaults, f, u) {
+                NestErr(e) => NestErr(e)
+                NestOk(arms, f2, u2) => NestOk(
+                  Cons(SurfaceArm::SurfaceArmMk(PtCtor(g.ctor, elab_binds(named.fst.snd)), None, None, body), arms),
+                  f2,
+                  u2
+                )
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The arms of a `match`, with nested patterns turned into `match`es in the
+// arms' bodies; arms without nested patterns are returned as they are, after
+// numerals and booleans are read as constructors.
+pub fn elab_nest_arms(k: Nat, core: KernelCore, arms: List(SurfaceArm)): ElabNested(List(SurfaceArm)) {
+  let read: ElabNested(List(SurfaceArm)) := if elab_arms_numeral(k, arms) { elab_arms_numerals(k, arms) } else { NestOk(arms, 0, false) }
+  ⊢ ElabNested(List(SurfaceArm)) from match read {
+    NestErr(e) => NestErr(e)
+    NestOk(arms2, f, u) => if elab_any_nested(core, arms2) == false { NestOk(arms2, 0, false) } else {
+      ⊢ ElabNested(List(SurfaceArm)) from match elab_rows(arms2) {
+        NestErr(e) => NestErr(e)
+        NestOk(rows, g, v) => ⊢ ElabNested(List(SurfaceArm)) from match elab_split(k, core, rows, 0, 0, false) {
+          NestErr(e) => NestErr(e)
+          NestOk(split, fresh, used) => if elab_has_default(rows) && used == false {
+            NestErr("the arm `_ =>` matches no case the other arms leave")
+          } else { NestOk(split.snd, fresh, used) }
+        }
+      }
+    }
+  }
+}

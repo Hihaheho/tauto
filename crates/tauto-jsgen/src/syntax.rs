@@ -18,16 +18,23 @@ pub(crate) fn parser_index(pkg: &Package, name: &str, sha: &str, result: &Ty) ->
         .position(|p| p.name == name && p.sha == sha && p.result == *result)
 }
 
-fn ctor(pkg: &Package, data: &str, ctor: &str, values: &[String]) -> R<String> {
+/// A value of a constructor of `data`, from JavaScript expressions.
+fn ctor(pkg: &Package, parser: usize, data: &str, ctor: &str, values: &[String]) -> R<String> {
     let d = pkg
         .datas
         .iter()
-        .find(|d| d.name == data)
+        .find(|d| pkg.syntax_parsers[parser].data_bindings.get(data) == Some(&d.name))
         .ok_or_else(|| msg!("jsgen-syntax-data-not-retained", data = data).to_string())?;
     let c = d
         .ctors
         .iter()
-        .find(|c| d.is_struct || c.name == ctor || c.name.rsplit("::").next() == Some(ctor))
+        .find(|c| {
+            d.is_struct
+                || pkg.syntax_parsers[parser]
+                    .constructor_bindings
+                    .get(&(data.to_string(), ctor.to_string()))
+                    == Some(&c.name)
+        })
         .ok_or_else(|| {
             msg!("jsgen-syntax-schema-constructor", data = data, ctor = ctor).to_string()
         })?;
@@ -46,10 +53,10 @@ fn ctor(pkg: &Package, data: &str, ctor: &str, values: &[String]) -> R<String> {
         .join(",");
     Ok(format!(
         "construct({},[{names}],[{}],[{order}],{},{})",
-        quote(&c.name),
+        quote(crate::constructor_symbol(pkg, &c.name)),
         values.join(","),
         d.is_struct,
-        quote(&d.name)
+        quote(&crate::owner_symbol(pkg, &d.name))
     ))
 }
 
@@ -57,11 +64,12 @@ fn field(pkg: &Package, parser: usize, ty: &FieldTy, ast: &str) -> R<String> {
     Ok(match ty {
         FieldTy::Named(name) => format!("syn{parser}_{name}({ast},text)"),
         FieldTy::Token => {
-            let span = ctor(pkg, "SynSpan", "SynSpan", &["BigInt(t[0])".into()])?;
-            let empty = ctor(pkg, "List", "Nil", &[])?;
-            let ctx = ctor(pkg, "SynCtx", "SynCtx", &[empty])?;
+            let span = ctor(pkg, parser, "SynSpan", "SynSpan", &["BigInt(t[0])".into()])?;
+            let empty = ctor(pkg, parser, "List", "Nil", &[])?;
+            let ctx = ctor(pkg, parser, "SynCtx", "SynCtx", &[empty])?;
             let token = ctor(
                 pkg,
+                parser,
                 "SynToken",
                 "SynToken",
                 &["synText(text,t[0],t[1])".into(), span, ctx],
@@ -119,14 +127,20 @@ pub(crate) fn parsers(pkg: &Package) -> R<String> {
             for (index, (c, span, fields)) in ctors.into_iter().enumerate() {
                 let mut values = Vec::new();
                 if span {
-                    values.push(ctor(pkg, "SynSpan", "SynSpan", &["BigInt(n[2])".into()])?);
+                    values.push(ctor(
+                        pkg,
+                        i,
+                        "SynSpan",
+                        "SynSpan",
+                        &["BigInt(n[2])".into()],
+                    )?);
                 }
                 for (k, f) in fields.into_iter().enumerate() {
                     values.push(field(pkg, i, f, &format!("n[4][{k}]"))?);
                 }
                 arms.push(format!(
                     "case {index}:return {};",
-                    ctor(pkg, &data, c, &values)?
+                    ctor(pkg, i, &data, c, &values)?
                 ));
             }
             out.push_str(&format!(
@@ -141,8 +155,10 @@ pub(crate) fn parsers(pkg: &Package) -> R<String> {
             TypeDef::Struct { name, .. } | TypeDef::Enum { name, .. } => name,
         };
         let expected = "list(d.expected)".to_string();
+        let arg = ctor(pkg, i, "SynArg", "SynArg", &["a[0]".into(), "a[1]".into()])?;
         let diag = ctor(
             pkg,
+            i,
             "SynDiag",
             "SynDiag",
             &[
@@ -150,6 +166,7 @@ pub(crate) fn parsers(pkg: &Package) -> R<String> {
                 "BigInt(d.at)".into(),
                 expected,
                 quote("macro.syntax_error"),
+                format!("list(d.args.map(a=>{arg}))"),
             ],
         )?;
         out.push_str(&format!(

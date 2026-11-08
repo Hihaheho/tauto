@@ -12,12 +12,9 @@ module Ordmap {
 
   // One step of `Bytes::compare`: the first bytes decide, or the rest does.
   pub fn select3(before: Bool, after: Bool, rest: Ordering): Ordering {
-    match before: Ordering {
+    ⊢ Ordering from match before {
       true => Less
-      false => match after: Ordering {
-        true => Greater
-        false => rest
-      }
+      false => ⊢ Ordering from match after { true => Greater, false => rest }
     }
   }
 
@@ -28,7 +25,7 @@ module Ordmap {
     hp: p = false,
     hq: q = false
   ): select3(p, q, r) = r {
-    match p: select3(p, q, r) = r {
+    ⊢ select3(p, q, r) = r from match p {
       false => match q {
         false => Refl
         true => False::elim(true_ne_false(hq))
@@ -38,7 +35,7 @@ module Ordmap {
   }
 
   pub theorem select3_true(p: Bool, q: Bool, r: Ordering, hp: p = true): select3(p, q, r) = Less {
-    match p: select3(p, q, r) = Less {
+    ⊢ select3(p, q, r) = Less from match p {
       false => False::elim(false_ne_true(hp))
       true => Refl
     }
@@ -50,7 +47,7 @@ module Ordmap {
     r: Ordering,
     e: select3(p, q, r) = Equal
   ): p = false ∧ q = false ∧ r = Equal {
-    match p: p = false ∧ q = false ∧ r = Equal {
+    ⊢ p = false ∧ q = false ∧ r = Equal from match p {
       false => match q {
         false => AndIntro(Refl, AndIntro(Refl, e))
         true => False::elim(greater_ne_equal(e))
@@ -67,14 +64,14 @@ module Bytes {
     y: Nat,
     ys: List(Nat)
   ): compare(Cons(x, xs), Cons(y, ys)) = Ordmap::select3(x < y, y < x, compare(xs, ys)) {
-    match x < y: compare(Cons(x, xs), Cons(y, ys)) = Ordmap::select3(x < y, y < x, compare(xs, ys)) {
-      false => ⊢ match y < x: Ordering {
+    ⊢ compare(
+      Cons(x, xs),
+      Cons(y, ys)
+    ) = Ordmap::select3(x < y, y < x, compare(xs, ys)) from match x < y {
+      false => ⊢ (⊢ Ordering from match y < x {
         false => compare(xs, ys)
         true => Greater
-      } = Ordmap::select3(false, y < x, compare(xs, ys)) from match y < x: match y < x: Ordering {
-        false => compare(xs, ys)
-        true => Greater
-      } = Ordmap::select3(false, y < x, compare(xs, ys)) {
+      }) = Ordmap::select3(false, y < x, compare(xs, ys)) from match y < x {
         false => ⊢ compare(xs, ys) = Ordmap::select3(false, false, compare(xs, ys)) from Refl
         true => ⊢ Greater = Ordmap::select3(false, true, compare(xs, ys)) from Refl
       }
@@ -83,7 +80,7 @@ module Bytes {
   }
 
   pub theorem compare_same(a: List(Nat)): compare(a, a) = Equal {
-    match a: compare(a, a) = Equal {
+    ⊢ compare(a, a) = Equal from match a {
       Nil => Refl
       Cons(x, xs) => Eq::trans(
         compare_step(x, xs, x, xs),
@@ -102,7 +99,7 @@ module Bytes {
   }
 
   pub theorem compare_eq(a: List(Nat), b: List(Nat), e: compare(a, b) = Equal): a = b {
-    match a: a = b {
+    ⊢ a = b from match a {
       Nil => match b {
         Nil => Refl
         Cons(y, ys) => False::elim(less_ne_equal(e))
@@ -160,11 +157,7 @@ module Bytes {
 
 module Ordering {
   pub fn flip(o: Ordering): Ordering {
-    match o: Ordering {
-      Less => Greater
-      Equal => Equal
-      Greater => Less
-    }
+    ⊢ Ordering from match o { Less => Greater, Equal => Equal, Greater => Less }
   }
 }
 
@@ -175,11 +168,8 @@ module Ordmap {
     r: Ordering,
     asym: (p = true) -> (q = false)
   ): select3(q, p, Ordering::flip(r)) = Ordering::flip(select3(p, q, r)) {
-    match p: select3(q, p, Ordering::flip(r)) = Ordering::flip(select3(p, q, r)) {
-      false => match q {
-        false => Refl
-        true => Refl
-      }
+    ⊢ select3(q, p, Ordering::flip(r)) = Ordering::flip(select3(p, q, r)) from match p {
+      false => match q { false => Refl, true => Refl }
       true => match q {
         false => Refl
         true => False::elim(true_ne_false(asym(Refl)))
@@ -208,7 +198,7 @@ module Ordmap {
     e2: select3(p2, q2, r2) = Less,
     ih: (r1 = Less) -> (r2 = Less) -> (r3 = Less)
   ): select3(x < z, z < x, r3) = Less {
-    match p1: select3(x < z, z < x, r3) = Less {
+    ⊢ select3(x < z, z < x, r3) = Less from match p1 {
       true => match p2 {
         true => select3_true(x < z, z < x, r3, Nat::lt_trans(x, y, z, hp1, hp2))
         false => match q2 {
@@ -261,7 +251,7 @@ module Ordmap {
   }
 
   pub theorem compare_text_eq(a: Text, b: Text, e: compare_text(a, b) = Equal): a = b {
-    match a: a = b {
+    ⊢ a = b from match a {
       Mk(xs) => match b {
         Mk(ys) => Eq::congr(Text::Mk, Bytes::compare_eq(xs, ys, e))
       }
@@ -274,7 +264,7 @@ module Bytes {
     a: List(Nat),
     b: List(Nat)
   ): compare(b, a) = Ordering::flip(compare(a, b)) {
-    match a: compare(b, a) = Ordering::flip(compare(a, b)) {
+    ⊢ compare(b, a) = Ordering::flip(compare(a, b)) from match a {
       Nil => match b {
         Nil => Refl
         Cons(y, ys) => Refl
@@ -307,7 +297,7 @@ module Bytes {
     e1: compare(a, b) = Less,
     e2: compare(b, c) = Less
   ): compare(a, c) = Less {
-    match a: compare(a, c) = Less {
+    ⊢ compare(a, c) = Less from match a {
       Nil => match c {
         Nil => match b {
           Nil => False::elim(equal_ne_less(e1))
@@ -396,7 +386,7 @@ module Ordmap {
     k: Text,
     v: V,
     s: ordered(m, compare_text)
-  ): get(insert(m, k, v, compare_text), k, compare_text) = Some(v) {
+  ): Ordmap::get(insert(m, k, v, compare_text), k, compare_text) = Some(v) {
     get_insert_same(compare_text, compare_text_law(), m, k, v, s)
   }
 }

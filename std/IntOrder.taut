@@ -10,16 +10,16 @@ module Nat {
   // laws of the order follow from that and `int_norm!`.
 
   pub theorem le_add_right(a: Nat, k: Nat): le(a, add(a, k)) = true {
-    match k: le(a, add(a, k)) = true {
+    ⊢ le(a, add(a, k)) = true from match k {
       Zero => le_refl(a)
       Succ(j) => le_trans(a, add(a, j), Succ(add(a, j)), le_add_right(a, j), le_succ(add(a, j)))
     }
   }
 
   pub theorem le_gap(a: Nat, b: Nat, h: le(a, b) = true): b = add(a, b - a) {
-    match a: b = add(a, b - a) {
+    ⊢ b = add(a, b - a) from match a {
       Zero => Eq::sym(add_zero_left(b))
-      Succ(a2) => match b: b = add(Succ(a2), b - Succ(a2)) {
+      Succ(a2) => ⊢ b = add(Succ(a2), b - Succ(a2)) from match b {
         Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(lt_zero_false(a2)), h)))
         Succ(b2) => Eq::trans(
           Eq::congr(Succ, le_gap(a2, b2, h)),
@@ -33,16 +33,16 @@ module Nat {
   }
 
   pub theorem le_add_both(u: Nat, v: Nat, w: Nat): le(add(u, w), add(v, w)) = le(u, v) {
-    match w: le(add(u, w), add(v, w)) = le(u, v) {
+    ⊢ le(add(u, w), add(v, w)) = le(u, v) from match w {
       Zero => Refl
       Succ(j) => le_add_both(u, v, j)
     }
   }
 
   pub theorem le_total(a: Nat, b: Nat): le(a, b) = true ∨ le(b, a) = true {
-    match a: le(a, b) = true ∨ le(b, a) = true {
+    ⊢ le(a, b) = true ∨ le(b, a) = true from match a {
       Zero => OrInl(le_zero(b))
-      Succ(a2) => match b: le(Succ(a2), b) = true ∨ le(b, Succ(a2)) = true {
+      Succ(a2) => ⊢ le(Succ(a2), b) = true ∨ le(b, Succ(a2)) = true from match b {
         Zero => OrInr(le_zero(Succ(a2)))
         Succ(b2) => le_total(a2, b2)
       }
@@ -50,19 +50,19 @@ module Nat {
   }
 
   pub theorem add_eq_zero(a: Nat, b: Nat, h: add(a, b) = Zero): a = Zero {
-    match b: a = Zero {
+    ⊢ a = Zero from match b {
       Zero => h
       Succ(k) => False::elim(zero_ne_succ(add(a, k), Eq::sym(h)))
     }
   }
 
   pub theorem eq_comm(a: Nat, b: Nat): a == b = b == a {
-    match a: a == b = b == a {
-      Zero => match b: Zero == b = b == Zero {
+    ⊢ a == b = b == a from match a {
+      Zero => ⊢ Zero == b = b == Zero from match b {
         Zero => Refl
         Succ(k) => Refl
       }
-      Succ(a2) => match b: Succ(a2) == b = b == Succ(a2) {
+      Succ(a2) => ⊢ Succ(a2) == b = b == Succ(a2) from match b {
         Zero => Refl
         Succ(b2) => eq_comm(a2, b2)
       }
@@ -70,12 +70,12 @@ module Nat {
   }
 
   pub theorem lt_or_eq(a: Nat, b: Nat): a < b || a == b = le(a, b) {
-    match a: a < b || a == b = le(a, b) {
-      Zero => match b: Zero < b || Zero == b = le(Zero, b) {
+    ⊢ a < b || a == b = le(a, b) from match a {
+      Zero => ⊢ Zero < b || Zero == b = le(Zero, b) from match b {
         Zero => Refl
         Succ(k) => Refl
       }
-      Succ(a2) => match b: Succ(a2) < b || Succ(a2) == b = le(Succ(a2), b) {
+      Succ(a2) => ⊢ Succ(a2) < b || Succ(a2) == b = le(Succ(a2), b) from match b {
         Zero => Eq::sym(lt_zero_false(a2))
         Succ(b2) => lt_or_eq(a2, b2)
       }
@@ -93,15 +93,18 @@ module Int {
     x: Int,
     y: Int
   ): le(x, y) = Nat::add(pos(x), negp(y)) <= Nat::add(pos(y), negp(x)) {
-    match x: le(x, y) = Nat::add(pos(x), negp(y)) <= Nat::add(pos(y), negp(x)) {
-      IntOfNat(a) => match y: le(IntOfNat(a), y) = Nat::add(a, negp(y)) <= Nat::add(pos(y), Zero) {
+    ⊢ le(x, y) = Nat::add(pos(x), negp(y)) <= Nat::add(pos(y), negp(x)) from match x {
+      IntOfNat(a) => ⊢ le(
+        IntOfNat(a),
+        y
+      ) = Nat::add(a, negp(y)) <= Nat::add(pos(y), Zero) from match y {
         IntOfNat(b) => Nat::lt_or_eq(a, b)
         IntNegSucc(b) => Eq::sym(Nat::lt_zero_false(Nat::add(a, b)))
       }
-      IntNegSucc(a) => match y: le(
+      IntNegSucc(a) => ⊢ le(
         IntNegSucc(a),
         y
-      ) = Nat::add(Zero, negp(y)) <= Nat::add(pos(y), Succ(a)) {
+      ) = Nat::add(Zero, negp(y)) <= Nat::add(pos(y), Succ(a)) from match y {
         IntOfNat(b) => Refl
         IntNegSucc(b) => Eq::trans(
           Eq::congr(⟦b < a || □⟧, Nat::eq_comm(a, b)),
@@ -301,9 +304,7 @@ module Int {
   }
 
   pub theorem add_nat_self(x: Int, k: Nat, e: x = add(x, IntOfNat(k))): k = Zero {
-    let s1: IntOfNat(
-      k
-    ) = add(
+    let s1: IntOfNat(k) = add(
       add(x, IntOfNat(k)),
       neg(x)
     ) := by int_norm!(): IntOfNat(k) = add(add(x, IntOfNat(k)), neg(x)) {}
@@ -378,10 +379,10 @@ module Int {
   }
 
   pub theorem le_total(x: Int, y: Int): IntLe(x, y) ∨ IntLe(y, x) {
-    match Nat::le_total(
-      Nat::add(pos(x), negp(y)),
-      Nat::add(pos(y), negp(x))
-    ): IntLe(x, y) ∨ IntLe(y, x) {
+    ⊢ IntLe(
+      x,
+      y
+    ) ∨ IntLe(y, x) from match Nat::le_total(Nat::add(pos(x), negp(y)), Nat::add(pos(y), negp(x))) {
       OrInl(h) => OrInl(Eq::trans(le_parts(x, y), h))
       OrInr(h) => OrInr(Eq::trans(le_parts(y, x), h))
     }
@@ -445,7 +446,7 @@ module Int {
     m: Nat,
     h: IntLe(mul(x, IntOfNat(Succ(m))), mul(y, IntOfNat(Succ(m))))
   ): IntLe(x, y) {
-    match le_total(x, y): IntLe(x, y) {
+    ⊢ IntLe(x, y) from match le_total(x, y) {
       OrInl(l) => l
       OrInr(l) => le_mul_cancel_back(x, y, m, h, l)
     }
@@ -648,8 +649,8 @@ pub theorem int_add_one_nat(
   by int_norm!(): Int::add(Int::add(x, 1), IntOfNat(g)) = Int::add(x, IntOfNat(Succ(g))) {}
 }
 
-pub theorem int_lt_or_ge(x: Int, y: Int): Or(IntLe(Int::add(x, 1), y), IntLe(y, x)) {
-  match Int::le_total(Int::add(x, 1), y): Or(IntLe(Int::add(x, 1), y), IntLe(y, x)) {
+pub theorem int_lt_or_ge(x: Int, y: Int): ((IntLe(Int::add(x, 1), y)) ∨ (IntLe(y, x))) {
+  ⊢ ((IntLe(Int::add(x, 1), y)) ∨ (IntLe(y, x))) from match Int::le_total(Int::add(x, 1), y) {
     OrInl(l) => OrInl(l)
     OrInr(l) => int_lt_or_ge_back(
       x,
@@ -665,8 +666,8 @@ pub theorem int_lt_or_ge_back(
   y: Int,
   g: Nat,
   e: Int::add(x, 1) = Int::add(y, IntOfNat(g))
-): Or(IntLe(Int::add(x, 1), y), IntLe(y, x)) {
-  match g: Or(IntLe(Int::add(x, 1), y), IntLe(y, x)) {
+): ((IntLe(Int::add(x, 1), y)) ∨ (IntLe(y, x))) {
+  ⊢ ((IntLe(Int::add(x, 1), y)) ∨ (IntLe(y, x))) from match g {
     Zero => OrInl(int_le_of_eq(Int::add(x, 1), y, Eq::trans(e, Int::add_zero(y))))
     Succ(k) => OrInr(
       Int::le_rw(
@@ -710,7 +711,7 @@ pub theorem nat_half_lt(
   b: Nat,
   h: NatLe(Succ(Nat::mul(2, a)), Nat::mul(2, b))
 ): NatLe(Succ(a), b) {
-  match int_lt_or_ge(IntOfNat(a), IntOfNat(b)): NatLe(Succ(a), b) {
+  ⊢ NatLe(Succ(a), b) from match int_lt_or_ge(IntOfNat(a), IntOfNat(b)) {
     OrInl(l) => l
     OrInr(l) => False::elim(
       int_le_succ_self(
@@ -771,7 +772,7 @@ pub theorem int_le_of_lt(x: Int, y: Int, h: IntLe(Int::add(x, 1), y)): IntLe(x, 
 }
 
 pub theorem nat_ge_of_not_lt(a: Nat, b: Nat, e: a < b = false): NatLe(b, a) {
-  match int_lt_or_ge(IntOfNat(a), IntOfNat(b)): NatLe(b, a) {
+  ⊢ NatLe(b, a) from match int_lt_or_ge(IntOfNat(a), IntOfNat(b)) {
     OrInl(l) => False::elim(false_ne_true(Eq::trans(Eq::sym(e), yn_of_nat_le(Succ(a), b, l))))
     OrInr(l) => l
   }

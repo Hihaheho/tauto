@@ -19,14 +19,14 @@ fn has_dep<K, T>(o: Option(Node(K, T)), k: K): Bool where Ord(K) {
 }
 
 theorem edges_bool_or_true_right(a: Bool): Bool::or(a, true) = true {
-  match a: Bool::or(a, true) = true {
+  ⊢ Bool::or(a, true) = true from match a {
     false => Refl
     true => Refl
   }
 }
 
 theorem bool_or_false_split(a: Bool, b: Bool, h: Bool::or(a, b) = false): a = false ∧ b = false {
-  match a: a = false ∧ b = false {
+  ⊢ a = false ∧ b = false from match a {
     false => AndIntro(Refl, h)
     true => False::elim(true_ne_false(h))
   }
@@ -37,7 +37,7 @@ module Key {
     l: List(K),
     k: K
   ): key_in(k, List::append(l, Cons(k, Nil))) = true where Ord(K) {
-    match l: key_in(k, List::append(l, Cons(k, Nil))) = true {
+    ⊢ key_in(k, List::append(l, Cons(k, Nil))) = true from match l {
       Nil => Eq::congr((c: Bool) => Bool::or(c, false), Key::eq_refl(k))
       Cons(h, t) => Eq::trans(
         Eq::congr((c: Bool) => Bool::or(key_eq(h, k), c), Key::in_append_last(t, k)),
@@ -47,7 +47,7 @@ module Key {
   }
 
   fn add_by<K>(l: List(K), k: K, b: Bool): List(K) {
-    match b: List(K) {
+    ⊢ List(K) from match b {
       true => l
       false => List::append(l, Cons(k, Nil))
     }
@@ -59,7 +59,7 @@ module Key {
     b: Bool,
     hb: key_in(k, l) = b
   ): key_in(k, Key::add_by(l, k, b)) = true where Ord(K) {
-    match b: key_in(k, Key::add_by(l, k, b)) = true {
+    ⊢ key_in(k, Key::add_by(l, k, b)) = true from match b {
       true => hb
       false => Key::in_append_last(l, k)
     }
@@ -88,7 +88,7 @@ theorem has_present<K, T>(
   k: K,
   h: has_dep(o, k) = true
 ): not(is_none(o)) = true where Ord(K) {
-  match o: not(is_none(o)) = true {
+  ⊢ not(is_none(o)) = true from match o {
     None => False::elim(false_ne_true(h))
     Some(n) => Refl
   }
@@ -101,7 +101,7 @@ theorem opt_has<K, T>(
   hf: ∀ n: Node(K, T). key_in(k, Node::dependents(f(n))) = true,
   hp: not(is_none(o)) = true
 ): has_dep(Option::map(f, o), k) = true where Ord(K) {
-  match o: has_dep(Option::map(f, o), k) = true {
+  ⊢ has_dep(Option::map(f, o), k) = true from match o {
     None => False::elim(false_ne_true(hp))
     Some(n) => hf(n)
   }
@@ -113,7 +113,7 @@ theorem opt_gone<K, T>(
   k: K,
   hf: ∀ n: Node(K, T). key_in(k, Node::dependents(f(n))) = false
 ): has_dep(Option::map(f, o), k) = false where Ord(K) {
-  match o: has_dep(Option::map(f, o), k) = false {
+  ⊢ has_dep(Option::map(f, o), k) = false from match o {
     None => Refl
     Some(n) => hf(n)
   }
@@ -123,7 +123,7 @@ theorem is_none_map<K, T>(
   f: (Node(K, T)) -> Node(K, T),
   o: Option(Node(K, T))
 ): is_none(Option::map(f, o)) = is_none(o) {
-  match o: is_none(Option::map(f, o)) = is_none(o) {
+  ⊢ is_none(Option::map(f, o)) = is_none(o) from match o {
     None => Refl
     Some(n) => Refl
   }
@@ -191,7 +191,7 @@ theorem modify_present_at<K, T>(
   b: Bool,
   hb: key_eq(i, j) = b
 ): present(nodes_modify(ns, i, f), j) = present(ns, j) where Ord(K) {
-  match b: present(nodes_modify(ns, i, f), j) = present(ns, j) {
+  ⊢ present(nodes_modify(ns, i, f), j) = present(ns, j) from match b {
     true => Eq::subst(
       (z: K) => present(nodes_modify(ns, i, f), z) = present(ns, z),
       Key::eq_sound(i, j, hb),
@@ -224,7 +224,7 @@ theorem modify_keeps_opt<K, T>(
   hf: ∀ n: Node(K, T). key_in(k, Node::dependents(f(n))) = c,
   h: has_dep(o, k) = c
 ): has_dep(Option::map(f, o), k) = c where Ord(K) {
-  match o: has_dep(Option::map(f, o), k) = c {
+  ⊢ has_dep(Option::map(f, o), k) = c from match o {
     None => h
     Some(n) => hf(n)
   }
@@ -243,7 +243,7 @@ theorem modify_keeps_at<K, T>(
   b: Bool,
   hb: key_eq(i, j) = b
 ): has_dep(nodes_get(nodes_modify(ns, i, f), j), k) = c where Ord(K) {
-  match b: has_dep(nodes_get(nodes_modify(ns, i, f), j), k) = c {
+  ⊢ has_dep(nodes_get(nodes_modify(ns, i, f), j), k) = c from match b {
     true => Eq::subst(
       (z: K) => has_dep(nodes_get(nodes_modify(ns, i, f), z), k) = c,
       Key::eq_sound(i, j, hb),
@@ -283,17 +283,17 @@ theorem add_dep_has<K, T>(
   k,
   Node::dependents(Node::with_dependents(n, Key::add(Node::dependents(n), k)))
 ) = true where Ord(K) {
-  match n: key_in(
+  ⊢ key_in(
     k,
     Node::dependents(Node::with_dependents(n, Key::add(Node::dependents(n), k)))
-  ) = true {
+  ) = true from match n {
     Mk(x, d, v, c, l, ds, rs) => Key::add_has(rs, k)
   }
 }
 
 module Key {
   fn drop_by<K>(h: K, t: List(K), k: K, b: Bool): List(K) where Ord(K) {
-    match not(b): List(K) {
+    ⊢ List(K) from match not(b) {
       false => Key::drop(t, k)
       true => Cons(h, Key::drop(t, k))
     }
@@ -307,14 +307,14 @@ module Key {
     hb: key_eq(h, k) = b,
     ih: key_in(k, Key::drop(t, k)) = false
   ): key_in(k, Key::drop_by(h, t, k, b)) = false where Ord(K) {
-    match b: key_in(k, Key::drop_by(h, t, k, b)) = false {
+    ⊢ key_in(k, Key::drop_by(h, t, k, b)) = false from match b {
       true => ih
       false => Eq::trans(Eq::congr((c: Bool) => Bool::or(c, key_in(k, Key::drop(t, k))), hb), ih)
     }
   }
 
   theorem drop_gone<K>(l: List(K), k: K): key_in(k, Key::drop(l, k)) = false where Ord(K) {
-    match l: key_in(k, Key::drop(l, k)) = false {
+    ⊢ key_in(k, Key::drop(l, k)) = false from match l {
       Nil => Refl
       Cons(h, t) => Key::drop_gone_at(h, t, k, key_eq(h, k), Refl, Key::drop_gone(t, k))
     }
@@ -328,10 +328,10 @@ theorem drop_dep_gone<K, T>(
   k,
   Node::dependents(Node::with_dependents(n, Key::drop(Node::dependents(n), k)))
 ) = false where Ord(K) {
-  match n: key_in(
+  ⊢ key_in(
     k,
     Node::dependents(Node::with_dependents(n, Key::drop(Node::dependents(n), k)))
-  ) = false {
+  ) = false from match n {
     Mk(x, d, v, c, l, ds, rs) => Key::drop_gone(rs, k)
   }
 }
@@ -345,7 +345,7 @@ theorem link_keeps<K, T>(
   j: K,
   h: has_dep(nodes_get(ns, j), k) = true
 ): has_dep(nodes_get(link(ns, k, ids), j), k) = true where Ord(K) {
-  match ids: has_dep(nodes_get(link(ns, k, ids), j), k) = true {
+  ⊢ has_dep(nodes_get(link(ns, k, ids), j), k) = true from match ids {
     Nil => h
     Cons(i, rest) => link_keeps(
       rest,
@@ -378,7 +378,7 @@ theorem link_present<K, T>(
   k: K,
   j: K
 ): present(link(ns, k, ids), j) = present(ns, j) where Ord(K) {
-  match ids: present(link(ns, k, ids), j) = present(ns, j) {
+  ⊢ present(link(ns, k, ids), j) = present(ns, j) from match ids {
     Nil => Refl
     Cons(i, rest) => Eq::trans(
       link_present(
@@ -439,7 +439,7 @@ theorem link_other<K, T>(
   ns: List(K × Node(K, T)),
   h: key_in(j, ids) = false
 ): nodes_get(link(ns, k, ids), j) = nodes_get(ns, j) where Ord(K) {
-  match ids: nodes_get(link(ns, k, ids), j) = nodes_get(ns, j) {
+  ⊢ nodes_get(link(ns, k, ids), j) = nodes_get(ns, j) from match ids {
     Nil => Refl
     Cons(i, rest) => {
       let ih: ∀ ms: List(K × Node(K, T)). (key_in(j, rest) = false) -> nodes_get(link(ms, k, rest), j) = nodes_get(ms, j) := (ms: List(K × Node(K, T))) => (hr: key_in(j, rest) = false) => link_other(
@@ -470,7 +470,7 @@ theorem link_has_at<K, T>(
   b: Bool,
   hb: key_eq(i, j) = b
 ): has_dep(nodes_get(link(ns, k, Cons(i, rest)), j), k) = true where Ord(K) {
-  match b: has_dep(nodes_get(link(ns, k, Cons(i, rest)), j), k) = true {
+  ⊢ has_dep(nodes_get(link(ns, k, Cons(i, rest)), j), k) = true from match b {
     true => link_keeps(
       rest,
       nodes_modify(
@@ -522,7 +522,7 @@ theorem link_has<K, T>(
   hin: key_in(j, ids) = true,
   hp: present(ns, j) = true
 ): has_dep(nodes_get(link(ns, k, ids), j), k) = true where Ord(K) {
-  match ids: has_dep(nodes_get(link(ns, k, ids), j), k) = true {
+  ⊢ has_dep(nodes_get(link(ns, k, ids), j), k) = true from match ids {
     Nil => False::elim(false_ne_true(hin))
     Cons(i, rest) => link_has_at(
       i,
@@ -555,7 +555,7 @@ theorem unlink_keeps<K, T>(
   j: K,
   h: has_dep(nodes_get(ns, j), k) = false
 ): has_dep(nodes_get(unlink(ns, k, ids), j), k) = false where Ord(K) {
-  match ids: has_dep(nodes_get(unlink(ns, k, ids), j), k) = false {
+  ⊢ has_dep(nodes_get(unlink(ns, k, ids), j), k) = false from match ids {
     Nil => h
     Cons(i, rest) => unlink_keeps(
       rest,
@@ -588,7 +588,7 @@ theorem unlink_present<K, T>(
   k: K,
   j: K
 ): present(unlink(ns, k, ids), j) = present(ns, j) where Ord(K) {
-  match ids: present(unlink(ns, k, ids), j) = present(ns, j) {
+  ⊢ present(unlink(ns, k, ids), j) = present(ns, j) from match ids {
     Nil => Refl
     Cons(i, rest) => Eq::trans(
       unlink_present(
@@ -624,7 +624,7 @@ theorem unlink_gone_at<K, T>(
   b: Bool,
   hb: key_eq(i, j) = b
 ): has_dep(nodes_get(unlink(ns, k, Cons(i, rest)), j), k) = false where Ord(K) {
-  match b: has_dep(nodes_get(unlink(ns, k, Cons(i, rest)), j), k) = false {
+  ⊢ has_dep(nodes_get(unlink(ns, k, Cons(i, rest)), j), k) = false from match b {
     true => unlink_keeps(
       rest,
       nodes_modify(
@@ -662,7 +662,7 @@ theorem unlink_gone<K, T>(
   ns: List(K × Node(K, T)),
   hin: key_in(j, ids) = true
 ): has_dep(nodes_get(unlink(ns, k, ids), j), k) = false where Ord(K) {
-  match ids: has_dep(nodes_get(unlink(ns, k, ids), j), k) = false {
+  ⊢ has_dep(nodes_get(unlink(ns, k, ids), j), k) = false from match ids {
     Nil => False::elim(false_ne_true(hin))
     Cons(i, rest) => unlink_gone_at(
       i,
@@ -686,7 +686,7 @@ fn kept<K>(old: List(K), new: List(K)): List(K) where Ord(K) {
 }
 
 fn kept_by<K>(h: K, t: List(K), new: List(K), b: Bool): List(K) where Ord(K) {
-  match not(b): List(K) {
+  ⊢ List(K) from match not(b) {
     false => kept(t, new)
     true => Cons(h, kept(t, new))
   }
@@ -702,7 +702,7 @@ theorem kept_has_at<K>(
   b: Bool,
   hb: key_in(h, new) = b
 ): key_in(j, kept_by(h, t, new, b)) = true where Ord(K) {
-  match b: key_in(j, kept_by(h, t, new, b)) = true {
+  ⊢ key_in(j, kept_by(h, t, new, b)) = true from match b {
     true => yesc(hb)
     false => noc
   }
@@ -719,7 +719,7 @@ theorem kept_cons<K>(
   b: Bool,
   hb: key_eq(h, j) = b
 ): key_in(j, kept(Cons(h, t), new)) = true where Ord(K) {
-  match b: key_in(j, kept(Cons(h, t), new)) = true {
+  ⊢ key_in(j, kept(Cons(h, t), new)) = true from match b {
     true => kept_has_at(
       h,
       t,
@@ -763,7 +763,7 @@ theorem kept_has<K>(
   hnew: key_in(j, new) = false,
   hin: key_in(j, old) = true
 ): key_in(j, kept(old, new)) = true where Ord(K) {
-  match old: key_in(j, kept(old, new)) = true {
+  ⊢ key_in(j, kept(old, new)) = true from match old {
     Nil => False::elim(false_ne_true(hin))
     Cons(h, t) => kept_cons(
       h,
@@ -828,7 +828,7 @@ theorem put_present_at<K, T>(
   b: Bool,
   hb: key_eq(k, j) = b
 ): present(nodes_put(ns, k, n), j) = true where Ord(K) {
-  match b: present(nodes_put(ns, k, n), j) = true {
+  ⊢ present(nodes_put(ns, k, n), j) = true from match b {
     true => Eq::subst(
       (z: K) => present(nodes_put(ns, k, n), z) = true,
       Key::eq_sound(k, j, hb),

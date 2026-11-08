@@ -52,7 +52,7 @@ pub theorem e_operation_arity(
     Eq::congr((n: Nat) => Nat::eq(n, List::length(args)), arity),
     Nat::eq_refl(List::length(args))
   )
-  Eq::congr((same: Bool) => match same: EResult(MVal) {
+  Eq::congr((same: Bool) => ⊢ EResult(MVal) from match same {
     true => e_primitive_out(m_op(ctors, cx, op, args))
     false => ErError("internal: a primitive has the wrong arity")
   }, enough)
@@ -76,9 +76,9 @@ m_out(p, m_op(p_ctors(p), cx, op, args), k, slots, stack, frames) {
     Eq::congr((n: Nat) => m_pop(n, List::append(List::reverse(args), stack)), arity),
     e_pop_arguments(args, stack)
   )
-  Eq::congr((values: Option(Pair(List(MVal), List(MVal)))) => match values: MStep {
+  Eq::congr((values: Option(Pair(List(MVal), List(MVal)))) => ⊢ MStep from match values {
     None => m_bad()
-    Some(pair) => match pair: MStep {
+    Some(pair) => ⊢ MStep from match pair {
       Pair { fst: operands, snd: rest } => m_out(p, m_op(p_ctors(p), cx, op, operands), k, slots, rest, frames)
     }
   }, popped)

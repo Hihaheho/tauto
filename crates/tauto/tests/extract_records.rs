@@ -45,9 +45,9 @@ fn a_field_named_like_an_earlier_constructor_keeps_its_name() {
         &path,
         "inductive Method: Type {\n  Get: Method\n  Put: Method\n}\n\
          inductive Box: Type {\n  Boxed(put: Nat, take: Nat): Box\n}\n\
-         fn box_put(b: Box): Nat {\n  match b: Nat {\n    Boxed(p, t) => p\n  }\n}\n\
+         fn box_put(b: Box): Nat {\n  ⊢ Nat from match b {\n    Boxed(p, t) => p\n  }\n}\n\
          fn make(): Box {\n  Box { put: 1, take: 2 }\n}\n\
-         fn first(b: Box): Nat {\n  match b: Nat {\n    Box { put: p } => p\n  }\n}\n",
+         fn first(b: Box): Nat {\n  ⊢ Nat from match b {\n    Box { put: p } => p\n  }\n}\n",
     )
     .unwrap();
     let out = tauto::extract::extract_files(&[path]).unwrap();
@@ -81,7 +81,10 @@ fn make_token(s: Text): Token { Token { width: 1, text: s } }
     .unwrap();
     let nib = tauto::extract::extract_files(&[path]).unwrap();
     assert!(
-        nib.contains("shared struct Token { width: nat, text: Text }"),
+        nib.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains("shared struct Token { width: nat, text: Text }"),
         "{nib}"
     );
     assert!(nib.contains(".text"), "{nib}");
@@ -298,7 +301,7 @@ fn locals_named_like_reserved_words_read_back() {
     fs::write(
         &path,
         "fn pick(r#quote: Bool, slash: Bool, d: Nat): Nat {\n  \
-         match r#quote: Nat {\n    true => d\n    false => match slash: Nat {\n      \
+         ⊢ Nat from match r#quote {\n    true => d\n    false => ⊢ Nat from match slash {\n      \
          true => 1\n      false => 2\n    }\n  }\n}\n",
     )
     .unwrap();
@@ -322,11 +325,11 @@ fn a_macro_beside_a_function_that_runs_as_written_makes_its_declarations_once() 
     fs::write(
         root.join("gen.taut"),
         "import std::prelude::Macro\nmacro fn gen_k(e: SynExpr, s: SynStmt): List(SynStmt) ! {macro_error, Div} {\n  \
-         match s: List(SynStmt) {\n    StInductive(d) => {\n      \
+         ⊢ List(SynStmt) from match s {\n    StInductive(d) => {\n      \
          let k := Syn::decl_name(d.name, \"K\")\n      let a := Syn::decl_name(d.name, \"ka\")\n      \
          let f := Syn::decl_name(d.name, \"kf\")\n      quote stmts {\n        \
          inductive $k: Type { $a: $k }\n        \
-         fn $f(x: $k): Text { match x: Text { $a => \"seven\" } }\n      }\n    }\n    \
+         fn $f(x: $k): Text { ⊢ Text from match x { $a => \"seven\" } }\n      }\n    }\n    \
          _ => Nil\n  }\n}\n",
     )
     .unwrap();
@@ -364,7 +367,7 @@ fn variants_of_a_type_named_like_a_prelude_type_are_named_by_its_path() {
     fs::write(
         &path,
         "import std::prelude::Os\npub(open) inductive Pending: Type {\n  Empty: Pending\n  One(a: Nat): Pending\n  Two(a: Nat, b: Nat): Pending\n}\n\
-         fn size(p: Pending): Nat {\n  match p: Nat {\n    Empty => 0\n    One(a) => a\n    Two(a, b) => a + b\n  }\n}\n\
+         fn size(p: Pending): Nat {\n  ⊢ Nat from match p {\n    Empty => 0\n    One(a) => a\n    Two(a, b) => a + b\n  }\n}\n\
          fn show(p: Pending) {\n  match p {\n    Empty => print(\"empty\")\n    One(_) => print(\"one\")\n    Two(_, _) => print(\"two\")\n  }\n}\n\
          show(Two(1, 2))\n",
     )

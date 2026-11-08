@@ -67,17 +67,7 @@ pub theorem ck_fresh_frame_tracked(
   c,
   ck_fresh(c)
 ) { AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c))) }
-pub theorem instantiation_bound_frame_tracked(
-  c: Checker,
-  g: Pair(Text, Kind),
-  v: Ty,
-  name: Text,
-  span: TySpan,
-  arg: Option(Kind)
-): TrackedFrame(
-  c,
-  instantiation_bound(c, g, v, name, span, arg)
-) { match arg: TrackedFrame(c, instantiation_bound(c, g, v, name, span, arg)) { None => AndIntro(
+pub theorem instantiation_bound_frame_tracked(c: Checker, g: Pair(Text, Kind), v: Ty, name: Text, span: TySpan, arg: Option(Kind)): TrackedFrame(c, instantiation_bound(c, g, v, name, span, arg)) { ⊢ TrackedFrame(c, instantiation_bound(c, g, v, name, span, arg)) from match arg { None => AndIntro(
   item => member => member,
   AndIntro(
     Refl,
@@ -178,7 +168,7 @@ pub theorem ck_instantiate_map_ctors_frame_tracked(
   span: TySpan,
   map: Ordmap(Text, Ty)
 ): TrackedFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) {
-  match gs: TrackedFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) {
+  ⊢ TrackedFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) from match gs {
     Nil => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Cons(g, rest) => Eq::subst(
       (z: Mut1(Ordmap(Text, Ty), Checker)) => TrackedFrame(c, z),
@@ -221,7 +211,7 @@ pub theorem instantiation_pred_frame_tracked(
   span: TySpan,
   found: Option(Ty)
 ): TrackedFrame(c, instantiation_pred(c, p, what, span, found)) {
-  match found: TrackedFrame(c, instantiation_pred(c, p, what, span, found)) {
+  ⊢ TrackedFrame(c, instantiation_pred(c, p, what, span, found)) from match found {
     None => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Some(t) => tracked_rewrap(
       c,
@@ -270,7 +260,7 @@ pub theorem ck_pend_preds_frame_tracked(
   what: Text,
   span: TySpan
 ): TrackedFrame(c, ck_pend_preds(ps, c, map, what, span)) {
-  match ps: TrackedFrame(c, ck_pend_preds(ps, c, map, what, span)) {
+  ⊢ TrackedFrame(c, ck_pend_preds(ps, c, map, what, span)) from match ps {
     Nil => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Cons(p, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => TrackedFrame(c, z),
@@ -327,10 +317,7 @@ pub theorem instantiation_scheme_frame_tracked(
       (ignored: Unit, c2: Checker) => mut1(ty_substitute(instantiation_scheme_ty(s), map), c2),
       ck_pend_preds(instantiation_scheme_preds(s), c1, map, name, span),
       ck_pend_preds_frame_tracked(instantiation_scheme_preds(s), c1, map, name, span),
-      ignored => c2 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c2))
-      )
+      ignored => c2 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c2)))
     )
   )
 }
@@ -395,7 +382,7 @@ pub theorem ck_fresh_each_frame_tracked(
   gs: List(Text),
   c: Checker
 ): TrackedFrame(c, ck_fresh_each(gs, c)) {
-  match gs: TrackedFrame(c, ck_fresh_each(gs, c)) {
+  ⊢ TrackedFrame(c, ck_fresh_each(gs, c)) from match gs {
     Nil => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Cons(g, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => TrackedFrame(c, z),
@@ -411,7 +398,7 @@ pub theorem frame_error_if_ok_tracked(
   span: TySpan,
   b: Bool
 ): TrackedFrame(c, frame_error_if(c, message, span, b)) {
-  match b: TrackedFrame(c, frame_error_if(c, message, span, b)) {
+  ⊢ TrackedFrame(c, frame_error_if(c, message, span, b)) from match b {
     true => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     false => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   }
@@ -423,14 +410,11 @@ pub theorem leaf_constructor_return_frame_tracked(
   args: List(Ty),
   fields: List(DataField)
 ): TrackedFrame(c, leaf_constructor_return(c, d, args, fields)) {
-  match fields: TrackedFrame(c, leaf_constructor_return(c, d, args, fields)) { Nil => AndIntro(
+  ⊢ TrackedFrame(c, leaf_constructor_return(c, d, args, fields)) from match fields { Nil => AndIntro(
     item => member => member,
     AndIntro(Refl, obligation_state_refl(c))
   )
-    Cons(f, rest) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    ) }
+    Cons(f, rest) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c))) }
 }
 pub theorem leaf_constructor_fields_frame_tracked(
   c: Checker,
@@ -448,13 +432,13 @@ pub theorem leaf_constructor_fields_frame_tracked(
     (ignored: Unit, c1: Checker) => leaf_constructor_return(c1, d, args, fields),
     frame_error_if(
       c,
-      cat5("`", name, "` is a struct: write `", name, " { field: value }`"),
+      struct_value_message(name),
       span,
       data_is_struct(ck_datas_of(c), d)
     ),
     frame_error_if_ok_tracked(
       c,
-      cat5("`", name, "` is a struct: write `", name, " { field: value }`"),
+      struct_value_message(name),
       span,
       data_is_struct(ck_datas_of(c), d)
     ),
@@ -526,7 +510,7 @@ pub theorem leaf_constructor_choice_frame_tracked(
   name: Text,
   ambiguous: Bool
 ): TrackedFrame(c, leaf_constructor_choice(c, d, idx, span, name, ambiguous)) {
-  match ambiguous: TrackedFrame(c, leaf_constructor_choice(c, d, idx, span, name, ambiguous)) {
+  ⊢ TrackedFrame(c, leaf_constructor_choice(c, d, idx, span, name, ambiguous)) from match ambiguous {
     true => tracked_rewrap(
       c,
       ck_defer_constructor(c, name, span),
@@ -568,7 +552,7 @@ pub theorem leaf_lookup_ctor_frame_tracked(
   span: TySpan,
   found: Option(Pair(Text, Nat))
 ): TrackedFrame(c, leaf_lookup_ctor(c, name, env, span, found)) {
-  match found: TrackedFrame(c, leaf_lookup_ctor(c, name, env, span, found)) {
+  ⊢ TrackedFrame(c, leaf_lookup_ctor(c, name, env, span, found)) from match found {
     None => tracked_bind(
       Unit,
       Ty,
@@ -593,7 +577,7 @@ pub theorem leaf_lookup_special_frame_tracked(
   span: TySpan,
   special: Bool
 ): TrackedFrame(c, leaf_lookup_special(c, name, env, span, special)) {
-  match special: TrackedFrame(c, leaf_lookup_special(c, name, env, span, special)) {
+  ⊢ TrackedFrame(c, leaf_lookup_special(c, name, env, span, special)) from match special {
     true => tracked_bind(
       Ty,
       Ty,
@@ -614,7 +598,7 @@ pub theorem leaf_lookup_function_frame_tracked(
   span: TySpan,
   found: Option(Scheme)
 ): TrackedFrame(c, leaf_lookup_function(c, name, env, span, found)) {
-  match found: TrackedFrame(c, leaf_lookup_function(c, name, env, span, found)) {
+  ⊢ TrackedFrame(c, leaf_lookup_function(c, name, env, span, found)) from match found {
     Some(s) => tracked_rewrap(
       c,
       ck_instantiate_scheme(c, name, s, span),
@@ -637,7 +621,7 @@ pub theorem leaf_lookup_frame_tracked(
   span: TySpan,
   found: Option(Local)
 ): TrackedFrame(c, leaf_lookup(c, name, env, span, found)) {
-  match found: TrackedFrame(c, leaf_lookup(c, name, env, span, found)) {
+  ⊢ TrackedFrame(c, leaf_lookup(c, name, env, span, found)) from match found {
     Some(l) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     None => leaf_lookup_function_frame_tracked(
       c,
@@ -697,7 +681,7 @@ pub theorem access_borrow_frame_tracked(
   t: Ty,
   borrow: Bool
 ): TrackedFrame(c, access_borrow(c, t, borrow)) {
-  match borrow: TrackedFrame(c, access_borrow(c, t, borrow)) {
+  ⊢ TrackedFrame(c, access_borrow(c, t, borrow)) from match borrow {
     true => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     false => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   }
@@ -711,7 +695,7 @@ pub theorem access_found_frame_tracked(
   borrowed: Bool,
   found: Option(Ty)
 ): TrackedFrame(c, access_found(c, term, name, d, borrowed, found)) {
-  match found: TrackedFrame(c, access_found(c, term, name, d, borrowed, found)) {
+  ⊢ TrackedFrame(c, access_found(c, term, name, d, borrowed, found)) from match found {
     None => tracked_bind(
       Unit,
       Ty,
@@ -734,7 +718,7 @@ pub theorem access_struct_frame_tracked(
   borrowed: Bool,
   structural: Bool
 ): TrackedFrame(c, access_struct(c, term, name, d, args, borrowed, structural)) {
-  match structural: TrackedFrame(c, access_struct(c, term, name, d, args, borrowed, structural)) {
+  ⊢ TrackedFrame(c, access_struct(c, term, name, d, args, borrowed, structural)) from match structural {
     true => access_found_frame_tracked(
       c,
       term,
@@ -758,7 +742,7 @@ pub theorem access_info_unbounded_frame_tracked(
   h: Ty,
   unbounded: Bool
 ): TrackedFrame(c, access_info_unbounded(c, term, name, h, unbounded)) {
-  match unbounded: TrackedFrame(c, access_info_unbounded(c, term, name, h, unbounded)) {
+  ⊢ TrackedFrame(c, access_info_unbounded(c, term, name, h, unbounded)) from match unbounded {
     true => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     false => tracked_rewrap(
       c,
@@ -775,7 +759,7 @@ pub theorem access_info_frame_tracked(
   h: Ty,
   more: Bool
 ): TrackedFrame(c, access_info(c, term, name, h, more)) {
-  match more: TrackedFrame(c, access_info(c, term, name, h, more)) {
+  ⊢ TrackedFrame(c, access_info(c, term, name, h, more)) from match more {
     true => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     false => access_info_unbounded_frame_tracked(c, term, name, h, Text::eq(name, "unbounded"))
   }
@@ -789,7 +773,7 @@ pub theorem access_field_frame_tracked(
   borrowed: Bool,
   t: Ty
 ): TrackedFrame(c, access_field(c, term, name, original, borrowed, t)) {
-  match t: TrackedFrame(c, access_field(c, term, name, original, borrowed, t)) {
+  ⊢ TrackedFrame(c, access_field(c, term, name, original, borrowed, t)) from match t {
     TyInt(pat_w) => tracked_rewrap(
       c,
       ck_field_missing(c, term, original, name),
@@ -910,7 +894,7 @@ pub theorem leaf_literal_parsed_frame_tracked(
   t: Ty,
   parsed: Option(Nat)
 ): TrackedFrame(c, leaf_literal_parsed(c, n, span, t, parsed)) {
-  match parsed: TrackedFrame(c, leaf_literal_parsed(c, n, span, t, parsed)) {
+  ⊢ TrackedFrame(c, leaf_literal_parsed(c, n, span, t, parsed)) from match parsed {
     Some(v) => tracked_rewrap(
       c,
       pattern_literal_record(c, false, v, t, span),
@@ -937,10 +921,7 @@ pub theorem leaf_literal_after_frame_tracked(
     (ignored: Unit, c1: Checker) => mut1(t, c1),
     leaf_literal_parsed(c, n, span, t, text_parse_u64(n)),
     leaf_literal_parsed_frame_tracked(c, n, span, t, text_parse_u64(n)),
-    ignored => c1 => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c1))
-    )
+    ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
   )
 }
 
@@ -1004,7 +985,7 @@ pub theorem ck_instantiate_named_map_frame_tracked(
   c: Checker,
   map: Ordmap(Text, Ty)
 ): TrackedFrame(c, ck_instantiate_named_map(gs, c, map)) {
-  match gs: TrackedFrame(c, ck_instantiate_named_map(gs, c, map)) {
+  ⊢ TrackedFrame(c, ck_instantiate_named_map(gs, c, map)) from match gs {
     Nil => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Cons(g, rest) => Eq::subst(
       (z: Mut1(Ordmap(Text, Ty), Checker)) => TrackedFrame(c, z),
@@ -1116,7 +1097,7 @@ pub theorem handle_sig_found_frame_tracked(
   body: SurfaceTerm,
   found: Option(EffectSig)
 ): TrackedFrame(c, handle_sig_found(c, eff, result, budget_ty, body, found)) {
-  match found: TrackedFrame(c, handle_sig_found(c, eff, result, budget_ty, body, found)) {
+  ⊢ TrackedFrame(c, handle_sig_found(c, eff, result, budget_ty, body, found)) from match found {
     Some(s) => tracked_bind(
       Ty,
       Option(Pair(List(Ty), Ty)),
@@ -1133,10 +1114,7 @@ pub theorem handle_sig_found_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(None, c1),
       ck_error(c, cat3("no effect `", eff, "` is declared"), span_of(body)),
       ck_error_frame_tracked(c, cat3("no effect `", eff, "` is declared"), span_of(body)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
   }
 }
@@ -1149,7 +1127,7 @@ pub theorem handle_sig_frame_tracked(
   body: SurfaceTerm,
   exceeded: Bool
 ): TrackedFrame(c, handle_sig(c, eff, result, budget_ty, body, exceeded)) {
-  match exceeded: TrackedFrame(c, handle_sig(c, eff, result, budget_ty, body, exceeded)) {
+  ⊢ TrackedFrame(c, handle_sig(c, eff, result, budget_ty, body, exceeded)) from match exceeded {
     true => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     false => handle_sig_found_frame_tracked(
       c,
@@ -1260,7 +1238,7 @@ pub theorem leaf_number_frame_tracked(
   op: Text,
   r: Ty
 ): TrackedFrame(c, leaf_number(c, original, span, op, r)) {
-  match r: TrackedFrame(c, leaf_number(c, original, span, op, r)) {
+  ⊢ TrackedFrame(c, leaf_number(c, original, span, op, r)) from match r {
     TyInt(w) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     TyBool => tracked_rewrap(
       c,
@@ -1367,7 +1345,7 @@ pub theorem leaf_div_var_frame_tracked(
   v: Nat,
   unknown: Bool
 ): TrackedFrame(c, leaf_div_var(c, span, v, unknown)) {
-  match unknown: TrackedFrame(c, leaf_div_var(c, span, v, unknown)) {
+  ⊢ TrackedFrame(c, leaf_div_var(c, span, v, unknown)) from match unknown {
     true => tracked_rewrap(
       c,
       ck_error(c, "the operands of `/` have no known type: write it", span),
@@ -1394,7 +1372,7 @@ pub theorem leaf_divide_frame_tracked(
   span: TySpan,
   t: Ty
 ): TrackedFrame(c, leaf_divide(c, span, t)) {
-  match t: TrackedFrame(c, leaf_divide(c, span, t)) {
+  ⊢ TrackedFrame(c, leaf_divide(c, span, t)) from match t {
     TyInt(w) => tracked_rewrap(
       c,
       ck_error(
@@ -1640,7 +1618,7 @@ pub theorem leaf_clone_target_frame_tracked(
   arg: SurfaceTerm,
   t: Ty
 ): TrackedFrame(c, leaf_clone_target(c, original, arg, t)) {
-  match t: TrackedFrame(c, leaf_clone_target(c, original, arg, t)) {
+  ⊢ TrackedFrame(c, leaf_clone_target(c, original, arg, t)) from match t {
     TyInt(w) => tracked_bind(
       Unit,
       Ty,
@@ -1648,10 +1626,7 @@ pub theorem leaf_clone_target_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(original, c1),
       ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
       ck_error_frame_tracked(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
     TyBool => tracked_bind(
       Unit,
@@ -1660,10 +1635,7 @@ pub theorem leaf_clone_target_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(original, c1),
       ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
       ck_error_frame_tracked(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
     TyText => tracked_bind(
       Unit,
@@ -1672,10 +1644,7 @@ pub theorem leaf_clone_target_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(original, c1),
       ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
       ck_error_frame_tracked(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
     TyUnit => tracked_bind(
       Unit,
@@ -1684,10 +1653,7 @@ pub theorem leaf_clone_target_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(original, c1),
       ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
       ck_error_frame_tracked(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
     TyNever => tracked_bind(
       Unit,
@@ -1696,10 +1662,7 @@ pub theorem leaf_clone_target_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(original, c1),
       ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
       ck_error_frame_tracked(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
     TyDecimal => tracked_bind(
       Unit,
@@ -1708,10 +1671,7 @@ pub theorem leaf_clone_target_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(original, c1),
       ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
       ck_error_frame_tracked(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
     TyFloat => tracked_bind(
       Unit,
@@ -1720,10 +1680,7 @@ pub theorem leaf_clone_target_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(original, c1),
       ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
       ck_error_frame_tracked(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
     TyFn(params, result, kind) => tracked_bind(
       Unit,
@@ -1732,10 +1689,7 @@ pub theorem leaf_clone_target_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(original, c1),
       ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
       ck_error_frame_tracked(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
     TyUnion(members) => tracked_bind(
       Unit,
@@ -1744,10 +1698,7 @@ pub theorem leaf_clone_target_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(original, c1),
       ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
       ck_error_frame_tracked(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
     TyProduct(members) => tracked_bind(
       Unit,
@@ -1765,10 +1716,7 @@ pub theorem leaf_clone_target_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(original, c1),
       ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
       ck_error_frame_tracked(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
     TyNamed(name, args) => tracked_bind(
       Unit,
@@ -1777,10 +1725,7 @@ pub theorem leaf_clone_target_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(original, c1),
       ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
       ck_error_frame_tracked(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
     TyParam(name, bound) => tracked_bind(
       Unit,
@@ -1789,10 +1734,7 @@ pub theorem leaf_clone_target_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(original, c1),
       ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
       ck_error_frame_tracked(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
     TyInfo(inner) => tracked_bind(
       Unit,
@@ -1801,15 +1743,9 @@ pub theorem leaf_clone_target_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(original, c1),
       ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
       ck_error_frame_tracked(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
-    TyBorrow(x, m) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
+    TyBorrow(x, m) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     TyVar(v) => tracked_bind(
       Unit,
       Ty,
@@ -1817,10 +1753,7 @@ pub theorem leaf_clone_target_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(original, c1),
       ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
       ck_error_frame_tracked(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
     TyPoly(generics, inner) => tracked_bind(
       Unit,
@@ -1829,10 +1762,7 @@ pub theorem leaf_clone_target_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(original, c1),
       ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
       ck_error_frame_tracked(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
     TyApp(typehead, typearg) => tracked_bind(
       Unit,
@@ -1841,10 +1771,7 @@ pub theorem leaf_clone_target_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(original, c1),
       ck_error(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
       ck_error_frame_tracked(c, "`clone` takes a borrow: write `clone(&x)`", span_of(arg)),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
   }
 }
@@ -1866,7 +1793,7 @@ pub theorem leaf_clone_why_frame_tracked(
   span: TySpan,
   why: Option(Text)
 ): TrackedFrame(c, leaf_clone_why(c, span, why)) {
-  match why: TrackedFrame(c, leaf_clone_why(c, span, why)) {
+  ⊢ TrackedFrame(c, leaf_clone_why(c, span, why)) from match why {
     None => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Some(message) => tracked_rewrap(
       c,
@@ -1901,10 +1828,7 @@ pub theorem leaf_clone_frame_tracked(
       (ignored: Unit, c2: Checker) => mut1(t, c2),
       leaf_clone_why(c1, span, datas_no_clone(ck_datas_of(c1), t)),
       leaf_clone_why_frame_tracked(c1, span, datas_no_clone(ck_datas_of(c1), t)),
-      ignored => c2 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c2))
-      )
+      ignored => c2 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c2)))
     )
   )
 }
@@ -1957,7 +1881,7 @@ pub theorem ck_lambda_params_frame_tracked(
   c: Checker,
   borrows: List(Option(Bool))
 ): TrackedFrame(c, ck_lambda_params(ps, c, borrows)) {
-  match ps: TrackedFrame(c, ck_lambda_params(ps, c, borrows)) {
+  ⊢ TrackedFrame(c, ck_lambda_params(ps, c, borrows)) from match ps {
     Nil => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Cons(p, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => TrackedFrame(c, z),
@@ -1988,7 +1912,7 @@ pub theorem record_missing_name_frame_tracked(
   span: TySpan,
   fieldname: Option(Text)
 ): TrackedFrame(c, record_missing_name(c, name, seen, span, fieldname)) {
-  match fieldname: TrackedFrame(c, record_missing_name(c, name, seen, span, fieldname)) {
+  ⊢ TrackedFrame(c, record_missing_name(c, name, seen, span, fieldname)) from match fieldname {
     None => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Some(n) => frame_error_if_ok_tracked(
       c,
@@ -2040,7 +1964,7 @@ pub theorem ck_record_missing_frame_tracked(
   seen: List(Text),
   span: TySpan
 ): TrackedFrame(c, ck_record_missing(fs, c, name, seen, span)) {
-  match fs: TrackedFrame(c, ck_record_missing(fs, c, name, seen, span)) {
+  ⊢ TrackedFrame(c, ck_record_missing(fs, c, name, seen, span)) from match fs {
     Nil => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Cons(f, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => TrackedFrame(c, z),
@@ -2091,7 +2015,7 @@ pub theorem frame_arity_small_ok_tracked(
   data: Data,
   small: Bool
 ): TrackedFrame(c, frame_arity_small(c, n, span, data, small)) {
-  match small: TrackedFrame(c, frame_arity_small(c, n, span, data, small)) {
+  ⊢ TrackedFrame(c, frame_arity_small(c, n, span, data, small)) from match small {
     true => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     false => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   }
@@ -2104,7 +2028,7 @@ pub theorem frame_arity_decl_ok_tracked(
   span: TySpan,
   o: Option(Data)
 ): TrackedFrame(c, frame_arity_decl(c, n, given, span, o)) {
-  match o: TrackedFrame(c, frame_arity_decl(c, n, given, span, o)) {
+  ⊢ TrackedFrame(c, frame_arity_decl(c, n, given, span, o)) from match o {
     None => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Some(data) => frame_arity_small_ok_tracked(
       c,
@@ -2123,7 +2047,7 @@ pub theorem frame_arity_k_ok_tracked(
   span: TySpan,
   constructor: Bool
 ): TrackedFrame(c, frame_arity_k(c, n, given, span, constructor)) {
-  match constructor: TrackedFrame(c, frame_arity_k(c, n, given, span, constructor)) {
+  ⊢ TrackedFrame(c, frame_arity_k(c, n, given, span, constructor)) from match constructor {
     true => frame_arity_decl_ok_tracked(c, n, given, span, datas_decl(ck_datas_of(c), n))
     false => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   }
@@ -2149,7 +2073,7 @@ pub theorem frame_written_var_named_ok_tracked(
   t: Ty,
   found: Bool
 ): TrackedFrame(c, frame_written_var_named(c, n, span, t, found)) {
-  match found: TrackedFrame(c, frame_written_var_named(c, n, span, t, found)) {
+  ⊢ TrackedFrame(c, frame_written_var_named(c, n, span, t, found)) from match found {
     true => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     false => tracked_return(c, t, ck_arity(c, n, 0, span), ck_arity_frame_tracked(c, n, 0, span))
   }
@@ -2163,7 +2087,7 @@ pub theorem frame_written_var_k_ok_tracked(
   original: Ty,
   t: Ty
 ): TrackedFrame(c, frame_written_var_k(c, n, generics, span, original, t)) {
-  match t: TrackedFrame(c, frame_written_var_k(c, n, generics, span, original, t)) {
+  ⊢ TrackedFrame(c, frame_written_var_k(c, n, generics, span, original, t)) from match t {
     TyNamed(name, args) => frame_written_var_named_ok_tracked(
       c,
       n,
@@ -2195,10 +2119,7 @@ pub theorem frame_written_var_k_ok_tracked(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
     )
-    TyInfo(inner) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
+    TyInfo(inner) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     TyBorrow(inner, mutable) => AndIntro(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
@@ -2208,10 +2129,7 @@ pub theorem frame_written_var_k_ok_tracked(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
     )
-    TyApp(head, arg) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
+    TyApp(head, arg) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   }
 }
 
@@ -2241,7 +2159,7 @@ pub theorem frame_app_nested_ok_tracked(
   after: List(Ty),
   inner: Ty
 ): TrackedFrame(c, frame_app_nested(c, span, after, inner)) {
-  match inner: TrackedFrame(c, frame_app_nested(c, span, after, inner)) {
+  ⊢ TrackedFrame(c, frame_app_nested(c, span, after, inner)) from match inner {
     TyNamed(n, before) => tracked_return(
       c,
       TyNamed(n, List::append(before, after)),
@@ -2282,10 +2200,7 @@ pub theorem frame_app_nested_ok_tracked(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
     )
-    TyApp(head, arg) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
+    TyApp(head, arg) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   }
 }
 
@@ -2293,12 +2208,9 @@ pub theorem frame_app_info_ok_tracked(
   c: Checker,
   args: List(Ty)
 ): TrackedFrame(c, frame_app_info(c, args)) {
-  match args: TrackedFrame(c, frame_app_info(c, args)) {
+  ⊢ TrackedFrame(c, frame_app_info(c, args)) from match args {
     Nil => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
-    Cons(a, rest) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
+    Cons(a, rest) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   }
 }
 pub theorem frame_app_generic_ok_tracked(
@@ -2308,12 +2220,9 @@ pub theorem frame_app_generic_ok_tracked(
   span: TySpan,
   args: List(Ty)
 ): TrackedFrame(c, frame_app_generic(c, n, generics, span, args)) {
-  match args: TrackedFrame(c, frame_app_generic(c, n, generics, span, args)) {
+  ⊢ TrackedFrame(c, frame_app_generic(c, n, generics, span, args)) from match args {
     Nil => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
-    Cons(x, more) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
+    Cons(x, more) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   }
 }
 
@@ -2335,7 +2244,7 @@ pub theorem frame_app_generic_count_ok_tracked(
   one: Bool,
   iheach: ∀ next: Checker. TrackedFrame(next, ck_written_each(arguments, next, generics))
 ): TrackedFrame(c, frame_app_generic_count(c, arguments, generics, span, n, one)) {
-  match one: TrackedFrame(c, frame_app_generic_count(c, arguments, generics, span, n, one)) {
+  ⊢ TrackedFrame(c, frame_app_generic_count(c, arguments, generics, span, n, one)) from match one {
     true => tracked_bind(
       List(Ty),
       Ty,
@@ -2369,7 +2278,7 @@ pub theorem frame_app_kind_ok_tracked(
   app: WrittenApp,
   iheach: ∀ next: Checker. TrackedFrame(next, ck_written_each(arguments, next, generics))
 ): TrackedFrame(c, frame_app_kind(c, arguments, generics, span, under_borrow, app)) {
-  match app: TrackedFrame(c, frame_app_kind(c, arguments, generics, span, under_borrow, app)) {
+  ⊢ TrackedFrame(c, frame_app_kind(c, arguments, generics, span, under_borrow, app)) from match app {
     WrittenUnit => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     WrittenInfo => tracked_bind(
       List(Ty),
@@ -2447,10 +2356,10 @@ pub theorem frame_written_app_ok_tracked(
   ihterm: ∀ next: Checker. TrackedFrame(next, ck_written_in(function, next, generics)),
   iheach: ∀ next: Checker. TrackedFrame(next, ck_written_each(arguments, next, generics))
 ): TrackedFrame(c, frame_written_app(c, arguments, generics, span, function, under_borrow, nested)) {
-  match nested: TrackedFrame(
+  ⊢ TrackedFrame(
     c,
     frame_written_app(c, arguments, generics, span, function, under_borrow, nested)
-  ) {
+  ) from match nested {
     true => tracked_changed(
       c,
       frame_set_constructor_position(c, true),
@@ -2588,11 +2497,8 @@ pub theorem ck_written_fn_kind_frame_tracked(
   fk: Text,
   span: TySpan
 ): TrackedFrame(c, ck_written_fn_kind(w, c, fk, span)) {
-  match w: TrackedFrame(c, ck_written_fn_kind(w, c, fk, span)) {
-    TyFn(ps, r, k) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
+  ⊢ TrackedFrame(c, ck_written_fn_kind(w, c, fk, span)) from match w {
+    TyFn(ps, r, k) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     TyInt(width) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     TyBool => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     TyText => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
@@ -2617,10 +2523,7 @@ pub theorem ck_written_fn_kind_frame_tracked(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
     )
-    TyInfo(inner) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
+    TyInfo(inner) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     TyBorrow(inner, mutable) => AndIntro(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
@@ -2630,10 +2533,7 @@ pub theorem ck_written_fn_kind_frame_tracked(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
     )
-    TyApp(head, arg) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
+    TyApp(head, arg) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   }
 }
 
@@ -2768,10 +2668,7 @@ pub theorem frame_written_each_cons_ok_tracked(
       (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
       ck_written_each(rest, c1, generics),
       ihr(c1),
-      tail => c2 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c2))
-      )
+      tail => c2 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c2)))
     )
   )
 }
@@ -2788,7 +2685,7 @@ pub theorem frame_written_params_cons_ok_tracked(
     ck_written_params(rest, next, generics, count)
   )
 ): TrackedFrame(c, frame_written_params_cons(p, rest, c, generics, skip)) {
-  match skip: TrackedFrame(c, frame_written_params_cons(p, rest, c, generics, skip)) {
+  ⊢ TrackedFrame(c, frame_written_params_cons(p, rest, c, generics, skip)) from match skip {
     Zero => tracked_bind(
       Ty,
       List(Ty),
@@ -2808,10 +2705,7 @@ pub theorem frame_written_params_cons_ok_tracked(
         (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
         ck_written_params(rest, c1, generics, 0),
         ihr(c1, 0),
-        tail => c2 => AndIntro(
-          item => member => member,
-          AndIntro(Refl, obligation_state_refl(c2))
-        )
+        tail => c2 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c2)))
       )
     )
     Succ(n) => tracked_rewrap(c, ck_written_params(rest, c, generics, n), ihr(c, n))
@@ -2824,7 +2718,7 @@ mutual {
     c: Checker,
     generics: Ordmap(Text, Ty)
   ): TrackedFrame(c, ck_written_in(t, c, generics)) {
-    match t: TrackedFrame(c, ck_written_in(t, c, generics)) {
+    ⊢ TrackedFrame(c, ck_written_in(t, c, generics)) from match t {
       SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => Eq::subst(
         (z: Mut1(Ty, Checker)) => TrackedFrame(c, z),
         Eq::sym(frame_written_in_unf(ast_occurrence, sk, start, end, c, generics)),
@@ -2867,7 +2761,7 @@ mutual {
     span: TySpan,
     under_borrow: Bool
   ): TrackedFrame(c, ck_written_kind(sk, c, generics, span, under_borrow)) {
-    match sk: TrackedFrame(c, ck_written_kind(sk, c, generics, span, under_borrow)) {
+    ⊢ TrackedFrame(c, ck_written_kind(sk, c, generics, span, under_borrow)) from match sk {
       SkVar(n) => Eq::subst(
         (z: Mut1(Ty, Checker)) => TrackedFrame(c, z),
         Eq::sym(frame_unf_SkVar(n, c, generics, span, under_borrow)),
@@ -3020,7 +2914,9 @@ mutual {
       )
       SkMatch(scrutinee, motive, arms, binder) => Eq::subst(
         (z: Mut1(Ty, Checker)) => TrackedFrame(c, z),
-        Eq::sym(frame_unf_SkMatch(scrutinee, motive, arms, binder, c, generics, span, under_borrow)),
+        Eq::sym(
+          frame_unf_SkMatch(scrutinee, motive, arms, binder, c, generics, span, under_borrow)
+        ),
         tracked_state_refl(c)
       )
       SkHole(name) => Eq::subst(
@@ -3103,7 +2999,7 @@ mutual {
     c: Checker,
     generics: Ordmap(Text, Ty)
   ): TrackedFrame(c, ck_written_each(ts, c, generics)) {
-    match ts: TrackedFrame(c, ck_written_each(ts, c, generics)) {
+    ⊢ TrackedFrame(c, ck_written_each(ts, c, generics)) from match ts {
       Nil => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
       Cons(t, rest) => Eq::subst(
         (z: Mut1(List(Ty), Checker)) => TrackedFrame(c, z),
@@ -3125,7 +3021,7 @@ mutual {
     generics: Ordmap(Text, Ty),
     skip: Nat
   ): TrackedFrame(c, ck_written_params(ps, c, generics, skip)) {
-    match ps: TrackedFrame(c, ck_written_params(ps, c, generics, skip)) {
+    ⊢ TrackedFrame(c, ck_written_params(ps, c, generics, skip)) from match ps {
       Nil => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
       Cons(p, rest) => Eq::subst(
         (z: Mut1(List(Ty), Checker)) => TrackedFrame(c, z),
@@ -3147,7 +3043,7 @@ mutual {
     c: Checker,
     generics: Ordmap(Text, Ty)
   ): TrackedFrame(c, ck_written_param(p, c, generics)) {
-    match p: TrackedFrame(c, ck_written_param(p, c, generics)) {
+    ⊢ TrackedFrame(c, ck_written_param(p, c, generics)) from match p {
       SurfaceParamMk(name, ty) => Eq::subst(
         (z: Mut1(Ty, Checker)) => TrackedFrame(c, z),
         Eq::sym(frame_written_param_unf(name, ty, c, generics)),
@@ -3186,7 +3082,7 @@ pub theorem binding_let_mode_frame_tracked(
   value: SurfaceTerm,
   bm: Bool
 ): TrackedFrame(c, binding_let_mode(c, name, resolved, value, bm)) {
-  match bm: TrackedFrame(c, binding_let_mode(c, name, resolved, value, bm)) {
+  ⊢ TrackedFrame(c, binding_let_mode(c, name, resolved, value, bm)) from match bm {
     true => tracked_rewrap(
       c,
       ck_error(
@@ -3224,7 +3120,7 @@ pub theorem binding_let_view_frame_tracked(
   value: SurfaceTerm,
   r#view: Bool
 ): TrackedFrame(c, binding_let_view(c, name, bm, resolved, value, r#view)) {
-  match r#view: TrackedFrame(c, binding_let_view(c, name, bm, resolved, value, r#view)) {
+  ⊢ TrackedFrame(c, binding_let_view(c, name, bm, resolved, value, r#view)) from match r#view {
     true => frame_error_if_ok_tracked(
       c,
       cat3("`let &mut ", name, "` binds what a function returns as `-> &mut A`"),
@@ -3293,7 +3189,7 @@ pub theorem binding_stored_borrow_frame_tracked(
   p: Ty,
   borrow: Bool
 ): TrackedFrame(c, binding_stored_borrow(c, name, t, resolved, value, p, borrow)) {
-  match borrow: TrackedFrame(c, binding_stored_borrow(c, name, t, resolved, value, p, borrow)) {
+  ⊢ TrackedFrame(c, binding_stored_borrow(c, name, t, resolved, value, p, borrow)) from match borrow {
     true => tracked_bind(
       Unit,
       Ty,
@@ -3301,10 +3197,7 @@ pub theorem binding_stored_borrow_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(t, c1),
       ck_stored_borrow(c, name, resolved, value),
       ck_stored_borrow_frame_tracked(c, name, resolved, value),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
     false => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   }
@@ -3318,7 +3211,7 @@ pub theorem binding_stored_found_frame_tracked(
   value: SurfaceTerm,
   found: Option(Ty)
 ): TrackedFrame(c, binding_stored_found(c, name, t, resolved, value, found)) {
-  match found: TrackedFrame(c, binding_stored_found(c, name, t, resolved, value, found)) {
+  ⊢ TrackedFrame(c, binding_stored_found(c, name, t, resolved, value, found)) from match found {
     None => tracked_bind(
       Unit,
       Ty,
@@ -3326,10 +3219,7 @@ pub theorem binding_stored_found_frame_tracked(
       (ignored: Unit, c1: Checker) => mut1(t, c1),
       ck_stored_borrow(c, name, resolved, value),
       ck_stored_borrow_frame_tracked(c, name, resolved, value),
-      ignored => c1 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c1))
-      )
+      ignored => c1 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c1)))
     )
     Some(p) => binding_stored_borrow_frame_tracked(
       c,
@@ -3351,7 +3241,7 @@ pub theorem binding_stored_frame_tracked(
   value: SurfaceTerm,
   stored: Bool
 ): TrackedFrame(c, binding_stored(c, name, t, resolved, value, stored)) {
-  match stored: TrackedFrame(c, binding_stored(c, name, t, resolved, value, stored)) {
+  ⊢ TrackedFrame(c, binding_stored(c, name, t, resolved, value, stored)) from match stored {
     true => binding_stored_found_frame_tracked(
       c,
       name,
@@ -3386,7 +3276,7 @@ pub theorem binding_var_view_frame_tracked(
   value: SurfaceTerm,
   r#view: Bool
 ): TrackedFrame(c, binding_var_view(c, name, resolved, value, r#view)) {
-  match r#view: TrackedFrame(c, binding_var_view(c, name, resolved, value, r#view)) {
+  ⊢ TrackedFrame(c, binding_var_view(c, name, resolved, value, r#view)) from match r#view {
     true => tracked_rewrap(
       c,
       ck_error(c, cat3("a borrow cannot be stored in `var ", name, "`"), span_of(value)),
@@ -3418,7 +3308,7 @@ pub theorem binding_var_mode_frame_tracked(
   value: SurfaceTerm,
   vb: Bool
 ): TrackedFrame(c, binding_var_mode(c, name, resolved, value, vb)) {
-  match vb: TrackedFrame(c, binding_var_mode(c, name, resolved, value, vb)) {
+  ⊢ TrackedFrame(c, binding_var_mode(c, name, resolved, value, vb)) from match vb {
     true => frame_error_if_ok_tracked(
       c,
       cat3("`var &", name, "` binds what a function returns as a view"),
@@ -3448,7 +3338,7 @@ pub theorem ck_sig_written_frame_tracked(
   p: Option(SurfaceTerm),
   map: Ordmap(Text, Ty)
 ): TrackedFrame(c, ck_sig_written(c, p, map)) {
-  match p: TrackedFrame(c, ck_sig_written(c, p, map)) {
+  ⊢ TrackedFrame(c, ck_sig_written(c, p, map)) from match p {
     None => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Some(x) => tracked_rewrap(c, ck_written(c, x, map), ck_written_frame_tracked(c, x, map))
   }
@@ -3459,7 +3349,7 @@ pub theorem signature_wrap_if_frame_tracked(
   mutable: Bool,
   borrowed: Bool
 ): TrackedFrame(c, signature_wrap_if(c, t, mutable, borrowed)) {
-  match borrowed: TrackedFrame(c, signature_wrap_if(c, t, mutable, borrowed)) {
+  ⊢ TrackedFrame(c, signature_wrap_if(c, t, mutable, borrowed)) from match borrowed {
     true => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     false => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   }
@@ -3469,7 +3359,7 @@ pub theorem signature_wrap_frame_tracked(
   t: Ty,
   b: Option(Bool)
 ): TrackedFrame(c, signature_wrap(c, t, b)) {
-  match b: TrackedFrame(c, signature_wrap(c, t, b)) {
+  ⊢ TrackedFrame(c, signature_wrap(c, t, b)) from match b {
     None => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Some(m) => signature_wrap_if_frame_tracked(c, t, m, ty_is_borrow(t))
   }
@@ -3530,10 +3420,7 @@ pub theorem signature_params_cons_frame_tracked(
       (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
       ck_sig_params(rest, c1, List::tail(borrows), map),
       ih(c1, List::tail(borrows)),
-      tail => c2 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c2))
-      )
+      tail => c2 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c2)))
     )
   )
 }
@@ -3544,7 +3431,7 @@ pub theorem ck_sig_params_frame_tracked(
   borrows: List(Option(Bool)),
   map: Ordmap(Text, Ty)
 ): TrackedFrame(c, ck_sig_params(pts, c, borrows, map)) {
-  match pts: TrackedFrame(c, ck_sig_params(pts, c, borrows, map)) {
+  ⊢ TrackedFrame(c, ck_sig_params(pts, c, borrows, map)) from match pts {
     Nil => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Cons(p, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => TrackedFrame(c, z),
@@ -3566,7 +3453,7 @@ pub theorem signature_result_k_frame_tracked(
   map: Ordmap(Text, Ty),
   p: Option(SurfaceTerm)
 ): TrackedFrame(c, signature_result_k(c, map, p)) {
-  match p: TrackedFrame(c, signature_result_k(c, map, p)) {
+  ⊢ TrackedFrame(c, signature_result_k(c, map, p)) from match p {
     None => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Some(r) => tracked_rewrap(c, ck_written(c, r, map), ck_written_frame_tracked(c, r, map))
   }
@@ -3588,7 +3475,7 @@ pub theorem ck_report_frame_tracked(
   message: Option(Text),
   span: TySpan
 ): TrackedFrame(c, ck_report(c, message, span)) {
-  match message: TrackedFrame(c, ck_report(c, message, span)) {
+  ⊢ TrackedFrame(c, ck_report(c, message, span)) from match message {
     None => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Some(m) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   }
@@ -3600,7 +3487,7 @@ pub theorem signature_pred_duplicate_frame_tracked(
   g: Text,
   dup: Bool
 ): TrackedFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) {
-  match dup: TrackedFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) {
+  ⊢ TrackedFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) from match dup {
     true => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     false => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   }
@@ -3612,7 +3499,7 @@ pub theorem signature_pred_generic_frame_tracked(
   preds: List(Pair(Text, Text)),
   o: Option(Text)
 ): TrackedFrame(c, signature_pred_generic(c, w, name, preds, o)) {
-  match o: TrackedFrame(c, signature_pred_generic(c, w, name, preds, o)) {
+  ⊢ TrackedFrame(c, signature_pred_generic(c, w, name, preds, o)) from match o {
     None => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Some(g) => signature_pred_duplicate_frame_tracked(
       c,
@@ -3631,7 +3518,7 @@ pub theorem signature_pred_missing_frame_tracked(
   preds: List(Pair(Text, Text)),
   missing: Bool
 ): TrackedFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) {
-  match missing: TrackedFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) {
+  ⊢ TrackedFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) from match missing {
     true => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     false => signature_pred_generic_frame_tracked(
       c,
@@ -3687,7 +3574,7 @@ pub theorem ck_where_preds_frame_tracked(
   name: Text,
   preds: List(Pair(Text, Text))
 ): TrackedFrame(c, ck_where_preds(ws, c, gs, name, preds)) {
-  match ws: TrackedFrame(c, ck_where_preds(ws, c, gs, name, preds)) {
+  ⊢ TrackedFrame(c, ck_where_preds(ws, c, gs, name, preds)) from match ws {
     Nil => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Cons(w, rest) => Eq::subst(
       (z: Mut1(List(Pair(Text, Text)), Checker)) => TrackedFrame(c, z),
@@ -3813,7 +3700,7 @@ pub theorem ck_effect_param_frame_tracked(
   p: Option(SurfaceTerm),
   generics: Ordmap(Text, Ty)
 ): TrackedFrame(c, ck_effect_param(c, e, p, generics)) {
-  match p: TrackedFrame(c, ck_effect_param(c, e, p, generics)) {
+  ⊢ TrackedFrame(c, ck_effect_param(c, e, p, generics)) from match p {
     None => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Some(x) => tracked_rewrap(
       c,
@@ -3850,10 +3737,7 @@ pub theorem registration_effect_params_cons_ok_tracked(
       (tail: List(Ty), c2: Checker) => mut1(Cons(head, tail), c2),
       ck_effect_params(rest, c1, e, generics),
       ih(c1),
-      tail => c2 => AndIntro(
-        item => member => member,
-        AndIntro(Refl, obligation_state_refl(c2))
-      )
+      tail => c2 => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c2)))
     )
   )
 }
@@ -3864,7 +3748,7 @@ pub theorem ck_effect_params_frame_tracked(
   e: SurfaceEffect,
   generics: Ordmap(Text, Ty)
 ): TrackedFrame(c, ck_effect_params(ps, c, e, generics)) {
-  match ps: TrackedFrame(c, ck_effect_params(ps, c, e, generics)) {
+  ⊢ TrackedFrame(c, ck_effect_params(ps, c, e, generics)) from match ps {
     Nil => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Cons(p, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => TrackedFrame(c, z),
@@ -3886,7 +3770,7 @@ pub theorem registration_effect_result_frame_tracked(
   generics: Ordmap(Text, Ty),
   o: Option(SurfaceTerm)
 ): TrackedFrame(c, registration_effect_result_k(c, generics, o)) {
-  match o: TrackedFrame(c, registration_effect_result_k(c, generics, o)) {
+  ⊢ TrackedFrame(c, registration_effect_result_k(c, generics, o)) from match o {
     None => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Some(r) => tracked_rewrap(
       c,
@@ -3913,7 +3797,7 @@ pub theorem registration_quant_parsed_frame_tracked(
   q: Text,
   o: Option(Quant)
 ): TrackedFrame(c, registration_quant_parsed(c, e, q, o)) {
-  match o: TrackedFrame(c, registration_quant_parsed(c, e, q, o)) {
+  ⊢ TrackedFrame(c, registration_quant_parsed(c, e, q, o)) from match o {
     Some(x) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     None => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   }
@@ -3923,7 +3807,7 @@ pub theorem registration_quant_resume_frame_tracked(
   e: SurfaceEffect,
   r#resume: Option(Text)
 ): TrackedFrame(c, registration_quant_resume(c, e, r#resume)) {
-  match r#resume: TrackedFrame(c, registration_quant_resume(c, e, r#resume)) {
+  ⊢ TrackedFrame(c, registration_quant_resume(c, e, r#resume)) from match r#resume {
     None => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     Some(q) => registration_quant_parsed_frame_tracked(c, e, q, quant_parse(q))
   }
@@ -4038,7 +3922,7 @@ pub theorem record_stmt_label_frame_tracked(
   end: Nat,
   label: Bool
 ): TrackedFrame(c, record_stmt_label(c, what, start, end, label)) {
-  match label: TrackedFrame(c, record_stmt_label(c, what, start, end, label)) {
+  ⊢ TrackedFrame(c, record_stmt_label(c, what, start, end, label)) from match label {
     true => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     false => tracked_rewrap(
       c,
@@ -4052,7 +3936,7 @@ pub theorem ck_stmt_other_frame_tracked(
   c: Checker,
   s: SurfaceStmt
 ): TrackedFrame(c, ck_stmt_other(c, s)) {
-  match s: TrackedFrame(c, ck_stmt_other(c, s)) {
+  ⊢ TrackedFrame(c, ck_stmt_other(c, s)) from match s {
     StLet(pat_name, pat_ty, pat_value, pat_borrow, pat_mutable) => AndIntro(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
@@ -4074,10 +3958,7 @@ pub theorem ck_stmt_other_frame_tracked(
       AndIntro(Refl, obligation_state_refl(c))
     )
     StFn(pat_f) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
-    StTheorem(pat_t) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
+    StTheorem(pat_t) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     StDef(pat_t) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     StMutual(pat_stmts, pat_start, pat_end) => AndIntro(
       item => member => member,
@@ -4091,26 +3972,14 @@ pub theorem ck_stmt_other_frame_tracked(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
     )
-    StEffect(pat_e) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
-    StStruct(pat_d) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
-    StEnum(pat_d) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
+    StEffect(pat_e) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
+    StStruct(pat_d) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
+    StEnum(pat_d) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     StExtern(pat_abi, pat_fns, pat_start, pat_end) => AndIntro(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))
     )
-    StClass(pat_c) => AndIntro(
-      item => member => member,
-      AndIntro(Refl, obligation_state_refl(c))
-    )
+    StClass(pat_c) => AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
     StInstance(pat_i) => AndIntro(
       item => member => member,
       AndIntro(Refl, obligation_state_refl(c))

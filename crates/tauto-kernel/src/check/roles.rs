@@ -6,6 +6,7 @@
 //! Nothing here decides what is accepted: it reads the types the kernel has
 //! already checked.
 
+use crate::surface::Name;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -32,6 +33,38 @@ pub struct Signature {
     pub result: Role,
 }
 
+impl Signature {
+    /// Roles in the source generic telescope. Effect elaboration removes an
+    /// active row binder and puts its operation/answer pair after the remaining
+    /// generics, so source positions are not core telescope positions.
+    pub fn source_generic_roles(&self, function: &crate::surface::FnDecl) -> Vec<Role> {
+        let active_rows: HashSet<_> = function
+            .effects
+            .iter()
+            .flatten()
+            .filter_map(|entry| entry.row_variable())
+            .collect();
+        let mut slot = 0;
+        function
+            .generics
+            .iter()
+            .map(|name| {
+                if active_rows.contains(name) {
+                    Role::Type
+                } else {
+                    let role = self
+                        .params
+                        .get(slot)
+                        .copied()
+                        .expect("checked generic telescope slot");
+                    slot += 1;
+                    role
+                }
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Family {
     pub prop: bool,
@@ -40,27 +73,39 @@ pub struct Family {
     pub predicate: bool,
     pub params: usize,
     pub indices: usize,
-    pub ctors: Vec<String>,
+    pub ctors: Vec<Name>,
 }
 
-/// A pattern written with a constructor's short name (`Mk`) that the kernel
-/// read as the constructor of the matched type (`One::Mk`), by the span of the
-/// arm's body. It is metadata for extraction: the kernel's typing is not
-/// consulted again, and the kernel's rules do not depend on it.
+/// A selected constructor at an expression head or an arm pattern. A pattern
+/// uses its body occurrence; an expression uses its head occurrence. Cloned
+/// occurrences retain the selection even when their positions change.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CtorSite {
+    pub expression: bool,
+    pub occurrence: crate::surface::TermId,
     pub span: tauto_parol::Span,
-    pub written: String,
-    pub resolved: String,
+    pub written: Name,
+    pub resolved: Name,
+}
+
+/// The record family selected by checking a source field projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldSite {
+    pub occurrence: crate::surface::TermId,
+    pub span: tauto_parol::Span,
+    pub family: Name,
 }
 
 /// Implicit slots inserted into a source application by elaboration.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ApplicationSite {
+    pub occurrence: crate::surface::TermId,
     pub span: tauto_parol::Span,
-    pub callee: String,
+    pub callee: Name,
     pub written: usize,
     pub omitted: usize,
+    /// Elaborated values of the inserted prefix, before the call is lowered.
+    pub arguments: Vec<T>,
 }
 
 /// A closed value type at an executable boundary. Equal identities were
@@ -74,40 +119,66 @@ pub struct BoundaryType {
 
 pub struct Checked {
     /// Declared parameter counts, excluding parameters of a returned function.
-    pub arities: HashMap<String, usize>,
+    pub arities: HashMap<Name, usize>,
     /// Declared parameters followed by the entire result type. Open and erased
     /// types have no executable boundary.
-    pub boundary_types: HashMap<String, Vec<Option<BoundaryType>>>,
+    pub boundary_types: HashMap<Name, Vec<Option<BoundaryType>>>,
+    /// Checked operation parameters followed by their result.
+    pub effect_types: HashMap<Name, Vec<Option<BoundaryType>>>,
+    pub effect_resumes: HashMap<Name, Option<String>>,
+    pub local_types: HashMap<Name, BoundaryType>,
     /// Executable declarations excluded from the proof environment.
-    pub runtime: HashSet<String>,
+    pub runtime: HashSet<Name>,
     pub files: Vec<PathBuf>,
     pub entries: Vec<FileEntry>,
-    pub signatures: HashMap<String, Signature>,
-    pub families: HashMap<String, Family>,
+    pub signatures: HashMap<Name, Signature>,
+    /// Core-only operation/answer slots inserted for an active effect row.
+    pub row_parameter_slots: HashMap<Name, std::ops::Range<usize>>,
+    pub families: HashMap<Name, Family>,
     /// The declarations whose type ends in `Prop`: propositions and the
     /// families and definitions that make them.
-    pub props: HashSet<String>,
+    pub props: HashSet<Name>,
     pub records: super::sugar::Records,
     /// The classes (`check/classes.rs`): a `where` on one of them is a
     /// parameter of the function, not written in the extracted program.
-    pub classes: HashSet<String>,
+    pub classes: HashSet<Name>,
+    pub class_members: HashMap<Name, Name>,
+    /// Dictionary declarations before erasure, with the source declaration they replace.
+    pub class_expansions: Vec<(crate::surface::Stmt, Vec<crate::surface::Stmt>)>,
+    /// Instance implementations indexed by class, type head, and member label.
+    pub instance_methods: HashMap<(Name, Name, String), Name>,
     /// The declarations a decidable equality generated, by the family that lists them.
-    pub derived: Vec<(String, Vec<crate::surface::Stmt>)>,
+    pub derived: Vec<(Name, Vec<crate::surface::Stmt>)>,
     pub ctor_sites: Vec<CtorSite>,
+    pub field_sites: Vec<FieldSite>,
     pub application_sites: Vec<ApplicationSite>,
+}
+
+impl Checked {
+    /// The role telescope of a source call, without compiler-inserted row
+    /// evidence. Core elaborated calls continue to use `signatures` directly.
+    pub fn source_call_signature(&self, name: &Name) -> Option<Signature> {
+        let mut signature = self.signatures.get(name)?.clone();
+        if let Some(slots) = self.row_parameter_slots.get(name) {
+            signature.params.drain(slots.clone());
+            signature.implicit = signature.implicit.saturating_sub(slots.len());
+        }
+        Some(signature)
+    }
 }
 
 pub fn checked_entries(
     mut kernel: Kernel,
     files: Vec<PathBuf>,
     out: Vec<FileEntry>,
-    prelude_names: Vec<String>,
+    prelude_names: Vec<Name>,
 ) -> Checked {
     let mut signatures = HashMap::new();
+    let mut row_parameter_slots = HashMap::new();
     let mut families = HashMap::new();
     let mut props = HashSet::new();
     // What a decidable equality generated checked when it was made.
-    let derived: Vec<String> = kernel
+    let derived: Vec<Name> = kernel
         .derived
         .iter()
         .flat_map(|(_, stmts)| stmts.iter().filter_map(super::declared_name))
@@ -118,12 +189,12 @@ pub fn checked_entries(
         .chain(derived.iter().cloned())
         .chain(out.iter().map(|e| e.entry.name.clone()))
         .collect::<Vec<_>>();
-    let checked = |name: &str| {
+    let checked = |name: &Name| {
         prelude_names.iter().any(|n| n == name)
             || derived.iter().any(|n| n == name)
-            || out
-                .iter()
-                .any(|e| e.entry.name == name && matches!(e.entry.verdict, Verdict::Checked { .. }))
+            || out.iter().any(|e| {
+                e.entry.name == *name && matches!(e.entry.verdict, Verdict::Checked { .. })
+            })
     };
     for name in names {
         if !checked(&name) {
@@ -165,15 +236,20 @@ pub fn checked_entries(
             let mut sig = kernel.signature_of(&ty);
             sig.implicit = implicit + super::implicit::dict_count(&ty, implicit);
             // The parameters a row variable is read as are not written.
-            sig.implicit += kernel.effects.row_params(&name);
+            let row_params = kernel.effects.row_params(&name);
+            sig.implicit += row_params;
+            if row_params > 0 {
+                row_parameter_slots.insert(name.clone(), implicit..implicit + row_params);
+            }
             signatures.insert(name, sig);
         }
     }
     let mut boundary_types = HashMap::new();
+    let mut effect_types = HashMap::new();
     {
         let mut identities = Vec::new();
         let mut names: Vec<_> = signatures.keys().cloned().collect();
-        names.sort();
+        names.sort_by(|a, b| a.as_str().cmp(b.as_str()).then(a.cmp(b)));
         for name in names {
             if kernel.ctors.contains_key(&name) || kernel.recs.contains_key(&name) {
                 continue;
@@ -181,10 +257,58 @@ pub fn checked_entries(
             if let Some(g) = kernel.globals.get(&name)
                 && g.value.is_some()
             {
-                let ty = g.ty.clone();
+                let mut ty = g.ty.clone();
                 let arity = g.params;
+                if kernel.effects.fns.contains_key(&name) {
+                    // Effect checking uses Comp in the result. The executable
+                    // boundary carries the value produced by that computation.
+                    fn result_value(ty: &mut T) {
+                        match std::sync::Arc::make_mut(&mut ty.kind) {
+                            TermKind::Pi { result, .. } => result_value(result),
+                            TermKind::App {
+                                function,
+                                arguments,
+                            } if matches!(&*function.kind, TermKind::Var(n) if tauto_surface::bindings::is_library(n, "Comp"))
+                                && arguments.len() == 3 =>
+                            {
+                                *ty = arguments[2].clone()
+                            }
+                            _ => {}
+                        }
+                    }
+                    result_value(&mut ty);
+                }
                 boundary_types.insert(name, kernel.boundary_types_of(&ty, arity, &mut identities));
             }
+        }
+        let mut effects: Vec<_> = kernel.effects.sigs.keys().cloned().collect();
+        effects.sort_by(|a, b| a.as_str().cmp(b.as_str()).then(a.cmp(b)));
+        for name in effects {
+            let Some(g) = kernel.globals.get(&super::effects::args_name(&name)) else {
+                continue;
+            };
+            let mut ty = g.ty.clone();
+            let arity = kernel.effects.sigs[&name];
+            let Some(result) = kernel.effects.results.get(&name).cloned() else {
+                continue;
+            };
+            let mut end = &mut ty;
+            loop {
+                if matches!(&*end.kind, TermKind::Pi { .. }) {
+                    let TermKind::Pi { result, .. } = std::sync::Arc::make_mut(&mut end.kind)
+                    else {
+                        unreachable!()
+                    };
+                    end = result;
+                } else {
+                    *end = result;
+                    break;
+                }
+            }
+            effect_types.insert(
+                name,
+                kernel.boundary_types_of(&ty, Some(arity), &mut identities),
+            );
         }
     }
     let arities = signatures
@@ -197,19 +321,58 @@ pub fn checked_entries(
                 .map(|arity| (name.clone(), arity))
         })
         .collect();
+    let local_types = kernel
+        .effects
+        .locals
+        .iter()
+        .filter_map(|(name, operation)| {
+            effect_types
+                .get(operation)
+                .and_then(|types| types.last())
+                .and_then(|ty| ty.clone())
+                .map(|ty| (name.clone(), ty))
+        })
+        .collect();
+    let mut class_expansions = std::mem::take(&mut kernel.class_expansions);
+    for (source, expansion) in &mut class_expansions {
+        kernel.resolve_statements(std::slice::from_mut(source));
+        kernel.resolve_statements(expansion);
+    }
     Checked {
+        class_expansions,
+        local_types,
         arities,
         boundary_types,
+        effect_types,
+        effect_resumes: kernel.effects.resumes.clone(),
         runtime: HashSet::new(),
         files,
         entries: out,
         signatures,
+        row_parameter_slots,
         families,
         props,
         records: kernel.records(),
         derived: std::mem::take(&mut kernel.derived),
         classes: kernel.classes.class_names(),
         ctor_sites: std::mem::take(&mut kernel.ctor_sites),
+        field_sites: std::mem::take(&mut kernel.field_sites),
+        class_members: kernel.classes.member_owners.clone(),
+        instance_methods: kernel
+            .classes
+            .direct_members
+            .iter()
+            .filter_map(|((member, head), target)| {
+                Some((
+                    (
+                        kernel.classes.member_owners.get(member)?.clone(),
+                        head.clone(),
+                        kernel.classes.member_labels.get(member)?.clone(),
+                    ),
+                    target.clone(),
+                ))
+            })
+            .collect(),
         application_sites: std::mem::take(&mut kernel.application_sites),
     }
 }
@@ -289,6 +452,16 @@ impl Kernel {
         Some(BoundaryType { id, ty, arguments })
     }
 
+    /// Parameter roles of an already checked global, for executable adapters.
+    pub fn checked_signature(&mut self, name: &Name) -> Option<Signature> {
+        let global = self.globals.get(name)?;
+        let ty = global.ty.clone();
+        let implicit = global.implicit;
+        let mut signature = self.signature_of(&ty);
+        signature.implicit = implicit;
+        Some(signature)
+    }
+
     fn signature_of(&mut self, ty: &T) -> Signature {
         let mut ctx: Ctx = Vec::new();
         let mut params = Vec::new();
@@ -304,7 +477,7 @@ impl Kernel {
             let (n, d) = &ps[0];
             // The record of a class (`check/classes.rs`) is the `where` of
             // the extracted function, not a parameter.
-            if n.as_deref().is_some_and(super::classes::is_dict) {
+            if n.as_ref().is_some_and(super::classes::is_dict) {
                 params.push(Role::Proof);
             } else {
                 params.push(self.role(&ctx, d));

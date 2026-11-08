@@ -1,0 +1,97 @@
+description = "The totes of incremental computation: whale (the dependency graph, with its proofs) and query-flow (queries, assets and their store on disk). Each checks without axioms, and the tests of its sources pass."
+
+@ cases.whale-checks-without-axioms
+tote = path`../../totes/whale`
+checks_all = "ok"
+
+@ cases.query-flow-checks
+tote = path`../../totes/query-flow`
+checks_all = "ok"
+
+@ cases.whale-tests-whale
+source = path`../../totes/whale/tests/whale.taut`
+extract = true
+tests = [
+  "a node and its reader are valid",
+  "writing the input invalidates the reader",
+  "confirm_unchanged makes the reader valid again",
+  "early cutoff",
+  "a stable reader of a volatile input is volatile",
+  "a stable change does not touch a reader of other stable nodes",
+  "a cycle is found",
+  "a chain has no cycle",
+]
+
+@ cases.query-flow-tests-flow
+source = path`../../totes/query-flow/tests/flow.taut`
+extract = true
+tests = [
+  "a query computes from its assets",
+  "a second read is cached",
+  "an asset change recomputes what read it",
+  "resolving the same value changes nothing",
+  "early cutoff stops at an unchanged output",
+  "a missing asset suspends",
+  "an invalidated asset suspends until resolved",
+  "a durable query skips checking after a volatile change",
+]
+
+@ cases.query-flow-tests-store
+source = path`../../totes/query-flow/tests/store.taut`
+extract = true
+tests = [
+  "a saved runtime reuses every result when the assets are the same, in memory",
+  "a loaded runtime waits for the host to confirm its assets, in memory",
+  "a changed asset after a load recomputes, and early cutoff still holds, in memory",
+  "a save of a loaded runtime loads again, in memory",
+  "nothing saved leaves the runtime as it is, in memory",
+  "a damaged state is discarded, in memory",
+  "a locator confirms the assets read from the storage, in memory",
+  "a durable asset read from the storage keeps its durability, in memory",
+  "a saved runtime reuses every result when the assets are the same, in files",
+  "a loaded runtime waits for the host to confirm its assets, in files",
+  "a changed asset after a load recomputes, and early cutoff still holds, in files",
+  "a save of a loaded runtime loads again, in files",
+  "nothing saved leaves the runtime as it is, in files",
+  "a damaged state is discarded, in files",
+  "a locator confirms the assets read from the storage, in files",
+  "a durable asset read from the storage keeps its durability, in files",
+  "the directory handler writes a temporary file and renames it over the state",
+]
+
+@ cases.query-flow-tests-macros
+source = path`../../totes/query-flow/tests/macros.taut`
+extract = true
+tests = [
+  "a query made by @query! computes",
+  "its key holds its arguments",
+  "an asset kind made by @asset_key! is resolved by key",
+  "its pending keys read back",
+  "output_eq decides early cutoff",
+  "keys: only the listed arguments tell queries apart",
+  "the struct codec of an asset key reads back",
+  "keys: an asset is told apart by its listed fields only",
+  "keys: a listed key keeps the whole key it was last named by",
+  "keys: a locator is given the whole key",
+]
+
+@ cases.query-flow-tests-features
+source = path`../../totes/query-flow/tests/features.taut`
+extract = true
+tests = [
+  "an error is cached and passed on",
+  "an asset error reaches its readers",
+  "a cycle is reported",
+  "a cancelled query is not cached",
+  "asset_state reads a loading asset as None, and the reader runs again",
+  "a locator gives an asset at once",
+  "a locator can leave an asset to the host",
+  "a locator that fails sets the asset to the error",
+  "a locator may read queries",
+  "listing the keys of a kind follows additions",
+  "invalidating a query computes it again",
+  "errors compare by the runtime's comparator",
+  "the tracer sees cache hits",
+  "an asset that becomes more durable still counts as changed",
+  "an asset that becomes less durable still counts as changed",
+]

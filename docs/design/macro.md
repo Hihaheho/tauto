@@ -21,26 +21,27 @@
 4. **カーネル（`check.rs`、`check/core.rs`）に規則を足さない。** マクロを展開した後のプログラムは、
    手で書いたプログラムと同じ道（カーネルと独立カーネル、`types.rs`・`rows.rs`・`lin.rs`）を通る。
 5. 新しい概念は六つだけ：構文の値（`SynExpr` など）、スコープ集合による衛生、`quote` と `$`、
-   `syntax` 宣言（文法と、その型付き AST のリテラル）、`macro` 宣言（登録）と呼び出し `NAME!(…)`、検査済みの項の手札 `Code`。
+   `syntax` 宣言（文法と、その型付き AST のリテラル）、`macro` 宣言（登録）と呼び出し `NAME!(…)`、検査済みの項の手札 `Judgement`。
 6. **構文とマクロを分ける**。``math`1 + 2 = 3` ``（とフェンスの ```` ```math ```` の塊。
-   「リテラルの三つの形」）は **構文 `math` のリテラル** で、マクロを通さずに型付き AST の値（`math_Eqn`）になる。
+   「リテラルの三つの形」）は **構文 `math` のリテラル** で、マクロを通さずに型付き AST の値（`math::Eqn`）になる。
    マクロは **明示的に呼ぶ**：``math!(`1 + 2 = 3`)``。引数のリテラルの構文はマクロの入力の型から推論され、
    書いてもよい（``math!(math`1 + 2 = 3`)``）。一つの構文に複数のマクロを登録できる（「`macro` 宣言（登録）と呼び出し `NAME!(…)`」）。
    型なしマクロと型付きマクロも同じ形 `nat!(a + b == b + a)`・`opt!(e)` で呼ぶ（括弧の中身は tauto の式。
-   入力の型が `SynExpr` なら検査せずに渡し、`Code` なら検査してから渡す）。``plaintext`…` `` は **組み込みの構文の一つ**（値は `Text`）。
-7. 文法は **`tauto.par` の文法の書き方の部分集合** で、**LL(k)**（k ≤ 3）。
-   解析表は Nib で書いた生成器 `totes/llkgen` が作り（コミットした参照の表と一字一句同じ表）、コミットする。
+   入力の型が `SynExpr` なら検査せずに渡し、`Judgement` なら検査してから渡す）。``plaintext`…` `` は **組み込みの構文の一つ**（値は `Text`）。
+7. 文法は **`tauto.par` の文法の書き方の部分集合** で、既定は **LL(k)**（k ≤ 3）、`%grammar_type 'LALR(1)'` を書けば
+   **LALR(1)**。解析表は Nib で書いた生成器が作り（LL(k) は `totes/llkgen`、LALR(1) は `totes/lalrgen`。
+   どちらもコミットした参照の表と一字一句同じ表）、コミットする。
    実行時の駆動部は自前の小さな表駆動の解析器（`crates/tauto-syntax`。self-host の
-   `totes/scan`・`totes/llk` と同じ表を読む）。
+   `totes/scan`・`totes/llk`・`totes/lr` と同じ表を読む）。
 8. 文法から、Nib の `struct` / `enum` で書いた **型付き AST** を決まった規則で生成する。各節点は span を持つ。
 9. 衛生は **スコープ集合**：識別子は名前とスコープの集合を持ち、束縛子のスコープ集合が識別子の
    スコープ集合の部分集合である束縛のうち最大のものに解決する。展開ごとに新しいスコープを出力に
    付け外し（flip）する。捕獲は「入力の識別子の文脈を借りる」明示的な操作だけ。
 10. span は **位置だけ** を表し、衛生には使わない。生成された節点はすべて **由来**（呼び出し元、
     定義元、生成、入れ子の展開）を持ち、診断は展開の連鎖をたどれる。
-11. マクロ関数の行は `{macro_error, macro_warn, elab, Div}` の部分でなければならない。さらに、
-    呼び出しのグラフが **マクロのホストが許した builtin** にしか届かないことを登録のときに確かめる。
-    `! {}` を「ホストに触れない」の根拠にしない（OS の builtin は行を持たないので。`macro-security.md`「信頼境界」）。
+11. マクロ関数の行は `{macro_error, macro_warn, elab, Div}` の部分でなければならない。ホストが答える builtin は
+    prelude の externs で行に効果を持ち、利用者のコードは呼べないので、行は閉包を通る呼び出しも含めて、関数がホストに触れるかを言う。
+    実行するホストは標準エフェクトに答えない（「マクロ関数の行」）。
 12. 実行はステップの予算、展開の深さ、出力の大きさ、評価器の確保量で止める。超えたら診断。
     結果は入力・関数・表・版の指紋で **キャッシュ** でき、決定的である。
 13. 型付きマクロは **宣言を検査した後** に走り、型推論の途中では走らない。結果の型は走る前に決まって
@@ -81,18 +82,18 @@
 この設計の中心にある判断は一つ：**マクロの出力は構文で、正しさは手で書いたコードを検査するのと同じ検査器が決める。**
 この判断が 1 と 2 を同時に満たす。マクロのために信頼する部分は増えず（カーネルも型検査器もマクロのないときと同じ）、
 新しい型付けの規則も要らない。代わりに失うものは「マクロを書いた時点で出力の型が保証される」ことで、
-これは診断の早さの問題であって健全性の問題ではない（「依存型とカーネルの断片」、OQ-6）。
+これは診断の早さの問題であって健全性の問題ではない（「依存型とカーネルの断片」、OQ-3）。
 
 ## 既存の部品との関係
 
 | 部品 | 形 | マクロとの関係 |
 |---|---|---|
-| 構文 | `crates/tauto-parol/tauto.par`（LL(k)、先読み 2）を `tools/tauto-parol-gen` が生成した表で読み、`cst.rs` が span 付きの CST を作る | 構文のリテラルを字句のモードで読み、一つのリテラルにまとめる（「リテラルの三つの形」）。DSL の文法も同じ書き方・同じ LL(k) |
-| 表面の AST | `surface.rs` の `SurfaceTerm { kind: TermKind, span: Span }`。型と式は同じ木。名前は `String` | 展開の結果は `SurfaceTerm` / `Stmt` に下ろす。マクロ専用の節点はカーネルに渡らない |
+| 構文 | `crates/tauto-parol/tauto.par`（LL(k)、先読み 2）を `tools/tauto-parol-gen` が生成した表で読み、`cst.rs` が span 付きの CST を作る | 構文のリテラルを字句のモードで読み、一つのリテラルにまとめる（「リテラルの三つの形」）。DSL の文法も同じ書き方（LL(k) か LALR(1)） |
+| 表面の AST | `surface.rs` の `SurfaceTerm { kind: TermKind, span: Span }`。型と式は同じ木。名前はソースの綴り・宣言参照・局所参照を区別する `Name` | 展開の結果は `SurfaceTerm` / `Stmt` に下ろす。マクロ専用の節点はカーネルに渡らない |
 | カーネル | `check.rs` が `SurfaceTerm` の上で名前付きで双方向検査し、受理した宣言を `check/core.rs` が locally nameless で検査し直す。両方が受理したものだけ足す | 型付きマクロの出力もこの二つを通る。規則は足さない |
-| 穴 | `?h` の位置で、ゴールの型と文脈を `HoleGoal { goal, context }` として集める | 型付きマクロの入力 `Code` の文脈と型は、穴と同じ道で集める（「`Code`」） |
-| 値の型・行・所有権 | `types.rs`（`TypeReport.terms` は **span をキーにした** 型）、`rows.rs`（`RowReport.calls` も span がキー）、`lin.rs`（種・使用・借用・CFL） | 実行されるコードの型付きマクロは、この三つの結果から `Code` を作り、出力をこの三つで検査し直す |
-| 評価器 | `eval.rs`。builtin は `extern "builtin"` を `fn builtin` で実装 | マクロ関数を走らせる。関数を値の引数で呼び値を受け取る入口と、許可リストつきのホスト（`macro-implementation.md`「評価器（`eval.rs`）」） |
+| 穴 | `?h` の位置で、ゴールの型と文脈を `HoleGoal { goal, context }` として集める | 型付きマクロの入力 `Judgement` の文脈と型は、穴と同じ道で集める（「`Judgement`」） |
+| 値の型・行・所有権 | `types.rs`（`TypeReport.terms` は **span をキーにした** 型）、`rows.rs`（`RowReport.calls` も span がキー）、`lin.rs`（種・使用・借用・CFL） | 実行されるコードの型付きマクロは、この三つの結果から `Judgement` を作り、出力をこの三つで検査し直す |
+| 評価器 | `eval.rs`。builtin は `extern "builtin"` を `fn builtin` で実装 | マクロ関数を走らせる。関数を値の引数で呼び値を受け取る入口と、標準エフェクトに答えないホスト（`macro-implementation.md`「評価器（`eval.rs`）」） |
 | prelude の span | `PRELUDE_BASE = 1 << 31` から始まる仮の位置で、プログラムの span と重ならない | 展開で作った節点にも重ならない仮の位置を割り当てる（「span と由来」） |
 | 文字列 | `"…"`（エスケープあり）、`'…'`（生）、``plaintext`…` ``（生、バッククォートと改行は入らない） | ``plaintext`…` `` は「名前つきの生の文字列」の一般形の一つ（「リテラルの三つの形」） |
 | tote | `Tauto.eure` の単位。依存が先、ファイルはパスの辞書順（`main.taut` は最後）に読む（[`self-host.md`](self-host.md)） | マクロの段の境界（「段の境界とファイル」） |
@@ -100,11 +101,11 @@
 
 隣の仕様への依存：
 
-- 名前空間（`rust-backend.md`「名前空間」）。生成する型と構文の値の名前は **接頭辞の名前**
-  （`math_Eqn`、`syn_ident`）で、モジュールには入れない。`math.Eqn`、`Syn.ident` に移すかは OQ-11。
-- OS の builtin（`self-host.md` の `os_read_file` など）は効果の行を持たない（`std/prelude/Os.taut` の署名に行がない）。これはマクロの安全性の
-  前提を壊すので、マクロのホストは builtin を許可リストで絞る（`macro-security.md`「マクロのホストの許可リスト」、
-  「マクロ関数の行」）。
+- 名前空間（`rust-backend.md`「名前空間」）。文法から生成する型と関数は構文の名前の下に入る（`math::Eqn`、`math::parse`）。`SynExpr` などの builtin の名前（`syn_ident`）は接頭辞のままで、`Syn.ident` に移すかは OQ-6。
+- ホストへの操作は標準エフェクト（`host-effects.md`）で、行に出る。ホストが答える `os_*` の builtin は
+  prelude だけが呼べる。二重の防御として、マクロのホストは標準エフェクトに答えず、
+  それに答える builtin（`Os::*`）を呼ぶとエラーにする
+  （「マクロ関数の行」）。
 
 ## 構成の比較と推奨
 
@@ -122,13 +123,13 @@
 
 - 出力の型（`SynExpr`、`List(SynStmt)`）と、それを作る `quote` / `$`
 - 衛生（スコープ集合）と span の由来
-- 登録（`macro NAME = FN`。入力の型で種類が決まる）と、呼び出しの書き方 `NAME!(…)`
-- 実行のホスト（予算、許可リスト、キャッシュ、記録）
+- 登録（`macro fn NAME(…)`。入力の型で種類が決まる）と、呼び出しの書き方 `NAME!(…)`
+- 実行のホスト（予算、キャッシュ、記録。標準エフェクトには答えない）
 - 道具（expand / inspect / trace）
 
-違うのは入力だけ：構文マクロは文法から生成した型の値、型なしマクロは tauto の式の構文の値 `SynExpr`、型付きマクロは `Code`、
+違うのは入力だけ：構文マクロは文法から生成した型の値、型なしマクロは tauto の式の構文の値 `SynExpr`、型付きマクロは `Judgement`、
 tactic は `ProofStep`。
-こうすると型付きマクロに固有の概念は「`Code` とその問い合わせ」と「型付きマクロの受理条件」の二つになる。
+こうすると型付きマクロに固有の概念は「`Judgement` とその問い合わせ」と「型付きマクロの受理条件」の二つになる。
 
 ## 文法と構文解析
 
@@ -137,27 +138,40 @@ tactic は `ProofStep`。
 | 選択肢 | 判断 | 理由 |
 |---|---|---|
 | 1. 文法から生成した Rust を組み込む | 不採用 | 文法ごとに Rust のコードを生成して tauto をビルドし直すことになり、利用者の文法をコンパイル時に足せない |
-| 2. 文法の文字列から表を作る生成器を使う | **採用（表の生成）** | 文字列の文法から LL(k) の先読み DFA・生成規則・字句の DFA を作れば、tauto をビルドし直さずに利用者の文法を読める。生成器は Nib で書いた `totes/llkgen`（「`tauto.par` との共通性と self-host」） |
-| 3. 表を読む小さな実行部を自前で持つ | **採用（実行部）** | 実行時に作った表をそのまま読める駆動部が要る（コンパイル時に埋め込む `&'static` の表では渡せない）。表を読む LL(k) の駆動部は小さい。self-host の `totes/llk`・`totes/scan` と同じ役割で、同じ表を読む |
+| 2. 文法の文字列から表を作る生成器を使う | **採用（表の生成）** | 文字列の文法から LL(k) の先読み DFA（LALR(1) では状態の表）・生成規則・字句の DFA を作れば、tauto をビルドし直さずに利用者の文法を読める。生成器は Nib で書いた `totes/llkgen`（LL(k)）と `totes/lalrgen`（LALR(1)）（「`tauto.par` との共通性と self-host」） |
+| 3. 表を読む小さな実行部を自前で持つ | **採用（実行部）** | 実行時に作った表をそのまま読める駆動部が要る（コンパイル時に埋め込む `&'static` の表では渡せない）。表を読む LL(k) と LALR(1) の駆動部は小さい。self-host の `totes/llk`・`totes/scan` と同じ役割で、同じ表を読む |
 | 4. 独自の文法の書き方と解析器 | 不採用 | `tauto.par` と書き方が分かれる。表の生成を tauto で書いても、書き方は `tauto.par` の書き方の部分集合のまま |
-| 5. 部分解析・合成 | 代わりの形 | 先読みの表は開始の非終端記号からの FOLLOW で作られるので、途中の非終端記号から始めると入力の終わりで予測できないことがある。部分解析は「入口ごとに開始規則を足して表を作る」で代える（OQ-14）。合成は自前の **前置き** トークン `${ … }`（「DSL の中の tauto の式（前置き `${ … }`）」）で代える |
+| 5. 部分解析・合成 | 代わりの形 | 先読みの表は開始の非終端記号からの FOLLOW で作られるので、途中の非終端記号から始めると入力の終わりで予測できないことがある。部分解析は「入口ごとに開始規則を足して表を作る」で代える（OQ-8）。合成は自前の **前置き** トークン `${ … }`（「DSL の中の tauto の式（前置き `${ … }`）」）で代える |
 
-**LL(k) にする**（LALR(1) を足すかは OQ-1）。理由：
+**文法の種類は二つ**：既定の **LL(k)**（k ≤ 3）と、`%grammar_type 'LALR(1)'` を書いた **LALR(1)**。
+`%grammar_type 'LL(k)'` と書いても同じで、書かなければ LL(k)。
 
-- `tauto.par` が LL(k) で、self-host の駆動部（`totes/llk`）も LL(k)。DSL も同じ駆動部で読めば、
-  駆動部は一つで済む（Minimalism、Self-hosting）。
-- 上から下へ読むので、CST の組み立て（「非終端記号を開く・閉じる・トークンを足す」の出来事の列、
+- LL(k)：上から下へ読むので、CST の組み立て（「非終端記号を開く・閉じる・トークンを足す」の出来事の列、
   `self-host.md`）と型付き AST の生成規則（「型付き AST の生成規則」）がそのまま対応する。
-- 予測の失敗は「この非終端記号でこの先読みは予測できない」という局所的な形で出るので、
-  期待するトークンの一覧が作りやすい（AI-Native）。
-- 欠点は左再帰が書けないこと。演算子の結合は `{ … }` の繰り返しと AST 側の畳み込みで書く（`cases/macro/syntax.eure` の `math_rest`）。
-
-`%grammar_type 'LALR(1)'` を書いた文法は拒否する。
+  予測の失敗は「この非終端記号でこの先読みは予測できない」という局所的な形で出るので、期待するトークンの一覧が
+  作りやすい。左再帰は書けない。演算子の結合は `{ … }` の繰り返しと AST 側の畳み込みで書く
+  （`cases/macro/syntax.eure` の `math_rest`）。
+- LALR(1)：下から上へ読み、状態と次のトークンで shift か reduce を決める。**左再帰が書ける**
+  （`Sum: Sum Plus Term | Term;`）ので、左結合の演算子を繰り返しと畳み込みに書き換えずに文法として書ける
+  （`cases/macro/syntax-lalr.eure`）。LL(k) の `k` による制限はなく、先読みは 1 トークン。
+- 選び方：先頭の記号で選択肢が決まる文法と、繰り返しで足りる文法は LL(k) にする。左結合の演算子のように
+  左再帰が自然な文法、先頭が共通で 3 トークンの先読みでも決まらない文法は LALR(1) にする。
+- **衝突はエラー**：LALR(1) の文法に shift/reduce の衝突、または reduce/reduce の衝突があれば、表を作るとき
+  （`tauto syntax gen`）に拒否する。優先順位や結合の指定で衝突を解く方式、順序つきの選択、曖昧さを許して
+  結果を森にする方式は入れない（型付き AST が一つに決まらなくなる、曖昧さが見えなくなる）。衝突は文法を
+  曖昧でない形に書き直して解く。メッセージは `LALR(1) shift/reduce conflict in state N on T`（または
+  `reduce/reduce`）の行に、競合する動作（`shift to state M`、`reduce by production #P of NT`）を一行ずつ続ける。
+  `N` は表の状態の番号、`T` は先読みの終端記号、`P` は生成器が数える生成規則の番号。入力の終わりで受理と
+  別の動作が重なる文法（開始記号が文法の中で使われる、など）も同じくエラーにする。LL(k) の衝突
+  （`LL(3) conflict in rule …`）と同じく、表を作れないので、その文法の `syntax!` は使えない。
+  検査は `tools/selfhost-harness/tests/llkgen.rs`。
+- どちらの文法でも、型付き AST の生成規則（「型付き AST の生成規則」）と `=> …` の一覧は同じ規則で決まる。
+  左再帰の規則も他の規則と同じく、選択肢ごとの変種を持つ enum になる。
 
 ### `syntax` 宣言
 
 ````nib
-syntax math = ```par
+syntax!(math, ```par
 %start Eqn
 %title "math"
 %%
@@ -170,27 +184,28 @@ Equals: '=';
 Plus: '+';
 LParen: '(';
 RParen: ')';
-```
+```) => …
 ````
 
-- 右辺は ```` ```par ```` の塊（「リテラルの三つの形」）で、中身は **`tauto.par` の文法の書き方の部分集合**。
-  `par` は組み込みの名前で、文法の文字列を表す（マクロではない。`syntax` の右辺にだけ書ける）。
+- 第二引数は ```` ```par ```` の塊（「リテラルの三つの形」）で、中身は **`tauto.par` の文法の書き方の部分集合**。
+  `syntax!` と `inductive_syntax!` は `include_text!` と並ぶ組み込みで、名前で認識され、最初の読み込みの段階で登録される（組み込みはこの三つだけ）。
 - `syntax` は **解析器と型とリテラル** を定義する。展開関数は登録しない（展開は `macro`、「`macro` 宣言（登録）と呼び出し `NAME!(…)`」）。
   理由：一つの文法を複数のマクロで使える。マクロを通さずにリテラルを型付き AST の値として使う（「文法から作られるもの」）、
-  実行時に DSL を読む（`math_parse`）だけの使い方もある。
-- 書ける指示：`%start`（一つ、必須）、`%title`、`%comment`、`%line_comment`、`%block_comment`、
+  実行時に DSL を読む（`math::parse`）だけの使い方もある。
+- 書ける指示：`%start`（一つ、必須）、`%title`、`%describe 終端記号 "意味"`（構文エラーがその終端記号を名前の代わりにこの言葉で呼ぶ。終端記号ごとに一つまで）、`%comment`、`%line_comment`、`%block_comment`、
   `%auto_newline_off`、`%auto_ws_off`、`%on … %enter/%push/%pop`、`%scanner`、終端記号の `^`（AST から落とす）、
   正規表現・文字列の終端記号、`?=`・`?!` の先読み。
 - 正規表現の `\d`・`\p{Nd}`・`\p{Decimal_Number}` は Unicode の十進数字を表す。
   `\D`・`\P{Nd}`・`\P{Decimal_Number}` はその補集合を表す。`\p{N}` は十進数字以外の数も含む。
-- 書けない指示（エラー）：`%grammar_type`（LL(k) に決まっている）、`%user_type`・`%nt_type`・`%t_type`・
+- 書ける指示：`%grammar_type`（`'LL(k)'` か `'LALR(1)'`。省略は LL(k)。「比較」）。
+- 書けない指示（エラー）：`%user_type`・`%nt_type`・`%t_type`・
   `: Type` の注釈（型は 「型付き AST の生成規則」の規則でだけ決まる）、`%start` 以外の開始。
-- 先読みの最大は **3**（`tauto.par` の 2 より一つ多い。OQ-1）。`k > 3` が要る文法はエラー。
+- LL(k) の先読みの最大は **3**（`tauto.par` の 2 より一つ多い）。`k > 3` が要る文法はエラー。LALR(1) の先読みは 1。
 - 解析表は文法の文字列の指紋で引く **生成物** で、`tauto syntax gen` が作り、コミットする（「`tauto.par` との共通性と self-host」、`macro-implementation.md`「`totes/llkgen` と表のファイル」）。
 
 ### 型付き AST の生成規則
 
-文法 `S` の非終端記号 `N` ごとに、Nib の型 `S_N` を作る。規則は **書かれた文法の形** で決める
+文法 `S` の非終端記号 `N` ごとに、Nib の型 `S::N` を作る。規則は **書かれた文法の形** で決める
 （表の生成器が繰り返し・省略のために内部で作る `…List`・`…Opt` の非終端記号には型を作らない）。
 
 1. **トークンの非終端記号**：右辺が終端記号一つだけ（`Num: /[0-9]+/;`）なら、型を作らず、
@@ -199,10 +214,10 @@ RParen: ')';
    struct SynToken { text: Text, span: SynSpan, ctx: SynCtx }
    ```
    `ctx` は呼び出し元の文脈（「構文の値（`std/prelude/Macro.taut`）」）で、トークンから識別子を作るときに使う。
-   開始の非終端記号がトークンの非終端記号なら、`struct S_N { span: SynSpan, token: SynToken }` を作る（マクロ関数の
+   開始の非終端記号がトークンの非終端記号なら、`struct S::N { span: SynSpan, token: SynToken }` を作る（マクロ関数の
    入力の型が要るので）。
-2. **選択肢が一つ**：`struct S_N { span: SynSpan, フィールド… }`。
-3. **選択肢が二つ以上**：`enum S_N { 構成子… }`。構成子の名前：
+2. **選択肢が一つ**：`struct S::N { span: SynSpan, フィールド… }`。
+3. **選択肢が二つ以上**：`enum S::N { 構成子… }`。構成子の名前：
    - 選択肢がちょうど一つの非終端記号 `M` なら、構成子は `M(S_M)`（または `M(SynToken)`）。**推奨の形**。
    - そうでなければ、選択肢の記号の名前を順につないだもの（`LParenSumRParen`）で、レコードの構成子
      `{ span: SynSpan, フィールド… }`。lint `syntax-unnamed-alternative` がこの形を知らせる。
@@ -213,23 +228,25 @@ RParen: ')';
    文法の SHA が同じ既存の表は `syntax gen` では保持する。生成器の命名規則を適用して作り直す操作は
    `tauto syntax gen --force DIR`、生成された型の確認は `tauto syntax show DIR NAME`。フィールド名が変わる表では利用側も合わせる。
 5. `[ β ]` → `Option(T)`、`{ β }` → `List(T)`。`T` は β が記号一つならその型、二つ以上なら
-   生成した構造体 `S_N_Opt1`・`S_N_Rep1`（番号は N の中で出てきた順）。
-6. `( β | γ )` → 生成した列挙 `S_N_Group1`（構成子の名前は 3 と同じ規則）。
+   生成した構造体 `S::N_Opt1`・`S::N_Rep1`（番号は N の中で出てきた順）。
+6. `( β | γ )` → 生成した列挙 `S::N_Group1`（構成子の名前は 3 と同じ規則）。
 7. 前置きトークン `TautoExpr`（「DSL の中の tauto の式（前置き `${ … }`）」）→ `SynExpr`。
 8. 再帰はそのまま再帰型になる（Nib の `enum` は再帰できる）。
 
 `span` は **構造体と、レコードの構成子** の最初のフィールド。トークンは自分の `span` を持つ。
 エラー節点は作らない：解析は最初の構文エラーで止まり、型付き AST はできない（「構文エラー」）。
-CST（損失のない木）は道具（LSP、`inspect`）のためにだけ残し、マクロ関数には渡さない（OQ-16）。
+CST（損失のない木）は道具（LSP、`inspect`）のためにだけ残し、マクロ関数には渡さない（OQ-9）。
 
 例：「`syntax` 宣言」の `math` から（全部は `cases/macro/syntax.eure` の `a-syntax-declaration-makes-types-and-a-parser`）：
 
 ```nib
-struct math_Eqn { span: SynSpan, sum: math_Sum, equals: SynToken, sum_2: math_Sum }
-struct math_Sum { span: SynSpan, term: math_Term, rep: List(math_Sum_Rep1) }
-struct math_Sum_Rep1 { span: SynSpan, plus: SynToken, term: math_Term }
-enum math_Term { Num(SynToken), Paren(math_Paren) }
-struct math_Paren { span: SynSpan, l_paren: SynToken, sum: math_Sum, r_paren: SynToken }
+module math {
+  struct Eqn { span: SynSpan, sum: Sum, equals: SynToken, sum_2: Sum }
+  struct Sum { span: SynSpan, term: Term, rep: List(Sum_Rep1) }
+  struct Sum_Rep1 { span: SynSpan, plus: SynToken, term: Term }
+  enum Term { Num(SynToken), Paren(Paren) }
+  struct Paren { span: SynSpan, l_paren: SynToken, sum: Sum, r_paren: SynToken }
+}
 ```
 
 （`{ Plus Term }` の繰り返しのフィールド名は、記号が二つなので `rep`。一つなら記号の名前の複数形にはせず
@@ -239,12 +256,85 @@ struct math_Paren { span: SynSpan, l_paren: SynToken, sum: math_Sum, r_paren: Sy
 展開関数は普通の型エラーになる。表と型の生成物は文法の指紋（SHA-256）と生成器の版で引く。
 別の tote が文法を使うときは、その tote の生成物の指紋を依存の情報に含める（`macro-implementation.md`「`totes/llkgen` と表のファイル」）。
 
+### 構文に付ける関数（`with`）
+
+`syntax` の宣言には、その構文のテキストを **道具** が扱うときに呼ぶ関数を付けられる。`with` の後に、役割と関数の名前を `,` で並べる
+（役割ごとに一度まで）。
+
+````nib
+syntax!(math, ```par
+…
+```, with(fmt: math_fmt, tokens: math_tokens)) => …
+````
+
+- 役割は `fmt`（テキストの整形、`tauto fmt` が使う）と `tokens`（色付け、言語サーバーの semantic tokens が使う）の二つ。
+  関数はプログラムのグローバルな名前で、`macro` の関数と同じく `syntax` の宣言より前でも後でも定義できる。
+  登録は **宣言を作らない** ので `=>` の一覧には現れない。
+- 関数が受け取るのは、タグ付きの木ではなく **テキストそのもの** を忠実に写した値で、型で選ぶ（型付き AST は受け取らない：
+  `^` で落とした終端記号、空白、コメントが木に残らないため、テキストを書き直す用途に足りない）。
+
+  | 受け取る型 | 中身 |
+  |---|---|
+  | `List(SynTok)` | 字句解析の結果。空白とコメントも含む。構文解析を通らない（書きかけのテキストにも使える） |
+  | `SynCst` | 構文解析の結果の無損失の木。構文解析が通らなければ関数は呼ばれない |
+
+  ```nib
+  struct SynTok { kind: Text, text: Text, start: u64, end: u64, skipped: Bool }
+  enum SynCst { CstNode(Text, List(SynCst), u64, u64), CstTok(SynTok) }
+  struct SynHighlight { start: u64, end: u64, kind: Text }
+  ```
+
+  `kind` は終端記号の名前、`skipped` は文法が読み飛ばす（空白とコメント）ことを表す。`start`・`end` はテキストの中のバイト位置（0 から）。
+  `CstNode(名前, 子, start, end)` の名前は文法の非終端記号で、繰り返し・省略・群のために表の生成器が作る非終端記号は節点にならない
+  （その中身は外側の節点の子になる）。`start`〜`end` は、読み飛ばされないトークンのうち最初から最後までで、前後の空白とコメントは
+  節点の外（親の子として兄弟）に置く。根だけが、テキストの先頭と末尾の空白とコメントを子に持つ。
+- 型：
+
+  | 役割 | 型 |
+  |---|---|
+  | `fmt` | `(List(SynTok), u64) -> Option(Text) ! {Div}`、または `(SynCst, u64) -> Option(Text) ! {Div}` |
+  | `tokens` | `(List(SynTok)) -> List(SynHighlight) ! {Div}`、または `(SynCst) -> List(SynHighlight) ! {Div}` |
+
+  関数の存在、型、効果は、プログラムを読むときに検査され、違反は `syntax s: …` のエラーになる。効果の行は `Div` と
+  `macro_error` だけを持てる。ホストが答える標準エフェクト（`stdout`、`fs_read`、`net` など。`host-effects.md`）が行にあれば、
+  その名前を挙げて登録を拒否する。呼べる関数と組み込みは、ほかには絞らない：閉包も `Vec`・`HashMap`・`Text` も使える。
+  実行するホストは標準エフェクトに答えず、実行中に実行されたらエラーにする。
+- **`fmt`**：第二引数は、テキストの行に使える桁数（`tauto fmt` の幅から、リテラルの字下げか開始位置を引いたもの）。
+  返すテキストは、ブロックのリテラルでは閉じのフェンスの字下げを除いたもの、コメントのフェンスでは行頭の接頭辞を除いたもので、
+  `None` は「そのまま」。
+  `tauto fmt` は、`fmt` を登録した構文のテキストを、**ファイルの構文木から** すべて探して関数の結果で置き換える。
+  マクロの直接のリテラル引数で構文名が省略されている場合は、呼び出しが解決した入力構文を使う。
+  探すのは次の二つで、マクロや展開、型検査の結果によらない。
+  - 名前つきのリテラル（``math`…` ``、``math<`…`>``、```` ```math ```` の塊）。普通のコード、`quote` の中、`macro` の定義、
+    どこからも使われない関数、検査や展開に失敗するコードの中にあるものも含む。文字列とコメントの中は、リテラルではないので読まない。ファイルの構文木だけから探すので、構文解析できないファイルは何も整形せず警告を出す。
+  - コメントの中のフェンス（「ソース位置、補完、ハイライト、DSL の中のエラー」の規則で読む）。本体はフェンスの接頭辞（`    /// `）を除いて関数に渡し、結果の各行に接頭辞を付け直す（空行は接頭辞の末尾の空白を除いたもの）。
+    閉じないフェンスは警告にして、そのままにする。
+
+  探すのはファイルの構文木だけで、置き換える候補に `fmt` を登録しうる構文のものがあるときに限り、構文の名前と文法の表を、ファイルとその `import` を読んで得る（候補がなければ読まない）。
+  読めなければ何も置き換えず、警告を出す。ファイルの型検査が通らなくても、登録された関数とその呼び先が動けば置き換える。
+  ブロックのリテラルの本体は、構文解析が取り除いた字下げ（閉じのフェンスの字下げ）を付け直して書き戻す。閉じのフェンスより浅い行がある（`macro.block_indent`）
+  ブロックと、閉じのフェンスが行頭から始まらないブロックは、そのままにして警告を出す。ファイルの改行（LF か CR LF）は変えない。
+  置き換える前に次を確かめ、どれかが外れればそのテキストをそのままにして警告を出す（`tauto fmt --check` も同じ警告を出す）。
+  1. 結果は同じ構文のテキストとして読める。
+  2. 空白を除いたトークン（読み飛ばされるコメントを含む）が元と同じ並びである。整形器は空白だけを変える。
+  3. 結果にもう一度 `fmt` を適用しても変わらない（冪等）。
+
+  リテラルやフェンスの形が結果を入れられないとき（一行のリテラルが改行かバッククォートを含む、区切りつきのリテラルが自分の閉じの区切り（`` `> ``、`` `>> ``、`` `>>> ``）を含む、塊が自分の閉じのバッククォートの並びを含む、コメントのフェンスの本体に閉じと同じ行がある、など）もそのままにして警告を出す。
+  登録がないときは、テキストに触れない。リテラルの区切りのバッククォートとフェンスの行、その周りのコードは変えない。
+  整形されていないテキストが残っていれば、`tauto fmt --check` は整形が要るファイルとして挙げる。整形の実行は、マクロの展開と同じ予算（ステップ、割り当て）で行う。
+- **`tokens`**：返す範囲はテキストの中のバイト位置で、`kind` は言語サーバーの色の一覧（`keyword`、`number`、`string`、`variable`、
+  `comment`、`operator`、`type`、`function`、`parameter`、`property`、`namespace`、`enumMember`、`macro`、`regexp`、`struct`、`enum`、
+  `class`、`interface`、`typeParameter`、`method`、`event`、`decorator`、`modifier`）のどれか。関数が返した範囲だけに色が付く。
+  `tokens` の登録がない構文は、終端記号の名前から色を決める（「ソース位置、補完、ハイライト、DSL の中のエラー」）。
+  関数がエラーになった（予算切れ、一覧にない色、テキストの外の範囲）リテラルも、同じく終端記号の名前で色を付ける。
+- `tauto fmt` の `totes/fmt` 版は、リテラルの中身に触れない（`fmt` の関数による整形はこの節の道具の層で、Rust の `tauto fmt` だけが行う）。
+
 ### 文法から作られるもの
 
-`syntax math = …` は、その位置に次の宣言を置いたのと同じになる。**作る宣言の一覧は `=>` の後ろに書く**（「作る宣言の一覧」）：
+`syntax!(math, ```par …```) => …` は、その位置に次の宣言を置いたのと同じになる。**作る宣言の一覧は `=>` の後ろに書く**（「作る宣言の一覧」）：
 
 - 「型付き AST の生成規則」の型。
-- `fn math_parse(t: Text) -> Result(math_Eqn, SynDiag)`：実行時にも使える解析関数（builtin
+- `fn math::parse(t: Text): Result(math::Eqn, SynDiag)`：実行時にも使える解析関数（builtin
   `syn_parse` を表の番号で呼ぶ）。マクロでない使い方（設定ファイルを読む、など）もできる。
   Rust backend は構文名・grammar SHA がリテラルの呼び出しを、検証済みの表を埋め込んだ解析関数に
   lower する。生成 AST の型・再帰フィールド・`Option`・`List` と `SynDiag` は Rust からも読める。
@@ -252,19 +342,21 @@ struct math_Paren { span: SynSpan, l_paren: SynToken, sum: math_Sum, r_paren: Sy
   UTF-8 バイト位置は evaluator と共通である。動的に構文名や SHA を選ぶ呼び出し、戻り型が
   その構文の AST と一致しない呼び出し、`TautoExpr` の穴を含む実行時構文は build 時に拒否する。
   `TautoExpr` を埋め込む用途ではコンパイル時の構文リテラルを使う。
-- **`inductive syntax math = …`**（実装済み）：上の Nib の型と `math_parse` に加えて、**証明側の `inductive` の型** を作る。
-  カーネルは Nib の `struct` / `enum` を見ないので、これがないと生成された AST について定理を書けない。
-  - 型は `math_Eqn_I` のように型名に `_I` を付ける。一つの `mutual` の塊で、リスト（`List`）を通した入れ子もそのまま書く。
-    構成子は、`struct` が `mk_<型名>`、`enum` が `<構成子名>_I`。フィールド名は文法の名前に `f_` を付ける
-    （`plus` や `star` は `std/` の名前なので、そのままだと影を作る）。トークンは文字列 `Text` になり、`span` と衛生のスコープは持たない。
-  - `math_<Type>_to_i`（Nib の関数）が、`math_parse` が読んだ木をこの `inductive` の木にする。これは証明されない。
-  - `${ … }`（`TautoExpr`）を持つ文法は `inductive` にできない（`SynExpr` を持てないので、エラー）。
-  - tote の `.taut` に書くと、Nib の型・`math_parse`・`math_<Type>_to_i` は抽出されずそのまま Nib として出る。
+- **`inductive_syntax!(math, …) => …`**（実装済み）：上の Nib の型と `math::parse` に加えて、**証明側の `inductive` の型** を作る。
+  生成される Nib の型は `inductive` の付かない `struct` / `enum` で、`Span` などカーネルが読めないフィールドも持つので、カーネルは読まない（`program-data.md`）。これがないと生成された AST について定理を書けない。
+  - 型は `math::Eqn::I` のように型名に `.I` を付ける。一つの `mutual` の塊で、リスト（`List`）を通した入れ子もそのまま書く。
+    構成子は、`struct` が `<型名>.Mk`、`enum` が `<構成子名>_I`（どちらも大文字で始まる）。フィールド名は文法の名前に `f_` を付ける
+    （`plus` のような文法の名前は `std/` の名前と重なると影を作る）。トークンは文字列 `Text` になり、`span` と衛生のスコープは持たない。
+    `enum` の構成子が `I` か `to_i`（文法の規則の名前）のときは、作る `<型名>::I`・`<型名>::to_i` と同じ名前に二つの意味を持たせることになるので、宣言をエラーにする。
+  - `math.<Type>.to_i`（Nib の関数）が、`math::parse` が読んだ木をこの `inductive` の木にする。これは証明されない。
+  - `${ … }`（`TautoExpr`）の `inductive` の形は、その式の木 `SynExprI`（`std/SynTree.taut`）で、変換は `SynTree::expr`。
+    木は span と衛生のスコープを持たず、名前は書かれた位置を持つ。使う文法では `std/SynTree.taut` も読み込んでおく。
+  - tote の `.taut` に書くと、Nib の型・`math::parse`・`math.<Type>.to_i` は抽出されずそのまま Nib として出る。
     `std/Std.taut` と `std/Text.taut` を読み込んでおく。
   - 使い方の例は `examples/calc`。
 - **リテラル** ``math`…` ``（「リテラルの三つの形」の三つの形）：検査のときに表で解析し、型付き AST の値を **構成子の項** として
-  その場所に置く（`math_Eqn { span: …, … }` を手で書いたのと同じ）。マクロは走らない。解析のエラーは
-  `macro.syntax_error`（「構文エラー」）。値の型は開始の非終端記号の型（`math_Eqn`）。
+  その場所に置く（`math::Eqn { span: …, … }` を手で書いたのと同じ）。マクロは走らない。解析のエラーは
+  `macro.syntax_error`（「構文エラー」）。値の型は開始の非終端記号の型（`math::Eqn`）。
   - ユーザーのコードを走らせないので、**同じファイルの中** でも `syntax` の宣言より後ならリテラルを書ける
     （「段の境界とファイル」の段の境界はマクロの呼び出しにだけ掛かる）。
   - 値の中の `SynSpan` はリテラルの中の位置を由来の表（「span と由来」）に登録した番号、`SynToken.ctx` はリテラルを書いた
@@ -279,29 +371,48 @@ DSL の中に tauto の式を書く場所が要る（``math!(`$n + 0 = $n`)``）
 
 - 文法が予約の名前 `TautoExpr` を終端記号として使うと（定義は書かない）、その文法の字句解析は、どのモードでも
   入力の読んでいる位置が `${` で始まるとき、DFA より先に **tauto の字句規則で** 対応する `}` までを読み、
-  中身を tauto の `Expr` として解析した結果を一つのトークンにする。
-- 名前だけなら `$n` と書ける（`$` に続く識別子 `[A-Za-z_][A-Za-z0-9_]*` を一つのトークンにし、中身の式は
-  その名前の変数）。式は `${ … }` だけで、`${n}` は書かない（一つのことに書き方は一つ。`tauto lint` の
-  `braced-name` が `std/` と `meta/` で禁じる）。`${` と `$n` は同じ終端記号 `TautoExpr`。
+  中身を tauto のブロックの本体（`{ … }` の中と同じ文の並び）として解析した結果を一つのトークンにする。
+  ブロックと同じに、文が式一つならその式、`let` などの文が前にあればそれに続く最後の式が値で、文の束縛は
+  `${ … }` の中だけに及ぶ。
+  `${ … }` の `{ … }` がそのままブロックなので、中に `{ … }` を重ねて書く必要はない。
+- **後置の式は `$` 一つで書ける。** `$` の直後（空白を挟まない）から、`tauto.par` の `CondPostfix`
+  （`CondPrimary` に呼び出し `(…)` が続いたもの。フィールド `.f` は読まない）を一つ、tauto の字句規則で読んで一つのトークンにする。
+  演算子は読まないので、外側に演算子のある式は括弧で囲む。
+  - `$n`：名前の変数。
+  - `$add(add(a, b), c)`、`$Eq::sym(h)`：呼び出し。括弧の中には演算子も書ける（`$Succ(Zero + n)`）。
+  - `$(1 + n)`：括弧の式（`Paren`）。
+  - `$nat!(a = b)`：マクロの呼び出し（`MacroCall`）。展開は外のマクロの出力の中で行われる（下の「中身にマクロの呼び出し」）。
+  - 呼び出しの `(` は `$` の項に空白なしで続くときだけ読む。`$f (x)` は `$f` で止まり、`(x)` は DSL の字句。
+  - `$[a, b]`・`$[x, ..rest]`・`$[]`：リストリテラル。意味は `${[…]}` と同じ。`[` と `]` の対応で終わりを決め、
+    入れ子（`$[[a], [b]]`）も書ける。呼び出しは続けて読まない。ラベル `[key]` は `$` で始まらないので紛れない。
+  - フィールドは `$(p.fst)` と括弧で書く。`.` は文の終わりなど DSL が自分の字句に使うことが多く（`proof!` の本文の
+    `… is $n.`）、`$n.` の `.` を読み違えないため。
+  終わりは括弧の対応と字句で決まり、DSL の文法には依存しない（DFA より先に読むのは `${` と同じ）。
+- **`${ … }` は文の並びが要るときだけ。** `let` などの文を前に置くときに書く。式一つなら `$` の形で書き、
+  `${n}`・`${f(x)}`・`${a + b}`（`$(a + b)` と書く）は書かない（一つのことに書き方は一つ。`tauto lint` の
+  `braced-name` が `std/` と `meta/` で禁じる）。`${` と `$` の形は同じ終端記号 `TautoExpr`。
+- **なぜ `$` 一つか。** 等式の連鎖のような DSL では、行ごとに式が二つ三つ入る。`${ … }` で囲むと記号が式の数の
+  四倍増え、読み手が式の中身より区切りを読むことになる（AI-Native、Expressiveness）。後置の式に限れば終わりが字句で決まるので、
+  文法の側に「ここは tauto の式」と書く仕組み（パーサーの状態で字句を変える）を足さずに済む（Minimalism）。
 - 中身の span は本物の位置（呼び出しの文字列の中）を持ち、文脈は呼び出し元のもの。
 - `TautoExpr` を使わない文法では `${` は普通の文字。
 - 中身にマクロの呼び出しがあってよい。展開は外のマクロの出力の中で行われる（「順序」、外側から）。
 
 ### `tauto.par` との共通性と self-host
 
-Tauto 自身の文法は `totes/grammar/src/grammar.taut` の `syntax tauto` で定義する。
-同 tote の `tauto_parse` を使って Tauto のソースを解析できる。`tauto syntax source DIR NAME` は
+Tauto 自身の文法は `totes/grammar/src/grammar.taut` の `syntax!(tauto, …)` で定義する。
+同 tote の `tauto::parse` を使って Tauto のソースを解析できる。`tauto syntax source DIR NAME` は
 表や生成された型を読み込まず文法の文字列をそのまま標準出力へ取り出す。bootstrap の
 `tauto.par` もこの宣言から生成する（[`totes/grammar`](../../totes/grammar/README.md)）。
 
 - 書き方は `tauto.par` と同じ（部分集合）。違いは 「`syntax` 宣言」の禁止だけ。
-- 表の形は `self-host.md` が `totes/syntax` のために決めた項目（終端記号の名前、非終端記号、先読み DFA、
+- 表の形は `self-host.md` が `totes/syntax` のために決めた項目（終端記号の名前、非終端記号、先読み DFA（LALR(1) では状態ごとの動作と goto）、
   生成規則、字句のモード、文字クラスの区間）と同じものに、型の生成規則の情報（「型付き AST の生成規則」のための、
-  どの非終端記号が繰り返し・省略・群か）を足したもの。だから `totes/llk`・`totes/scan` が
+  どの非終端記号が繰り返し・省略・群か）を足したもの。だから `totes/llk`・`totes/lr`・`totes/scan` が
   そのまま DSL を読める。
-- 表の生成器（FIRST/FOLLOW と k 個の先読みの計算、正規表現から DFA への変換、最小化）は
-  Nib で書いた tote `totes/llkgen` で、リポジトリにコミットした参照の表と一字一句同じ表を作る
-  （`crates/tauto-selfhost/tests/llkgen.rs`）。`tauto syntax gen` はこれをビルドして走らせ、表をコミットする。
+- 表の生成器（FIRST/FOLLOW と k 個の先読みの計算または LALR(1) の状態の計算、正規表現から DFA への変換、最小化）は
+  Nib で書いた tote（LL(k) は `totes/llkgen`、LALR(1) は `totes/lalrgen`）で、リポジトリにコミットした参照の表と一字一句同じ表を作る
+  （`tools/selfhost-harness/tests/llkgen.rs`）。`tauto syntax gen` はこれをビルドして走らせ、表をコミットする。
   表の生成は生成のときだけ別に走り、検査は表を読むだけ（`syntax` を書き換えたら `tauto syntax gen` を回す）。
   表をコミットせずに検査のときに作ってキャッシュする運用は選ばない。
 
@@ -319,9 +430,9 @@ Tauto 自身の文法は `totes/grammar/src/grammar.taut` の `syntax tauto` で
 | 塊 | 3〜6 個のバッククォートと名前の行（```` ```math ````）から、同じ数のバッククォートまで | 開きより少ない数のバッククォートの並びは書ける | 式、型、文 |
 
 ````nib
-let p = math`1 + 2 = 3`
+let p := math`1 + 2 = 3`
 
-let q = ```math
+let q := ```math
   (1 + 2)
     + 3 = 6
   ```
@@ -333,7 +444,7 @@ let q = ```math
 - **名前を省けるのはマクロの引数の中だけ**（``math!(`1 + 2 = 3`)``）。そこでは構文がマクロの入力の型から決まる（「`macro` 宣言（登録）と呼び出し `NAME!(…)`」）。
   ほかの場所で名前のない形はエラー（`a-backtick-text-needs-the-plaintext-tag`）。名前が値の型を決めるので、
   省けるのは推論できる場所に限る。期待される型から名前のないリテラルの構文を推論する形
-  （``let e: math_Eqn = `1 + 2 = 3` ``）は入れない（字句の段では構文が決まらないため）。
+  （``let e: math::Eqn := `1 + 2 = 3` ``）は入れない（字句の段では構文が決まらないため）。
 - 字句：字句のモードで読む（バッククォートの数ごとのモード）。開き（`` math` ``、`` math<` ``、```` ```math ````＋行末まで）で
   モードに入り、中身の断片と閉じを別のトークンとして読み、`surface.rs` が一つの呼び出しにまとめる（`macro-implementation.md`「`tauto.par` のマクロの構文」）。
   塊の開きの行は、名前の後に空白だけを書ける。
@@ -344,16 +455,17 @@ let q = ```math
   行内の二つの形は字下げを取り除かない。
 - **字下げと位置**：字下げを取り除くと DSL の位置と書かれた位置は一対一でなくなるが、取り除いた後の中身の位置（DSL の文法が見る位置）から書かれた位置への対応は、行ごとの
   ずれ（取り除いた空白の数）の表で引く。DSL の中の診断は書かれた行と列を出す（「span と由来」）。
-- 名前の解決：リテラルの名前は **構文の名前の空間** で引く（`syntax` 宣言と組み込みの `plaintext`）。見つからなければ
-  「`math` は構文ではない」。マクロ・型・関数の名前とはぶつからない（`syntax math` と `macro math` は両方書ける）。
+- 名前の解決：リテラルの名前は **構文の名前の空間** で引く（`syntax!` の宣言と組み込みの `plaintext`）。見つからなければ
+  「`math` は構文ではない」。マクロ・型・関数の名前とはぶつからない（`syntax!(math, …)` と `macro fn math` は両方書ける）。
 
 ### 入れないもの
 
 - **トークン木の引数**（字句の並びをそのまま渡し、マクロが自分で読む形）：入れない。tauto の式として読める引数は
   型なしマクロ（「型なしマクロ」）が **構文の値** で受け取る。tauto の式として読めない記法（`by`、`:=` など）は構文マクロの
   リテラルで書く。字句の並びという三つ目の表現を足さない。
-- `NAME!(` は名前・`!`・`(` が空白なしで続くときだけマクロの呼び出しで、効果の行（`-> T ! {e}`）や否定（`!x`）とは
-  字句で区別する（`macro-implementation.md`「`tauto.par` のマクロの構文」）。
+- 名前・`!`・`(` が続くと（間に空白があってもなくても）マクロの呼び出しで、効果の行（`-> T ! {e}`）とは `!` の次が `(`
+  か `{` かで区別する。`!` はどこでも一つのトークンで、真偽値の否定は関数 `not(x)` で書く（`macro-implementation.md`「`tauto.par` のマクロの構文」）。
+  引数のないマクロは `NAME!()` と書く（引数は単位）。
 - **呼び出しの入れ子のエスケープ**：DSL の中にマクロを書くには `${ … }`（「DSL の中の tauto の式（前置き `${ … }`）」）を使う。
 - **型付きマクロにリテラルを渡す形**：入れない。型付きマクロの入力は tauto のコードなので、`f!(e)` の中身は式だけ。
 
@@ -361,66 +473,109 @@ let q = ```math
 
 - DSL の中のトークンの span は **呼び出しの文字列の中の本物のバイト位置**（`parse_program_at` と同じく
   開始位置を足す）。構文エラーはそこを指し、`tauto check --json` の `line`・`col` は DSL の中の行と列になる。
-- 構文エラーの診断（`macro.syntax_error`）は期待する終端記号の一覧（名前と、`%title` があればその文法の名前）を持つ。
-- ハイライトと補完：LSP は呼び出しのトークンを見つけたら、その文法の表で中身を読み、
-  トークンの種類（終端記号の名前）で色を付け、予測に失敗した位置の期待する終端記号を補完の候補にする。
+- 構文エラーの診断（`macro.syntax_error`）は期待する終端記号の一覧（名前と、`%title` があればその文法の名前）を持つ。メッセージは文ではなく、ツールのメッセージの id（`message`）と引数（`args`：構文の名前、期待する終端記号ごとの `expected`、見つけた `found`）で持ち、ツールが設定された言語で書く。引数は、`%describe` のある終端記号を名前でなくその言葉で呼ぶ（`expected the '.' that ends a sentence, found the end of the text`）。一覧の名前はそのまま。スキャナーがどの終端記号にも読めなかった文字列（`Error`）は、`macro-syntax-not-a-token`（引数は構文の名前だけ、一覧は空）になる。
+- ハイライトと補完：LSP は構文のテキストを、その構文の文法の表で読んで色を付け、予測に失敗した位置の期待する終端記号を
+  補完の候補にする。色を付けるテキストは二種類ある（`tauto fmt` が整形するテキストも同じ二種類で、探し方は同じである）。
+  - **ソースにある構文のリテラルすべて**：``math`…` `` やブロックのリテラル、`math!(`…`)` の引数。リテラルはファイルの
+    ソースの文字列から直接集めるので、`quote { … }` の中、マクロの定義の中、呼ばれない関数の中、型検査や展開に失敗する
+    コードの中にあっても色が付く（展開で読まれたかどうかによらない）。構文の名前は、リテラルに書かれた名前か、
+    `NAME!(…)` のマクロの第一パラメータの型（`math::Eqn` なら `math`）で決まる。
+  - **コメントの中のフェンス**：コメントに ```` ```math ```` で始まり同じ数のバッククォートで閉じるフェンスを書くと、
+    その本体を `math` のテキストとして読む。道具（`tauto fmt`、言語サーバー）はどれも、ファイルの構文木が持つコメントの
+    トークンの中だけからフェンスを探す（`quote` やリテラルの中、文字列の中は、コメントではないので読まない）。規則は次のとおり。
+    - コメントの行：`//`、`///`、`//!` の行コメントの行と、`/* */` の二行目以降の行。行コメントの行は、その前に空白（半角スペース）
+      だけが置かれていること。タブは空白ではない。
+    - 行の接頭辞：行頭の空白、印（`//`、`///`、`//!`。ブロックコメントの行では `*` か、なし）、印の後ろの空白一つ（あれば）。
+    - 開き：行の接頭辞の後ろが、バッククォート三つから六つ、構文の名前（リテラルの開きと同じ綴り）、空白だけ。
+      この行の接頭辞がフェンスの接頭辞になる。
+    - 本体：開きの次の行から、閉じの行の前まで。どの行も、ファイルの次の行で、コメントの行で、フェンスの接頭辞で始まる
+      （接頭辞の末尾の空白を除いた行は、空行）。本体のテキストは各行の接頭辞を除いたもの（行ごとに改行で終える）で、
+      位置はファイルの行ごとに対応づける。
+    - 閉じ：接頭辞の後ろが、開きと同じ数のバッククォートだけ（後ろの空白は可）の行。閉じの後ろから次のフェンスを探す。
+    - 閉じない（コメントの行でなくなる、接頭辞が合わない行に当たる）フェンスは本体を持たない。
+    CR LF の改行のファイルでも、行の終わりは `\r` を含まない。
+    宣言されていない構文のフェンスには色を付けない（文法の `par` のフェンスは下の **文法**）。
+  トークンの種類（終端記号の名前）で色を付ける。構文が `tokens` の関数を登録していれば、色はその関数が決める
+  （「構文に付ける関数（`with`）」）。関数がエラーになった（予算切れ、テキストの外の範囲、一覧にない色）ときは終端記号の
+  名前で付ける。関数は、ファイルの宣言が型検査に通らなくても、登録された関数が使う宣言が通れば呼ぶ
+  （通らない宣言を呼んだときだけ、その呼び出しがエラーになる）。
+  複数の行にまたがる範囲は行ごとに分け、前の範囲と重なる範囲は捨てる。
+- **埋め込み**：構文のテキストの中の `$name` と `${e}`（`TautoExpr`、「DSL の中の tauto の式（前置き `${ … }`）」）は、
+  構文が `fmt`・`tokens` を登録しているかどうかにも、終端記号の名前による色にもよらず、いつも tauto として色を付ける。
+  `$` と `${`・`}` だけが operator で、`$name` の `name` と `${e}` の `e` は、言語が埋め込みの式を読むのと同じに、
+  式として単独で解析し、リテラルのある場所の名前の環境で名前を解決して色を付ける（関数は function、コンストラクタは
+  enumMember、型は type、引数は parameter、局所変数は variable、解決できない名前は variable。キーワード、数、文字列、
+  コメント、記号は字句の種類の色）。`tokens` の関数が返した範囲は、埋め込みと重なる部分を削る（関数は埋め込みを
+  上書きも覆いもしない）。
+- **関数を使えないとき**：登録された `tokens` の関数を使えない（関数が型検査に通らない、関数がエラーになった、
+  範囲がテキストの外にある）ときは、終端記号の名前で色を付けたうえで、そのリテラルに理由つきの警告を出す
+  （言語サーバーは警告の診断として送る）。
+- **文法**：`syntax` 宣言の ```` ```par ```` のリテラルと、コメントの中の ```` ```par ```` のフェンス（`par` という名前の構文を
+  宣言していないとき。フェンスの規則は上と同じ）は、表の生成器が文法を読むのと同じ字句の読み（`totes/parlex`。
+  `totes/pargen` はこれで文法を読み、`crates/tauto-analyzer` は Rust に変換して組み込む）で語に分け、語の種類で色を付ける。
+  指示（`%start`、`%%` など）は keyword、`"…"` と `'…'` は string、`/…/` は regexp、数は number、コメントは comment、
+  記号（`:`、`;`、`|`、`{`、`?=` など）は operator。名前は置かれた場所で決まる：`<…>` の中は scanner の状態で namespace、
+  `@` の後ろは property、`%%` の後ろで `:` によって記号に付けた型と、`%user_type`・`%t_type` と `=` の後ろは class、
+  `%scanner`・`%enter`・`%push` の後ろは namespace、それ以外（規則の左辺と右辺の非終端記号、`%start` の後ろ）は type。
+  文法に置けない文字には色を付けず、閉じない文字列とコメントはテキストの終わりまでを string と comment にする。
 
 ## `macro` 宣言（登録）と呼び出し `NAME!(…)`
 
 ```nib
-macro math = math_expand              // 構文マクロ：入力の型が math_Eqn
-macro math_nat = math_expand_nat      // 同じ構文 math の、別のマクロ
-macro nat = nat_expand                // 型なしマクロ：入力の型が SynExpr
-macro unroll = unroll_pow             // 型付きマクロ：入力の型が Code
+macro fn math(e: math::Eqn): SynExpr {…}      // 構文マクロ：入力の型が math::Eqn
+macro fn math_nat(e: math::Eqn): SynExpr {…}  // 同じ構文 math の、別のマクロ
+macro fn nat(e: SynExpr): SynExpr {…}        // 型なしマクロ：入力の型が SynExpr
+macro fn unroll(c: Judgement): SynExpr {…}        // 型付きマクロ：入力の型が Judgement
 
-let a = math`1 + 2 = 3`               // マクロなし：値は math_Eqn
-theorem t(): math!(`1 + 2 = 3`) { refl(Nat, 3) }        // 構文は math_expand の入力の型から推論
-theorem u(): math!(math`1 + 2 = 3`) { refl(Nat, 3) }    // 構文を書いてもよい（推論と一致しなければエラー）
-theorem v(a: Nat, b: Nat): nat!(a + b == b + a) { nat_add_comm(a, b) }   // 中身は検査しない tauto の式
-fn cube(x: i64) -> i64 ! {Div} { unroll!(pow(x, 3)) }   // 中身は検査してから渡す
+let a := math`1 + 2 = 3`               // マクロなし：値は math::Eqn
+theorem t(): math!(`1 + 2 = 3`) { Refl(Nat, 3) }        // 構文は math の入力の型から推論
+theorem u(): math!(math`1 + 2 = 3`) { Refl(Nat, 3) }    // 構文を書いてもよい（推論と一致しなければエラー）
+theorem v(a: Nat, b: Nat): nat!(a + b == b + a) { Nat::add_comm(a, b) }   // 中身は検査しない tauto の式
+fn cube(x: i64): i64 ! {Div} { unroll!(pow(x, 3)) }   // 中身は検査してから渡す
 ```
 
-- `macro NAME = FN` だけ。種類と位置は `FN` の型から決まり、ヘッダに型を書き直さない。`typed macro` のような
+- 登録は `macro fn NAME(…)` だけ。関数の宣言と登録が一つになり、`NAME!(…)` でマクロとして、`NAME(…)` で普通の関数として呼ぶ。種類と位置は引数の型から決まり、ヘッダに型を書き直さない。`typed macro` のような
   種類のキーワードは書かない（関数の型と同じことを二度書くことになり、食い違ったときの規則が要るので）。
   種類は道具が示す：`tauto macro inspect` と `tauto check --json` の展開の一覧の `kind` が
   `syntax`（構文マクロ）・`untyped`（型なしマクロ）・`typed`（型付きマクロ。証明つきの `Proved` を返すものも）・`step`（tactic：入力の型が `ProofStep`）のどれか（「道具（AI-Native）」）。
-- マクロはどの種類も **明示的に** `NAME!(…)` で呼ぶ。型付きマクロ専用の呼び出しの書き方はない（一つのことに書き方は一つ）。括弧の中身の読み方は
-  `FN` の入力の型で決まる：構文の型 `S_N` ならリテラル（「リテラルの三つの形」の三つの形のどれか）、`SynExpr` なら検査しない
-  tauto の式（「型なしマクロ」）、`Code` なら検査する tauto の式（「呼び出しと段」）、`ProofStep` なら `by NAME!(…) -> G0 { … }` の
+- マクロとしては、どの種類も **明示的に** `NAME!(…)` で呼ぶ（`!` のない `NAME(…)` は普通の関数の呼び出しで、展開しない）。型付きマクロ専用の呼び出しの書き方はない（一つのことに書き方は一つ）。括弧の中身の読み方は
+  `FN` の入力の型で決まる：構文の型 `S::N` ならリテラル（「リテラルの三つの形」の三つの形のどれか）、`SynExpr` なら検査しない
+  tauto の式（「型なしマクロ」）、`Judgement` なら検査する tauto の式（「呼び出しと段」）、`ProofStep` なら `by NAME!(…): G0 { … }` の
   引数（`by` の後でだけ呼べ、ほかの種類は `by` で呼べない。`macro-steps.md`）。
   構文解析は中身を式として読み（リテラルも式の一つ）、どれかを決めるのは展開のとき。
-  - 構文の推論：`FN` の入力の型 `S_N` から構文 `S` が決まり、名前のないリテラルはその文法で読む。
+  - 構文の推論：`FN` の入力の型 `S::N` から構文 `S` が決まり、名前のないリテラルはその文法で読む。
     名前を書いたら `S` と一致しなければならない（`macro.syntax_mismatch`）。
-  - `N` は `S` の開始の非終端記号でなければならない（ほかの非終端記号から読むのは OQ-14）。
+  - `N` は `S` の開始の非終端記号でなければならない（ほかの非終端記号から読むのは OQ-8）。
   - 引数はリテラル一つだけ。値（変数や式）は渡せない。マクロはコンパイル時に走るので、引数は書かれた文字列で
     なければならない（コンパイル時の値を渡すのは `${ … }`、「DSL の中の tauto の式（前置き `${ … }`）」）。
 - `FN` の型と、呼び出しの形・位置：
 
 | `FN` の型 | 種類 | 呼び出し | 位置 |
 |---|---|---|---|
-| `(S_N) -> SynExpr ! ρ` | 構文マクロ | ``NAME!(`…`)`` など 「リテラルの三つの形」の形を `NAME!` で包む | 式・型 |
-| `(S_N) -> List(SynStmt) ! ρ` | 構文マクロ | 同上 | 文（トップレベルとブロックの中） |
+| `(S::N) -> SynExpr ! ρ` | 構文マクロ | ``NAME!(`…`)`` など 「リテラルの三つの形」の形を `NAME!` で包む | 式・型 |
+| `(S::N) -> List(SynStmt) ! ρ` | 構文マクロ | 同上 | 文（トップレベルとブロックの中） |
 | `(SynExpr) -> SynExpr ! ρ` | 型なしマクロ | `NAME!(e)`（`e` は検査しない） | 式・型 |
 | `(SynExpr) -> List(SynStmt) ! ρ` | 型なしマクロ | 同上 | 文（トップレベルとブロックの中） |
-| `(Code) -> SynExpr ! ρ` | 型付きマクロ | `NAME!(e)` | 式・型 |
-| `(Code) -> Proved ! ρ` | 証明つきの型付きマクロ | `NAME!(e)` | 式（`e` がカーネルの断片のときだけ） |
-| `(ProofStep) -> SynExpr ! ρ` | tactic | `by NAME!(e) -> G0 { … }` | 項（証明の位置。`macro-steps.md`） |
-| `(S_N, SynStmt) -> List(SynStmt) ! ρ`、`(SynExpr, SynStmt) -> List(SynStmt) ! ρ` | 構文マクロ・型なしマクロ（属性の位置） | ``#[NAME!(…) => 種別 名前, …]`` を宣言の前に書く | 宣言（「属性マクロ」） |
+| `(Judgement) -> SynExpr ! ρ` | 型付きマクロ | `NAME!(e)` | 式・型 |
+| `(Judgement) -> Proved ! ρ` | 証明つきの型付きマクロ | `NAME!(e)` | 式（`e` がカーネルの断片のときだけ） |
+| `(ProofStep) -> SynExpr ! ρ` | tactic | `by NAME!(e): G0 { … }` | 項（証明の位置。`macro-steps.md`） |
+| `(Judgement, S::N) -> SynExpr ! ρ`、`(Judgement, SynExpr) -> SynExpr ! ρ` | 位置のマクロ | `NAME!(…)`（中身は検査しない） | 項（証明の位置。「位置のマクロ」） |
+| `(S::N, SynStmt) -> List(SynStmt) ! ρ`、`(SynExpr, SynStmt) -> List(SynStmt) ! ρ` | 構文マクロ・型なしマクロ（属性の位置） | ``@NAME!(…) => 種別 名前, …`` を宣言の前の行に書く | 宣言（「属性マクロ」） |
 
 - `ρ` は `{macro_error, macro_warn, elab, Div}` の部分集合でなければならない（`elab` は型付きマクロと tactic だけ）。
   行変数は書けない。「マクロ関数の行」。
 - 一つの構文に複数のマクロを登録してよい（上の `math` と `math_nat`）。マクロを一つも通さなければ、リテラルは
   型付き AST の値のまま使える（「文法から作られるもの」）。
-- 一つの関数を複数の名前で登録してもよい。
-- `macro` の名前は、マクロの名前の空間に入る。同じ tote で同じ名前は一度だけ。依存先の tote のマクロも
-  同じ空間に入り、ぶつかればエラー（マクロの名前はモジュールに入らない）。
-- 組み込みの構文：`plaintext`（「リテラルの三つの形」の三つの形のどれでも、値は中身の `Text`）。組み込みのマクロはない。
-  `NAME!(…)` の形で書く組み込みは、読み込み `include_text!("path")` だけで、これはマクロではない（次の節）。
+- マクロの名前は `macro fn` の関数の名前だけで、別名で登録する宣言はない。同じ関数を別の名前のマクロにするには、それを呼ぶ `macro fn` を書く。
+- `macro fn` の名前は、関数の名前として普通の名前の空間に入り（`NAME(…)` で呼べる）、同じ名前でマクロの名前の空間にも入る。
+  マクロの名前は同じ tote で一度だけ。依存先の tote のマクロも同じ空間に入り、ぶつかればエラー（マクロの名前はモジュールに入らない）。
+- 組み込みの構文：`plaintext`（「リテラルの三つの形」の三つの形のどれでも、値は中身の `Text`）。
+  `NAME!(…)` の形で書く組み込みは `include_text!`・`syntax!`・`inductive_syntax!` の三つだけで、いずれも利用者のマクロではない（次の節と「文法から作られるもの」）。
 
 ### 組み込みの読み込み `include_text!`
 
 ```tauto
-fn syntax_tables_terminal_names() -> Text {
+fn syntax_tables_terminal_names(): Text {
   concat("", include_text!("tables/terminal_names.txt"))
 }
 ```
@@ -432,16 +587,16 @@ fn syntax_tables_terminal_names() -> Text {
   最も近い `Tauto.eure` のあるディレクトリ。どの tote にも入らないファイルは、そのファイルのディレクトリ）の中に
   とどまらなければならない。絶対パス（`include.absolute`）、`..` で外に出るパスと、外を指すシンボリックリンク
   （`include.outside`）、読めないファイル（`include.read`）、UTF-8 でないファイル（`include.not_utf8`）はエラー。
-- マクロではない：利用者のコードは走らず、マクロ関数の許可リスト（`macro-security.md`「マクロのホストの許可リスト」）も
+- マクロではない：利用者のコードは走らず、マクロ関数の行の制限（「マクロ関数の行」）も
   変わらない。読み込みは書かれたファイルの中の呼び出しだけを置き換えるので、マクロの出力に現れた `include_text!` は
   読まれず、展開がエラー `macro.include_text` にする（マクロはこれを通してもファイルを読めない）。ファイルのない
-  テキスト（`tauto::read::parse_program`）の中の呼び出しも同じエラー。`macro include_text = …` は `macro.reserved`。
+  テキスト（`tauto::read::parse_program`）の中の呼び出しも同じエラー。`macro fn include_text(…) …` は `macro.reserved`。
   ファイルに書かれた `quote { … }` の中の呼び出しは、そのファイルを読むときに置き換わる（書いた人の tote のファイルを読む）。
 - 読んだファイルの中身は結果の入力である：リテラルは宣言の一部なので、証明のキャッシュの鍵（`check/cache.rs`。宣言の
   `Debug` の文字列）と、増分の検査の指紋（`check/incremental.rs`、`tauto-analyzer`）に入る。`tauto-analyzer` は読んだ
   ファイルを `Source`（エディタのバッファ）から引くので、その変更でも読み直す。`tauto-build` は読んだファイルを
   `cargo:rerun-if-changed` に出す（`program::tote_inputs`）。
-- 生成した表のデータ（`totes/syntax/src/tables/*.txt`、`totes/unicode/src/tables/*.txt`、`totes/llkgen/src/uni/*.txt`）は
+- 生成した表のデータ（`totes/syntax/src/tables/*.txt`、`totes/unicode/src/tables/*.txt`、`totes/pargen/src/uni/*.txt`）は
   これで読む。データのファイルは中身がそのまま値なので、由来は `.taut` の側の先頭に書く。
 
 ## 構文の値、衛生、span
@@ -453,11 +608,11 @@ fn syntax_tables_terminal_names() -> Text {
 ```nib
 struct SynSpan { id: u64 }                        // 由来の表（「span と由来」）の番号
 struct SynCtx { scopes: List(u64) }               // スコープ集合（整列、重複なし）
-struct SynIdent { name: Text, ctx: SynCtx, span: SynSpan }
+struct SynIdent { name: Text, ctx: SynCtx, span: SynSpan, declaration: Option(SynDeclaration) }
 
 enum SynExpr {
   ExVar(SynIdent)
-  ExAtom(u64, SynSpan)                            // Code の文脈の変数（「文脈の変数（原子）と、範囲の外への持ち出し」）
+  ExAtom(u64, SynSpan)                            // Judgement の文脈の変数（「文脈の変数（原子）と、範囲の外への持ち出し」）
   ExNat(Text, SynSpan)                            // 数のリテラル（10 進の文字列）
   ExText(Text, SynSpan)
   ExBool(Bool, SynSpan)
@@ -474,10 +629,12 @@ enum SynExpr {
   ExRecord(SynIdent, List(Pair(Text, SynExpr)), SynSpan)
   ExBorrow(Bool, SynExpr, SynSpan)
   ExUnion(List(SynExpr), SynSpan)
+  ExProduct(List(SynExpr), SynSpan)
   ExTagged(Text, SynExpr, SynSpan)
   ExExists(SynBinder, SynExpr, SynExpr, SynSpan)
   ExMacroCall(SynIdent, Text, SynSpan)            // 出力の中の、まだ展開していない呼び出し（リテラルの引数）
   ExMacroExpr(SynIdent, SynExpr, SynSpan)         // 同じく、式の引数の呼び出し（型なしマクロ・型付きマクロ）
+  ExStep(SynIdent, SynExpr, Option(SynExpr), List(SynStepArm), SynSpan)  // ステップ `by t!(arg): G0 { … }`（`macro-steps.md`「マクロの出力の中のステップ」）
 }
 // SynStmt（構成子は St…：StLet、StVar、StAssign、StFn、StExpr、StWhile、StReturn、StStruct、StEnum、StEffect、
 // StTheorem、StDef、StInductive、StMutual、StMacroCall）、SynPattern（Pt…）、SynArm、SynHandler、SynParam、
@@ -488,9 +645,10 @@ enum SynExpr {
 - `Hole`（`?h`）と `Other`（未対応の構文）に当たる構成子は **ない**。`StAxiom`・`StExtern`・`StImport` もない（「展開の出力に許さないもの」）。マクロは穴を作れない
   （書きかけの証明の印はユーザーが書くもの）。
 - 束縛子は `enum SynBinder { BName(SynIdent, Option(SynExpr)), BAtom(u64, Option(SynExpr)) }`（名前か原子と、書くなら型）。
-  `BAtom` は `code_view` が開いた原子を束縛子として使うためのもの（「文脈の変数（原子）と、範囲の外への持ち出し」）。
+  `BAtom` は `Judgement::open` が開いた原子を束縛子として使うためのもの（「文脈の変数（原子）と、範囲の外への持ち出し」）。
 - 付随する関数（`std/prelude/Macro.taut`）：`syn_ident(t: SynToken) -> SynIdent`（トークンの文字列と文脈で識別子を作る）、
-  `syn_ident_like(model: SynIdent, name: Text) -> SynIdent`（「衛生（スコープ集合）」の 6）、`syn_nat(t: SynToken) -> SynExpr ! {macro_error}`
+  `syn_ident_like(model: SynIdent, name: Text): SynIdent`（「衛生（スコープ集合）」の 6）、
+  `syn_decl_name(model: SynIdent, name: Text): SynIdent`（同じ 7）、`syn_global(name: Text): SynIdent`（同じ 5）、`syn_call_span(): SynSpan`（呼び出しの位置。属性マクロでは属性。そこへのエラーは呼び出しを指す）、`syn_nat(t: SynToken): SynExpr ! {macro_error}`
   （数字でなければエラー）、`syn_lift_*`（「コンパイル時の値と実行時の値、段を越える持ち込み」）、`syn_error(span, message) -> Never ! {macro_error}`。
 - 構文の値は普通の Nib のデータで、種は shared。複製してよい。複製したものを二度埋めたときに
   所有権が壊れるかどうかは、出力の検査（`lin.rs`）が決める（「線形・アフィンとの統合」）。
@@ -498,11 +656,11 @@ enum SynExpr {
 ### `quote` と `$`
 
 ```nib
-fn swap_expand(e: swp_Pair) -> SynExpr ! {macro_error} {
-  let a = syn_ident(e.left)
-  let b = syn_ident(e.right)
+fn swap_expand(e: swp.Pair): SynExpr ! {macro_error} {
+  let a := syn_ident(e.left)
+  let b := syn_ident(e.right)
   quote {
-    let tmp = $a
+    let tmp := $a
     $a := $b
     $b := tmp
   }
@@ -512,7 +670,7 @@ fn swap_expand(e: swp_Pair) -> SynExpr ! {macro_error} {
 - `quote { 文… }` は `SynExpr`（中身が式一つならその式、そうでなければ `ExBlock`）、`quote stmts { 文… }` は `List(SynStmt)` を作る。中身は
   tauto の構文として読まれ、**構成子の呼び出しに展開される糖衣**（カーネルに何も足さない）。
 - `$x`（名前）と `$(e)`（式）で値を埋める。埋められるもの：`SynExpr`（式の位置）、`SynIdent`
-  （名前の位置：束縛子・変数・効果・フィールドの名前）、`List(SynStmt)`（文の位置）、`Code`（式の位置。「文脈の変数（原子）と、範囲の外への持ち出し」）。
+  （名前の位置：束縛子・変数・効果・フィールドの名前）、`List(SynStmt)`（文の位置）、`Judgement`（式の位置。「文脈の変数（原子）と、範囲の外への持ち出し」）。
   どれでもない型を埋めたら型エラー。数や文字列を埋めるには `syn_lift_i64(n)` などで構文にする（「コンパイル時の値と実行時の値、段を越える持ち込み」）。
 - `quote` の中の識別子は、`quote` を書いた場所の文脈（定義元の tote のスコープ）を持つ。「衛生（スコープ集合）」の flip で
   展開ごとのスコープが付き、呼び出し元の名前を捕獲しない。
@@ -549,42 +707,100 @@ Expansion = { id, macro, kind, call: Written, def: Written, parent: Option(id) }
 
 形式的な定義は `macro-semantics.md`「衛生」。ここでは規則を書く。
 
-1. **識別子** は名前とスコープの集合 `ctx` を持つ。**束縛** は名前、スコープの集合、束縛の番号を持つ。
-2. **解決**：識別子 `x^S` は、名前が `x` で、スコープの集合 `B` が `B ⊆ S` である束縛のうち、`B` が
-   最大のものに解決する。最大が一つに決まらなければ「曖昧」のエラー。候補がなければ「定義されていない」。
-3. **tote のスコープ**：tote `T` のソースから読んだ識別子はすべて `t_T` を持つ。`T` のトップレベルの宣言は
-   `{t_T}` で束縛される。`T` が依存する tote `D` の宣言は、`T` の中では `{t_T}` でも束縛される（見える）。
-   prelude の宣言は `{}` で束縛される（どこからも見える）。
-4. **局所の束縛（束縛の形のスコープ）**：展開器は外側から木を歩き、束縛の形（`fn` の引数、λ、`let`・`var`
-   （ブロックの残り）、`match` の腕、ハンドラの腕と `k`、`∀`・`∃`）に入るたびに新しいスコープ `b` を作り、
-   束縛子の識別子と、その **有効範囲にその時点である** すべての識別子（書かれたコードと、すでに置かれた
-   入力の構文）に `b` を足す。束縛は束縛子の `ctx` で登録される。範囲の中にあるマクロの呼び出しは、
-   この後で展開されるので、その出力が新しく作った識別子は `b` を持たない。
-5. **展開のスコープ**：展開ごとに新しいスコープ `s` を作る。入力（型付き AST のトークンの `ctx`、`Code`）に
-   `s` を足して関数に渡し、出力のすべての識別子で `s` を **反転**（あれば外し、なければ足す）する。
-   - 入力から来た識別子は `s` が外れて、呼び出し元の文脈（`t_U` と、囲む束縛の形の `b` たち）に戻る。
-     だから呼び出し元の意図した束縛に解決する。
-   - マクロが `quote` や構成子で作った識別子は `s` を得る。持つのは定義元の `t_M` と `s` だけで、
-     呼び出し元を囲む束縛の形の `b` を持たない。だから呼び出し元の **局所の** 束縛（`b` を含む）には
-     解決しない（呼び出し元の変数を捕獲しない）。大域の宣言には `t_M` で解決する（定義元の意味）。
-   - マクロが作った **束縛子** は `s` を持つ。入力から来た識別子は `s` を持たないので、それに解決しない
-     （マクロの一時変数が利用者の名前を奪わない）。
-   - `quote` の中身は、マクロ関数自身の束縛の形の `b` を受け取らない（構文のデータで、コードではないので）。
-     `quote` の識別子の `ctx` は、書かれた tote のスコープ `{t_M}` だけ。
+1. **識別子** は名前と展開スコープの集合 `ctx` を持つ。解決した大域参照は宣言 ID も持つ。
+2. **局所の解決**：名前と `ctx` が等しい束縛のうち、有効範囲の最も内側のものを選ぶ。
+   有効範囲は構文木の環境で表し、束縛の形ごとのスコープは識別子に加えない。
+3. **大域の解決**：定義元の import と可視性を確認し、宣言 ID に結び付ける。
+   ID を持つ識別子は、呼び出し元で名前を解き直さない。
+4. **局所の有効範囲**：関数と λ の引数、局所関数、`let`・`var`、パターン、ハンドラの腕と `k`、
+   `∀`・`∃` の束縛を構文が定める範囲だけ環境に登録する。腕ごとの環境は独立している。
+5. **展開のスコープ**：展開ごとに新しいスコープ `s` を作る。入力に `s` を加えて関数に渡し、
+   出力で反転する。入力由来の識別子からは `s` が外れ、生成した識別子には `s` が付く。
+   両者のスコープ集合は等しくないので、生成した束縛と入力の参照は互いに捕獲しない。
+   大域参照の ID は反転で変えない。引用内の局所と生成宣言の識別子は空のスコープから始まる。
 6. **明示的な捕獲**：`syn_ident_like(model: SynIdent, name: Text) -> SynIdent` は `model` の `ctx` を
    借りて新しい名前の識別子を作る。入力の識別子を `model` にすれば、呼び出し元の文脈の名前になる
-   （照応の `it` など）。これが捕獲の **唯一の** 方法で、`tauto macro trace` は「捕獲」として印を付け、
+   （照応の `it` など）。これが呼び出し元の局所を捕獲する **唯一の** 方法で、`tauto macro trace` は「捕獲」として印を付け、
    lint `macro-capture` が `std/` と `meta/` で禁じる。
+   定義元の大域の名前を手で作るときは `Syn::global(name: Text): SynIdent` を使う。
+   マクロの定義元で解決した宣言の ID を値として持ち、出力を項に戻すときもその ID を使う。
+   表示名や `ctx` の編集では参照先は変わらない。`name-identity.md`「マクロの宣言参照」に値の境界を定める。
+   定義元の意味は、マクロを書いたファイルがその名前で指す宣言のこと。名前がほかのファイルの宣言やパターン変数とぶつかって
+   完全名（`narrative::src::story::arg`）に書き換えられた宣言でも、展開の中の名前はその完全名を指す。呼び出し元の周りのファイルが
+   同じ名前をパターンで束縛していても、マクロの名前の意味は変わらない。完全名に書き換えない宣言でも、マクロが書いた変数は、マクロを書いたファイルが import する
+   （またはそのファイル自身が宣言する）宣言を指し、呼び出し元はそのファイルを import していなくてよい（import は推移しない）。
+   引用と構文リテラルが組み立てる大域参照は、定義元で宣言 ID に結び付ける。
+   項に出どころのファイル番号を付けて名前を読み直す処理は行わない。
+   宣言 ID のない識別子は、展開の局所束縛や生成宣言として解決し、残るソース名には
+   出現先の import の規則を適用する。大域を明示的に指す値を作るには `Syn::global` を使う。
 7. **トップレベルの宣言の名前**：構文マクロが作った宣言の名前が `s` を持てば、その宣言は展開の中からしか
-   見えない（補助の関数）。入力の識別子か `syn_ident_like` で作った名前なら、呼び出し元から見える。
-8. **カーネルへの名前**：解決の後、束縛ごとに一意な名前を付けて `SurfaceTerm` に下ろす。スコープの集合が
-   展開のスコープを含まない束縛は元の名前のまま（手で書いたコードの名前は変わらない）。含むものは
-   `x#n`（`#` は `Ident` に書けない文字なので、書いた名前とぶつからない）。診断は `x#n` を
-   「`x`（`math` の展開が導入）」と書き直す。独立カーネル（`core.rs`）は名前を使わないので影響がない。
+   見えない（補助の関数）。入力の識別子か、`syn_decl_name(model, name)` で入力の識別子から作った名前なら、呼び出し元から見える。
+   `syn_decl_name` の中身は `syn_ident_like` と同じだが、宣言の名前を呼び出し元に見せるのは属性マクロの目的そのものなので、
+   lint `macro-capture` の対象にしない（6 の捕獲とは書き分ける）。
+8. **カーネルへの参照**：束縛と使用箇所は同じ局所 ID を持ち、大域参照は宣言 ID を持つ。
+   表示では生成した束縛を `x#n` と区別できるが、その表示を変更しても参照先は変わらない。
+   core へ下ろすとき、局所 ID は束縛位置へ変換する。
 9. **名前の使い回しの規則**（外側の変数と同じ名前の束縛（パターン変数、λ の引数）を書かない）は、スコープの集合まで
    同じ束縛どうしにだけ適用する。展開が導入した `tmp#1` は利用者の `tmp` の使い回しではない。
 10. **展開のスコープの番号は決定的**：`s` は（tote の名前、ファイル、呼び出しのバイト位置、親の展開の番号、
     親の中での順番）から決まる。だから同じ入力は同じ名前の出力を出し、キャッシュした出力をそのまま使える。
+
+### `Syn::ident_like` の使い方（ガイド）
+
+衛生は既定で名前を守る。`quote` の中で書いた名前は展開の中だけのもので、呼び出し元の変数を捕まえない。
+`Syn::ident_like(model, name)` は、その既定を一か所だけ意図して外す道具である。
+`model` の `ctx`（スコープの集合）を借りて、`name` という綴りの識別子を作る。
+
+**使う場面。** 呼び出し元の式の中で、マクロが名前を束縛し、呼び出し元がその名前を書く場合だけ。
+典型は照応の `it` である。
+
+```tauto
+pub macro fn aif(a: aif::Aif): SynExpr {
+  // `it` は呼び出しの `then` と同じ文脈の名前になる
+  let it := Syn::ident_like(Syn::ident(a.kw_then), "it")
+  let c := a.tauto_expr
+  let t := a.tauto_expr_2
+  let e := a.tauto_expr_3
+  quote {
+    match $c {
+      Some($it) => $t
+      None => $e
+    }
+  }
+}
+```
+
+`ident_like` を使わずに `quote` の中へ `it` と書くと、その `it` は展開のスコープを持つので、
+利用者の `t` に書いた `it` は束縛されない（実行すると `it is not defined`）。動く例と動かない例は
+`cases/macro/hygiene.eure` にある。
+
+**`model` の選び方。** 捕まえたい文脈を持つ、入力の識別子かトークンを選ぶ。
+`Syn::ident_like(Syn::ident(a.kw_then), "it")` のように、入力から取った識別子を渡せば、その呼び出しの文脈になる。
+`model` が違えば見える範囲が違うので、「どの入力の中で `it` が見えるか」を `model` の選択で決める。
+`model` は入力側の識別子であって、マクロ自身の名前ではない。
+
+**使わない場面。** 別の道具があるときはそちらを使う。
+
+| したいこと | 使うもの |
+| --- | --- |
+| 展開の中だけで使う補助の局所変数 | `quote` の中で普通に書く（展開のスコープが付き、何も捕獲しない） |
+| 呼び出し元から見える宣言の名前（`T_take` など） | `Syn::decl_name(model, name)`（lint `macro-capture` の対象外） |
+| マクロを書いた tote の大域の名前 | `Syn::global(name)`（宣言 ID を持ち、呼び出し元の局所に取られない） |
+| 呼び出し元の局所を捕獲する | `Syn::ident_like(model, name)` |
+
+マクロ自身の名前に `ident_like` を使うと、定義元のスコープを借りた名前を作れるが、`quote` の局所と同じ働きである。
+意図が見えにくくなるので、`quote` の局所か `Syn::global` を使う。
+
+**確認の方法。**
+- `tauto macro trace` は `ident_like` で作った名前を「捕獲」と印を付けて示す。意図した名前だけが並んでいるか確かめる。
+- lint `macro-capture` は `std/` と `meta/` での使用を禁じる。ライブラリの標準マクロは、呼び出し元の名前を捕まえないという約束を保つ。
+- 捕獲した名前は、呼び出し元がその名前を別の意味で使っていると意味が変わる。マクロの文書に「`it` が束縛される」と書く。
+
+**捕獲の道具が満たす性質。**
+- *Minimalism*：捕獲の道具は一つだけで、宣言の名前（`decl_name`）と大域の名前（`global`）は役割ごとに分かれている。
+  使い分けの表のとおり、一つの道具に複数の意味を持たせない。
+- *Soundness*：捕獲は既定では起きず、書いた場所が一つに決まる。展開の出力はそのままカーネルで検査される。
+- *AI-Native*：どこで名前が外から見えるかが `ident_like` の呼び出しだけに現れ、`tauto macro trace` と lint で機械的に拾える。
 
 ## 構文マクロと型なしマクロの展開
 
@@ -623,49 +839,72 @@ Expansion = { id, macro, kind, call: Written, def: Written, parent: Option(id) }
 
 ### 属性マクロ
 
-宣言の前に `#[NAME!(…) => fn f, theorem g, inductive I]` と書くと、その宣言（`SynStmt`）を第二引数に受けたマクロが、
-宣言を置き換える文の列を作る。第一引数は `NAME!(…)` の括弧の中身（構文マクロなら文法で読んだ木、型なしマクロなら
+宣言の前の行に `@NAME!(…) => fn f, theorem g` と書くと、その宣言（`SynStmt`）を第二引数に受けたマクロが、
+宣言の他の宣言を作る。第一引数は `NAME!(…)` の括弧の中身（構文マクロなら文法で読んだ木、型なしマクロなら
 `SynExpr`）で、種類は関数の入力の型だけで決まる（要約 1）。
 
+```
+@mode!(`lookup(rec G, in i, out A) -> Looked { HasFound | HasNone }`) => inductive Looked, fn lookup
+inductive Has: (List(Ty)) -> (Nat) -> (Ty) -> Prop { … }
+
+@wrap!(`…`) => replace fn f, theorem f_spec
+fn f(n: Nat): Nat { … }
+```
+
+- **書き方。** `@` と呼び出しと一覧で一行（一覧はカンマの後で改行してよい）。行の終わりで属性が終わり、次の行の宣言に付く。
+  `@` の後ろは普通のマクロの呼び出し `NAME!(…)` で、呼び出しの書き方は一つのまま（「`macro` 宣言（登録）と呼び出し `NAME!(…)`」）。
+  理由：`#[ … ]` のような属性だけの括弧を持たない。一覧は `decreasing_by`・`syntax`・`inductive` と同じ `=> 種別 名前, …` で、
+  括弧の中に閉じ込めない（「作る宣言の一覧」）。`@` は内部名（`f@step`）にも使うが、内部名は利用者が書けないので、行頭の `@NAME!` とは紛れない。
 - **生成物の一覧を書く。** `=>` の後ろは、マクロが **新しく作る** トップレベルの宣言の（種別、名前）の完全な一覧で、
   種別は `fn`、`theorem`、`def`、`inductive`、`struct`、`enum`。書かない（`=>` がない）のは「何も作らない」という宣言で、
   作れば不一致になる。展開の結果と順序を問わず **完全に一致** しなければエラー `macro.generates`（作ったが書かれていないものと、
   書かれたが作られていないものを両方出す）。名前が合っても種別が違えば不一致。理由：どの名前が増えるかは、展開せずに
   その場で読めなければならない（読み手がその場で確かめられないものを展開に任せない）。名前を知る道具（定義への移動、補完）も展開を要さない。
-- **元の宣言は数えない。** マクロは渡された宣言をそのまま返してもよく、変えて返してもよい（名前と種別が同じなら元の宣言として扱う）。返さなければ、
-  その宣言は消える。
+- **元の宣言は既定で書いたまま。** マクロは渡された宣言を返さない。展開は書いた宣言をそのまま残し、その後ろにマクロの作ったものを置く。
+  マクロが渡された宣言と同じ種別と名前の宣言を作れば、エラー `macro.replace`（修正案は `=> replace 種別 名前, …`）。
+  理由：手で書いた宣言が、展開で黙って別のものにならない（読んだものがそのまま検査される。Safe by Default）。
+- **変えるなら `replace` を書く。** マクロが宣言を変えるときは、一覧の先頭に `replace 種別 名前` と、付けた宣言の種別と名前を書く。
+  マクロはその宣言を（変えて）作り直さなければならず、作り直したものが書いた宣言に代わる。作らなければ `macro.replace`。
+  `replace` の後ろの宣言が付けた宣言でない、`replace` 以外の語が書かれている、も `macro.replace`。
+  `replace` は予約語ではなく、この位置でだけ意味を持つ（`replace` という名前の関数はそのまま書ける）。
 - **作ってよい宣言は上の六つだけ。** `axiom`、`extern`、`import`、`syntax`、`macro` は「展開の出力に許さないもの」のとおり作れない。
-- **名前の見え方**は「衛生（スコープ集合）」の 7 のとおり：生成物の名前は `syn_ident_like` で入力の宣言の名前から作れば、
+- **名前の見え方**は「衛生（スコープ集合）」の 7 のとおり：生成物の名前は `syn_decl_name` で入力の宣言の名前から作れば、
   呼び出し元から見える。渡された宣言の名前と中身は、展開のスコープを持たずに戻る。
+- **宣言を先に検査し、型を見せる。** マクロを走らせる前に、それより前の宣言（前のファイルと、同じファイルのそれより上）の後ろで
+  渡す宣言を検査する。通らなければマクロは走らず、宣言はそのまま残って自分の誤りを報告する。走るマクロは型付きマクロと同じ
+  `Elab` の操作（`! {elab}`）を使え、答えるのは前の宣言とこの宣言。`Elab::siblings(c)` は構成子 `c` の型の構成子の一覧を返す。
+  `Elab::constructor_arity(c)` は、その構成子自身のジェネリクスを含み、型の一様なパラメータを除いたフィールド数を返す。
+  入力の `c` は `SynIdent` で、宣言参照を持つ場合はその参照だけを調べる。`Elab::siblings` の結果も宣言参照を持つ識別子の一覧である。
+  どちらも構成子でない識別子には `None` を返し、宣言を変更しない。
+  理由：規則から関数を作るマクロ（`mode!`）は、構成子が他のファイルで宣言された型のものでも、すべてを覆うかを知る必要がある。
+  `replace` で変えたときは、変えたものが手で書いたものと同じ道で検査し直される。
+- **引数は文法で読むのがよい。** 設定を渡す属性マクロは、自分の構文（`syntax`）を持ち、引数をその文法で読む（`mode!` の `mode`）。
+  `spec(in(G), …)` のような検査されない疑似呼び出しにしない。綴りの誤りが位置つきの構文エラーになり、ハイライトと補完も文法から付く。
 - 属性は宣言一つに一つまで。`quote` の中には書けない。
 - カーネルに規則は足さない。出力は、手で書いたものと同じ道（カーネルと独立カーネル）を通る。
 
 #### `mode!`（`std/Mode.taut`）：規則を関数にする属性マクロ
 
-`inductive` の関係に付けると、ある位置を入力から求める関数と、証明つきの答えの型を作る。
-`examples/lambda/Lib.taut` は `Typing` に付けて `infer` と `Inferred` を作る。
+帰納的な `Prop` の関係から、出力が一意な判定関数と証明つきの結果型を作る。
+`examples/lambda/Lib.taut` の型推論、`meta/Kernel.taut` の環境検索と大小判定で使う。
+契約、受理条件、証明の生成は [`mode.md`](mode.md)「実装と保証」・「役割と規則の受理条件」・
+「パターン分割と証明の生成」にある。構文と展開の検査は `cases/check/mode.eure` と
+`cases/check/mode-certificates.eure` に置く。
 
-```
-#[mode!(spec(in(G), rec(t), out(A), name(infer), result(Inferred, inferred, not_inferred),
-             via(Has, lookup, has_found, has_none), eq(Ty, ty_dec, ty_same, ty_diff))) => inductive Inferred, fn infer]
-inductive Typing(): (List(Ty)) -> (Tm) -> (Ty) -> Prop { … }
-```
+- **指定。** 構文 `mode` で、関数名、関係の各位置の役割と名前、結果型と成功・拒否の構成子名を読む。
+  `rec` は一つ、`out` はゼロか一つで、残りは `in`。役割は全位置に宣言順で指定する。
+  再帰する入力は関数の先頭へ移し、型の依存順を確認する。
+- **結果。** 出力がある成功は出力、元の関係の導出、一意性を持ち、拒否は全出力の反証を持つ。
+  出力がない場合は成立の導出か、その導出の反証を持つ。
+- **照合。** 入れ子の構成子パターンを分割し、型の全構成子の腕を明示する。
+  入力全体で分離できる規則を受理し、重なりや非線形な入力パターンは拒否する。
+- **前提。** 宣言順に処理する。自身の関係には構造再帰し、別の関係には `via` の関数を使う。
+  `via` は最後の位置を出力とし、同じ導出・一意性・反証の契約を要求する。
+  未束縛の名前は出力に束縛し、構成子は分解し、既知の変数はその型の `eq` で比較する。
+  `eq` も等式の証明か反証を返す。
+- **生成物。** 結果の帰納型と判定関数の種別と名前を属性の生成物一覧に書く。
+  元の関係は変更しない。生成した型と項は通常のカーネルの検査を通す。
 
-- **役割。** `in`・`rec`・`out` を関係の位置の順に書く（名前は生成する関数の引数名）。`rec` が場合分けする位置で、
-  規則の結論のその位置が `ctor(x, …)` の形でなければならない。`out` は一つで、`in` は結論で変数でなければならず、その名前は spec と同じ。
-  `rec` を関数の最初の引数にするのは、構造再帰が最初の引数で減るという決まりのため。
-- **答えの型。** `result(R, ok, bad)` は `inductive R(rec, in…) { ok(out: T, h: 関係(…)), bad() }`。`ok` が答えと、その導出を一緒に運ぶので、
-  健全性の定理と逆転補題は要らない（構成で正しい）。
-- **規則から腕へ。** 規則一つが `rec` の構成子の腕一つ。前提を順に読み、同じ関係の前提は `infer` の再帰呼び出し、
-  結果の `ok` を `match` して次へ進む。最後は `ok(結論の out, 規則(導出…))`。どれかの前提が失敗すれば `bad()`。
-  前提の `out` の書き方で三通り：新しい名前（そのまま束縛）、既知の名前（`eq(…)` の判定関数で比べ、`refl` で書き換える）、
-  構成子（答えを `match` し、導出を腕の引数にして型を合わせる。他の構成子は `bad()`）。
-- **他の関係の前提。** `via(P, f, found, none)`：関係 `P` の前提は、関数 `f`（引数は前提の引数から最後を除いたもの）が返す
-  `found(x, h)` / `none` の `match` で答える。`f` と、その結果の型は手で書く（`Has` には `lookup`）。
-- **一覧。** 作るのは spec の `result` の型と `name` の関数で、属性の `=>` の一覧と完全に一致しなければならない。元の `inductive` は数えない。
-- **扱わないもの。** `out` が二つ以上、`in` の位置の構成子による場合分け（`lookup` 自体を `mode!` で作ること）、
-  一つの構成子に複数の規則、`rec` に入れ子の構成子。どれも誤りとして報告する。
-- 生成した名前（`h`、`Type` など）は衛生のとおりマクロのもので、`lint` の `macro-capture` に触れない。構成子の `refl` は `refl()` の形で書く。
 
 ### 作る宣言の一覧
 
@@ -674,21 +913,21 @@ inductive Typing(): (List(Ty)) -> (Tm) -> (Ty) -> Prop { … }
 
 | 書き方 | 一覧に書くもの |
 |---|---|
-| `#[NAME!(…) => …]` 宣言 | マクロが宣言の他に作るもの |
+| `@NAME!(…) => …` 宣言 | マクロが宣言の他に作るもの（変えるなら先頭に `replace 種別 名前`） |
 | `NAME!(…) => …`（文の位置） | 呼び出しが作る宣言。宣言を作る呼び出しは一覧が必須 |
-| `syntax s => … = ```par …` | `struct s_N` / `enum s_N`（補助の `s_N_Rep1` などを含む）、`fn s_parse` |
-| `inductive syntax s => … = ```par …` | 上に加えて、型ごとに `inductive s_N_I` と `fn s_N_to_i`、リストを通した入れ子の `fn s_N_Rep1_list_to_i` |
-| `fn f(…) -> R decreasing_by W => theorem f_eq { … }` | `theorem f_eq` |
-| `inductive T(…): Type => fn T_beq, theorem T_beq_refl, theorem T_beq_sound, theorem T_deq { … }` | 決定可能な等しさ（`classes.md`「構造的な述語の法則」）。書かなければ作らない |
+| `syntax!(s, ```par …```) => …` | `struct N` / `enum N`（補助の `N_Rep1` などを含む）、`fn parse` |
+| `inductive_syntax!(s, ```par …```) => …` | 上に加えて、型ごとに `inductive N::I` と `fn N::to_i`、リストを通した入れ子の `fn N_Rep1::list_to_i` |
+| `fn f(…): R decreasing_by W => theorem f::eq { … }` | `theorem f::eq` |
+| `inductive T(…): Type => fn T::beq, theorem T::beq_refl, theorem T::beq_sound, theorem T::deq { … }` | 決定可能な等しさ（`classes.md`「構造的な述語の法則」）。書かなければ作らない |
 
 - **完全一致。** 作られたが書かれていないもの、書かれたが作られていないものを両方出す（`macro.generates`。`syntax`、
   `decreasing_by`、`inductive` では、それぞれの宣言の名前をつけたエラー）。順序は問わず、種別が違えば不一致。
-- **一覧は `tauto fmt --fill-generated FILE` が埋める**（エラーの修正案をそのまま書く。一覧の改行は `tauto fmt` が保つ）。
+- **一覧は `tauto lint --fix FILE` が埋める**（エラーの修正案をそのまま書く。一覧の改行は `tauto fmt` が保つ。宣言と属性の一覧はコンマの後で改行できるので長ければ折り返して書くが、呼び出しと `decreasing_by` の後の一覧は行末で終わるので一行に書く）。
   埋めるのは書き手の手間を減らすためで、一覧がソースにあることは変わらない。ワイルドカードは入れない。
 - **文の位置の呼び出し**の一覧は一行に書く（`decreasing_by` と同じ形。構文は `Expr` の `=>` の右に一覧を許す）。
-- **例外**（一覧に書かない）：書いた宣言の中身から名前が決まるもの（コンストラクタ、フィールド、クラスの `C.m` と `C.mk`）、
-  `@` を含み利用者が書けない内部名（`f@step`、`C.inst@H`、`C.m@H`）、`inductive` の標準の付属物
-  （`T_ind`、`T_rec`、添字つきの族の `match` が不可能な腕を落とすのに使う `T_nc`・`T_nc_diag`・`T_noconf`。型ごとに
+- **例外**（一覧に書かない）：書いた宣言の中身から名前が決まるもの（コンストラクタ、フィールド、クラスの `C::m` と `C::Mk`）、
+  `@` を含み利用者が書けない内部名（`f@step`、`C::inst@H`、`C::m@H`）、`inductive` の標準の付属物
+  （`T::ind`、`T::rec`、添字つきの族の `match` が不可能な腕を落とすのに使う `T::nc`・`T::nc_diag`・`T.noconf`。型ごとに
   無条件に作る、`inductive` の意味そのもの）。構文糖（入れ子パターン、`T { f: e }`、文字列リテラル、演算子）は宣言を作らない。
 
 ### 型なしマクロ
@@ -696,18 +935,18 @@ inductive Typing(): (List(Ty)) -> (Tm) -> (Ty) -> Prop { … }
 関数の入力の型が `SynExpr` のマクロ。括弧の中身を **tauto の式として読み、検査せずに** 構文の値で渡す。
 
 ```nib
-// lib/nat.taut：== を Eq に、+ と * を nat_add と nat_mul（std/Base.taut）に読み替える（match は一段ずつ）
-fn nat_bin(op: Text, l: SynExpr, r: SynExpr, e: SynExpr) -> SynExpr ! {macro_error, Div} {
-  let a = nat_expand(l)
-  let b = nat_expand(r)
+// lib/nat.taut：== を Eq に、+ と * を Nat::add と Nat::mul（std/Base.taut）に読み替える（match は一段ずつ）
+fn nat_bin(op: Text, l: SynExpr, r: SynExpr, e: SynExpr): SynExpr ! {macro_error, Div} {
+  let a := nat(l)
+  let b := nat(r)
   if op == "==" { quote { Eq(Nat, $a, $b) } } else {
-    if op == "+" { quote { nat_add($a, $b) } } else {
-      if op == "*" { quote { nat_mul($a, $b) } } else { e }
+    if op == "+" { quote { Nat::add($a, $b) } } else {
+      if op == "*" { quote { Nat::mul($a, $b) } } else { e }
     }
   }
 }
 
-fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr) -> SynExpr ! {macro_error, Div} {
+fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr): SynExpr ! {macro_error, Div} {
   match f {
     ExVar(op) => match args {
       Cons(l, rest) => match rest {
@@ -723,31 +962,29 @@ fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr) -> SynExpr ! {macro_erro
   }
 }
 
-fn nat_expand(e: SynExpr) -> SynExpr ! {macro_error, Div} {
+macro fn nat(e: SynExpr): SynExpr ! {macro_error, Div} {
   match e {
     ExApp(f, args, _) => nat_app(f, args, e)
     _ => e
   }
 }
-
-macro nat = nat_expand
 ```
 
 ```nib
 // main.taut
-theorem add_comm_stmt(a: Nat, b: Nat): nat!(a + b == b + a) { nat_add_comm(a, b) }
+theorem add_comm_stmt(a: Nat, b: Nat): nat!(a + b == b + a) { Nat::add_comm(a, b) }
 ```
 
 - **読み方**：中身は `tauto.par` の `Expr` の文法で読む（`tauto.par` を変えない）。読めなければ普通の構文エラー。
   名前の解決も型の検査もしない。`==` は、その場で型が付くかどうかに関わらず読める（読むのは文法だけ）。
 - **構文の値への持ち上げ**：`${ … }` の中身を `SynExpr` にするのと同じ変換（`syn.rs` の `Lift`）を使う。
   書かれた識別子は呼び出し元のスコープ集合を持ち、展開のスコープ `s` が付いて、出力の flip で外れる（「衛生（スコープ集合）」）。
-  だから入力の `a`・`b` は呼び出し元の引数に解決し、マクロの `quote` の `Eq`・`nat_add` はマクロの tote の名前に解決する。
+  だから入力の `a`・`b` は呼び出し元の引数に解決し、マクロの `quote` の `Eq`・`Nat::add` はマクロの tote の名前に解決する。
 - **入れ子**：中身にマクロの呼び出しがあれば、リテラルの引数なら `ExMacroCall`、式の引数なら `ExMacroExpr`（引数も構文の値）として渡す（外側から、「順序」）。中身の中の型付きマクロの
   呼び出しは、出力の中に残れば、外の宣言の検査の後に走る（「呼び出しと段」）。
 - **走る時点**：構文マクロと同じく、宣言の検査の **前**（「全体の順序」）。型・効果・所有権は見えない。見たいなら型付きマクロ。
 - **位置**：式・型・文。定理の文や引数の型にも書ける（構文マクロと同じ）。
-- **意味の読み替えの注意**：中身は tauto の式に **見える** が、意味はマクロが決める（`nat!` の `==` は `Eq`、`+` は `nat_add`）。
+- **意味の読み替えの注意**：中身は tauto の式に **見える** が、意味はマクロが決める（`nat!` の `==` は `Eq`、`+` は `Nat::add`）。
   読み手が tauto の意味で読み違えないよう、`tauto macro expand` と `trace` が展開後の形を出す（「道具（AI-Native）」）。`std/` に置く
   型なしマクロは、記号を tauto と違う意味に読み替えないことをレビューの項目にする。
 - **構文・型なし・型付きに分ける理由**：「いつ走るか」と「何が見えるか」の組み合わせが重ならない。検査の前に走るものは型を見られず、
@@ -764,7 +1001,7 @@ theorem add_comm_stmt(a: Nat, b: Nat): nat!(a + b == b + a) { nat_add_comm(a, b)
 ### 呼び出しと段
 
 ```nib
-fn cube(x: i64) -> i64 ! {Div} { unroll!(pow(x, 3)) }
+fn cube(x: i64): i64 ! {Div} { unroll!(pow(x, 3)) }
 ```
 
 `f!(e)` を含む宣言 `D` について、次の順で行う：
@@ -772,12 +1009,12 @@ fn cube(x: i64) -> i64 ! {Div} { unroll!(pow(x, 3)) }
 1. **素の検査**：`D` の `f!(e)` を `e` に置き換えた `D°` を、通常の検査に通す
    （カーネルの断片ならカーネルと独立カーネル、実行されるコードなら `types.rs`・`rows.rs`・`lin.rs`）。
    通らなければ、それが `D` のエラー（マクロは走らない）。
-2. **手札を作る**：各 型付きマクロの呼び出しの位置について、`D°` の検査の結果から `Code`（「`Code`」）を作る。
+2. **手札を作る**：各 型付きマクロの呼び出しの位置について、`D°` の検査の結果から `Judgement`（「`Judgement`」）を作る。
 3. **変換**：`f(c)` をマクロのホストで走らせる。ホストが見せる宣言の環境は `D` より前の宣言だけ（凍結）。
 4. **置換**：出力を flip し（「衛生（スコープ集合）」）、`Atom` を文脈の束縛に結び（「文脈の変数（原子）と、範囲の外への持ち出し」）、`D` の中の 型付きマクロの呼び出しの位置に置いた `D′` を作る。
 5. **再検査**：`D′` 全体を 1 と同じ検査に通す。さらに各位置で：
    - 型：出力の型が元の型 `A` と **定義的に等しい**（カーネルの断片は変換性 `conv`、実行されるコードは `Ty` の同値）。
-   - 効果：出力の行が元の行の **部分集合**。元の行は位置の行で、関数に書いた行ではない（`! {show}` と書いた関数の中でも、
+   - 効果：出力の行が元の行の **部分集合**。元の行は位置の行で、関数に書いた行ではない（`! {∀ A. show(A)}` と書いた関数の中でも、
      `w * h` を `show` する出力に変えれば拒否）。
    - 署名：`D′` から推論される行・種が `D°` と同じ（行を書いていない関数の行が増えたら、呼び出し元が変わるので拒否）。
    - `Proved` なら、証明が `Eq(A, e, e′)` の型を持つ（カーネルで検査）。
@@ -787,12 +1024,33 @@ fn cube(x: i64) -> i64 ! {Div} { unroll!(pow(x, 3)) }
   呼び出し `f!(e)` の型は `e` の型で、マクロが走る前に決まっている。だから「マクロが型を調べ、その結果で型が変わる」
   循環はない。
 - 型付きマクロは **宣言の環境を変えない**（4 は `D` の中だけを変える）。
-- 型付きマクロの呼び出しの入れ子（`f!(… g!(…) …)`）は禁じる（OQ-5）。同じ宣言の中の並んだ呼び出しは、
+- 型付きマクロの呼び出しの入れ子（`f!(… g!(…) …)`）は禁じる（OQ-2）。同じ宣言の中の並んだ呼び出しは、
   互いに重ならないので、2〜4 を独立に行い、5 は一度だけ行う。
+- 出力の中に型付きマクロや位置のマクロの呼び出しが残れば、5 の前に、出力を置いた `D′` を `D` として 1 からやり直す。
+  呼び出しは外側から展開され、内側の呼び出しはその位置の判断を受け取る。やり直しの回数は展開の深さの上限で抑える。
 
-### `Code`
+### 位置のマクロ
 
-`Code` は **検査器だけが作る** 不透明な値で、ある時点で検査を通った判断を表す：
+関数が `Judgement` と、構文の値（構文マクロの入力か `SynExpr`）の二つを受け取るマクロは **位置のマクロ** で、
+カーネルの断片の項の位置に `NAME!(…)` と書く。中身は検査しない。マクロは、呼び出しの位置の目標と文脈を
+`Judgement`（項は穴、型は位置の目標）で、書かれた中身を二つ目の引数で受け取り、その位置の項を返す。
+
+- 素の検査では、呼び出しを名前付きの穴に置き換えた宣言を検査し、その穴の目標と文脈から `Judgement` を作る。
+  型付きマクロと違って中身は項でなくてよく、中身の型は呼び出しの型にならない。
+- 出力は呼び出しの位置に置き、宣言全体をカーネルが検査し直す（「呼び出しと段」の 5）。信頼する部分は増えない。
+  出力が受理されなければ、出力を置いた宣言の誤りとして、出力の位置で報告する。
+- 中身はマクロが読むデータで、ファイルの束縛では解決しない。中身の名前は書いたままマクロに渡り、出力が置かれた
+  場所の束縛（出力の中の `λ` を含む）で解決される。中身の中のマクロの呼び出しも、中身とともにはまだ展開されない。
+  マクロが中身を出力に置けば、その呼び出しは次の回に展開される。
+- `Judgement` の文脈の変数は、項の中では原子（`ExAtom`）として現れる。マクロは文脈から変数を名前で選び、
+  その原子を出力に置ける。原子は捕獲されず、出力を置いた位置の文脈の同じ変数を指す。
+- マクロの出力が作った呼び出しは、ファイルに書いた呼び出しと同じく、そのマクロの import を使ったものとして数える。
+- `syn_expand` は型付きマクロと同じく使え、頼んだ展開をしてからマクロを走らせ直す。
+- 例と検査は `cases/macro/placed.eure`。`proof!` の文型（`proof-macro.md`「Proof-lang の本体」）がこの形で書かれている。
+
+### `Judgement`
+
+`Judgement` は **検査器だけが作る** 不透明な値で、ある時点で検査を通った判断を表す：
 
 ```text
 Γ ⊢ e : A ! ε ▷ U
@@ -800,56 +1058,56 @@ fn cube(x: i64) -> i64 ! {Div} { unroll!(pow(x, 3)) }
 
 | 部分 | 中身 | 出どころ |
 |---|---|---|
-| `Γ` | 文脈：束縛ごとに原子の番号、表示名、型（`Code`）、種、持ち方（所有・`var`・`&`・`&mut`）、値（`let` の定義があれば） | カーネルの断片は穴と同じ道（`HoleGoal.context`）、実行されるコードは `TypeReport.locals` |
+| `Γ` | 文脈：束縛ごとに原子の番号、表示名、型（`Judgement`）、種、持ち方（所有・`var`・`&`・`&mut`）、値（`let` の定義があれば） | カーネルの断片は穴と同じ道（`HoleGoal.context`）、実行されるコードは `TypeReport.locals` |
 | `e` | 項（精密化の後。暗黙の引数はすべて書かれている） | カーネルの精密化の結果、または表面の項 |
-| `A` | 型（`Code`） | 穴の `goal` と同じ道、`TypeReport.terms` |
+| `A` | 型（`Judgement`） | 穴の `goal` と同じ道、`TypeReport.terms` |
 | `ε` | 効果の行 | `RowReport.calls` を部分項で合わせたもの。カーネルの断片は空 |
 | `U` | 使用の要約：`Γ` の束縛ごとに、`e` の中で move・借用・`&mut` 借用・未使用のどれか | 型付きマクロの変換が、素の検査の結果から作る（`macro-implementation.md`「マクロの実装」） |
 | 断片 | `Kernel` か `Program` | どちらの検査器が検査したか |
 
- `Code<Γ, Δin, Δout, A, ε>` との対応：`Δin` は `Γ` の種と持ち方、`Δout` は `U`。これらは
-**型の添字ではなく、`Code` の中のデータ**（「なぜ `Code` を型の添字で表さないか」で理由）。
+ `Judgement<Γ, Δin, Δout, A, ε>` との対応：`Δin` は `Γ` の種と持ち方、`Δout` は `U`。これらは
+**型の添字ではなく、`Judgement` の中のデータ**（「なぜ `Judgement` を型の添字で表さないか」で理由）。
 
-操作（`std/prelude/Macro.taut`）。**純粋** なものは `Code` の中のデータを読むだけ、`elab` の操作は
+操作（`std/prelude/Macro.taut`）。**純粋** なものは `Judgement` の中のデータを読むだけ、`elab` の操作は
 凍結した宣言の環境を読む（決定的で、環境を変えない）。
 
 | 操作 | 型 | 純粋か |
 |---|---|---|
-| `code_term(c)` | `(Code) -> SynExpr` | 純粋。文脈の変数は `Atom` で出る |
-| `code_type(c)` | `(Code) -> Code` | 純粋（型の判断 `Γ ⊢ A : Sort` の手札） |
-| `code_row(c)` | `(Code) -> List(Text)` | 純粋 |
-| `code_ctx(c)` | `(Code) -> List(CodeBinder)` | 純粋 |
-| `code_usage(c)` | `(Code) -> List(CodeUse)` | 純粋 |
-| `code_span(c)` | `(Code) -> SynSpan` | 純粋 |
-| `code_fragment(c)` | `(Code) -> CodeFragment` | 純粋 |
-| `code_same_atom(a, n)` | `(Code, u64) -> Bool` | 純粋。`a` が原子 `n` そのものか |
-| `code_mentions(c, n)` | `(Code, u64) -> Bool` | 純粋。`c` に原子 `n` が現れるか |
-| `code_view(c)` | `(Code) -> CodeView` | 純粋。一段だけ分解した形で、部分項も `Code`（束縛子の下は文脈を一つ広げた `Code`） |
-| `elab_whnf(c)` | `(Code) -> Code ! {elab}` | 環境に依存（定義の展開） |
-| `elab_defeq(a, b)` | `(Code, Code) -> Bool ! {elab}` | 環境に依存 |
-| `elab_check(e, ctx, ty)` | `(SynExpr, Code, Option(Code)) -> Result(Code, SynDiag) ! {elab}` | 環境に依存。`ctx` の `Code` の文脈で `e` を検査し、新しい手札を作る |
-| `elab_global(name)` | `(Text) -> Option(Code) ! {elab}` | 環境に依存。`D` より前の宣言の型 |
-| `elab_resolve(id, ctx)` | `(SynIdent, Code) -> Option(Code) ! {elab}` | 環境に依存。名前の解決（「衛生（スコープ集合）」） |
+| `Judgement::term(c)` | `(Judgement) -> SynExpr` | 純粋。文脈の変数は `Atom` で出る |
+| `Judgement::type_of(c)` | `(Judgement) -> Judgement` | 純粋（型の判断 `Γ ⊢ A : Sort` の手札） |
+| `Judgement::row(c)` | `(Judgement) -> List(Text)` | 純粋 |
+| `Judgement::ctx(c)` | `(Judgement) -> List(Judgement::Binder)` | 純粋 |
+| `Judgement::usage(c)` | `(Judgement) -> List(Judgement::Use)` | 純粋 |
+| `Judgement::span(c)` | `(Judgement) -> SynSpan` | 純粋 |
+| `Judgement::fragment(c)` | `(Judgement) -> CodeFragment` | 純粋 |
+| `Judgement::same_atom(a, n)` | `(Judgement, u64) -> Bool` | 純粋。`a` が原子 `n` そのものか |
+| `Judgement::mentions(c, n)` | `(Judgement, u64) -> Bool` | 純粋。`c` に原子 `n` が現れるか |
+| `Judgement::open(c)` | `(Judgement) -> CodeView` | 純粋。一段だけ分解した形で、部分項も `Judgement`（束縛子の下は文脈を一つ広げた `Judgement`） |
+| `elab_whnf(c)` | `(Judgement) -> Judgement ! {elab}` | 環境に依存（定義の展開） |
+| `elab_defeq(a, b)` | `(Judgement, Judgement) -> Bool ! {elab}` | 環境に依存 |
+| `elab_check(e, ctx, ty)` | `(SynExpr, Judgement, Option(Judgement)) -> Result(Judgement, SynDiag) ! {elab}` | 環境に依存。`ctx` の `Judgement` の文脈で `e` を検査し、新しい手札を作る |
+| `elab_global(name)` | `(Text) -> Option(Judgement) ! {elab}` | 環境に依存。`D` より前の宣言の型 |
+| `elab_resolve(id, ctx)` | `(SynIdent, Judgement) -> Option(Judgement) ! {elab}` | 環境に依存。名前の解決（「衛生（スコープ集合）」） |
 
-`CodeView` はカーネルの断片では `VAtom(u64)`、`VConst(Text)`、`VSort(Text)`、`VApp(Code, List(Code))`、
-`VLam(u64, Code, Code)`、`VPi(u64, Code, Code)`、`VLit(Text)`、`VMatch(…)`。実行されるコードでは
-`SynExpr` の構成子と同じ並び（`VInt(Text)`、`VApp(Code, List(Code))`、`VIf(Code, Code, Option(Code))` など）で、
-部分項が `Code`。パターン照合はこの値に対する普通の `match` で書く。大域の宣言の参照は `VConst(名前)`
+`CodeView` はカーネルの断片では `VAtom(u64)`、`VConst(Text)`、`VSort(Text)`、`VApp(Judgement, List(Judgement))`、
+`VLam(u64, Judgement, Judgement)`、`VPi(u64, Judgement, Judgement)`、`VLit(Text)`、`VMatch(…)`。実行されるコードでは
+`SynExpr` の構成子と同じ並び（`VInt(Text)`、`VApp(Judgement, List(Judgement))`、`VIf(Judgement, Judgement, Option(Judgement))` など）で、
+部分項が `Judgement`。パターン照合はこの値に対する普通の `match` で書く。大域の宣言の参照は `VConst(名前)`
 （名前は解決した後の一意な名前）。
 
-`Code` は作れない：構成子を持たない builtin の型で、`elab_check` と `code_view` と `code_type` だけが
-値を返す。`Code` の値はホストの外へ出せず（実行時には存在しない）、種は shared（不変のデータ）。
+`Judgement` は作れない：構成子を持たない builtin の型で、`elab_check` と `Judgement::open` と `Judgement::type_of` だけが
+値を返す。`Judgement` の値はホストの外へ出せず（実行時には存在しない）、種は shared（不変のデータ）。
 
 ### 文脈の変数（原子）と、範囲の外への持ち出し
 
-- `Code` の中の文脈の変数は `ExAtom(n, span)` として出る。`n` は検査器が付けた番号。
-- 出力の中の `ExAtom(n)` は、型付きマクロの呼び出しの位置の文脈 `Γ`、または出力の中の束縛子（`code_view` が開いた束縛子を
+- `Judgement` の中の文脈の変数は `ExAtom(n, span)` として出る。`n` は検査器が付けた番号。
+- 出力の中の `ExAtom(n)` は、型付きマクロの呼び出しの位置の文脈 `Γ`、または出力の中の束縛子（`Judgement::open` が開いた束縛子を
   そのまま使ったもの）に結ぶ。**名前による解決を通らない** ので、捕獲は起きない。
-- **偽造の検出**：ホストは、その呼び出しで渡した `Code` に現れた原子の集合を覚える。出力に知らない原子が
+- **偽造の検出**：ホストは、その呼び出しで渡した `Judgement` に現れた原子の集合を覚える。出力に知らない原子が
   あればエラー `macro.unknown_atom`。
-- **範囲の外への持ち出し**（scope extrusion）：`code_view` で λ の下を開いて得た原子を、その λ の外に置けば、
+- **範囲の外への持ち出し**（scope extrusion）：`Judgement::open` で λ の下を開いて得た原子を、その λ の外に置けば、
   4 の結びつけで束縛子が見つからない。エラー `macro.scope_extrusion`。型で防ぐのではなく、置換の時点で
-  必ず見つける（「なぜ `Code` を型の添字で表さないか」、OQ-6）。
+  必ず見つける（「なぜ `Judgement` を型の添字で表さないか」、OQ-3）。
 
 ### 型保存と意味保存
 
@@ -869,13 +1127,13 @@ fn cube(x: i64) -> i64 ! {Div} { unroll!(pow(x, 3)) }
 - 型保存だけでも、カーネルと検査器が受理したものは不正な証明・型・所有権を含まない（「線形・アフィンとの統合」）。
 
 例：`quote { $c * $c * $c }` は `$c` の型も行も保つので受理されるが、`$c` の効果は三回起きる（一度だけ評価するには
-`let t = $c` で束縛する。`cases/macro/code.eure`）。実行されるコードの意味の等しさは言語では扱わない。確かめたいときは道具で、変換の前後を同じ入力で走らせて `show` の列を
+`let t := $c` で束縛する。`cases/macro/code.eure`）。実行されるコードの意味の等しさは言語では扱わない。確かめたいときは道具で、変換の前後を同じ入力で走らせて `show` の列を
 比べる（`tauto macro trace --diff` で前後の形を見る）。これは保証ではない。
 
 **証明を作るマクロ：tactic。** 関数の入力の型が `ProofStep` のマクロは、**元のゴールと次のゴールを明示したステップ**
-`by t!(arg) -> G0 { Δ ⊢ G => p … }` でだけ呼べ、場所のゴールと書かれた腕を受け取って穴 `?arm1 …` を含む項を返す。
+`by t!(arg): G0 { Δ ⊢ G from p … }` でだけ呼べ、場所のゴールと書かれた腕を受け取って穴 `?arm1 …` を含む項を返す。
 書かれたゴールはどれも `the` の注釈としてカーネルが検査し、信頼する部分は増えない。詳細は
-[`macro-steps.md`](macro-steps.md)。場所の型だけを受け取ってゴールを書かないマクロはない。
+[`macro-steps.md`](macro-steps.md)。
 例：`examples/lambda` の `reduce_goal!`、`std/Rewrite.taut` の `rewrite!`。
 
 `Proved` の意味：`struct Proved { term: SynExpr, proof: SynExpr }`。`proof` の型が `Γ ⊢ Eq(A, e, term)` で
@@ -885,18 +1143,18 @@ fn cube(x: i64) -> i64 ! {Div} { unroll!(pow(x, 3)) }
 ### 線形・アフィンとの統合
 
 「型が一致しているので安全」とは判断しない。所有権に関わる保証は、すべて **`D′` 全体の `lin.rs` の検査**
-から来る。`Code` の `U` は変換を書くための情報で、根拠ではない。
+から来る。`Judgement` の `U` は変換を書くための情報で、根拠ではない。
 
 | 事柄 | 扱い |
 |---|---|
-| `Code` の複製 | `Code` は shared。手札を何度複製しても、それは「項の記述」の複製で、値の複製ではない |
+| `Judgement` の複製 | `Judgement` は shared。手札を何度複製しても、それは「項の記述」の複製で、値の複製ではない |
 | 埋め込みの複数回の使用 | `quote { $c + $c }` は許す。`c` が affine の束縛を move していれば、`D′` の `lin.rs` が「二度 move」で拒否する |
 | affine の消費 | 出力が affine の束縛を使わなくなる（捨てる）のは、種の規則が許す（affine は捨ててよい）。ただし `Drop` の時点が変わる。意味の変化で、検査は通る |
 | linear の必須使用 | 出力が linear の束縛を使わなければ、`lin.rs` が「使われていない」で拒否する |
 | 閉包と捕獲 | 出力が閉包を作り affine を捕獲すれば閉包が affine になる（`ownership.md`「閉包」）。その閉包を二度呼べば拒否 |
 | multi-shot の継続 | 出力が `resume ω` の効果を行えば、効果の行が増える（「呼び出しと段」の 5 で拒否）。元から ω の効果がある場所で、出力が affine の束縛を ω を跨いで生かせば、CFL（`ownership.md`「制御フロー線形性（CFL）の規則」）で拒否 |
 | ハンドラによる変化 | 出力がハンドラを足して効果を消すのは許す（行は減る）。ハンドラの腕が外の affine を捕まえれば、腕の規則（`ownership.md`「腕と `k`」）で拒否 |
-| 借用 | 出力の借用の衝突・凍結は `lin.rs` が検査する。`Code` の `U` で借用の場所がわかるので、変換は避けられる |
+| 借用 | 出力の借用の衝突・凍結は `lin.rs` が検査する。`Judgement` の `U` で借用の場所がわかるので、変換は避けられる |
 
 **なぜ宣言全体を検査するか**：CFL は「ある部分式を跨いで生きている値」を見る。型付きマクロの呼び出しの位置の外にある
 値が、出力の中の `perform` を跨いで生きることがあり、位置の中だけの検査では見落とす。宣言全体の検査なら
@@ -906,10 +1164,10 @@ fn cube(x: i64) -> i64 ! {Div} { unroll!(pow(x, 3)) }
 
 - 定義的等価：「呼び出しと段」の 5 で出力の型と元の型を `conv` で比べる。カーネルの `conv`（β・δ・リテラルの算術）
   そのまま。
-- 宇宙：出力の型が元の型と変換可能なら宇宙も同じ。`Code` の型の手札は `Sort` を含めて扱える。
-- 代入と束縛：`Code` の文脈の変数は原子なので、置換で束縛を取り違えない。カーネルに渡すときは 「衛生（スコープ集合）」の名前を付ける。
+- 宇宙：出力の型が元の型と変換可能なら宇宙も同じ。`Judgement` の型の手札は `Sort` を含めて扱える。
+- 代入と束縛：`Judgement` の文脈の変数は原子なので、置換で束縛を取り違えない。カーネルに渡すときは 「衛生（スコープ集合）」の名前を付ける。
 - **依存する位置**：`D` の中で、型付きマクロの呼び出しの位置の後ろが `e` の値に **定義的に** 依存していることがある
-  （`let x: Nat = opt!(e)` の後に `refl` で `x ≡ e` を使う）。出力 `e′` が `e` と定義的に等しく
+  （`let x: Nat := opt!(e)` の後に `Refl` で `x ≡ e` を使う）。出力 `e′` が `e` と定義的に等しく
   なければ、`D′` の再検査で落ちる。これは正しい振る舞いで、エラーは「型付きマクロの出力が元と定義的に
   等しくないため、ここで使っている等しさが成り立たない」と説明する（`macro.dependent_use`）。
 - 後の宣言：`D′` が環境に入るので、後の宣言は変換後の本体を δ で見る。
@@ -919,20 +1177,20 @@ fn cube(x: i64) -> i64 ! {Div} { unroll!(pow(x, 3)) }
   展開を項として書き戻せば、規則を有効にした tote にも残せる。規則の対象は定理と `def` の中の
   型付きマクロ（`tauto lint` の `typed-macro-in-proof`）。
 
-### なぜ `Code` を型の添字で表さないか
+### なぜ `Judgement` を型の添字で表さないか
 
 候補：
 
 | 候補 | 評価 |
 |---|---|
-| `Code<Γ, A>` を Nib の型で添字付け | マクロ関数は Nib（依存型を持たない層）で書く。`A` が依存型のとき、それを Nib の型の添字にはできない。tauto の型で添字付けると、マクロを書く言語の中に tauto の型と項とその型付けを表す依存型の構文が要り、言語の中で言語自身の型理論を書くことになる |
-| `Code<Γ, A, ε>`、capability の入出力つき | 同上。加えて、行と使用の添字の計算をマクロの言語の型検査でしなければならない |
+| `Judgement<Γ, A>` を Nib の型で添字付け | マクロ関数は Nib（依存型を持たない層）で書く。`A` が依存型のとき、それを Nib の型の添字にはできない。tauto の型で添字付けると、マクロを書く言語の中に tauto の型と項とその型付けを表す依存型の構文が要り、言語の中で言語自身の型理論を書くことになる |
+| `Judgement<Γ, A, ε>`、capability の入出力つき | 同上。加えて、行と使用の添字の計算をマクロの言語の型検査でしなければならない |
 | 内在的に型付けた AST | 依存型の内在的な構文は、置換が型の上で計算される必要があり、実装も証明も大きい |
 | 型付け導出を持つ外在的な AST | 導出を作る検査器（`meta/Kernel*.taut` の、導出を返す検査器）はあるが、実行されるコードの導出（型・行・所有権）はない |
 | **カーネルが検査した項への不透明な手札** | **採用**。保証は「この手札の判断は、ある時点で検査器が出した」。出力はもう一度検査する |
 
 保証が弱くなるのは「マクロの作者が出力の型を書いた時点で知る」ことだけで、受理されるプログラムの
-健全性は変わらない。静的に型の付いた `quote`（作者への早い診断）は、手札の上に後で足せる（OQ-6）。
+健全性は変わらない。静的に型の付いた `quote`（作者への早い診断）は、手札の上に後で足せる（OQ-3）。
 
 ## 段と実行のモデル
 
@@ -947,11 +1205,11 @@ Syntax Expansion          ファイルごとに外側から。DSL の解析 → 
   ↓
 Elaboration / Checking    通常の検査：カーネル + 独立カーネル、types.rs・rows.rs・lin.rs
   ↓
-Typed Macro Transformation  宣言ごと。型付きマクロの呼び出しの位置の Code → 関数 → 置換
+Typed Macro Transformation  宣言ごと。型付きマクロの呼び出しの位置の Judgement → 関数 → 置換
   ↓
 Rechecking                変換した宣言全体を、もう一度同じ検査に通す
   ↓
-Code Generation           eval.rs、または tauto-nir → tauto-rustgen（rust-backend）
+Judgement Generation           eval.rs、または tauto-nir → tauto-rustgen（rust-backend）
 ```
 
 この順序で書けない場合と、その扱い：
@@ -960,32 +1218,26 @@ Code Generation           eval.rs、または tauto-nir → tauto-rustgen（rust
   型付きマクロの結果は宣言の本体だけを変え、構文を増やさない。
 - **構文マクロの関数が、前のファイルで型付きマクロを使っている**：前のファイルは検査と変換を終えているので、
   関数の本体は変換後のもの。問題ない。
-- **宣言 `D` の中の型付きマクロが、同じ `D` の残りの型を見たい**：見られない（`Code` は 型付きマクロの呼び出しの位置の判断だけ）。
+- **宣言 `D` の中の型付きマクロが、同じ `D` の残りの型を見たい**：見られない（`Judgement` は 型付きマクロの呼び出しの位置の判断だけ）。
 - **相互再帰（`mutual`）の宣言の中の型付きマクロ**：グループ全体を `D` として扱う（「呼び出しと段」の 1 と 5 をグループで行う）。
 
 ### マクロ関数の行
 
 ```nib
-effect macro_error: (d: SynDiag) -> Never resume 0
-effect macro_warn: (d: SynDiag) -> () resume 1
-effect elab = {elab_whnf, elab_defeq, elab_check, elab_global, elab_resolve}   // 各操作は resume 1
+effect macro_error(d: SynDiag): Never resume 0
+effect macro_warn(d: SynDiag): () resume 1
+effect elab {elab_whnf, elab_defeq, elab_check, elab_global, elab_resolve}   // 各操作は resume 1
 ```
 
 - マクロ関数の行は `{macro_error, macro_warn, elab, Div}` の部分集合。`Div` を許すのは、再帰や `while` を
   書けるようにするため。停止はホストの予算が保証する（「停止と資源」）。`show` は許さない（観測の操作で、
   ホストの外へ値を出す）。
 - 行の検査で「追えない効果」（`?…`、rows.rs）が出たら、登録をエラーにする（空と読まない）。
-- 行だけでは足りない（`macro-security.md`「信頼境界」）：行は停止と資源を言わず、また OS の builtin
-  （`std/prelude/Os.taut` の `os_read_file` など）は行を持たない。OS の操作（`os_args`、`os_read_file`、
-  `os_write_file`、`os_print`、`os_eprint`、`os_exit`）は、`show` と同じくホストが答える操作の集まり `effect Os` にする
-  （`os_exit` は `resume 0`）。そうすれば上の行の制限だけで OS の操作は締め出され、試験はハンドラで OS を差し替えられる。
-  `effect Os` は実装されておらず、`std/prelude/Os.taut` の操作は行のない `extern` の関数である。
-  OS の操作が `effect Os` であるかどうかに関わらず、二重の防御として、登録のとき、
-  関数の **呼び出しのグラフ** を静的にたどり、届く `extern "builtin"` がすべて **マクロのホストの許可リスト**
-  （`macro-security.md`「マクロのホストの許可リスト」：`text_*`、`num` の変換、`buf_*`、`concat`、`words`、`clone`、`div`・`mod`、`syn_*`、`code_*`）に
-  入っていることを確かめる。閉包を通る呼び出しなど、静的に追えない呼び出しは「呼ばれうる builtin の集合」を
-  プログラム全体の **閉包として作られうる関数** で上から抑える。抑えられなければ登録をエラーにする。
-  さらに実行時にもホストが許可リストで拒む（二重の防御）。
+- 行は停止と資源を言わないので、それはホストの予算が止める。OS の操作は
+  標準エフェクト（`stdout`、`fs_read`、`net` など、`host-effects.md`）で、上の行の制限だけで締め出され、
+  試験はハンドラで OS を差し替えられる。行は閉包を通る呼び出しも含めて関数の効果を言うので、これで足りる。二重の防御として、実行するホストは
+  標準エフェクトに答えず、実行中に実行されたらエラーにし、それに答える builtin（`Os::*`）を呼んでもエラーにする。
+  `Ref`・`Atomic` など、呼びの中で作った値にしか触れない builtin は使える。
 - `extern "rust"` の関数は評価器が呼べない。マクロからも呼べない。
 
 ### 停止と資源
@@ -1018,23 +1270,23 @@ effect elab = {elab_whnf, elab_defeq, elab_check, elab_global, elab_resolve}   /
 
 ### コンパイル時の値と実行時の値、段を越える持ち込み
 
-- コンパイル時に存在する値：マクロ関数の引数（型付き AST、`Code`）、マクロ関数の中で作った値。
+- コンパイル時に存在する値：マクロ関数の引数（型付き AST、`Judgement`）、マクロ関数の中で作った値。
 - 実行時の値はコンパイル時にない（当然）。コンパイル時の値は **構文としてだけ** 実行時へ持ち込める。
 - 持ち込める値（`lift`）：`syn_lift_i64`、`syn_lift_u64`、`syn_lift_text`、`syn_lift_bool`、
   `syn_lift_decimal` がリテラルの構文を作る。`List` や `Option` などのデータは、要素を持ち込んで構成子の
   呼び出しを `quote` で作る。
-- 持ち込めない値：閉包、`var` のセル、継続、`Code`（`code_term` で構文にすれば持ち込める。それは再検査される）、
+- 持ち込めない値：閉包、`var` のセル、継続、`Judgement`（`Judgement::term` で構文にすれば持ち込める。それは再検査される）、
   affine・linear の値（`Buf`、`Vec` など）。持ち込む関数がないので、持ち込めないことは型で決まる。
 - 大域の宣言の参照は持ち込みではない：`quote { helper(x) }` は名前の参照で、解決は 「衛生（スコープ集合）」。
 
 ### キャッシュと決定性
 
 - 展開の結果は、次の指紋で引く：マクロ関数とそれが届くすべての宣言の **展開・検査後の** 正規形の指紋、
-  入力（DSL の文字列と開始位置を除いた中身、または `Code` の正規形）、文法の表の指紋、tauto の版、
+  入力（DSL の文字列と開始位置を除いた中身、または `Judgement` の正規形）、文法の表の指紋、tauto の版、
   評価器の版、予算の設定。
 - `include_text!` が読んだファイルの中身は、マクロの入力ではなく、書かれたプログラムの一部（リテラル）として鍵に入る
   （「組み込みの読み込み `include_text!`」）。
-- 決定性の根拠：マクロ関数は許可リストの builtin しか呼べない（ホストの時刻・乱数・環境変数・ファイルがない）、
+- 決定性の根拠：マクロ関数の行にはホストが答える効果がなく、ホストは答えない（時刻・乱数・環境変数・ファイルがない）、
   評価器は決定的（ハッシュの順序に依存しない。`macro-security.md`「決定性」で監査項目にする）、展開のスコープの番号は位置から
   決まる（「衛生（スコープ集合）」の 10）。
 - 決定性は **評価器の性質** で、Lean では評価器のモデルについて示す（`macro-semantics.md`「段と決定性」）。Rust の評価器との対応は試験で確かめる。
@@ -1047,7 +1299,7 @@ effect elab = {elab_whnf, elab_defeq, elab_check, elab_global, elab_resolve}   /
 |---|---|
 | `tauto macro expand FILE [--at LINE:COL] [--depth N] [--json]` | 展開した後のソース（`tauto fmt` で整形）。`--at` はその位置の呼び出しだけ。`--depth` は展開を N 段で止める |
 | `tauto macro expand FILE --write` | ファイルのすべての呼び出しを展開の結果で置き換えて書く（`tauto fill` と同じく、展開にエラーがあれば書かない）。導入された名前 `x#n` は衝突しない名前に直す |
-| `tauto macro inspect FILE --at LINE:COL [--json]` | 構文マクロ：トークン、CST、型付き AST の値。型付きマクロ：`Code` の判断（`Γ`、`A`、`ε`、`U`） |
+| `tauto macro inspect FILE --at LINE:COL [--json]` | 構文マクロ：トークン、CST、型付き AST の値。型付きマクロ：`Judgement` の判断（`Γ`、`A`、`ε`、`U`） |
 | `tauto macro trace FILE [--json]` | すべての展開の木：番号、マクロ、種類、呼び出しの位置、親、入出力の指紋、ステップ、キャッシュの当たり、捕獲の印、診断 |
 | `tauto syntax gen [PATH] [--check]` | tote の `syntax` の表と型の生成物を作り直す。`--check` は古ければ失敗 |
 | `tauto syntax show NAME [--json]` | 文法から生成した型の宣言と、表の大きさ |
@@ -1077,10 +1329,10 @@ effect elab = {elab_whnf, elab_defeq, elab_check, elab_global, elab_resolve}   /
 
 - 診断はすべて安定した `code`（`macro.syntax_error`、`macro.budget_exceeded`、`macro.depth_exceeded`、
   `macro.forbidden_output`、`macro.unknown_atom`、`macro.scope_extrusion`、`macro.type_changed`、`macro.row_grew`、
-  `macro.signature_changed`、`macro.dependent_use`、`macro.same_file`、`macro.not_allowed_builtin`、`macro.unchecked_effect`、
+  `macro.signature_changed`、`macro.dependent_use`、`macro.same_file`、`macro.not_allowed_builtin`（実行中にホストが答える builtin を呼んだ）、`macro.unchecked_effect`、
   `macro.proof_rejected`、`macro.output_too_large`、`macro.memory_exceeded`、`macro.ambiguous`、`macro.unbound`）を持つ。
 - `trace` は展開の番号の連鎖（内側から）。各番号は `expansions` で引ける。
-- 型付き AST と `Code` の直列化は、構成子の名前とフィールドの名前で書いた JSON（`{"$": "math_Term.Num", "0": {…}}`）。
+- 型付き AST と `Judgement` の直列化は、構成子の名前とフィールドの名前で書いた JSON（`{"$": "math::Term::Num", "0": {…}}`）。
   順序は宣言の順で、安定している。
 - 変換の差分：`tauto macro trace --diff ID` は、その展開の入力（型付きマクロなら `e`）と出力の、
   整形したソースの差分を出す。
@@ -1088,7 +1340,7 @@ effect elab = {elab_whnf, elab_defeq, elab_check, elab_global, elab_resolve}   /
 ### 診断の位置
 
 - 展開の出力の中の型エラーは、仮の span を由来で引き直し、「書かれた位置」（定義元の `quote` の中か、呼び出し元）と
-  展開の連鎖を出す。人向けの表示は ``math!(`1 + 2 = 3`)（a.taut:3:23）の展開の中、math_expand（lib.taut:12:5）の quote から``。
+  展開の連鎖を出す。人向けの表示は ``math!(`1 + 2 = 3`)（a.taut:3:23）の展開の中、math（lib.taut:12:5）の quote から``。
 - DSL の構文エラーは DSL の文字列の中の行と列。
 
 ## Lean で示すこと（概要）
@@ -1097,88 +1349,82 @@ effect elab = {elab_whnf, elab_defeq, elab_check, elab_global, elab_resolve}   /
 
 | 性質 | 何が保証するか | Lean |
 |---|---|---|
-| 構文が文法に従う | 表の生成器（`totes/llkgen`）と駆動部の正しさ。**健全性には効かない**（誤っても出力は再検査される） | 示さない。差分試験（参照の表と `totes/llkgen`、`crates/tauto-syntax` の駆動部と `totes/scan`・`totes/llk`）で確かめる |
+| 構文が文法に従う | 表の生成器（`totes/llkgen`・`totes/lalrgen`）と駆動部の正しさ。**健全性には効かない**（誤っても出力は再検査される） | 示さない。差分試験（参照の表と `totes/llkgen`・`totes/lalrgen`、`crates/tauto-syntax` の駆動部と `totes/scan`・`totes/llk`・`totes/lr`）で確かめる |
 | 生成したコードが型検査に通る | 検査器（カーネル + 独立カーネル）の正しさ | 既存の形式化（[`lean.md`](lean.md)）のまま。マクロのために足さない |
 | 効果・capability の健全性 | `D′` 全体の `rows.rs`・`lin.rs` の検査と、Lean の使用の検査の定理（`ownership.md`「Lean での証明」） | 既存。マクロのために足すのは置換の補題（局所の再検査のため） |
 | 変換前後の意味の等しさ | `Proved` の証明をカーネルが検査したときだけ、カーネルの論理の命題として | マクロのために足さない |
 | マクロが停止する | ホストの予算 | 燃料つきの展開の関係で、展開が有限の段で終わること（`macro-semantics.md`「段と決定性」） |
-| マクロの実行が決定的 | 許可リストと、評価器の決定性 | 評価器のモデルの決定性（既存の `Proto/Nib` の意味論が関数として定義されていること）と、展開のスコープが位置から決まること |
-| ホスト環境を侵害しない | 許可リストと評価器の実装 | 示さない（Rust の実装の性質）。`macro-security.md` の監査と試験で確かめる |
+| マクロの実行が決定的 | 行の制限と、評価器の決定性 | 評価器のモデルの決定性（既存の `Proto/Nib` の意味論が関数として定義されていること）と、展開のスコープが位置から決まること |
+| ホスト環境を侵害しない | 行の制限と評価器の実装 | 示さない（Rust の実装の性質）。`macro-security.md` の監査と試験で確かめる |
 | 衛生 | スコープ集合の解決規則 | 示す（`macro-semantics.md`「衛生の定理」の定理 H1〜H3） |
 
 ## この設計で入れないもの
 
 | 入れないもの | 代わり | 理由 |
 |---|---|---|
-| 型推論の途中で走るマクロ（ゴールを書かないタクティク） | ゴールを明示したステップ（[`macro-steps.md`](macro-steps.md)）、穴 `?h` と `tauto try`/`fill` | 推論の状態を API にしない。証明の状態はソースから読める |
+| 型推論の途中で走るマクロ | ゴールを明示したステップ（[`macro-steps.md`](macro-steps.md)）、穴 `?h` と `tauto try`/`fill` | 推論の状態を API にしない。証明の状態はソースから読める |
 | トークン木の引数（字句の並び） | 型なしマクロの式の引数 `m!(1 + 2)`、または構文マクロのリテラル ``m!(`1 + 2`)`` | 「入れないもの」 |
 | マクロでの `axiom`・`extern`・`import` の生成 | 手で書く | 信頼の一覧を黙って増やさない |
 | 意味保存の証明の必須化 | `Proved` を選べる | 「型保存と意味保存」 |
 | マクロからのファイル・ネットワーク・環境変数・時刻 | 入れない | 決定性とホストの保護（`macro-security.md`）。宣言したファイルだけをホストが読んで値として渡す外部入力は、要る用途（スキーマから型を作る）が出てから。入れるなら中身の指紋をキャッシュの鍵に入れ、読むのはホスト |
 | 型付きマクロを宣言全体に掛ける書き方 | 本体を `m!(…)` で包む | 一つのことに書き方は一つ。宣言の署名から本体を作りたいなら、宣言を生成する構文マクロで書く |
 | 同じファイルの中での定義と使用 | 前のファイル | 「段の境界とファイル」 |
-| 型付き AST のエラー節点 | 最初のエラーで止まる | 小さくする（OQ-16） |
+| 型付き AST のエラー節点 | 最初のエラーで止まる | 小さくする（OQ-9） |
 | ユーザー定義の字句の前処理（読み込みマクロ） | `syntax` の文法の字句規則 | 字句の段にユーザーのコードを入れない |
 
 ## 未決定の問い
 
-### OQ-1 文法の種類：LALR(1) を足すか
+### OQ-2 型付きマクロの呼び出しの入れ子
 
-LL(k)（k ≤ 3）にした（「比較」）。LALR(1) は左再帰と演算子の優先順位が書きやすいが、駆動部が二つになり、
-shift/reduce の衝突の説明が DSL の作者に要る。曖昧さを隠す・受け付ける方式（順序つきの選択、結果が森になる方式）は、
-型付き AST が一つに決まらないか曖昧さが見えなくなるので入れない。決めるには、優先順位が 4 段で前置・後置の演算子と
-関数の適用を持つ数学の記法を LL(k) で書いて畳み込みの長さを測り、`k = 3` で足りない DSL の例を集める。
-
-### OQ-5 型付きマクロの呼び出しの入れ子
-
-禁止している（「呼び出しと段」）。内側から順に変換して手札を作り直す形は、置換の補題 T5（`macro-semantics.md`「定理」）を
+引数の中の入れ子は禁止している（「呼び出しと段」）。出力の中に残った呼び出しは、外側から次の回に展開する。
+位置のマクロの中身はデータなので、中身の中の呼び出しはこの禁止の対象ではない。内側から順に変換して手札を作り直す形は、置換の補題 T5（`macro-semantics.md`「定理」）を
 使えば安く入れられる。外側からの形は、外側の出力の中に内側の呼び出しが残り、その判断が外側の変換に依存する。
 要る実例が出たら、T5 の使用の検査の半分を示してから考える。
 
-### OQ-6 静的に型の付いた `quote`・`Code(A)`
+### OQ-3 静的に型の付いた `quote`・`Judgement(A)`
 
-`Code` は添字を持たない（「なぜ `Code` を型の添字で表さないか」）。Nib の型で添字を付けて `quote` を書いた時点で型を
+`Judgement` は添字を持たない（「なぜ `Judgement` を型の添字で表さないか」）。Nib の型で添字を付けて `quote` を書いた時点で型を
 検査する形は、文脈 `Γ`（`quote` の自由変数の型）と行・使用の添字が要り、メタ言語の型検査が大きくなる。健全性は
 再検査で保たれるので、得るのはマクロの作者への早い診断だけ。
 
-### OQ-7 型付きマクロが推論した行を減らすこと
+### OQ-4 型付きマクロが推論した行を減らすこと
 
 推論される署名が変われば拒否する（「呼び出しと段」の 5）。行を書いていない関数で、ハンドラで包んで行を減らす変換も
 拒否される。小さい行は部分型なので、減る場合に限って呼び出し元を検査し直さずに許す緩め方がある。要る実例が出てから。
 
-### OQ-10 DSL の中の `${ … }` の記号
+### OQ-5 DSL の中の `${ … }` の記号
 
 `${` は DSL の字句より優先するので、`TautoExpr` を使う文法の DSL は `${` を自分の字句に使えない。代わりの記号を
 文法ごとに選べるようにする形（`%splice '#{' '}'`）は、`${` を自分で使う DSL（シェル、テンプレート）が要るときに考える。
 
-### OQ-11 生成した型の名前と名前空間
+### OQ-6 生成した型の名前と名前空間
 
-生成した型の名前は `<syntax>_<非終端記号>`（`math_Eqn`）。モジュール（`rust-backend.md`「名前空間」）に入れて `module math { … }` の
-`math.Eqn`、構文の値の型も `SynExpr` → `Syn.Expr` にするか。移すなら展開関数を機械的に書き換えられるか（`tauto fmt`）。
+生成した型の名前は `<syntax>.<非終端記号>`（`math::Eqn`）で、モジュール（`rust-backend.md`「名前空間」）の中にある。構文の値の型も `SynExpr` → `Syn.Expr` にするか。移すなら展開関数を機械的に書き換えられるか（`tauto fmt`）。
 
-### OQ-13 宣言を生成するマクロの名前の見え方の細部
+### OQ-7 宣言を生成するマクロの名前の見え方の細部
 
 規則は「衛生（スコープ集合）」の 7。残るのは (1) 展開の中だけで見える宣言を、別の展開から参照する方法
 （決まっている規則では、共有したい宣言は呼び出し元から見える名前で作る）、(2) `tauto check` の宣言の一覧で、見えない宣言を
 展開の下に入れて出すこと。
 
-### OQ-14 一つの文法の複数の入口
+### OQ-8 一つの文法の複数の入口
 
-文法の開始は `%start` 一つで、マクロの入力の型の `N` は開始の非終端記号でなければならない。`syntax math(Eqn, Sum) = …` のように
+文法の開始は `%start` 一つで、マクロの入力の型の `N` は開始の非終端記号でなければならない。`syntax!(math, ```par …```) => …` のように
 入口を並べ、入口ごとに開始規則（`__Start_Sum: Sum;`）を足した文法で表を作れば正しく読める（表は入口の数だけ増える）。
-入れれば `(math_Sum) -> SynExpr` のように入力の型の `N` をそのまま入口にできる。
+入れれば `(math::Sum) -> SynExpr` のように入力の型の `N` をそのまま入口にできる。
 
-### OQ-16 エラーからの回復と CST をマクロに渡すか
+### OQ-9 エラーからの回復と CST をマクロに渡すか
 
-構文解析は最初のエラーで止まり、型付き AST を作らない。CST は道具（LSP、`inspect`）だけ。回復した木をマクロに渡すと、すべての
+構文解析は最初のエラーで止まり、型付き AST を作らない。CST を受け取るのは道具の関数（`with` で登録する `fmt`、`tokens`。
+「構文に付ける関数（`with`）」）と `inspect` だけで、マクロには渡さない。回復した木をマクロに渡すと、すべての
 型にエラーの構成子が要り、展開関数がそれを扱わなければならない。書きかけの DSL での補完を CST だけで賄えるかで決める。
 
-### OQ-17 共有のキャッシュ
+### OQ-10 共有のキャッシュ
 
 キャッシュは手元だけ。共有するなら、鍵と値の対に署名を付けるか、「キャッシュから読んだ出力も再検査される」ことだけに
 頼るか。後者は健全性（A1）は守るが、見える意味（A5）と決定性の監査を守らない（`macro-security.md`「キャッシュ」）。
 
-### OQ-19 型付き AST の `span` フィールドとパターン
+### OQ-11 型付き AST の `span` フィールドとパターン
 
 `span` は構造体の最初のフィールド。レコードのパターンで一部のフィールドだけを書けないなら、位置の構成子のパターン
 （`Paren(p)` の後に `p.sum`）で書く。span を別の関数（`math_span_Paren(p)`）で取る形と比べて決める。

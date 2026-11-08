@@ -112,7 +112,7 @@ pub theorem product_step_tracked<A: Type>(
 }
 
 pub fn pm_dup(c: Checker, x: Ty, m: SurfaceTerm, d: Bool): Mut1(Ty, Checker) {
-  match d: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match d {
     true => mut1(x, c)
     false => frame_bind(
       Unit,
@@ -124,7 +124,7 @@ pub fn pm_dup(c: Checker, x: Ty, m: SurfaceTerm, d: Bool): Mut1(Ty, Checker) {
 }
 
 pub fn pm_step(c: Checker, t: Ty, m: SurfaceTerm, o: Option(Ty)): Mut1(Ty, Checker) {
-  match o: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match o {
     None => mut1(ck_resolve(c, t), c)
     Some(x) => pm_dup(c, x, m, kind_dup(ck_kind(c, x)))
   }
@@ -142,7 +142,7 @@ pub theorem pm_dup_step(
   m: SurfaceTerm,
   d: Bool
 ): ProductStep(c, pm_dup(c, x, m, d)) {
-  match d: ProductStep(c, pm_dup(c, x, m, d)) {
+  ⊢ ProductStep(c, pm_dup(c, x, m, d)) from match d {
     true => product_step_return(c, x)
     false => product_step_bind(
       c,
@@ -160,7 +160,7 @@ pub theorem pm_step_step(
   m: SurfaceTerm,
   o: Option(Ty)
 ): ProductStep(c, pm_step(c, t, m, o)) {
-  match o: ProductStep(c, pm_step(c, t, m, o)) {
+  ⊢ ProductStep(c, pm_step(c, t, m, o)) from match o {
     None => product_step_return(c, ck_resolve(c, t))
     Some(x) => pm_dup_step(c, x, m, kind_dup(ck_kind(c, x)))
   }
@@ -184,12 +184,12 @@ pub theorem ck_product_members_step(
   c: Checker,
   tys: List(Ty)
 ): ProductStep(c, ck_product_members(types, members, c, tys)) {
-  match types: ProductStep(c, ck_product_members(types, members, c, tys)) {
+  ⊢ ProductStep(c, ck_product_members(types, members, c, tys)) from match types {
     Nil => product_step_return(c, tys)
-    Cons(t, rest) => match members: ProductStep(
+    Cons(t, rest) => ⊢ ProductStep(
       c,
       ck_product_members(Cons(t, rest), members, c, tys)
-    ) {
+    ) from match members {
       Nil => product_step_return(c, tys)
       Cons(m, more) => product_step_bind(
         c,
@@ -361,7 +361,7 @@ pub theorem project_step_bind<A: Type, B: Type>(
 }
 
 pub fn pj_only_rest(c: Checker, one: Ty, want: Ty, rest: List(Ty)): Mut1(Option(Ty), Checker) {
-  match rest: Mut1(Option(Ty), Checker) {
+  ⊢ Mut1(Option(Ty), Checker) from match rest {
     Nil => frame_bind(
       Bool,
       Option(Ty),
@@ -379,7 +379,7 @@ pub theorem pj_only_rest_step(
   rest: List(Ty),
   ordered: CkOrdered(c)
 ): ProjectStep(c, pj_only_rest(c, one, want, rest)) {
-  match rest: ProjectStep(c, pj_only_rest(c, one, want, rest)) {
+  ⊢ ProjectStep(c, pj_only_rest(c, one, want, rest)) from match rest {
     Nil => project_step_bind(
       c,
       (fitted: Bool, c1: Checker) => mut1(Some(ck_resolve(c1, one)), c1),
@@ -407,14 +407,14 @@ pub theorem ck_project_only_step(
   want: Ty,
   ordered: CkOrdered(c)
 ): ProjectStep(c, ck_project_only(c, fits, want)) {
-  match fits: ProjectStep(c, ck_project_only(c, fits, want)) {
+  ⊢ ProjectStep(c, ck_project_only(c, fits, want)) from match fits {
     Nil => project_step_of_product(c, mut1(None, c), product_step_return(c, None), ordered)
     Cons(one, rest) => pj_only_rest_step(c, one, want, rest, ordered)
   }
 }
 
 pub fn pj_find_step(c: Checker, members: List(Ty), want: Ty, has: Bool): Mut1(Option(Ty), Checker) {
-  match has: Mut1(Option(Ty), Checker) {
+  ⊢ Mut1(Option(Ty), Checker) from match has {
     true => mut1(Some(want), c)
     false => ck_rewrap1(ck_project_only(c, ck_project_fits(c, members, want), want))
   }
@@ -424,7 +424,11 @@ pub theorem ck_project_find_unf(
   c: Checker,
   members: List(Ty),
   want: Ty
-): ck_project_find(c, members, want) = pj_find_step(c, members, want, ty_list_has(members, want)) { Refl }
+): ck_project_find(
+  c,
+  members,
+  want
+) = pj_find_step(c, members, want, ty_list_has(members, want)) { Refl }
 
 pub theorem pj_find_step_step(
   c: Checker,
@@ -433,7 +437,7 @@ pub theorem pj_find_step_step(
   has: Bool,
   ordered: CkOrdered(c)
 ): ProjectStep(c, pj_find_step(c, members, want, has)) {
-  match has: ProjectStep(c, pj_find_step(c, members, want, has)) {
+  ⊢ ProjectStep(c, pj_find_step(c, members, want, has)) from match has {
     true => project_step_of_product(
       c,
       mut1(Some(want), c),
@@ -462,7 +466,7 @@ pub theorem ck_project_find_step(
 }
 
 pub fn pj_some(c: Checker, t: Ty, d: Bool): Mut1(Ty, Checker) {
-  match d: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match d {
     true => mut1(TyBorrow(t, false), c)
     false => mut1(t, c)
   }
@@ -475,7 +479,7 @@ pub fn pj_found(
   span: TySpan,
   found: Option(Ty)
 ): Mut1(Ty, Checker) {
-  match found: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match found {
     Some(t) => pj_some(c, t, ty_is_borrow(resolved) && not(kind_dup(ck_kind(c, t))))
     None => frame_bind(
       Unit,
@@ -505,7 +509,7 @@ pub theorem ck_project_of_unf(
 }
 
 pub theorem pj_some_step(c: Checker, t: Ty, d: Bool): ProductStep(c, pj_some(c, t, d)) {
-  match d: ProductStep(c, pj_some(c, t, d)) {
+  ⊢ ProductStep(c, pj_some(c, t, d)) from match d {
     true => product_step_return(c, TyBorrow(t, false))
     false => product_step_return(c, t)
   }
@@ -518,7 +522,7 @@ pub theorem pj_found_step(
   span: TySpan,
   found: Option(Ty)
 ): ProductStep(c, pj_found(c, resolved, want, span, found)) {
-  match found: ProductStep(c, pj_found(c, resolved, want, span, found)) {
+  ⊢ ProductStep(c, pj_found(c, resolved, want, span, found)) from match found {
     Some(t) => pj_some_step(c, t, ty_is_borrow(resolved) && not(kind_dup(ck_kind(c, t))))
     None => product_step_bind(
       c,

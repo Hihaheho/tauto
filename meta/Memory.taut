@@ -1,0 +1,348 @@
+import "../std/Base.taut" { Nat }
+import "../std/WellFounded.taut" { Acc, InvImage, NatLt, WellFounded, measure_wf }
+
+// Strong-reference paths and collection of zero-count objects. The Live set,
+// roots and edges describe payloads, not allocator blocks or weak handles.
+// A completed drain has exactly the original reachable objects when incoming
+// edges are well-founded. This does not establish that a backend implements
+// these transitions or that Nib's constraint translation covers every Edge.
+
+pub(open) inductive StrongPath(A: Type, Edge: (A, A) -> Prop): (A, A) -> Prop {
+  PathEdge<a: A, b: A>(h: Edge(a, b)): StrongPath(A, Edge, a, b)
+  PathTail<a: A, b: A, c: A>(p: StrongPath(A, Edge, a, b), h: Edge(b, c)): StrongPath(A, Edge, a, c)
+}
+
+pub def NoStrongCycle(A: Type, Edge: (A, A) -> Prop): Prop :=
+∀ a: A. ¬StrongPath(A, Edge, a, a)
+
+// Each concrete Edge must be represented by an abstract Edge. This is an
+// explicit obligation on the analysis, not a property of arbitrary maps.
+theorem strong_path_map<A: Type, a: A, b: A>(
+  B: Type,
+  Edge: (A, A) -> Prop,
+  abstract: (B, B) -> Prop,
+  site: (A) -> B,
+  covers: ∀ x: A, y: A. (Edge(x, y)) -> abstract(site(x), site(y)),
+  p: StrongPath(A, Edge, a, b)
+): StrongPath(B, abstract, site(a), site(b)) {
+  ⊢ StrongPath(B, abstract, site(a), site(b)) from match p {
+    PathEdge(x, y, h) => ⊢ StrongPath(B, abstract, site(x), site(y)) from PathEdge(covers(x, y, h))
+    PathTail(x, y, z, q, h) => ⊢ StrongPath(
+      B,
+      abstract,
+      site(x),
+      site(z)
+    ) from PathTail(strong_path_map(B, Edge, abstract, site, covers, q), covers(y, z, h))
+  }
+}
+
+pub theorem abstract_acyclic_implies_acyclic<A: Type>(
+  B: Type,
+  Edge: (A, A) -> Prop,
+  abstract: (B, B) -> Prop,
+  site: (A) -> B,
+  covers: ∀ x: A, y: A. (Edge(x, y)) -> abstract(site(x), site(y)),
+  acyclic: NoStrongCycle(B, abstract)
+): NoStrongCycle(A, Edge) {
+  a => p => acyclic(site(a), strong_path_map(B, Edge, abstract, site, covers, p))
+}
+
+pub(open) inductive HeapReach(
+  A: Type,
+  Live: (A) -> Prop,
+  Root: (A) -> Prop,
+  Edge: (A, A) -> Prop
+): (A) -> Prop {
+  ReachRoot<v: A>(hl: Live(v), hr: Root(v)): HeapReach(A, Live, Root, Edge, v)
+  ReachEdge<u: A, v: A>(
+    hu: HeapReach(A, Live, Root, Edge, u),
+    hv: Live(v),
+    he: Edge(u, v)
+  ): HeapReach(A, Live, Root, Edge, v)
+}
+
+pub def ZeroCount(
+  A: Type,
+  Live: (A) -> Prop,
+  Root: (A) -> Prop,
+  Edge: (A, A) -> Prop,
+  v: A
+): Prop :=
+¬Root(v) ∧ ∀ u: A. Live(u) -> ¬Edge(u, v)
+
+pub def RemoveLive(A: Type, Live: (A) -> Prop, v: A, w: A): Prop :=
+Live(w) ∧ ¬(w = v)
+
+theorem heap_reach_live<A: Type, Live: (A) -> Prop, Root: (A) -> Prop, Edge: (
+  A,
+  A
+) -> Prop, v: A>(h: HeapReach(A, Live, Root, Edge, v)): Live(v) {
+  ⊢ Live(v) from match h {
+    ReachRoot(x, hl, hr) => ⊢ Live(x) from hl
+    ReachEdge(x, y, hx, hy, he) => ⊢ Live(y) from hy
+  }
+}
+
+pub theorem zero_count_unreachable<A: Type, Live: (A) -> Prop, Root: (A) -> Prop, Edge: (
+  A,
+  A
+) -> Prop, v: A>(
+  h: HeapReach(A, Live, Root, Edge, v),
+  hz: ZeroCount(A, Live, Root, Edge, v)
+): False {
+  ⊢ False from match h {
+    ReachRoot(_, _, hr) => ⊢ False from And::left(hz)(hr)
+    ReachEdge(x, _, hx, _, he) => ⊢ False from And::right(hz)(x, heap_reach_live(hx), he)
+  }
+}
+
+theorem reach_remove<A: Type, Live: (A) -> Prop, Root: (A) -> Prop, Edge: (
+  A,
+  A
+) -> Prop, w: A>(
+  v: A,
+  hz: ZeroCount(A, Live, Root, Edge, v),
+  h: HeapReach(A, Live, Root, Edge, w)
+): HeapReach(A, RemoveLive(A, Live, v), Root, Edge, w) {
+  ⊢ HeapReach(A, RemoveLive(A, Live, v), Root, Edge, w) from match h {
+    ReachRoot(x, hl, hr) => ⊢ HeapReach(
+      A,
+      RemoveLive(A, Live, v),
+      Root,
+      Edge,
+      x
+    ) from ReachRoot(
+      AndIntro(
+        hl,
+        e => zero_count_unreachable(
+          Eq::subst(z => HeapReach(A, Live, Root, Edge, z), e, ReachRoot(hl, hr)),
+          hz
+        )
+      ),
+      hr
+    )
+    ReachEdge(x, y, hx, hy, he) => ⊢ HeapReach(
+      A,
+      RemoveLive(A, Live, v),
+      Root,
+      Edge,
+      y
+    ) from ReachEdge(
+      reach_remove(v, hz, hx),
+      AndIntro(
+        hy,
+        e => zero_count_unreachable(
+          Eq::subst(z => HeapReach(A, Live, Root, Edge, z), e, ReachEdge(hx, hy, he)),
+          hz
+        )
+      ),
+      he
+    )
+  }
+}
+
+theorem reach_subset<A: Type, before: (A) -> Prop, Root: (A) -> Prop, Edge: (
+  A,
+  A
+) -> Prop, w: A>(
+  after: (A) -> Prop,
+  sub: ∀ x: A. (before(x)) -> after(x),
+  h: HeapReach(A, before, Root, Edge, w)
+): HeapReach(A, after, Root, Edge, w) {
+  ⊢ HeapReach(A, after, Root, Edge, w) from match h {
+    ReachRoot(x, hl, hr) => ⊢ HeapReach(A, after, Root, Edge, x) from ReachRoot(sub(x, hl), hr)
+    ReachEdge(x, y, hx, hy, he) => ⊢ HeapReach(
+      A,
+      after,
+      Root,
+      Edge,
+      y
+    ) from ReachEdge(reach_subset(after, sub, hx), sub(y, hy), he)
+  }
+}
+
+// The roots and edges stay fixed during collection; only the Live set shrinks.
+pub(open) inductive HeapDrain(
+  A: Type,
+  Root: (A) -> Prop,
+  Edge: (A, A) -> Prop
+): ((A) -> Prop, (A) -> Prop) -> Prop {
+  DrainDone(Live: (A) -> Prop): HeapDrain(A, Root, Edge, Live, Live)
+  DrainFree(
+    before: (A) -> Prop,
+    after: (A) -> Prop,
+    v: A,
+    hl: before(v),
+    hz: ZeroCount(A, before, Root, Edge, v),
+    rest: HeapDrain(A, Root, Edge, RemoveLive(A, before, v), after)
+  ): HeapDrain(A, Root, Edge, before, after)
+}
+
+pub theorem drain_preserves_reach<A: Type, Root: (A) -> Prop, Edge: (
+  A,
+  A
+) -> Prop, before: (A) -> Prop, after: (A) -> Prop>(
+  d: HeapDrain(A, Root, Edge, before, after),
+  w: A,
+  h: HeapReach(A, before, Root, Edge, w)
+): HeapReach(A, after, Root, Edge, w) {
+  ⊢ HeapReach(A, after, Root, Edge, w) from match d {
+    DrainDone(Live) => ⊢ HeapReach(A, Live, Root, Edge, w) from h
+    DrainFree(first, last, v, hl, hz, rest) => ⊢ HeapReach(
+      A,
+      last,
+      Root,
+      Edge,
+      w
+    ) from drain_preserves_reach(rest, w, reach_remove(v, hz, h))
+  }
+}
+
+pub theorem drain_reflects_reach<A: Type, Root: (A) -> Prop, Edge: (
+  A,
+  A
+) -> Prop, before: (A) -> Prop, after: (A) -> Prop>(
+  d: HeapDrain(A, Root, Edge, before, after),
+  w: A,
+  h: HeapReach(A, after, Root, Edge, w)
+): HeapReach(A, before, Root, Edge, w) {
+  ⊢ HeapReach(A, before, Root, Edge, w) from match d {
+    DrainDone(Live) => ⊢ HeapReach(A, Live, Root, Edge, w) from h
+    DrainFree(first, _, _, _, _, rest) => ⊢ HeapReach(
+      A,
+      first,
+      Root,
+      Edge,
+      w
+    ) from reach_subset(first, x => hx => And::left(hx), drain_reflects_reach(rest, w, h))
+  }
+}
+
+// A terminal heap gives a holder for every Live non-Root. The witness avoids
+// an assumption of excluded middle for arbitrary predicates.
+pub(open) inductive Held(
+  A: Type,
+  Live: (A) -> Prop,
+  Root: (A) -> Prop,
+  Edge: (A, A) -> Prop,
+  v: A
+): Prop {
+  HeldRoot(hr: Root(v)): Held(A, Live, Root, Edge, v)
+  HeldEdge(u: A, hl: Live(u), he: Edge(u, v)): Held(A, Live, Root, Edge, v)
+}
+
+pub def HeapTerminal(A: Type, Live: (A) -> Prop, Root: (A) -> Prop, Edge: (A, A) -> Prop): Prop :=
+∀ v: A. (Live(v)) -> Held(A, Live, Root, Edge, v)
+
+pub theorem held_reachable<A: Type, Live: (A) -> Prop, Root: (A) -> Prop, Edge: (
+  A,
+  A
+) -> Prop, v: A>(
+  hv: Live(v),
+  ih: ∀ u: A. (Edge(u, v)) -> (Live(u)) -> HeapReach(A, Live, Root, Edge, u),
+  h: Held(A, Live, Root, Edge, v)
+): HeapReach(A, Live, Root, Edge, v) {
+  ⊢ HeapReach(A, Live, Root, Edge, v) from match h {
+    HeldRoot(hr) => ReachRoot(hv, hr)
+    HeldEdge(u, hu, he) => ReachEdge(ih(u, he, hu), hv, he)
+  }
+}
+
+def TerminalGoal(A: Type, Live: (A) -> Prop, Root: (A) -> Prop, Edge: (A, A) -> Prop, v: A): Prop :=
+(Live(v)) -> HeapReach(A, Live, Root, Edge, v)
+
+// Well-founded incoming edges rule out an infinite chain of unreachable
+// holders. A finite topological rank supplies this premise.
+pub theorem terminal_reachable<A: Type>(
+  Live: (A) -> Prop,
+  Root: (A) -> Prop,
+  Edge: (A, A) -> Prop,
+  terminal: HeapTerminal(A, Live, Root, Edge),
+  v: A,
+  accessible: Acc(A, Edge, v),
+  hv: Live(v)
+): HeapReach(A, Live, Root, Edge, v) {
+  Acc::ind(
+    <A: A, R: Edge>,
+    x => ax => TerminalGoal(A, Live, Root, Edge, x),
+    x => predecessors => ih => hx => held_reachable(hx, ih, terminal(x, hx)),
+    v,
+    accessible,
+    hv
+  )
+}
+
+pub theorem drain_exact<A: Type, Root: (A) -> Prop, Edge: (
+  A,
+  A
+) -> Prop, before: (A) -> Prop, after: (A) -> Prop>(
+  wf: WellFounded(A, Edge),
+  d: HeapDrain(A, Root, Edge, before, after),
+  terminal: HeapTerminal(A, after, Root, Edge),
+  w: A
+): after(w) ↔ HeapReach(A, before, Root, Edge, w) {
+  IffIntro(
+    hw => drain_reflects_reach(d, w, terminal_reachable(after, Root, Edge, terminal, w, wf(w), hw)),
+    hr => heap_reach_live(drain_preserves_reach(d, w, hr))
+  )
+}
+
+// A topological rank makes every predecessor smaller. The rank must cover
+// every strong Edge, including edges through captured values.
+theorem ranked_edges_wf<A: Type>(
+  Edge: (A, A) -> Prop,
+  rank: (A) -> Nat,
+  increasing: ∀ u: A, v: A. (Edge(u, v)) -> NatLt(rank(u), rank(v))
+): WellFounded(A, Edge) {
+  x => Acc::ind(
+    <A: A, R: InvImage(A, Nat, NatLt, rank)>,
+    y => ay => Acc(A, Edge, y),
+    y => predecessors => ih => AccIntro(<A: A, R: Edge>, y, z => hz => ih(z, increasing(z, y, hz))),
+    x,
+    measure_wf(rank)(x)
+  )
+}
+
+theorem strong_path_rank<A: Type, a: A, b: A>(
+  Edge: (A, A) -> Prop,
+  rank: (A) -> Nat,
+  increasing: ∀ u: A, v: A. (Edge(u, v)) -> NatLt(rank(u), rank(v)),
+  p: StrongPath(A, Edge, a, b)
+): NatLt(rank(a), rank(b)) {
+  ⊢ NatLt(rank(a), rank(b)) from match p {
+    PathEdge(x, y, h) => ⊢ NatLt(rank(x), rank(y)) from increasing(x, y, h)
+    PathTail(x, y, z, q, h) => ⊢ NatLt(
+      rank(x),
+      rank(z)
+    ) from Nat::lt_trans(
+      rank(x),
+      rank(y),
+      rank(z),
+      strong_path_rank(Edge, rank, increasing, q),
+      increasing(y, z, h)
+    )
+  }
+}
+
+pub theorem ranked_edges_acyclic<A: Type>(
+  Edge: (A, A) -> Prop,
+  rank: (A) -> Nat,
+  increasing: ∀ u: A, v: A. (Edge(u, v)) -> NatLt(rank(u), rank(v))
+): NoStrongCycle(A, Edge) {
+  x => p => false_ne_true(
+    Eq::trans(Eq::sym(Nat::lt_irrefl(rank(x))), strong_path_rank(Edge, rank, increasing, p))
+  )
+}
+
+pub theorem ranked_drain_exact<A: Type, Root: (A) -> Prop, Edge: (
+  A,
+  A
+) -> Prop, before: (A) -> Prop, after: (A) -> Prop>(
+  rank: (A) -> Nat,
+  increasing: ∀ u: A, v: A. (Edge(u, v)) -> NatLt(rank(u), rank(v)),
+  d: HeapDrain(A, Root, Edge, before, after),
+  terminal: HeapTerminal(A, after, Root, Edge),
+  w: A
+): after(w) ↔ HeapReach(A, before, Root, Edge, w) {
+  drain_exact(ranked_edges_wf(Edge, rank, increasing), d, terminal, w)
+}

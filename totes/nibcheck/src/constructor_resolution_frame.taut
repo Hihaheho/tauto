@@ -41,13 +41,12 @@ pub theorem constructor_frame_bind<A: Type, B: Type>(
   first: ConstructorFrame(c, m),
   tail: ∀ value: A. ∀ next: Checker. (CkOrdered(next)) -> ConstructorFrame(next, k(value, next))
 ): ConstructorFrame(c, frame_bind(k, m)) {
-  match m: ConstructorFrame(c, frame_bind(k, m)) {
+  ⊢ ConstructorFrame(c, frame_bind(k, m)) from match m {
     mut1(value, next) => {
-      let last: ConstructorFrame(next, k(value, next)) := tail(
-        value,
+      let last: ConstructorFrame(
         next,
-        And::left(And::left(first))
-      )
+        k(value, next)
+      ) := tail(value, next, And::left(And::left(first)))
       AndIntro(
         AndIntro(
           And::left(And::left(last)),
@@ -97,7 +96,7 @@ pub theorem ck_constructor_errors_frame(
   c: Checker,
   ordered: CkOrdered(c)
 ): ConstructorFrame(c, ck_constructor_errors(uses, c)) {
-  match uses: ConstructorFrame(c, ck_constructor_errors(uses, c)) {
+  ⊢ ConstructorFrame(c, ck_constructor_errors(uses, c)) from match uses {
     Nil => constructor_frame_return(c, Star, ordered)
     Cons(use, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => ConstructorFrame(c, m),
@@ -161,7 +160,7 @@ pub fn constructor_pass_one(
   rest: List(TyConstructorUse),
   found: Option(Pair(Text, Nat))
 ): Mut1(List(TyConstructorUse), Checker) {
-  match found: Mut1(List(TyConstructorUse), Checker) {
+  ⊢ Mut1(List(TyConstructorUse), Checker) from match found {
     None => frame_bind(
       List(TyConstructorUse),
       List(TyConstructorUse),
@@ -187,16 +186,19 @@ pub theorem constructor_pass_unf(
   c: Checker,
   use: TyConstructorUse,
   rest: List(TyConstructorUse)
-): ck_constructor_pass(Cons(use, rest), c) = constructor_pass_one(
-    c,
-    use,
-    rest,
-    constructor_resolve(
-      ck_datas_of(c),
-      constructor_use_name(use),
-      ck_resolve(c, constructor_use_ty(use))
-    )
-  ) { Refl }
+): ck_constructor_pass(
+  Cons(use, rest),
+  c
+) = constructor_pass_one(
+  c,
+  use,
+  rest,
+  constructor_resolve(
+    ck_datas_of(c),
+    constructor_use_name(use),
+    ck_resolve(c, constructor_use_ty(use))
+  )
+) { Refl }
 
 pub theorem constructor_pass_one_frame(
   c: Checker,
@@ -209,7 +211,7 @@ pub theorem constructor_pass_one_frame(
     ck_constructor_pass(rest, next)
   )
 ): ConstructorFrame(c, constructor_pass_one(c, use, rest, found)) {
-  match found: ConstructorFrame(c, constructor_pass_one(c, use, rest, found)) {
+  ⊢ ConstructorFrame(c, constructor_pass_one(c, use, rest, found)) from match found {
     None => constructor_frame_bind(
       List(TyConstructorUse),
       List(TyConstructorUse),
@@ -301,7 +303,7 @@ pub theorem ck_constructor_pass_frame(
   c: Checker,
   ordered: CkOrdered(c)
 ): ConstructorFrame(c, ck_constructor_pass(uses, c)) {
-  match uses: ConstructorFrame(c, ck_constructor_pass(uses, c)) {
+  ⊢ ConstructorFrame(c, ck_constructor_pass(uses, c)) from match uses {
     Nil => constructor_frame_return(c, Nil(TyConstructorUse), ordered)
     Cons(use, rest) => Eq::subst(
       (m: Mut1(List(TyConstructorUse), Checker)) => ConstructorFrame(c, m),
@@ -328,7 +330,7 @@ pub fn constructor_rounds_after(
   pending: List(TyConstructorUse),
   stopped: Bool
 ): Mut1(Unit, Checker) {
-  match stopped: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match stopped {
     true => ck_rewrap1(ck_constructor_errors(pending, c))
     false => ck_rewrap1(ck_constructor_rounds(fuel, pending, c))
   }
@@ -370,7 +372,7 @@ pub theorem constructor_rounds_after_frame(
     CkOrdered(next)
   ) -> ConstructorFrame(next, ck_constructor_rounds(fuel, inputs, next))
 ): ConstructorFrame(c, constructor_rounds_after(fuel, c, pending, stopped)) {
-  match stopped: ConstructorFrame(c, constructor_rounds_after(fuel, c, pending, stopped)) {
+  ⊢ ConstructorFrame(c, constructor_rounds_after(fuel, c, pending, stopped)) from match stopped {
     true => constructor_frame_rewrap(
       c,
       ck_constructor_errors(pending, c),
@@ -390,7 +392,7 @@ pub theorem ck_constructor_rounds_frame(
   c: Checker,
   ordered: CkOrdered(c)
 ): ConstructorFrame(c, ck_constructor_rounds(fuel, uses, c)) {
-  match fuel: ConstructorFrame(c, ck_constructor_rounds(fuel, uses, c)) {
+  ⊢ ConstructorFrame(c, ck_constructor_rounds(fuel, uses, c)) from match fuel {
     Zero => constructor_frame_rewrap(
       c,
       ck_constructor_errors(uses, c),

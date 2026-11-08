@@ -32,9 +32,9 @@ pub fn text_list_reverse<A>(xs: List(A)): List(A) {
 }
 
 pub fn text_join_parts(parts: List(Text), sep: Text): List(Text) {
-  match parts: List(Text) {
+  ⊢ List(Text) from match parts {
     Nil => Nil
-    Cons(part, rest) => match rest: List(Text) {
+    Cons(part, rest) => ⊢ List(Text) from match rest {
       Nil => Cons(part, Nil)
       Cons(next, more) => Cons(part, Cons(sep, text_join_parts(rest, sep)))
     }
@@ -46,7 +46,7 @@ pub fn text_join(parts: List(Text), sep: Text): Text {
 }
 
 pub fn text_starts_with(t: Text, prefix: Text, at: Nat): Bool {
-  match Text::slice(t, at, Nat::add(at, Text::len(prefix))): Bool {
+  ⊢ Bool from match Text::slice(t, at, Nat::add(at, Text::len(prefix))) {
     None => false
     Some(part) => Text::eq(part, prefix)
   }
@@ -54,9 +54,9 @@ pub fn text_starts_with(t: Text, prefix: Text, at: Nat): Bool {
 
 // The first of the `k` positions from `at` where `needle` is.
 pub fn text_find_in(k: Nat, t: Text, needle: Text, at: Nat): Option(Nat) {
-  match k: Option(Nat) {
+  ⊢ Option(Nat) from match k {
     Zero => None
-    Succ(k2) => match text_starts_with(t, needle, at): Option(Nat) {
+    Succ(k2) => ⊢ Option(Nat) from match text_starts_with(t, needle, at) {
       true => Some(at)
       false => text_find_in(k2, t, needle, Succ(at))
     }
@@ -68,10 +68,10 @@ pub fn text_find_from(t: Text, needle: Text, at: Nat, last: Nat): Option(Nat) {
 }
 
 pub fn text_find(t: Text, needle: Text, r#from: Nat): Option(Nat) {
-  match Bool::or(
+  ⊢ Option(Nat) from match Bool::or(
     Nat::lt(Text::len(t), Text::len(needle)),
     Nat::lt(Nat::sub(Text::len(t), Text::len(needle)), r#from)
-  ): Option(Nat) {
+  ) {
     true => None
     false => text_find_from(t, needle, r#from, Nat::sub(Text::len(t), Text::len(needle)))
   }
@@ -80,9 +80,9 @@ pub fn text_find(t: Text, needle: Text, r#from: Nat): Option(Nat) {
 // The parts from byte `start`, last first, onto `done`; at most `k` more
 // cuts.
 pub fn text_split_in(k: Nat, t: Text, sep: Text, start: Nat, done: List(Text)): List(Text) {
-  match k: List(Text) {
+  ⊢ List(Text) from match k {
     Zero => Cons(Text::slice_or_empty(t, start, Text::len(t)), done)
-    Succ(k2) => match text_find(t, sep, start): List(Text) {
+    Succ(k2) => ⊢ List(Text) from match text_find(t, sep, start) {
       None => Cons(Text::slice_or_empty(t, start, Text::len(t)), done)
       Some(at) => text_split_in(
         k2,
@@ -104,7 +104,7 @@ pub fn text_split_from(t: Text, sep: Text, start: Nat, done: List(Text)): List(T
 // The parts of `t` between the occurrences of `sep`, which is not empty (an
 // empty `sep` leaves `t` whole).
 pub fn text_split(t: Text, sep: Text): List(Text) {
-  match Nat::eq(Text::len(sep), 0): List(Text) {
+  ⊢ List(Text) from match Nat::eq(Text::len(sep), 0) {
     true => Cons(t, Nil)
     false => List::reverse(text_split_from(t, sep, 0, Nil))
   }
@@ -116,7 +116,7 @@ pub fn text_lines(t: Text): List(Text) {
 }
 
 pub fn text_repeat_parts(t: Text, n: Nat): List(Text) {
-  match n: List(Text) {
+  ⊢ List(Text) from match n {
     Zero => Nil
     Succ(k) => Cons(t, text_repeat_parts(t, k))
   }
@@ -136,15 +136,18 @@ pub fn text_decode_with(
   b2: Nat,
   b3: Nat
 ): Option(@code Nat × @len Nat) {
-  match Nat::eq(length, 2): Option(@code Nat × @len Nat) {
+  ⊢ Option(@code Nat × @len Nat) from match Nat::eq(length, 2) {
     true => Some(#(@code Nat::add(Nat::mul(64, lead), b1), @len length))
-    false => match Nat::eq(length, 3): Option(@code Nat × @len Nat) {
+    false => ⊢ Option(@code Nat × @len Nat) from match Nat::eq(length, 3) {
       true => Some(
         #(@code Nat::add(Nat::mul(64, Nat::add(Nat::mul(64, lead), b1)), b2), @len length)
       )
       false => Some(
         #(
-          @code Nat::add(Nat::mul(64, Nat::add(Nat::mul(64, Nat::add(Nat::mul(64, lead), b1)), b2)), b3),
+          @code Nat::add(
+            Nat::mul(64, Nat::add(Nat::mul(64, Nat::add(Nat::mul(64, lead), b1)), b2)),
+            b3
+          ),
           @len length
         )
       )
@@ -154,7 +157,7 @@ pub fn text_decode_with(
 
 // A first byte from 224 on: three bytes below 240, four from 240.
 pub fn text_decode_from_224(t: Text, i: Nat, first: Nat): Option(@code Nat × @len Nat) {
-  match Nat::lt(first, 240): Option(@code Nat × @len Nat) {
+  ⊢ Option(@code Nat × @len Nat) from match Nat::lt(first, 240) {
     true => text_decode_with(
       Nat::sub(first, 224),
       3,
@@ -174,15 +177,21 @@ pub fn text_decode_from_224(t: Text, i: Nat, first: Nat): Option(@code Nat × @l
 
 // A first byte from 192 on: two bytes below 224.
 pub fn text_decode_from_192(t: Text, i: Nat, first: Nat): Option(@code Nat × @len Nat) {
-  match Nat::lt(first, 224): Option(@code Nat × @len Nat) {
-    true => text_decode_with(Nat::sub(first, 192), 2, Nat::sub(Text::byte_value(t, Succ(i)), 128), 0, 0)
+  ⊢ Option(@code Nat × @len Nat) from match Nat::lt(first, 224) {
+    true => text_decode_with(
+      Nat::sub(first, 192),
+      2,
+      Nat::sub(Text::byte_value(t, Succ(i)), 128),
+      0,
+      0
+    )
     false => text_decode_from_224(t, i, first)
   }
 }
 
 // A first byte from 128 on: below 192 it continues a character.
 pub fn text_decode_from_128(t: Text, i: Nat, first: Nat): Option(@code Nat × @len Nat) {
-  match Nat::lt(first, 192): Option(@code Nat × @len Nat) {
+  ⊢ Option(@code Nat × @len Nat) from match Nat::lt(first, 192) {
     true => None
     false => text_decode_from_192(t, i, first)
   }
@@ -192,7 +201,7 @@ pub fn text_decode_from_128(t: Text, i: Nat, first: Nat): Option(@code Nat × @l
 // function of its own, so a proof can take the steps one at a time
 // (`totes/text/src/utf8.taut`).
 pub fn text_decode_first(t: Text, i: Nat, first: Nat): Option(@code Nat × @len Nat) {
-  match Nat::lt(first, 128): Option(@code Nat × @len Nat) {
+  ⊢ Option(@code Nat × @len Nat) from match Nat::lt(first, 128) {
     true => Some(#(@code first, @len 1))
     false => text_decode_from_128(t, i, first)
   }
@@ -201,7 +210,7 @@ pub fn text_decode_first(t: Text, i: Nat, first: Nat): Option(@code Nat × @len 
 // The character at byte `i`: its code point and its length in bytes. `None`
 // when `i` is past the end or inside a character.
 pub fn text_decode(t: Text, i: Nat): Option(@code Nat × @len Nat) {
-  match Text::byte(t, i): Option(@code Nat × @len Nat) {
+  ⊢ Option(@code Nat × @len Nat) from match Text::byte(t, i) {
     None => None
     Some(first) => text_decode_first(t, i, first)
   }
@@ -209,12 +218,12 @@ pub fn text_decode(t: Text, i: Nat): Option(@code Nat × @len Nat) {
 
 // The characters among the `k` bytes from `i`, added to `count`.
 pub fn text_char_count_in(k: Nat, t: Text, i: Nat, count: Nat): Nat {
-  match k: Nat {
+  ⊢ Nat from match k {
     Zero => count
-    Succ(k2) => match Bool::and(
+    Succ(k2) => ⊢ Nat from match Bool::and(
       Nat::le(128, Text::byte_value(t, i)),
       Nat::lt(Text::byte_value(t, i), 192)
-    ): Nat {
+    ) {
       // A byte `10xxxxxx` continues a character; the others start one.
       true => text_char_count_in(k2, t, Succ(i), count)
       false => text_char_count_in(k2, t, Succ(i), Succ(count))
@@ -231,7 +240,7 @@ pub fn text_char_count(t: Text): Nat {
 }
 
 pub fn text_digit(b: Nat): Option(Nat) {
-  match Bool::and(Nat::le(48, b), Nat::le(b, 57)): Option(Nat) {
+  ⊢ Option(Nat) from match Bool::and(Nat::le(48, b), Nat::le(b, 57)) {
     true => Some(Nat::sub(b, 48))
     false => None
   }
@@ -240,11 +249,14 @@ pub fn text_digit(b: Nat): Option(Nat) {
 // The digits among the `k` bytes from `at`, added onto `acc`, while `acc`
 // stays within 2^63 - 1 (the evaluator keeps a `u64` in an `i64`).
 pub fn text_parse_nat_in(k: Nat, t: Text, at: Nat, acc: Nat): Option(Nat) {
-  match k: Option(Nat) {
+  ⊢ Option(Nat) from match k {
     Zero => Some(acc)
-    Succ(k2) => match text_digit(Text::byte_value(t, at)): Option(Nat) {
+    Succ(k2) => ⊢ Option(Nat) from match text_digit(Text::byte_value(t, at)) {
       None => None
-      Some(d) => match Nat::lt(Nat::div_nz(Nat::sub(9223372036854775807, d), 10, Nat::ne_zero(10, Refl)), acc): Option(Nat) {
+      Some(d) => ⊢ Option(Nat) from match Nat::lt(
+        Nat::div_nz(Nat::sub(9223372036854775807, d), 10, Nat::ne_zero(10, Refl)),
+        acc
+      ) {
         true => None
         false => text_parse_nat_in(k2, t, Succ(at), Nat::add(Nat::mul(acc, 10), d))
       }
@@ -254,12 +266,12 @@ pub fn text_parse_nat_in(k: Nat, t: Text, at: Nat, acc: Nat): Option(Nat) {
 
 // Digits with an optional `+`. A number from 2^63 on is `None`.
 pub fn text_parse_u64(t: Text): Option(Nat) {
-  match Nat::eq(Text::len(t), 0): Option(Nat) {
+  ⊢ Option(Nat) from match Nat::eq(Text::len(t), 0) {
     true => None
-    false => match Nat::eq(Text::byte_value(t, 0), 45): Option(Nat) {
+    false => ⊢ Option(Nat) from match Nat::eq(Text::byte_value(t, 0), 45) {
       true => None
-      false => match Nat::eq(Text::byte_value(t, 0), 43): Option(Nat) {
-        true => match Nat::eq(Text::len(t), 1): Option(Nat) {
+      false => ⊢ Option(Nat) from match Nat::eq(Text::byte_value(t, 0), 43) {
+        true => ⊢ Option(Nat) from match Nat::eq(Text::len(t), 1) {
           true => None
           false => text_parse_nat_in(Nat::sub(Text::len(t), 1), t, 1, 0)
         }
@@ -279,14 +291,14 @@ pub fn text_numbers_in(
   inside: Bool,
   done: List(Nat)
 ): List(Nat) {
-  match k: List(Nat) {
-    Zero => match inside: List(Nat) {
+  ⊢ List(Nat) from match k {
+    Zero => ⊢ List(Nat) from match inside {
       true => List::reverse(Cons(current, done))
       false => List::reverse(done)
     }
-    Succ(k2) => match text_digit(Text::byte_value(t, at)): List(Nat) {
+    Succ(k2) => ⊢ List(Nat) from match text_digit(Text::byte_value(t, at)) {
       Some(d) => text_numbers_in(k2, t, Succ(at), current * 10 + d, true, done)
-      None => match inside: List(Nat) {
+      None => ⊢ List(Nat) from match inside {
         true => text_numbers_in(k2, t, Succ(at), 0, false, Cons(current, done))
         false => text_numbers_in(k2, t, Succ(at), 0, false, done)
       }
@@ -308,7 +320,9 @@ pub theorem text_find_example(): text_find("abcab", "ab", 1) = Some(3) {
   Refl
 }
 
-pub theorem text_number_list_example(): text_number_list("3 14,15") = Cons(3, Cons(14, Cons(15, Nil))) {
+pub theorem text_number_list_example(): text_number_list(
+  "3 14,15"
+) = Cons(3, Cons(14, Cons(15, Nil))) {
   Refl
 }
 

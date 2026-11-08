@@ -8,19 +8,19 @@ use std::collections::{HashMap, HashSet};
 
 use tauto::check::{LibEntry, Verdict, describe, free_vars};
 use tauto::report::{Attempt, Hole, Json, Report, check_report, find_hole, term_json, try_fill};
-use tauto::surface::{SurfaceTerm as T, TermKind};
+use tauto::surface::{Name, SurfaceTerm as T, TermKind};
 
 /// First-order matching of a type that names unknowns (the parameters of a
 /// constant) against another, up to the names of bound variables.
 struct Matcher<'a> {
-    metas: &'a HashSet<String>,
-    bound: HashMap<String, T>,
+    metas: &'a HashSet<Name>,
+    bound: HashMap<Name, T>,
     /// The binders passed under, as (in the pattern, in the target).
-    env: Vec<(String, String)>,
+    env: Vec<(Name, Name)>,
 }
 
 impl<'a> Matcher<'a> {
-    fn new(metas: &'a HashSet<String>) -> Self {
+    fn new(metas: &'a HashSet<Name>) -> Self {
         Self {
             metas,
             bound: HashMap::new(),
@@ -124,7 +124,7 @@ impl<'a> Matcher<'a> {
         self.apply_under(t, &mut Vec::new())
     }
 
-    fn apply_under(&self, t: &T, shadow: &mut Vec<String>) -> T {
+    fn apply_under(&self, t: &T, shadow: &mut Vec<Name>) -> T {
         let sp = t.span;
         match &*t.kind {
             TermKind::Var(n) if self.metas.contains(n) && !shadow.contains(n) => {
@@ -192,7 +192,7 @@ impl<'a> Matcher<'a> {
 }
 
 /// The parameters of a type written as a chain of Π, and what is left.
-fn chain(ty: &T) -> (Vec<(Option<String>, T)>, &T) {
+fn chain(ty: &T) -> (Vec<(Option<Name>, T)>, &T) {
     let mut params = Vec::new();
     let mut at = ty;
     while let TermKind::Pi {
@@ -221,6 +221,7 @@ pub struct SuggestedArg {
 /// holes for the premises it needs.
 #[derive(Debug, Clone)]
 pub struct Suggestion {
+    pub(crate) reference: Name,
     pub name: String,
     /// `hypothesis`, or the kind of a library constant (`theorem`, …).
     pub kind: &'static str,
@@ -287,6 +288,7 @@ impl Suggestion {
 /// for every explicit parameter.
 fn candidate(
     hole: &Hole,
+    reference: &Name,
     name: &str,
     kind: &'static str,
     source: &'static str,
@@ -296,7 +298,7 @@ fn candidate(
     let goal = &hole.goal.goal;
     let (params, result) = chain(ty);
     let implicit = implicit.min(params.len());
-    let metas: HashSet<String> = params.iter().filter_map(|(n, _)| n.clone()).collect();
+    let metas: HashSet<Name> = params.iter().filter_map(|(n, _)| n.clone()).collect();
     let explicit = &params[implicit..];
 
     // As it stands: a hypothesis whose type is the goal.
@@ -304,6 +306,7 @@ fn candidate(
         let none = HashSet::new();
         if Matcher::new(&none).unify(ty, goal) {
             return Some(Suggestion {
+                reference: reference.clone(),
                 name: name.into(),
                 kind,
                 source,
@@ -326,7 +329,10 @@ fn candidate(
         .map(|(i, (n, d))| {
             let ty = m.apply(d);
             SuggestedArg {
-                name: n.clone().filter(|n| n != "_"),
+                name: n
+                    .as_ref()
+                    .filter(|n| n.as_str() != "_")
+                    .map(ToString::to_string),
                 hole: format!(
                     "{}_{}",
                     hole.goal.name,
@@ -337,6 +343,7 @@ fn candidate(
                 unresolved_metas: free_vars(&ty)
                     .into_iter()
                     .filter(|v| v.starts_with('?'))
+                    .map(|v| v.to_string())
                     .collect(),
                 ty,
             }
@@ -354,6 +361,7 @@ fn candidate(
         )
     };
     Some(Suggestion {
+        reference: reference.clone(),
         name: name.into(),
         kind,
         source,
@@ -369,23 +377,27 @@ fn candidate(
 /// a constant, then by name. `limit` caps the list.
 pub fn suggest(report: &Report, hole: &Hole, limit: usize) -> Vec<Suggestion> {
     let mut out = Vec::new();
-    let in_scope: HashSet<&str> = hole.goal.context.iter().map(|(n, _)| n.as_str()).collect();
     for (n, ty) in hole.goal.context.iter().rev() {
         // A generated name cannot be written: the proof reaches it by a call.
         if n.contains('\'') {
             continue;
         }
-        out.extend(candidate(hole, n, "hypothesis", "context", ty, 0));
+        if let Ok(written) = report.source_term(hole, &T::var(n, hole.goal.span)) {
+            out.extend(candidate(hole, n, &written, "hypothesis", "context", ty, 0));
+        }
     }
     for l in &report.library {
         let usable = l.state == "ok"
             && !matches!(&*l.kind, "inductive" | "eliminator")
-            && !in_scope.contains(l.name.as_str())
             && !l.name.contains('\'');
         if usable {
             // The goal is held as a program writes it (`a = b`), so the type is too.
             let ty = tauto::check::Kernel::eqs_written(&l.ty);
-            out.extend(candidate(hole, &l.name, l.kind, "library", &ty, l.implicit));
+            if let Ok(written) = report.source_term(hole, &T::var(&l.name, hole.goal.span)) {
+                out.extend(candidate(
+                    hole, &l.name, &written, l.kind, "library", &ty, l.implicit,
+                ));
+            }
         }
     }
     out.sort_by_key(|s| {
@@ -538,7 +550,7 @@ fn fresh_hole(wanted: &str, taken: &HashSet<String>) -> String {
 }
 
 /// The family a type is a value of: `Nat`, `List(A)`.
-fn family_of(ty: &T) -> Option<&str> {
+fn family_of(ty: &T) -> Option<&tauto::surface::Name> {
     match &*ty.kind {
         TermKind::Var(n) => Some(n),
         TermKind::App { function, .. } => match &*function.kind {
@@ -554,8 +566,12 @@ fn family_of(ty: &T) -> Option<&str> {
 /// when the others are filled.
 pub fn expand(report: &Report, hole: &Hole, by: &By) -> Result<Expansion, String> {
     let taken_holes: HashSet<String> = report.holes().into_iter().map(|h| h.goal.name).collect();
-    let mut taken_names: HashSet<String> =
-        hole.goal.context.iter().map(|(n, _)| n.clone()).collect();
+    let mut taken_names: HashSet<String> = hole
+        .goal
+        .context
+        .iter()
+        .map(|(n, _)| n.to_string())
+        .collect();
     let base = &hole.goal.name;
     match by {
         By::Intro => {
@@ -580,7 +596,7 @@ pub fn expand(report: &Report, hole: &Hole, by: &By) -> Result<Expansion, String
             })
         }
         By::Match(var) => {
-            let Some((_, ty)) = hole.goal.context.iter().find(|(n, _)| n == var) else {
+            let Some((_, ty)) = hole.goal.context.iter().find(|(n, _)| n.as_str() == var) else {
                 return Err(tauto_message::msg!(
                     "analyzer-match-not-in-scope",
                     var = var,
@@ -599,17 +615,19 @@ pub fn expand(report: &Report, hole: &Hole, by: &By) -> Result<Expansion, String
             let Some(info) = report
                 .library
                 .iter()
-                .find(|l| l.name == family)
+                .find(|l| &l.name == family)
                 .and_then(|l: &LibEntry| l.inductive.as_ref())
             else {
-                return Err(
-                    tauto_message::msg!("analyzer-match-not-inductive", family = family)
-                        .to_string(),
-                );
+                return Err(tauto_message::msg!(
+                    "analyzer-match-not-inductive",
+                    family = family.to_string()
+                )
+                .to_string());
             };
             let mut pieces = Vec::new();
             let mut arms = Vec::new();
             for c in &info.ctors {
+                let constructor = report.source_term(hole, &T::var(&c.name, hole.goal.span))?;
                 let mut used = taken_names.clone();
                 let mut binds: Vec<(String, T)> = Vec::new();
                 for (n, t) in &c.fields {
@@ -631,11 +649,11 @@ pub fn expand(report: &Report, hole: &Hole, by: &By) -> Result<Expansion, String
                         .collect(),
                 );
                 let pattern = if binds.is_empty() {
-                    c.name.clone()
+                    constructor.clone()
                 } else {
                     format!(
                         "{}({})",
-                        c.name,
+                        constructor,
                         binds
                             .iter()
                             .map(|(n, _)| n.as_str())
@@ -646,7 +664,7 @@ pub fn expand(report: &Report, hole: &Hole, by: &By) -> Result<Expansion, String
                 arms.push(format!("{pattern} => ?{new}"));
                 pieces.push(Piece {
                     hole: new,
-                    constructor: Some(c.name.clone()),
+                    constructor: Some(c.name.to_string()),
                     binds,
                     recursive,
                 });
@@ -690,7 +708,7 @@ pub fn expand_step(
 ) -> Result<(Expansion, Attempt), String> {
     let before = check_report(path, None)?;
     let h = find_hole(&before, path, hole)?;
-    let goal = tauto::surface::print::print_term(&h.goal.goal);
+    let goal = before.source_term(&h, &h.goal.goal)?;
     let failure = |a: &Attempt| -> Option<String> {
         a.report
             .entries
@@ -698,7 +716,8 @@ pub fn expand_step(
             .find_map(|e| match &e.entry.verdict {
                 Verdict::Failed(d)
                     if e.file == a.hole.file
-                        && (e.entry.name == a.hole.declaration || e.entry.name == "macro") =>
+                        && (e.entry.name.as_str() == a.hole.declaration
+                            || e.entry.name.spelling() == Some("macro")) =>
                 {
                     Some(d.message.to_string())
                 }
@@ -758,7 +777,7 @@ pub fn expand_step(
                         .context
                         .iter()
                         .filter(|(n, _)| !outer.contains(&n.as_str()))
-                        .cloned()
+                        .map(|(n, t)| (n.to_string(), t.clone()))
                         .collect()
                 })
                 .unwrap_or_default();

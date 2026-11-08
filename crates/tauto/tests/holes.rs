@@ -36,7 +36,7 @@ fn a_hole_reports_its_goal_and_context() {
     let json = report.json().render();
     assert!(json.starts_with("{\"status\":\"incomplete\""), "{json}");
     assert!(json.contains("\"goal\":\"B\""), "{json}");
-    assert!(json.contains("\"line\":2,\"col\":13"), "{json}");
+    assert!(json.contains("\"line\":2,\"col\":12"), "{json}");
 }
 
 #[test]

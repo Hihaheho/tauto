@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use rustdoc_types::{
@@ -6,12 +7,15 @@ use rustdoc_types::{
 };
 
 use crate::config::Config;
+use tauto_message::{Message, msg};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Output {
     pub tauto: String,
     pub eure: String,
     pub report: String,
+    /// What could not be bound, as the messages the report lists.
+    pub unbound: Vec<Message>,
 }
 
 /// Words a parameter cannot be named.
@@ -79,11 +83,12 @@ struct Gen<'a> {
     public: BTreeMap<String, Id>,
     bound: Vec<Bound>,
     names: HashMap<Id, String>,
-    report: Vec<String>,
+    report: Vec<Message>,
     /// Extern name (qualified) → Rust path.
     externs: BTreeMap<String, String>,
     /// Extern name (qualified) → its `usize` / `isize` marks.
     marks: BTreeMap<String, String>,
+    affine_types: RefCell<BTreeSet<&'static str>>,
 }
 
 /// A generic parameter filled by the config's `instances`: its type in
@@ -100,6 +105,7 @@ pub fn generate(krate: &Crate, cfg: &Config, config_file: &str) -> Output {
         report: Vec::new(),
         externs: BTreeMap::new(),
         marks: BTreeMap::new(),
+        affine_types: RefCell::new(BTreeSet::new()),
     };
     g.index_public();
     g.run(config_file)
@@ -178,9 +184,10 @@ impl<'a> Gen<'a> {
         }
         for path in &items {
             let Some(id) = self.public.get(path).copied() else {
-                self.report.push(format!(
-                    "{path}: not a public item of {}",
-                    self.cfg.crate_name
+                self.report.push(msg!(
+                    "bind-not-public",
+                    item = path.as_str(),
+                    crate_name = self.cfg.crate_name.as_str()
                 ));
                 continue;
             };
@@ -224,9 +231,8 @@ impl<'a> Gen<'a> {
             ItemEnum::Enum(e) => &e.generics,
             ItemEnum::Function(_) => return,
             _ => {
-                self.report.push(format!(
-                    "{path}: only structs, enums and functions are bound"
-                ));
+                self.report
+                    .push(msg!("bind-only-structs-enums-functions", item = path));
                 return;
             }
         };
@@ -235,9 +241,8 @@ impl<'a> Gen<'a> {
             match &p.kind {
                 GenericParamDefKind::Lifetime { .. } => lifetimes += 1,
                 _ => {
-                    self.report.push(format!(
-                        "{path}: a type with type or const parameters needs its instances in the config (not supported yet)"
-                    ));
+                    self.report
+                        .push(msg!("bind-type-needs-instances", item = path));
                     return;
                 }
             }
@@ -269,7 +274,7 @@ impl<'a> Gen<'a> {
                 }
                 self.externs.insert(qualified, rust);
             }
-            Err(why) => self.report.push(format!("{path}: {why}")),
+            Err(why) => self.report.push(msg!("bind-unbound", item = path, reason = why)),
         }
     }
 
@@ -322,7 +327,11 @@ impl<'a> Gen<'a> {
                                 }
                                 self.externs.insert(qualified, call);
                             }
-                            Err(why) => self.report.push(format!("{rust}::{mname}: {why}")),
+                            Err(why) => self.report.push(msg!(
+                                "bind-unbound",
+                                item = format!("{rust}::{mname}"),
+                                reason = why
+                            )),
                         }
                     }
                 }
@@ -383,15 +392,21 @@ impl<'a> Gen<'a> {
                                     )
                                 }
                                 Some(Err(why)) => {
-                                    self.report.push(format!("{rust}: Iterator::Item: {why}"));
+                                    self.report.push(msg!(
+                                        "bind-iterator-item",
+                                        item = rust,
+                                        reason = why
+                                    ));
                                     continue;
                                 }
                                 None => continue,
                             }
                         }
                         _ => {
-                            self.report.push(format!(
-                                "{rust}: the trait {tname} is not one that can be bound"
+                            self.report.push(msg!(
+                                "bind-trait-not-bindable",
+                                item = rust,
+                                trait_name = tname
                             ));
                             continue;
                         }
@@ -413,12 +428,32 @@ impl<'a> Gen<'a> {
         f: &Function,
         owner: Option<(Id, &str)>,
         rust_path: &str,
-    ) -> Result<(String, String, String), String> {
+    ) -> Result<(String, String, String), Message> {
+        let imports = self.affine_types.borrow().clone();
+        let result = self.signature_inner(name, f, owner, rust_path);
+        if result.is_err() {
+            *self.affine_types.borrow_mut() = imports;
+        }
+        result
+    }
+
+    fn affine(&self, name: &'static str) -> &'static str {
+        self.affine_types.borrow_mut().insert(name);
+        name
+    }
+
+    fn signature_inner(
+        &self,
+        name: &str,
+        f: &Function,
+        owner: Option<(Id, &str)>,
+        rust_path: &str,
+    ) -> Result<(String, String, String), Message> {
         if f.header.is_unsafe {
-            return Err("unsafe fn".into());
+            return Err(msg!("bind-why-unsafe-fn"));
         }
         if f.header.is_async {
-            return Err("async fn".into());
+            return Err(msg!("bind-why-async-fn"));
         }
         let type_params: Vec<&str> = f
             .generics
@@ -432,19 +467,19 @@ impl<'a> Gen<'a> {
             .iter()
             .any(|p| matches!(p.kind, GenericParamDefKind::Const { .. }))
         {
-            return Err("a const generic".into());
+            return Err(msg!("bind-why-const-generic"));
         }
         let mut subst = Subst::new();
         let mut call = rust_path.to_string();
         if !type_params.is_empty() {
             let Some(args) = self.cfg.instances.get(rust_path) else {
-                return Err("a generic function needs an instance in the config".into());
+                return Err(msg!("bind-why-generic-needs-instance"));
             };
             if args.len() != type_params.len() {
-                return Err(format!(
-                    "the config gives {} type arguments, the function has {}",
-                    args.len(),
-                    type_params.len()
+                return Err(msg!(
+                    "bind-why-instance-count",
+                    given = args.len(),
+                    expected = type_params.len()
                 ));
             }
             for (g, a) in type_params.iter().zip(args) {
@@ -491,7 +526,7 @@ impl<'a> Gen<'a> {
             // `Cow<str>` is a `Buf` (the owned copy), marked `c`.
             Some(t) if is_cow_str(t) => {
                 marks.push("c".to_string());
-                ": Buf".to_string()
+                format!(": {}", self.affine("Buf"))
             }
             Some(t) => match int_mark(t) {
                 Some((mark, ty)) => {
@@ -513,12 +548,12 @@ impl<'a> Gen<'a> {
     }
 
     /// A type argument of an instance, written in Rust, as tauto writes it.
-    fn instance_type(&self, rust: &str) -> Result<String, String> {
+    fn instance_type(&self, rust: &str) -> Result<String, Message> {
         if rust == "&str" {
             return Ok("&str".into());
         }
         if rust == "String" {
-            return Ok("Buf".into());
+            return Ok(self.affine("Buf").into());
         }
         if let Some(b) = self.bound.iter().find(|b| b.rust == rust) {
             return Ok(b.name.clone());
@@ -527,7 +562,7 @@ impl<'a> Gen<'a> {
             "bool" => Ok("Bool".into()),
             "f64" => Ok("Float".into()),
             "i32" | "i64" | "u8" | "u32" | "u64" => Ok(rust.into()),
-            other => Err(format!("the instance type {other} is not bound")),
+            other => Err(msg!("bind-why-instance-type-unbound", type_name = other)),
         }
     }
 
@@ -537,7 +572,7 @@ impl<'a> Gen<'a> {
         t: &Type,
         owner: Option<(Id, &str)>,
         subst: &Subst,
-    ) -> Result<String, String> {
+    ) -> Result<String, Message> {
         if let Type::Generic(g) = t
             && let Some((tauto, _)) = subst.get(g)
         {
@@ -553,15 +588,19 @@ impl<'a> Gen<'a> {
             } => match &**type_ {
                 Type::Primitive(p) if p == "str" => {
                     if *is_mutable {
-                        return Err("&mut str".into());
+                        return Err(msg!("bind-why-mut-str"));
                     }
                     Ok(format!("&{n}: Text"))
                 }
                 Type::Slice(inner) => {
                     if *is_mutable {
-                        return Err("&mut [T] is not supported".into());
+                        return Err(msg!("bind-why-mut-slice"));
                     }
-                    Ok(format!("&{n}: Slice({})", self.ty(inner, owner, subst)?))
+                    Ok(format!(
+                        "&{n}: {}({})",
+                        self.affine("Slice"),
+                        self.ty(inner, owner, subst)?
+                    ))
                 }
                 other => {
                     let inner = self.ty(other, owner, subst)?;
@@ -582,7 +621,7 @@ impl<'a> Gen<'a> {
                         && let Some(args) = &trait_.args
                         && let GenericArgs::Parenthesized { inputs, output } = &**args
                     {
-                        let ins: Result<Vec<String>, String> =
+                        let ins: Result<Vec<String>, Message> =
                             inputs.iter().map(|i| self.ty(i, owner, subst)).collect();
                         let out = match output {
                             Some(o) => self.ty(o, owner, subst)?,
@@ -591,23 +630,21 @@ impl<'a> Gen<'a> {
                         return Ok(format!("&{n}: ({}) -> {out}", ins?.join(", ")));
                     }
                 }
-                Err("an `impl Trait` argument".into())
+                Err(msg!("bind-why-impl-trait-argument"))
             }
             other => Ok(format!("{n}: {}", self.ty(other, owner, subst)?)),
         }
     }
 
     /// A type as tauto writes it.
-    fn ty(&self, t: &Type, owner: Option<(Id, &str)>, subst: &Subst) -> Result<String, String> {
+    fn ty(&self, t: &Type, owner: Option<(Id, &str)>, subst: &Subst) -> Result<String, Message> {
         match t {
             Type::Primitive(p) => match p.as_str() {
                 "bool" => Ok("Bool".into()),
                 "f64" => Ok("Float".into()),
                 "i32" | "i64" | "u8" | "u32" | "u64" => Ok(p.clone()),
-                "usize" | "isize" => Err(format!(
-                    "{p} nested in a type (only a parameter, the result, or an Option result is converted)"
-                )),
-                other => Err(format!("the type {other}")),
+                "usize" | "isize" => Err(msg!("bind-why-size-nested", type_name = p.as_str())),
+                other => Err(msg!("bind-why-type", type_name = other)),
             },
             Type::Tuple(v) if v.is_empty() => Ok("Unit".into()),
             Type::Tuple(v) if v.len() == 2 => Ok(format!(
@@ -615,22 +652,24 @@ impl<'a> Gen<'a> {
                 self.ty(&v[0], owner, subst)?,
                 self.ty(&v[1], owner, subst)?
             )),
-            Type::Tuple(_) => Err("a tuple of more than two".into()),
+            Type::Tuple(_) => Err(msg!("bind-why-large-tuple")),
             Type::Generic(g) if g == "Self" => match owner {
                 Some((_, n)) => Ok(n.to_string()),
-                None => Err("Self outside an impl".into()),
+                None => Err(msg!("bind-why-self-outside-impl")),
             },
             Type::Generic(g) => match subst.get(g) {
                 Some((t, _)) if t != "&str" => Ok(t.clone()),
-                _ => Err(format!("the type parameter {g}")),
+                _ => Err(msg!("bind-why-type-parameter", name = g.as_str())),
             },
             Type::BorrowedRef {
                 is_mutable, type_, ..
             } => match &**type_ {
-                Type::Primitive(p) if p == "str" => Err("a &str nested in a type".into()),
-                Type::Slice(inner) if !is_mutable => {
-                    Ok(format!("&Slice({})", self.ty(inner, owner, subst)?))
-                }
+                Type::Primitive(p) if p == "str" => Err(msg!("bind-why-str-nested")),
+                Type::Slice(inner) if !is_mutable => Ok(format!(
+                    "&{}({})",
+                    self.affine("Slice"),
+                    self.ty(inner, owner, subst)?
+                )),
                 other => {
                     let inner = self.ty(other, owner, subst)?;
                     Ok(if *is_mutable {
@@ -664,9 +703,9 @@ impl<'a> Gen<'a> {
                     for g in &alias.generics.params {
                         if let GenericParamDefKind::Type { .. } = g.kind {
                             let Some(t) = given.next() else {
-                                return Err(format!(
-                                    "the alias {} has a default parameter",
-                                    p.path
+                                return Err(msg!(
+                                    "bind-why-alias-default-parameter",
+                                    alias = p.path.as_str()
                                 ));
                             };
                             inner
@@ -685,24 +724,24 @@ impl<'a> Gen<'a> {
                         .collect(),
                     _ => Vec::new(),
                 };
-                let each = |me: &Self| -> Result<Vec<String>, String> {
+                let each = |me: &Self| -> Result<Vec<String>, Message> {
                     args.iter().map(|a| me.ty(a, owner, subst)).collect()
                 };
                 match (last, args.len()) {
-                    ("String", 0) => Ok("Buf".into()),
-                    ("Vec", 1) => Ok(format!("Vec({})", each(self)?[0])),
+                    ("String", 0) => Ok(self.affine("Buf").into()),
+                    ("Vec", 1) => Ok(format!("{}({})", self.affine("Vec"), each(self)?[0])),
                     ("Option", 1) => Ok(format!("Option({})", each(self)?[0])),
                     ("Result", 2) => {
                         let v = each(self)?;
                         Ok(format!("Result({}, {})", v[0], v[1]))
                     }
-                    _ => Err(format!("the type {} is not bound", p.path)),
+                    _ => Err(msg!("bind-why-type-not-bound", type_name = p.path.as_str())),
                 }
             }
-            Type::Slice(_) => Err("an unsized slice".into()),
-            Type::DynTrait(_) => Err("dyn Trait".into()),
-            Type::ImplTrait(_) => Err("an `impl Trait` result".into()),
-            _ => Err("a type that has no tauto form".into()),
+            Type::Slice(_) => Err(msg!("bind-why-unsized-slice")),
+            Type::DynTrait(_) => Err(msg!("bind-why-dyn-trait")),
+            Type::ImplTrait(_) => Err(msg!("bind-why-impl-trait-result")),
+            _ => Err(msg!("bind-why-no-tauto-form")),
         }
     }
 
@@ -725,6 +764,13 @@ impl<'a> Gen<'a> {
         };
         let mut t = header("//");
         t.push('\n');
+        let affine_types = self.affine_types.borrow();
+        if !affine_types.is_empty() {
+            t.push_str(&format!(
+                "import std::prelude::Affine {{ {} }}\n\n",
+                affine_types.iter().copied().collect::<Vec<_>>().join(", ")
+            ));
+        }
         for (_, name, _, lifetimes) in bound {
             let kw = if *lifetimes > 0 {
                 "view struct"
@@ -792,6 +838,7 @@ impl<'a> Gen<'a> {
             tauto: t,
             eure: e,
             report: r,
+            unbound: self.report.clone(),
         }
     }
 }
@@ -887,6 +934,63 @@ mod tests {
             "header": {"is_const": false, "is_unsafe": false, "is_async": false, "abi": "Rust"},
             "has_body": true,
         }})
+    }
+
+    #[test]
+    fn only_emitted_signatures_import_affine_types() {
+        let slice = json!({"borrowed_ref": {"lifetime": null, "is_mutable": false,
+            "type": {"slice": {"primitive": "u8"}}}});
+        let vector = json!({"resolved_path": {"path": "Vec", "id": 10,
+            "args": {"angle_bracketed": {"args": [{"type": {"primitive": "u8"}}], "constraints": []}}}});
+        let string = json!({"resolved_path": {"path": "String", "id": 11, "args": null}});
+        let mut rejected = identity(slice.clone(), json!([]));
+        rejected["function"]["sig"]["output"] = json!({"primitive": "u128"});
+        let krate: Crate = serde_json::from_value(json!({
+            "root": 0, "crate_version": "0.0.0", "includes_private": false,
+            "index": {
+                "0": item(0, "fixture", json!({"module": {"is_crate": true, "items": [1, 2, 3, 4], "is_stripped": false}})),
+                "1": item(1, "bytes", identity(vector, json!([]))),
+                "2": item(2, "text", identity(string, json!([]))),
+                "3": item(3, "slice", identity(slice, json!([]))),
+                "4": item(4, "rejected", rejected),
+            },
+            "paths": {}, "external_crates": {},
+            "target": {"triple": "x86_64-unknown-linux-gnu", "target_features": []},
+            "format_version": rustdoc_types::FORMAT_VERSION,
+        })).unwrap();
+        let cfg = |items: &[&str]| Config {
+            crate_name: "fixture".into(),
+            items: items
+                .iter()
+                .map(|name| format!("fixture::{name}"))
+                .collect(),
+            ..Config::default()
+        };
+        let output = generate(
+            &krate,
+            &cfg(&["bytes", "text", "slice"]),
+            "fixture.config.eure",
+        );
+        assert!(
+            output
+                .tauto
+                .contains("import std::prelude::Affine { Buf, Slice, Vec }"),
+            "{}",
+            output.tauto
+        );
+        let rejected = generate(&krate, &cfg(&["rejected"]), "fixture.config.eure");
+        assert!(
+            !rejected.tauto.contains("import std::prelude::Affine"),
+            "{}",
+            rejected.tauto
+        );
+        assert!(
+            rejected.unbound.iter().any(|m| m.id == "bind-unbound"
+                && matches!(m.get("reason"), Some(tauto_message::Value::Message(why))
+                    if why.id == "bind-why-type" && why.get("type_name") == Some(&"u128".into()))),
+            "{:?}",
+            rejected.unbound
+        );
     }
 
     #[test]

@@ -2,21 +2,23 @@
 use super::{View, rule_id, show};
 use crate::check::{Derivation, FileEntry, Verdict};
 use crate::report::{Json, term_json};
+use crate::surface::Name;
 use crate::surface::{SurfaceTerm, TheoremDecl};
 use std::path::Path;
+use tauto_message::Message;
 
 fn string(s: impl Into<String>) -> Json {
     Json::Str(s.into())
 }
-fn strings(xs: &[String]) -> Json {
-    Json::Arr(xs.iter().map(|s| string(s.clone())).collect())
+fn strings(xs: &[Name]) -> Json {
+    Json::Arr(xs.iter().map(|s| string(s.to_string())).collect())
 }
-fn context(xs: &[(String, SurfaceTerm)]) -> Json {
+fn context(xs: &[(Name, SurfaceTerm)]) -> Json {
     Json::Arr(
         xs.iter()
             .map(|(n, t)| {
                 Json::Obj(vec![
-                    ("name", string(n.clone())),
+                    ("name", string(n.to_string())),
                     ("type", string(show(t))),
                     ("type_tree", term_json(t)),
                 ])
@@ -54,10 +56,10 @@ fn status(v: &Verdict) -> &'static str {
 pub(super) fn render(
     declarations: &[&TheoremDecl],
     entries: &[FileEntry],
-    trees: &[(String, Derivation)],
+    trees: &[(Name, Derivation)],
     own: &Path,
     load_failed: bool,
-) -> Result<View, String> {
+) -> Result<View, Message> {
     let mut proofs = Vec::new();
     for d in declarations {
         let matching: Vec<_> = entries
@@ -65,7 +67,10 @@ pub(super) fn render(
             .filter(|e| e.file == own && e.entry.name == d.name)
             .collect();
         let [entry] = matching.as_slice() else {
-            return Err(tauto_message::msg!("proof-ambiguous", name = d.name.clone()).to_string());
+            return Err(tauto_message::msg!(
+                "proof-ambiguous",
+                name = d.name.to_string()
+            ));
         };
         let verdict = &entry.entry.verdict;
         let (axioms, uses, holes, error) = match verdict {
@@ -103,7 +108,7 @@ pub(super) fn render(
                 Json::Arr(vec![]),
                 Json::Arr(vec![]),
                 Json::Arr(vec![]),
-                string(e.clone()),
+                string(e.to_string()),
             ),
         };
         let tree = trees
@@ -112,7 +117,7 @@ pub(super) fn render(
             .find(|(name, _)| name == &d.name)
             .map_or(Json::Null, |(_, d)| node(d, &mut 0));
         proofs.push(Json::Obj(vec![
-            ("name", string(d.name.clone())),
+            ("name", string(d.name.to_string())),
             ("status", string(status(verdict))),
             ("parameters", context(&d.params)),
             ("implicit", Json::Num(d.implicit)),

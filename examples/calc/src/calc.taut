@@ -27,7 +27,7 @@ RParen: ')';
   fn Prod_Rep1_list::to_i
 
 pub fn calc_digits(bs: List(Nat), acc: Nat): Nat {
-  match bs: Nat {
+  ⊢ Nat from match bs {
     Nil => acc
     Cons(b, rest) => calc_digits(rest, Nat::add(Nat::mul(acc, 10), Nat::sub(b, 48)))
   }
@@ -39,45 +39,45 @@ pub fn calc_num(t: Text): Nat { calc_digits(Text::bytes(t), 0) }
 // (`+ P` or `* A`) is added or multiplied in on the right, so the functions recurse on a field.
 mutual {
   pub fn calc_expr_val(e: arith::Expr::I): Nat {
-    match e: Nat {
+    ⊢ Nat from match e {
       Mk(prod, rep) => Nat::add(calc_prod_val(prod), calc_sum_val(rep))
     }
   }
   pub fn calc_sum_val(rep: List(arith::Expr_Rep1::I)): Nat {
-    match rep: Nat {
+    ⊢ Nat from match rep {
       Nil => 0
       Cons(r, more) => Nat::add(calc_plus_val(r), calc_sum_val(more))
     }
   }
   pub fn calc_plus_val(r: arith::Expr_Rep1::I): Nat {
-    match r: Nat {
+    ⊢ Nat from match r {
       Mk(op, prod) => calc_prod_val(prod)
     }
   }
   pub fn calc_prod_val(p: arith::Prod::I): Nat {
-    match p: Nat {
+    ⊢ Nat from match p {
       Mk(atom, rep) => Nat::mul(calc_atom_val(atom), calc_factor_val(rep))
     }
   }
   pub fn calc_factor_val(rep: List(arith::Prod_Rep1::I)): Nat {
-    match rep: Nat {
+    ⊢ Nat from match rep {
       Nil => 1
       Cons(r, more) => Nat::mul(calc_star_val(r), calc_factor_val(more))
     }
   }
   pub fn calc_star_val(r: arith::Prod_Rep1::I): Nat {
-    match r: Nat {
+    ⊢ Nat from match r {
       Mk(op, atom) => calc_atom_val(atom)
     }
   }
   pub fn calc_atom_val(a: arith::Atom::I): Nat {
-    match a: Nat {
+    ⊢ Nat from match a {
       Num_I(t) => calc_num(t)
       Paren_I(p) => calc_paren_val(p)
     }
   }
   pub fn calc_paren_val(p: arith::Paren::I): Nat {
-    match p: Nat {
+    ⊢ Nat from match p {
       Mk(l, e, r) => calc_expr_val(e)
     }
   }
@@ -87,45 +87,45 @@ mutual {
 // its unit, `0` for `+` and `1` for `*`.
 mutual {
   pub fn calc_expr_lower(e: arith::Expr::I): Expr {
-    match e: Expr {
+    ⊢ Expr from match e {
       Mk(prod, rep) => EAdd(calc_prod_lower(prod), calc_sum_lower(rep))
     }
   }
   pub fn calc_sum_lower(rep: List(arith::Expr_Rep1::I)): Expr {
-    match rep: Expr {
+    ⊢ Expr from match rep {
       Nil => ELit(0)
       Cons(r, more) => EAdd(calc_plus_lower(r), calc_sum_lower(more))
     }
   }
   pub fn calc_plus_lower(r: arith::Expr_Rep1::I): Expr {
-    match r: Expr {
+    ⊢ Expr from match r {
       Mk(op, prod) => calc_prod_lower(prod)
     }
   }
   pub fn calc_prod_lower(p: arith::Prod::I): Expr {
-    match p: Expr {
+    ⊢ Expr from match p {
       Mk(atom, rep) => EMul(calc_atom_lower(atom), calc_factor_lower(rep))
     }
   }
   pub fn calc_factor_lower(rep: List(arith::Prod_Rep1::I)): Expr {
-    match rep: Expr {
+    ⊢ Expr from match rep {
       Nil => ELit(1)
       Cons(r, more) => EMul(calc_star_lower(r), calc_factor_lower(more))
     }
   }
   pub fn calc_star_lower(r: arith::Prod_Rep1::I): Expr {
-    match r: Expr {
+    ⊢ Expr from match r {
       Mk(op, atom) => calc_atom_lower(atom)
     }
   }
   pub fn calc_atom_lower(a: arith::Atom::I): Expr {
-    match a: Expr {
+    ⊢ Expr from match a {
       Num_I(t) => ELit(calc_num(t))
       Paren_I(p) => calc_paren_lower(p)
     }
   }
   pub fn calc_paren_lower(p: arith::Paren::I): Expr {
-    match p: Expr {
+    ⊢ Expr from match p {
       Mk(l, e, r) => calc_expr_lower(e)
     }
   }

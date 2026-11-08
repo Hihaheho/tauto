@@ -254,73 +254,75 @@ fn host_boundary_rejects_symlinks() {
 
 #[test]
 fn compiler_import_graph_matches_host_without_rewriting_sources() {
-    fn copy_sources(from: &std::path::Path, to: &std::path::Path) {
-        fs::create_dir_all(to).unwrap();
-        for entry in fs::read_dir(from).unwrap() {
-            let entry = entry.unwrap();
-            if entry.file_type().unwrap().is_dir() {
-                copy_sources(&entry.path(), &to.join(entry.file_name()));
-            } else if tauto::program::is_source_file(&entry.path()) {
-                fs::copy(entry.path(), to.join(entry.file_name())).unwrap();
+    tauto_test_suite::with_deep_stack(|| {
+        fn copy_sources(from: &std::path::Path, to: &std::path::Path) {
+            fs::create_dir_all(to).unwrap();
+            for entry in fs::read_dir(from).unwrap() {
+                let entry = entry.unwrap();
+                if entry.file_type().unwrap().is_dir() {
+                    copy_sources(&entry.path(), &to.join(entry.file_name()));
+                } else if tauto::program::is_source_file(&entry.path()) {
+                    fs::copy(entry.path(), to.join(entry.file_name())).unwrap();
+                }
             }
         }
-    }
-    let s = Scratch::new();
-    let root = selfhost_harness::root().canonicalize().unwrap();
-    // Enumerate all source files, not a graph pre-resolved by the host. The
-    // independent host load below is only the comparison oracle.
-    for dir in ["totes", "std"] {
-        copy_sources(&root.join(dir), &s.0.join(dir));
-    }
-    let bundle = source_bundle(&s.0).unwrap();
-    let entry = "totes/rustgen/src/main.taut";
-    let host = tauto::program::load(&root.join(entry)).unwrap();
-    let expected: String = host
-        .files
-        .iter()
-        .map(|file| {
-            format!(
-                "{}\t{}\t{}\n",
-                match file.path.strip_prefix(tauto::stdlib::ROOT) {
-                    // A standard library file is read from inside tauto; the
-                    // bundle holds the same text under `std/`.
-                    Ok(rel) => Path::new("std").join(rel).to_string_lossy().into_owned(),
-                    Err(_) => file
-                        .path
-                        .canonicalize()
-                        .unwrap()
-                        .strip_prefix(&root)
-                        .unwrap()
-                        .to_string_lossy()
-                        .into_owned(),
-                },
-                file.base,
-                file.base as usize + file.text.len()
-            )
-        })
-        .collect();
-    let graph = success(s.run(&bundle, "--graph", entry));
-    assert_eq!(graph, expected);
-    assert!(graph.contains("totes/rustgen/src/loader.taut\t"));
-    assert!(graph.contains("totes/surface/src/surface.taut\t"));
-    // Import closure does not imply a stage1 -> stage2 fixed point. In
-    // particular, original proof declarations and generic data remain intact.
-    let out = s.run(&bundle, "--bundle", entry);
-    assert!(out.error.is_none(), "{out:?}");
-    assert_eq!(
-        out.exit,
-        Some(1),
-        "full compiler unexpectedly accepted: {out:?}"
-    );
-    assert!(out.stdout.is_empty());
-    assert!(
-        !out.stderr.contains("StImport"),
-        "loader failed to consume imports: {out:?}"
-    );
-    eprintln!(
-        "compiler graph accepted; compilation blocker: {}",
-        out.stderr.trim()
-    );
+        let s = Scratch::new();
+        let root = selfhost_harness::root().canonicalize().unwrap();
+        // Enumerate all source files, not a graph pre-resolved by the host. The
+        // independent host load below is only the comparison oracle.
+        for dir in ["totes", "std"] {
+            copy_sources(&root.join(dir), &s.0.join(dir));
+        }
+        let bundle = source_bundle(&s.0).unwrap();
+        let entry = "totes/rustgen/src/main.taut";
+        let host = tauto::program::load(&root.join(entry)).unwrap();
+        let expected: String = host
+            .files
+            .iter()
+            .map(|file| {
+                format!(
+                    "{}\t{}\t{}\n",
+                    match file.path.strip_prefix(tauto::stdlib::ROOT) {
+                        // A standard library file is read from inside tauto; the
+                        // bundle holds the same text under `std/`.
+                        Ok(rel) => Path::new("std").join(rel).to_string_lossy().into_owned(),
+                        Err(_) => file
+                            .path
+                            .canonicalize()
+                            .unwrap()
+                            .strip_prefix(&root)
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned(),
+                    },
+                    file.base,
+                    file.base as usize + file.text.len()
+                )
+            })
+            .collect();
+        let graph = success(s.run(&bundle, "--graph", entry));
+        assert_eq!(graph, expected);
+        assert!(graph.contains("totes/rustgen/src/loader.taut\t"));
+        assert!(graph.contains("totes/surface/src/surface.taut\t"));
+        // Import closure does not imply a stage1 -> stage2 fixed point. In
+        // particular, original proof declarations and generic data remain intact.
+        let out = s.run(&bundle, "--bundle", entry);
+        assert!(out.error.is_none(), "{out:?}");
+        assert_eq!(
+            out.exit,
+            Some(1),
+            "full compiler unexpectedly accepted: {out:?}"
+        );
+        assert!(out.stdout.is_empty());
+        assert!(
+            !out.stderr.contains("StImport"),
+            "loader failed to consume imports: {out:?}"
+        );
+        eprintln!(
+            "compiler graph accepted; compilation blocker: {}",
+            out.stderr.trim()
+        );
+    });
 }
 
 #[test]

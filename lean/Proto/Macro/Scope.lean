@@ -30,40 +30,32 @@ instance (B S : Scopes) : Decidable (Scopes.Sub B S) := by
   unfold Scopes.Sub
   exact inferInstance
 
-/-- The bindings an identifier may mean: the same name, scopes inside its own. -/
+/-- Equality of scope sets is decidable by the two finite inclusions. -/
+instance (A B : Scopes) : Decidable (Scopes.Eqv A B) :=
+  decidable_of_iff (Scopes.Sub A B ∧ Scopes.Sub B A) (by
+    constructor
+    · intro h s; exact ⟨h.1 s, h.2 s⟩
+    · intro h; exact ⟨fun s hs => (h s).mp hs, fun s hs => (h s).mpr hs⟩)
+
+/-- The environment is ordered from the innermost lexical binding outward.
+Only identifiers with the same spelling and the same expansion scopes match. -/
 def cand (x : Ident) (ρ : List Bind) : List Bind :=
-  ρ.filter fun b => b.name == x.name && decide (Scopes.Sub b.scopes x.scopes)
-
-/-- A candidate is below another when its scopes are strictly fewer. -/
-def Below (b c : Bind) : Prop := Scopes.Sub b.scopes c.scopes ∧ ¬ Scopes.Sub c.scopes b.scopes
-
-instance (b c : Bind) : Decidable (Below b c) := by
-  unfold Below
-  exact inferInstance
-
-/-- The candidates nothing is above. -/
-def maximals (cs : List Bind) : List Bind :=
-  cs.filter fun c => cs.all fun d => decide (¬ Below c d)
+  ρ.filter fun b => b.name == x.name && decide (Scopes.Eqv b.scopes x.scopes)
 
 inductive Res where
   | found (b : Bind)
-  | ambiguous
   | unbound
 
-/-- `resolve(x^S, ρ)` of the semantics. -/
+/-- Lexical scope is represented by the environment, not by an introduction
+mark on every node in a binding form. -/
 def resolve (x : Ident) (ρ : List Bind) : Res :=
-  match maximals (cand x ρ) with
+  match cand x ρ with
   | [] => .unbound
-  | [b] => .found b
-  | _ :: _ :: _ => .ambiguous
+  | b :: _ => .found b
 
 theorem mem_cand {x : Ident} {ρ : List Bind} {b : Bind} :
-    b ∈ cand x ρ ↔ b ∈ ρ ∧ b.name = x.name ∧ Scopes.Sub b.scopes x.scopes := by
+    b ∈ cand x ρ ↔ b ∈ ρ ∧ b.name = x.name ∧ Scopes.Eqv b.scopes x.scopes := by
   simp only [cand, List.mem_filter, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq]
-
-theorem mem_maximals {cs : List Bind} {b : Bind} : b ∈ maximals cs → b ∈ cs := by
-  intro h
-  exact (List.mem_filter.mp h).1
 
 /-- What a resolution found was a candidate. -/
 theorem resolve_found_cand {x : Ident} {ρ : List Bind} {b : Bind}
@@ -71,16 +63,16 @@ theorem resolve_found_cand {x : Ident} {ρ : List Bind} {b : Bind}
   unfold resolve at h
   split at h
   · cases h
-  · rename_i heq
+  · rename_i c cs heq
     cases h
-    exact mem_maximals (by rw [heq]; simp)
-  · cases h
+    rw [heq]
+    exact List.mem_cons_self
 
 /-- A binding with a scope the identifier lacks is never what it means. -/
 theorem resolve_lacks {x : Ident} {ρ : List Bind} {b : Bind} {s : Nat}
     (h : resolve x ρ = .found b) (hs : s ∈ b.scopes) : s ∈ x.scopes := by
   have := (mem_cand.mp (resolve_found_cand h)).2.2
-  exact this s hs
+  exact (this s).mp hs
 
 /-- H1: an identifier from the input (without the expansion's scope `s`) does not
 resolve to a binding the expansion introduced (with it). -/
@@ -95,6 +87,13 @@ theorem intro_not_capture {x : Ident} {ρ : List Bind} {b : Bind} {f : Nat}
     (hx : f ∉ x.scopes) (hb : f ∈ b.scopes) : resolve x ρ ≠ .found b :=
   resolve_not_intro hx hb
 
+/-- A reference introduced by an expansion cannot select a caller binding
+that lacks that expansion's mark. -/
+theorem introduced_not_capture {x : Ident} {ρ : List Bind} {b : Bind} {s : Nat}
+    (hx : s ∈ x.scopes) (hb : s ∉ b.scopes) : resolve x ρ ≠ .found b := by
+  intro h
+  exact hb (((mem_cand.mp (resolve_found_cand h)).2.2 s).mpr hx)
+
 /-- Bindings with a scope the identifier lacks are not candidates, so adding them
 changes nothing. -/
 theorem cand_append_intro {x : Ident} {ρ new : List Bind} {s : Nat}
@@ -102,11 +101,11 @@ theorem cand_append_intro {x : Ident} {ρ new : List Bind} {s : Nat}
     cand x (ρ ++ new) = cand x ρ := by
   unfold cand
   rw [List.filter_append]
-  have : new.filter (fun b => b.name == x.name && decide (Scopes.Sub b.scopes x.scopes)) = [] := by
+  have : new.filter (fun b => b.name == x.name && decide (Scopes.Eqv b.scopes x.scopes)) = [] := by
     apply List.filter_eq_nil_iff.mpr
     intro b hb
     have hsb := hn b hb
-    have : ¬ Scopes.Sub b.scopes x.scopes := fun h => hx (h s hsb)
+    have : ¬ Scopes.Eqv b.scopes x.scopes := fun h => hx ((h s).mp hsb)
     simp [this]
   rw [this, List.append_nil]
 
@@ -117,6 +116,19 @@ theorem input_keeps_binding {x : Ident} {ρ new : List Bind} {s : Nat}
     resolve x (ρ ++ new) = resolve x ρ := by
   unfold resolve
   rw [cand_append_intro hx hn]
+
+/-- Introduced bindings at inner lexical positions also leave an input's
+reference unchanged. -/
+theorem input_keeps_inner_binding {x : Ident} {ρ new : List Bind} {s : Nat}
+    (hx : s ∉ x.scopes) (hn : ∀ b ∈ new, s ∈ b.scopes) :
+    resolve x (new ++ ρ) = resolve x ρ := by
+  have empty : cand x new = [] := by
+    simpa [cand] using (cand_append_intro (ρ := []) hx hn)
+  have same : cand x (new ++ ρ) = cand x ρ := by
+    unfold cand at *
+    rw [List.filter_append, empty, List.nil_append]
+  unfold resolve
+  rw [same]
 
 /-- Adding or taking away the scope `s`. -/
 def flipScopes (s : Nat) (S : Scopes) : Scopes :=

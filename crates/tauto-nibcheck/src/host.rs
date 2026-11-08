@@ -12,6 +12,7 @@ pub const HOST_EFFECTS: &[&str] = &[
     "stderr",
     "stdin_bytes",
     "stdout_flush",
+    "shutdown_token",
     "stdin",
     "argv",
     "exit",
@@ -26,10 +27,14 @@ pub const HOST_EFFECTS: &[&str] = &[
     "fs_write",
     "fs_read_bytes",
     "fs_write_bytes",
+    "fs_read_under",
+    "fs_read_bytes_under",
     "fs_create_dir",
     "fs_list_dir",
     "fs_remove",
     "fs_stat",
+    "fs_read_link",
+    "fs_write_new",
     "fs_rename",
     "fs_copy",
     "fs_canonicalize",
@@ -77,10 +82,16 @@ pub fn is_host_primitive(f: &crate::surface::FnDecl) -> bool {
 /// The permission (`--allow-<name>`) an effect needs, if any.
 pub fn permission(effect: &str) -> Option<&'static str> {
     match effect {
-        "fs_read" | "fs_read_bytes" | "fs_list_dir" | "fs_stat" | "fs_canonicalize" => Some("read"),
-        "fs_write" | "fs_write_bytes" | "fs_create_dir" | "fs_remove" | "fs_rename" => {
-            Some("write")
-        }
+        "fs_read"
+        | "fs_read_bytes"
+        | "fs_read_under"
+        | "fs_read_bytes_under"
+        | "fs_list_dir"
+        | "fs_stat"
+        | "fs_read_link"
+        | "fs_canonicalize" => Some("read"),
+        "fs_write" | "fs_write_bytes" | "fs_write_new" | "fs_create_dir" | "fs_remove"
+        | "fs_rename" => Some("write"),
         "proc_run" | "proc_spawn" => Some("run"),
         "env" => Some("env"),
         "net" | "net_addr" | "net_resolve" => Some("net"),
@@ -154,6 +165,13 @@ pub fn wrap(program: &Program) -> Option<Program> {
         WRAPPER_BASE,
     )
     .expect("the wrapper parses");
+    if tauto_surface::bindings::declared_names(&crate::types::prelude_for(program).stmts)
+        .iter()
+        .any(|n| n.is_resolved())
+    {
+        tauto_surface::resolve::Resolver::new(tauto_surface::bindings::library_bindings())
+            .statements(&mut wrapper.stmts);
+    }
     let Some(Stmt::Let { value: call, .. }) = wrapper.stmts.first_mut() else {
         panic!("the wrapper has the shape it is written with");
     };
@@ -213,6 +231,17 @@ fn tasks_in(t: &mut SurfaceTerm) {
             if let Some(f) = body {
                 let mut task = parse_expr_at("() => Host::run(())", WRAPPER_BASE)
                     .expect("the task's wrapper parses");
+                if effect.is_resolved() {
+                    let mut wrapper = vec![Stmt::Expr(task)];
+                    tauto_surface::resolve::Resolver::new(
+                        tauto_surface::bindings::library_bindings(),
+                    )
+                    .statements(&mut wrapper);
+                    let Stmt::Expr(resolved) = wrapper.remove(0) else {
+                        unreachable!()
+                    };
+                    task = resolved;
+                }
                 put_task(&mut task, f.clone());
                 *f = task;
             }

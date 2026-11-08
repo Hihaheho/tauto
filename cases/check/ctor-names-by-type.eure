@@ -1,0 +1,149 @@
+// Two `inductive` types (or `inductive enum`s) of one file may have
+// constructors of the same name, as Nib's enums may, and so may a type and the
+// prelude's (`Pen::None` and `Option::None`): each is the constructor of its own
+// type. A short name is
+// read by the type wanted where it is written (the matched value's, a
+// function's result); `A::Start` names the type, and where no type decides,
+// the name is ambiguous.
+
+@ cases.types-of-one-file-share-a-constructor-name
+files."main.nib" = ```tauto
+inductive A: Type {
+  Start: A
+  Stop(n: Nat): A
+}
+inductive B: Type {
+  Start: B
+  Go: B
+}
+fn fa(x: A): Nat {
+  ⊢ Nat from match x {
+    Start => Zero
+    Stop(n) => n
+  }
+}
+fn fb(x: B): Nat {
+  ⊢ Nat from match x {
+    Start => 1
+    Go => Zero
+  }
+}
+fn mb(): B { Start }
+theorem fa_stop(): fa(Stop(3)) = 3 { Refl }
+theorem fa_start(): fa(A::Start) = Zero { Refl }
+theorem fb_start(): fb(mb()) = 1 { Refl }
+```
+checks.A = "ok"
+checks.B = "ok"
+checks.fa = "ok"
+checks.fb = "ok"
+checks.mb = "ok"
+checks.fa_stop = "ok"
+checks.fa_start = "ok"
+checks.fb_start = "ok"
+
+@ cases.a-file-importing-them-reads-them-by-type
+files."a.taut" = ```tauto
+pub(open) inductive A: Type {
+  Start: A
+}
+pub(open) inductive B: Type {
+  Start: B
+  Go: B
+}
+```
+files."main.nib" = ```tauto
+import "a.taut"
+fn fb(x: B): Nat {
+  ⊢ Nat from match x {
+    Start => 1
+    Go => Zero
+  }
+}
+theorem fb_start(): fb(B::Start) = 1 { Refl }
+```
+checks.fb = "ok"
+checks.fb_start = "ok"
+
+@ cases.without-a-type-a-shared-name-is-ambiguous
+files."main.nib" = ```tauto
+inductive A: Type {
+  Start: A
+}
+inductive B: Type {
+  Start: B
+}
+theorem t(): Start = Start { Refl }
+```
+checks."main.nib::macro#1" = "error: `Start` is ambiguous: it is a constructor of more than one type (`main::A::Start` and `main::B::Start`), and the type wanted here does not say which; write it with its type, `T::Start`"
+
+@ cases.inductive-enums-of-one-file-and-the-prelude-share-a-constructor-name
+files."main.nib" = ```tauto
+inductive enum Pen {
+  None
+  Mk(Nat)
+}
+fn pen_width(p: Pen): Nat {
+  ⊢ Nat from match p {
+    None => Zero
+    Mk(n) => n
+  }
+}
+fn opt_width(o: Option(Nat)): Nat {
+  ⊢ Nat from match o {
+    None => 1
+    Some(n) => n
+  }
+}
+fn no_pen(): Pen { None }
+fn no_width(): Option(Nat) { None }
+theorem pen_none(): pen_width(no_pen()) = Zero { Refl }
+theorem opt_none(): opt_width(no_width()) = 1 { Refl }
+theorem pen_full(): pen_width(Pen::None) = Zero { Refl }
+```
+checks.Pen = "ok"
+checks.pen_width = "ok"
+checks.opt_width = "ok"
+checks.no_pen = "ok"
+checks.no_width = "ok"
+checks.pen_none = "ok"
+checks.opt_none = "ok"
+checks.pen_full = "ok"
+
+@ cases.inductive-enums-without-a-type-wanted-are-ambiguous
+files."main.nib" = ```tauto
+inductive enum Light {
+  Off
+  On
+}
+inductive enum Fan {
+  Off
+  Fast
+}
+theorem t(): Off = Off { Refl }
+```
+checks."main.nib::macro#1" = "error: `Off` is ambiguous: it is a constructor of more than one type (`main::Light::Off` and `main::Fan::Off`), and the type wanted here does not say which; write it with its type, `T::Off`"
+
+@ cases.nested-patterns-retain-nullary-constructor-candidates
+source = ```tauto
+inductive Other: Type {
+  None: Other
+  Some(n: Nat): Other
+}
+fn first_pair(value: Option(Pair(Nat, Nat))): Nat {
+  ⊢ Nat from match value {
+    None => 0
+    Some(Pair { fst: first, snd: _ }) => first
+  }
+}
+theorem absent_pair(): first_pair(Option::None) = 0 { Refl }
+theorem present_pair(): first_pair(Option::Some(Pair { fst: 3, snd: 4 })) = 3 { Refl }
+```
+checks.Other = "ok"
+checks.first_pair = "ok"
+checks.absent_pair = "ok"
+checks.present_pair = "ok"
+
+@ cases.an-imported-constructor-keeps-its-name-beside-an-unimported-prelude-type
+source = path`../../meta/Typing.taut`
+checks_all = "ok"

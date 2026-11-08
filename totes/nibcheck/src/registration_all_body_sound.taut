@@ -54,10 +54,10 @@ pub theorem body_prepare_fns_after_sound(
   ready: ∀ accepted: DiagnosticClean(ck_st(m)). BodyPreparationReady(program, source, ck_st(m)),
   clean: DiagnosticClean(ck_st(body_prepare_fns_after(prelude, program, own, m)))
 ): DataBodyChecked(ck_datas_of(ck_st(body_prepare_fns_after(prelude, program, own, m))), source) {
-  match m: DataBodyChecked(
+  ⊢ DataBodyChecked(
     ck_datas_of(ck_st(body_prepare_fns_after(prelude, program, own, m))),
     source
-  ) {
+  ) from match m {
     mut1(ignored, next) => {
       let prepared: BodyPreparationReady(
         program,
@@ -93,7 +93,9 @@ pub theorem body_prepare_data_ready(
   declared: DeclaresData(program, source),
   clean: DiagnosticClean(ck_st(ck_prepare_datas(c, prelude, program, own)))
 ): BodyPreparationReady(program, source, ck_st(ck_prepare_datas(c, prelude, program, own))) {
-  let context: written_context(ck_st(ck_prepare_datas(c, prelude, program, own))) = written_context(c) := ck_prepare_datas_context(c, prelude, program, own, ordinary, clean)
+  let context: written_context(
+    ck_st(ck_prepare_datas(c, prelude, program, own))
+  ) = written_context(c) := ck_prepare_datas_context(c, prelude, program, own, ordinary, clean)
   AndIntro(
     Eq::trans(Eq::congr(written_context_borrow, context), ordinary),
     AndIntro(

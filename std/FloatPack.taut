@@ -144,8 +144,8 @@ pub theorem pow2_le(a: Nat, b: Nat, h: NatLe(a, b)): NatLe(Nat::pow2(a), Nat::po
   )
 }
 
-pub theorem float_yn_or(o: Bool): Or(o = true, o = false) {
-  match o: Or(o = true, o = false) {
+pub theorem float_yn_or(o: Bool): ((o = true) ∨ (o = false)) {
+  ⊢ ((o = true) ∨ (o = false)) from match o {
     true => OrInl(Refl)
     false => OrInr(Refl)
   }
@@ -157,7 +157,7 @@ pub theorem len_lo(
   hb: BitLen(S, L),
   hlo: NatLe(72057594037927936, S)
 ): NatLe(56, L) {
-  match int_lt_or_ge(IntOfNat(L), IntOfNat(56)): NatLe(56, L) {
+  ⊢ NatLe(56, L) from match int_lt_or_ge(IntOfNat(L), IntOfNat(56)) {
     OrInl(h) => False::elim(
       len_lo_contra(
         S,
@@ -177,7 +177,7 @@ pub theorem len_hi(
   hb: BitLen(S, L),
   hhi: NatLe(S, 288230376151711744)
 ): NatLe(L, 58) {
-  match int_lt_or_ge(IntOfNat(58), IntOfNat(L)): NatLe(L, 58) {
+  ⊢ NatLe(L, 58) from match int_lt_or_ge(IntOfNat(58), IntOfNat(L)) {
     OrInl(h) => False::elim(
       len_hi_contra(S, Nat::pow2(L), And::left(hb), pow2_le(59, L, nat_lt_le(58, L, h)), hhi)
     )
@@ -190,12 +190,12 @@ pub theorem len_j(
   L: Nat,
   e: L = 56 + j,
   h: NatLe(56 + j, 58)
-): Or(L = 56, Or(L = 57, L = 58)) {
-  match j: Or(L = 56, Or(L = 57, L = 58)) {
+): ((L = 56) ∨ (L = 57) ∨ (L = 58)) {
+  ⊢ ((L = 56) ∨ (L = 57) ∨ (L = 58)) from match j {
     Zero => OrInl(e)
-    Succ(j1) => match j1: Or(L = 56, Or(L = 57, L = 58)) {
+    Succ(j1) => ⊢ ((L = 56) ∨ (L = 57) ∨ (L = 58)) from match j1 {
       Zero => OrInr(OrInl(e))
-      Succ(j2) => match j2: Or(L = 56, Or(L = 57, L = 58)) {
+      Succ(j2) => ⊢ ((L = 56) ∨ (L = 57) ∨ (L = 58)) from match j2 {
         Zero => OrInr(OrInr(e))
         Succ(j3) => False::elim(len_j_contra(j3, h))
       }
@@ -210,20 +210,20 @@ pub theorem len_cases(
   hb: BitLen(S, L),
   hlo: NatLe(72057594037927936, S),
   hhi: NatLe(S, 288230376151711744)
-): Or(L = 56, Or(L = 57, L = 58)) {
+): ((L = 56) ∨ (L = 57) ∨ (L = 58)) {
   let eg: L = 56 + (L - 56) := Nat::le_gap(56, L, yn_of_nat_le(56, L, len_lo(S, L, hb, hlo)))
   len_j(L - 56, L, eg, Eq::subst((w: Nat) => NatLe(w, 58), eg, len_hi(S, L, hb, hhi)))
 }
 
 pub theorem nat_eq_zero_no(S: Nat, h: NatLe(1, S)): S == 0 = false {
-  match S: S == 0 = false {
+  ⊢ S == 0 = false from match S {
     Zero => False::elim(false_ne_true(h))
     Succ(S0) => Refl
   }
 }
 
 pub fn float_pack_by(o: Bool, s: Nat, m: Nat, e: Nat): Nat {
-  match o: Nat {
+  ⊢ Nat from match o {
     true => Float::zero_raw(s)
     false => Float::pack_at(s, m, e, Nat::max(e + Float::len(m) - 53, 2926))
   }
@@ -251,7 +251,7 @@ pub theorem flen_of(
   S: Nat,
   h: NatLe(1, S)
 ): Float::len(S) = Succ(Float::bitlen(129, Nat::div_nz(S, 2, Nat::ne_zero(2, Refl)))) {
-  match S: Float::len(S) = Succ(Float::bitlen(129, Nat::div_nz(S, 2, Nat::ne_zero(2, Refl)))) {
+  ⊢ Float::len(S) = Succ(Float::bitlen(129, Nat::div_nz(S, 2, Nat::ne_zero(2, Refl)))) from match S {
     Zero => False::elim(false_ne_true(h))
     Succ(S0) => Refl
   }
@@ -262,7 +262,7 @@ pub theorem len_spec(
   h: NatLe(1, S),
   hhi: NatLe(S, 288230376151711744)
 ): BitLen(S, Float::bitlen(129, Nat::div_nz(S, 2, Nat::ne_zero(2, Refl)))) {
-  match S: BitLen(S, Float::bitlen(129, Nat::div_nz(S, 2, Nat::ne_zero(2, Refl)))) {
+  ⊢ BitLen(S, Float::bitlen(129, Nat::div_nz(S, 2, Nat::ne_zero(2, Refl)))) from match S {
     Zero => False::elim(false_ne_true(h))
     Succ(S0) => bitlen_spec(
       129,
@@ -285,7 +285,7 @@ pub theorem g_eq(
   eg: g = 4503599627370496 + h0,
   hc: NatLe(4503599627370496 + g, 9007199254740992)
 ): g = 4503599627370496 {
-  match h0: g = 4503599627370496 {
+  ⊢ g = 4503599627370496 from match h0 {
     Zero => eg
     Succ(h1) => False::elim(
       g_contra(h1, Eq::subst((w: Nat) => NatLe(4503599627370496 + w, 9007199254740992), eg, hc))
@@ -301,10 +301,11 @@ pub theorem decode_hi(
   hc: NatLe(4503599627370496 + g, 9007199254740992),
   hfin: EncodeFinite(4503599627370496 + g, 2926 + T)
 ): DecodeOk(s, 4503599627370496 + g, 2926 + T) {
-  match int_lt_or_ge(
-    IntOfNat(g),
-    IntOfNat(4503599627370496)
-  ): DecodeOk(s, 4503599627370496 + g, 2926 + T) {
+  ⊢ DecodeOk(
+    s,
+    4503599627370496 + g,
+    2926 + T
+  ) from match int_lt_or_ge(IntOfNat(g), IntOfNat(4503599627370496)) {
     OrInl(l) => float_decode_normal(
       s,
       T,
@@ -339,51 +340,81 @@ pub theorem decode_hi(
   }
 }
 
+// `decode_fin` below `2^52`, where the exponent is the smallest.
+theorem decode_fin_lo(
+  s: Nat,
+  c: Nat,
+  T: Nat,
+  hs: s < 2 = true,
+  hct: ((NatLe(4503599627370496, c)) ∨ (2926 + T = 2926)),
+  l: IntLe(Int::add(IntOfNat(c), 1), IntOfNat(4503599627370496))
+): DecodeOk(s, c, 2926 + T) {
+  ⊢ DecodeOk(s, c, 2926 + T) from match hct {
+    OrInl(h52) => False::elim(lt_le_contra(c, 4503599627370496, l, h52))
+    OrInr(et) => Eq::subst(
+      (w: Nat) => DecodeOk(s, c, w),
+      Eq::sym(et),
+      float_decode_sub(
+        s,
+        c,
+        hs,
+        yn_of_nat_le(Succ(c), 4503599627370496, nat_lt_le(c, 4503599627370496, l))
+      )
+    )
+  }
+}
+
+// `decode_fin` above `2^52`, with the gap `d` held apart from `c`.
+theorem decode_fin_hi(
+  s: Nat,
+  c: Nat,
+  d: Nat,
+  T: Nat,
+  hs: s < 2 = true,
+  eg: c = 4503599627370496 + d,
+  hc: NatLe(c, 9007199254740992),
+  hfin: EncodeFinite(c, 2926 + T)
+): DecodeOk(s, c, 2926 + T) {
+  Eq::subst(
+    (w: Nat) => DecodeOk(s, w, 2926 + T),
+    Eq::sym(eg),
+    decode_hi(
+      s,
+      d,
+      T,
+      hs,
+      Eq::subst((w: Nat) => NatLe(w, 9007199254740992), eg, hc),
+      Eq::subst((w: Nat) => EncodeFinite(w, 2926 + T), eg, hfin)
+    )
+  )
+}
+
 pub theorem decode_fin(
   s: Nat,
   c: Nat,
   T: Nat,
   hs: s < 2 = true,
   hc: NatLe(c, 9007199254740992),
-  hct: Or(NatLe(4503599627370496, c), 2926 + T = 2926),
+  hct: ((NatLe(4503599627370496, c)) ∨ (2926 + T = 2926)),
   hfin: EncodeFinite(c, 2926 + T)
 ): DecodeOk(s, c, 2926 + T) {
-  match int_lt_or_ge(IntOfNat(c), IntOfNat(4503599627370496)): DecodeOk(s, c, 2926 + T) {
-    OrInl(l) => match hct: DecodeOk(s, c, 2926 + T) {
-      OrInl(h52) => False::elim(lt_le_contra(c, 4503599627370496, l, h52))
-      OrInr(et) => Eq::subst(
-        (w: Nat) => DecodeOk(s, c, w),
-        Eq::sym(et),
-        float_decode_sub(
-          s,
-          c,
-          hs,
-          yn_of_nat_le(Succ(c), 4503599627370496, nat_lt_le(c, 4503599627370496, l))
-        )
-      )
-    }
-    OrInr(l) => {
-      let eg: c = 4503599627370496 + (
-        c - 4503599627370496
-      ) := gap_plus(
+  ⊢ DecodeOk(s, c, 2926 + T) from match int_lt_or_ge(IntOfNat(c), IntOfNat(4503599627370496)) {
+    OrInl(l) => decode_fin_lo(s, c, T, hs, hct, l)
+    OrInr(l) => decode_fin_hi(
+      s,
+      c,
+      c - 4503599627370496,
+      T,
+      hs,
+      gap_plus(
         4503599627370496,
         c,
         c - 4503599627370496,
         Nat::le_gap(4503599627370496, c, yn_of_nat_le(4503599627370496, c, l))
-      )
-      Eq::subst(
-        (w: Nat) => DecodeOk(s, w, 2926 + T),
-        Eq::sym(eg),
-        decode_hi(
-          s,
-          c - 4503599627370496,
-          T,
-          hs,
-          Eq::subst((w: Nat) => NatLe(w, 9007199254740992), eg, hc),
-          Eq::subst((w: Nat) => EncodeFinite(w, 2926 + T), eg, hfin)
-        )
-      )
-    }
+      ),
+      hc,
+      hfin
+    )
   }
 }
 
@@ -396,13 +427,13 @@ pub theorem decode_any_T(
   G: (Nat) -> Prop,
   hs: s < 2 = true,
   hc: NatLe(c, 9007199254740992),
-  hct: Or(NatLe(4503599627370496, c), 2926 + T = 2926),
+  hct: ((NatLe(4503599627370496, c)) ∨ (2926 + T = 2926)),
   K: (DecodeOk(s, c, 2926 + T)) -> G(Float::encode(s, c, 2926 + T)),
   inf: G(Float::inf_raw(s))
 ): G(Float::encode(s, c, 2926 + T)) {
-  match float_yn_or(
-    (2926 + T - 2926) * 4503599627370496 + c < 9218868437227405312
-  ): G(Float::encode(s, c, 2926 + T)) {
+  ⊢ G(
+    Float::encode(s, c, 2926 + T)
+  ) from match float_yn_or((2926 + T - 2926) * 4503599627370496 + c < 9218868437227405312) {
     OrInl(hy) => K(decode_fin(s, c, T, hs, hc, hct, hy))
     OrInr(hn) => Eq::subst((o: Bool) => G(float_encode_by(o, s, c, 2926 + T)), Eq::sym(hn), inf)
   }
@@ -416,7 +447,7 @@ pub theorem decode_any(
   hs: s < 2 = true,
   hc: NatLe(c, 9007199254740992),
   ht: NatLe(2926, t),
-  hct: Or(NatLe(4503599627370496, c), t = 2926),
+  hct: ((NatLe(4503599627370496, c)) ∨ (t = 2926)),
   K: (DecodeOk(s, c, t)) -> G(Float::encode(s, c, t)),
   inf: G(Float::inf_raw(s))
 ): G(Float::encode(s, c, t)) {
@@ -431,7 +462,7 @@ pub theorem decode_any(
       G,
       hs,
       hc,
-      Eq::subst((w: Nat) => Or(NatLe(4503599627370496, c), w = 2926), et, hct),
+      Eq::subst((w: Nat) => ((NatLe(4503599627370496, c)) ∨ (w = 2926)), et, hct),
       Eq::subst((w: Nat) => (DecodeOk(s, c, w)) -> G(Float::encode(s, c, w)), et, K),
       inf
     )
@@ -446,7 +477,7 @@ pub def ScaledOk(
   Q: Nat,
   Pe: Nat,
   Z: Nat
-): Prop := And(NatLe(S * (Q * Pe), P * Z + Q * Pe), NatLe(P * Z, S * (Q * Pe) + Q * Pe))
+): Prop := ((NatLe(S * (Q * Pe), P * Z + Q * Pe)) ∧ (NatLe(P * Z, S * (Q * Pe) + Q * Pe)))
 
 // What is left to show of a finite result `c 2^t`: it reads back, and is
 // within the error of `P / Q`.
@@ -458,10 +489,7 @@ pub def FinK(s: Nat, P: Nat, Q: Nat, G: (Nat) -> Prop): Prop :=
 ) -> G(Float::encode(s, c, t))
 
 pub fn nat_max_by(o: Bool, a: Nat, b: Nat): Nat {
-  match o: Nat {
-    false => a
-    true => b
-  }
+  ⊢ Nat from match o { false => a, true => b }
 }
 
 pub theorem nat_max_no(a: Nat, b: Nat, h: a < b = false): Nat::max(a, b) = a {
@@ -473,7 +501,7 @@ pub theorem nat_max_yes(a: Nat, b: Nat, h: a < b = true): Nat::max(a, b) = b {
 }
 
 pub fn float_pack_at_by(o: Bool, s: Nat, m: Nat, e: Nat, t: Nat): Nat {
-  match o: Nat {
+  ⊢ Nat from match o {
     true => Float::encode(s, m * Nat::pow2(e - t), t)
     false => Float::round_shift(s, m, t, t - e)
   }
@@ -494,21 +522,21 @@ pub theorem pack_at_no(
 }
 
 pub theorem le_add_no(e: Nat, k0: Nat): e + Succ(k0) <= e = false {
-  match float_yn_or(e + Succ(k0) <= e): e + Succ(k0) <= e = false {
+  ⊢ e + Succ(k0) <= e = false from match float_yn_or(e + Succ(k0) <= e) {
     OrInl(h) => False::elim(le_add_contra(e, k0, nat_le_of_yn(e + Succ(k0), e, h)))
     OrInr(h) => h
   }
 }
 
 pub theorem le2926_no(e: Nat, kk: Nat, h2: NatLe(Succ(e + kk), 2926)): 2926 <= e = false {
-  match float_yn_or(2926 <= e): 2926 <= e = false {
+  ⊢ 2926 <= e = false from match float_yn_or(2926 <= e) {
     OrInl(h) => False::elim(le2926_contra(e, kk, nat_le_of_yn(2926, e, h), h2))
     OrInr(h) => h
   }
 }
 
 pub theorem succ_pred(k: Nat, h: NatLe(1, k)): k = Succ(k - 1) {
-  match k: k = Succ(k - 1) {
+  ⊢ k = Succ(k - 1) from match k {
     Zero => False::elim(false_ne_true(h))
     Succ(k1) => Refl
   }
@@ -521,9 +549,10 @@ pub theorem enc_zero(s: Nat): Float::encode(s, 0, 2926) = Float::zero_raw(s) {
 pub theorem pow2_split_eq(
   a: Nat,
   b: Nat
-): And(
-  NatLe(Nat::pow2(a + b), Nat::pow2(a) * Nat::pow2(b)),
-  NatLe(Nat::pow2(a) * Nat::pow2(b), Nat::pow2(a + b))
+): (
+  (
+    NatLe(Nat::pow2(a + b), Nat::pow2(a) * Nat::pow2(b))
+  ) ∧ (NatLe(Nat::pow2(a) * Nat::pow2(b), Nat::pow2(a + b)))
 ) {
   AndIntro(
     int_le_of_eq(
@@ -570,19 +599,20 @@ pub theorem pack_normal(
     Nat::rem_nz(S, Nat::pow2(Succ(kk0)), Nat::pow2_ne_zero(Succ(kk0))),
     Nat::pow2(kk0)
   )
-  let ro: And(
-    Float::round_shift(s, S, t, Succ(kk0)) = Float::encode(s, c, t),
-    RoundOk(c, S, K)
+  let ro: (
+    (Float::round_shift(s, S, t, Succ(kk0)) = Float::encode(s, c, t)) ∧ (RoundOk(c, S, K))
   ) := round_shift_ok(s, S, t, kk0, hk)
   let hr: RoundOk(c, S, K) := And::right(ro)
-  let hT: And(
-    NatLe(Nat::pow2(t), Nat::pow2(e) * K),
-    NatLe(Nat::pow2(e) * K, Nat::pow2(t))
+  let hT: (
+    (NatLe(Nat::pow2(t), Nat::pow2(e) * K)) ∧ (NatLe(Nat::pow2(e) * K, Nat::pow2(t)))
   ) := pow2_split_eq(e, Succ(kk0))
   let hc: NatLe(
     c,
     9007199254740992
-  ) := match int_lt_or_ge(IntOfNat(9007199254740992), IntOfNat(c)): NatLe(c, 9007199254740992) {
+  ) := ⊢ NatLe(
+    c,
+    9007199254740992
+  ) from match int_lt_or_ge(IntOfNat(9007199254740992), IntOfNat(c)) {
     OrInl(l) => False::elim(
       cle53_contra(c, S, K, nat_lt_le(9007199254740992, c, l), And::left(hr), hKS)
     )
@@ -591,7 +621,10 @@ pub theorem pack_normal(
   let h52: NatLe(
     4503599627370496,
     c
-  ) := match int_lt_or_ge(IntOfNat(c), IntOfNat(4503599627370496)): NatLe(4503599627370496, c) {
+  ) := ⊢ NatLe(
+    4503599627370496,
+    c
+  ) from match int_lt_or_ge(IntOfNat(c), IntOfNat(4503599627370496)) {
     OrInl(l) => False::elim(
       cge52_contra(c, S, K, nat_lt_le(c, 4503599627370496, l), And::right(hr), hK52, k_one(K, h16))
     )
@@ -660,9 +693,10 @@ pub theorem pack_sub_round(
   hKS: NatLe(Succ(S), 4503599627370496 * Nat::pow2(Succ(k0))),
   h16: NatLe(16, Nat::pow2(Succ(k0))),
   hk: Succ(k0) < 125 = true,
-  hT: And(
-    NatLe(Nat::pow2(2926), Nat::pow2(e) * Nat::pow2(Succ(k0))),
-    NatLe(Nat::pow2(e) * Nat::pow2(Succ(k0)), Nat::pow2(2926))
+  hT: (
+    (
+      NatLe(Nat::pow2(2926), Nat::pow2(e) * Nat::pow2(Succ(k0)))
+    ) ∧ (NatLe(Nat::pow2(e) * Nat::pow2(Succ(k0)), Nat::pow2(2926)))
   )
 ): G(Float::round_shift(s, S, 2926, Succ(k0))) {
   let K: Nat := Nat::pow2(Succ(k0))
@@ -675,15 +709,17 @@ pub theorem pack_sub_round(
     Nat::rem_nz(S, Nat::pow2(Succ(k0)), Nat::pow2_ne_zero(Succ(k0))),
     Nat::pow2(k0)
   )
-  let ro: And(
-    Float::round_shift(s, S, 2926, Succ(k0)) = Float::encode(s, c, 2926),
-    RoundOk(c, S, K)
+  let ro: (
+    (Float::round_shift(s, S, 2926, Succ(k0)) = Float::encode(s, c, 2926)) ∧ (RoundOk(c, S, K))
   ) := round_shift_ok(s, S, 2926, k0, hk)
   let hr: RoundOk(c, S, K) := And::right(ro)
   let hc: NatLe(
     c,
     9007199254740992
-  ) := match int_lt_or_ge(IntOfNat(9007199254740992), IntOfNat(c)): NatLe(c, 9007199254740992) {
+  ) := ⊢ NatLe(
+    c,
+    9007199254740992
+  ) from match int_lt_or_ge(IntOfNat(9007199254740992), IntOfNat(c)) {
     OrInl(l) => False::elim(
       cle53_contra(c, S, K, nat_lt_le(9007199254740992, c, l), And::left(hr), sub_hks2(S, K, hKS))
     )
@@ -814,28 +850,29 @@ pub theorem pack_sub(
     Eq::subst((w: Nat) => NatLe(2926, w), eg, Int::le_refl(IntOfNat(2926)))
   )
   let hp: NatLe(2 * Nat::pow2(Succ(kk0)), Nat::pow2(k)) := pow2_le(Succ(Succ(kk0)), k, hkk)
-  let hT0: And(
-    NatLe(Nat::pow2(e + k), Nat::pow2(e) * Nat::pow2(k)),
-    NatLe(Nat::pow2(e) * Nat::pow2(k), Nat::pow2(e + k))
+  let hT0: (
+    (
+      NatLe(Nat::pow2(e + k), Nat::pow2(e) * Nat::pow2(k))
+    ) ∧ (NatLe(Nat::pow2(e) * Nat::pow2(k), Nat::pow2(e + k)))
   ) := pow2_split_eq(e, k)
-  let hT: And(
-    NatLe(Nat::pow2(2926), Nat::pow2(e) * Nat::pow2(k)),
-    NatLe(Nat::pow2(e) * Nat::pow2(k), Nat::pow2(2926))
+  let hT: (
+    (
+      NatLe(Nat::pow2(2926), Nat::pow2(e) * Nat::pow2(k))
+    ) ∧ (NatLe(Nat::pow2(e) * Nat::pow2(k), Nat::pow2(2926)))
   ) := Eq::subst(
-    (w: Nat) => And(
-      NatLe(Nat::pow2(w), Nat::pow2(e) * Nat::pow2(k)),
-      NatLe(Nat::pow2(e) * Nat::pow2(k), Nat::pow2(w))
+    (w: Nat) => (
+      (
+        NatLe(Nat::pow2(w), Nat::pow2(e) * Nat::pow2(k))
+      ) ∧ (NatLe(Nat::pow2(e) * Nat::pow2(k), Nat::pow2(w)))
     ),
     Eq::sym(eg),
     hT0
   )
   let r: G(
     Float::round_shift(s, S, 2926, k)
-  ) := match float_yn_or(k < 125): G(Float::round_shift(s, S, 2926, k)) {
+  ) := ⊢ G(Float::round_shift(s, S, 2926, k)) from match float_yn_or(k < 125) {
     OrInl(hk) => {
-      let ek: k = Succ(
-        k - 1
-      ) := succ_pred(
+      let ek: k = Succ(k - 1) := succ_pred(
         k,
         Int::le_trans(
           IntOfNat(1),
@@ -872,9 +909,10 @@ pub theorem pack_sub(
           ),
           Eq::subst((w: Nat) => w < 125 = true, ek, hk),
           Eq::subst(
-            (w: Nat) => And(
-              NatLe(Nat::pow2(2926), Nat::pow2(e) * Nat::pow2(w)),
-              NatLe(Nat::pow2(e) * Nat::pow2(w), Nat::pow2(2926))
+            (w: Nat) => (
+              (
+                NatLe(Nat::pow2(2926), Nat::pow2(e) * Nat::pow2(w))
+              ) ∧ (NatLe(Nat::pow2(e) * Nat::pow2(w), Nat::pow2(2926)))
             ),
             ek,
             hT
@@ -902,9 +940,9 @@ pub theorem pack_56(
   hhi: NatLe(S, 288230376151711744),
   hb: BitLen(S, 56)
 ): G(Float::pack_at(s, S, e, Nat::max(e + Succ(56) - 53, 2926))) {
-  match float_yn_or(
-    e + Succ(3) < 2926
-  ): G(Float::pack_at(s, S, e, Nat::max(e + Succ(56) - 53, 2926))) {
+  ⊢ G(
+    Float::pack_at(s, S, e, Nat::max(e + Succ(56) - 53, 2926))
+  ) from match float_yn_or(e + Succ(3) < 2926) {
     OrInl(hy) => Eq::subst(
       (w: Nat) => G(Float::pack_at(s, S, e, w)),
       Eq::sym(nat_max_yes(e + Succ(3), 2926, hy)),
@@ -951,9 +989,9 @@ pub theorem pack_57(
   hhi: NatLe(S, 288230376151711744),
   hb: BitLen(S, 57)
 ): G(Float::pack_at(s, S, e, Nat::max(e + Succ(57) - 53, 2926))) {
-  match float_yn_or(
-    e + Succ(4) < 2926
-  ): G(Float::pack_at(s, S, e, Nat::max(e + Succ(57) - 53, 2926))) {
+  ⊢ G(
+    Float::pack_at(s, S, e, Nat::max(e + Succ(57) - 53, 2926))
+  ) from match float_yn_or(e + Succ(4) < 2926) {
     OrInl(hy) => Eq::subst(
       (w: Nat) => G(Float::pack_at(s, S, e, w)),
       Eq::sym(nat_max_yes(e + Succ(4), 2926, hy)),
@@ -1000,9 +1038,9 @@ pub theorem pack_58(
   hhi: NatLe(S, 288230376151711744),
   hb: BitLen(S, 58)
 ): G(Float::pack_at(s, S, e, Nat::max(e + Succ(58) - 53, 2926))) {
-  match float_yn_or(
-    e + Succ(5) < 2926
-  ): G(Float::pack_at(s, S, e, Nat::max(e + Succ(58) - 53, 2926))) {
+  ⊢ G(
+    Float::pack_at(s, S, e, Nat::max(e + Succ(58) - 53, 2926))
+  ) from match float_yn_or(e + Succ(5) < 2926) {
     OrInl(hy) => Eq::subst(
       (w: Nat) => G(Float::pack_at(s, S, e, w)),
       Eq::sym(nat_max_yes(e + Succ(5), 2926, hy)),
@@ -1067,13 +1105,9 @@ pub theorem pack_ok(
   )
   let gL: G(
     Float::pack_at(s, S, e, Nat::max(e + Succ(L) - 53, 2926))
-  ) := match len_cases(
-    S,
-    L,
-    hb,
-    hlo,
-    hhi
-  ): G(Float::pack_at(s, S, e, Nat::max(e + Succ(L) - 53, 2926))) {
+  ) := ⊢ G(
+    Float::pack_at(s, S, e, Nat::max(e + Succ(L) - 53, 2926))
+  ) from match len_cases(S, L, hb, hlo, hhi) {
     OrInl(e56) => Eq::subst(
       (w: Nat) => G(Float::pack_at(s, S, e, Nat::max(e + Succ(w) - 53, 2926))),
       Eq::sym(e56),
@@ -1093,7 +1127,7 @@ pub theorem pack_ok(
         Eq::subst((w: Nat) => BitLen(S, w), e56, hb)
       )
     )
-    OrInr(o) => match o: G(Float::pack_at(s, S, e, Nat::max(e + Succ(L) - 53, 2926))) {
+    OrInr(o) => ⊢ G(Float::pack_at(s, S, e, Nat::max(e + Succ(L) - 53, 2926))) from match o {
       OrInl(e57) => Eq::subst(
         (w: Nat) => G(Float::pack_at(s, S, e, Nat::max(e + Succ(w) - 53, 2926))),
         Eq::sym(e57),
@@ -1147,7 +1181,7 @@ pub fn float_scaled_by(
   up: Nat,
   down: Nat
 ): Nat {
-  match o: Nat {
+  ⊢ Nat from match o {
     true => float_scaled_up_by(up - down < 2100, pack, s, p, q, up, down)
     false => float_scaled_down_by(down - up < 1100, pack, inf, s, p, q, up, down)
   }
@@ -1162,7 +1196,7 @@ pub fn float_scaled_up_by(
   up: Nat,
   down: Nat
 ): Nat {
-  match o: Nat {
+  ⊢ Nat from match o {
     true => pack(s, Float::sticky(p * Nat::pow2(up - down), q), 3999 - (up - down))
     false => pack(s, 0, 0)
   }
@@ -1178,7 +1212,7 @@ pub fn float_scaled_down_by(
   up: Nat,
   down: Nat
 ): Nat {
-  match o: Nat {
+  ⊢ Nat from match o {
     true => pack(s, Float::sticky(p, q * Nat::pow2(down - up)), 3999 + (down - up))
     false => inf
   }
@@ -1189,26 +1223,27 @@ pub theorem pow2_split_at(
   b: Nat,
   z: Nat,
   h: a + b = z
-): And(
-  NatLe(Nat::pow2(z), Nat::pow2(a) * Nat::pow2(b)),
-  NatLe(Nat::pow2(a) * Nat::pow2(b), Nat::pow2(z))
+): (
+  (
+    NatLe(Nat::pow2(z), Nat::pow2(a) * Nat::pow2(b))
+  ) ∧ (NatLe(Nat::pow2(a) * Nat::pow2(b), Nat::pow2(z)))
 ) {
   Eq::subst(
-    (w: Nat) => And(
-      NatLe(Nat::pow2(w), Nat::pow2(a) * Nat::pow2(b)),
-      NatLe(Nat::pow2(a) * Nat::pow2(b), Nat::pow2(w))
+    (w: Nat) => (
+      (
+        NatLe(Nat::pow2(w), Nat::pow2(a) * Nat::pow2(b))
+      ) ∧ (NatLe(Nat::pow2(a) * Nat::pow2(b), Nat::pow2(w)))
     ),
     h,
     pow2_split_eq(a, b)
   )
 }
 
-pub theorem pow2_4000_le(): And(
-  NatLe(Nat::pow2(4000), 2 * Nat::pow2(3999)),
-  NatLe(2 * Nat::pow2(3999), Nat::pow2(4000))
+pub theorem pow2_4000_le(): (
+  (NatLe(Nat::pow2(4000), 2 * Nat::pow2(3999))) ∧ (NatLe(2 * Nat::pow2(3999), Nat::pow2(4000)))
 ) {
   Eq::subst(
-    (w: Nat) => And(NatLe(w, 2 * Nat::pow2(3999)), NatLe(2 * Nat::pow2(3999), w)),
+    (w: Nat) => ((NatLe(w, 2 * Nat::pow2(3999))) ∧ (NatLe(2 * Nat::pow2(3999), w))),
     Eq::sym(float_pow2_succ_eq(3999)),
     AndIntro(
       Int::le_refl(IntOfNat(2 * Nat::pow2(3999))),
@@ -1250,17 +1285,17 @@ pub theorem frac_up(
     3999,
     yn_of_nat_le(k, 3999, k_le_3999(k, nat_le_of_yn(Succ(k), 2100, hk)))
   )
-  let hke: And(
-    NatLe(Nat::pow2(3999), K2 * Nat::pow2(e)),
-    NatLe(K2 * Nat::pow2(e), Nat::pow2(3999))
+  let hke: (
+    (NatLe(Nat::pow2(3999), K2 * Nat::pow2(e))) ∧ (NatLe(K2 * Nat::pow2(e), Nat::pow2(3999)))
   ) := Eq::subst(
-    (w: Nat) => And(NatLe(Nat::pow2(w), K2 * Nat::pow2(e)), NatLe(K2 * Nat::pow2(e), Nat::pow2(w))),
+    (w: Nat) => (
+      (NatLe(Nat::pow2(w), K2 * Nat::pow2(e))) ∧ (NatLe(K2 * Nat::pow2(e), Nat::pow2(w)))
+    ),
     Eq::sym(ek),
     pow2_split_eq(k, e)
   )
-  let z4: And(
-    NatLe(Nat::pow2(4000), 2 * Nat::pow2(3999)),
-    NatLe(2 * Nat::pow2(3999), Nat::pow2(4000))
+  let z4: (
+    (NatLe(Nat::pow2(4000), 2 * Nat::pow2(3999))) ∧ (NatLe(2 * Nat::pow2(3999), Nat::pow2(4000)))
   ) := pow2_4000_le()
   let za1: NatLe(
     2 * (K2 * Nat::pow2(e)),
@@ -1293,20 +1328,23 @@ pub theorem frac_up(
     scaled_a2(S, P, Q, K2, Nat::pow2(e), Nat::pow2(4000), And::right(hst), za2)
   )
   let eu: 56 + Succ(LQ) = Succ(LP) + k := Nat::le_gap(Succ(LP), 56 + Succ(LQ), hle)
-  let r1: And(
-    NatLe(Nat::pow2(56 + Succ(LQ)), Nat::pow2(Succ(LP)) * K2),
-    NatLe(Nat::pow2(Succ(LP)) * K2, Nat::pow2(56 + Succ(LQ)))
+  let r1: (
+    (
+      NatLe(Nat::pow2(56 + Succ(LQ)), Nat::pow2(Succ(LP)) * K2)
+    ) ∧ (NatLe(Nat::pow2(Succ(LP)) * K2, Nat::pow2(56 + Succ(LQ))))
   ) := Eq::subst(
-    (w: Nat) => And(
-      NatLe(Nat::pow2(w), Nat::pow2(Succ(LP)) * K2),
-      NatLe(Nat::pow2(Succ(LP)) * K2, Nat::pow2(w))
+    (w: Nat) => (
+      (
+        NatLe(Nat::pow2(w), Nat::pow2(Succ(LP)) * K2)
+      ) ∧ (NatLe(Nat::pow2(Succ(LP)) * K2, Nat::pow2(w)))
     ),
     Eq::sym(eu),
     pow2_split_eq(Succ(LP), k)
   )
-  let r2: And(
-    NatLe(Nat::pow2(56 + Succ(LQ)), Nat::pow2(56) * Nat::pow2(Succ(LQ))),
-    NatLe(Nat::pow2(56) * Nat::pow2(Succ(LQ)), Nat::pow2(56 + Succ(LQ)))
+  let r2: (
+    (
+      NatLe(Nat::pow2(56 + Succ(LQ)), Nat::pow2(56) * Nat::pow2(Succ(LQ)))
+    ) ∧ (NatLe(Nat::pow2(56) * Nat::pow2(Succ(LQ)), Nat::pow2(56 + Succ(LQ))))
   ) := pow2_split_eq(56, Succ(LQ))
   let rel1: NatLe(
     Nat::pow2(Succ(LP)) * K2,
@@ -1331,7 +1369,10 @@ pub theorem frac_up(
   let hlo: NatLe(
     72057594037927936,
     S
-  ) := match int_lt_or_ge(IntOfNat(S), IntOfNat(72057594037927936)): NatLe(72057594037927936, S) {
+  ) := ⊢ NatLe(
+    72057594037927936,
+    S
+  ) from match int_lt_or_ge(IntOfNat(S), IntOfNat(72057594037927936)) {
     OrInl(l) => False::elim(
       a_lo_contra(
         S,
@@ -1352,7 +1393,10 @@ pub theorem frac_up(
   let hhi: NatLe(
     S,
     288230376151711744
-  ) := match int_lt_or_ge(IntOfNat(288230376151711744), IntOfNat(S)): NatLe(S, 288230376151711744) {
+  ) := ⊢ NatLe(
+    S,
+    288230376151711744
+  ) from match int_lt_or_ge(IntOfNat(288230376151711744), IntOfNat(S)) {
     OrInl(l) => False::elim(
       a_hi_contra(
         S,
@@ -1393,13 +1437,15 @@ pub theorem frac_up_zero(
   let Q: Nat := Succ(q0)
   let K2: Nat := Nat::pow2(k)
   let eu: 56 + Succ(LQ) = Succ(LP) + k := Nat::le_gap(Succ(LP), 56 + Succ(LQ), hle)
-  let r1: And(
-    NatLe(Nat::pow2(56 + Succ(LQ)), Nat::pow2(Succ(LP)) * K2),
-    NatLe(Nat::pow2(Succ(LP)) * K2, Nat::pow2(56 + Succ(LQ)))
+  let r1: (
+    (
+      NatLe(Nat::pow2(56 + Succ(LQ)), Nat::pow2(Succ(LP)) * K2)
+    ) ∧ (NatLe(Nat::pow2(Succ(LP)) * K2, Nat::pow2(56 + Succ(LQ))))
   ) := Eq::subst(
-    (w: Nat) => And(
-      NatLe(Nat::pow2(w), Nat::pow2(Succ(LP)) * K2),
-      NatLe(Nat::pow2(Succ(LP)) * K2, Nat::pow2(w))
+    (w: Nat) => (
+      (
+        NatLe(Nat::pow2(w), Nat::pow2(Succ(LP)) * K2)
+      ) ∧ (NatLe(Nat::pow2(Succ(LP)) * K2, Nat::pow2(w)))
     ),
     Eq::sym(eu),
     pow2_split_eq(Succ(LP), k)
@@ -1452,7 +1498,7 @@ pub theorem frac_up_zero(
 
 // `up < down` from `nat_le(down, up) = no`.
 pub theorem up_le_down(up: Nat, down: Nat, h: down <= up = false): NatLe(up, down) {
-  match int_lt_or_ge(IntOfNat(down), IntOfNat(up)): NatLe(up, down) {
+  ⊢ NatLe(up, down) from match int_lt_or_ge(IntOfNat(down), IntOfNat(up)) {
     OrInl(l) => False::elim(
       false_ne_true(
         Eq::trans(Eq::sym(h), yn_of_nat_le(down, up, int_le_of_lt(IntOfNat(down), IntOfNat(up), l)))
@@ -1499,13 +1545,11 @@ pub theorem frac_down(
     Eq::sym(eq2),
     sticky_ok(P, Q2 - 1)
   )
-  let hpe: And(
-    NatLe(Nat::pow2(e), Nat::pow2(3999) * K2),
-    NatLe(Nat::pow2(3999) * K2, Nat::pow2(e))
+  let hpe: (
+    (NatLe(Nat::pow2(e), Nat::pow2(3999) * K2)) ∧ (NatLe(Nat::pow2(3999) * K2, Nat::pow2(e)))
   ) := pow2_split_eq(3999, k)
-  let z4: And(
-    NatLe(Nat::pow2(4000), 2 * Nat::pow2(3999)),
-    NatLe(2 * Nat::pow2(3999), Nat::pow2(4000))
+  let z4: (
+    (NatLe(Nat::pow2(4000), 2 * Nat::pow2(3999))) ∧ (NatLe(2 * Nat::pow2(3999), Nat::pow2(4000)))
   ) := pow2_4000_le()
   let hsc: ScaledOk(
     S,
@@ -1540,29 +1584,28 @@ pub theorem frac_down(
       And::left(z4)
     )
   )
-  let ed: Succ(
-    LP
-  ) = 56 + Succ(
-    LQ
-  ) + k := Nat::le_gap(
+  let ed: Succ(LP) = 56 + Succ(LQ) + k := Nat::le_gap(
     56 + Succ(LQ),
     Succ(LP),
     yn_of_nat_le(56 + Succ(LQ), Succ(LP), up_le_down(56 + Succ(LQ), Succ(LP), hle))
   )
-  let r1: And(
-    NatLe(Nat::pow2(Succ(LP)), Nat::pow2(56 + Succ(LQ)) * K2),
-    NatLe(Nat::pow2(56 + Succ(LQ)) * K2, Nat::pow2(Succ(LP)))
+  let r1: (
+    (
+      NatLe(Nat::pow2(Succ(LP)), Nat::pow2(56 + Succ(LQ)) * K2)
+    ) ∧ (NatLe(Nat::pow2(56 + Succ(LQ)) * K2, Nat::pow2(Succ(LP))))
   ) := Eq::subst(
-    (w: Nat) => And(
-      NatLe(Nat::pow2(w), Nat::pow2(56 + Succ(LQ)) * K2),
-      NatLe(Nat::pow2(56 + Succ(LQ)) * K2, Nat::pow2(w))
+    (w: Nat) => (
+      (
+        NatLe(Nat::pow2(w), Nat::pow2(56 + Succ(LQ)) * K2)
+      ) ∧ (NatLe(Nat::pow2(56 + Succ(LQ)) * K2, Nat::pow2(w)))
     ),
     Eq::sym(ed),
     pow2_split_eq(56 + Succ(LQ), k)
   )
-  let r2: And(
-    NatLe(Nat::pow2(56 + Succ(LQ)), Nat::pow2(56) * Nat::pow2(Succ(LQ))),
-    NatLe(Nat::pow2(56) * Nat::pow2(Succ(LQ)), Nat::pow2(56 + Succ(LQ)))
+  let r2: (
+    (
+      NatLe(Nat::pow2(56 + Succ(LQ)), Nat::pow2(56) * Nat::pow2(Succ(LQ)))
+    ) ∧ (NatLe(Nat::pow2(56) * Nat::pow2(Succ(LQ)), Nat::pow2(56 + Succ(LQ))))
   ) := pow2_split_eq(56, Succ(LQ))
   let rel1: NatLe(
     2 * Nat::pow2(LP),
@@ -1591,7 +1634,10 @@ pub theorem frac_down(
   let hlo: NatLe(
     72057594037927936,
     S
-  ) := match int_lt_or_ge(IntOfNat(S), IntOfNat(72057594037927936)): NatLe(72057594037927936, S) {
+  ) := ⊢ NatLe(
+    72057594037927936,
+    S
+  ) from match int_lt_or_ge(IntOfNat(S), IntOfNat(72057594037927936)) {
     OrInl(l) => False::elim(
       b_lo_contra(
         S,
@@ -1613,7 +1659,10 @@ pub theorem frac_down(
   let hhi: NatLe(
     S,
     288230376151711744
-  ) := match int_lt_or_ge(IntOfNat(288230376151711744), IntOfNat(S)): NatLe(S, 288230376151711744) {
+  ) := ⊢ NatLe(
+    S,
+    288230376151711744
+  ) from match int_lt_or_ge(IntOfNat(288230376151711744), IntOfNat(S)) {
     OrInl(l) => False::elim(
       b_hi_contra(
         S,
@@ -1652,15 +1701,13 @@ pub theorem frac_ok(
   let down: Nat := Succ(LP)
   let r: G(
     float_scaled_by(down <= up, Float::pack, Float::inf_raw(s), s, Succ(p0), Succ(q0), up, down)
-  ) := match float_yn_or(
-    down <= up
-  ): G(
+  ) := ⊢ G(
     float_scaled_by(down <= up, Float::pack, Float::inf_raw(s), s, Succ(p0), Succ(q0), up, down)
-  ) {
+  ) from match float_yn_or(down <= up) {
     OrInl(hle) => Eq::subst(
       (o: Bool) => G(float_scaled_by(o, Float::pack, Float::inf_raw(s), s, Succ(p0), Succ(q0), up, down)),
       Eq::sym(hle),
-      match float_yn_or(up - down < 2100): G(float_scaled_up_by(up - down < 2100, Float::pack, s, Succ(p0), Succ(q0), up, down)) {
+      ⊢ G(float_scaled_up_by(up - down < 2100, Float::pack, s, Succ(p0), Succ(q0), up, down)) from match float_yn_or(up - down < 2100) {
         OrInl(hk) => Eq::subst(
           (o: Bool) => G(float_scaled_up_by(o, Float::pack, s, Succ(p0), Succ(q0), up, down)),
           Eq::sym(hk),
@@ -1676,7 +1723,7 @@ pub theorem frac_ok(
     OrInr(hle) => Eq::subst(
       (o: Bool) => G(float_scaled_by(o, Float::pack, Float::inf_raw(s), s, Succ(p0), Succ(q0), up, down)),
       Eq::sym(hle),
-      match float_yn_or(down - up < 1100): G(float_scaled_down_by(down - up < 1100, Float::pack, Float::inf_raw(s), s, Succ(p0), Succ(q0), up, down)) {
+      ⊢ G(float_scaled_down_by(down - up < 1100, Float::pack, Float::inf_raw(s), s, Succ(p0), Succ(q0), up, down)) from match float_yn_or(down - up < 1100) {
         OrInl(hk) => Eq::subst(
           (o: Bool) => G(float_scaled_down_by(o, Float::pack, Float::inf_raw(s), s, Succ(p0), Succ(q0), up, down)),
           Eq::sym(hk),

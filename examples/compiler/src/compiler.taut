@@ -17,7 +17,7 @@ pub(open) inductive Instr: Type {
 }
 
 pub fn eval_expr(e: Expr): Nat {
-  match e: Nat {
+  ⊢ Nat from match e {
     ELit(n) => n
     EAdd(a, b) => Nat::add(eval_expr(a), eval_expr(b))
     EMul(a, b) => Nat::mul(eval_expr(a), eval_expr(b))
@@ -27,20 +27,20 @@ pub fn eval_expr(e: Expr): Nat {
 // Runs `code` on the stack `st` (the top is the head). `None` when an instruction finds
 // too few values on the stack.
 pub fn run_code(code: List(Instr), st: List(Nat)): Option(List(Nat)) {
-  match code: Option(List(Nat)) {
+  ⊢ Option(List(Nat)) from match code {
     Nil => Some(st)
-    Cons(i, rest) => match i: Option(List(Nat)) {
+    Cons(i, rest) => ⊢ Option(List(Nat)) from match i {
       IPush(n) => run_code(rest, Cons(n, st))
-      IAdd => match st: Option(List(Nat)) {
+      IAdd => ⊢ Option(List(Nat)) from match st {
         Nil => None
-        Cons(b, s1) => match s1: Option(List(Nat)) {
+        Cons(b, s1) => ⊢ Option(List(Nat)) from match s1 {
           Nil => None
           Cons(a, s2) => run_code(rest, Cons(Nat::add(a, b), s2))
         }
       }
-      IMul => match st: Option(List(Nat)) {
+      IMul => ⊢ Option(List(Nat)) from match st {
         Nil => None
-        Cons(b, s1) => match s1: Option(List(Nat)) {
+        Cons(b, s1) => ⊢ Option(List(Nat)) from match s1 {
           Nil => None
           Cons(a, s2) => run_code(rest, Cons(Nat::mul(a, b), s2))
         }
@@ -51,7 +51,7 @@ pub fn run_code(code: List(Instr), st: List(Nat)): Option(List(Nat)) {
 
 // The code of `e` followed by `k`. (Passing the rest of the code along avoids appending lists.)
 pub fn comp_expr(e: Expr, k: List(Instr)): List(Instr) {
-  match e: List(Instr) {
+  ⊢ List(Instr) from match e {
     ELit(n) => Cons(IPush(n), k)
     EAdd(a, b) => comp_expr(a, comp_expr(b, Cons(IAdd, k)))
     EMul(a, b) => comp_expr(a, comp_expr(b, Cons(IMul, k)))
@@ -63,8 +63,8 @@ pub fn compile_expr(e: Expr): List(Instr) {
 }
 
 pub fn fold_add(a: Expr, b: Expr): Expr {
-  match a: Expr {
-    ELit(n) => match b: Expr {
+  ⊢ Expr from match a {
+    ELit(n) => ⊢ Expr from match b {
       ELit(m) => ELit(Nat::add(n, m))
       EAdd(b1, b2) => EAdd(a, b)
       EMul(b1, b2) => EAdd(a, b)
@@ -75,8 +75,8 @@ pub fn fold_add(a: Expr, b: Expr): Expr {
 }
 
 pub fn fold_mul(a: Expr, b: Expr): Expr {
-  match a: Expr {
-    ELit(n) => match b: Expr {
+  ⊢ Expr from match a {
+    ELit(n) => ⊢ Expr from match b {
       ELit(m) => ELit(Nat::mul(n, m))
       EAdd(b1, b2) => EMul(a, b)
       EMul(b1, b2) => EMul(a, b)
@@ -87,7 +87,7 @@ pub fn fold_mul(a: Expr, b: Expr): Expr {
 }
 
 pub fn fold_expr(e: Expr): Expr {
-  match e: Expr {
+  ⊢ Expr from match e {
     ELit(n) => ELit(n)
     EAdd(a, b) => fold_add(fold_expr(a), fold_expr(b))
     EMul(a, b) => fold_mul(fold_expr(a), fold_expr(b))

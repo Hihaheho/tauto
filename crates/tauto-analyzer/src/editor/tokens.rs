@@ -14,7 +14,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::rc::Rc;
 
 use tauto::registered::Library;
 use tauto::surface::{Stmt, SurfaceTerm, SyntaxLit, TermKind, parse_program_unresolved_at, walk};
@@ -25,7 +24,7 @@ use super::{DslNote, DslToken, kind_of};
 
 /// The syntaxes the program declares and the macros that read one.
 struct Syntaxes {
-    tables: HashMap<String, Rc<Tables>>,
+    tables: HashMap<String, std::sync::Arc<Tables>>,
     /// The syntax a macro's first parameter is of, by the macro's name.
     macros: HashMap<String, String>,
 }
@@ -33,7 +32,7 @@ struct Syntaxes {
 /// A text of a syntax and where each byte of it was written.
 struct Piece {
     syntax: String,
-    tables: Rc<Tables>,
+    tables: std::sync::Arc<Tables>,
     text: String,
     origin: Origin,
 }
@@ -85,7 +84,46 @@ impl Origin {
 /// `tokens` function was not used, each with the reason (they are coloured by the names of the
 /// grammar's terminals instead).
 pub fn dsl_tokens(path: &Path, text: &str) -> Result<(Vec<DslToken>, Vec<DslNote>), String> {
+    if nothing_to_colour(text) {
+        return Ok((Vec::new(), Vec::new()));
+    }
     super::kept::tokens(path, text, || coloured(path, text))
+}
+
+/// Whether the text has nothing a token could come from, whatever the program around it is: no
+/// syntax literal, no `syntax` declaration, no fenced block in a comment, and no call of a macro
+/// (which may write a literal) or statement the parser did not read. Such a text is not expanded.
+fn nothing_to_colour(text: &str) -> bool {
+    fn plain(s: &mut Stmt) -> bool {
+        match s {
+            Stmt::Attributed { .. }
+            | Stmt::Called { .. }
+            | Stmt::Syntax { .. }
+            | Stmt::Other(..) => return false,
+            Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => {
+                if !items.iter_mut().all(plain) {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+        let mut plain = true;
+        walk::stmt(s, &mut |t: &mut SurfaceTerm| {
+            if matches!(
+                &*t.kind,
+                TermKind::SyntaxLit(_) | TermKind::MacroCall { .. }
+            ) {
+                plain = false;
+            }
+        });
+        plain
+    }
+    let Ok(mut program) = parse_program_unresolved_at(text, 0) else {
+        return false;
+    };
+    let lexical = tauto::surface::lexical(text);
+    tauto::surface::fence::fences(text, &lexical.comments).is_empty()
+        && program.stmts.iter_mut().all(plain)
 }
 
 fn coloured(path: &Path, text: &str) -> Result<Coloured, String> {
@@ -181,7 +219,7 @@ struct Context<'a> {
     base: u32,
     /// The registered functions, opened when a text first needs one, or why they cannot run
     /// at all.
-    library: std::cell::OnceCell<std::rc::Rc<Result<Library<'static>, String>>>,
+    library: std::cell::OnceCell<std::rc::Rc<Result<Library<'static>, tauto_message::Message>>>,
     registrations: &'a [tauto::syntax::Registration],
     /// What each name written in an interpolation is, by where it starts in the file.
     names: &'a HashMap<usize, &'static str>,
@@ -195,7 +233,7 @@ impl<'a> Context<'a> {
     /// A function registered in a file the file imports runs in the program of the files read
     /// before this one, which does not change as this file is edited; one registered in this
     /// file runs in the program of this file.
-    fn library(&self) -> Result<&Library<'static>, &str> {
+    fn library(&self) -> Result<&Library<'static>, &tauto_message::Message> {
         self.library
             .get_or_init(|| {
                 let own = self
@@ -206,7 +244,6 @@ impl<'a> Context<'a> {
             })
             .as_ref()
             .as_ref()
-            .map_err(String::as_str)
     }
 }
 
@@ -288,8 +325,8 @@ fn colour(piece: &Piece, cx: &Context, out: &mut Vec<DslToken>, notes: &mut Vec<
             Ok(library) if !library.has(&piece.syntax, Role::Tokens) => Some(
                 library
                     .unbound(&piece.syntax, Role::Tokens)
-                    .unwrap_or_default()
-                    .to_string(),
+                    .map(|m| m.to_string())
+                    .unwrap_or_default(),
             ),
             Ok(library) => match library.highlight(&piece.syntax, &piece.tables, &piece.text) {
                 Ok(Some(found))
@@ -307,11 +344,11 @@ fn colour(piece: &Piece, cx: &Context, out: &mut Vec<DslToken>, notes: &mut Vec<
                 }
                 Ok(Some(_)) => Some(tauto_message::msg!("analyzer-tokens-outside").to_string()),
                 Ok(None) => None,
-                Err(why) => Some(why),
+                Err(why) => Some(why.to_string()),
             },
         };
         if let Some(why) = why {
-            unused = Some((r.function.clone(), why));
+            unused = Some((r.function.to_string(), why));
         }
     }
     if let Some((function, why)) = unused
@@ -327,8 +364,7 @@ fn colour(piece: &Piece, cx: &Context, out: &mut Vec<DslToken>, notes: &mut Vec<
                 syntax = &piece.syntax,
                 function = &function,
                 why = &why
-            )
-            .to_string(),
+            ),
         });
     }
     if !from_function && let Ok(events) = parse(&piece.tables, &piece.text, 0, &Limits::default()) {
@@ -503,7 +539,7 @@ fn syntaxes(loaded: &tauto::program::Expanded) -> Syntaxes {
                             && let TermKind::Var(ty) = &*t.kind
                             && let Some((module, _)) = ty.split_once("::")
                         {
-                            first_types.insert(f.name.clone(), module.to_string());
+                            first_types.insert(f.name.to_string(), module.to_string());
                         }
                     }
                     _ => {}

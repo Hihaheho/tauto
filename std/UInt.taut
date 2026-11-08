@@ -29,7 +29,7 @@ pub(open) inductive Never: Type {
 
 module Never {
   pub fn elim<A>(n: Never): A {
-    match n: A {
+    ⊢ A from match n {
     }
   }
 }
@@ -48,7 +48,7 @@ pub(open) effect DivZero(): Never
 // `div_nz` its proof, and the kernel checks them; the kernel does not check
 // a function that performs an effect, and such code cannot give a proof.
 pub fn or_div_zero<A>(o: Option(A)): A ! {DivZero} {
-  match o: A {
+  ⊢ A from match o {
     Some(x) => x
     None => Never::elim(perform DivZero())
   }
@@ -58,7 +58,7 @@ module Nat {
 
   // `div`, or `None` when `b` is 0.
   pub fn checked_div(a: Nat, b: Nat): Option(Nat) {
-    match b == 0 eqn h: Option(Nat) {
+    ⊢ Option(Nat) from match b == 0 eqn h {
       false => Some(Nat::div_nz(a, b, Nat::ne_zero(b, h)))
       true => None
     }
@@ -71,7 +71,7 @@ module Nat {
 
   // `rem`, or `None` when `b` is 0.
   pub fn checked_rem(a: Nat, b: Nat): Option(Nat) {
-    match b == 0 eqn h: Option(Nat) {
+    ⊢ Option(Nat) from match b == 0 eqn h {
       false => Some(Nat::rem_nz(a, b, Nat::ne_zero(b, h)))
       true => None
     }
@@ -93,7 +93,7 @@ module Nat {
   }
 
   pub theorem pred_le(n: Nat): Nat::pred(n) <= n = true {
-    match n: Nat::pred(n) <= n = true {
+    ⊢ Nat::pred(n) <= n = true from match n {
       Zero => Refl
       Succ(k) => Nat::le_succ(k)
     }
@@ -101,7 +101,7 @@ module Nat {
 
   // `a - b` (cut off at 0) is at most `a`.
   pub theorem sub_le(a: Nat, b: Nat): a - b <= a = true {
-    match b: a - b <= a = true {
+    ⊢ a - b <= a = true from match b {
       Zero => Nat::le_refl(a)
       Succ(k) => Nat::le_trans(Nat::pred(a - k), a - k, a, pred_le(a - k), sub_le(a, k))
     }
@@ -115,7 +115,7 @@ module Nat {
   // (a hash's test vector) without unfolding `Nat` to unary.
 
   pub fn bits_and(w: Nat, a: Nat, b: Nat): Nat {
-    match w: Nat {
+    ⊢ Nat from match w {
       Zero => Zero
       Succ(k) => Nat::add(
         Nat::mul(
@@ -135,7 +135,7 @@ module Nat {
   }
 
   pub fn bits_or(w: Nat, a: Nat, b: Nat): Nat {
-    match w: Nat {
+    ⊢ Nat from match w {
       Zero => Zero
       Succ(k) => Nat::add(
         Nat::add(
@@ -158,7 +158,7 @@ module Nat {
   }
 
   pub fn bits_xor(w: Nat, a: Nat, b: Nat): Nat {
-    match w: Nat {
+    ⊢ Nat from match w {
       Zero => Zero
       Succ(k) => Nat::add(
         Nat::rem_nz(
@@ -182,22 +182,22 @@ module Nat {
   }
 
   pub fn pow2(n: Nat): Nat {
-    match n: Nat {
+    ⊢ Nat from match n {
       Zero => 1
       Succ(k) => Nat::mul(2, pow2(k))
     }
   }
 
   pub theorem double_ne_zero(x: Nat, h: x == 0 = false): Nat::mul(2, x) == 0 = false {
-    match x: Nat::mul(2, x) == 0 = false {
-      Zero => match true_ne_false(h): Nat::mul(2, Zero) == 0 = false {
+    ⊢ Nat::mul(2, x) == 0 = false from match x {
+      Zero => ⊢ Nat::mul(2, Zero) == 0 = false from match true_ne_false(h) {
       }
       Succ(y) => Refl
     }
   }
 
   pub theorem pow2_eq_zero(n: Nat): pow2(n) == 0 = false {
-    match n: pow2(n) == 0 = false {
+    ⊢ pow2(n) == 0 = false from match n {
       Zero => Refl
       Succ(k) => double_ne_zero(pow2(k), pow2_eq_zero(k))
     }
@@ -216,20 +216,20 @@ pub(open) inductive U8: Type {
 module U8 {
   // Mapped: the number a `u8` is.
   pub fn val(x: U8): Nat {
-    match x: Nat {
+    ⊢ Nat from match x {
       Mk(v, h) => v
     }
   }
 
   pub theorem ok(x: U8): val(x) < 256 = true {
-    match x: val(x) < 256 = true {
+    ⊢ val(x) < 256 = true from match x {
       Mk(v, h) => h
     }
   }
 
   // Mapped: `n` as a `u8` when `o`, the decision of `n < 2^8`, says it fits.
   pub fn of_decided(n: Nat, o: Bool, h: n < 256 = o): Option(U8) {
-    match o: Option(U8) {
+    ⊢ Option(U8) from match o {
       false => None
       true => Some(U8::Mk(n, h))
     }
@@ -265,7 +265,7 @@ module U8 {
 
   // Mapped: `a - b`, or `None` when `b` is larger.
   pub fn checked_sub(a: U8, b: U8): Option(U8) {
-    match val(a) < val(b): Option(U8) {
+    ⊢ Option(U8) from match val(a) < val(b) {
       false => of_nat_checked(val(a) - val(b))
       true => None
     }
@@ -329,7 +329,7 @@ module U8 {
 
   // Mapped: the value in `o`, or `overflow`.
   pub fn or_overflow(o: Option(U8)): U8 ! {overflow} {
-    match o: U8 {
+    ⊢ U8 from match o {
       Some(x) => x
       None => Never::elim(perform overflow())
     }
@@ -351,7 +351,7 @@ module U8 {
   // quotient is at most `a`, so `of_nat_checked` always gives it; the `None` arm is
   // never reached.
   pub fn div_nz(a: U8, b: U8, h: ¬(val(b) = 0)): U8 {
-    match of_nat_checked(Nat::div_nz(val(a), val(b), h)): U8 {
+    ⊢ U8 from match of_nat_checked(Nat::div_nz(val(a), val(b), h)) {
       Some(q) => q
       None => a
     }
@@ -359,7 +359,7 @@ module U8 {
 
   // The remainder of `div_nz`, below `b`, so `of_nat_checked` always gives it.
   pub fn rem_nz(a: U8, b: U8, h: ¬(val(b) = 0)): U8 {
-    match of_nat_checked(Nat::rem_nz(val(a), val(b), h)): U8 {
+    ⊢ U8 from match of_nat_checked(Nat::rem_nz(val(a), val(b), h)) {
       Some(r) => r
       None => a
     }
@@ -367,7 +367,7 @@ module U8 {
 
   // `div`, or `None` when `b` is 0.
   pub fn checked_div(a: U8, b: U8): Option(U8) {
-    match val(b) == 0 eqn h: Option(U8) {
+    ⊢ Option(U8) from match val(b) == 0 eqn h {
       false => Some(div_nz(a, b, Nat::ne_zero(val(b), h)))
       true => None
     }
@@ -380,7 +380,7 @@ module U8 {
 
   // `rem`, or `None` when `b` is 0.
   pub fn checked_rem(a: U8, b: U8): Option(U8) {
-    match val(b) == 0 eqn h: Option(U8) {
+    ⊢ Option(U8) from match val(b) == 0 eqn h {
       false => Some(rem_nz(a, b, Nat::ne_zero(val(b), h)))
       true => None
     }
@@ -400,8 +400,8 @@ module U8 {
 
   // Catching `overflow` gives back the decision: the effect says no more and
   // no less than the `Option`.
-  pub theorem catch_is(o: Option(U8)): catch(o) = o {
-    match o: catch(o) = o {
+  pub theorem catch_is(o: Option(U8)): U8::catch(o) = o {
+    ⊢ U8::catch(o) = o from match o {
       Some(x) => Refl
       None => Refl
     }
@@ -439,20 +439,20 @@ pub(open) inductive U32: Type {
 module U32 {
   // Mapped: the number a `u32` is.
   pub fn val(x: U32): Nat {
-    match x: Nat {
+    ⊢ Nat from match x {
       Mk(v, h) => v
     }
   }
 
   pub theorem ok(x: U32): val(x) < 4294967296 = true {
-    match x: val(x) < 4294967296 = true {
+    ⊢ val(x) < 4294967296 = true from match x {
       Mk(v, h) => h
     }
   }
 
   // Mapped: `n` as a `u32` when `o`, the decision of `n < 2^32`, says it fits.
   pub fn of_decided(n: Nat, o: Bool, h: n < 4294967296 = o): Option(U32) {
-    match o: Option(U32) {
+    ⊢ Option(U32) from match o {
       false => None
       true => Some(U32::Mk(n, h))
     }
@@ -488,7 +488,7 @@ module U32 {
 
   // Mapped: `a - b`, or `None` when `b` is larger.
   pub fn checked_sub(a: U32, b: U32): Option(U32) {
-    match val(a) < val(b): Option(U32) {
+    ⊢ Option(U32) from match val(a) < val(b) {
       false => of_nat_checked(val(a) - val(b))
       true => None
     }
@@ -560,7 +560,7 @@ module U32 {
 
   // Mapped: the value in `o`, or `overflow`.
   pub fn or_overflow(o: Option(U32)): U32 ! {overflow} {
-    match o: U32 {
+    ⊢ U32 from match o {
       Some(x) => x
       None => Never::elim(perform overflow())
     }
@@ -582,7 +582,7 @@ module U32 {
   // quotient is at most `a`, so `of_nat_checked` always gives it; the `None` arm is
   // never reached.
   pub fn div_nz(a: U32, b: U32, h: ¬(val(b) = 0)): U32 {
-    match of_nat_checked(Nat::div_nz(val(a), val(b), h)): U32 {
+    ⊢ U32 from match of_nat_checked(Nat::div_nz(val(a), val(b), h)) {
       Some(q) => q
       None => a
     }
@@ -590,7 +590,7 @@ module U32 {
 
   // The remainder of `div_nz`, below `b`, so `of_nat_checked` always gives it.
   pub fn rem_nz(a: U32, b: U32, h: ¬(val(b) = 0)): U32 {
-    match of_nat_checked(Nat::rem_nz(val(a), val(b), h)): U32 {
+    ⊢ U32 from match of_nat_checked(Nat::rem_nz(val(a), val(b), h)) {
       Some(r) => r
       None => a
     }
@@ -598,7 +598,7 @@ module U32 {
 
   // `div`, or `None` when `b` is 0.
   pub fn checked_div(a: U32, b: U32): Option(U32) {
-    match val(b) == 0 eqn h: Option(U32) {
+    ⊢ Option(U32) from match val(b) == 0 eqn h {
       false => Some(div_nz(a, b, Nat::ne_zero(val(b), h)))
       true => None
     }
@@ -611,7 +611,7 @@ module U32 {
 
   // `rem`, or `None` when `b` is 0.
   pub fn checked_rem(a: U32, b: U32): Option(U32) {
-    match val(b) == 0 eqn h: Option(U32) {
+    ⊢ Option(U32) from match val(b) == 0 eqn h {
       false => Some(rem_nz(a, b, Nat::ne_zero(val(b), h)))
       true => None
     }
@@ -631,8 +631,8 @@ module U32 {
 
   // Catching `overflow` gives back the decision: the effect says no more and
   // no less than the `Option`.
-  pub theorem catch_is(o: Option(U32)): catch(o) = o {
-    match o: catch(o) = o {
+  pub theorem catch_is(o: Option(U32)): U32::catch(o) = o {
+    ⊢ U32::catch(o) = o from match o {
       Some(x) => Refl
       None => Refl
     }
@@ -670,20 +670,20 @@ pub(open) inductive U64: Type {
 module U64 {
   // Mapped: the number a `u64` is.
   pub fn val(x: U64): Nat {
-    match x: Nat {
+    ⊢ Nat from match x {
       Mk(v, h) => v
     }
   }
 
   pub theorem ok(x: U64): val(x) < 18446744073709551616 = true {
-    match x: val(x) < 18446744073709551616 = true {
+    ⊢ val(x) < 18446744073709551616 = true from match x {
       Mk(v, h) => h
     }
   }
 
   // Mapped: `n` as a `u64` when `o`, the decision of `n < 2^64`, says it fits.
   pub fn of_decided(n: Nat, o: Bool, h: n < 18446744073709551616 = o): Option(U64) {
-    match o: Option(U64) {
+    ⊢ Option(U64) from match o {
       false => None
       true => Some(U64::Mk(n, h))
     }
@@ -725,7 +725,7 @@ module U64 {
 
   // Mapped: `a - b`, or `None` when `b` is larger.
   pub fn checked_sub(a: U64, b: U64): Option(U64) {
-    match val(a) < val(b): Option(U64) {
+    ⊢ Option(U64) from match val(a) < val(b) {
       false => of_nat_checked(val(a) - val(b))
       true => None
     }
@@ -820,7 +820,7 @@ module U64 {
 
   // Mapped: the value in `o`, or `overflow`.
   pub fn or_overflow(o: Option(U64)): U64 ! {overflow} {
-    match o: U64 {
+    ⊢ U64 from match o {
       Some(x) => x
       None => Never::elim(perform overflow())
     }
@@ -842,7 +842,7 @@ module U64 {
   // quotient is at most `a`, so `of_nat_checked` always gives it; the `None` arm is
   // never reached.
   pub fn div_nz(a: U64, b: U64, h: ¬(val(b) = 0)): U64 {
-    match of_nat_checked(Nat::div_nz(val(a), val(b), h)): U64 {
+    ⊢ U64 from match of_nat_checked(Nat::div_nz(val(a), val(b), h)) {
       Some(q) => q
       None => a
     }
@@ -850,7 +850,7 @@ module U64 {
 
   // The remainder of `div_nz`, below `b`, so `of_nat_checked` always gives it.
   pub fn rem_nz(a: U64, b: U64, h: ¬(val(b) = 0)): U64 {
-    match of_nat_checked(Nat::rem_nz(val(a), val(b), h)): U64 {
+    ⊢ U64 from match of_nat_checked(Nat::rem_nz(val(a), val(b), h)) {
       Some(r) => r
       None => a
     }
@@ -858,7 +858,7 @@ module U64 {
 
   // `div`, or `None` when `b` is 0.
   pub fn checked_div(a: U64, b: U64): Option(U64) {
-    match val(b) == 0 eqn h: Option(U64) {
+    ⊢ Option(U64) from match val(b) == 0 eqn h {
       false => Some(div_nz(a, b, Nat::ne_zero(val(b), h)))
       true => None
     }
@@ -871,7 +871,7 @@ module U64 {
 
   // `rem`, or `None` when `b` is 0.
   pub fn checked_rem(a: U64, b: U64): Option(U64) {
-    match val(b) == 0 eqn h: Option(U64) {
+    ⊢ Option(U64) from match val(b) == 0 eqn h {
       false => Some(rem_nz(a, b, Nat::ne_zero(val(b), h)))
       true => None
     }
@@ -891,8 +891,8 @@ module U64 {
 
   // Catching `overflow` gives back the decision: the effect says no more and
   // no less than the `Option`.
-  pub theorem catch_is(o: Option(U64)): catch(o) = o {
-    match o: catch(o) = o {
+  pub theorem catch_is(o: Option(U64)): U64::catch(o) = o {
+    ⊢ U64::catch(o) = o from match o {
       Some(x) => Refl
       None => Refl
     }

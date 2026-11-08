@@ -215,6 +215,7 @@ impl<'a> Check<'a> {
             | ExprKind::Float(_)
             | ExprKind::Bool(_)
             | ExprKind::Text(_)
+            | ExprKind::Declaration(_)
             | ExprKind::FnValue { .. } => {}
             ExprKind::Read { local, how } => {
                 if let Some(boxed) = self.tracked.get(&local.id)
@@ -252,6 +253,10 @@ impl<'a> Check<'a> {
                         && self.cand.contains(&(*id, i))
                         && tracked_read(a, &self.tracked)
                     {
+                        // Passing it on to a parameter that is a borrow too
+                        // (as the function `accumulate.rs` writes in front
+                        // of its accumulating one does) is a use as one.
+                        self.matched = true;
                         continue;
                     }
                     self.visit(a);
@@ -266,14 +271,12 @@ impl<'a> Check<'a> {
             | ExprKind::FnCast(a) => self.visit(a),
             ExprKind::Inject { value, .. }
             | ExprKind::Remap { value, .. }
-            | ExprKind::Member { value, .. }
             | ExprKind::Deref { value, .. } => self.visit(value),
             ExprKind::And(a, b) | ExprKind::Or(a, b) => {
                 self.visit(a);
                 self.visit(b);
             }
             ExprKind::Ctor { fields, .. } => fields.iter().for_each(|(_, f)| self.visit(f)),
-            ExprKind::Product { members, .. } => members.iter().for_each(|m| self.visit(m)),
             ExprKind::If {
                 cond,
                 then,
@@ -436,14 +439,12 @@ impl Rewrite<'_> {
             | ExprKind::TempRef(a) => self.expr(a),
             ExprKind::Inject { value, .. }
             | ExprKind::Remap { value, .. }
-            | ExprKind::Member { value, .. }
             | ExprKind::Deref { value, .. } => self.expr(value),
             ExprKind::And(a, b) | ExprKind::Or(a, b) => {
                 self.expr(a);
                 self.expr(b);
             }
             ExprKind::Ctor { fields, .. } => fields.iter_mut().for_each(|(_, f)| self.expr(f)),
-            ExprKind::Product { members, .. } => members.iter_mut().for_each(|m| self.expr(m)),
             ExprKind::If {
                 cond,
                 then,
@@ -649,7 +650,11 @@ perform show("value", run())"#,
             ),
         ] {
             let package = compile_with(&source, false).unwrap();
-            let read = package.fns.iter().find(|f| f.source == "read").unwrap();
+            let read = package
+                .fns
+                .iter()
+                .find(|f| f.source.as_str() == "read")
+                .unwrap();
             assert_eq!(read.params[0].local.repr, expected, "{source}");
         }
     }

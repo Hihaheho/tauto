@@ -38,7 +38,7 @@ pub fn kernel_level_var_name(v: Pair(Text, Nat)): Text { v.fst }
 pub fn kernel_level_var_offset(v: Pair(Text, Nat)): Nat { v.snd }
 
 pub fn kernel_level_offset(name: Text, vs: List(Pair(Text, Nat))): Option(Nat) {
-  match vs: Option(Nat) {
+  ⊢ Option(Nat) from match vs {
     Nil => None
 
     Cons(v, rest) => if name == kernel_level_var_name(
@@ -56,7 +56,7 @@ pub fn kernel_level_floor(l: KernelLevel): Nat {
 }
 
 pub fn kernel_level_le(a: KernelLevel, b: KernelLevel): Bool {
-  a.constant <= kernel_level_floor(b) && kernel_list_all_Pair_Text_Nat_Bool((v: Pair(Text, Nat)) => match kernel_level_offset(kernel_level_var_name(v), b.variables): Bool {
+  a.constant <= kernel_level_floor(b) && kernel_list_all_Pair_Text_Nat_Bool((v: Pair(Text, Nat)) => ⊢ Bool from match kernel_level_offset(kernel_level_var_name(v), b.variables) {
 None => false
 Some(n) => kernel_level_var_offset(v) <= n
     },
@@ -83,12 +83,12 @@ pub fn kernel_level_join(a: KernelLevel, b: KernelLevel): KernelLevel {
     List::append(
       kernel_list_map_Pair_Text_Nat_Pair_Text_Nat((v: Pair(Text, Nat)) => Pair {
         fst: kernel_level_var_name(v),
-        snd: match kernel_level_offset(kernel_level_var_name(v), b.variables): Nat {
+        snd: ⊢ Nat from match kernel_level_offset(kernel_level_var_name(v), b.variables) {
 None => kernel_level_var_offset(v)
 Some(n) => Nat::max(kernel_level_var_offset(v), n)
         }
       }, a.variables),
-      kernel_list_filter_Pair_Text_Nat_Bool((v: Pair(Text, Nat)) => match kernel_level_offset(kernel_level_var_name(v), a.variables): Bool {
+      kernel_list_filter_Pair_Text_Nat_Bool((v: Pair(Text, Nat)) => ⊢ Bool from match kernel_level_offset(kernel_level_var_name(v), a.variables) {
 None => true
 Some(n) => false
       }, b.variables)
@@ -97,16 +97,16 @@ Some(n) => false
 }
 
 pub fn kernel_sort_next(s: KernelSort): KernelSort {
-  match s: KernelSort {
+  ⊢ KernelSort from match s {
     KernelProp => KernelType(KernelLevel::Mk(0, Nil))
     KernelType(l) => KernelType(kernel_level_next(l))
   }
 }
 
 pub fn kernel_sort_le(a: KernelSort, b: KernelSort): Bool {
-  match a: Bool {
+  ⊢ Bool from match a {
     KernelProp => true
-    KernelType(l) => match b: Bool {
+    KernelType(l) => ⊢ Bool from match b {
       KernelProp => false
       KernelType(m) => kernel_level_le(l, m)
     }
@@ -118,9 +118,9 @@ pub fn kernel_sort_eq(a: KernelSort, b: KernelSort): Bool {
 }
 
 pub fn kernel_sort_pi(a: KernelSort, b: KernelSort): KernelSort {
-  match b: KernelSort {
+  ⊢ KernelSort from match b {
     KernelProp => KernelProp
-    KernelType(m) => match a: KernelSort {
+    KernelType(m) => ⊢ KernelSort from match a {
       KernelProp => b
       KernelType(l) => KernelType(kernel_level_join(l, m))
     }

@@ -2,10 +2,10 @@
 //! its statement, proof text, checker source and dependencies are unchanged.
 //!
 //! The key of a theorem is a SHA-256 of the checker's own source, the
-//! theorem as read (statement and proof, without places), and the interface
-//! of every global the theorem names: a global's type, its value when it
-//! unfolds (a function, a definition; never a theorem: a proof does not
-//! unfold), the declaration of a family, and so on through what those name.
+//! bound theorem (statement and proof, without places), and the checked
+//! environment: declaration types, unfolding values, family membership,
+//! axiom dependencies and instances. References are numbered within that
+//! environment. A cached reference denotes the declaration in that slot.
 //! Changing a proof therefore invalidates nothing that uses the theorem.
 //!
 //! On a hit the statement is still elaborated and checked by both checkers;
@@ -29,14 +29,20 @@ use std::path::PathBuf;
 use tauto_parol::Span;
 use tauto_syntax::sha256_hex;
 
-use super::{ApplicationSite, CtorSite, Kernel, T};
-use crate::surface::{TermKind, TheoremDecl};
+use super::{ApplicationSite, CtorSite, FieldSite, Kernel, T};
+use crate::surface::{Name, Stmt, TermKind, TheoremDecl};
+mod references;
+use references::References;
 
 /// The source of the checker: a change to it is a change to every key. Every
 /// file of the kernel is here (`every_kernel_file_is_in_the_key`).
 const CHECKER: &[&str] = &[
     include_str!("../check.rs"),
     include_str!("cache.rs"),
+    include_str!("cache/references.rs"),
+    include_str!("../../../tauto-identity/src/lib.rs"),
+    include_str!("../../../tauto-surface/src/bindings.rs"),
+    include_str!("../../../tauto-surface/src/resolve.rs"),
     include_str!("core.rs"),
     include_str!("derivation.rs"),
     include_str!("implicit.rs"),
@@ -71,7 +77,69 @@ const CHECKER: &[&str] = &[
 pub(super) struct Cache {
     dir: PathBuf,
     checker: String,
-    interfaces: HashMap<String, String>,
+    bindings: HashMap<String, std::sync::Arc<References>>,
+    interfaces: HashMap<Name, Interface>,
+    occurrences: HashMap<String, Vec<crate::surface::TermId>>,
+}
+
+#[derive(Clone)]
+struct Interface {
+    global: super::Global,
+    dependencies: Vec<Name>,
+    hash: String,
+}
+
+impl Interface {
+    fn matches(&self, global: &super::Global) -> bool {
+        std::sync::Arc::ptr_eq(&self.global.ty.kind, &global.ty.kind)
+            && match (&self.global.value, &global.value) {
+                (Some(a), Some(b)) => std::sync::Arc::ptr_eq(&a.kind, &b.kind),
+                (None, None) => true,
+                _ => false,
+            }
+            && self.global.axioms == global.axioms
+            && self.global.implicit == global.implicit
+            && self.global.params == global.params
+            && self.global.failed == global.failed
+            && self.global.incomplete == global.incomplete
+    }
+
+    fn new(global: &super::Global) -> Option<Self> {
+        let mut dependencies: Vec<Name> = global.axioms.iter().cloned().collect();
+        let mut collect = |name: &mut Name| match name {
+            Name::Global(_) => dependencies.push(name.clone()),
+            Name::Selection(selection) => {
+                dependencies.extend(selection.candidates().iter().cloned().map(Name::from))
+            }
+            _ => {}
+        };
+        crate::surface::references::term(&mut global.ty.clone(), &mut collect);
+        if let Some(value) = &global.value {
+            crate::surface::references::term(&mut value.clone(), &mut collect);
+        }
+        let references = References::new(dependencies)?;
+        let mut encoder = references.encode();
+        let ty = encoder.term(&global.ty)?;
+        let value = match &global.value {
+            Some(value) => Some(encoder.term(value)?),
+            None => None,
+        };
+        let axioms = global
+            .axioms
+            .iter()
+            .map(|a| references.slot(a))
+            .collect::<Option<Vec<_>>>()?;
+        let labels: Vec<_> = references.names().iter().map(Name::as_str).collect();
+        let text = without_places(&format!(
+            "{labels:?} {ty:?} {value:?} {axioms:?} {} {:?} {} {}",
+            global.implicit, global.params, global.failed, global.incomplete
+        ));
+        Some(Self {
+            global: global.clone(),
+            dependencies: references.names().to_vec(),
+            hash: sha256_hex(text.as_bytes()),
+        })
+    }
 }
 
 impl Cache {
@@ -80,7 +148,9 @@ impl Cache {
         Cache {
             dir,
             checker: sha256_hex(CHECKER.concat().as_bytes()),
+            bindings: HashMap::new(),
             interfaces: HashMap::new(),
+            occurrences: HashMap::new(),
         }
     }
 
@@ -98,19 +168,24 @@ impl Cache {
         Some(Cache {
             dir,
             checker: sha256_hex(CHECKER.concat().as_bytes()),
+            bindings: HashMap::new(),
             interfaces: HashMap::new(),
+            occurrences: HashMap::new(),
         })
     }
 
     /// The globals a previously checked proof with this key names; its
     /// axioms are theirs as they are now (`Kernel::theorem`).
-    pub(super) fn get(&self, key: &str) -> Option<BTreeSet<String>> {
+    pub(super) fn get(&self, key: &str) -> Option<BTreeSet<Name>> {
         let text = std::fs::read_to_string(self.dir.join(key)).ok()?;
         let mut lines = text.lines();
-        if lines.next() != Some("uses") {
+        if lines.next() != Some("uses-ids") {
             return None;
         }
-        Some(lines.map(String::from).collect())
+        let references = self.bindings.get(key)?;
+        lines
+            .map(|line| references.reference(line.parse().ok()?))
+            .collect()
     }
 
     /// The elaborated terms of a previously checked declaration with this key,
@@ -118,18 +193,28 @@ impl Cache {
     pub(super) fn get_terms(&self, key: &str, at: Span) -> Option<Vec<T>> {
         let text = std::fs::read_to_string(self.dir.join(key)).ok()?;
         let mut lines = text.lines();
-        if lines.next() != Some("terms") {
+        if lines.next() != Some("terms-ids") {
             return None;
         }
-        lines.map(|l| read_term(l, at)).collect()
+        let mut decoder = self.bindings.get(key)?.decode();
+        lines
+            .map(|line| decoder.term(read_term(line, at)?))
+            .collect()
     }
 
     /// Records the terms a declaration with this key elaborated to; a term
     /// that is not a kernel term is not recorded.
     pub(super) fn put_terms(&self, key: &str, terms: &[&T]) {
-        let mut text = String::from("terms\n");
+        let Some(references) = self.bindings.get(key) else {
+            return;
+        };
+        let mut encoder = references.encode();
+        let mut text = String::from("terms-ids\n");
         for t in terms {
-            if !write_term(t, &mut text) {
+            let Some(encoded) = encoder.term(t) else {
+                return;
+            };
+            if !write_term(&encoded, &mut text) {
                 return;
             }
             text.push('\n');
@@ -142,17 +227,32 @@ impl Cache {
     pub(super) fn get_sites(&self, key: &str, base: u32) -> Option<Vec<CtorSite>> {
         let text = std::fs::read_to_string(self.dir.join(format!("{key}.sites"))).ok()?;
         let mut lines = text.lines();
-        if lines.next() != Some("sites") {
+        if lines.next() != Some("sites-reference-occurrences") {
             return None;
         }
+        let mut decoder = self.bindings.get(key)?.decode();
         lines
             .map(|l| {
                 let mut f = l.split('\t');
+                let expression = match f.next()? {
+                    "expression" => true,
+                    "pattern" => false,
+                    _ => return None,
+                };
+                let occurrence = *self
+                    .occurrences
+                    .get(key)?
+                    .get(f.next()?.parse::<usize>().ok()?)?;
                 let start = base.checked_add_signed(f.next()?.parse::<i32>().ok()?)?;
                 let end = base.checked_add_signed(f.next()?.parse::<i32>().ok()?)?;
-                let written = f.next()?.to_string();
-                let resolved = f.next()?.to_string();
+                let written = decoder.token(f.next()?)?;
+                let resolved = decoder.token(f.next()?)?;
+                if !matches!(resolved, Name::Global(_)) {
+                    return None;
+                }
                 Some(CtorSite {
+                    expression,
+                    occurrence,
                     span: Span { start, end },
                     written,
                     resolved,
@@ -164,66 +264,184 @@ impl Cache {
     /// Records the constructors the patterns of a declaration with this key
     /// were read as, with places relative to `base` (`place_base`).
     pub(super) fn put_sites(&self, key: &str, sites: &[CtorSite], base: u32) {
-        let mut text = String::from("sites\n");
+        let Some(references) = self.bindings.get(key) else {
+            return;
+        };
+        let mut encoder = references.encode();
+        let mut text = String::from("sites-reference-occurrences\n");
         for s in sites {
+            let Some(occurrence) = self
+                .occurrences
+                .get(key)
+                .and_then(|ids| ids.iter().position(|id| *id == s.occurrence))
+            else {
+                return;
+            };
             let (Some(start), Some(end)) = (
                 i64::from(s.span.start).checked_sub(i64::from(base)),
                 i64::from(s.span.end).checked_sub(i64::from(base)),
             ) else {
                 return;
             };
-            text.push_str(&format!("{start}\t{end}\t{}\t{}\n", s.written, s.resolved));
+            let (Some(written), Some(resolved)) =
+                (encoder.token(&s.written), encoder.token(&s.resolved))
+            else {
+                return;
+            };
+            let kind = if s.expression {
+                "expression"
+            } else {
+                "pattern"
+            };
+            text.push_str(&format!(
+                "{kind}\t{occurrence}\t{start}\t{end}\t{written}\t{resolved}\n"
+            ));
         }
         self.write(&format!("{key}.sites"), text);
+    }
+
+    pub(super) fn get_fields(&self, key: &str, base: u32) -> Option<Vec<FieldSite>> {
+        let text = std::fs::read_to_string(self.dir.join(format!("{key}.fields"))).ok()?;
+        let mut lines = text.lines();
+        if lines.next() != Some("fields-reference-occurrences") {
+            return None;
+        }
+        let mut decoder = self.bindings.get(key)?.decode();
+        lines
+            .map(|line| {
+                let mut fields = line.split('\t');
+                let occurrence = *self
+                    .occurrences
+                    .get(key)?
+                    .get(fields.next()?.parse::<usize>().ok()?)?;
+                let start = base.checked_add_signed(fields.next()?.parse::<i32>().ok()?)?;
+                let end = base.checked_add_signed(fields.next()?.parse::<i32>().ok()?)?;
+                let family = decoder.token(fields.next()?)?;
+                if !matches!(family, Name::Global(_)) {
+                    return None;
+                }
+                Some(FieldSite {
+                    occurrence,
+                    span: Span { start, end },
+                    family,
+                })
+            })
+            .collect()
+    }
+
+    pub(super) fn put_fields(&self, key: &str, sites: &[FieldSite], base: u32) {
+        let Some(references) = self.bindings.get(key) else {
+            return;
+        };
+        let mut encoder = references.encode();
+        let mut text = String::from("fields-reference-occurrences\n");
+        for site in sites {
+            let Some(occurrence) = self
+                .occurrences
+                .get(key)
+                .and_then(|all| all.iter().position(|id| *id == site.occurrence))
+            else {
+                return;
+            };
+            let Some(family) = encoder.token(&site.family) else {
+                return;
+            };
+            let start = i64::from(site.span.start) - i64::from(base);
+            let end = i64::from(site.span.end) - i64::from(base);
+            text.push_str(&format!("{occurrence}\t{start}\t{end}\t{family}\n"));
+        }
+        self.write(&format!("{key}.fields"), text);
     }
 
     pub(super) fn get_applications(&self, key: &str, base: u32) -> Option<Vec<ApplicationSite>> {
         let text = std::fs::read_to_string(self.dir.join(format!("{key}.calls"))).ok()?;
         let mut lines = text.lines();
-        if lines.next() != Some("calls") {
+        if lines.next() != Some("calls-reference-occurrences") {
             return None;
         }
+        let mut decoder = self.bindings.get(key)?.decode();
         lines
             .map(|line| {
                 let mut fields = line.split('\t');
+                let occurrence = *self
+                    .occurrences
+                    .get(key)?
+                    .get(fields.next()?.parse::<usize>().ok()?)?;
                 let start = base.checked_add_signed(fields.next()?.parse::<i32>().ok()?)?;
                 let end = base.checked_add_signed(fields.next()?.parse::<i32>().ok()?)?;
-                let callee = fields.next()?.to_string();
+                let callee = decoder.token(fields.next()?)?;
                 let written = fields.next()?.parse().ok()?;
                 let omitted = fields.next()?.parse().ok()?;
-                if fields.next().is_some() {
+                let arguments: Vec<_> = fields
+                    .map(|t| decoder.term(read_term(t, Span { start, end })?))
+                    .collect::<Option<_>>()?;
+                if arguments.len() != omitted {
                     return None;
                 }
                 Some(ApplicationSite {
+                    occurrence,
                     span: Span { start, end },
                     callee,
                     written,
                     omitted,
+                    arguments,
                 })
             })
             .collect()
     }
 
     pub(super) fn put_applications(&self, key: &str, sites: &[ApplicationSite], base: u32) {
-        let mut text = String::from("calls\n");
+        let Some(references) = self.bindings.get(key) else {
+            return;
+        };
+        let mut encoder = references.encode();
+        let mut text = String::from("calls-reference-occurrences\n");
         for site in sites {
+            let Some(occurrence) = self
+                .occurrences
+                .get(key)
+                .and_then(|all| all.iter().position(|id| *id == site.occurrence))
+            else {
+                // A site on a term the checker made (a list literal's
+                // constructors, a match's eliminator) has an identity of
+                // this run only; no later run can look it up.
+                continue;
+            };
+            let Some(callee) = encoder.token(&site.callee) else {
+                return;
+            };
             let start = i64::from(site.span.start) - i64::from(base);
             let end = i64::from(site.span.end) - i64::from(base);
             text.push_str(&format!(
-                "{start}\t{end}\t{}\t{}\t{}\n",
-                site.callee, site.written, site.omitted
+                "{occurrence}\t{start}\t{end}\t{}\t{}\t{}",
+                callee, site.written, site.omitted
             ));
+            for argument in &site.arguments {
+                text.push('\t');
+                if !encoder
+                    .term(argument)
+                    .is_some_and(|argument| write_term(&argument, &mut text))
+                {
+                    return;
+                }
+            }
+            text.push('\n');
         }
         self.write(&format!("{key}.calls"), text);
     }
 
     /// Records that the proof with this key passed checking, and the globals
     /// it names. If writing fails, the proof is checked again on the next run.
-    pub(super) fn put(&self, key: &str, uses: &BTreeSet<String>) {
-        let mut text = String::from("uses\n");
+    pub(super) fn put(&self, key: &str, uses: &BTreeSet<Name>) {
+        let Some(references) = self.bindings.get(key) else {
+            return;
+        };
+        let mut text = String::from("uses-ids\n");
         for a in uses {
-            text.push_str(a);
-            text.push('\n');
+            let Some(slot) = references.slot(a) else {
+                return;
+            };
+            text.push_str(&format!("{slot}\n"));
         }
         self.write(key, text);
     }
@@ -241,109 +459,163 @@ impl Kernel {
     /// The key of a theorem's proof, or none when it may not be cached (it
     /// names a declaration that failed or is incomplete).
     pub(super) fn proof_key(&mut self, t: &TheoremDecl) -> Option<String> {
-        self.key(&format!("{t:?}"), &[t.name.as_str()])
+        self.key(&[Stmt::Theorem(t.clone())], &[t.name.clone()])
     }
 
-    /// The key of a declaration whose `Debug` text is `text` and which
-    /// declares `own`: its text and the interfaces of the globals it names.
-    pub(super) fn key(&mut self, text: &str, own: &[&str]) -> Option<String> {
-        // What a declaration uses is not all in its text: an instance with a
-        // law not proved is found by the types, and makes what uses it
-        // incomplete, so nothing is taken as checked while there is one.
-        if self.classes.instances.values().any(|i| {
-            i.laws_global
-                .as_ref()
-                .and_then(|n| self.globals.get(n))
-                .is_some_and(|g| g.incomplete)
-        }) {
-            return None;
+    /// Fingerprints bound syntax and the complete checked environment. References
+    /// in the artifact are slots in this environment, not source spellings.
+    pub(super) fn key(&mut self, statements: &[Stmt], own: &[Name]) -> Option<String> {
+        self.cache.as_ref()?;
+        let mut names: Vec<Name> = self
+            .globals
+            .keys()
+            .cloned()
+            .chain(own.iter().cloned())
+            .collect();
+        let mut collect = |name: &mut Name| match name {
+            Name::Global(_) => names.push(name.clone()),
+            Name::Selection(selection) => {
+                names.extend(selection.candidates().iter().cloned().map(Name::from))
+            }
+            _ => {}
+        };
+        for statement in statements {
+            crate::surface::references::statement(&mut statement.clone(), &mut collect);
         }
-        let mut cache = self.cache.take()?;
-        // Noting the constructors of patterns (`Kernel::record_ctor_sites`) keeps where
-        // each arm stands in the declaration with its terms, so the key holds the
-        // places relative to the declaration's first.
+        let cache = self.cache.as_mut()?;
+        for (name, global) in &self.globals {
+            if !cache
+                .interfaces
+                .get(name)
+                .is_some_and(|entry| entry.matches(global))
+            {
+                cache
+                    .interfaces
+                    .insert(name.clone(), Interface::new(global)?);
+            }
+            names.extend(cache.interfaces.get(name)?.dependencies.iter().cloned());
+        }
+        // A family's key names its constructors and the families of its
+        // group (`family:` below), which a nested family's group can hold
+        // without any of them being named elsewhere; without a slot for each,
+        // no declaration that uses the family would have a key.
+        for name in self.globals.keys() {
+            if let Some(family) = self.inds.get(name) {
+                names.extend(family.ctors.iter().map(|c| c.name.clone()));
+                names.extend(family.group.iter().cloned());
+            }
+        }
+        let mut collect = |name: &mut Name| match name {
+            Name::Global(_) => names.push(name.clone()),
+            Name::Selection(selection) => {
+                names.extend(selection.candidates().iter().cloned().map(Name::from))
+            }
+            _ => {}
+        };
+        for ((class, head), instance) in &self.classes.instances {
+            collect(&mut class.clone());
+            collect(&mut head.clone());
+            collect(&mut instance.global.clone());
+            if let Some(laws) = &instance.laws_global {
+                collect(&mut laws.clone());
+            }
+            crate::surface::references::term(&mut instance.head.clone(), &mut collect);
+            for arg in &instance.arguments {
+                crate::surface::references::term(&mut arg.clone(), &mut collect);
+            }
+            for (class, ty) in &instance.wheres {
+                collect(&mut class.clone());
+                for arg in ty {
+                    crate::surface::references::term(&mut arg.clone(), &mut collect);
+                }
+            }
+        }
+        let references = References::new(names)?.with_source(statements);
+        let mut encoder = references.encode();
+        let syntax = encoder.statements(statements)?;
+        let text = format!("{syntax:?}");
         let text = if self.record_sites {
-            relative_places(text)
+            relative_places(&text)
         } else {
-            without_places(text)
+            without_places(&text)
         };
-        let mut parts = vec![cache.checker.clone(), text.clone()];
-        let mut ok = true;
-        for name in quoted(&text) {
-            if own.contains(&name.as_str()) {
+        let mut parts = vec![self.cache.as_ref()?.checker.clone(), text];
+        for name in references.names() {
+            parts.push(format!("declaration:{}", name.as_str()));
+            if own.contains(name) {
                 continue;
             }
-            match self.interface(&mut cache, &name, &mut Vec::new()) {
-                Some(Some(h)) => parts.push(format!("{name}={h}")),
-                Some(None) => {}
-                None => ok = false,
-            }
-        }
-        // An instance is found by the types, not named in the text: what a
-        // declaration may unfold is every instance, so each is in the key.
-        let mut instances: Vec<_> = self.classes.instances.iter().collect();
-        instances.sort_by(|a, b| a.0.cmp(b.0));
-        for ((class, head), i) in instances {
-            if own.contains(&i.global.as_str()) {
+            if !self.globals.contains_key(name) {
                 continue;
             }
-            match self.interface(&mut cache, &i.global, &mut Vec::new()) {
-                Some(h) => parts.push(format!("instance {class}({head})={h:?}")),
-                None => ok = false,
+            // Each immutable interface has its own reference numbering. Its
+            // dependency labels link those slots to the complete environment
+            // above; payload slots still use that complete environment.
+            parts.push(self.cache.as_ref()?.interfaces.get(name)?.hash.clone());
+            if let Some(family) = self.inds.get(name) {
+                let constructors = family
+                    .ctors
+                    .iter()
+                    .map(|c| references.slot(&c.name))
+                    .collect::<Option<Vec<_>>>()?;
+                let group = family
+                    .group
+                    .iter()
+                    .map(|n| references.slot(n))
+                    .collect::<Option<Vec<_>>>()?;
+                parts.push(format!(
+                    "family:{constructors:?}:{group:?}:{}:{}",
+                    family.pos, family.indices
+                ));
             }
         }
-        self.cache = Some(cache);
-        ok.then(|| sha256_hex(parts.join("\n").as_bytes()))
-    }
-
-    /// The hash of a global's interface: `Some(None)` when `name` is not a
-    /// global, `None` when it may not be relied on.
-    fn interface(
-        &self,
-        cache: &mut Cache,
-        name: &str,
-        visiting: &mut Vec<String>,
-    ) -> Option<Option<String>> {
-        if let Some(h) = cache.interfaces.get(name) {
-            return Some(Some(h.clone()));
+        let mut instances = Vec::new();
+        for ((class, head), instance) in &self.classes.instances {
+            let mut encoder = references.encode();
+            let class = references.slot(class)?;
+            let head = references.slot(head)?;
+            let global = references.slot(&instance.global)?;
+            let laws = match &instance.laws_global {
+                Some(name) => Some(references.slot(name)?),
+                None => None,
+            };
+            let term = std::iter::once(&instance.head)
+                .chain(&instance.arguments)
+                .map(|arg| encoder.term(arg))
+                .collect::<Option<Vec<_>>>()?;
+            let constraints = instance
+                .wheres
+                .iter()
+                .map(|(class, ty)| {
+                    Some((
+                        references.slot(class)?,
+                        ty.iter()
+                            .map(|arg| encoder.term(arg))
+                            .collect::<Option<Vec<_>>>()?,
+                    ))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            instances.push(without_places(&format!(
+                "{class}:{head}:{global}:{laws:?}:{term:?}:{constraints:?}"
+            )));
         }
-        let Some(g) = self.globals.get(name) else {
-            return Some(None);
-        };
-        if g.failed || g.incomplete {
-            return None;
+        instances.sort();
+        parts.extend(instances);
+        let key = sha256_hex(parts.join("\n").as_bytes());
+        let mut occurrences = Vec::new();
+        for statement in statements {
+            let mut statement = statement.clone();
+            crate::surface::walk::stmt(&mut statement, &mut |term| occurrences.push(term.id()));
         }
-        if visiting.iter().any(|v| v == name) {
-            // A family or function of a mutual group: its members are
-            // hashed with it.
-            return Some(Some(format!("cycle:{name}")));
-        }
-        visiting.push(name.to_string());
-        let mut own = format!("{:?}\n{:?}\n{}", g.ty, g.value, g.implicit);
-        if let Some(ind) = self.inds.get(name) {
-            own.push_str(&format!("\n{ind:?}"));
-        }
-        if let Some((family, _)) = self.ctors.get(name) {
-            own.push_str(&format!("\nctor of {family}"));
-        }
-        if let Some(family) = self.recs.get(name) {
-            own.push_str(&format!("\nrec of {family}"));
-        }
-        let own = without_places(&own);
-        let mut parts = vec![own.clone()];
-        for dep in quoted(&own) {
-            if dep == name {
-                continue;
-            }
-            match self.interface(cache, &dep, visiting)? {
-                Some(h) => parts.push(format!("{dep}={h}")),
-                None => {}
-            }
-        }
-        visiting.pop();
-        let h = sha256_hex(parts.join("\n").as_bytes());
-        cache.interfaces.insert(name.to_string(), h.clone());
-        Some(Some(h))
+        self.cache
+            .as_mut()?
+            .occurrences
+            .insert(key.clone(), occurrences);
+        self.cache
+            .as_mut()?
+            .bindings
+            .insert(key.clone(), std::sync::Arc::new(references));
+        Some(key)
     }
 }
 
@@ -417,7 +689,7 @@ fn read_term(line: &str, at: Span) -> Option<T> {
     ) -> Option<T> {
         let count = |w: Option<&str>| w?.parse::<usize>().ok();
         let kind = match words.next()? {
-            "v" => TermKind::Var(words.next()?.to_string()),
+            "v" => TermKind::Var(crate::surface::Name::Spelled(words.next()?.to_string())),
             "n" => {
                 let n = words.next()?;
                 if !n.bytes().all(|b| b.is_ascii_digit()) {
@@ -464,7 +736,7 @@ fn read_term(line: &str, at: Span) -> Option<T> {
                 for _ in 0..k {
                     let n = match words.next()? {
                         "-" => None,
-                        n => Some(n.to_string()),
+                        n => Some(Name::from(n)),
                     };
                     params.push((n, next(words, at)?));
                 }
@@ -477,7 +749,7 @@ fn read_term(line: &str, at: Span) -> Option<T> {
             "l" => {
                 let k = count(words.next())?;
                 let params = (0..k)
-                    .map(|_| words.next().map(String::from))
+                    .map(|_| words.next().map(Name::from))
                     .collect::<Option<_>>()?;
                 TermKind::Lam {
                     params,
@@ -548,18 +820,6 @@ fn places(text: &str) -> impl Iterator<Item = (usize, u32, u32, usize)> + '_ {
 }
 
 /// Every name that may be a global's: the quoted strings of a `Debug` text.
-fn quoted(text: &str) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    let mut rest = text;
-    while let Some(i) = rest.find('"') {
-        let after = &rest[i + 1..];
-        let Some(j) = after.find('"') else { break };
-        out.insert(after[..j].to_string());
-        rest = &after[j + 1..];
-    }
-    out
-}
-
 /// A `Debug` text with every `Span { start: …, end: … }` left out, so that
 /// moving a declaration in its file does not change it.
 pub(super) fn without_places(text: &str) -> String {
@@ -577,7 +837,7 @@ pub(super) fn without_places(text: &str) -> String {
         }
     }
     out.push_str(rest);
-    fresh_in_order(&out)
+    tauto_identity::refs_in_order(&fresh_in_order(&out))
 }
 
 /// `text` with the names the checker made up (`x'42`, `?'7`) numbered in
@@ -615,6 +875,43 @@ mod tests {
     use super::*;
     use crate::surface::parse_program_as_written as parse_program;
 
+    #[test]
+    fn field_sites_restore_reference_occurrence_and_relative_position() {
+        let dir = std::env::temp_dir().join(format!("tauto-cache-fields-{}", std::process::id()));
+        let mut cache = Cache::at(dir.clone());
+        let family = tauto_surface::bindings::library_name("Nat");
+        let original = T::var(&family, Span { start: 10, end: 15 });
+        cache.bindings.insert(
+            "projection".into(),
+            std::sync::Arc::new(References::new(vec![family.clone()]).unwrap()),
+        );
+        cache
+            .occurrences
+            .insert("projection".into(), vec![original.id()]);
+        cache.put_fields(
+            "projection",
+            &[FieldSite {
+                occurrence: original.id(),
+                span: original.span,
+                family: family.clone(),
+            }],
+            10,
+        );
+        let reread = T::var(&family, Span { start: 30, end: 35 });
+        cache
+            .occurrences
+            .insert("projection".into(), vec![reread.id()]);
+        assert_eq!(
+            cache.get_fields("projection", 30).unwrap(),
+            vec![FieldSite {
+                occurrence: reread.id(),
+                span: reread.span,
+                family,
+            }]
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// The verdict of `name` in `source`, checked with the cache in `dir`.
     fn verdict(dir: &std::path::Path, source: &str, name: &str) -> Verdict {
         let mut k = Kernel::new();
@@ -623,7 +920,7 @@ mod tests {
         let entries = k.declare(&parse_program(source).unwrap(), false);
         entries
             .into_iter()
-            .find(|e| e.name == name)
+            .find(|e| e.name.as_str() == name)
             .unwrap()
             .verdict
     }
@@ -689,7 +986,7 @@ theorem t(): two() = 2 { Refl }
                 &dir,
                 r#"class C(A: Type) { fn m(a: A): Nat }
 instance C(Nat) { fn m(a: Nat): Nat { 1 } }
-theorem t(): C.m(Zero) = 1 { Refl }
+theorem t(): C::m(Zero) = 1 { Refl }
 "#,
                 "t"
             ),
@@ -700,7 +997,7 @@ theorem t(): C.m(Zero) = 1 { Refl }
                 &dir,
                 r#"class C(A: Type) { fn m(a: A): Nat }
 instance C(Nat) { fn m(a: Nat): Nat { 1 } }
-theorem t(): C.m(Zero) = 1 { Refl }
+theorem t(): C::m(Zero) = 1 { Refl }
 "#,
                 "t"
             ),
@@ -712,7 +1009,7 @@ theorem t(): C.m(Zero) = 1 { Refl }
                 &dir,
                 r#"class C(A: Type) { fn m(a: A): Nat }
 instance C(Nat) { fn m(a: Nat): Nat { 2 } }
-theorem t(): C.m(Zero) = 1 { Refl }
+theorem t(): C::m(Zero) = 1 { Refl }
 "#,
                 "t"
             ),
@@ -724,7 +1021,7 @@ theorem t(): C.m(Zero) = 1 { Refl }
                 &fresh,
                 r#"class C(A: Type) { fn m(a: A): Nat }
 instance C(Nat) { fn m(a: Nat): Nat { 2 } }
-theorem t(): C.m(Zero) = 1 { Refl }
+theorem t(): C::m(Zero) = 1 { Refl }
 "#,
                 "t"
             ),
@@ -742,7 +1039,10 @@ theorem t(): C.m(Zero) = 1 { Refl }
         let axiom = "axiom base(): Eq(Nat, 1, 1)\n\
                      theorem uses(): Eq(Nat, 1, 1) { base() }";
         let axioms = |src| match verdict(&dir, src, "uses") {
-            Verdict::Checked { axioms } => axioms,
+            Verdict::Checked { axioms } => axioms
+                .into_iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>(),
             v => panic!("{v:?}"),
         };
         assert_eq!(axioms(theorem), Vec::<String>::new());
@@ -762,11 +1062,17 @@ theorem t(): C.m(Zero) = 1 { Refl }
             src.join("lib.rs"),
             src.join("prelude.taut"),
         ];
-        files.extend(
-            std::fs::read_dir(src.join("check"))
-                .unwrap()
-                .map(|e| e.unwrap().path()),
-        );
+        let mut directories = vec![src.join("check")];
+        while let Some(directory) = directories.pop() {
+            for entry in std::fs::read_dir(directory).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    directories.push(path);
+                } else {
+                    files.push(path);
+                }
+            }
+        }
         for f in files {
             let text = std::fs::read_to_string(&f).unwrap();
             assert!(
@@ -840,7 +1146,11 @@ theorem t(): four() = 4 { Refl(Nat, 4) }
         }
         assert!(matches!(verdict(&dir, src, "two"), Verdict::Checked { .. }));
         for path in files() {
-            assert!(std::fs::read_to_string(path).unwrap().contains("Succ"));
+            assert!(
+                std::fs::read_to_string(path)
+                    .unwrap()
+                    .starts_with("terms-ids\n")
+            );
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

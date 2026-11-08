@@ -144,7 +144,7 @@ pub theorem ck_clone_bad_frame(c: Checker, span: TySpan): CkReadFrame(c, ck_clon
   )
 }
 
-pub fn leaf_lend_name(inner: SurfaceTerm): Text { match place_name(inner): Text { Some(w) => w
+pub fn leaf_lend_name(inner: SurfaceTerm): Text { ⊢ Text from match place_name(inner) { Some(w) => w
     None => "this" } }
 
 pub fn leaf_ck_check_lend(
@@ -183,7 +183,13 @@ pub theorem leaf_ck_check_lend_unf(
   inner: SurfaceTerm,
   env: List(Local),
   span: TySpan
-): ck_check_lend(c, mutable, inner, env, span) = leaf_ck_check_lend(c, mutable, inner, env, span) { Refl }
+): ck_check_lend(
+  c,
+  mutable,
+  inner,
+  env,
+  span
+) = leaf_ck_check_lend(c, mutable, inner, env, span) { Refl }
 
 pub theorem ck_check_lend_frame(
   c: Checker,
@@ -288,7 +294,12 @@ pub theorem leaf_ck_stored_borrow_unf(
   name: Text,
   resolved: Ty,
   value: SurfaceTerm
-): ck_stored_borrow(c, name, resolved, value) = leaf_ck_stored_borrow(c, name, resolved, value) { Refl }
+): ck_stored_borrow(
+  c,
+  name,
+  resolved,
+  value
+) = leaf_ck_stored_borrow(c, name, resolved, value) { Refl }
 
 pub theorem ck_stored_borrow_frame(
   c: Checker,
@@ -304,7 +315,7 @@ pub theorem ck_stored_borrow_frame(
 }
 
 pub fn leaf_number(c: Checker, original: Ty, span: TySpan, op: Text, r: Ty): Mut1(Unit, Checker) {
-  match r: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match r {
     TyInt(w) => mut1(Star, c)
     TyBool => ck_rewrap1(
       ck_error(c, cat5("`", op, "` of ", ty_show(original), ": not a number"), span)
@@ -361,7 +372,7 @@ pub theorem leaf_number_frame(
   op: Text,
   r: Ty
 ): CkReadFrame(c, leaf_number(c, original, span, op, r)) {
-  match r: CkReadFrame(c, leaf_number(c, original, span, op, r)) {
+  ⊢ CkReadFrame(c, leaf_number(c, original, span, op, r)) from match r {
     TyInt(w) => Refl
     TyBool => frame_rewrap(
       c,
@@ -460,7 +471,7 @@ pub theorem ck_number_frame(
 }
 
 pub fn leaf_div_var(c: Checker, span: TySpan, v: Nat, unknown: Bool): Mut1(Unit, Checker) {
-  match unknown: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match unknown {
     true => ck_rewrap1(ck_error(c, "the operands of `/` have no known type: write it", span))
     false => ck_rewrap1(
       ck_error(
@@ -478,7 +489,7 @@ pub theorem leaf_div_var_frame(
   v: Nat,
   unknown: Bool
 ): CkReadFrame(c, leaf_div_var(c, span, v, unknown)) {
-  match unknown: CkReadFrame(c, leaf_div_var(c, span, v, unknown)) {
+  ⊢ CkReadFrame(c, leaf_div_var(c, span, v, unknown)) from match unknown {
     true => frame_rewrap(
       c,
       ck_error(c, "the operands of `/` have no known type: write it", span),
@@ -501,7 +512,7 @@ pub theorem leaf_div_var_frame(
 }
 
 pub fn leaf_divide(c: Checker, span: TySpan, t: Ty): Mut1(Unit, Checker) {
-  match t: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match t {
     TyInt(w) => ck_rewrap1(
       ck_error(
         c,
@@ -618,7 +629,7 @@ pub theorem leaf_divide_frame(
   span: TySpan,
   t: Ty
 ): CkReadFrame(c, leaf_divide(c, span, t)) {
-  match t: CkReadFrame(c, leaf_divide(c, span, t)) {
+  ⊢ CkReadFrame(c, leaf_divide(c, span, t)) from match t {
     TyInt(w) => frame_rewrap(
       c,
       ck_error(
@@ -839,7 +850,7 @@ pub theorem ck_divide_frame(
 }
 
 pub fn leaf_clone_target(c: Checker, original: Ty, arg: SurfaceTerm, t: Ty): Mut1(Ty, Checker) {
-  match t: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match t {
     TyInt(w) => frame_bind(
       Unit,
       Ty,
@@ -952,7 +963,7 @@ pub theorem leaf_clone_target_frame(
   arg: SurfaceTerm,
   t: Ty
 ): CkReadFrame(c, leaf_clone_target(c, original, arg, t)) {
-  match t: CkReadFrame(c, leaf_clone_target(c, original, arg, t)) {
+  ⊢ CkReadFrame(c, leaf_clone_target(c, original, arg, t)) from match t {
     TyInt(w) => frame_bind_ok(
       Unit,
       Ty,
@@ -1114,7 +1125,11 @@ pub theorem leaf_clone_target_unf(
   c: Checker,
   t: Ty,
   arg: SurfaceTerm
-): ck_clone_target(c, t, arg) = leaf_clone_target(c, ck_resolve(c, t), arg, ck_resolve(c, t)) { Refl }
+): ck_clone_target(
+  c,
+  t,
+  arg
+) = leaf_clone_target(c, ck_resolve(c, t), arg, ck_resolve(c, t)) { Refl }
 
 pub theorem ck_clone_target_frame(
   c: Checker,
@@ -1129,7 +1144,7 @@ pub theorem ck_clone_target_frame(
 }
 
 pub fn leaf_clone_why(c: Checker, span: TySpan, why: Option(Text)): Mut1(Unit, Checker) {
-  match why: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match why {
     None => mut1(Star, c)
     Some(message) => ck_rewrap1(ck_error(c, message, span))
   }
@@ -1140,7 +1155,7 @@ pub theorem leaf_clone_why_frame(
   span: TySpan,
   why: Option(Text)
 ): CkReadFrame(c, leaf_clone_why(c, span, why)) {
-  match why: CkReadFrame(c, leaf_clone_why(c, span, why)) {
+  ⊢ CkReadFrame(c, leaf_clone_why(c, span, why)) from match why {
     None => Refl
     Some(message) => frame_rewrap(c, ck_error(c, message, span), ck_error_frame(c, message, span))
   }

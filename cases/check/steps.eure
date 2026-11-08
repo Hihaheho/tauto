@@ -1,0 +1,980 @@
+@ cases.a-goal-written-is-the-goal-up-to-computation-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+fn id_nat(n: Nat): Nat { n }
+theorem t(n: Nat): Succ(n) = Succ(n) {
+  by same!(): id_nat(Succ(n)) = Succ(n) {
+    ⊢ Succ(id_nat(n)) = Succ(n) from Refl
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::id_nat" = "ok"
+checks."input/main.taut::t" = "ok"
+
+@ cases.a-hole-in-an-arm-has-the-goal-written-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(n: Nat): n = n {
+  by same!(): n = n {
+    ⊢ n = n from ?rest
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "incomplete: ?rest"
+holes = [{ declaration => "t", file => "input/main.taut", name => "rest", goal => "n = n", context => ["n: Nat"] }]
+
+@ cases.a-step-is-written-in-a-proof-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+fn f(n: i64): i64 {
+  var m := n
+  by exact!(m): i64 {}
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::f" = "skipped"
+checks."input/main.taut::macro" = "error: "
+@ cases.a-step-is-written-in-a-proof-0.diagnostics[]
+file = "input/main.taut"
+name = "macro"
+message = "step.fragment: a step is written in a theorem, a `def` or a function of the kernel's language"
+
+@ cases.a-step-with-no-goal-left-is-its-tactic-term-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(n: Nat): n = n {
+  by exact!(Refl): n = n {}
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "ok"
+
+@ cases.a-tactic-is-called-after-by-and-only-a-tactic-is-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(n: Nat): n = n {
+  exact!(Refl)
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::macro" = "error: "
+@ cases.a-tactic-is-called-after-by-and-only-a-tactic-is-0.diagnostics[]
+file = "input/main.taut"
+name = "macro"
+message = "macro.argument: macro exact is a tactic: it is called as `by exact!(…): G { … }`"
+
+@ cases.a-tactic-is-called-after-by-and-only-a-tactic-is-1
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(n: Nat): n = n {
+  by plain!(Refl): n = n {}
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "incomplete: ?step"
+checks."input/main.taut::macro" = "error: "
+holes = [{ declaration => "t", file => "input/main.taut", name => "step", goal => "n = n", context => ["n: Nat"] }]
+@ cases.a-tactic-is-called-after-by-and-only-a-tactic-is-1.diagnostics[]
+file = "input/main.taut"
+name = "macro"
+message = "step.tactic: macro plain is not a tactic: its function does not take a ProofStep and make a SynExpr"
+
+@ cases.a-variable-the-arm-does-not-write-is-rejected-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(): ∀ n: Nat. n = n {
+  by intro_x!(): ∀ n: Nat. n = n {
+    ⊢ n = n from Refl
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "incomplete: ?step"
+checks."input/main.taut::macro" = "error: "
+holes = [{ declaration => "t", file => "input/main.taut", name => "step", goal => "(n: Nat) -> n = n", context => [] }]
+@ cases.a-variable-the-arm-does-not-write-is-rejected-0.diagnostics[]
+file = "input/main.taut"
+name = "macro"
+message = "step.context_mismatch: arm 1: the tactic adds [x#1], and the arm writes []"
+fix = "x#1: Nat ⊢ x#1 = x#1"
+fix_span = "⊢ n = n"
+
+@ cases.a-wrong-goal-before-is-rejected-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(n: Nat): n = n {
+  by exact!(Refl): Succ(n) = Succ(n) {}
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "incomplete: ?step"
+checks."input/main.taut::macro" = "error: "
+holes = [{ declaration => "t", file => "input/main.taut", name => "step", goal => "n = n", context => ["n: Nat"] }]
+@ cases.a-wrong-goal-before-is-rejected-0.diagnostics[]
+file = "input/main.taut"
+name = "macro"
+message = "step.before_mismatch: the goal written is not the goal here: here `n = n`, written `Succ(n) = Succ(n)` (type mismatch: expected `Succ(n) = Succ(n)`, found `n = n`\n  differing part: expected `Succ(n)`, found `n`)"
+
+@ cases.a-wrong-goal-comes-with-the-edit-that-writes-the-tactics-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(n: Nat): n = n {
+  by same!(): n = n {
+    ⊢ Succ(n) = n from ?rest
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "incomplete: ?step"
+checks."input/main.taut::macro" = "error: "
+holes = [{ declaration => "t", file => "input/main.taut", name => "step", goal => "n = n", context => ["n: Nat"] }]
+@ cases.a-wrong-goal-comes-with-the-edit-that-writes-the-tactics-0.diagnostics[]
+file = "input/main.taut"
+name = "macro"
+message = "step.goal_mismatch: arm 1: the tactic leaves `n = n`, and the arm writes `Succ(n) = n` (type mismatch: expected `Succ(n) = n`, found `n = n`\n  differing part: expected `Succ(n)`, found `n`)"
+fix = "⊢ n = n"
+fix_span = "⊢ Succ(n) = n"
+
+@ cases.a-wrong-goal-is-rejected-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(n: Nat): n = n {
+  by same!(): n = n {
+    ⊢ Succ(n) = n from ?rest
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "incomplete: ?step"
+checks."input/main.taut::macro" = "error: "
+holes = [{ declaration => "t", file => "input/main.taut", name => "step", goal => "n = n", context => ["n: Nat"] }]
+@ cases.a-wrong-goal-is-rejected-0.diagnostics[]
+file = "input/main.taut"
+name = "macro"
+message = "step.goal_mismatch: arm 1: the tactic leaves `n = n`, and the arm writes `Succ(n) = n` (type mismatch: expected `Succ(n) = n`, found `n = n`\n  differing part: expected `Succ(n)`, found `n`)"
+fix = "⊢ n = n"
+fix_span = "⊢ Succ(n) = n"
+
+@ cases.a-wrong-variable-comes-with-the-edit-too-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(): ∀ n: Nat. n = n {
+  by intro!(): ∀ n: Nat. n = n {
+    m: Bool ⊢ m = m from Refl
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "incomplete: ?step"
+checks."input/main.taut::macro" = "error: "
+holes = [{ declaration => "t", file => "input/main.taut", name => "step", goal => "(n: Nat) -> n = n", context => [] }]
+@ cases.a-wrong-variable-comes-with-the-edit-too-0.diagnostics[]
+file = "input/main.taut"
+name = "macro"
+message = "step.context_mismatch: arm 1: `m` is a `Nat`, and the arm writes `Bool` (type mismatch: expected `Bool`, found `Nat`)"
+fix = "m: Nat ⊢ m = m"
+fix_span = "m: Bool ⊢ m = m"
+
+@ cases.a-wrong-variable-comes-with-the-edit-too-1
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(): ∀ n: Nat. n = n {
+  by intro!(): ∀ n: Nat. n = n {
+    m: Nat ⊢ m = m from Refl
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "ok"
+
+@ cases.an-arm-proved-by-a-step-starts-from-the-arm-goal-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(n: Nat): n = n {
+  by same!(): n = n {
+    ⊢ n = n from by exact!(Refl) {}
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "ok"
+
+@ cases.nat-norm-does-not-prove-what-is-not-an-equation-of-the-semiring-0
+imports = [path`../../std/Base.taut`, path`../../std/Tactic.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem bad(a: Nat, b: Nat): Nat::add(a, b) = Nat::mul(a, b) {
+  by nat_norm!(): Nat::add(a, b) = Nat::mul(a, b) {}
+}
+theorem not_nat(a: Nat): true = true {
+  by nat_norm!(): true = true {}
+}
+theorem an_arm(a: Nat): a = a {
+  by nat_norm!(): a = a {
+    ⊢ a = a from Refl
+  }
+}
+```
+
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+checks."std/Rewrite.taut::rewrite" = "skipped"
+checks."std/Rewrite.taut::Tac::motive" = "skipped"
+checks."std/Rewrite.taut::Tac::same_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_all_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::replace_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::replace_all_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_sides" = "skipped"
+checks."std/Rewrite.taut::Tac::elaborated" = "skipped"
+checks."std/Rewrite.taut::Tac::eq_sides" = "skipped"
+checks."std/Rewrite.taut::Tac::sides" = "skipped"
+checks."std/Rewrite.taut::Tac::eq_goal" = "skipped"
+checks."std/Rewrite.taut::Tac::two" = "skipped"
+checks."std/Rewrite.taut::Tac::typed" = "skipped"
+checks."std/Tactic.taut::nat_norm" = "skipped"
+checks."std/Tactic.taut::nat_le" = "skipped"
+checks."std/Tactic.taut::Tac::nat_le_goal" = "skipped"
+checks."std/Tactic.taut::Tac::nat_le_sides" = "skipped"
+checks."std/Tactic.taut::Tac::nat_norm_sides" = "skipped"
+checks."std/Tactic.taut::Tac::nn_read" = "skipped"
+checks."std/Tactic.taut::Tac::nn_call" = "skipped"
+checks."std/Tactic.taut::Tac::nn_var" = "skipped"
+checks."std/Tactic.taut::Tac::nn_var_expr" = "skipped"
+checks."std/Tactic.taut::Tac::nn_index" = "skipped"
+checks."std/Tactic.taut::Tac::nn_length" = "skipped"
+checks."std/Tactic.taut::Tac::nn_nat" = "skipped"
+checks."std/Tactic.taut::Tac::nn_list" = "skipped"
+checks."input/main.taut::bad" = "incomplete: ?step"
+checks."input/main.taut::not_nat" = "incomplete: ?step"
+checks."input/main.taut::an_arm" = "incomplete: ?step"
+checks."input/main.taut::macro#1" = "error: "
+checks."input/main.taut::macro#2" = "error: "
+checks."input/main.taut::macro#3" = "error: "
+holes = [{ declaration => "bad", file => "input/main.taut", name => "step", goal => "Nat::add(a, b) = Nat::mul(a, b)", context => ["a: Nat", "b: Nat"] }, { declaration => "not_nat", file => "input/main.taut", name => "step", goal => "r#true = r#true", context => ["a: Nat"] }, { declaration => "an_arm", file => "input/main.taut", name => "step", goal => "a = a", context => ["a: Nat"] }]
+@ cases.nat-norm-does-not-prove-what-is-not-an-equation-of-the-semiring-0.diagnostics[]
+file = "input/main.taut"
+name = "macro"
+message = "macro.error: nat_norm!: the two sides are not equal as polynomials of Nat (anything that is not `+`, `*`, `Succ`, `Zero` or a numeral is one variable): type mismatch: expected `Nat::add(a, b) = Nat::mul(a, b)`, found `Nat::add(a, b) = Nat::add(a, b)`\n  differing part: expected `a * b`, found `a + b`"
+@ cases.nat-norm-does-not-prove-what-is-not-an-equation-of-the-semiring-0.diagnostics[]
+file = "input/main.taut"
+name = "macro"
+message = "macro.error: nat_norm!: the goal is not an equation of Nat"
+@ cases.nat-norm-does-not-prove-what-is-not-an-equation-of-the-semiring-0.diagnostics[]
+file = "input/main.taut"
+name = "macro"
+message = "macro.error: nat_norm! leaves no goal: write no arm"
+
+@ cases.nat-norm-proves-the-equations-of-the-semiring-0
+imports = [path`../../std/Base.taut`, path`../../std/Tactic.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn double(n: Nat): Nat { Nat::add(n, n) }
+theorem square(a: Nat, b: Nat): Nat::mul(Nat::add(a, b), Nat::add(a, b)) = Nat::add(Nat::add(Nat::mul(a, a), Nat::mul(b, b)), Nat::mul(2, Nat::mul(a, b))) {
+  by nat_norm!(): Nat::mul(Nat::add(a, b), Nat::add(a, b)) = Nat::add(Nat::add(Nat::mul(a, a), Nat::mul(b, b)), Nat::mul(2, Nat::mul(a, b))) {}
+}
+theorem calls_are_variables(a: Nat, b: Nat): Nat::add(Succ(a), Nat::mul(2, double(b))) = Nat::add(Nat::mul(2, double(b)), Succ(a)) {
+  by nat_norm!(): Nat::add(Succ(a), Nat::mul(2, double(b))) = Nat::add(Nat::mul(2, double(b)), Succ(a)) {}
+}
+theorem operators(a: Nat, b: Nat): (a + b) * (a + b) = a * a + 2 * a * b + b * b {
+  by nat_norm!(): (a + b) * (a + b) = a * a + 2 * a * b + b * b {}
+}
+theorem in_a_chain(a: Nat, b: Nat, h: a = b): Nat::add(Nat::mul(a, a), Nat::mul(a, b)) = Nat::mul(a, Nat::add(b, b)) {
+  by rewrite!(h): Nat::add(Nat::mul(a, a), Nat::mul(a, b)) = Nat::mul(a, Nat::add(b, b)) {
+    ⊢ Nat::add(Nat::mul(b, b), Nat::mul(b, b)) = Nat::mul(b, Nat::add(b, b)) from by nat_norm!() {}
+  }
+}
+```
+
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+checks."std/Rewrite.taut::rewrite" = "skipped"
+checks."std/Rewrite.taut::Tac::motive" = "skipped"
+checks."std/Rewrite.taut::Tac::same_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_all_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::replace_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::replace_all_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_sides" = "skipped"
+checks."std/Rewrite.taut::Tac::elaborated" = "skipped"
+checks."std/Rewrite.taut::Tac::eq_sides" = "skipped"
+checks."std/Rewrite.taut::Tac::sides" = "skipped"
+checks."std/Rewrite.taut::Tac::eq_goal" = "skipped"
+checks."std/Rewrite.taut::Tac::two" = "skipped"
+checks."std/Rewrite.taut::Tac::typed" = "skipped"
+checks."std/Tactic.taut::nat_norm" = "skipped"
+checks."std/Tactic.taut::nat_le" = "skipped"
+checks."std/Tactic.taut::Tac::nat_le_goal" = "skipped"
+checks."std/Tactic.taut::Tac::nat_le_sides" = "skipped"
+checks."std/Tactic.taut::Tac::nat_norm_sides" = "skipped"
+checks."std/Tactic.taut::Tac::nn_read" = "skipped"
+checks."std/Tactic.taut::Tac::nn_call" = "skipped"
+checks."std/Tactic.taut::Tac::nn_var" = "skipped"
+checks."std/Tactic.taut::Tac::nn_var_expr" = "skipped"
+checks."std/Tactic.taut::Tac::nn_index" = "skipped"
+checks."std/Tactic.taut::Tac::nn_length" = "skipped"
+checks."std/Tactic.taut::Tac::nn_nat" = "skipped"
+checks."std/Tactic.taut::Tac::nn_list" = "skipped"
+checks."input/main.taut::double" = "ok"
+checks."input/main.taut::square" = "ok"
+checks."input/main.taut::calls_are_variables" = "ok"
+checks."input/main.taut::operators" = "ok"
+checks."input/main.taut::in_a_chain" = "ok"
+
+@ cases.rewrite-rejects-goals-that-differ-otherwise-0
+imports = [path`../../std/Base.taut`, path`../../std/Nat.taut`, path`../../std/Tactic.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem bad(a: Nat, b: Nat, h: a = b): Nat::add(a, Zero) = a {
+  by rewrite!(h): Nat::add(a, Zero) = a {
+    ⊢ Nat::add(b, Succ(Zero)) = b from ?rest
+  }
+}
+```
+
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+checks."std/Rewrite.taut::rewrite" = "skipped"
+checks."std/Rewrite.taut::Tac::motive" = "skipped"
+checks."std/Rewrite.taut::Tac::same_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_all_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::replace_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::replace_all_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_sides" = "skipped"
+checks."std/Rewrite.taut::Tac::elaborated" = "skipped"
+checks."std/Rewrite.taut::Tac::eq_sides" = "skipped"
+checks."std/Rewrite.taut::Tac::sides" = "skipped"
+checks."std/Rewrite.taut::Tac::eq_goal" = "skipped"
+checks."std/Rewrite.taut::Tac::two" = "skipped"
+checks."std/Rewrite.taut::Tac::typed" = "skipped"
+checks."std/Tactic.taut::nat_norm" = "skipped"
+checks."std/Tactic.taut::nat_le" = "skipped"
+checks."std/Tactic.taut::Tac::nat_le_goal" = "skipped"
+checks."std/Tactic.taut::Tac::nat_le_sides" = "skipped"
+checks."std/Tactic.taut::Tac::nat_norm_sides" = "skipped"
+checks."std/Tactic.taut::Tac::nn_read" = "skipped"
+checks."std/Tactic.taut::Tac::nn_call" = "skipped"
+checks."std/Tactic.taut::Tac::nn_var" = "skipped"
+checks."std/Tactic.taut::Tac::nn_var_expr" = "skipped"
+checks."std/Tactic.taut::Tac::nn_index" = "skipped"
+checks."std/Tactic.taut::Tac::nn_length" = "skipped"
+checks."std/Tactic.taut::Tac::nn_nat" = "skipped"
+checks."std/Tactic.taut::Tac::nn_list" = "skipped"
+checks."input/main.taut::bad" = "incomplete: ?step"
+checks."input/main.taut::macro#1" = "error: "
+holes = [{ declaration => "bad", file => "input/main.taut", name => "step", goal => "Nat::add(a, Zero) = a", context => ["a: Nat", "b: Nat", "h: a = b"] }]
+@ cases.rewrite-rejects-goals-that-differ-otherwise-0.diagnostics[]
+file = "input/main.taut"
+name = "macro"
+message = "macro.error: rewrite!: the two goals differ other than by the equation; write one step for each equation"
+
+@ cases.rewrite-writes-the-motive-from-the-two-goals-0
+imports = [path`../../std/Base.taut`, path`../../std/Nat.taut`, path`../../std/Tactic.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem comm(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(b, a) {
+  ⊢ Nat::add(a, b) = Nat::add(b, a) from match b {
+    Zero => Eq::sym(Nat::add_zero_left(a))
+    Succ(k) => by rewrite!(comm(a, k)): Succ(Nat::add(a, k)) = Nat::add(Succ(k), a) {
+      ⊢ Succ(Nat::add(k, a)) = Nat::add(Succ(k), a) from by rewrite!(Nat::add_succ_left(k, a)) {
+      ⊢ Succ(Nat::add(k, a)) = Succ(Nat::add(k, a)) from Refl
+    }}
+  }
+}
+
+theorem twice(a: Nat, b: Nat, h: a = b): Nat::add(a, a) = Nat::add(b, b) {
+  by rewrite!(h): Nat::add(a, a) = Nat::add(b, b) {
+    ⊢ Nat::add(b, b) = Nat::add(b, b) from Refl
+  }
+}
+
+theorem one_side(a: Nat, b: Nat, h: a = b): Nat::add(a, a) = Nat::add(b, a) {
+  by rewrite!(h): Nat::add(a, a) = Nat::add(b, a) {
+    ⊢ Nat::add(b, a) = Nat::add(b, a) from Refl
+  }
+}
+```
+
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+checks."std/Rewrite.taut::rewrite" = "skipped"
+checks."std/Rewrite.taut::Tac::motive" = "skipped"
+checks."std/Rewrite.taut::Tac::same_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_all_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::replace_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::replace_all_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_sides" = "skipped"
+checks."std/Rewrite.taut::Tac::elaborated" = "skipped"
+checks."std/Rewrite.taut::Tac::eq_sides" = "skipped"
+checks."std/Rewrite.taut::Tac::sides" = "skipped"
+checks."std/Rewrite.taut::Tac::eq_goal" = "skipped"
+checks."std/Rewrite.taut::Tac::two" = "skipped"
+checks."std/Rewrite.taut::Tac::typed" = "skipped"
+checks."std/Tactic.taut::nat_norm" = "skipped"
+checks."std/Tactic.taut::nat_le" = "skipped"
+checks."std/Tactic.taut::Tac::nat_le_goal" = "skipped"
+checks."std/Tactic.taut::Tac::nat_le_sides" = "skipped"
+checks."std/Tactic.taut::Tac::nat_norm_sides" = "skipped"
+checks."std/Tactic.taut::Tac::nn_read" = "skipped"
+checks."std/Tactic.taut::Tac::nn_call" = "skipped"
+checks."std/Tactic.taut::Tac::nn_var" = "skipped"
+checks."std/Tactic.taut::Tac::nn_var_expr" = "skipped"
+checks."std/Tactic.taut::Tac::nn_index" = "skipped"
+checks."std/Tactic.taut::Tac::nn_length" = "skipped"
+checks."std/Tactic.taut::Tac::nn_nat" = "skipped"
+checks."std/Tactic.taut::Tac::nn_list" = "skipped"
+checks."input/main.taut::comm" = "ok"
+checks."input/main.taut::twice" = "ok"
+checks."input/main.taut::one_side" = "ok"
+
+@ cases.rewrite-reads-an-equation-whose-sides-are-calls-with-implicit-arguments-0
+imports = [path`../../std/Base.taut`, path`../../std/List.taut`, path`../../std/Nat.taut`, path`../../std/Tactic.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem under_a_call<A: Type>(l: List(A), n: Nat, h: List::length(l) = n): List::length(List::reverse(l)) = n {
+  by rewrite!(List::length_reverse(l)): List::length(List::reverse(l)) = n {
+    ⊢ List::length(l) = n from h
+  }
+}
+
+theorem under_an_operator(a: Nat, b: Nat, c: Nat, h: a + b = c): b + a = c {
+  by rewrite!(Nat::add_comm(b, a)): b + a = c {
+    ⊢ Nat::add(a, b) = c from h
+  }
+}
+```
+
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+checks."std/Rewrite.taut::rewrite" = "skipped"
+checks."std/Rewrite.taut::Tac::motive" = "skipped"
+checks."std/Rewrite.taut::Tac::same_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_all_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::replace_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::replace_all_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_sides" = "skipped"
+checks."std/Rewrite.taut::Tac::elaborated" = "skipped"
+checks."std/Rewrite.taut::Tac::eq_sides" = "skipped"
+checks."std/Rewrite.taut::Tac::sides" = "skipped"
+checks."std/Rewrite.taut::Tac::eq_goal" = "skipped"
+checks."std/Rewrite.taut::Tac::two" = "skipped"
+checks."std/Rewrite.taut::Tac::typed" = "skipped"
+checks."std/Tactic.taut::nat_norm" = "skipped"
+checks."std/Tactic.taut::Tac::nat_norm_sides" = "skipped"
+checks."std/Tactic.taut::Tac::nn_read" = "skipped"
+checks."std/Tactic.taut::Tac::nn_call" = "skipped"
+checks."std/Tactic.taut::Tac::nn_var" = "skipped"
+checks."std/Tactic.taut::Tac::nn_var_expr" = "skipped"
+checks."std/Tactic.taut::Tac::nn_index" = "skipped"
+checks."std/Tactic.taut::Tac::nn_length" = "skipped"
+checks."std/Tactic.taut::Tac::nn_nat" = "skipped"
+checks."std/Tactic.taut::Tac::nn_list" = "skipped"
+checks."std/Tactic.taut::nat_le" = "skipped"
+checks."std/Tactic.taut::Tac::nat_le_goal" = "skipped"
+checks."std/Tactic.taut::Tac::nat_le_sides" = "skipped"
+checks."input/main.taut::under_a_call" = "ok"
+checks."input/main.taut::under_an_operator" = "ok"
+@ cases.the-goal-before-is-written-once-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(n: Nat): n = n {
+  by exact!(Refl) {}
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "incomplete: ?step"
+checks."input/main.taut::macro" = "error: "
+holes = [{ declaration => "t", file => "input/main.taut", name => "step", goal => "n = n", context => ["n: Nat"] }]
+@ cases.the-goal-before-is-written-once-0.diagnostics[]
+file = "input/main.taut"
+name = "macro"
+message = "step.before: write the goal the step starts from: `by t!(…): G { … }`"
+
+@ cases.the-goal-before-is-written-once-1
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(n: Nat): n = n {
+  by same!(): n = n {
+    ⊢ n = n from by exact!(Refl): n = n {}
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "incomplete: ?step"
+checks."input/main.taut::macro" = "error: "
+holes = [{ declaration => "t", file => "input/main.taut", name => "step", goal => "n = n", context => ["n: Nat"] }]
+@ cases.the-goal-before-is-written-once-1.diagnostics[]
+file = "input/main.taut"
+name = "macro"
+message = "step.before: the arm's goal is the goal of the step that proves it; leave out `: …`"
+
+@ cases.the-holes-a-tactic-leaves-are-the-arms-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(n: Nat): n = n {
+  by none!(): n = n {
+    ⊢ n = n from Refl
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "incomplete: ?step"
+checks."input/main.taut::macro" = "error: "
+holes = [{ declaration => "t", file => "input/main.taut", name => "step", goal => "n = n", context => ["n: Nat"] }]
+@ cases.the-holes-a-tactic-leaves-are-the-arms-0.diagnostics[]
+file = "input/main.taut"
+name = "macro"
+message = "step.holes: the step has 1 arm(s), and the tactic left the holes []; it leaves `?arm1` … `?arm1`, each once"
+
+@ cases.a-step-sees-a-file-before-with-a-forward-reference-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/fwd.taut" = ```tauto
+pub fn twice(n: Nat): Nat { plus_one(plus_one(n)) }
+pub fn plus_one(n: Nat): Nat { Succ(n) }
+```
+files."input/main.taut" = ```tauto
+import "lib.taut"
+import "fwd.taut"
+theorem t(n: Nat): twice(n) = Succ(Succ(n)) {
+  by same!(): twice(n) = Succ(Succ(n)) {
+    ⊢ Succ(Succ(n)) = Succ(Succ(n)) from Refl
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/fwd.taut::twice" = "ok"
+checks."input/fwd.taut::plus_one" = "ok"
+checks."input/main.taut::t" = "ok"
+
+@ cases.an-instance-the-macro-library-cannot-run-does-not-stop-a-step-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/arith.taut" = ```tauto
+class Arith(A: Type) {
+  fn zero(): A
+}
+instance Arith(Nat) {
+  fn zero(): Nat { 0 }
+}
+instance Arith(Float) {
+  fn zero(): Float { 0.0 }
+}
+```
+files."input/main.taut" = ```tauto
+import "lib.taut"
+import "arith.taut"
+theorem t(n: Nat): n = n {
+  by exact!(Refl): n = n {}
+}
+```
+
+checks."input/arith.taut::Arith::zero@Float" = "skipped"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "ok"
+
+@ cases.nat-le-proves-the-inequalities-of-the-semiring-0
+imports = [path`../../std/Base.taut`, path`../../std/Tactic.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem add_right(a: Nat, b: Nat): a <= a + b = true {
+  by nat_le!(): a <= a + b = true {}
+}
+theorem square(a: Nat, b: Nat): (a + b) * (a + b) <= a * a + 2 * a * b + b * b + 3 = true {
+  by nat_le!(): (a + b) * (a + b) <= a * a + 2 * a * b + b * b + 3 = true {}
+}
+theorem strict(a: Nat): a < a + 1 = true {
+  by nat_le!(): a < a + 1 = true {}
+}
+theorem named(a: Nat, b: Nat): Nat::le(a * b, b * a + a) = true {
+  by nat_le!(): Nat::le(a * b, b * a + a) = true {}
+}
+```
+
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+checks."std/Rewrite.taut::rewrite" = "skipped"
+checks."std/Rewrite.taut::Tac::motive" = "skipped"
+checks."std/Rewrite.taut::Tac::same_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_all_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::replace_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::replace_all_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_sides" = "skipped"
+checks."std/Rewrite.taut::Tac::elaborated" = "skipped"
+checks."std/Rewrite.taut::Tac::eq_sides" = "skipped"
+checks."std/Rewrite.taut::Tac::sides" = "skipped"
+checks."std/Rewrite.taut::Tac::eq_goal" = "skipped"
+checks."std/Rewrite.taut::Tac::two" = "skipped"
+checks."std/Rewrite.taut::Tac::typed" = "skipped"
+checks."std/Tactic.taut::nat_norm" = "skipped"
+checks."std/Tactic.taut::nat_le" = "skipped"
+checks."std/Tactic.taut::Tac::nat_le_goal" = "skipped"
+checks."std/Tactic.taut::Tac::nat_le_sides" = "skipped"
+checks."std/Tactic.taut::Tac::nat_norm_sides" = "skipped"
+checks."std/Tactic.taut::Tac::nn_read" = "skipped"
+checks."std/Tactic.taut::Tac::nn_call" = "skipped"
+checks."std/Tactic.taut::Tac::nn_var" = "skipped"
+checks."std/Tactic.taut::Tac::nn_var_expr" = "skipped"
+checks."std/Tactic.taut::Tac::nn_index" = "skipped"
+checks."std/Tactic.taut::Tac::nn_length" = "skipped"
+checks."std/Tactic.taut::Tac::nn_nat" = "skipped"
+checks."std/Tactic.taut::Tac::nn_list" = "skipped"
+checks."input/main.taut::add_right" = "ok"
+checks."input/main.taut::square" = "ok"
+checks."input/main.taut::strict" = "ok"
+checks."input/main.taut::named" = "ok"
+
+@ cases.nat-le-does-not-prove-what-the-normal-forms-do-not-show-0
+imports = [path`../../std/Base.taut`, path`../../std/Tactic.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem unrelated(a: Nat, b: Nat): a <= b = true {
+  by nat_le!(): a <= b = true {}
+}
+theorem not_strict(a: Nat): a < a = true {
+  by nat_le!(): a < a = true {}
+}
+theorem not_an_inequality(a: Nat): a = a {
+  by nat_le!(): a = a {}
+}
+theorem an_arm(a: Nat): a <= a = true {
+  by nat_le!(): a <= a = true {
+    ⊢ a = a from Refl
+  }
+}
+```
+
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+checks."std/Rewrite.taut::rewrite" = "skipped"
+checks."std/Rewrite.taut::Tac::motive" = "skipped"
+checks."std/Rewrite.taut::Tac::same_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_all_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::replace_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::replace_all_checked" = "skipped"
+checks."std/Rewrite.taut::Tac::abstract_sides" = "skipped"
+checks."std/Rewrite.taut::Tac::elaborated" = "skipped"
+checks."std/Rewrite.taut::Tac::eq_sides" = "skipped"
+checks."std/Rewrite.taut::Tac::sides" = "skipped"
+checks."std/Rewrite.taut::Tac::eq_goal" = "skipped"
+checks."std/Rewrite.taut::Tac::two" = "skipped"
+checks."std/Rewrite.taut::Tac::typed" = "skipped"
+checks."std/Tactic.taut::nat_norm" = "skipped"
+checks."std/Tactic.taut::nat_le" = "skipped"
+checks."std/Tactic.taut::Tac::nat_le_goal" = "skipped"
+checks."std/Tactic.taut::Tac::nat_le_sides" = "skipped"
+checks."std/Tactic.taut::Tac::nat_norm_sides" = "skipped"
+checks."std/Tactic.taut::Tac::nn_read" = "skipped"
+checks."std/Tactic.taut::Tac::nn_call" = "skipped"
+checks."std/Tactic.taut::Tac::nn_var" = "skipped"
+checks."std/Tactic.taut::Tac::nn_var_expr" = "skipped"
+checks."std/Tactic.taut::Tac::nn_index" = "skipped"
+checks."std/Tactic.taut::Tac::nn_length" = "skipped"
+checks."std/Tactic.taut::Tac::nn_nat" = "skipped"
+checks."std/Tactic.taut::Tac::nn_list" = "skipped"
+checks."input/main.taut::unrelated" = "incomplete: ?step"
+checks."input/main.taut::not_strict" = "incomplete: ?step"
+checks."input/main.taut::not_an_inequality" = "incomplete: ?step"
+checks."input/main.taut::an_arm" = "incomplete: ?step"
+checks."input/main.taut::macro#1" = "error: "
+checks."input/main.taut::macro#2" = "error: "
+checks."input/main.taut::macro#3" = "error: "
+checks."input/main.taut::macro#4" = "error: "
+
+@ cases.a-step-a-macro-makes-runs-as-a-written-one-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(n: Nat): n = n {
+  plain!(by exact!(Refl): n = n {})
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "ok"
+
+@ cases.a-tactic-makes-no-step-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(n: Nat): n = n {
+  by exact!(by exact!(Refl): n = n {}): n = n {}
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "incomplete: ?step"
+checks."input/main.taut::macro" = "error: "
+@ cases.a-tactic-makes-no-step-0.diagnostics[]
+file = "input/main.taut"
+name = "macro"
+message = "step.nested: a tactic's output has no step: it makes a term with a hole for each arm"
+
+@ cases.a-goal-through-a-let-stays-the-goal-when-a-later-step-is-checked-0
+entry = "input/main.taut"
+files."input/lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."input/main.taut" = ```tauto
+import "lib.taut"
+theorem t(n: Nat): Succ(n) = Succ(n) {
+  let m: Nat := Succ(n)
+  let s1: m = m := by exact!(Refl): Succ(n) = Succ(n) {}
+  let s2: m = m := by exact!(Refl): Succ(n) = Succ(n) {}
+  Eq::trans(s1, s2)
+}
+```
+
+checks_all = "ok"
+checks."input/lib.taut::exact" = "skipped"
+checks."input/lib.taut::same" = "skipped"
+checks."input/lib.taut::intro" = "skipped"
+checks."input/lib.taut::intro_x" = "skipped"
+checks."input/lib.taut::none" = "skipped"
+checks."input/lib.taut::plain" = "skipped"
+checks."input/main.taut::t" = "ok"

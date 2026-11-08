@@ -36,6 +36,13 @@ impl Gen<'_> {
                 let at = self.loc(c.span);
                 quote!(tauto_rt::host_tick(#at);)
             }
+            tauto_nir::Tick::Budget if fx.sync_budget => quote!(__tauto_fuel.tick()?;),
+            // A function of the O tier counts the steps of its budget as a
+            // call to itself would.
+            tauto_nir::Tick::Budget if fx.o => {
+                let at = self.loc(c.span);
+                quote!(tauto_rt::budget::tick(#at).await;)
+            }
             _ => Rs::new(),
         };
         let label = label();

@@ -42,7 +42,10 @@ impl Known {
         let find = |owner: &str, tag: &str| {
             p.ctors
                 .iter()
-                .find(|c| &*c.owner == owner && &*c.tag == tag)
+                .find(|c| {
+                    c.owner == tauto_nir::library_name(owner)
+                        && c.tag == tauto_nir::library_name(tag)
+                })
                 .cloned()
                 .expect("a constructor of the prelude")
         };
@@ -82,10 +85,10 @@ impl Known {
     pub fn err(&self, v: Value) -> Value {
         Self::make(&self.err, vec![v])
     }
-    pub fn result(&self, r: Result<Value, String>) -> Value {
+    pub fn result<E: std::fmt::Display>(&self, r: Result<Value, E>) -> Value {
         match r {
             Ok(v) => self.ok(v),
-            Err(e) => self.err(Value::text(&e)),
+            Err(e) => self.err(Value::text(&e.to_string())),
         }
     }
     pub fn pair(&self, a: Value, b: Value) -> Value {
@@ -150,6 +153,8 @@ pub const NAMES: &[&str] = &[
     "Bytes::get",
     "Bytes::slice",
     "Bytes::concat",
+    "Syn::same_declaration",
+    "Syn::eliminator",
     "Bytes::eq",
     "Bytes::of_text",
     "Text::of_bytes",
@@ -265,9 +270,13 @@ pub const NAMES: &[&str] = &[
     "Os::write_file",
     "Os::read_bytes",
     "Os::write_bytes",
+    "Os::read_under",
+    "Os::read_bytes_under",
     "Os::create_dir",
     "Os::remove",
     "Os::stat",
+    "Os::read_link",
+    "Os::write_new",
     "Os::move_path",
     "Os::copy_file",
     "Os::canonicalize",
@@ -275,6 +284,7 @@ pub const NAMES: &[&str] = &[
     "Os::read_line",
     "Os::read_stdin",
     "Os::flush",
+    "Os::on_shutdown",
     "Os::env",
     "Os::wall_ms",
     "Os::monotonic_ns",
@@ -298,6 +308,11 @@ pub const NAMES: &[&str] = &[
     "MutexGuard::claimed",
     "MutexGuard::get",
     "MutexGuard::get_mut",
+    "Signal::fresh",
+    "Signal::raise",
+    "Signal::is_raised",
+    "Signal::either",
+    "Signal::listen",
 ];
 
 fn pending(v: &Value) -> R<Rc<Pending>> {
@@ -517,6 +532,11 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
             out.extend_from_slice(&y);
             v(Value::Bytes(Rc::from(out)))
         }
+        "Syn::same_declaration" => v(Value::Bool(crate::value::equal(&a[0], &a[1])?)),
+        "Syn::eliminator" => match a[0].get()? {
+            Value::Declaration(d) => v(Value::Declaration(tauto_rt::stdlib::syn_eliminator(d))),
+            other => fail(format!("internal: expected a declaration reference, got {}", other.kind())),
+        },
         "Bytes::eq" => v(Value::Bool(bytes(&a[0])? == bytes(&a[1])?)),
         "Bytes::of_text" => v(Value::Bytes(Rc::from(a[0].as_text()?.as_bytes()))),
         "Text::of_bytes" => v(k.option(text_of_utf8(&bytes(&a[0])?))),
@@ -791,6 +811,18 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
                 .write_bytes(&a[0].as_text()?, &bytes(&a[1])?)
                 .map(|()| Value::Unit),
         )),
+        "Os::read_under" => v(k.result(
+            tauto_rt::stdlib::os_read_under(
+                tauto_rt::Text::from(&*a[0].as_text()?),
+                tauto_rt::Text::from(&*a[1].as_text()?),
+            )
+            .map(|t| Value::text(&t)),
+        )),
+        "Os::read_bytes_under" => v(k.result(
+            System
+                .read_bytes_under(&a[0].as_text()?, &a[1].as_text()?)
+                .map(|b| Value::Bytes(Rc::from(b))),
+        )),
         "Os::create_dir" => v(k.result(System.create_dir(&a[0].as_text()?).map(|()| Value::Unit))),
         "Os::remove" => v(k.result(System.remove(&a[0].as_text()?).map(|()| Value::Unit))),
         "Os::stat" => v(k.result(System.stat(&a[0].as_text()?).map(|found| {
@@ -804,6 +836,14 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
             };
             k.list(items.into_iter())
         }))),
+        "Os::read_link" => v(k.result(System.read_link(&a[0].as_text()?).map(|found| {
+            k.list(found.iter().map(|t| Value::text(t)).collect::<Vec<_>>().into_iter())
+        }))),
+        "Os::write_new" => v(k.result(
+            System
+                .create_new(&a[0].as_text()?, a[1].as_text()?.as_bytes())
+                .map(|()| Value::Unit),
+        )),
         "Os::move_path" => v(k.result(
             System
                 .rename(&a[0].as_text()?, &a[1].as_text()?)
@@ -822,17 +862,26 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
         // The run may read and write under the directory, as under one the
         // user picked (`Permissions::choose`).
         "Os::temp_dir" => {
-            let made = System.temp_dir().and_then(|dir| {
-                let p = m.host.permissions();
-                p.choose("read", &dir, true);
-                p.choose("write", &dir, true)
-                    .ok_or_else(|| format!("{dir}: cannot be resolved"))
-            });
+            let made = System
+                .temp_dir()
+                .map_err(|e| e.to_string())
+                .and_then(|dir| {
+                    let p = m.host.permissions();
+                    p.choose("read", &dir, true);
+                    p.choose("write", &dir, true)
+                        .ok_or_else(|| format!("{dir}: cannot be resolved"))
+                });
             v(k.result(made.map(|d| Value::text(&d))))
         }
         "Os::read_stdin" => v(Value::Bytes(Rc::from(
             System.read_stdin(a[0].as_int()?.clamp(0, 1 << 24) as usize),
         ))),
+        "Os::on_shutdown" => {
+            let outside = tauto_rt::signal::Signal::new();
+            tauto_rt::shutdown::register(outside.clone());
+            *signal(&a[0])?.outside.borrow_mut() = Some(outside);
+            v(Value::Unit)
+        }
         "Os::flush" => {
             System.flush();
             v(Value::Unit)
@@ -893,6 +942,31 @@ pub fn call(m: &mut Machine<'_>, name: &str, a: Vec<Value>) -> R<Out> {
             } else {
                 Ok(Out::Yield(p))
             }
+        }
+        "Signal::listen" => v(a[0].get()?),
+        "Signal::fresh" => v(Value::Signal(Rc::new(Signal::default()))),
+        "Signal::raise" => {
+            signal(&a[0])?.raise();
+            v(Value::Unit)
+        }
+        "Signal::is_raised" => v(Value::Bool(signal(&a[0])?.is_raised())),
+        "Signal::either" => {
+            let mut seen = std::collections::HashSet::new();
+            let inputs = [signal(&a[0])?, signal(&a[1])?]
+                .into_iter()
+                .flat_map(|s| {
+                    if s.inputs.is_empty() {
+                        vec![s]
+                    } else {
+                        s.inputs.clone()
+                    }
+                })
+                .filter(|s| seen.insert(Rc::as_ptr(s) as usize))
+                .collect();
+            v(Value::Signal(Rc::new(Signal {
+                inputs,
+                ..Signal::default()
+            })))
         }
         "Pending::signal" => {
             let p = pending(&a[0])?;

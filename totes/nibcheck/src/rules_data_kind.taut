@@ -27,7 +27,10 @@ pub(open) inductive DeclaredFieldKinds(
   DeclaredFieldsCons<f: DataField, rest: List(
     DataField
   )>(
-    bound: kind_join(datas_kind(d, ty_substitute(declaration_field_ty(f), map)), declared) = declared,
+    bound: kind_join(
+      datas_kind(d, ty_substitute(declaration_field_ty(f), map)),
+      declared
+    ) = declared,
     tail: DeclaredFieldKinds(d, map, declared, rest)
   ): DeclaredFieldKinds(d, map, declared, Cons(f, rest))
 }
@@ -57,7 +60,7 @@ pub fn declaration_annotation(d: Data): Option(Kind) { d.declared }
 pub fn declaration_data_recursive(d: Data): Bool { d.recursive }
 pub fn declaration_data_ctors(d: Data): List(DataCtor) { d.constructors }
 pub fn declaration_parameters(gs: List(Text), map: Ordmap(Text, Ty)): Ordmap(Text, Ty) {
-  match gs: Ordmap(Text, Ty) {
+  ⊢ Ordmap(Text, Ty) from match gs {
     Nil => map
     Cons(g, rest) => declaration_parameters(
       rest,
@@ -70,7 +73,16 @@ pub fn declaration_parameters(gs: List(Text), map: Ordmap(Text, Ty)): Ordmap(Tex
 pub def DataDeclarationKinds(
   d: Datas,
   s: SurfaceData
-): Prop := ∀ data: Data. ∀ declared: Kind. ∀ found: datas_decl(d, declaration_surface_name(s)) = Some(data). ∀ annotation: declaration_annotation(data) = Some(declared). And(
+): Prop := ∀ data: Data. ∀ declared: Kind. ∀ found: datas_decl(
+  d,
+  declaration_surface_name(s)
+) = Some(
+  data
+). ∀ annotation: declaration_annotation(
+  data
+) = Some(
+  declared
+). And(
   RecursiveDeclarationKind(declaration_data_recursive(data), declared),
   DeclaredConstructorKinds(
     d,
@@ -80,7 +92,7 @@ pub def DataDeclarationKinds(
   )
 )
 pub fn StatementDataKinds(d: Datas, s: SurfaceStmt): Prop {
-  match s: Prop {
+  ⊢ Prop from match s {
     StLet(n, ty, v, b, m) => True
     StVar(n, ty, v, b) => True
     StModule(n, ss, start, end) => True

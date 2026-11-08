@@ -37,29 +37,27 @@ pub fn w_tokens(fuel: Nat, bs: List(Nat)): Option(List(WTok)) {
       Nil => Some(Nil)
       Cons(b, rest) => if w_space(b) {
         w_tokens(f, rest)
-      } else {
-        if Nat::eq(b, 116) {
-          match w_number(rest, 0, false) {
-            None => None
-            Some(r) => match r {
-              Pair { fst: n, snd: after } => if Nat::le(n, List::length(after)) {
-                match w_tokens(f, List::drop(n, after)) {
-                  None => None
-                  Some(ts) => Some(Cons(WtText(Text::Mk(List::take(n, after))), ts))
-                }
-              } else {
-                None
+      } else if Nat::eq(b, 116) {
+        match w_number(rest, 0, false) {
+          None => None
+          Some(r) => match r {
+            Pair { fst: n, snd: after } => if Nat::le(n, List::length(after)) {
+              match w_tokens(f, List::drop(n, after)) {
+                None => None
+                Some(ts) => Some(Cons(WtText(Text::Mk(List::take(n, after))), ts))
               }
+            } else {
+              None
             }
           }
-        } else {
-          match w_number(bs, 0, false) {
-            None => None
-            Some(r) => match r {
-              Pair { fst: n, snd: after } => match w_tokens(f, after) {
-                None => None
-                Some(ts) => Some(Cons(WtNum(n), ts))
-              }
+        }
+      } else {
+        match w_number(bs, 0, false) {
+          None => None
+          Some(r) => match r {
+            Pair { fst: n, snd: after } => match w_tokens(f, after) {
+              None => None
+              Some(ts) => Some(Cons(WtNum(n), ts))
             }
           }
         }
@@ -74,9 +72,7 @@ pub fn w_number(bs: List(Nat), acc: Nat, seen: Bool): Option(Pair(Nat, List(Nat)
     Nil => if seen { Some(Pair { fst: acc, snd: Nil }) } else { None }
     Cons(b, rest) => if w_digit(b) {
       w_number(rest, Nat::add(Nat::mul(acc, 10), Nat::sub(b, 48)), true)
-    } else {
-      if Bool::and(seen, w_space(b)) { Some(Pair { fst: acc, snd: rest }) } else { None }
-    }
+    } else if Bool::and(seen, w_space(b)) { Some(Pair { fst: acc, snd: rest }) } else { None }
   }
 }
 
@@ -160,38 +156,32 @@ pub fn w_val(s: WS): Pair(CVal, WS) {
   match w_nat(s) {
     Pair { fst: tag, snd: s2 } => if Nat::eq(tag, 0) {
       Pair { fst: CvUnit, snd: s2 }
-    } else {
-      if Nat::eq(tag, 1) {
-        match w_int(s2) {
-          Pair { fst: i, snd: s3 } => Pair { fst: CvInt(i), snd: s3 }
-        }
-      } else {
-        if Nat::eq(tag, 2) {
-          match w_nat(s2) {
-            Pair { fst: bits, snd: s3 } => Pair { fst: CvFloat(Float::of_raw(bits)), snd: s3 }
-          }
-        } else {
-          if Nat::eq(tag, 3) {
-            match w_bool(s2) {
-              Pair { fst: b, snd: s3 } => Pair { fst: CvBool(b), snd: s3 }
-            }
-          } else {
-            if Nat::eq(tag, 4) {
-              match w_text(s2) {
-                Pair { fst: t, snd: s3 } => Pair { fst: CvText(t), snd: s3 }
-              }
-            } else {
-              if Nat::eq(tag, 5) {
-                match w_nat(s2) {
-                  Pair { fst: f, snd: s3 } => Pair { fst: CvFn(f), snd: s3 }
-                }
-              } else {
-                Pair { fst: CvUnit, snd: w_bad(s2) }
-              }
-            }
-          }
-        }
+    } else if Nat::eq(tag, 1) {
+      match w_int(s2) {
+        Pair { fst: i, snd: s3 } => Pair { fst: CvInt(i), snd: s3 }
       }
+    } else if Nat::eq(tag, 2) {
+      match w_nat(s2) {
+        Pair { fst: bits, snd: s3 } => Pair { fst: CvFloat(Float::of_raw(bits)), snd: s3 }
+      }
+    } else if Nat::eq(tag, 3) {
+      match w_bool(s2) {
+        Pair { fst: b, snd: s3 } => Pair { fst: CvBool(b), snd: s3 }
+      }
+    } else if Nat::eq(tag, 4) {
+      match w_text(s2) {
+        Pair { fst: t, snd: s3 } => Pair { fst: CvText(t), snd: s3 }
+      }
+    } else if Nat::eq(tag, 5) {
+      match w_nat(s2) {
+        Pair { fst: f, snd: s3 } => Pair { fst: CvFn(f), snd: s3 }
+      }
+    } else if Nat::eq(tag, 6) {
+      match w_nat(s2) {
+        Pair { fst: slot, snd: s3 } => Pair { fst: CvDeclaration(slot), snd: s3 }
+      }
+    } else {
+      Pair { fst: CvUnit, snd: w_bad(s2) }
     }
   }
 }
@@ -208,7 +198,7 @@ pub fn w_step(s: WS): Pair(MPath, WS) {
           fst: if Nat::eq(
             tag,
             0
-          ) { MpathIndex(i) } else { if Nat::eq(tag, 2) { MpathItem(i) } else { MpathEntry(i) } },
+          ) { MpathIndex(i) } else if Nat::eq(tag, 2) { MpathItem(i) } else { MpathEntry(i) },
           snd: s3
         }
       }
@@ -240,29 +230,29 @@ mutual {
       Succ(f) => match w_nat(s) {
         Pair { fst: tag, snd: s2 } => if Nat::eq(tag, 0) {
           Pair { fst: CpWild, snd: s2 }
-        } else {
-          if Nat::eq(tag, 1) {
-            match w_nat(s2) {
-              Pair { fst: id, snd: s3 } => match w_bool(s3) {
-                Pair { fst: borrow, snd: s4 } => Pair { fst: CpBind(id, borrow), snd: s4 }
-              }
-            }
-          } else {
-            if Nat::eq(tag, 2) {
-              match w_val(s2) {
-                Pair { fst: v, snd: s3 } => Pair { fst: CpLit(v), snd: s3 }
-              }
-            } else {
-              match w_nat(s2) {
-                Pair { fst: c, snd: s3 } => match w_nat(s3) {
-                  Pair { fst: n, snd: s4 } => match w_pats(f, n, s4) {
-                    Pair { fst: ps, snd: s5 } => Pair { fst: CpCtor(c, ps), snd: s5 }
-                  }
-                }
-              }
+        } else if Nat::eq(tag, 1) {
+          match w_nat(s2) {
+            Pair { fst: id, snd: s3 } => match w_bool(s3) {
+              Pair { fst: borrow, snd: s4 } => Pair { fst: CpBind(id, borrow), snd: s4 }
             }
           }
-        }
+        } else if Nat::eq(tag, 2) {
+          match w_val(s2) {
+            Pair { fst: v, snd: s3 } => Pair { fst: CpLit(v), snd: s3 }
+          }
+        } else if Nat::eq(tag, 3) { match w_nat(s2) {
+            Pair { fst: c, snd: s3 } => match w_nat(s3) {
+              Pair { fst: n, snd: s4 } => match w_pats(f, n, s4) {
+                Pair { fst: ps, snd: s5 } => Pair { fst: CpCtor(c, ps), snd: s5 }
+              }
+            }
+          } } else if Nat::eq(tag, 4) {
+          match w_nat(s2) {
+            Pair { fst: n, snd: s3 } => match w_pats(f, n, s3) {
+              Pair { fst: ps, snd: s4 } => Pair { fst: CpProduct(ps), snd: s4 }
+            }
+          }
+        } else { Pair { fst: CpWild, snd: w_bad(s2) } }
       }
     }
   }
@@ -288,7 +278,7 @@ pub fn w_picks(n: Nat, s: WS): Pair(List(Pair(Nat, Option(Nat))), WS) {
     Succ(m) => match w_nat(s) {
       Pair { fst: i, snd: s2 } => match w_bool(s2) {
         Pair { fst: has, snd: s3 } => {
-          let jr := match has: Pair(Option(Nat), WS) {
+          let jr := ⊢ Pair(Option(Nat), WS) from match has {
             false => Pair { fst: None, snd: s3 }
             true => match w_nat(s3) {
               Pair { fst: j, snd: s4 } => Pair { fst: Some(j), snd: s4 }
@@ -313,7 +303,7 @@ pub fn w_options(n: Nat, s: WS): Pair(List(Option(Nat)), WS) {
     Zero => Pair { fst: Nil, snd: s }
     Succ(m) => match w_bool(s) {
       Pair { fst: has, snd: s2 } => {
-        let jr := match has: Pair(Option(Nat), WS) {
+        let jr := ⊢ Pair(Option(Nat), WS) from match has {
           false => Pair { fst: None, snd: s2 }
           true => match w_nat(s2) {
             Pair { fst: j, snd: s3 } => Pair { fst: Some(j), snd: s3 }
@@ -376,9 +366,7 @@ pub fn w_syn_elem(s: WS): Pair(SynElem, WS) {
   match w_nat(s) {
     Pair { fst: tag, snd: s2 } => if Nat::eq(tag, 0) {
       Pair { fst: SeItem, snd: s2 }
-    } else {
-      if Nat::eq(tag, 1) { w_syn_node(s2) } else { Pair { fst: SeItem, snd: w_bad(s2) } }
-    }
+    } else if Nat::eq(tag, 1) { w_syn_node(s2) } else { Pair { fst: SeItem, snd: w_bad(s2) } }
   }
 }
 
@@ -391,27 +379,27 @@ pub fn w_syn_shape(s: WS): Pair(SynShape, WS) {
           SeItem => Pair { fst: ShPass, snd: w_bad(s3) }
         }
       }
-    } else { if Nat::eq(tag, 1) {
-        Pair { fst: ShPass, snd: s2 }
-      } else { if Nat::eq(tag, 2) {
-          match w_syn_elem(s2) {
-            Pair { fst: e, snd: s3 } => Pair { fst: ShSome(e), snd: s3 }
-          }
-        } else { if Nat::eq(tag, 3) {
-            Pair { fst: ShNone, snd: s2 }
-          } else { if Nat::eq(tag, 4) {
-              Pair { fst: ShEmpty, snd: s2 }
-            } else { if Nat::eq(tag, 5) {
-                match w_syn_elem(s2) {
-                  Pair { fst: e, snd: s3 } => Pair { fst: ShMore(e), snd: s3 }
-                }
-              } else { if Nat::eq(tag, 6) {
-                  match w_text(s2) {
-                    Pair { fst: m, snd: s3 } => Pair { fst: ShBad(m), snd: s3 }
-                  }
-                } else {
-                  Pair { fst: ShPass, snd: w_bad(s2) }
-                } } } } } } }
+    } else if Nat::eq(tag, 1) {
+      Pair { fst: ShPass, snd: s2 }
+    } else if Nat::eq(tag, 2) {
+      match w_syn_elem(s2) {
+        Pair { fst: e, snd: s3 } => Pair { fst: ShSome(e), snd: s3 }
+      }
+    } else if Nat::eq(tag, 3) {
+      Pair { fst: ShNone, snd: s2 }
+    } else if Nat::eq(tag, 4) {
+      Pair { fst: ShEmpty, snd: s2 }
+    } else if Nat::eq(tag, 5) {
+      match w_syn_elem(s2) {
+        Pair { fst: e, snd: s3 } => Pair { fst: ShMore(e), snd: s3 }
+      }
+    } else if Nat::eq(tag, 6) {
+      match w_text(s2) {
+        Pair { fst: m, snd: s3 } => Pair { fst: ShBad(m), snd: s3 }
+      }
+    } else {
+      Pair { fst: ShPass, snd: w_bad(s2) }
+    }
   }
 }
 
@@ -553,14 +541,14 @@ pub fn w_syn_tables(lr: Bool, s: WS): WSynTables {
     Pair { fst: n, snd: s2 } => if lr {
       match w_syn_states(n, s2) {
         Pair { fst: states, snd: s3 } => WSynTables {
-          looks: Nil(Option(SynLook)),
+          looks: Nil(<A: Option(SynLook)>),
           states: states,
           rest: s3
         }
       }
     } else {
       match w_syn_looks(n, s2) {
-        Pair { fst: looks, snd: s3 } => WSynTables { looks: looks, states: Nil(SynState), rest: s3 }
+        Pair { fst: looks, snd: s3 } => WSynTables { looks: looks, states: Nil(<A: SynState>), rest: s3 }
       }
     }
   }
@@ -579,7 +567,7 @@ pub fn w_syn_parser(s: WS): Pair(CPrim, WS) {
                 Pair { fst: lr, snd: s8 } => match w_syn_tables(lr, s8) {
                   WSynTables { looks: looks, states: states, rest: s9 } => match w_nat(s9) {
                     Pair { fst: np, snd: s10 } => match w_syn_prods(np, s10) {
-                      Pair { fst: prods, snd: s11 } => match w_nats(4, s11) {
+                      Pair { fst: prods, snd: s11 } => match w_nats(5, s11) {
                         Pair { fst: ids, snd: s12 } => match scan_tables_read_dynamic(
                           w_syn_text_at(scans, 0),
                           w_syn_text_at(scans, 1),
@@ -603,7 +591,8 @@ pub fn w_syn_parser(s: WS): Pair(CPrim, WS) {
                                 span: m_nth_nat(ids, 0),
                                 ctx: m_nth_nat(ids, 1),
                                 token: m_nth_nat(ids, 2),
-                                diag: m_nth_nat(ids, 3)
+                                diag: m_nth_nat(ids, 3),
+                                arg: m_nth_nat(ids, 4)
                               }
                             ),
                             snd: s12
@@ -638,53 +627,53 @@ pub fn w_prim(s: WS): Pair(CPrim, WS) {
           snd: s3
         }
       }
-    } else { if Nat::eq(tag, 1) {
-        match w_nat(s2) {
-          Pair { fst: a, snd: s3 } => Pair { fst: CprFloat(a), snd: s3 }
+    } else if Nat::eq(tag, 1) {
+      match w_nat(s2) {
+        Pair { fst: a, snd: s3 } => Pair { fst: CprFloat(a), snd: s3 }
+      }
+    } else if Nat::eq(tag, 2) {
+      match w_nat(s2) {
+        Pair { fst: c, snd: s3 } => Pair { fst: CprCmp(c), snd: s3 }
+      }
+    } else if Nat::eq(tag, 3) {
+      match w_bool(s2) {
+        Pair { fst: n, snd: s3 } => Pair { fst: CprEq(n), snd: s3 }
+      }
+    } else if Nat::eq(tag, 4) {
+      match w_nat(s2) {
+        Pair { fst: c, snd: s3 } => match w_count_nats(s3) {
+          Pair { fst: order, snd: s4 } => Pair { fst: CprConstruct(c, order), snd: s4 }
         }
-      } else { if Nat::eq(tag, 2) {
-          match w_nat(s2) {
-            Pair { fst: c, snd: s3 } => Pair { fst: CprCmp(c), snd: s3 }
-          }
-        } else { if Nat::eq(tag, 3) {
-            match w_bool(s2) {
-              Pair { fst: n, snd: s3 } => Pair { fst: CprEq(n), snd: s3 }
-            }
-          } else { if Nat::eq(tag, 4) {
-              match w_nat(s2) {
-                Pair { fst: c, snd: s3 } => match w_count_nats(s3) {
-                  Pair { fst: order, snd: s4 } => Pair { fst: CprConstruct(c, order), snd: s4 }
-                }
-              }
-            } else { if Nat::eq(tag, 5) {
-                match w_nat(s2) {
-                  Pair { fst: n, snd: s3 } => match w_picks(n, s3) {
-                    Pair { fst: picks, snd: s4 } => Pair { fst: CprProduct(picks), snd: s4 }
-                  }
-                }
-              } else { if Nat::eq(tag, 6) {
-                  Pair { fst: CprConcat, snd: s2 }
-                } else { if Nat::eq(tag, 7) {
-                    Pair { fst: CprTextOfInt, snd: s2 }
-                  } else { if Nat::eq(tag, 8) {
-                      Pair { fst: CprTextLen, snd: s2 }
-                    } else { if Nat::eq(tag, 9) {
-                        Pair { fst: CprTextCompare, snd: s2 }
-                      } else { if Nat::eq(tag, 10) {
-                          match w_bool(s2) {
-                            Pair { fst: m, snd: s3 } => match w_nat(s3) {
-                              Pair { fst: w, snd: s4 } => Pair { fst: CprDivide(m, w), snd: s4 }
-                            }
-                          }
-                        } else { if Nat::eq(tag, 11) {
-                            match w_nat(s2) {
-                              Pair { fst: a, snd: s3 } => Pair { fst: CprFloat32(a), snd: s3 }
-                            }
-                          } else { if Nat::eq(tag, 12) {
-                              w_syn_parser(s2)
-                            } else {
-                              Pair { fst: CprConcat, snd: w_bad(s2) }
-                            } } } } } } } } } } } } }
+      }
+    } else if Nat::eq(tag, 5) {
+      match w_nat(s2) {
+        Pair { fst: n, snd: s3 } => match w_picks(n, s3) {
+          Pair { fst: picks, snd: s4 } => Pair { fst: CprProduct(picks), snd: s4 }
+        }
+      }
+    } else if Nat::eq(tag, 6) {
+      Pair { fst: CprConcat, snd: s2 }
+    } else if Nat::eq(tag, 7) {
+      Pair { fst: CprTextOfInt, snd: s2 }
+    } else if Nat::eq(tag, 8) {
+      Pair { fst: CprTextLen, snd: s2 }
+    } else if Nat::eq(tag, 9) {
+      Pair { fst: CprTextCompare, snd: s2 }
+    } else if Nat::eq(tag, 10) {
+      match w_bool(s2) {
+        Pair { fst: m, snd: s3 } => match w_nat(s3) {
+          Pair { fst: w, snd: s4 } => Pair { fst: CprDivide(m, w), snd: s4 }
+        }
+      }
+    } else if Nat::eq(tag, 11) {
+      match w_nat(s2) {
+        Pair { fst: a, snd: s3 } => Pair { fst: CprFloat32(a), snd: s3 }
+      }
+    } else if Nat::eq(tag, 12) {
+      w_syn_parser(s2)
+    } else {
+      Pair { fst: CprConcat, snd: w_bad(s2) }
+    }
   }
 }
 
@@ -692,44 +681,44 @@ pub fn w_unary(s: WS): Pair(CUnary, WS) {
   match w_nat(s) {
     Pair { fst: tag, snd: s2 } => if Nat::eq(tag, 0) {
       Pair { fst: CuNot, snd: s2 }
-    } else { if Nat::eq(tag, 1) {
-        match w_nat(s2) {
-          Pair { fst: i, snd: s3 } => Pair { fst: CuMember(i), snd: s3 }
+    } else if Nat::eq(tag, 1) {
+      match w_nat(s2) {
+        Pair { fst: i, snd: s3 } => Pair { fst: CuMember(i), snd: s3 }
+      }
+    } else if Nat::eq(tag, 2) {
+      match w_step(s2) {
+        Pair { fst: st, snd: s3 } => Pair { fst: CuField(st), snd: s3 }
+      }
+    } else if Nat::eq(tag, 3) {
+      Pair { fst: CuShown, snd: s2 }
+    } else if Nat::eq(tag, 4) {
+      Pair { fst: CuTempRef, snd: s2 }
+    } else if Nat::eq(tag, 5) {
+      Pair { fst: CuDeref, snd: s2 }
+    } else if Nat::eq(tag, 6) {
+      match w_nats(2, s2) {
+        Pair { fst: ui, snd: s3 } => Pair {
+          fst: CuInject(m_nth_nat(ui, 0), m_nth_nat(ui, 1)),
+          snd: s3
         }
-      } else { if Nat::eq(tag, 2) {
-          match w_step(s2) {
-            Pair { fst: st, snd: s3 } => Pair { fst: CuField(st), snd: s3 }
-          }
-        } else { if Nat::eq(tag, 3) {
-            Pair { fst: CuShown, snd: s2 }
-          } else { if Nat::eq(tag, 4) {
-              Pair { fst: CuTempRef, snd: s2 }
-            } else { if Nat::eq(tag, 5) {
-                Pair { fst: CuDeref, snd: s2 }
-              } else { if Nat::eq(tag, 6) {
-                  match w_nats(2, s2) {
-                    Pair { fst: ui, snd: s3 } => Pair {
-                      fst: CuInject(m_nth_nat(ui, 0), m_nth_nat(ui, 1)),
-                      snd: s3
-                    }
-                  }
-                } else { if Nat::eq(tag, 7) {
-                    match w_options(1, s2) {
-                      Pair { fst: to, snd: s3 } => match w_nat(s3) {
-                        Pair { fst: n, snd: s4 } => match w_options(n, s4) {
-                          Pair { fst: table, snd: s5 } => Pair {
-                            fst: CuRemap(match List::nth(to, 0) {
+      }
+    } else if Nat::eq(tag, 7) {
+      match w_options(1, s2) {
+        Pair { fst: to, snd: s3 } => match w_nat(s3) {
+          Pair { fst: n, snd: s4 } => match w_options(n, s4) {
+            Pair { fst: table, snd: s5 } => Pair {
+              fst: CuRemap(match List::nth(to, 0) {
                 None => None
                 Some(t) => t
               }, table),
-                            snd: s5
-                          }
-                        }
-                      }
-                    }
-                  } else {
-                    Pair { fst: CuNot, snd: w_bad(s2) }
-                  } } } } } } } }
+              snd: s5
+            }
+          }
+        }
+      }
+    } else {
+      Pair { fst: CuNot, snd: w_bad(s2) }
+    }
   }
 }
 
@@ -769,70 +758,70 @@ mutual {
         match w_val(s2) {
           Pair { fst: v, snd: s3 } => Pair { fst: CPure(v), snd: s3 }
         }
-      } else { if Nat::eq(tag, 1) {
-          match w_nat(s2) {
-            Pair { fst: id, snd: s3 } => match w_bool(s3) {
-              Pair { fst: d, snd: s4 } => Pair { fst: CRead(id, d), snd: s4 }
+      } else if Nat::eq(tag, 1) {
+        match w_nat(s2) {
+          Pair { fst: id, snd: s3 } => match w_bool(s3) {
+            Pair { fst: d, snd: s4 } => Pair { fst: CRead(id, d), snd: s4 }
+          }
+        }
+      } else if Nat::eq(tag, 2) {
+        match w_cps(f, s2) {
+          Pair { fst: callee, snd: s3 } => match w_list(f, s3) {
+            Pair { fst: args, snd: s4 } => match w_bool(s4) {
+              Pair { fst: t, snd: s5 } => Pair { fst: CCall(callee, args, t), snd: s5 }
             }
           }
-        } else { if Nat::eq(tag, 2) {
-            match w_cps(f, s2) {
-              Pair { fst: callee, snd: s3 } => match w_list(f, s3) {
-                Pair { fst: args, snd: s4 } => match w_bool(s4) {
-                  Pair { fst: t, snd: s5 } => Pair { fst: CCall(callee, args, t), snd: s5 }
+        }
+      } else if Nat::eq(tag, 3) {
+        match w_nat(s2) {
+          Pair { fst: inst, snd: s3 } => match w_list(f, s3) {
+            Pair { fst: args, snd: s4 } => Pair { fst: CTail(inst, args), snd: s4 }
+          }
+        }
+      } else if Nat::eq(tag, 4) {
+        match w_text(s2) {
+          Pair { fst: name, snd: s3 } => match w_list(f, s3) {
+            Pair { fst: args, snd: s4 } => Pair { fst: CBuiltin(name, args), snd: s4 }
+          }
+        }
+      } else if Nat::eq(tag, 5) {
+        match w_prim(s2) {
+          Pair { fst: op, snd: s3 } => match w_list(f, s3) {
+            Pair { fst: args, snd: s4 } => Pair { fst: MkCPrim(op, args), snd: s4 }
+          }
+        }
+      } else if Nat::eq(tag, 6) {
+        match w_cps(f, s2) {
+          Pair { fst: v, snd: s3 } => match w_unary(s3) {
+            Pair { fst: op, snd: s4 } => Pair { fst: CMap(v, op), snd: s4 }
+          }
+        }
+      } else if Nat::eq(tag, 7) {
+        match w_cps(f, s2) {
+          Pair { fst: c, snd: s3 } => match w_cps(f, s3) {
+            Pair { fst: t, snd: s4 } => match w_cps(f, s4) {
+              Pair { fst: o, snd: s5 } => Pair { fst: CBranch(c, t, o), snd: s5 }
+            }
+          }
+        }
+      } else if Nat::eq(tag, 8) {
+        match w_list(f, s2) {
+          Pair { fst: items, snd: s3 } => Pair { fst: CSeq(items), snd: s3 }
+        }
+      } else {
+        match w_nat(s2) {
+          Pair { fst: id, snd: s3 } => match w_bool(s3) {
+            Pair { fst: r#shared, snd: s4 } => match w_bool(s4) {
+              Pair { fst: drop, snd: s5 } => match w_cps(f, s5) {
+                Pair { fst: init, snd: s6 } => Pair {
+                  fst: CDefine(id, r#shared, drop, init),
+                  snd: s6
                 }
               }
             }
-          } else { if Nat::eq(tag, 3) {
-              match w_nat(s2) {
-                Pair { fst: inst, snd: s3 } => match w_list(f, s3) {
-                  Pair { fst: args, snd: s4 } => Pair { fst: CTail(inst, args), snd: s4 }
-                }
-              }
-            } else { if Nat::eq(tag, 4) {
-                match w_text(s2) {
-                  Pair { fst: name, snd: s3 } => match w_list(f, s3) {
-                    Pair { fst: args, snd: s4 } => Pair { fst: CBuiltin(name, args), snd: s4 }
-                  }
-                }
-              } else { if Nat::eq(tag, 5) {
-                  match w_prim(s2) {
-                    Pair { fst: op, snd: s3 } => match w_list(f, s3) {
-                      Pair { fst: args, snd: s4 } => Pair { fst: MkCPrim(op, args), snd: s4 }
-                    }
-                  }
-                } else { if Nat::eq(tag, 6) {
-                    match w_cps(f, s2) {
-                      Pair { fst: v, snd: s3 } => match w_unary(s3) {
-                        Pair { fst: op, snd: s4 } => Pair { fst: CMap(v, op), snd: s4 }
-                      }
-                    }
-                  } else { if Nat::eq(tag, 7) {
-                      match w_cps(f, s2) {
-                        Pair { fst: c, snd: s3 } => match w_cps(f, s3) {
-                          Pair { fst: t, snd: s4 } => match w_cps(f, s4) {
-                            Pair { fst: o, snd: s5 } => Pair { fst: CBranch(c, t, o), snd: s5 }
-                          }
-                        }
-                      }
-                    } else { if Nat::eq(tag, 8) {
-                        match w_list(f, s2) {
-                          Pair { fst: items, snd: s3 } => Pair { fst: CSeq(items), snd: s3 }
-                        }
-                      } else {
-                        match w_nat(s2) {
-                          Pair { fst: id, snd: s3 } => match w_bool(s3) {
-                            Pair { fst: r#shared, snd: s4 } => match w_bool(s4) {
-                              Pair { fst: drop, snd: s5 } => match w_cps(f, s5) {
-                                Pair { fst: init, snd: s6 } => Pair {
-                                  fst: CDefine(id, r#shared, drop, init),
-                                  snd: s6
-                                }
-                              }
-                            }
-                          }
-                        }
-                      } } } } } } } } }
+          }
+        }
+      }
     }
   }
 
@@ -849,108 +838,108 @@ mutual {
             }
           }
         }
-      } else { if Nat::eq(tag, 11) {
-          match w_cps(f, s2) {
-            Pair { fst: c, snd: s3 } => match w_cps(f, s3) {
-              Pair { fst: b, snd: s4 } => match w_bool(s4) {
-                Pair { fst: t, snd: s5 } => Pair { fst: CWhile(c, b, t), snd: s5 }
+      } else if Nat::eq(tag, 11) {
+        match w_cps(f, s2) {
+          Pair { fst: c, snd: s3 } => match w_cps(f, s3) {
+            Pair { fst: b, snd: s4 } => match w_bool(s4) {
+              Pair { fst: t, snd: s5 } => Pair { fst: CWhile(c, b, t), snd: s5 }
+            }
+          }
+        }
+      } else if Nat::eq(tag, 12) {
+        match w_cps(f, s2) {
+          Pair { fst: v, snd: s3 } => Pair { fst: CReturn(v), snd: s3 }
+        }
+      } else if Nat::eq(tag, 13) {
+        match w_cps(f, s2) {
+          Pair { fst: scrut, snd: s3 } => match w_nat(s3) {
+            Pair { fst: n, snd: s4 } => match w_arms(f, n, s4) {
+              Pair { fst: arms, snd: s5 } => match arms {
+                Pair { fst: ps, snd: gb } => match gb {
+                  Pair { fst: gs, snd: bs } => Pair {
+                    fst: CMatch(scrut, ps, gs, bs),
+                    snd: s5
+                  }
+                }
               }
             }
           }
-        } else { if Nat::eq(tag, 12) {
-            match w_cps(f, s2) {
-              Pair { fst: v, snd: s3 } => Pair { fst: CReturn(v), snd: s3 }
+        }
+      } else if Nat::eq(tag, 14) {
+        match w_cps(f, s2) {
+          Pair { fst: body, snd: s3 } => match w_count_nats(s3) {
+            Pair { fst: params, snd: s4 } => match w_count_nats(s4) {
+              Pair { fst: caps, snd: s5 } => match w_bool(s5) {
+                Pair { fst: borrowed, snd: s6 } => match w_nat(s6) {
+                  Pair { fst: nrefs, snd: s7 } => match w_ref_pairs(nrefs, s7) {
+                    Pair { fst: refs, snd: s8 } => Pair {
+                      fst: CClosure(body, params, caps, borrowed, refs),
+                      snd: s8
+                    }
+                  }
+                }
+              }
             }
-          } else { if Nat::eq(tag, 13) {
-              match w_cps(f, s2) {
-                Pair { fst: scrut, snd: s3 } => match w_nat(s3) {
-                  Pair { fst: n, snd: s4 } => match w_arms(f, n, s4) {
-                    Pair { fst: arms, snd: s5 } => match arms {
-                      Pair { fst: ps, snd: gb } => match gb {
-                        Pair { fst: gs, snd: bs } => Pair {
-                          fst: CMatch(scrut, ps, gs, bs),
-                          snd: s5
+          }
+        }
+      } else if Nat::eq(tag, 15) {
+        match w_text(s2) {
+          Pair { fst: op, snd: s3 } => match w_nat(s3) {
+            Pair { fst: q, snd: s4 } => match w_list(f, s4) {
+              Pair { fst: args, snd: s5 } => Pair { fst: CPerform(op, q, args), snd: s5 }
+            }
+          }
+        }
+      } else if Nat::eq(tag, 16) {
+        match w_cps(f, s2) {
+          Pair { fst: body, snd: s3 } => match w_nat(s3) {
+            Pair { fst: n, snd: s4 } => match w_handler_arms(f, n, s4) {
+              Pair { fst: arms, snd: s5 } => match arms {
+                Pair { fst: ops, snd: r } => match r {
+                  Pair { fst: pss, snd: kb } => match kb {
+                    Pair { fst: ks, snd: bs } => match w_nat(s5) {
+                      Pair { fst: hasret, snd: s6 } => match w_arms(f, hasret, s6) {
+                        Pair { fst: rarms, snd: s7 } => match rarms {
+                          Pair { fst: rps, snd: rgb } => match rgb {
+                            Pair { fst: rgs, snd: rbs } => Pair {
+                              fst: CHandle(body, ops, pss, ks, bs, rps, rgs, rbs),
+                              snd: s7
+                            }
+                          }
                         }
                       }
                     }
                   }
                 }
               }
-            } else { if Nat::eq(tag, 14) {
-                match w_cps(f, s2) {
-                  Pair { fst: body, snd: s3 } => match w_count_nats(s3) {
-                    Pair { fst: params, snd: s4 } => match w_count_nats(s4) {
-                      Pair { fst: caps, snd: s5 } => match w_bool(s5) {
-                        Pair { fst: borrowed, snd: s6 } => match w_nat(s6) {
-                          Pair { fst: nrefs, snd: s7 } => match w_ref_pairs(nrefs, s7) {
-                            Pair { fst: refs, snd: s8 } => Pair {
-                              fst: CClosure(body, params, caps, borrowed, refs),
-                              snd: s8
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              } else { if Nat::eq(tag, 15) {
-                  match w_text(s2) {
-                    Pair { fst: op, snd: s3 } => match w_nat(s3) {
-                      Pair { fst: q, snd: s4 } => match w_list(f, s4) {
-                        Pair { fst: args, snd: s5 } => Pair { fst: CPerform(op, q, args), snd: s5 }
-                      }
-                    }
-                  }
-                } else { if Nat::eq(tag, 16) {
-                    match w_cps(f, s2) {
-                      Pair { fst: body, snd: s3 } => match w_nat(s3) {
-                        Pair { fst: n, snd: s4 } => match w_handler_arms(f, n, s4) {
-                          Pair { fst: arms, snd: s5 } => match arms {
-                            Pair { fst: ops, snd: r } => match r {
-                              Pair { fst: pss, snd: kb } => match kb {
-                                Pair { fst: ks, snd: bs } => match w_nat(s5) {
-                                  Pair { fst: hasret, snd: s6 } => match w_arms(f, hasret, s6) {
-                                    Pair { fst: rarms, snd: s7 } => match rarms {
-                                      Pair { fst: rps, snd: rgb } => match rgb {
-                                        Pair { fst: rgs, snd: rbs } => Pair {
-                                          fst: CHandle(body, ops, pss, ks, bs, rps, rgs, rbs),
-                                          snd: s7
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  } else { if Nat::eq(tag, 17) {
-                      match w_nat(s2) {
-                        Pair { fst: id, snd: s3 } => match w_path(s3) {
-                          Pair { fst: path, snd: s4 } => match w_bool(s4) {
-                            Pair { fst: through, snd: s5 } => Pair {
-                              fst: CBorrow(id, path, through),
-                              snd: s5
-                            }
-                          }
-                        }
-                      }
-                    } else { if Nat::eq(tag, 18) {
-                        match w_bool(s2) {
-                          Pair { fst: memory, snd: s3 } => match w_cps(f, s3) {
-                            Pair { fst: steps, snd: s4 } => match w_cps(f, s4) {
-                              Pair { fst: body, snd: s5 } => Pair {
-                                fst: CBudget(memory, steps, body),
-                                snd: s5
-                              }
-                            }
-                          }
-                        }
-                      } else {
-                        Pair { fst: CPure(CvUnit), snd: w_bad(s2) }
-                      } } } } } } } } }
+            }
+          }
+        }
+      } else if Nat::eq(tag, 17) {
+        match w_nat(s2) {
+          Pair { fst: id, snd: s3 } => match w_path(s3) {
+            Pair { fst: path, snd: s4 } => match w_bool(s4) {
+              Pair { fst: through, snd: s5 } => Pair {
+                fst: CBorrow(id, path, through),
+                snd: s5
+              }
+            }
+          }
+        }
+      } else if Nat::eq(tag, 18) {
+        match w_bool(s2) {
+          Pair { fst: memory, snd: s3 } => match w_cps(f, s3) {
+            Pair { fst: steps, snd: s4 } => match w_cps(f, s4) {
+              Pair { fst: body, snd: s5 } => Pair {
+                fst: CBudget(memory, steps, body),
+                snd: s5
+              }
+            }
+          }
+        }
+      } else {
+        Pair { fst: CPure(CvUnit), snd: w_bad(s2) }
+      }
     }
   }
 
@@ -980,12 +969,12 @@ mutual {
   pub fn w_arms(fuel: Nat, n: Nat, s: WS): Pair(Pair(List(CPat), Pair(List(Cps), List(Cps))), WS) {
     match fuel {
       Zero => Pair {
-        fst: Pair { fst: Nil(CPat), snd: Pair { fst: Nil(Cps), snd: Nil(Cps) } },
+        fst: Pair { fst: Nil(<A: CPat>), snd: Pair { fst: Nil(<A: Cps>), snd: Nil(<A: Cps>) } },
         snd: w_bad(s)
       }
       Succ(f) => match n {
         Zero => Pair {
-          fst: Pair { fst: Nil(CPat), snd: Pair { fst: Nil(Cps), snd: Nil(Cps) } },
+          fst: Pair { fst: Nil(<A: CPat>), snd: Pair { fst: Nil(<A: Cps>), snd: Nil(<A: Cps>) } },
           snd: s
         }
         Succ(m) => match w_pat(f, s) {

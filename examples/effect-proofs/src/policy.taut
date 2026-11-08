@@ -4,16 +4,16 @@ pub(open) inductive Resource: Type {
   Mk(generation: Nat, value: Nat): Resource
 }
 pub fn generation(state: Resource): Nat {
-  match state: Nat { Mk(n, v) => n }
+  ⊢ Nat from match state { Mk(n, v) => n }
 }
 pub fn displayed(state: Resource): Nat {
-  match state: Nat { Mk(n, v) => v }
+  ⊢ Nat from match state { Mk(n, v) => v }
 }
 pub fn begin(state: Resource): Resource {
   Resource::Mk(Succ(generation(state)), displayed(state))
 }
 pub fn complete(state: Resource, token: Nat, value: Nat): Resource {
-  match Nat::eq(token, generation(state)): Resource {
+  ⊢ Resource from match Nat::eq(token, generation(state)) {
     false => state
     true => Resource::Mk(generation(state), value)
   }
@@ -26,10 +26,10 @@ pub theorem stale_ignored(
   value: Nat,
   stale: (token = generation(state)) -> False
 ): (complete(state, token, value) = state) {
-  match Nat::eq(
+  ⊢ (complete(state, token, value) = state) from match Nat::eq(
     token,
     generation(state)
-  ) eqn comparison: (complete(state, token, value) = state) {
+  ) eqn comparison {
     false => ⊢ state = state from Refl
     true => ⊢ Resource::Mk(generation(state), value) = state from
     False::elim(stale(Nat::eq_sound(token, generation(state), comparison)))
@@ -41,10 +41,10 @@ pub theorem current_accepted(
   state: Resource,
   value: Nat
 ): complete(state, generation(state), value) = Resource::Mk(generation(state), value) {
-  match Nat::eq(
+  ⊢ (complete(state, generation(state), value) = Resource::Mk(generation(state), value)) from match Nat::eq(
     generation(state),
     generation(state)
-  ) eqn comparison: (complete(state, generation(state), value) = Resource::Mk(generation(state), value)) {
+  ) eqn comparison {
     false => ⊢ state = Resource::Mk(generation(state), value) from
     False::elim(true_ne_false(Eq::trans(Eq::sym(Nat::eq_refl(generation(state))), comparison)))
     true => ⊢ Resource::Mk(generation(state), value) = Resource::Mk(generation(state), value) from Refl

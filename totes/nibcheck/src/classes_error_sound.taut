@@ -27,7 +27,7 @@ pub theorem cf_effects_frame_errors(
   cl: SurfaceClass,
   es: List(Text)
 ): CkErrorFrame(c, cf_effects(c, m, cl, es)) {
-  match es: CkErrorFrame(c, cf_effects(c, m, cl, es)) {
+  ⊢ CkErrorFrame(c, cf_effects(c, m, cl, es)) from match es {
     Nil => (clean_errors => clean_errors)
     Cons(e, more) => error_frame_rewrap(
       c,
@@ -63,7 +63,7 @@ pub theorem cf_effects_opt_frame_errors(
   cl: SurfaceClass,
   o: Option(List(Text))
 ): CkErrorFrame(c, cf_effects_opt(c, m, cl, o)) {
-  match o: CkErrorFrame(c, cf_effects_opt(c, m, cl, o)) {
+  ⊢ CkErrorFrame(c, cf_effects_opt(c, m, cl, o)) from match o {
     None => (clean_errors => clean_errors)
     Some(es) => cf_effects_frame_errors(c, m, cl, es)
   }
@@ -92,7 +92,7 @@ pub theorem ck_law_methods_frame_errors(
   c: Checker,
   cl: SurfaceClass
 ): CkErrorFrame(c, ck_law_methods(ms, c, cl)) {
-  match ms: CkErrorFrame(c, ck_law_methods(ms, c, cl)) {
+  ⊢ CkErrorFrame(c, ck_law_methods(ms, c, cl)) from match ms {
     Nil => (clean_errors => clean_errors)
     Cons(m, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
@@ -111,7 +111,7 @@ pub theorem cf_laws_dup_frame_errors(
   dup: Bool,
   ih: ∀ ns: List(Text). ∀ next: Checker. CkErrorFrame(next, ck_class_laws_each(rest, ns, next, cl))
 ): CkErrorFrame(c, cf_laws_dup(l, rest, seen, c, cl, dup)) {
-  match dup: CkErrorFrame(c, cf_laws_dup(l, rest, seen, c, cl, dup)) {
+  ⊢ CkErrorFrame(c, cf_laws_dup(l, rest, seen, c, cl, dup)) from match dup {
     true => error_frame_bind(
       Unit,
       Unit,
@@ -143,7 +143,7 @@ pub theorem ck_class_laws_each_frame_errors(
   c: Checker,
   cl: SurfaceClass
 ): CkErrorFrame(c, ck_class_laws_each(ls, seen, c, cl)) {
-  match ls: CkErrorFrame(c, ck_class_laws_each(ls, seen, c, cl)) {
+  ⊢ CkErrorFrame(c, ck_class_laws_each(ls, seen, c, cl)) from match ls {
     Nil => (clean_errors => clean_errors)
     Cons(l, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
@@ -166,7 +166,7 @@ pub theorem cf_laws_any_frame_errors(
   cl: SurfaceClass,
   ls: List(SurfaceLaw)
 ): CkErrorFrame(c, cf_laws_any(c, cl, ls)) {
-  match ls: CkErrorFrame(c, cf_laws_any(c, cl, ls)) {
+  ⊢ CkErrorFrame(c, cf_laws_any(c, cl, ls)) from match ls {
     Nil => (clean_errors => clean_errors)
     Cons(l, rest) => error_frame_rewrap(
       c,
@@ -209,7 +209,7 @@ pub theorem cf_method_where_frame_errors(
   cl: SurfaceClass,
   ws: List(SurfaceConstraint)
 ): CkErrorFrame(c, cf_method_where(c, m, cl, ws)) {
-  match ws: CkErrorFrame(c, cf_method_where(c, m, cl, ws)) {
+  ⊢ CkErrorFrame(c, cf_method_where(c, m, cl, ws)) from match ws {
     Nil => (clean_errors => clean_errors)
     Cons(w, more) => error_frame_rewrap(
       c,
@@ -333,7 +333,7 @@ pub theorem ck_class_methods_frame_errors(
   c: Checker,
   cl: SurfaceClass
 ): CkErrorFrame(c, ck_class_methods(ms, seen, c, cl)) {
-  match ms: CkErrorFrame(c, ck_class_methods(ms, seen, c, cl)) {
+  ⊢ CkErrorFrame(c, ck_class_methods(ms, seen, c, cl)) from match ms {
     Nil => (clean_errors => clean_errors)
     Cons(m, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
@@ -356,7 +356,7 @@ pub theorem cf_bound_ctor_frame_errors(
   b: Text,
   o: Option(Pair(Kind, Kind))
 ): CkErrorFrame(c, cf_bound_ctor(c, cl, b, o)) {
-  match o: CkErrorFrame(c, cf_bound_ctor(c, cl, b, o)) {
+  ⊢ CkErrorFrame(c, cf_bound_ctor(c, cl, b, o)) from match o {
     None => error_frame_bind(
       Unit,
       Option(Pair(Kind, Option(Kind))),
@@ -376,7 +376,7 @@ pub theorem cf_bound_kind_frame_errors(
   b: Text,
   o: Option(Kind)
 ): CkErrorFrame(c, cf_bound_kind(c, cl, b, o)) {
-  match o: CkErrorFrame(c, cf_bound_kind(c, cl, b, o)) {
+  ⊢ CkErrorFrame(c, cf_bound_kind(c, cl, b, o)) from match o {
     None => cf_bound_ctor_frame_errors(c, cl, b, kind_parse_ctor(b))
     Some(k) => (clean_errors => clean_errors)
   }
@@ -387,7 +387,7 @@ pub theorem cf_bound_frame_errors(
   cl: SurfaceClass,
   o: Option(Text)
 ): CkErrorFrame(c, cf_bound(c, cl, o)) {
-  match o: CkErrorFrame(c, cf_bound(c, cl, o)) {
+  ⊢ CkErrorFrame(c, cf_bound(c, cl, o)) from match o {
     None => (clean_errors => clean_errors)
     Some(b) => cf_bound_kind_frame_errors(c, cl, b, kind_parse(b))
   }
@@ -414,7 +414,7 @@ pub theorem cf_class_bound_result_frame_errors(
   cl: SurfaceClass,
   o: Option(Pair(Kind, Option(Kind)))
 ): CkErrorFrame(c, cf_class_bound_result(c, cl, o)) {
-  match o: CkErrorFrame(c, cf_class_bound_result(c, cl, o)) {
+  ⊢ CkErrorFrame(c, cf_class_bound_result(c, cl, o)) from match o {
     None => (clean_errors => clean_errors)
     Some(bound) => error_frame_bind(
       Unit,
@@ -447,7 +447,7 @@ pub theorem cf_class_arity_frame_errors(
   own_types: List(Text),
   bad: Bool
 ): CkErrorFrame(c, cf_class_arity(c, cl, own_types, bad)) {
-  match bad: CkErrorFrame(c, cf_class_arity(c, cl, own_types, bad)) {
+  ⊢ CkErrorFrame(c, cf_class_arity(c, cl, own_types, bad)) from match bad {
     true => written_error_return(
       c,
       false,
@@ -490,7 +490,7 @@ pub theorem cf_class_type_frame_errors(
   own_types: List(Text),
   bad: Bool
 ): CkErrorFrame(c, cf_class_type(c, cl, own_types, bad)) {
-  match bad: CkErrorFrame(c, cf_class_type(c, cl, own_types, bad)) {
+  ⊢ CkErrorFrame(c, cf_class_type(c, cl, own_types, bad)) from match bad {
     true => written_error_return(
       c,
       false,
@@ -507,7 +507,7 @@ pub theorem cf_class_duplicate_frame_errors(
   own_types: List(Text),
   bad: Bool
 ): CkErrorFrame(c, cf_class_duplicate(c, cl, own_types, bad)) {
-  match bad: CkErrorFrame(c, cf_class_duplicate(c, cl, own_types, bad)) {
+  ⊢ CkErrorFrame(c, cf_class_duplicate(c, cl, own_types, bad)) from match bad {
     true => written_error_return(
       c,
       false,
@@ -518,7 +518,12 @@ pub theorem cf_class_duplicate_frame_errors(
         cf_class_span(cl)
       )
     )
-    false => cf_class_type_frame_errors(c, cl, own_types, text_list_has(own_types, cf_class_name(cl)))
+    false => cf_class_type_frame_errors(
+      c,
+      cl,
+      own_types,
+      text_list_has(own_types, cf_class_name(cl))
+    )
   }
 }
 
@@ -528,7 +533,7 @@ pub theorem cf_class_builtin_frame_errors(
   own_types: List(Text),
   bad: Bool
 ): CkErrorFrame(c, cf_class_builtin(c, cl, own_types, bad)) {
-  match bad: CkErrorFrame(c, cf_class_builtin(c, cl, own_types, bad)) {
+  ⊢ CkErrorFrame(c, cf_class_builtin(c, cl, own_types, bad)) from match bad {
     true => written_error_return(
       c,
       false,
@@ -600,7 +605,7 @@ pub theorem ck_declare_methods_each_frame_errors(
   cl: SurfaceClass,
   info: ClassInfo
 ): CkErrorFrame(c, ck_declare_methods_each(ms, c, cl, info)) {
-  match ms: CkErrorFrame(c, ck_declare_methods_each(ms, c, cl, info)) {
+  ⊢ CkErrorFrame(c, ck_declare_methods_each(ms, c, cl, info)) from match ms {
     Nil => (clean_errors => clean_errors)
     Cons(m, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
@@ -622,7 +627,7 @@ pub theorem cf_declare_methods_get_frame_errors(
   cl: SurfaceClass,
   o: Option(ClassInfo)
 ): CkErrorFrame(c, cf_declare_methods_get(c, cl, o)) {
-  match o: CkErrorFrame(c, cf_declare_methods_get(c, cl, o)) {
+  ⊢ CkErrorFrame(c, cf_declare_methods_get(c, cl, o)) from match o {
     None => (clean_errors => clean_errors)
     Some(info) => error_frame_rewrap(
       c,
@@ -653,7 +658,7 @@ pub theorem ck_declare_methods_frame_errors(
   cls: List(SurfaceClass),
   c: Checker
 ): CkErrorFrame(c, ck_declare_methods(cls, c)) {
-  match cls: CkErrorFrame(c, ck_declare_methods(cls, c)) {
+  ⊢ CkErrorFrame(c, ck_declare_methods(cls, c)) from match cls {
     Nil => (clean_errors => clean_errors)
     Cons(cl, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
@@ -674,7 +679,7 @@ pub theorem cf_cons_if_mut_frame_errors<A: Type>(
   xs: List(A),
   take: Bool
 ): CkErrorFrame(c, cf_cons_if_mut(c, x, xs, take)) {
-  match take: CkErrorFrame(c, cf_cons_if_mut(c, x, xs, take)) {
+  ⊢ CkErrorFrame(c, cf_cons_if_mut(c, x, xs, take)) from match take {
     true => (clean_errors => clean_errors)
     false => (clean_errors => clean_errors)
   }
@@ -718,7 +723,7 @@ pub theorem cf_class_list_step_errors(
   own_types: List(Text),
   ih: ∀ next: Checker. CkErrorFrame(next, ck_declare_class_list(rest, next, own_types))
 ): CkErrorFrame(c, ck_declare_class_list(Cons(s, rest), c, own_types)) {
-  match s: CkErrorFrame(c, ck_declare_class_list(Cons(s, rest), c, own_types)) {
+  ⊢ CkErrorFrame(c, ck_declare_class_list(Cons(s, rest), c, own_types)) from match s {
     StLet(name, ty, value, borrow, mutable) => Eq::subst(
       (z: Mut1(List(SurfaceClass), Checker)) => CkErrorFrame(c, z),
       Eq::sym(cf_class_list_StLet_unf(name, ty, value, borrow, mutable, rest, c, own_types)),
@@ -857,7 +862,7 @@ pub theorem ck_declare_class_list_frame_errors(
   c: Checker,
   own_types: List(Text)
 ): CkErrorFrame(c, ck_declare_class_list(ss, c, own_types)) {
-  match ss: CkErrorFrame(c, ck_declare_class_list(ss, c, own_types)) {
+  ⊢ CkErrorFrame(c, ck_declare_class_list(ss, c, own_types)) from match ss {
     Nil => (clean_errors => clean_errors)
     Cons(s, rest) => cf_class_list_step_errors(
       s,

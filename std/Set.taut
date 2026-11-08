@@ -14,7 +14,7 @@ pub(open) inductive Ordset(K: Type): Type {
 
 module Ordset {
   pub fn map<K>(s: Ordset(K)): Ordmap(K, Bool) {
-    match s: Ordmap(K, Bool) {
+    ⊢ Ordmap(K, Bool) from match s {
       Mk(m) => m
     }
   }
@@ -24,23 +24,23 @@ module Ordset {
   }
 
   pub fn size<K>(s: Ordset(K)): Nat {
-    Ordmap::size(map(s))
+    Ordmap::size(Ordset::map(s))
   }
 
   pub fn contains<K>(s: Ordset(K), k: K, cmp: (K, K) -> Ordering): Bool {
-    Ordmap::contains(map(s), k, cmp)
+    Ordmap::contains(Ordset::map(s), k, cmp)
   }
 
   pub fn insert<K>(s: Ordset(K), k: K, cmp: (K, K) -> Ordering): Ordset(K) {
-    Ordset::Mk(Ordmap::insert(map(s), k, true, cmp))
+    Ordset::Mk(Ordmap::insert(Ordset::map(s), k, true, cmp))
   }
 
   pub fn remove<K>(s: Ordset(K), k: K, cmp: (K, K) -> Ordering): Ordset(K) {
-    Ordset::Mk(Ordmap::remove(map(s), k, cmp))
+    Ordset::Mk(Ordmap::remove(Ordset::map(s), k, cmp))
   }
 
   pub fn keys_of<K>(es: List(K × Bool)): List(K) {
-    match es: List(K) {
+    ⊢ List(K) from match es {
       Nil => Nil
       Cons(#(k, b), rest) => Cons(k, keys_of(rest))
     }
@@ -48,11 +48,11 @@ module Ordset {
 
   // The elements, in order.
   pub fn to_list<K>(s: Ordset(K)): List(K) {
-    keys_of(Ordmap::entries(map(s)))
+    keys_of(Ordmap::entries(Ordset::map(s)))
   }
 
   pub fn insert_all<K>(s: Ordset(K), l: List(K), cmp: (K, K) -> Ordering): Ordset(K) {
-    match l: Ordset(K) {
+    ⊢ Ordset(K) from match l {
       Nil => s
       Cons(k, rest) => insert_all(insert(s, k, cmp), rest, cmp)
     }
@@ -67,9 +67,9 @@ module Ordset {
   }
 
   pub fn keep<K>(l: List(K), b: Ordset(K), want: Bool, cmp: (K, K) -> Ordering): List(K) {
-    match l: List(K) {
+    ⊢ List(K) from match l {
       Nil => Nil
-      Cons(k, rest) => match Bool::eq(contains(b, k, cmp), want): List(K) {
+      Cons(k, rest) => ⊢ List(K) from match Bool::eq(contains(b, k, cmp), want) {
         true => Cons(k, keep(rest, b, want, cmp))
         false => keep(rest, b, want, cmp)
       }
@@ -86,11 +86,11 @@ module Ordset {
 
   // The set's map is ordered: what the theorems below assume.
   pub fn ordered<K>(s: Ordset(K), cmp: (K, K) -> Ordering): Prop {
-    Ordmap::ordered(map(s), cmp)
+    Ordmap::ordered(Ordset::map(s), cmp)
   }
 
-  pub theorem empty_ordered<K: Type>(cmp: (K, K) -> Ordering): ordered(empty(K), cmp) {
-    Ordmap::empty_ordered(K, Bool, cmp)
+  pub theorem empty_ordered<K: Type>(cmp: (K, K) -> Ordering): ordered(empty(<K: K>), cmp) {
+    Ordmap::empty_ordered(<K: K, V: Bool>, cmp)
   }
 
   pub theorem insert_ordered<K: Type>(
@@ -100,7 +100,7 @@ module Ordset {
     k: K,
     o: ordered(s, cmp)
   ): ordered(insert(s, k, cmp), cmp) {
-    Ordmap::insert_ordered(cmp, w, map(s), k, true, o)
+    Ordmap::insert_ordered(cmp, w, Ordset::map(s), k, true, o)
   }
 
   pub theorem remove_ordered<K: Type>(
@@ -110,7 +110,7 @@ module Ordset {
     k: K,
     o: ordered(s, cmp)
   ): ordered(remove(s, k, cmp), cmp) {
-    Ordmap::remove_ordered(cmp, w, map(s), k, o)
+    Ordmap::remove_ordered(cmp, w, Ordset::map(s), k, o)
   }
 
   pub theorem contains_insert_same<K: Type>(
@@ -120,7 +120,7 @@ module Ordset {
     k: K,
     o: ordered(s, cmp)
   ): contains(insert(s, k, cmp), k, cmp) = true {
-    Eq::congr(⟦Ordmap::is_some(□)⟧, Ordmap::get_insert_same(cmp, w, map(s), k, true, o))
+    Eq::congr(⟦Ordmap::is_some(□)⟧, Ordmap::get_insert_same(cmp, w, Ordset::map(s), k, true, o))
   }
 
   pub theorem contains_insert_other<K: Type>(
@@ -136,7 +136,7 @@ module Ordset {
   ): contains(insert(s, k, cmp), j, cmp) = contains(s, j, cmp) {
     Eq::congr(
       ⟦Ordmap::is_some(□)⟧,
-      Ordmap::get_insert_other(cmp, w, map(s), k, true, j, c, ne, ej, o)
+      Ordmap::get_insert_other(cmp, w, Ordset::map(s), k, true, j, c, ne, ej, o)
     )
   }
 
@@ -147,7 +147,7 @@ module Ordset {
     k: K,
     o: ordered(s, cmp)
   ): contains(remove(s, k, cmp), k, cmp) = false {
-    Eq::congr(⟦Ordmap::is_some(□)⟧, Ordmap::get_remove_same(cmp, w, map(s), k, o))
+    Eq::congr(⟦Ordmap::is_some(□)⟧, Ordmap::get_remove_same(cmp, w, Ordset::map(s), k, o))
   }
 
   pub theorem contains_remove_other<K: Type>(
@@ -161,7 +161,10 @@ module Ordset {
     ej: cmp(j, k) = c,
     o: ordered(s, cmp)
   ): contains(remove(s, k, cmp), j, cmp) = contains(s, j, cmp) {
-    Eq::congr(⟦Ordmap::is_some(□)⟧, Ordmap::get_remove_other(cmp, w, map(s), k, j, c, ne, ej, o))
+    Eq::congr(
+      ⟦Ordmap::is_some(□)⟧,
+      Ordmap::get_remove_other(cmp, w, Ordset::map(s), k, j, c, ne, ej, o)
+    )
   }
 
   pub theorem insert_all_ordered<K: Type>(
@@ -171,7 +174,7 @@ module Ordset {
     s: Ordset(K),
     o: ordered(s, cmp)
   ): ordered(insert_all(s, l, cmp), cmp) {
-    match l: ordered(insert_all(s, l, cmp), cmp) {
+    ⊢ ordered(insert_all(s, l, cmp), cmp) from match l {
       Nil => o
       Cons(k, rest) => insert_all_ordered(
         cmp,

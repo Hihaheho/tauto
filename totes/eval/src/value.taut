@@ -4,6 +4,7 @@ import "../../vm/src/mval.taut"
 
 pub fn e_value(v: CVal): MVal {
   match v {
+    CvDeclaration(slot) => MvDeclaration(slot)
     CvUnit => MvUnit
     CvInt(i) => MvInt(i)
     CvFloat(x) => MvFloat(x)
@@ -22,7 +23,7 @@ pub(open) inductive EBinding: Type {
 pub fn e_lookup(env: List(Pair(Nat, EBinding)), id: Nat): Option(EBinding) {
   match env {
     Nil => None
-    Cons(entry, rest) => match entry: Option(EBinding) {
+    Cons(entry, rest) => ⊢ Option(EBinding) from match entry {
       Pair { fst: key, snd: value } => if Nat::eq(key, id) {
         Some(value)
       } else {

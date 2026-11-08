@@ -94,7 +94,6 @@ pub(crate) fn susp(e: &Expr) -> bool {
         } => susp(cond) || susp(then) || otherwise.as_deref().is_some_and(susp),
         ExprKind::And(a, b) | ExprKind::Or(a, b) => susp(a) || susp(b),
         ExprKind::Ctor { fields, .. } => fields.iter().any(|(_, e)| susp(e)),
-        ExprKind::Product { members, .. } => members.iter().any(susp),
         ExprKind::Arith { args, .. } | ExprKind::Cmp { args, .. } | ExprKind::Eq { args, .. } => {
             args.iter().any(susp)
         }
@@ -106,18 +105,16 @@ pub(crate) fn susp(e: &Expr) -> bool {
         ExprKind::Field { base, .. } => susp(base),
         ExprKind::Inject { value, .. }
         | ExprKind::Remap { value, .. }
-        | ExprKind::Member { value, .. }
         | ExprKind::Deref { value, .. } => susp(value),
         _ => false,
     }
 }
 
-/// A call of a borrowed function of the O tier (one that may diverge under a
+/// A call of a function value of the O tier (one that may diverge under a
 /// budget): in code of the M tier it is answered through the budgets in the
 /// handlers in place, so it is written in continuation-passing style.
 fn o_callback_call(c: &CallNode) -> bool {
-    c.tier == Tier::O
-        && matches!(&c.callee, Callee::Local(l) if matches!(l.repr, Repr::FnRef | Repr::BorrowClosure))
+    c.tier == Tier::O && matches!(&c.callee, Callee::Local(_) | Callee::Value(_))
 }
 
 fn stmt_susp(s: &Stmt) -> bool {
@@ -521,7 +518,7 @@ impl<'a> Gen<'a> {
     }
 
     fn cps_perform(&mut self, p: &PerformNode, e: &Expr, mx: &mut Mx, k: Kc<'a>) -> Rs {
-        let opc = id(&format!("OP_{}", self.pkg.ops[p.op].name));
+        let opc = crate::expr::op_const(&self.pkg.ops[p.op]);
         let at = self.loc(p.span);
         let mut fx = Fx::new(false);
         fx.m = true;
@@ -600,11 +597,27 @@ impl<'a> Gen<'a> {
                     Tick::None => call(self, mx),
                 }
             }
-            Callee::Local(l) if o_callback_call(c) => {
+            Callee::Local(l)
+                if o_callback_call(c) && matches!(l.repr, Repr::FnRef | Repr::BorrowClosure) =>
+            {
                 let kont = self.typed_kont(mx, k, &e.ty);
                 let (x, at) = (lid(l), self.loc(c.span));
                 let args = tuple(&args);
                 quote!(tauto_rt::cps::call_o(ev, m, #at, &#x, #args, #kont))
+            }
+            Callee::Local(_) | Callee::Value(_) if o_callback_call(c) => {
+                let kont = self.typed_kont(mx, k, &e.ty);
+                let at = self.loc(c.span);
+                let function = match &c.callee {
+                    Callee::Local(local) => {
+                        let name = lid(local);
+                        quote!(#name)
+                    }
+                    Callee::Value(value) => self.expr(value, &mut fx),
+                    _ => unreachable!(),
+                };
+                let joined = comma(std::iter::once(quote!(ev)).chain(args));
+                quote!(tauto_rt::cps::call_o_future(ev, m, #at, (#function)(#joined), #kont))
             }
             Callee::Local(l) => {
                 let kont = self.typed_kont(mx, k, &e.ty);
@@ -1016,7 +1029,7 @@ impl<'a> Gen<'a> {
         let _ = ty;
         let mut groups = Rs::new();
         for op in &ops {
-            let opc = id(&format!("OP_{}", self.pkg.ops[*op].name));
+            let opc = crate::expr::op_const(&self.pkg.ops[*op]);
             let mine: Vec<OpArm> = m_arms(h).filter(|a| a.op == *op).cloned().collect();
             let tup = self.payload_ty(&mine[0].params);
             let mut tries = Rs::new();

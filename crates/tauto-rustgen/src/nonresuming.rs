@@ -81,9 +81,6 @@ impl ProofContext {
             Ty::HashMap(a, b) => Ty::HashMap(Box::new(resolve(a)), Box::new(resolve(b))),
             Ty::Result(a, b) => Ty::Result(Box::new(resolve(a)), Box::new(resolve(b))),
             Ty::Pair(a, b) => Ty::Pair(Box::new(resolve(a)), Box::new(resolve(b))),
-            Ty::Product(ms) => {
-                Ty::Product(ms.iter().map(|(k, m)| (k.clone(), resolve(m))).collect())
-            }
             Ty::Data(name, args) => Ty::Data(name.clone(), args.iter().map(&mut resolve).collect()),
             Ty::Std(name, args) => Ty::Std(name.clone(), args.iter().map(&mut resolve).collect()),
             Ty::Fn(f) => Ty::Fn(Box::new(FnTy {
@@ -189,7 +186,7 @@ fn explain_function(
                 checked.insert(b.id);
                 out.push(BudgetDiagnostic {
                     budget_id: b.id,
-                    function: f.source.clone(),
+                    function: f.source.to_string(),
                     span: b.span,
                     reasons: check.reasons,
                     variant: variant.into(),
@@ -202,13 +199,13 @@ fn explain_function(
         if !checked.contains(&budget_id) {
             out.push(BudgetDiagnostic {
                 budget_id,
-                function: f.source.clone(),
+                function: f.source.to_string(),
                 span,
                 variant: variant.into(),
                 assumptions: Vec::new(),
                 reasons: vec![BudgetReason {
                     code: "no-immediate-handler",
-                    function: f.source.clone(),
+                    function: f.source.to_string(),
                     span,
                     message: msg!("rustgen-budget-no-immediate-handler").to_string(),
                 }],
@@ -288,7 +285,7 @@ impl Gen<'_> {
             );
         }
         if let Some(arm) = h.susp.first() {
-            if self.pkg.ops[arm.op].name != "exceeded"
+            if !tauto::bindings::is_library(&self.pkg.ops[arm.op].name, "exceeded")
                 || arm.guard.is_some()
                 || arm.params != [Ty::Info(Box::new(budget.body.ty.clone()))]
                 || !matches!(arm.pats.as_slice(), [Pat::Wild | Pat::Bind(_, _)])
@@ -336,7 +333,7 @@ impl Gen<'_> {
                     span,
                     msg!(
                         "rustgen-budget-abort-not-locally-total",
-                        op = &self.pkg.ops[op].name
+                        op = self.pkg.ops[op].name.to_string()
                     ),
                 );
             }
@@ -641,7 +638,7 @@ impl Gen<'_> {
                                     c.span,
                                     msg!(
                                         "rustgen-budget-unproven-type-arguments",
-                                        function = &f.source,
+                                        function = f.source.to_string(),
                                         generics = format!(
                                             "{:?}",
                                             f.generics
@@ -682,7 +679,7 @@ impl Gen<'_> {
                                             "rustgen-budget-unknown-callback",
                                             index = index + 1,
                                             name = &param.local.name,
-                                            function = &f.source,
+                                            function = f.source.to_string(),
                                             ty = self.ty(&ty).to_string(),
                                             origin = c
                                                 .args
@@ -703,7 +700,7 @@ impl Gen<'_> {
                                         "rustgen-budget-unproven-parameter",
                                         index = index + 1,
                                         name = &param.local.name,
-                                        function = &f.source,
+                                        function = f.source.to_string(),
                                         ty = self.ty(&ty).to_string(),
                                         from = self.ty(&param.ty).to_string()
                                     ),
@@ -717,7 +714,7 @@ impl Gen<'_> {
                                 c.span,
                                 msg!(
                                     "rustgen-budget-unproven-result",
-                                    function = &f.source,
+                                    function = f.source.to_string(),
                                     ty = self.ty(&proven.resolve(&f.ret)).to_string()
                                 ),
                             );
@@ -765,7 +762,7 @@ impl Gen<'_> {
                                 "callback-builtin",
                                 function,
                                 c.span,
-                                msg!("rustgen-budget-callback-builtin", name = name),
+                                msg!("rustgen-budget-callback-builtin", name = name.to_string()),
                             );
                         }
                         if mode == Mode::Observer
@@ -788,7 +785,7 @@ impl Gen<'_> {
                                 "handler-may-panic",
                                 function,
                                 c.span,
-                                msg!("rustgen-budget-builtin-may-panic", name = name),
+                                msg!("rustgen-budget-builtin-may-panic", name = name.to_string()),
                             );
                         }
                     }
@@ -807,7 +804,7 @@ impl Gen<'_> {
                                     c.span,
                                     msg!(
                                         "rustgen-budget-extern-tier",
-                                        name = name,
+                                        name = name.to_string(),
                                         tier = format!("{:?}", c.tier)
                                     ),
                                 );
@@ -821,7 +818,7 @@ impl Gen<'_> {
                                     c.span,
                                     msg!(
                                         "rustgen-budget-extern-result",
-                                        name = name,
+                                        name = name.to_string(),
                                         ty = self.ty(&result).to_string()
                                     ),
                                 );
@@ -836,7 +833,7 @@ impl Gen<'_> {
                                         arg.span,
                                         msg!(
                                             "rustgen-budget-extern-argument",
-                                            name = name,
+                                            name = name.to_string(),
                                             index = index + 1,
                                             ty = self.ty(&ty).to_string()
                                         ),
@@ -851,7 +848,7 @@ impl Gen<'_> {
                                 "extern-contract",
                                 function,
                                 c.span,
-                                msg!("rustgen-budget-extern-contract", name = name),
+                                msg!("rustgen-budget-extern-contract", name = name.to_string()),
                             );
                         }
                     }
@@ -867,8 +864,11 @@ impl Gen<'_> {
                                 "rustgen-budget-origin-computed-callable",
                                 ty = self.ty(&context.resolve(&value.ty)).to_string()
                             ),
-                            Callee::Builtin(name) | Callee::Extern(name) => Message::text(name),
-                            Callee::Inst(inst) => Message::text(&self.pkg.fns[*inst].source),
+                            Callee::Builtin(name) => Message::text(name),
+                            Callee::Extern(name) => Message::text(name.to_string()),
+                            Callee::Inst(inst) => {
+                                Message::text(self.pkg.fns[*inst].source.to_string())
+                            }
                         };
                         check.reject(
                             "unknown-call",
@@ -934,7 +934,6 @@ impl Gen<'_> {
             | ExprKind::Unreachable(value)
             | ExprKind::Inject { value, .. }
             | ExprKind::Remap { value, .. }
-            | ExprKind::Member { value, .. }
             | ExprKind::Deref { value, .. } => child(value, false),
             ExprKind::And(a, b) | ExprKind::Or(a, b) => {
                 child(a, false);
@@ -942,11 +941,6 @@ impl Gen<'_> {
             }
             ExprKind::Ctor { fields, .. } => {
                 for (_, value) in fields {
-                    child(value, false);
-                }
-            }
-            ExprKind::Product { members, .. } => {
-                for value in members {
                     child(value, false);
                 }
             }
@@ -991,6 +985,7 @@ impl Gen<'_> {
             | ExprKind::Float(_)
             | ExprKind::Bool(_)
             | ExprKind::Text(_)
+            | ExprKind::Declaration(_)
             | ExprKind::Read { .. }
             | ExprKind::Ref(_)
             | ExprKind::RefMut(_) => {}
@@ -1192,7 +1187,7 @@ impl Gen<'_> {
         match &expr.kind {
             ExprKind::FnValue { inst, .. } => msg!(
                 "rustgen-budget-origin-function",
-                name = &self.pkg.fns[*inst].source
+                name = self.pkg.fns[*inst].source.to_string()
             ),
             ExprKind::Read { local, .. } => msg!("rustgen-budget-origin-local", name = &local.name),
             ExprKind::Ref(place) | ExprKind::RefMut(place) => {
@@ -1237,7 +1232,6 @@ impl Gen<'_> {
             Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
                 self.concrete_type(a, unions) && self.concrete_type(b, unions)
             }
-            Ty::Product(ms) => ms.iter().all(|(_, m)| self.concrete_type(m, unions)),
             Ty::Data(_, args) | Ty::Std(_, args) => {
                 args.iter().all(|t| self.concrete_type(t, unions))
             }
@@ -1271,7 +1265,7 @@ impl Gen<'_> {
     /// Early exhaustion must not change an observable destructor's timing.
     /// Unknown type parameters, function values and host-owned types stay on
     /// the resumable path, including when nested in generated containers.
-    fn inert_drop(&self, ty: &Ty, params: &HashSet<String>, seen: &mut HashSet<String>) -> bool {
+    fn inert_drop(&self, ty: &Ty, params: &HashSet<String>, seen: &mut HashSet<Name>) -> bool {
         match ty {
             Ty::Int(_)
             | Ty::Bool
@@ -1292,7 +1286,6 @@ impl Gen<'_> {
             Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
                 self.inert_drop(a, params, seen) && self.inert_drop(b, params, seen)
             }
-            Ty::Product(ms) => ms.iter().all(|(_, m)| self.inert_drop(m, params, seen)),
             Ty::Param(p) => params.contains(p),
             Ty::Data(name, args) => {
                 if self.bindings.types.contains_key(name)
@@ -1310,7 +1303,7 @@ impl Gen<'_> {
                 // A host can add Drop to non-Copy data unless it asserts the
                 // whole-embedding contract at a separate qualified entry.
                 if self.trusted_budget_host.is_none()
-                    && !(d.copy && self.flags[self.data_index[name.as_str()]][0])
+                    && !(d.copy && self.flags[self.data_index[name]][0])
                 {
                     return false;
                 }

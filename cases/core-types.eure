@@ -1,0 +1,237 @@
+@ cases.literals-default-to-i64-1
+source = ```tauto
+let a := 1 + 2
+```
+types = "ok"
+inferred_types.a = "i64"
+
+@ cases.literals-default-to-i64-2
+source = ```tauto
+let a: i32 := 1 + 2
+```
+types = "ok"
+inferred_types.a = "i32"
+
+@ cases.widths-do-not-mix-1
+source = ```tauto
+fn f(a: i32, b: i64): i64 { a + b }
+```
+types = "error: `+` of i32 and i64: the operands differ"
+
+@ cases.widths-do-not-mix-2
+source = ```tauto
+let a: i32 := 3000000000
+```
+types = "error: 3000000000 does not fit i32"
+
+@ cases.integer-division-is-an-error-1
+source = ```tauto
+let a := 7 / 2
+```
+types = "error: integer `/` is a type error: write div(a, b), mod(a, b), or decimal(a) / decimal(b)"
+
+@ cases.integer-division-is-an-error-2
+source = ```tauto
+let a := div(7, 2)
+let b := mod(7, 2)
+```
+types = "ok"
+inferred_types.b = "i64"
+
+@ cases.a-handler-gives-the-union-of-its-arms-1
+source = ```tauto
+effect ask(): i64
+let c := handle { perform ask() } with {
+  ask(), k => "none"
+  return v => v
+}
+```
+types = "ok"
+inferred_types.c = "i64 | Text"
+
+@ cases.budget-info-resumes-with-the-handle-type-1
+source = ```tauto
+let d := handle { budget(steps: 50) { 1 } } with {
+  exceeded(info), k => info.more(100)
+}
+```
+types = "ok"
+inferred_types.d = "i64"
+
+@ cases.show-takes-a-name-and-any-value-1
+source = ```tauto
+let u := perform show("a", 1)
+let v := perform show("b", true)
+```
+types = "ok"
+
+@ cases.show-takes-a-name-and-any-value-2
+source = ```tauto
+let u := perform show(1, 1)
+```
+types = "error: an argument: i64 does not fit Text"
+
+@ cases.a-tag-is-forgotten-not-added-1
+source = ```tauto
+fn f(x: @a i64): i64 { x }
+```
+types = "ok"
+
+@ cases.a-tag-is-forgotten-not-added-2
+// Where `@a T` is written for a `T`, the value is wrapped, as in a proof.
+source = ```tauto
+fn f(x: i64): @a i64 { x }
+```
+types = "ok"
+
+@ cases.a-match-covers-every-value-1
+source = ```tauto
+let a := match 1 { 0 => 1 }
+```
+types = "error: the `match` does not cover every value"
+
+@ cases.a-match-covers-every-value-2
+source = ```tauto
+let a := match true { true => 1, false => 0 }
+```
+types = "ok"
+
+@ cases.a-match-on-literals-ends-with-a-named-rest-arm
+source = ```tauto
+fn f(n: i64): i64 { match n { 1 => 10, other => other } }
+fn g(s: Text): i64 { match s { "a" => 1, "b" => 2, rest => 0 } }
+```
+types = "ok"
+
+@ cases.a-match-on-literals-does-not-end-with-a-wild-arm
+source = ```tauto
+fn f(n: i64): i64 { match n { 1 => 10, _ => 0 } }
+```
+types = "error: a `match` on literals ends with a named rest arm (`other => …`)"
+
+@ cases.a-match-on-text-literals-does-not-end-with-a-wild-arm
+source = ```tauto
+fn g(s: Text): i64 { match s { "a" => 1, _ => 0 } }
+```
+types = "error: a `match` on literals ends with a named rest arm (`other => …`)"
+
+@ cases.structs-and-enums-1
+source = ```tauto
+struct P { x: i64, y: i64 }
+enum S { Circle(i64), Empty }
+let p := P { x: 1, y: 2 }
+let a := p.x
+let s := Circle(3)
+let r := match s { Circle(n) => n, Empty => 0 }
+```
+types = "ok"
+inferred_types.a = "i64"
+inferred_types.r = "i64"
+
+@ cases.structs-and-enums-2
+source = ```tauto
+enum S { Circle(i64), Empty }
+let r := match Empty { Circle(n) => n }
+```
+types = "error: the `match` does not cover every value"
+
+@ cases.kinds-follow-the-fields-1
+source = ```tauto
+affine struct F {}
+struct W { f: F }
+struct Q { t: Text }
+enum L { Nil, Cons(i64, L) }
+struct P { x: i64 }
+```
+types = "ok"
+inferred_kinds.F = "affine"
+inferred_kinds.W = "affine"
+inferred_kinds.Q = "shared"
+inferred_kinds.L = "shared"
+inferred_kinds.P = "copy"
+
+@ cases.kinds-follow-the-fields-2
+source = ```tauto
+copy struct Q { t: Text }
+```
+types = "error: declared copy but field t is shared"
+
+@ cases.constructor-ambiguity-is-not-declaration-order-order-1-scenario-1
+source = ```tauto
+enum Left { Same(i64) }
+enum Right { Same(Text) }
+let x := Same(1)
+```
+types = "error: ambiguous constructor `Same`: use a type annotation or Left::Same or Right::Same"
+
+@ cases.constructor-ambiguity-is-not-declaration-order-order-1-scenario-2
+source = ```tauto
+enum Left { Same(i64) }
+enum Right { Same(Text) }
+fn left_value(x: Left): i64 { match x { Same(n) => n } }
+```
+types = "ok"
+
+@ cases.constructor-ambiguity-is-not-declaration-order-order-1-scenario-3
+source = ```tauto
+enum Left { Same(i64) }
+enum Right { Same(Text) }
+fn bad(x: Left): Text { match x { Right::Same(n) => n } }
+```
+types = "error: a pattern of Right cannot match Left"
+
+@ cases.constructor-ambiguity-is-not-declaration-order-order-1-scenario-4
+source = ```tauto
+enum Left { Same(i64) }
+enum Right { Same(Text) }
+let x: Left := Same(true)
+```
+types = "error: a constructor: (i64) -> Left does not fit (Bool) -> Left"
+
+@ cases.constructor-ambiguity-is-not-declaration-order-order-2-scenario-1
+source = ```tauto
+enum Right { Same(Text) }
+enum Left { Same(i64) }
+let x := Same(1)
+```
+types = "error: ambiguous constructor `Same`: use a type annotation or Left::Same or Right::Same"
+
+@ cases.constructor-ambiguity-is-not-declaration-order-order-2-scenario-2
+source = ```tauto
+enum Right { Same(Text) }
+enum Left { Same(i64) }
+fn left_value(x: Left): i64 { match x { Same(n) => n } }
+```
+types = "ok"
+
+@ cases.constructor-ambiguity-is-not-declaration-order-order-2-scenario-3
+source = ```tauto
+enum Right { Same(Text) }
+enum Left { Same(i64) }
+fn bad(x: Left): Text { match x { Right::Same(n) => n } }
+```
+types = "error: a pattern of Right cannot match Left"
+
+@ cases.constructor-ambiguity-is-not-declaration-order-order-2-scenario-4
+source = ```tauto
+enum Right { Same(Text) }
+enum Left { Same(i64) }
+let x: Left := Same(true)
+```
+types = "error: a constructor: (i64) -> Left does not fit (Bool) -> Left"
+
+@ cases.ambiguous-nullary-patterns-are-not-catchalls-order-1-scenario-1
+source = ```tauto
+enum Left { Empty, Full(i64) }
+enum Right { Empty, Full(Text) }
+fn bad(x: Left): i64 { match x { Empty => 0 } }
+```
+types = "error: the `match` does not cover every value"
+
+@ cases.ambiguous-nullary-patterns-are-not-catchalls-order-1-scenario-2
+source = ```tauto
+enum Left { Empty, Full(i64) }
+enum Right { Empty, Full(Text) }
+let x := Empty
+```
+types = "error: ambiguous constructor `Empty`: use a type annotation or Left::Empty or Right::Empty"

@@ -1,6 +1,7 @@
 //! Classes and instances: their declarations are checked here, and each
 //! method becomes a function that carries the class as a `where`.
 
+use crate::surface::Name;
 use std::collections::{HashMap, HashSet};
 
 use super::{Checker, Kind, Param, ParamId, STRUCTURAL, Scheme, Ty};
@@ -21,15 +22,34 @@ pub(super) struct ClassInfo {
 pub(super) struct InstanceInfo {
     pub generics: Vec<(Param, Kind)>,
     pub head: Ty,
-    pub preds: Vec<(String, Param)>,
+    /// The `where` of the instance: a class and the generic it constrains.
+    pub preds: Vec<(Name, Param)>,
 }
 
 /// `C::m@H`: the function an instance of `C` for `H` gives `m`.
-pub(super) fn instance_fn(class: &str, method: &str, head: &str) -> String {
-    format!("{class}::{method}@{head}")
+pub(super) fn member_fn(class: &ClassDecl, method: &str) -> Name {
+    let index = class
+        .methods
+        .iter()
+        .position(|m| m.name.as_str() == method)
+        .expect("class method");
+    match class.name.as_global() {
+        Some(owner) => owner.class_member(index, false, method).into(),
+        None => format!("{}::{method}", class.name).into(),
+    }
 }
 
-fn mentions(t: &SurfaceTerm, name: &str) -> bool {
+pub(super) fn instance_fn(class: &ClassDecl, method: &str, head: &Name) -> Name {
+    let member = member_fn(class, method);
+    match (member.as_global(), head.as_global()) {
+        (Some(member), Some(head)) => member
+            .specialize(&format!("head:{:?}", head.id()), format!("{member}@{head}"))
+            .into(),
+        _ => format!("{member}@{head}").into(),
+    }
+}
+
+fn mentions(t: &SurfaceTerm, name: &Name) -> bool {
     let mut t = t.clone();
     let mut found = false;
     walk::term(&mut t, &mut |x| {
@@ -42,8 +62,8 @@ fn mentions(t: &SurfaceTerm, name: &str) -> bool {
 
 /// `t` with `with` in the place of each `name`; what is put in is not
 /// searched again.
-pub(super) fn replace(t: &SurfaceTerm, name: &str, with: &SurfaceTerm) -> SurfaceTerm {
-    fn go(t: &mut SurfaceTerm, name: &str, with: &SurfaceTerm) {
+pub(super) fn replace(t: &SurfaceTerm, name: &Name, with: &SurfaceTerm) -> SurfaceTerm {
+    fn go(t: &mut SurfaceTerm, name: &Name, with: &SurfaceTerm) {
         if matches!(&*t.kind, TermKind::Var(v) if v == name) {
             *t = with.clone();
         } else {
@@ -55,19 +75,20 @@ pub(super) fn replace(t: &SurfaceTerm, name: &str, with: &SurfaceTerm) -> Surfac
     t
 }
 
-/// The name an instance for the product `A × B` is keyed by, as the checker keys it.
-const PRODUCT: &str = "Prod";
-
 /// The type constructor at the head of a type, as the instance table keys it.
-fn constructor(t: &Ty) -> Option<String> {
+fn constructor(t: &Ty, resolved: bool) -> Option<Name> {
+    let builtin = |name: &str| {
+        if resolved {
+            tauto_surface::bindings::library_name(name)
+        } else {
+            Name::from(name)
+        }
+    };
     match t {
         Ty::Named(n, _) => Some(n.clone()),
         Ty::Int(_) | Ty::Bool | Ty::Text | Ty::Float | Ty::Float32 | Ty::Decimal | Ty::Unit => {
-            Some(t.to_string())
+            Some(builtin(&t.to_string()))
         }
-        // The product `A × B`: one instance for every product, its members the first and
-        // the product of the rest.
-        Ty::Product(_) => Some(PRODUCT.to_string()),
         _ => None,
     }
 }
@@ -77,26 +98,26 @@ impl Checker {
     /// each method its function. The functions the program's instances
     /// define are returned, to be checked like the program's own.
     pub(super) fn declare_classes(&mut self, program: &Program, prelude: &Program) -> Vec<FnDecl> {
-        let own_classes: HashSet<&str> = program
+        let own_classes: HashSet<&Name> = program
             .stmts
             .iter()
             .filter_map(|s| match s {
-                Stmt::Class(c) => Some(c.name.as_str()),
+                Stmt::Class(c) => Some(&c.name),
                 _ => None,
             })
             .collect();
-        let own_types: HashSet<&str> = program
+        let own_types: HashSet<&Name> = program
             .stmts
             .iter()
             .filter_map(|s| match s {
-                Stmt::Struct(d) | Stmt::Enum(d) => Some(d.name.as_str()),
+                Stmt::Struct(d) | Stmt::Enum(d) => Some(&d.name),
                 _ => None,
             })
             .collect();
         let mut classes: Vec<(&ClassDecl, bool)> = Vec::new();
         for s in &prelude.stmts {
             if let Stmt::Class(c) = s
-                && !own_classes.contains(c.name.as_str())
+                && !own_classes.contains(&c.name)
             {
                 classes.push((c, true));
             }
@@ -126,7 +147,7 @@ impl Checker {
         let mut instances: Vec<(&InstanceDecl, bool)> = Vec::new();
         for s in &prelude.stmts {
             if let Stmt::Instance(i) = s
-                && !own_classes.contains(i.class.as_str())
+                && !own_classes.contains(&i.class)
             {
                 instances.push((i, true));
             }
@@ -147,7 +168,7 @@ impl Checker {
         &mut self,
         c: &ClassDecl,
         in_prelude: bool,
-        own_types: &HashSet<&str>,
+        own_types: &HashSet<&Name>,
     ) -> bool {
         if STRUCTURAL.contains(&c.name.as_str()) {
             self.error(format!("{} is built in", c.name), c.span);
@@ -157,8 +178,21 @@ impl Checker {
             self.error(format!("class {} is declared twice", c.name), c.span);
             return false;
         }
-        if !in_prelude && own_types.contains(c.name.as_str()) {
+        if !in_prelude && own_types.contains(&c.name) {
             self.error(format!("{} is already a type", c.name), c.span);
+            return false;
+        }
+        if c.parameters.first().is_some_and(|(_, ty)| {
+            !matches!(&*ty.kind, TermKind::Var(name) if name.as_str() == "Type")
+                && !c
+                    .bound
+                    .as_deref()
+                    .is_some_and(|bound| Kind::parse_ctor(bound).is_some())
+        }) {
+            self.error(
+                "value-indexed classes require checked dictionary extraction",
+                c.span,
+            );
             return false;
         }
         if c.arity != 1 {
@@ -244,8 +278,15 @@ impl Checker {
         let bound = self.classes[&c.name].bound;
         for m in &c.methods {
             let mut f = m.clone();
-            f.name = format!("{}::{}", c.name, m.name);
+            f.name = member_fn(c, &m.name);
             f.bounds.resize(f.generics.len(), None);
+            let mut generic_types: Vec<_> = f
+                .generic_parameters()
+                .into_iter()
+                .map(|(_, ty)| ty)
+                .collect();
+            generic_types.insert(0, SurfaceTerm::var("Type", m.span));
+            f.generic_types = generic_types;
             f.generics.insert(0, c.param.clone());
             if !f.rows.is_empty() {
                 f.rows.insert(0, false);
@@ -253,13 +294,14 @@ impl Checker {
             f.bounds.insert(
                 0,
                 Some(match self.classes[&c.name].arg {
-                    Some(arg) => format!("({arg})->{bound}"),
-                    None => bound.to_string(),
+                    Some(arg) => format!("({arg})->{bound}").into(),
+                    None => bound.to_string().into(),
                 }),
             );
             f.where_ = vec![Constraint {
                 class: c.name.clone(),
                 ty: SurfaceTerm::new(TermKind::Var(c.param.clone()), m.span),
+                arguments: Vec::new(),
                 span: m.span,
             }];
             let scheme = self.signature(&f);
@@ -271,10 +313,17 @@ impl Checker {
         &mut self,
         i: &InstanceDecl,
         in_prelude: bool,
-        own_classes: &HashSet<&str>,
-        own_types: &HashSet<&str>,
+        own_classes: &HashSet<&Name>,
+        own_types: &HashSet<&Name>,
         synthesized: &mut Vec<FnDecl>,
     ) {
+        if !i.arguments.is_empty() {
+            self.error(
+                "value-indexed class instances require checked dictionary extraction",
+                i.span,
+            );
+            return;
+        }
         if STRUCTURAL.contains(&i.class.as_str()) {
             self.error(
                 format!("{} is structural and has no instances to write", i.class),
@@ -288,7 +337,7 @@ impl Checker {
         };
         let (decl, bound, arg) = (class.decl.clone(), class.bound, class.arg);
         let mut generics: Vec<(Param, Kind)> = Vec::new();
-        let mut map: HashMap<String, Ty> = HashMap::new();
+        let mut map: HashMap<Name, Ty> = HashMap::new();
         for (n, g) in i.generics.iter().enumerate() {
             let k = i
                 .bounds
@@ -338,7 +387,7 @@ impl Checker {
             return;
         }
         for (g, _) in &generics {
-            if !mentions(&i.head, g.name()) {
+            if !mentions(&i.head, &g.name) {
                 self.error(format!("{g} does not appear in the head"), i.head.span);
                 return;
             }
@@ -346,7 +395,7 @@ impl Checker {
         self.constructor_position = true;
         let head = self.written(&i.head, &map);
         self.constructor_position = false;
-        let Some(ctor) = constructor(&head) else {
+        let Some(ctor) = constructor(&head, i.class.is_resolved()) else {
             self.error(
                 "an instance head applies a type to distinct generics",
                 i.head.span,
@@ -390,7 +439,7 @@ impl Checker {
                 return;
             }
             (None, Some(m)) if m > 0 => {
-                let n = constructor(&head).unwrap_or_default();
+                let n = constructor(&head, i.class.is_resolved()).unwrap_or_default();
                 let want = self.datas.decls[&n].generics.len();
                 self.error(format!("{n} takes {want} arguments"), i.head.span);
                 return;
@@ -408,10 +457,7 @@ impl Checker {
             }
         }
         let shown = self.shown(&head);
-        if !in_prelude
-            && !own_classes.contains(i.class.as_str())
-            && !own_types.contains(ctor.as_str())
-        {
+        if !in_prelude && !own_classes.contains(&i.class) && !own_types.contains(&ctor) {
             self.error(
                 format!(
                     "{}({ctor}) must be in the tote of {} or of {ctor}",
@@ -429,8 +475,15 @@ impl Checker {
             );
             return;
         }
-        let mut preds: Vec<(String, Param)> = Vec::new();
+        let mut preds: Vec<(Name, Param)> = Vec::new();
         for c in &i.where_ {
+            if !c.arguments.is_empty() {
+                self.error(
+                    "value-indexed constraints require checked dictionary extraction",
+                    c.span,
+                );
+                continue;
+            }
             if !STRUCTURAL.contains(&c.class.as_str()) && !self.classes.contains_key(&c.class) {
                 self.error(format!("{} is not a class", c.class), c.span);
                 continue;
@@ -441,7 +494,7 @@ impl Checker {
                         c.class.clone(),
                         generics
                             .iter()
-                            .find(|(p, _)| p.name() == g)
+                            .find(|(p, _)| &p.name == g)
                             .unwrap()
                             .0
                             .clone(),
@@ -480,12 +533,25 @@ impl Checker {
                 continue;
             };
             let mut f = m.clone();
-            f.name = instance_fn(&i.class, &m.name, &ctor);
+            f.name = instance_fn(&decl, &m.name, &ctor);
             f.bounds.resize(f.generics.len(), None);
             let mut bounds = i.bounds.clone();
             bounds.resize(i.generics.len(), None);
             bounds.extend(f.bounds.drain(..));
             f.bounds = bounds;
+            let mut generic_types: Vec<_> = i
+                .generics
+                .iter()
+                .enumerate()
+                .map(|(n, _)| {
+                    i.generic_types
+                        .get(n)
+                        .cloned()
+                        .unwrap_or_else(|| SurfaceTerm::var("Type", i.span))
+                })
+                .collect();
+            generic_types.extend(f.generic_parameters().into_iter().map(|(_, ty)| ty));
+            f.generic_types = generic_types;
             f.generics.splice(0..0, i.generics.iter().cloned());
             f.where_ = i.where_.clone();
             let scheme = self.signature(&f);
@@ -516,7 +582,7 @@ impl Checker {
         got: &FnDecl,
         scheme: &Scheme,
         expected: &FnDecl,
-        param: &str,
+        param: &Name,
         head: &Ty,
     ) {
         let mut want = expected.clone();
@@ -534,6 +600,19 @@ impl Checker {
         bounds.resize(i.generics.len(), None);
         bounds.extend(want.bounds.drain(..));
         want.bounds = bounds;
+        let mut generic_types: Vec<_> = i
+            .generics
+            .iter()
+            .enumerate()
+            .map(|(n, _)| {
+                i.generic_types
+                    .get(n)
+                    .cloned()
+                    .unwrap_or_else(|| SurfaceTerm::var("Type", i.span))
+            })
+            .collect();
+        generic_types.extend(want.generic_parameters().into_iter().map(|(_, ty)| ty));
+        want.generic_types = generic_types;
         want.generics.splice(0..0, i.generics.iter().cloned());
         want.where_ = i.where_.clone();
         let wanted = self.signature_in(&want, scheme.owner.clone());
@@ -586,9 +665,9 @@ impl Checker {
     /// to. Nothing here makes a type: an unknown type is left as an error.
     pub(super) fn resolve_class(
         &self,
-        class: &str,
+        class: &Name,
         t: &Ty,
-        assume: &[(String, Param)],
+        assume: &[(Name, Param)],
     ) -> Result<super::Ev, Unresolved> {
         use super::Ev;
         let t = match self.resolve(t) {
@@ -598,7 +677,7 @@ impl Checker {
         let shown = || self.shown(&t).to_string();
         if let Ty::Param(n, _) = &t {
             return if assume.iter().any(|(c, g)| c == class && g == n) {
-                Ok(Ev::Assume(class.to_string(), n.clone()))
+                Ok(Ev::Assume(class.clone(), n.clone()))
             } else {
                 Err(Unresolved::Assumption(shown()))
             };
@@ -606,17 +685,23 @@ impl Checker {
         if matches!(t, Ty::Var(_)) {
             return Err(Unresolved::Undetermined);
         }
-        if STRUCTURAL.contains(&class) {
+        if STRUCTURAL.contains(&class.as_str()) {
             return if self.datas.structural(class, &t, assume) {
                 Ok(Ev::Structural)
             } else {
                 Err(Unresolved::NoInstance(shown()))
             };
         }
-        let Some(ctor) = constructor(&t) else {
+        let Some(ctor) = constructor(&t, class.is_resolved()) else {
             return Err(Unresolved::NoInstance(shown()));
         };
-        let Some(instance) = self.instances.get(&(class.to_string(), ctor.clone())) else {
+        // A `Pair` is the instance's whichever way it is named: `A × B` is the prelude's.
+        let ctor = if super::is_pair_name(&ctor) {
+            self.pair_name()
+        } else {
+            ctor
+        };
+        let Some(instance) = self.instances.get(&(class.clone(), ctor.clone())) else {
             return Err(if self.has_vars(&t) {
                 Unresolved::Undetermined
             } else {
@@ -633,15 +718,6 @@ impl Checker {
                 }
             }
         }
-        // `A × B` on a product: `A` is its first member and `B` the product of the
-        // rest, as `A × B × C` is `A × (B × C)`.
-        if let (Ty::Product(params), Ty::Product(args)) = (&instance.head, &t)
-            && let ([Ty::Param(a, _), Ty::Param(b, _)], [first, rest @ ..]) =
-                (params.as_slice(), args.as_slice())
-        {
-            found.insert(a.id(), first.clone());
-            found.insert(b.id(), super::product(rest.to_vec()));
-        }
         let args: Vec<Ty> = instance
             .generics
             .iter()
@@ -652,6 +728,6 @@ impl Checker {
             let u = found.get(g.id()).cloned().unwrap_or(Ty::Unit);
             subs.push(self.resolve_class(d, &u, assume)?);
         }
-        Ok(Ev::Inst(class.to_string(), ctor, args, subs))
+        Ok(Ev::Inst(class.clone(), ctor, args, subs))
     }
 }

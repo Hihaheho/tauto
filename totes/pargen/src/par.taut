@@ -86,6 +86,8 @@ pub(open) struct PGrammar {
   lalr: Bool
   states: List(PState)
   title: Option(Text)
+  // `%describe Terminal "…"`: what a terminal means, for a syntax error.
+  describes: List(Pair(Text, Text))
   comment: Option(Text)
   scanners: List(PScanner)
   prods: List(PProd)
@@ -826,6 +828,7 @@ pub fn par_read(source: Text): PGrammar {
   var at: u64 := 0
   var start: Option(Text) := None
   var title: Option(Text) := None
+  var describes: List(Pair(Text, Text)) := Nil
   var comment: Option(Text) := None
   var initial := par_new_scanner("INITIAL")
   var modes: List(PScanner) := Nil
@@ -846,6 +849,10 @@ pub fn par_read(source: Text): PGrammar {
     } else if t.text == "%title" {
       title := Some(par_expect_literal(a, at + 1).text)
       at := at + 2
+    } else if t.text == "%describe" {
+      let n := par_expect_name(a, at + 1)
+      describes := Cons(Pair { fst: n.fst, snd: par_expect_literal(a, n.snd).text }, describes)
+      at := n.snd + 1
     } else if t.text == "%comment" {
       comment := Some(par_expect_literal(a, at + 1).text)
       at := at + 2
@@ -905,6 +912,7 @@ pub fn par_read(source: Text): PGrammar {
     lalr: lalr
     states: text_list_reverse(dyn_states)
     title: title
+    describes: text_list_reverse(describes)
     comment: comment
     scanners: Cons(par_finish_scanner(initial), text_list_reverse(modes))
     prods: text_list_reverse(prods)
@@ -1027,18 +1035,16 @@ pub fn md_expand(t: PTerm): Text {
           Buf::push(&mut b, &lk_slice(t.text, at, end))
           at := end
         }
-        None => {
-          match lk_decode(t.text, at) {
-            Some(#(@code code, @len len)) => {
-              if code < 128 && md_is_meta(code) {
-                Buf::push(&mut b, &"\\")
-              }
-              Buf::push(&mut b, &lk_slice(t.text, at, at + len))
-              at := at + len
+        None => match lk_decode(t.text, at) {
+          Some(#(@code code, @len len)) => {
+            if code < 128 && md_is_meta(code) {
+              Buf::push(&mut b, &"\\")
             }
-            None => {
-              at := at + 1
-            }
+            Buf::push(&mut b, &lk_slice(t.text, at, at + len))
+            at := at + len
+          }
+          None => {
+            at := at + 1
           }
         }
       }

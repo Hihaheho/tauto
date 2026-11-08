@@ -1,0 +1,64 @@
+import "../../scan/src/scan.taut"
+import "../../syntax/src/syntax.taut"
+import "../../text/src/text.taut"
+import std::Base
+import std::Text
+import std::prelude::Affine
+
+// The colour classes of a source file: each token the scanner reads, with
+// the class its kind has. A token without a class (white space, an
+// identifier, punctuation) is left out.
+
+pub(open) inductive HlClass: Type {
+  HlKeyword: HlClass
+  HlComment: HlClass
+  HlText: HlClass
+  HlNumber: HlClass
+  HlMacro: HlClass
+}
+
+pub(open) inductive HlSpan: Type {
+  Mk(kind: HlClass, start: Nat, end: Nat): HlSpan
+}
+
+// The short name of a class, as an HTML page or an editor names it.
+pub fn hl_class_name(c: HlClass): Text {
+  match c {
+    HlKeyword => "kw"
+    HlComment => "com"
+    HlText => "str"
+    HlNumber => "num"
+    HlMacro => "mac"
+  }
+}
+
+pub fn hl_class_of(kind: Text): Option(HlClass) {
+  if text_starts_with(kind, "Kw", 0) || kind == "True" || kind == "False" || kind == "Omega" {
+    Some(HlKeyword)
+  } else if kind == "LineComment" || kind == "BlockComment" || kind == "Comment" {
+    Some(HlComment)
+  } else if kind == "Text" || kind == "MacroText" || kind == "MacroChunk" {
+    Some(HlText)
+  } else if kind == "Integer" || kind == "Decimal" || kind == "Float" {
+    Some(HlNumber)
+  } else if kind == "MacroName" {
+    Some(HlMacro)
+  } else {
+    None
+  }
+}
+
+pub fn hl_classed(&t: SyntaxTables, tokens: List(ScanToken)): List(HlSpan) {
+  ⊢ List(HlSpan) from match tokens {
+    Nil => Nil
+    Cons(token, rest) => ⊢ List(HlSpan) from match hl_class_of(syntax_name(t.terminal_kinds, token.token_type)) {
+      None => hl_classed(t, rest)
+      Some(c) => Cons(HlSpan { kind: c, start: token.start, end: token.end }, hl_classed(t, rest))
+    }
+  }
+}
+
+// The classed tokens of `source`, in order.
+pub fn hl_spans(&t: SyntaxTables, source: Text): List(HlSpan) {
+  hl_classed(t, scan_all(t.scan, source))
+}

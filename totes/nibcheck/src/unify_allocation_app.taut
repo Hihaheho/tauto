@@ -9,7 +9,7 @@ import "unify_allocation_steps.taut"
 import "unify_sound.taut"
 
 pub fn allocated_split(limit: Nat, result: Option(Pair(List(Ty), Ty))): Prop {
-  match result: Prop { None => True
+  ⊢ Prop from match result { None => True
     Some(pair) => And(
       TypeListAllocated(limit, pair_fst_lt(pair)),
       TypeAllocated(limit, pair_snd_lt(pair))
@@ -22,9 +22,9 @@ pub theorem allocated_split_cons(
   result: Option(Pair(List(Ty), Ty)),
   rest: allocated_split(limit, result)
 ): allocated_split(limit, ck_split_k(head, result)) {
-  match result: allocated_split(limit, ck_split_k(head, result)) {
+  ⊢ allocated_split(limit, ck_split_k(head, result)) from match result {
     None => AndIntro(Trivial, item)
-    Some(pair) => match pair: allocated_split(limit, ck_split_k(head, Some(pair))) {
+    Some(pair) => ⊢ allocated_split(limit, ck_split_k(head, Some(pair))) from match pair {
       Pair { fst: initial, snd: last } => AndIntro(
         AndIntro(item, And::left(rest)),
         And::right(rest)
@@ -37,7 +37,7 @@ pub theorem allocated_split_last(
   limit: Nat,
   h: TypeListAllocated(limit, args)
 ): allocated_split(limit, ty_split_last(args)) {
-  match args: allocated_split(limit, ty_split_last(args)) {
+  ⊢ allocated_split(limit, ty_split_last(args)) from match args {
     Nil => Trivial
     Cons(head, tail) => allocated_split_cons(
       limit,
@@ -62,7 +62,7 @@ pub theorem allocated_unify_app_choice(
   result: Option(Pair(List(Ty), Ty)),
   split: allocated_split(ck_next_of(c), result)
 ): AllocationRun(c, ck_app_k(fuel, c, head, arg, name, result)) {
-  match result: AllocationRun(c, ck_app_k(fuel, c, head, arg, name, result)) {
+  ⊢ AllocationRun(c, ck_app_k(fuel, c, head, arg, name, result)) from match result {
     None => AndIntro(Refl, state)
     Some(pair) => allocation_and(
       c,

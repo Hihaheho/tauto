@@ -22,13 +22,13 @@ pub(open) inductive TyDecision(a: Ty, b: Ty): Type {
 }
 
 pub fn ty_dec(a: Ty, b: Ty): TyDecision(a, b) {
-  match a: TyDecision(a, b) {
-    TNat => match b: TyDecision(TNat, b) {
+  ⊢ TyDecision(a, b) from match a {
+    TNat => ⊢ TyDecision(TNat, b) from match b {
       TNat => TySame(Refl)
-      TBool => TyDifferent(e => match e: False {})
+      TBool => TyDifferent(e => ⊢ False from match e {})
     }
-    TBool => match b: TyDecision(TBool, b) {
-      TNat => TyDifferent(e => match e: False {})
+    TBool => ⊢ TyDecision(TBool, b) from match b {
+      TNat => TyDifferent(e => ⊢ False from match e {})
       TBool => TySame(Refl)
     }
   }
@@ -60,13 +60,13 @@ pub(open) inductive Val: Type {
 
 // 評価器。型の合わない演算は `None`（実行時の型エラー）。
 pub fn add_val(x: Option(Val), y: Option(Val)): Option(Val) {
-  match x: Option(Val) {
+  ⊢ Option(Val) from match x {
     None => None
-    Some(vx) => match vx: Option(Val) {
+    Some(vx) => ⊢ Option(Val) from match vx {
       VBool(xb) => None
-      VNat(nx) => match y: Option(Val) {
+      VNat(nx) => ⊢ Option(Val) from match y {
         None => None
-        Some(vy) => match vy: Option(Val) {
+        Some(vy) => ⊢ Option(Val) from match vy {
           VBool(yb) => None
           VNat(ny) => Some(VNat(Nat::add(nx, ny)))
         }
@@ -76,13 +76,13 @@ pub fn add_val(x: Option(Val), y: Option(Val)): Option(Val) {
 }
 
 pub fn eq_val(x: Option(Val), y: Option(Val)): Option(Val) {
-  match x: Option(Val) {
+  ⊢ Option(Val) from match x {
     None => None
-    Some(vx) => match vx: Option(Val) {
+    Some(vx) => ⊢ Option(Val) from match vx {
       VBool(xb) => None
-      VNat(nx) => match y: Option(Val) {
+      VNat(nx) => ⊢ Option(Val) from match y {
         None => None
-        Some(vy) => match vy: Option(Val) {
+        Some(vy) => ⊢ Option(Val) from match vy {
           VBool(yb) => None
           VNat(ny) => Some(VBool(Nat::eq(nx, ny)))
         }
@@ -92,11 +92,11 @@ pub fn eq_val(x: Option(Val), y: Option(Val)): Option(Val) {
 }
 
 pub fn if_val(c: Option(Val), t: Option(Val), e: Option(Val)): Option(Val) {
-  match c: Option(Val) {
+  ⊢ Option(Val) from match c {
     None => None
-    Some(vc) => match vc: Option(Val) {
+    Some(vc) => ⊢ Option(Val) from match vc {
       VNat(n) => None
-      VBool(b) => match b: Option(Val) {
+      VBool(b) => ⊢ Option(Val) from match b {
         true => t
         false => e
       }
@@ -105,7 +105,7 @@ pub fn if_val(c: Option(Val), t: Option(Val), e: Option(Val)): Option(Val) {
 }
 
 pub fn eval(t: Term): Option(Val) {
-  match t: Option(Val) {
+  ⊢ Option(Val) from match t {
     TmNum(n) => Some(VNat(n))
     TmBool(b) => Some(VBool(b))
     TmAdd(a, b) => add_val(eval(a), eval(b))

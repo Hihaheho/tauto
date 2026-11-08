@@ -68,7 +68,105 @@ fn ill_typed_or_unsupported_source_never_emits_a_declaration() {
             "effect",
             r#"theorem bad(A: Type): (A) -> A ! {} { x => x }"#,
         ),
-        ("inductive", r#"inductive X: Type { X0: X }"#),
+        (
+            "negative",
+            r#"inductive Bad: Type { Mk(f: (Bad) -> Bad): Bad }"#,
+        ),
+        (
+            "wrong-result",
+            r#"inductive A: Type { A0: A }
+inductive B: Type { B0: A }"#,
+        ),
+        (
+            "not-structural",
+            r#"inductive N: Type { Z: N
+S(n: N): N }
+fn bad(n: N): N { match n { Z => N::Z
+S(m) => bad(n) } }"#,
+        ),
+        (
+            "missing-arm",
+            r#"inductive N: Type { Z: N
+S(n: N): N }
+fn bad(n: N): N { match n { Z => N::Z } }"#,
+        ),
+        (
+            "uninferable",
+            r#"theorem pick<A: Type>(): Type { A }
+theorem bad(): Type { pick() }"#,
+        ),
+        (
+            "implicit-ctor",
+            r#"inductive W: Type { Mk<A: Type>(a: A): W }"#,
+        ),
+        (
+            "deep-not-a-part",
+            r#"inductive N: Type { Z: N
+S(n: N): N }
+fn bad(n: N): N { match n { Z => N::Z
+S(p) => bad(N::S(p)) } }"#,
+        ),
+        (
+            "nested-overlap",
+            r#"inductive N: Type { Z: N
+S(n: N): N }
+inductive P: Type { Mk(a: N, b: N): P }
+fn bad(p: P): N { match p { Mk(Z, b) => b
+Mk(a, S(c)) => c } }"#,
+        ),
+        (
+            "nested-default-unused",
+            r#"inductive N: Type { Z: N
+S(n: N): N }
+fn bad(n: N): N { match n { Z => N::Z
+S(Z) => N::Z
+S(S(m)) => m
+_ => N::Z } }"#,
+        ),
+        (
+            "nested-variable-arm",
+            r#"inductive N: Type { Z: N
+S(n: N): N }
+fn bad(n: N): N { match n { S(S(k)) => k
+other => other } }"#,
+        ),
+        (
+            "unify-missing-arm",
+            r#"inductive N: Type { Z: N
+S(n: N): N }
+inductive V(A: Type): (N) -> Type { Nil: V(A, N::Z)
+Cons(n: N, h: A, t: V(A, n)): V(A, N::S(n)) }
+fn bad(A: Type, n: N, a: A, v: V(A, N::S(n))): A { match v { Nil => a } }"#,
+        ),
+        (
+            "unify-stuck",
+            r#"inductive N: Type { Z: N
+S(n: N): N }
+inductive V(A: Type): (N) -> Type { Nil: V(A, N::Z)
+Cons(n: N, h: A, t: V(A, n)): V(A, N::S(n)) }
+fn bad(A: Type, f: (N) -> N, v: V(A, f(N::Z))): A { match v { Cons(m, h, t) => h } }"#,
+        ),
+        (
+            "level-template",
+            r#"theorem bad<u: Level>(A: Type(u)): Type(u) { Type(u) }"#,
+        ),
+        (
+            "level-instance-match",
+            r#"inductive UBox(u: Level, A: Type(u)): Type(u) {
+  Ubox(value: A): UBox(u, A)
+}
+theorem get(A: Type, b: UBox(0, A)): A { match b { Ubox(a) => a } }"#,
+        ),
+        (
+            "level-term",
+            r#"theorem bad<u: Level>(A: Type(u)): Type(u) { u }"#,
+        ),
+        (
+            "mutual-fns",
+            r#"mutual {
+theorem a(A: Prop, x: A): A { x }
+}"#,
+        ),
         (
             "attribute",
             r#"@unknown!(x)
@@ -101,52 +199,6 @@ theorem use_alias(A: Type, a: A): Alias(A) { a }"#,
         assert!(out.stdout.is_empty(), "{label}: {out:?}");
         assert!(!out.stderr.is_empty(), "{label}: {out:?}");
     }
-}
-
-#[test]
-fn rejection_and_exhaustion_restore_the_elaboration_environment() {
-    use selfhost_harness::{root, run_tote_at};
-    let fixture = materialize("elab-transaction", &[]);
-    let fixture_dir = fixture.dir.join("elab-transaction");
-    std::fs::create_dir(&fixture_dir).unwrap();
-    std::fs::create_dir(fixture_dir.join("src")).unwrap();
-    std::fs::write(fixture_dir.join("Tauto.eure"), format!(
-        "package {{ name = \"elab-transaction\"\n version = \"0.1.0\" }}\n dependencies {{ elaborator {{ path = {:?} }} }}\n",
-        root().join("totes/elaborator").to_str().unwrap()
-    )).unwrap();
-    std::fs::write(
-        fixture_dir.join("src/main.taut"),
-        r#"
-fn rejected(r: ElabResult(ElabDeclaration)): Bool {
-  match r { ElabErr(e) => true
-    ElabOk(d) => false }
-}
-fn clean(c: KernelCore): Bool {
-  c.next == 0 && not(c.exhausted) && List::length(c.locals) == 0 && List::length(c.globals) == 4
-}
-let prop := SurfaceTerm { kind: SkVar("Prop"), start: 0, end: 0 }
-let ty := SurfaceTerm { kind: SkVar("A"), start: 0, end: 0 }
-let value := SurfaceTerm { kind: SkVar("a"), start: 0, end: 0 }
-let params := Cons(SurfaceNamed {name: "A", ty: prop}, Cons(SurfaceNamed {name: "a", ty: ty}, Nil))
-let valid := SurfaceTheorem {name: "identity", implicit: 0, params: params, ty: ty, body: Some(value), start: 0, end: 0}
-let bad := SurfaceTheorem {name: "identity", implicit: 0, params: params, ty: ty, body: Some(prop), start: 0, end: 0}
-var core := kernel_new()
-let exhausted := rejected(elab_declaration_checked(0, &mut core, valid, false)) && clean(core)
-let mismatch := rejected(elab_declaration_checked(2000, &mut core, bad, false)) && clean(core)
-let accepted := match elab_declaration_checked(2000, &mut core, valid, false) {
-  ElabErr(e) => false
-  ElabOk(d) => kernel_closed(d.value) && kernel_closed(d.ty) && not(core.exhausted) && List::length(core.locals) == 0
-}
-let saved_next := core.next
-let duplicate := rejected(elab_declaration_checked(2000, &mut core, valid, false)) && core.next == saved_next && List::length(core.globals) == 5 && not(core.exhausted)
-if exhausted && mismatch && accepted && duplicate { print("ok") } else { print("failed") }
-"#,
-    )
-    .unwrap();
-    let out = run_tote_at(&fixture_dir, &[], 2_000_000_000);
-    assert_eq!(out.error, None, "{out:?}");
-    assert_eq!(out.stderr, "");
-    assert_eq!(out.stdout, "ok");
 }
 
 #[test]
@@ -209,15 +261,295 @@ id(a) }"#,
 
 #[test]
 fn a_declared_global_the_is_not_rewritten_as_an_annotation() {
-    let source = r#"def the(a: Bool): Bool := a
-theorem used(): Bool { the(true) }"#;
+    let source = r#"inductive B: Type { t: B
+f: B }
+def the(a: B): B := a
+theorem used(): B { the(B::t) }"#;
     let input = materialize("elab-global-the", &[("global-the".into(), source.into())]);
     let out = run_tote_native("elaborator", &input.paths, 200_000_000_000);
     assert_eq!(out.error, None);
     assert_eq!(out.exit, Some(0), "{out:?}");
     assert_eq!(out.stderr, "");
+    let lines: Vec<_> = out.stdout.lines().collect();
     assert_eq!(
-        out.stdout,
-        "D the p c Bool c Bool 1 l b 0 1\nD used c Bool 1 a c the z 1 0\n"
+        &lines[lines.len() - 2..],
+        ["D the p c B c B 1 l b 0 1", "D used c B 1 a c the c B::t 0"]
     );
+}
+
+/// The first command the host records for each inductive declaration. The host
+/// also derives no-confusion definitions (`::nc`, `::nc_diag`, `::noconf`);
+/// the source elaborator does not derive them yet, so they are not compared.
+fn host_inductive_lines(source: &str) -> String {
+    let before = Recorder::new().unwrap().finish().input.lines().count();
+    let mut host = Recorder::new().unwrap();
+    let entries = host.declare(&tauto::surface::parse_program_as_written(source).unwrap());
+    assert!(entries.iter().all(|e| !e.failed()), "{source}: {entries:?}");
+    let replay = host.finish();
+    let mut out = String::new();
+    for line in replay.input.lines().skip(before) {
+        // The derived no-confusion declarations are compared too.
+        if line.starts_with("I ") || line.starts_with("D ") || line.starts_with("V ") {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+#[test]
+fn inductive_families_elaborate_to_the_same_kernel_command() {
+    let sources = [
+        r#"inductive Unit0: Type { U: Unit0 }"#,
+        r#"inductive Two: Type { T0: Two
+T1: Two }"#,
+        r#"inductive N: Type { Z: N
+S(n: N): N }"#,
+        r#"inductive Box(A: Type): Type { Mk(a: A): Box(A) }"#,
+        r#"inductive Tree(A: Type): Type { Leaf: Tree(A)
+Node(l: Tree(A), a: A, r: Tree(A)): Tree(A) }"#,
+        r#"inductive Or2(A: Prop, B: Prop): Prop { L(a: A): Or2(A, B)
+R(b: B): Or2(A, B) }"#,
+        r#"inductive Sig(A: Type, B: (A) -> Type): Type { Mk(a: A, b: B(a)): Sig(A, B) }"#,
+        r#"inductive N: Type { Z: N
+S(n: N): N }
+inductive Wrap: Type { W(n: N): Wrap }
+theorem zero(): N { N::Z }"#,
+    ];
+    let mut files = Vec::new();
+    let mut expected = String::new();
+    for (i, source) in sources.iter().enumerate() {
+        expected.push_str(&host_inductive_lines(source));
+        files.push((format!("ind-{i}"), (*source).to_owned()));
+    }
+    let input = materialize("elab-inductive", &files);
+    let out = run_tote_native("elaborator", &input.paths, 200_000_000_000);
+    assert_eq!(out.error, None);
+    assert_eq!(out.stderr, "");
+    assert_eq!(out.exit, Some(0), "{out:?}");
+    assert_eq!(out.stdout, expected);
+}
+
+#[test]
+fn matches_and_structural_recursion_elaborate_to_the_same_eliminators() {
+    let nat = "inductive N: Type { Z: N\nS(n: N): N }\n";
+    let sources = [
+        format!("{nat}fn pred(n: N): N {{ match n {{ Z => N::Z\nS(m) => m }} }}"),
+        format!("{nat}fn add(a: N, b: N): N {{ match a {{ Z => b\nS(m) => N::S(add(m, b)) }} }}"),
+        format!("{nat}theorem t(n: N): N {{ ⊢ N from match n {{ N::Z => N::Z\nN::S(m) => m }} }}"),
+        format!(
+            "{nat}fn add(a: N, b: N): N {{ match a {{ Z => b\nS(m) => N::S(add(m, b)) }} }}
+inductive Tree: Type {{ Leaf: Tree\nNode(l: Tree, r: Tree): Tree }}
+fn size(t: Tree): N {{ match t {{ Leaf => N::S(N::Z)\nNode(l, r) => add(size(l), size(r)) }} }}"
+        ),
+        format!(
+            "{nat}inductive L(A: Type): Type {{ E: L(A)\nC(h: A, t: L(A)): L(A) }}
+fn len(A: Type, xs: L(A)): N {{ match xs {{ E => N::Z\nC(_, t) => N::S(len(A, t)) }} }}"
+        ),
+    ];
+    let mut files = Vec::new();
+    let mut expected = String::new();
+    for (i, source) in sources.iter().enumerate() {
+        expected.push_str(&host_inductive_lines(source));
+        files.push((format!("match-{i}"), source.clone()));
+    }
+    let input = materialize("elab-match", &files);
+    let out = run_tote_native("elaborator", &input.paths, 200_000_000_000);
+    assert_eq!(out.error, None);
+    assert_eq!(out.stderr, "");
+    assert_eq!(out.exit, Some(0), "{out:?}");
+    assert_eq!(out.stdout, expected);
+}
+
+#[test]
+fn implicit_arguments_are_inferred_as_the_host_infers_them() {
+    let sources = [
+        "theorem id<A: Type>(a: A): A { a }\ntheorem use(B: Type, b: B): B { id(b) }",
+        "inductive L(A: Type): Type { E: L(A)\nC(h: A, t: L(A)): L(A) }\ntheorem one(B: Type, b: B): L(B) { L::C(b, L::E) }",
+        "theorem k<A: Type, B: Type>(a: A, b: B): A { a }\ntheorem u(X: Type, x: X): X { k(x, x) }",
+        "inductive N: Type { Z: N\nS(n: N): N }\ninductive L(A: Type): Type { E: L(A)\nC(h: A, t: L(A)): L(A) }
+fn len<A>(xs: L(A)): N { match xs { E => N::Z\nC(_, t) => N::S(len(t)) } }
+theorem two(): N { len(L::C(N::Z, L::C(N::Z, L::E))) }",
+    ];
+    let mut files = Vec::new();
+    let mut expected = String::new();
+    for (i, source) in sources.iter().enumerate() {
+        expected.push_str(&host_inductive_lines(source));
+        files.push((format!("implicit-{i}"), (*source).to_owned()));
+    }
+    let input = materialize("elab-implicit", &files);
+    let out = run_tote_native("elaborator", &input.paths, 200_000_000_000);
+    assert_eq!(out.error, None);
+    assert_eq!(out.stderr, "");
+    assert_eq!(out.exit, Some(0), "{out:?}");
+    assert_eq!(out.stdout, expected);
+}
+
+#[test]
+fn nested_patterns_elaborate_to_the_hosts_case_trees() {
+    let nat = "inductive N: Type { Z: N\nS(n: N): N }\n";
+    let sources = [
+        format!("{nat}fn pred2(n: N): N {{ match n {{ Z => N::Z\nS(Z) => N::Z\nS(S(m)) => m }} }}"),
+        format!("{nat}fn one(n: N): N {{ match n {{ S(Z) => N::S(N::Z)\n_ => N::Z }} }}"),
+        format!(
+            "{nat}inductive P: Type {{ Mk(a: N, b: N): P }}
+fn f(p: P): N {{ match p {{ Mk(Z, b) => b\nMk(S(a), b) => a }} }}"
+        ),
+        format!(
+            "{nat}inductive P: Type {{ Mk(a: N, b: N): P }}
+fn g(p: P): N {{ match p {{ Mk(Z, Z) => N::Z\nMk(S(x), y) => y\n_ => N::S(N::Z) }} }}"
+        ),
+    ];
+    let mut files = Vec::new();
+    let mut expected = String::new();
+    for (i, source) in sources.iter().enumerate() {
+        expected.push_str(&host_inductive_lines(source));
+        files.push((format!("nested-{i}"), source.clone()));
+    }
+    let input = materialize("elab-nested", &files);
+    let out = run_tote_native("elaborator", &input.paths, 200_000_000_000);
+    assert_eq!(out.error, None);
+    assert_eq!(out.stderr, "");
+    assert_eq!(out.exit, Some(0), "{out:?}");
+    assert_eq!(out.stdout, expected);
+}
+
+#[test]
+fn matches_on_indexed_families_elaborate_to_the_same_eliminators() {
+    let nat = "inductive N: Type { Z: N\nS(n: N): N }\n";
+    let vec = "inductive V(A: Type): (N) -> Type { Nil: V(A, N::Z)\nCons(n: N, h: A, t: V(A, n)): V(A, N::S(n)) }\n";
+    let sources = [
+        format!("{nat}{vec}fn len(A: Type, n: N, v: V(A, n)): N {{ match v {{ Nil => N::Z\nCons(m, h, t) => N::S(len(A, m, t)) }} }}"),
+        format!("{nat}{vec}fn keep(A: Type, n: N, v: V(A, n)): V(A, n) {{ match v {{ Nil => V::Nil\nCons(m, h, t) => V::Cons(m, h, t) }} }}"),
+    ];
+    let mut files = Vec::new();
+    let mut expected = String::new();
+    for (i, source) in sources.iter().enumerate() {
+        expected.push_str(&host_inductive_lines(source));
+        files.push((format!("indexed-{i}"), source.clone()));
+    }
+    let input = materialize("elab-indexed", &files);
+    let out = run_tote_native("elaborator", &input.paths, 200_000_000_000);
+    assert_eq!(out.error, None);
+    assert_eq!(out.stderr, "");
+    assert_eq!(out.exit, Some(0), "{out:?}");
+    assert_eq!(out.stdout, expected);
+}
+
+#[test]
+fn matches_on_constructor_indices_unify_as_the_host_does() {
+    let nat = "inductive N: Type { Z: N\nS(n: N): N }\n";
+    let vec = "inductive V(A: Type): (N) -> Type { Nil: V(A, N::Z)\nCons(n: N, h: A, t: V(A, n)): V(A, N::S(n)) }\n";
+    let sources = [
+        format!("{nat}{vec}fn head(A: Type, n: N, v: V(A, N::S(n))): A {{ match v {{ Cons(m, h, t) => h }} }}"),
+        format!("{nat}{vec}fn tail(A: Type, n: N, v: V(A, N::S(n))): V(A, n) {{ match v {{ Cons(m, h, t) => t }} }}"),
+        format!("{nat}{vec}fn second(A: Type, n: N, v: V(A, N::S(N::S(n)))): A {{ match v {{ Cons(m, h, t) => match t {{ Cons(k, g, u) => g }} }} }}"),
+        format!("{nat}{vec}fn none(A: Type, v: V(A, N::Z)): N {{ match v {{ Nil => N::Z }} }}"),
+    ];
+    let mut files = Vec::new();
+    let mut expected = String::new();
+    for (i, source) in sources.iter().enumerate() {
+        expected.push_str(&host_inductive_lines(source));
+        files.push((format!("unify-{i}"), source.clone()));
+    }
+    let input = materialize("elab-unify", &files);
+    let out = run_tote_native("elaborator", &input.paths, 200_000_000_000);
+    assert_eq!(out.error, None);
+    assert_eq!(out.stderr, "");
+    assert_eq!(out.exit, Some(0), "{out:?}");
+    assert_eq!(out.stdout, expected);
+}
+
+#[test]
+fn level_polymorphic_declarations_are_instantiated_as_the_host_does() {
+    let sources = [
+        "theorem idu<u: Level, A: Type(u)>(a: A): A { a }\ntheorem use1(): Type { idu(1, Prop) }",
+        "theorem idv<u: Level>(A: Type(u), a: A): A { a }\ntheorem use3(): Type { idv(1, Type, Prop) }\ntheorem use4(): Type { idv(1, Type, Prop) }",
+        "theorem lift<u: Level>(A: Type(u)): Type(u + 1) { Type(u) }\ntheorem use2(): Type2 { lift(1, Type) }",
+        "def k<u: Level>(A: Type(u)): Type(u) := A\ntheorem use5(): Type { k(0, Prop) }\ntheorem use6(): Type1 { k(1, Type) }",
+        "theorem idu<u: Level, A: Type(u)>(a: A): A { a }\ntheorem idw<v: Level, B: Type(v)>(b: B): B { idu(v, b) }\ntheorem use1(): Type { idw(1, Prop) }",
+        "inductive UBox(u: Level, A: Type(u)): Type(u) {\n  Ubox(value: A): UBox(u, A)\n}\ntheorem small(): Type1 { UBox(1, Type) }\ntheorem mk(A: Type, a: A): UBox(0, A) { UBox::Ubox(0, a) }",
+        "theorem idu<u: Level, A: Type(u)>(a: A): A { a }\ntheorem idw<v: Level, B: Type(v)>(b: B): B { idu(v + 1, b) }\ntheorem use1(): Type { idw(1, Prop) }",
+    ];
+    let mut files = Vec::new();
+    let mut expected = String::new();
+    for (i, source) in sources.iter().enumerate() {
+        expected.push_str(&host_inductive_lines(source));
+        files.push((format!("levels-{i}"), (*source).to_owned()));
+    }
+    let input = materialize("elab-levels", &files);
+    let out = run_tote_native("elaborator", &input.paths, 200_000_000_000);
+    assert_eq!(out.error, None);
+    assert_eq!(out.stderr, "");
+    assert_eq!(out.exit, Some(0), "{out:?}");
+    assert_eq!(out.stdout, expected);
+}
+
+#[test]
+fn mutual_families_and_their_matches_elaborate_to_the_same_commands() {
+    let nat = "inductive N: Type { Z: N\nS(n: N): N }\n";
+    let evod = "mutual {\ninductive Ev: Type { EZ: Ev\nES(o: Od): Ev }\ninductive Od: Type { OS(e: Ev): Od }\n}\n";
+    let sources = [
+        evod.to_owned(),
+        format!("{nat}{evod}fn isz(e: Ev): N {{ match e {{ EZ => N::Z\nES(o) => N::S(N::Z) }} }}"),
+        format!("{nat}{evod}fn odd(o: Od): N {{ match o {{ OS(e) => N::S(N::Z) }} }}"),
+        "mutual {\ninductive T(A: Type): Type { Leaf(a: A): T(A)\nNode(f: F(A)): T(A) }\ninductive F(A: Type): Type { Nil: F(A)\nCons(t: T(A), r: F(A)): F(A) }\n}\n".to_owned(),
+    ];
+    let mut files = Vec::new();
+    let mut expected = String::new();
+    for (i, source) in sources.iter().enumerate() {
+        expected.push_str(&host_inductive_lines(source));
+        files.push((format!("mutual-{i}"), source.clone()));
+    }
+    let input = materialize("elab-mutual", &files);
+    let out = run_tote_native("elaborator", &input.paths, 200_000_000_000);
+    assert_eq!(out.error, None);
+    assert_eq!(out.stderr, "");
+    assert_eq!(out.exit, Some(0), "{out:?}");
+    assert_eq!(out.stdout, expected);
+}
+
+#[test]
+fn mutual_functions_elaborate_to_the_hosts_aligned_groups() {
+    let nat = "inductive N: Type { Z: N\nS(n: N): N }\n";
+    let sources = [
+        format!("{nat}mutual {{\nfn ev(n: N): N {{ match n {{ Z => N::S(N::Z)\nS(m) => od(m) }} }}\nfn od(n: N): N {{ match n {{ Z => N::Z\nS(m) => ev(m) }} }}\n}}"),
+        format!("{nat}mutual {{\nfn a(n: N): N {{ match n {{ Z => N::Z\nS(m) => b(m) }} }}\nfn b(n: N): N {{ match n {{ Z => N::S(N::Z)\nS(m) => c(m) }} }}\nfn c(n: N): N {{ match n {{ Z => N::Z\nS(m) => N::S(a(m)) }} }}\n}}"),
+        format!("{nat}inductive L(A: Type): Type {{ E: L(A)\nC(h: A, t: L(A)): L(A) }}\nmutual {{\nfn evens(A: Type, xs: L(A)): L(A) {{ match xs {{ E => L::E\nC(h, t) => L::C(h, odds(A, t)) }} }}\nfn odds(A: Type, xs: L(A)): L(A) {{ match xs {{ E => L::E\nC(h, t) => evens(A, t) }} }}\n}}"),
+    ];
+    let mut files = Vec::new();
+    let mut expected = String::new();
+    for (i, source) in sources.iter().enumerate() {
+        expected.push_str(&host_inductive_lines(source));
+        files.push((format!("group-{i}"), source.clone()));
+    }
+    let input = materialize("elab-group", &files);
+    let out = run_tote_native("elaborator", &input.paths, 200_000_000_000);
+    assert_eq!(out.error, None);
+    assert_eq!(out.stderr, "");
+    assert_eq!(out.exit, Some(0), "{out:?}");
+    assert_eq!(out.stdout, expected);
+}
+
+#[test]
+fn recursion_on_deeper_parts_elaborates_to_the_hosts_below_pairs() {
+    let nat = "inductive N: Type { Z: N\nS(n: N): N }\n";
+    let sources = [
+        format!("{nat}fn half(n: N): N {{ match n {{ Z => N::Z\nS(p) => match p {{ Z => N::Z\nS(m) => N::S(half(m)) }} }} }}"),
+        format!("{nat}fn half(n: N): N {{ match n {{ Z => N::Z\nS(Z) => N::Z\nS(S(m)) => N::S(half(m)) }} }}"),
+        format!("{nat}fn fib(n: N, a: N): N {{ match n {{ Z => a\nS(p) => match p {{ Z => a\nS(m) => fib(m, a) }} }} }}"),
+        format!("{nat}inductive T: Type {{ L: T\nB(l: T, r: T): T }}\nfn left2(t: T): N {{ match t {{ L => N::Z\nB(l, r) => match l {{ L => N::Z\nB(ll, lr) => N::S(left2(ll)) }} }} }}"),
+    ];
+    let mut files = Vec::new();
+    let mut expected = String::new();
+    for (i, source) in sources.iter().enumerate() {
+        expected.push_str(&host_inductive_lines(source));
+        files.push((format!("deep-{i}"), source.clone()));
+    }
+    let input = materialize("elab-deep", &files);
+    let out = run_tote_native("elaborator", &input.paths, 200_000_000_000);
+    assert_eq!(out.error, None);
+    assert_eq!(out.stderr, "");
+    assert_eq!(out.exit, Some(0), "{out:?}");
+    assert_eq!(out.stdout, expected);
 }

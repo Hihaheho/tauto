@@ -1,0 +1,83 @@
+@ cases.names_and_keyword
+files."main.taut" = ```tauto
+theorem identity<P: Prop>(p: P): P { p }
+theorem use_identity<Q: Prop>(q: Q): Q { identity(q) }
+```
+entry = "main.taut"
+hovers = [
+  { at => "theorem", proof => "identity", contains => ["theorem identity", "_theorem_"] },
+  { at => "identity<P", proof => "identity" },
+  { at => "identity(q)", proof => "identity" },
+  { at => "p }", contains => ["parameter" ] }
+]
+
+@ cases.unsaved_import
+files."lib.taut" = ```tauto
+pub(open) theorem original<P: Prop>(p: P): P { p }
+```
+files."main.taut" = ```tauto
+import "lib.taut"
+theorem use<Q: Prop>(q: Q): Q { replacement(q) }
+```
+entry = "main.taut"
+hovers = [{
+  at => "replacement(q)", proof => "replacement", proof_file => "lib.taut",
+  buffers => { "lib.taut" => ```tauto
+pub(open) theorem replacement<P: Prop>(p: P): P { p }
+``` }
+}]
+
+@ cases.unsaved_entry
+files."main.taut" = ```tauto
+theorem old<P: Prop>(p: P): P { p }
+```
+entry = "main.taut"
+hovers = [{
+  at => "theorem", proof => "edited",
+  buffers => { "main.taut" => ```tauto
+theorem edited<P: Prop>(p: P): P { p }
+``` }
+}]
+
+@ cases.incomplete
+files."main.taut" = ```tauto
+theorem unfinished<P: Prop>(p: P): P { ?h }
+```
+entry = "main.taut"
+hovers = [{ at => "unfinished", proof => "unfinished", contains => ["?h"] }]
+
+@ cases.no_proof
+files."main.taut" = ```tauto
+theorem missing(): Nat { unknown }
+```
+entry = "main.taut"
+hovers = [{ at => "theorem", contains => ["theorem missing", "_theorem_"] }]
+
+@ cases.comment
+files."main.taut" = ```tauto
+// theorem comment
+ theorem identity<P: Prop>(p: P): P { p }
+```
+entry = "main.taut"
+hovers = [{ at => "theorem comment", absent => true }]
+
+@ cases.axiom_dependency
+files."main.taut" = ```tauto
+axiom trusted<P: Prop>(p: P): P
+theorem dependent<Q: Prop>(q: Q): Q { trusted(q) }
+```
+entry = "main.taut"
+hovers = [{ at => "dependent", proof => "dependent", contains => ["trusted"] }]
+
+@ cases.mutual
+files."main.taut" = ```tauto
+mutual {
+  theorem first<P: Prop>(p: P): P { p }
+  theorem second<Q: Prop>(q: Q): Q { q }
+}
+```
+entry = "main.taut"
+hovers = [
+  { at => "theorem", occurrence => 1, proof => "second" },
+  { at => "first<P", proof => "first" }
+]

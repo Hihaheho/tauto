@@ -1,0 +1,290 @@
+$schema: changelog.schema.eure
+
+base = "d459cf3e86dab1de29c492b118ebbf047130407f"
+summary = ````markdown
+Proofs can be written as Proof-lang documents with `proof!`; equation chains move to the `calc!` macro; class laws are declared with `theorem`; `match x: T` annotates the scrutinee; products and `Pair` are one type; anonymous records, list patterns, named implicit arguments and sealed classes join the language; the language server and documentation pages are written in tauto as totes.
+````
+
+@ added[]
+area = "proofs"
+summary = ````markdown
+`proof!` (`std/proof/Lang.taut`) reads a proof written as a Proof-lang document: prose sentences nested by indentation, tactic steps written `$t!(e)`, and `${…}` terms in Proof-code items.
+````
+details = ````markdown
+Sentences such as `By induction on …` and `By the induction hypothesis.` expand to terms the kernel checks. Only sentences that are referred to need a label. The language server shows a theorem's proof as natural-language steps on hover.
+````
+
+@ added[]
+area = "syntax"
+summary = ````markdown
+Anonymous record types and values: `{ x: Nat, y: Nat }` and `#{ x: 1, y: 2 }`. The fields of a record type may start on the line after `{`.
+````
+
+@ added[]
+area = "syntax"
+summary = ````markdown
+List patterns and list rests. The pattern `[x, y, ..rest]` is `Cons(x, Cons(y, rest))` and `[]` is `Nil`; the rest is a name or `_`. The literal `[a, ..e]` is `Cons(a, e)`, where `e` is any expression. A rest comes last only.
+````
+
+@ added[]
+area = "syntax"
+summary = ````markdown
+Each member of a tuple expression can carry a written type: `#(a: A, b: B)`.
+````
+
+@ added[]
+area = "calls"
+summary = ````markdown
+Implicit arguments can be given by name at the start of a call: `f(<x: v>, h)`. Arguments that are left out are still inferred.
+````
+
+@ added[]
+area = "modules"
+summary = ````markdown
+`import self::b` imports a module of the file itself, and a hyphenated tote is imported by its name with underscores.
+````
+
+@ added[]
+area = "macros"
+summary = ````markdown
+A syntax can describe what a terminal means in its syntax errors with `%describe`. DSL texts accept postfix expressions embedded with a single `$`, list literals with `$[...]`, and raw identifiers in quote holes with `$r#name` and `${r#name}`. `Syn::same_ident` compares two identifiers.
+````
+
+@ added[]
+area = "effects"
+summary = ````markdown
+Cooperative cancellation in `std/prelude/Par.taut`: `CancelToken`, `Cancelled`, `Signal::either`, and `token`, `request`, `is_requested` and `signal`. The host effect `shutdown_token` receives Ctrl-C and SIGTERM as a `CancelToken`.
+````
+
+@ added[]
+area = "effects"
+summary = ````markdown
+Host effects `fs_read_under` and `fs_read_bytes_under` (reads that stay under a root), `fs_read_link` and `fs_write_new`.
+````
+
+@ added[]
+area = "effects"
+summary = ````markdown
+A handler arm's instance accepts an effect row argument (`cur<!{out}>(), k => …`), and the indices of row-indexed effects are fixed by unification at each call.
+````
+
+@ added[]
+area = "classes"
+summary = ````markdown
+Class parameters can be a telescope of types and terms, and class methods can have their own generics. Classes over a type constructor and classes whose methods have effects run on the VM, Rust and JavaScript backends.
+````
+
+@ added[]
+area = "classes"
+summary = ````markdown
+Instance resolution follows nested instance constraints and reports ambiguous, cyclic and too-deep resolution as errors. Instance arguments are constructor heads, literals or generics.
+````
+
+@ added[]
+area = "std"
+summary = ````markdown
+`calc!` in `std/Calc.taut`, `std/SynTree.taut`, the `std/proof` library, `meta/Memory.taut`, and the Ord pullback lemmas `ord_pullback_equal_iff`, `ord_pullback_swap` and `ord_pullback_trans` in the prelude.
+````
+
+@ added[]
+area = "lint"
+summary = ````markdown
+The `pair-name` lint: a pair is written `A × B` and `#(a, b)` rather than by the name `Pair`.
+````
+
+@ added[]
+area = "check"
+summary = ````markdown
+`check.axioms` in `Tauto.eure` lists the axioms each file may use, and `tauto check` enforces it.
+````
+
+@ added[]
+area = "manifest"
+summary = ````markdown
+`run.file` in `Tauto.eure` is the file `tauto run` and `tauto dev` run when given no file or `--tote`; `rust.stack-mb` sets the stack size of Rust builds; the environment variable `TAUTO_TIME_SCALE` scales every check time limit.
+````
+
+@ added[]
+area = "totes"
+summary = ````markdown
+Totes `cmdline` (command-line parsing), `json`, `highlight`, `names`, `doc`, `lsp`, `fmtcmd`, `initcmd`, and `mcp`, an MCP server written in tauto for AI agents.
+````
+
+@ added[]
+area = "lean"
+summary = ````markdown
+The Lean models cover quotients, memory, the ownership analysis, handlers and kept frames in Nib, and `Proto/AxiomAudit.lean` prints the axioms of the main theorems. `lean/README.md` lists what is stated but not proved.
+````
+
+@ added[]
+area = "examples"
+summary = ````markdown
+Examples `bounded-batch/`, `trust-review/`, `cancellation.taut`, `shutdown.taut`, `indexed-reading.taut` and `nat/proof/Add.taut`.
+````
+
+@ added[]
+area = "runtime"
+summary = ````markdown
+The VM machine compiles functions of the S tier that hold only fixed-width integers, `Bool` and `Unit` to native code with Cranelift (`crates/tauto-jit`), and runs everything else as before. The observable behaviour is the VM's. The JIT is on by default, can be turned off, and falls back to the VM where Cranelift has no target.
+````
+
+@ added[]
+area = "tools"
+summary = ````markdown
+A `Dockerfile` that builds an image with the `tauto` command only: `docker build -t tauto .`, then `docker run --rm -v "$PWD:/work" tauto check FILE`.
+````
+
+@ changed[]
+area = "syntax"
+summary = ````markdown
+In `match x: T`, `T` was the result type; it now annotates the type of the scrutinee, as `match (x: T)`. The result type is written `⊢ G from match x { … }`, and `⊢ G from e` is an expression wherever an expression goes, not only in a match arm. `eqn` comes after the annotation: `match f(x): T eqn e { … }`.
+````
+breaking = true
+migration = ````markdown
+Rewrite `match x: G { … }` as `⊢ G from match x { … }`, and `match f(x) eqn e: G { … }` as `⊢ G from match f(x) eqn e { … }`.
+````
+
+@ changed[]
+area = "products"
+summary = ````markdown
+`A × B` is the std `Pair(A, B)`, and `#(a, b)` is `Pair { fst: a, snd: b }`. A product and a `Pair` written by name are the same type, and `.fst` and `.snd` work on every backend.
+````
+details = ````markdown
+Products nested in the left member are not flattened. Members are matched by exact type, even when the type mentions type parameters.
+````
+breaking = true
+migration = ````markdown
+Code that relied on a product being a type distinct from `Pair`, or on left-nested products being flattened, must be written with `Pair` and the nesting it has.
+````
+
+@ changed[]
+area = "runtime"
+summary = ````markdown
+`show` prints products and pairs as `#(a, b, c)`. It printed `a × b` for products and `Pair { fst: a, snd: b }` for pairs.
+````
+breaking = true
+migration = ````markdown
+Update anything that reads the shown text of products or pairs.
+````
+
+@ changed[]
+area = "calls"
+summary = ````markdown
+Implicit arguments may not be passed by position in a call written in source.
+````
+breaking = true
+migration = ````markdown
+Write them by name: `f(<x: v>, h)`.
+````
+
+@ changed[]
+area = "classes"
+summary = ````markdown
+`pub` classes are sealed: only the declaring file writes instances unless the class is `pub(open)`. std's `Ord` and `ToText` are `pub(open)`.
+````
+breaking = true
+migration = ````markdown
+Declare a class `pub(open)` if other files must write its instances.
+````
+
+@ changed[]
+area = "modules"
+summary = ````markdown
+A short name that is ambiguous with an outer name inside a module is an error, and a local may not have the name of a module. A file's short names apply to that file only, and a file's own `enum Prop`, `enum Nat` or constructors do not hide the language's from other files.
+````
+breaking = true
+migration = ````markdown
+Qualify the ambiguous name, or rename the local.
+````
+
+@ changed[]
+area = "macros"
+summary = ````markdown
+`inductive_syntax!` rejects declarations that clash with the names an enum's constructors produce (`I` and `to_i`).
+````
+breaking = true
+migration = ````markdown
+Rename the clashing declaration.
+````
+
+@ changed[]
+area = "universes"
+summary = ````markdown
+A universe-polymorphic template is checked once at its declaration with its levels as variables (`Type(u)`, `Type(u + 1)`, `Type(max(u, v))`), and a mistake that appears only at some levels is reported at the template. It was checked at level zero and at each numeric instance.
+````
+breaking = true
+migration = ````markdown
+Fix the universe levels of a template that is rejected.
+````
+
+@ changed[]
+area = "check"
+summary = ````markdown
+A statement whose value is not used is an error, because its type would never be checked. Meaning is decided by identity and declaration rather than by a name's spelling, a tote's program that does not load is an error of the tote, and the kernel names every undefined name in a failed declaration.
+````
+breaking = true
+migration = ````markdown
+Bind or remove a statement whose value is not used.
+````
+
+@ changed[]
+area = "check"
+summary = ````markdown
+Check time limits are counted in the CPU time of the checking thread rather than wall time.
+````
+
+@ changed[]
+area = "diagnostics"
+summary = ````markdown
+Errors are reported as messages with an id and arguments: syntax errors with an excerpt as written, type mismatches pointing at the part that does not fit (a member of `#(…)` that fits no place is reported at that member), and the reason a dependent call is not checked.
+````
+
+@ changed[]
+area = "tools"
+summary = ````markdown
+The language server is the `lsp` tote, answered through query-flow with tactic output cached. `tauto doc` writes highlighted, linked source pages of a tote; it wrote pages of checked proof status and local API listings.
+````
+
+@ changed[]
+area = "fmt"
+summary = ````markdown
+Short `inductive` and `match` bodies are laid out on one line, binders and one-argument parentheses are not split, and a `calc!` literal is laid out even when its macro call fails.
+````
+
+@ changed[]
+area = "runtime"
+summary = ````markdown
+The VM machine that runs a program gets no network or subprocess permission beyond the program's own grants.
+````
+
+@ removed[]
+area = "syntax"
+summary = ````markdown
+The reserved word `calc` and the built-in `calc a { = b from p }` syntax.
+````
+breaking = true
+migration = ````markdown
+Write equation chains with the `calc!` macro from `std/Calc.taut`.
+````
+
+@ removed[]
+area = "classes"
+summary = ````markdown
+The reserved word `law` and `law` declarations in classes and instances.
+````
+breaking = true
+migration = ````markdown
+Write class laws, and their proofs in instances, with `theorem`. The std laws keep their names (`equal_iff`, `swap`, `trans`).
+````
+
+@ fixed[]
+area = "elaboration"
+summary = ````markdown
+Unannotated λ arguments are read at their parameter type, including in calls with a `match`; a `let` the goal does not mention is left out of the induction hypothesis; mutually recursive functions that shrink one argument are accepted as structural.
+````
+
+@ fixed[]
+area = "backends"
+summary = ````markdown
+Rust generation of nested pattern tests, tail self-calls in suspending functions and type parameters no field mentions; recursion that adds `Nat` to its result runs with an accumulator.
+````

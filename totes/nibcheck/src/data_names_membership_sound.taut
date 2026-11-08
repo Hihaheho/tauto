@@ -11,7 +11,7 @@ import "../../surface/src/surface.taut"
 pub theorem declared_data_member<ss: List(
   SurfaceStmt
 ), d: SurfaceData>(declared: DeclaresData(ss, d)): Mem(SurfaceData, d, types_data_decls(ss)) {
-  match declared: Mem(SurfaceData, d, types_data_decls(ss)) {
+  ⊢ Mem(SurfaceData, d, types_data_decls(ss)) from match declared {
     DeclaresDataStruct(data, rest) => MemHere(types_data_decls(rest))
     DeclaresDataEnum(data, rest) => MemHere(types_data_decls(rest))
     DeclaresDataLater(s, rest, data, tail) => Mem::append_right(
@@ -29,7 +29,7 @@ pub theorem fresh_data_head_absent(
   fresh: FreshDataNames(Cons(f, rest), seen),
   present: Mem(Text, decl_data_name(f), seen)
 ): False {
-  match fresh: False {
+  ⊢ False from match fresh {
     FreshDatasCons(head, tail, previous, absent, remaining) => absent(present)
   }
 }
@@ -40,7 +40,7 @@ pub theorem fresh_data_tail(
   seen: List(Text),
   fresh: FreshDataNames(Cons(f, rest), seen)
 ): FreshDataNames(rest, Cons(decl_data_name(f), seen)) {
-  match fresh: FreshDataNames(rest, Cons(decl_data_name(f), seen)) {
+  ⊢ FreshDataNames(rest, Cons(decl_data_name(f), seen)) from match fresh {
     FreshDatasCons(head, tail, previous, absent, remaining) => remaining
   }
 }
@@ -55,7 +55,7 @@ pub theorem fresh_data_excludes<d: SurfaceData, fs: List(
   already: Mem(Text, n, seen),
   equal: n = registration_name(d)
 ): False {
-  match member: False {
+  ⊢ False from match member {
     MemHere(rest) => fresh_data_head_absent(
       d,
       rest,
@@ -99,7 +99,7 @@ pub theorem data_seen_cons_sub(
   n: Text,
   member: Mem(Text, n, Cons(head, small))
 ): Mem(Text, n, Cons(head, large)) {
-  match member: Mem(Text, n, Cons(head, large)) {
+  ⊢ Mem(Text, n, Cons(head, large)) from match member {
     MemHere(rest) => MemHere(large)
     MemThere(first, rest, tail) => MemThere(head, large, sub(n, tail))
   }
@@ -114,7 +114,7 @@ pub theorem fresh_data_weaken<fs: List(
   smaller: List(Text),
   sub: Sub(Text, smaller, seen)
 ): FreshDataNames(fs, smaller) {
-  match fresh: FreshDataNames(fs, smaller) {
+  ⊢ FreshDataNames(fs, smaller) from match fresh {
     FreshDatasNil(previous) => FreshDatasNil(smaller)
     FreshDatasCons(first, rest, previous, absent, remaining) => FreshDatasCons(
       first,
@@ -136,7 +136,7 @@ pub theorem fresh_data_append_tail(
   seen: List(Text),
   fresh: FreshDataNames(List::append(prefix, suffix), seen)
 ): FreshDataNames(suffix, seen) {
-  match prefix: FreshDataNames(suffix, seen) {
+  ⊢ FreshDataNames(suffix, seen) from match prefix {
     Nil => fresh
     Cons(first, rest) => fresh_data_weaken(
       fresh_data_append_tail(

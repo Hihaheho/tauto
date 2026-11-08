@@ -1,0 +1,25 @@
+// Compile-time macro helpers are not runtime export roots.
+backends = ["javascript"]
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package {
+  name = "macro-exports"
+  version = "0.1.0"
+}
+javascript {
+  exports = ["draw"]
+}
+```
+files."app/src/macros.taut" = ```tauto
+import std::prelude::Macro
+
+pub fn make_expr(x: SynExpr): SynExpr { quote { $x } }
+pub macro fn emit(c: Judgement): SynExpr { make_expr(Judgement::term(c)) }
+```
+files."app/src/main.taut" = ```tauto
+import "macros.taut"
+fn helper(): i64 { 42 }
+fn draw(): i64 { emit!(helper()) }
+#()
+```
+javascript_shows = []

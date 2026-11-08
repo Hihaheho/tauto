@@ -1,0 +1,23 @@
+description = "A `let` name read only inside a type ascription `(x: T)` is used: the ascription is part of the term, so the `let` is substituted there, and a `let` read nowhere is still rejected."
+
+@ cases.a_let_used_only_in_ascriptions_is_used
+source = ```tauto
+fn f(a: Nat): Nat {
+  let one := Succ(a)
+  Succ((one: Nat))
+}
+theorem t(a: Nat): f(a) = Succ(Succ(a)) {
+  Refl
+}
+```
+checks."f" = "checked"
+checks."t" = "checked"
+
+@ cases.a_let_read_nowhere_is_still_rejected
+source = ```tauto
+theorem t(a: Nat): a = a {
+  let one := Succ(a)
+  Refl
+}
+```
+checks."t" = "error: `one` is defined but not used"

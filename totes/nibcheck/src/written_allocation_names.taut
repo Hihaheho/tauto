@@ -24,7 +24,7 @@ pub theorem written_name_option_allocated(
   tail: OptionTypeAllocated(limit, rest),
   flag: Bool
 ): OptionTypeAllocated(limit, written_name_choose_option(ty, rest, flag)) {
-  match flag: OptionTypeAllocated(limit, written_name_choose_option(ty, rest, flag)) {
+  ⊢ OptionTypeAllocated(limit, written_name_choose_option(ty, rest, flag)) from match flag {
     true => bounded
     false => tail }
 }
@@ -94,7 +94,7 @@ pub theorem written_type_name_allocated<generics: Ordmap(
   limit: Nat,
   bounded: GenericMapAllocated(limit, generics)
 ): TypeAllocated(limit, ty) {
-  match meaning: TypeAllocated(limit, ty) {
+  ⊢ TypeAllocated(limit, ty) from match meaning {
     WrittenNamePrimitive(t, builtin) => Eq::subst(
       (found: Option(Ty)) => OptionTypeAllocated(limit, found),
       builtin,
@@ -111,7 +111,7 @@ pub theorem written_atomic_allocated<env: Datas, generics: Ordmap(
   limit: Nat,
   bounded: GenericMapAllocated(limit, generics)
 ): TypeAllocated(limit, ty) {
-  match meaning: TypeAllocated(limit, ty) {
+  ⊢ TypeAllocated(limit, ty) from match meaning {
     AtomicPrimitive(t, builtin) => Eq::subst(
       (found: Option(Ty)) => OptionTypeAllocated(limit, found),
       builtin,
@@ -128,7 +128,7 @@ pub theorem written_name_type_allocated<env: Datas, generics: Ordmap(
   limit: Nat,
   bounded: GenericMapAllocated(limit, generics)
 ): TypeAllocated(limit, ty) {
-  match meaning: TypeAllocated(limit, ty) {
+  ⊢ TypeAllocated(limit, ty) from match meaning {
     WrittenNameValue(t, atomic) => written_atomic_allocated(atomic, limit, bounded)
     WrittenNameConstructor(t, named) => written_type_name_allocated(named, limit, bounded) }
 }
@@ -145,7 +145,7 @@ pub theorem written_binder_map_allocated<bs: List(
   limit: Nat,
   bounded: RigidMapAllocation(limit, initial)
 ): RigidMapAllocation(limit, final) {
-  match meaning: RigidMapAllocation(limit, final) {
+  ⊢ RigidMapAllocation(limit, final) from match meaning {
     WrittenBinderMapNil(map) => bounded
     WrittenBinderMapCons(name, kind, rest, first, last, tail) => written_binder_map_allocated(
       tail,
@@ -178,7 +178,7 @@ pub theorem written_polymorphic_allocated<bs: List(
   limit: Nat,
   bounded: TypeAllocated(limit, body)
 ): TypeAllocated(limit, ty) {
-  match meaning: TypeAllocated(limit, ty) {
+  ⊢ TypeAllocated(limit, ty) from match meaning {
     WrittenMonomorphic(inner) => bounded
     WrittenPolymorphic(first, rest, inner) => bounded }
 }

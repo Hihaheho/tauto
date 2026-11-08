@@ -1,0 +1,242 @@
+@ cases.perform-is-in-the-row-and-must-be-written-1
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 ! {ask} { perform ask(1) }
+```
+rows = "ok"
+
+@ cases.perform-is-in-the-row-and-must-be-written-2
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 ! {} { perform ask(1) }
+```
+rows = "error: `f` may perform ask but its row is {}"
+
+@ cases.calls-carry-the-callee-row-1
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 { perform ask(1) }
+fn g(): i64 { f() + 1 }
+```
+rows = "ok"
+inferred_rows.g = ["ask"]
+
+@ cases.handle-removes-what-it-answers-1
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 { perform ask(1) }
+let r := handle { f() } with {
+  ask(q), k => k(q)
+  return v => v
+}
+```
+rows = "ok"
+
+@ cases.an-unhandled-effect-at-the-top-is-an-error-1
+source = ```tauto
+effect ask(q: i64): i64
+let r := perform ask(1)
+```
+rows = "error: unhandled effect ask at the top level"
+
+@ cases.loops-and-recursion-diverge-and-budget-bounds-them-1
+source = ```tauto
+fn spin(): i64 { while true { }
+ 0 }
+fn rec(n: i64): i64 { rec(n) }
+let d := handle { budget(steps: 10) { spin() } } with {
+  exceeded(i), k => 0
+  return v => v
+}
+```
+rows = "ok"
+inferred_rows.spin = ["Div"]
+inferred_rows.rec = ["Div"]
+
+@ cases.an-unhandled-exceeded-is-reported-1
+source = ```tauto
+fn spin(): i64 { while true { }
+ 0 }
+let d := budget(steps: 10) { spin() }
+```
+rows = "error: unhandled effect Exceeded at the top level"
+
+@ cases.a-closure-row-is-latent-1
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 ! {} {
+  let g := () => perform ask(1)
+  0
+}
+```
+rows = "ok"
+
+@ cases.a-closure-row-is-latent-2
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 ! {} {
+  let g := () => perform ask(1)
+  g()
+}
+```
+rows = "error: `f` may perform ask but its row is {}"
+
+@ cases.an-unknown-closure-is-never-read-as-empty-1
+source = ```tauto
+fn pick(): i64 { 1 }
+fn f(h: i64): i64 ! {} { let g := pick()
+  g() }
+```
+rows = "error: cannot follow the effects of calling `g` in `f`"
+
+@ cases.row-variables-are-constrained-1
+source = ```tauto
+effect ask(q: i64): i64
+fn apply<!e>(g: () -> i64 ! e): i64 ! e { g() }
+```
+rows = "ok"
+
+@ cases.row-variables-are-constrained-2
+source = ```tauto
+effect ask(q: i64): i64
+fn apply<!e>(g: () -> i64 ! e): i64 ! e {
+  perform ask(1)
+  g()
+}
+```
+rows = "error: `apply` may perform ask but its row is {|e}"
+
+@ cases.a-caller-instantiates-the-row-variable-1
+source = ```tauto
+effect ask(q: i64): i64
+fn apply<!e>(g: () -> i64 ! e): i64 ! e { g() }
+fn main(): i64 ! {} { apply(() => perform ask(1)) }
+```
+rows = "error: `main` may perform ask but its row is {}"
+
+@ cases.a-refutable-arm-does-not-answer-the-effect-1
+source = ```tauto
+effect ask(q: i64): i64
+let r := handle { perform ask(1) } with {
+  ask(0), k => k(0)
+  return v => v
+}
+```
+rows = "error: unhandled effect ask at the top level"
+
+@ cases.a-function-a-handle-gives-performs-what-its-arms-do
+source = ```tauto
+effect get(): i64
+effect ping(): ()
+fn incr(): i64 ! {get} { perform get() }
+fn quiet(): i64 ! {} {
+  let run := handle { incr() } with {
+    get(), k => (s) => k(s)(s)
+    return v => (s) => v
+  }
+  run(5)
+}
+fn loud(): i64 ! {} {
+  let run := handle { incr() } with {
+    get(), k => (s) => { perform ping(); k(s)(s) }
+    return v => (s) => v
+  }
+  run(5)
+}
+```
+rows = "error: `loud` may perform ping but its row is {}"
+
+@ cases.structural-recursion-does-not-perform-div
+source = ```tauto
+fn len(xs: List(i64)): i64 { match xs {
+  Nil => 0
+  Cons(x, rest) => 1 + len(rest)
+} }
+fn same(xs: List(i64)): i64 { match xs {
+  Nil => 0
+  Cons(x, rest) => same(xs)
+} }
+fn down(n: i64): i64 { if n == 0 { 0 } else { down(n - 1) } }
+```
+inferred_rows.len = []
+inferred_rows.same = ["Div"]
+inferred_rows.down = ["Div"]
+
+@ cases.extracted-nat-recursion-does-not-perform-div
+source = ```tauto
+fn half(n: u64): u64 {
+  if n == 0 { 0 } else {
+    let k := (n - 1)
+    if k == 0 { 0 } else {
+      let j := (k - 1)
+      (half(j) + 1)
+    }
+  }
+}
+fn back(n: u64): u64 { if 0 == n { 0 } else { back(n - 2) } }
+fn same(n: u64): u64 { if n == 0 { 0 } else { same(n) } }
+fn up(n: u64): u64 { if n == 0 { 0 } else { up(n + 1) } }
+fn unguarded(n: u64): u64 { if n == 1 { 0 } else { unguarded(n - 1) } }
+fn signed(n: i64): i64 { if n == 0 { 0 } else { let k := (n - 1)
+ signed(k) } }
+fn redone(n: u64): u64 { var m: u64 := n
+ if m == 0 { 0 } else { redone(m - 1) } }
+fn twice(n: u64): u64 { (half(n) + half((n + 1))) }
+fn apply(f: (u64) -> u64, n: u64): u64 { f(n) }
+fn main(): u64 { apply((c) => twice(c), 3) }
+```
+rows = "ok"
+inferred_rows.half = []
+inferred_rows.back = []
+inferred_rows.twice = []
+inferred_rows.same = ["Div"]
+inferred_rows.up = ["Div"]
+inferred_rows.unguarded = ["Div"]
+inferred_rows.signed = ["Div"]
+inferred_rows.redone = ["Div"]
+
+@ cases.mutual-structural-recursion-with-different-arities-does-not-perform-div
+source = ```tauto
+fn val(f: List(i64), l: i64): i64 { match f {
+  Nil => l
+  Cons(x, g) => items(g, 1, l)
+} }
+fn items(f: List(i64), close: i64, l: i64): i64 { match f {
+  Nil => close
+  Cons(x, g) => val(g, l)
+} }
+fn stuck(f: List(i64), l: i64): i64 { match f {
+  Nil => l
+  Cons(x, g) => stuck_items(g, 1, l)
+} }
+fn stuck_items(f: List(i64), close: i64, l: i64): i64 { match f {
+  Nil => close
+  Cons(x, g) => stuck(f, l)
+} }
+fn apply(k: (i64) -> i64, n: i64): i64 { k(n) }
+fn main(): i64 { apply((c) => items(Cons(c, Nil), c, c), 3) }
+```
+rows = "ok"
+inferred_rows.val = []
+inferred_rows.items = []
+inferred_rows.main = []
+inferred_rows.stuck = ["Div"]
+inferred_rows.stuck_items = ["Div"]
+
+@ cases.ascription-does-not-hide-structural-recursion
+source = ```tauto
+fn walk(xs: List(i64), m: i64): i64 { match xs {
+  Nil => m
+  Cons(x, rest) => walk((rest: List(i64)), (m: i64))
+} }
+fn same(xs: List(i64)): i64 { match xs {
+  Nil => 0
+  Cons(x, rest) => same((xs: List(i64)))
+} }
+fn apply(k: (i64) -> i64, n: i64): i64 { k(n) }
+fn main(): i64 { apply((c) => walk(Cons(c, Nil), (c: i64)), 3) }
+```
+rows = "ok"
+inferred_rows.walk = []
+inferred_rows.main = []
+inferred_rows.same = ["Div"]

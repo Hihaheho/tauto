@@ -11,11 +11,11 @@ pub theorem below_sound(
   h: below(n, p) = true,
   hk: Nat::lt(k, n) = true
 ): p(k) = true {
-  match n: p(k) = true {
+  ⊢ p(k) = true from match n {
     Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(Nat::lt_zero_false(k)), hk)))
     Succ(m) => {
       let hs: And(p(m) = true, below(m, p) = true) := Bool::and_split(p(m), below(m, p), h)
-      match Nat::eq(k, m) eqn e: p(k) = true {
+      ⊢ p(k) = true from match Nat::eq(k, m) eqn e {
         true => Eq::subst((z: Nat) => p(z) = true, Eq::sym(Nat::eq_sound(k, m, e)), hs.a)
         false => below_sound(m, p, k, hs.b, Nat::lt_succ_ne(k, m, hk, e))
       }
@@ -57,7 +57,7 @@ pub theorem all_bytes_left(
   b: List(Nat),
   h: all_bytes(p, List::append(a, b)) = true
 ): all_bytes(p, a) = true {
-  match a: all_bytes(p, a) = true {
+  ⊢ all_bytes(p, a) = true from match a {
     Nil => Refl
     Cons(x, t) => all_bytes_cons(
       p,
@@ -75,7 +75,7 @@ pub theorem all_bytes_right(
   b: List(Nat),
   h: all_bytes(p, List::append(a, b)) = true
 ): all_bytes(p, b) = true {
-  match a: all_bytes(p, b) = true {
+  ⊢ all_bytes(p, b) = true from match a {
     Nil => h
     Cons(x, t) => all_bytes_right(p, t, b, all_bytes_tail(p, x, List::append(t, b), h))
   }
@@ -88,7 +88,7 @@ pub theorem all_bytes_append(
   ha: all_bytes(p, a) = true,
   hb: all_bytes(p, b) = true
 ): all_bytes(p, List::append(a, b)) = true {
-  match a: all_bytes(p, List::append(a, b)) = true {
+  ⊢ all_bytes(p, List::append(a, b)) = true from match a {
     Nil => hb
     Cons(x, t) => all_bytes_cons(
       p,
@@ -108,7 +108,7 @@ pub theorem all_bytes_imp(
   l: List(Nat),
   h: all_bytes(p, l) = true
 ): all_bytes(q, l) = true {
-  match l: all_bytes(q, l) = true {
+  ⊢ all_bytes(q, l) = true from match l {
     Nil => Refl
     Cons(x, t) => all_bytes_cons(
       q,
@@ -125,17 +125,17 @@ pub fn ne(c: Nat): (Nat) -> Bool {
 }
 
 pub theorem ne_false(c: Nat, b: Nat, h: not(Nat::eq(b, c)) = true): Nat::eq(b, c) = false {
-  match Nat::eq(b, c) eqn e: Nat::eq(b, c) = false {
+  ⊢ Nat::eq(b, c) = false from match Nat::eq(b, c) eqn e {
     true => False::elim(false_ne_true(h))
     false => Refl
   }
 }
 
 pub theorem cut_none(c: Nat, a: List(Nat), h: all_bytes(ne(c), a) = true): cut(c, a) = None {
-  match a: cut(c, a) = None {
+  ⊢ cut(c, a) = None from match a {
     Nil => Refl
     Cons(x, t) => Eq::subst(
-      (z: Bool) => (match z: Option(Pair(List(Nat), List(Nat))) {
+      (z: Bool) => (⊢ Option(Pair(List(Nat), List(Nat))) from match z {
           true => Some(Pair { fst: Nil, snd: t })
           false => cut_after(x, cut(c, t))
         }) = None,
@@ -152,9 +152,9 @@ pub theorem cut_app(
   b: List(Nat),
   h: all_bytes(ne(c), a) = true
 ): cut(c, List::append(a, Cons(c, b))) = Some(Pair { fst: a, snd: b }) {
-  match a: cut(c, List::append(a, Cons(c, b))) = Some(Pair { fst: a, snd: b }) {
+  ⊢ cut(c, List::append(a, Cons(c, b))) = Some(Pair { fst: a, snd: b }) from match a {
     Nil => Eq::subst(
-      (z: Bool) => (match z: Option(Pair(List(Nat), List(Nat))) {
+      (z: Bool) => (⊢ Option(Pair(List(Nat), List(Nat))) from match z {
           true => Some(Pair { fst: Nil, snd: b })
           false => cut_after(c, cut(c, b))
         }) = Some(Pair { fst: Nil, snd: b }),
@@ -162,7 +162,7 @@ pub theorem cut_app(
       Refl
     )
     Cons(x, t) => Eq::subst(
-      (z: Bool) => (match z: Option(Pair(List(Nat), List(Nat))) {
+      (z: Bool) => (⊢ Option(Pair(List(Nat), List(Nat))) from match z {
           true => Some(Pair { fst: Nil, snd: List::append(t, Cons(c, b)) })
           false => cut_after(x, cut(c, List::append(t, Cons(c, b))))
         }) = Some(Pair { fst: Cons(x, t), snd: b }),
@@ -176,7 +176,7 @@ pub theorem cut_app(
 }
 
 pub theorem rcut_none(c: Nat, a: List(Nat), h: all_bytes(ne(c), a) = true): rcut(c, a) = None {
-  match a: rcut(c, a) = None {
+  ⊢ rcut(c, a) = None from match a {
     Nil => Refl
     Cons(x, t) => Eq::trans(
       Eq::congr(
@@ -184,7 +184,7 @@ pub theorem rcut_none(c: Nat, a: List(Nat), h: all_bytes(ne(c), a) = true): rcut
         rcut_none(c, t, all_bytes_tail(ne(c), x, t, h))
       ),
       Eq::subst(
-        (z: Bool) => (match z: Option(Pair(List(Nat), List(Nat))) {
+        (z: Bool) => (⊢ Option(Pair(List(Nat), List(Nat))) from match z {
             true => Some(Pair { fst: Nil, snd: t })
             false => None
           }) = None,
@@ -202,11 +202,11 @@ pub theorem rcut_app(
   b: List(Nat),
   h: all_bytes(ne(c), b) = true
 ): rcut(c, List::append(a, Cons(c, b))) = Some(Pair { fst: a, snd: b }) {
-  match a: rcut(c, List::append(a, Cons(c, b))) = Some(Pair { fst: a, snd: b }) {
+  ⊢ rcut(c, List::append(a, Cons(c, b))) = Some(Pair { fst: a, snd: b }) from match a {
     Nil => Eq::trans(
       Eq::congr((o: Option(Pair(List(Nat), List(Nat)))) => rcut_step(c, c, b, o), rcut_none(c, b, h)),
       Eq::subst(
-        (z: Bool) => (match z: Option(Pair(List(Nat), List(Nat))) {
+        (z: Bool) => (⊢ Option(Pair(List(Nat), List(Nat))) from match z {
             true => Some(Pair { fst: Nil, snd: b })
             false => None
           }) = Some(Pair { fst: Nil, snd: b }),
@@ -221,11 +221,15 @@ pub theorem rcut_app(
   }
 }
 
-pub theorem split_one(c: Nat, p: List(Nat), h: all_bytes(ne(c), p) = true): split_all(c, p) = Cons(p, Nil) {
-  match p: split_all(c, p) = Cons(p, Nil) {
+pub theorem split_one(
+  c: Nat,
+  p: List(Nat),
+  h: all_bytes(ne(c), p) = true
+): split_all(c, p) = Cons(p, Nil) {
+  ⊢ split_all(c, p) = Cons(p, Nil) from match p {
     Nil => Refl
     Cons(x, t) => Eq::subst(
-      (z: Bool) => (match z: List(List(Nat)) {
+      (z: Bool) => (⊢ List(List(Nat)) from match z {
           true => Cons(Nil, split_all(c, t))
           false => push_front(x, split_all(c, t))
         }) = Cons(Cons(x, t), Nil),
@@ -241,9 +245,9 @@ pub theorem split_app(
   m: List(Nat),
   h: all_bytes(ne(c), p) = true
 ): split_all(c, List::append(p, Cons(c, m))) = Cons(p, split_all(c, m)) {
-  match p: split_all(c, List::append(p, Cons(c, m))) = Cons(p, split_all(c, m)) {
+  ⊢ split_all(c, List::append(p, Cons(c, m))) = Cons(p, split_all(c, m)) from match p {
     Nil => Eq::subst(
-      (z: Bool) => (match z: List(List(Nat)) {
+      (z: Bool) => (⊢ List(List(Nat)) from match z {
           true => Cons(Nil, split_all(c, m))
           false => push_front(c, split_all(c, m))
         }) = Cons(Nil, split_all(c, m)),
@@ -251,7 +255,7 @@ pub theorem split_app(
       Refl
     )
     Cons(x, t) => Eq::subst(
-      (z: Bool) => (match z: List(List(Nat)) {
+      (z: Bool) => (⊢ List(List(Nat)) from match z {
           true => Cons(Nil, split_all(c, List::append(t, Cons(c, m))))
           false => push_front(x, split_all(c, List::append(t, Cons(c, m))))
         }) = Cons(Cons(x, t), split_all(c, m)),
@@ -271,14 +275,13 @@ pub theorem split_join_rest(
   hp: all_bytes(ne(c), p) = true,
   hr: all_pieces(ne(c), rest) = true
 ): split_all(c, join_rest(c, p, rest)) = Cons(p, rest) {
-  match rest: split_all(c, join_rest(c, p, rest)) = Cons(p, rest) {
+  ⊢ split_all(c, join_rest(c, p, rest)) = Cons(p, rest) from match rest {
     Nil => split_one(c, p, hp)
     Cons(q, more) => {
-      let hs: And(all_bytes(ne(c), q) = true, all_pieces(ne(c), more) = true) := Bool::and_split(
-        all_bytes(ne(c), q),
-        all_pieces(ne(c), more),
-        hr
-      )
+      let hs: And(
+        all_bytes(ne(c), q) = true,
+        all_pieces(ne(c), more) = true
+      ) := Bool::and_split(all_bytes(ne(c), q), all_pieces(ne(c), more), hr)
       Eq::trans(
         split_app(c, p, join_rest(c, q, more), hp),
         Eq::congr((ps: List(List(Nat))) => Cons(p, ps), split_join_rest(c, q, more, hs.a, hs.b))
@@ -294,7 +297,7 @@ pub theorem split_join(
   ne_nil: is_empty_list(ps) = false,
   h: all_pieces(ne(c), ps) = true
 ): split_all(c, join(c, ps)) = ps {
-  match ps: split_all(c, join(c, ps)) = ps {
+  ⊢ split_all(c, join(c, ps)) = ps from match ps {
     Nil => False::elim(true_ne_false(ne_nil))
     Cons(p, rest) => split_join_rest(
       c,
@@ -308,7 +311,7 @@ pub theorem split_join(
 
 pub theorem lower_byte_same(b: Nat, e: is_upper(b) = false): lower_byte(b) = b {
   Eq::subst(
-    (z: Bool) => (match z: Nat {
+    (z: Bool) => (⊢ Nat from match z {
         true => Nat::add(b, 32)
         false => b
       }) = b,
@@ -341,7 +344,7 @@ pub theorem lower_byte_idem(b: Nat): lower_byte(lower_byte(b)) = lower_byte(b) {
 }
 
 pub theorem lower_idem(l: List(Nat)): lower(lower(l)) = lower(l) {
-  match l: lower(lower(l)) = lower(l) {
+  ⊢ lower(lower(l)) = lower(l) from match l {
     Nil => Refl
     Cons(b, t) => Eq::trans(
       Eq::congr((z: Nat) => Cons(z, lower(lower(t))), lower_byte_idem(b)),

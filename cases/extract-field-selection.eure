@@ -1,0 +1,31 @@
+description = "Field extraction uses the record family selected by the checker, including when indexed records share its field names."
+
+@ cases.an-indexed-record-does-not-change-an-ordinary-record-projection
+extract = true
+source = ```tauto
+inductive Indexed: (Nat) -> Type { Mk(value: Nat): Indexed(1) }
+inductive Ordinary: Type { Mk(value: Nat): Ordinary }
+fn ordinary(item: Ordinary): Nat { item.value }
+fn indexed(item: Indexed(1)): Nat { item.value }
+fn result(): Nat { ordinary(Ordinary::Mk(4)) + indexed(Indexed::Mk(7)) }
+theorem sum(): result() = 11 { Refl }
+perform show("sum", result())
+```
+shows = ["sum = 11"]
+rust_shows = ["sum = 11"]
+javascript_shows = ["sum = 11"]
+
+@ cases.projections-retain-their-family-through-local-substitution
+extract = true
+source = ```tauto
+inductive Indexed: (Nat) -> Type { Mk(value: Nat): Indexed(1) }
+inductive Ordinary: Type { Mk(value: Nat): Ordinary }
+fn ordinary(item: Ordinary): Nat { let saved := item; saved.value }
+fn indexed(item: Indexed(1)): Nat { let saved := item; saved.value }
+fn result(): Nat { ordinary(Ordinary::Mk(8)) + indexed(Indexed::Mk(5)) }
+theorem sum(): result() = 13 { Refl }
+perform show("sum", result())
+```
+shows = ["sum = 13"]
+rust_shows = ["sum = 13"]
+javascript_shows = ["sum = 13"]

@@ -50,7 +50,7 @@ pub theorem requirement_frame_bind<A: Type, B: Type>(
   first: RequirementFrame(c, m),
   tail: ∀ value: A. ∀ next: Checker. RequirementFrame(next, k(value, next))
 ): RequirementFrame(c, frame_bind(A, B, k, m)) {
-  match m: RequirementFrame(c, frame_bind(A, B, k, m)) {
+  ⊢ RequirementFrame(c, frame_bind(A, B, k, m)) from match m {
     mut1(value, next) => requirement_state_trans(
       c,
       next,
@@ -92,7 +92,7 @@ pub theorem instantiation_bound_frame_requirements(
   span: TySpan,
   arg: Option(Kind)
 ): RequirementFrame(c, instantiation_bound(c, g, value, name, span, arg)) {
-  match arg: RequirementFrame(c, instantiation_bound(c, g, value, name, span, arg)) {
+  ⊢ RequirementFrame(c, instantiation_bound(c, g, value, name, span, arg)) from match arg {
     None => AndIntro(
       (item: TyBound, member: Mem(TyBound, item, finish_bounds(c))) => MemThere(
         instance_scalar_bound(g, value, span),
@@ -192,7 +192,7 @@ pub theorem ck_instantiate_map_ctors_frame_requirements(
   span: TySpan,
   map: Ordmap(Text, Ty)
 ): RequirementFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) {
-  match gs: RequirementFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) {
+  ⊢ RequirementFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) from match gs {
     Nil => requirement_state_refl(c)
     Cons(g, rest) => Eq::subst(
       (z: Mut1(Ordmap(Text, Ty), Checker)) => RequirementFrame(c, z),
@@ -244,7 +244,7 @@ pub theorem instantiation_pred_frame_requirements(
   span: TySpan,
   found: Option(Ty)
 ): RequirementFrame(c, instantiation_pred(c, p, what, span, found)) {
-  match found: RequirementFrame(c, instantiation_pred(c, p, what, span, found)) {
+  ⊢ RequirementFrame(c, instantiation_pred(c, p, what, span, found)) from match found {
     None => requirement_state_refl(c)
     Some(t) => requirement_frame_rewrap(
       c,
@@ -293,7 +293,7 @@ pub theorem ck_pend_preds_frame_requirements(
   what: Text,
   span: TySpan
 ): RequirementFrame(c, ck_pend_preds(ps, c, map, what, span)) {
-  match ps: RequirementFrame(c, ck_pend_preds(ps, c, map, what, span)) {
+  ⊢ RequirementFrame(c, ck_pend_preds(ps, c, map, what, span)) from match ps {
     Nil => requirement_state_refl(c)
     Cons(p, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => RequirementFrame(c, z),
@@ -343,7 +343,7 @@ pub theorem ck_instantiate_named_map_frame_requirements(
   c: Checker,
   map: Ordmap(Text, Ty)
 ): RequirementFrame(c, ck_instantiate_named_map(gs, c, map)) {
-  match gs: RequirementFrame(c, ck_instantiate_named_map(gs, c, map)) {
+  ⊢ RequirementFrame(c, ck_instantiate_named_map(gs, c, map)) from match gs {
     Nil => requirement_state_refl(c)
     Cons(g, rest) => Eq::subst(
       (z: Mut1(Ordmap(Text, Ty), Checker)) => RequirementFrame(c, z),

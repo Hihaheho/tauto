@@ -39,6 +39,7 @@
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use tauto_message::{Message, msg};
 
 use super::ledger::{Sha256, quote};
 use super::strict::{self, Doc, hex_of};
@@ -177,11 +178,15 @@ fn point(out: &mut String, name: &str, p: &Point) {
 }
 
 pub fn parse(bytes: &[u8]) -> Result<State, String> {
+    parse_message(bytes).map_err(|e| e.to_string())
+}
+
+pub(crate) fn parse_message(bytes: &[u8]) -> Result<State, Message> {
     let doc = Doc::parse(bytes, FILE, MAX_STATE)?;
     let mut f = doc.fields(doc.root(), FILE)?;
     let format = f.integer("format")?;
     if format != 1 {
-        return Err(say!(
+        return Err(msg!(
             "totebag-at",
             place = FILE,
             error = tauto_message::msg!("totebag-unknown-format", format = format)
@@ -189,7 +194,7 @@ pub fn parse(bytes: &[u8]) -> Result<State, String> {
     }
     f.text_as("kind", |s| {
         (s == "index-state").then_some(()).ok_or_else(|| {
-            say!(
+            msg!(
                 "totebag-expected-value",
                 value = format!("{s:?}"),
                 want = "\"index-state\""
@@ -228,9 +233,9 @@ pub fn parse(bytes: &[u8]) -> Result<State, String> {
             None => None,
         };
         f.finish()
-            .map_err(|e| say!("totebag-at", place = &what, error = e))?;
+            .map_err(|e| msg!("totebag-at", place = &what, error = e))?;
         if state.ledger(&index).is_some() {
-            return Err(say!("totebag-state-index-twice", what = &what));
+            return Err(msg!("totebag-state-index-twice", what = &what));
         }
         state.ledgers.push(Ledger {
             index,
@@ -247,11 +252,11 @@ pub fn parse(bytes: &[u8]) -> Result<State, String> {
         let mut f = doc.fields(id, &what)?;
         let index = f.text_as("index", strict::sha256)?;
         let (url, reference) = origin(&mut f)?;
-        let rev = f.text_as("rev", Rev::parse)?;
+        let rev = f.text_as("rev", |s| Rev::parse(s).map_err(Message::from))?;
         let digest = f.text_as("digest", strict::sha256)?;
         let first_seen_at = f.text_as("first_seen_at", strict::time)?;
         f.finish()
-            .map_err(|e| say!("totebag-at", place = &what, error = e))?;
+            .map_err(|e| msg!("totebag-at", place = &what, error = e))?;
         state.receipts.push(Receipt {
             index,
             url,
@@ -263,15 +268,19 @@ pub fn parse(bytes: &[u8]) -> Result<State, String> {
     Ok(state)
 }
 
-fn origin(f: &mut strict::Fields<'_>) -> Result<(String, String), String> {
-    let url = f.text_as("git", |s| crate::spec::check_url(s).map(|()| s.to_string()))?;
+fn origin(f: &mut strict::Fields<'_>) -> Result<(String, String), Message> {
+    let url = f.text_as("git", |s| {
+        crate::spec::check_url(s)
+            .map(|()| s.to_string())
+            .map_err(Message::from)
+    })?;
     let reference = f.text_as("ref", strict::branch)?;
     Ok((url, reference))
 }
 
-fn read_point(f: &mut strict::Fields<'_>, name: &str) -> Result<Point, String> {
+fn read_point(f: &mut strict::Fields<'_>, name: &str) -> Result<Point, Message> {
     Ok(Point {
-        rev: f.text_as(name, Rev::parse)?,
+        rev: f.text_as(name, |s| Rev::parse(s).map_err(Message::from))?,
         digest: f.text_as(&format!("{name}_digest"), strict::sha256)?,
     })
 }
@@ -289,6 +298,10 @@ pub struct Held {
 
 impl Store {
     pub fn from_env() -> Result<Store, String> {
+        Self::from_env_message().map_err(|e| e.to_string())
+    }
+
+    pub(crate) fn from_env_message() -> Result<Store, Message> {
         let var = |k: &str| {
             std::env::var_os(k)
                 .filter(|v| !v.is_empty())
@@ -302,7 +315,7 @@ impl Store {
         }
         match var("HOME") {
             Some(home) => Ok(Store::at(home.join(".local/state/tauto/index"))),
-            None => Err(say!("totebag-no-state-place")),
+            None => Err(msg!("totebag-no-state-place")),
         }
     }
 
@@ -324,8 +337,12 @@ impl Store {
 
     /// Takes the lock and reads the state; an empty state when there is none.
     pub fn hold(&self) -> Result<Held, String> {
+        self.hold_message().map_err(|e| e.to_string())
+    }
+
+    pub(crate) fn hold_message(&self) -> Result<Held, Message> {
         std::fs::create_dir_all(&self.dir).map_err(|e| {
-            say!(
+            msg!(
                 "totebag-at",
                 place = self.dir.display().to_string(),
                 error = e.to_string()
@@ -338,14 +355,14 @@ impl Store {
             .write(true)
             .open(&lock_path)
             .map_err(|e| {
-                say!(
+                msg!(
                     "totebag-at",
                     place = lock_path.display().to_string(),
                     error = e.to_string()
                 )
             })?;
         lock.lock().map_err(|e| {
-            say!(
+            msg!(
                 "totebag-at",
                 place = lock_path.display().to_string(),
                 error = e.to_string()
@@ -356,7 +373,7 @@ impl Store {
             Ok(bytes) => parse(&bytes)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => State::default(),
             Err(e) => {
-                return Err(say!(
+                return Err(msg!(
                     "totebag-at",
                     place = file.display().to_string(),
                     error = e.to_string()
@@ -374,6 +391,10 @@ impl Store {
 impl Held {
     /// Replaces the file whole with the state as it is now.
     pub fn save(&self) -> Result<(), String> {
+        self.save_message().map_err(|e| e.to_string())
+    }
+
+    pub(crate) fn save_message(&self) -> Result<(), Message> {
         let tmp = self
             .file
             .with_file_name(format!(".{FILE}.{}.tmp", std::process::id()));
@@ -387,7 +408,7 @@ impl Held {
         };
         write().map_err(|e| {
             let _ = std::fs::remove_file(&tmp);
-            say!(
+            msg!(
                 "totebag-at",
                 place = self.file.display().to_string(),
                 error = e.to_string()

@@ -25,10 +25,10 @@ pub theorem generic_names_insert_cons(
   Cons(generic, rest),
   Ordmap::insert(map, instantiation_name(generic), value, Ordmap::compare_text)
 ) {
-  item => member => match member: InstanceNamePresent(
+  item => member => ⊢ InstanceNamePresent(
     Ordmap::insert(map, instantiation_name(generic), value, Ordmap::compare_text),
     instantiation_name(item)
-  ) {
+  ) from match member {
     MemHere(tail) => InstanceNamePresent::Mk(
       value,
       Ordmap::get_insert_same(
@@ -56,7 +56,7 @@ pub theorem rigid_names_cons(
   ordered: Ordmap::ordered(ck_val(m), Ordmap::compare_text),
   names: GenericNamesPresent(rest, ck_val(m))
 ): GenericNamesPresent(Cons(generic, rest), ck_val(ck_rigid_k(generic, value, m))) {
-  match m: GenericNamesPresent(Cons(generic, rest), ck_val(ck_rigid_k(generic, value, m))) {
+  ⊢ GenericNamesPresent(Cons(generic, rest), ck_val(ck_rigid_k(generic, value, m))) from match m {
     mut1(map, next) => generic_names_insert_cons(generic, rest, map, value, ordered, names)
   }
 }
@@ -64,7 +64,7 @@ pub theorem ck_rigid_names_present(
   gs: List(Pair(Text, Kind)),
   c: Checker
 ): GenericNamesPresent(gs, ck_val(ck_rigid(gs, c))) {
-  match gs: GenericNamesPresent(gs, ck_val(ck_rigid(gs, c))) {
+  ⊢ GenericNamesPresent(gs, ck_val(ck_rigid(gs, c))) from match gs {
     Nil => instance_names_nil(Ordmap::empty())
     Cons(generic, rest) => rigid_names_cons(
       generic,
@@ -87,7 +87,7 @@ pub theorem allocated_substitute_present(
   values: GenericMapAllocated(limit, map),
   present: InstanceNamePresent(map, name)
 ): TypeAllocated(limit, ty_substitute_name(name, map, fallback)) {
-  match present: TypeAllocated(limit, ty_substitute_name(name, map, fallback)) {
+  ⊢ TypeAllocated(limit, ty_substitute_name(name, map, fallback)) from match present {
     Mk(value, found) => Eq::subst(
       (choice: Option(Ty)) => TypeAllocated(limit, allocation_substitute_choice(fallback, choice)),
       Eq::sym(found),
@@ -111,9 +111,9 @@ pub theorem allocated_poly_map(
   values: GenericMapAllocated(limit, rigid),
   names: GenericNamesPresent(ga, rigid)
 ): RigidMapAllocation(limit, ty_poly_map(gb, ga, rigid)) {
-  match gb: RigidMapAllocation(limit, ty_poly_map(gb, ga, rigid)) {
+  ⊢ RigidMapAllocation(limit, ty_poly_map(gb, ga, rigid)) from match gb {
     Nil => AndIntro(Trivial, name => value => found => False::elim(ck_none_ne_some(value, found)))
-    Cons(b, brest) => match ga: RigidMapAllocation(limit, ty_poly_map(Cons(b, brest), ga, rigid)) {
+    Cons(b, brest) => ⊢ RigidMapAllocation(limit, ty_poly_map(Cons(b, brest), ga, rigid)) from match ga {
       Nil => AndIntro(Trivial, name => value => found => False::elim(ck_none_ne_some(value, found)))
       Cons(a, arest) => {
         let tail: RigidMapAllocation(

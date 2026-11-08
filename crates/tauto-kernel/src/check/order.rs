@@ -8,6 +8,7 @@
 //! `mutual` block, so recursion between declarations is always visible, and
 //! the ones in a cycle keep their written order, where the kernel reports it.
 
+use crate::surface::Name;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -17,6 +18,15 @@ use crate::surface::{Handler, Pattern, Stmt, SurfaceTerm, TermKind};
 /// uses it, when it is written after that statement. The order is otherwise
 /// the written one, and statements in a cycle of uses keep theirs.
 pub(super) fn dependency_order(stmts: &[Stmt]) -> Vec<Stmt> {
+    dependency_positions(stmts)
+        .into_iter()
+        .map(|i| stmts[i].clone())
+        .collect()
+}
+
+/// The positions in `stmts` of the statements of [`dependency_order`], in
+/// that order.
+pub(super) fn dependency_positions(stmts: &[Stmt]) -> Vec<usize> {
     let mut owner = Owners::default();
     for (i, s) in stmts.iter().enumerate() {
         for name in defines(s) {
@@ -48,7 +58,7 @@ pub(super) fn dependency_order(stmts: &[Stmt]) -> Vec<Stmt> {
         .enumerate()
         .all(|(i, u)| u.iter().all(|&j| j < i))
     {
-        return stmts.to_vec();
+        return (0..stmts.len()).collect();
     }
     let group = cycles(&uses);
     let count = group.iter().max().map_or(0, |g| g + 1);
@@ -67,7 +77,7 @@ pub(super) fn dependency_order(stmts: &[Stmt]) -> Vec<Stmt> {
     for i in 0..stmts.len() {
         place(group[i], &group_uses, &members, &mut placed, &mut order);
     }
-    order.into_iter().map(|i| stmts[i].clone()).collect()
+    order
 }
 
 /// Places the groups `g` uses, then the statements of `g` in written order.
@@ -153,26 +163,33 @@ fn cycles(uses: &[Vec<usize>]) -> Vec<usize> {
 
 #[derive(Default)]
 struct Owners {
-    names: HashMap<String, usize>,
+    names: HashMap<Name, usize>,
     /// Types and classes, whose generated names start with theirs.
-    types: HashMap<String, usize>,
+    types: HashMap<Name, usize>,
 }
 
 impl Owners {
     /// The statement that declares `name`: the declaration of that name, or
     /// of the type whose generated name (`T::rec`, `T::beq`, `C::m`) it is.
-    fn find(&self, name: &str) -> Option<usize> {
+    fn find(&self, name: &Name) -> Option<usize> {
         if let Some(&i) = self.names.get(name) {
             return Some(i);
         }
+        if let Name::Global(reference) = name {
+            return reference
+                .owner()
+                .or_else(|| reference.origin())
+                .and_then(|owner| self.find(&owner.clone().into()));
+        }
+        let name = name.spelling()?;
         name.char_indices()
             .rev()
             .filter(|&(_, c)| c == '_' || c == ':')
-            .find_map(|(at, _)| self.types.get(&name[..at]).copied())
+            .find_map(|(at, _)| self.types.get(&Name::from(&name[..at])).copied())
     }
 }
 
-fn type_name(s: &Stmt) -> Option<String> {
+fn type_name(s: &Stmt) -> Option<Name> {
     match s {
         Stmt::Inductive(d) => Some(d.name.clone()),
         Stmt::Struct(d) | Stmt::Enum(d) => Some(d.name.clone()),
@@ -181,7 +198,8 @@ fn type_name(s: &Stmt) -> Option<String> {
     }
 }
 
-fn defines(s: &Stmt) -> Vec<String> {
+/// The names a statement declares.
+fn defines(s: &Stmt) -> Vec<Name> {
     match s {
         Stmt::Theorem(t) | Stmt::Def(t) => vec![t.name.clone()],
         // `f::eq` of `opaque fn f` and of `decreasing_by`.
@@ -189,13 +207,13 @@ fn defines(s: &Stmt) -> Vec<String> {
             .chain(
                 f.generates
                     .iter()
-                    .flat_map(|g| g.items.iter().map(|(_, n)| n.clone())),
+                    .flat_map(|g| g.items.iter().map(|(_, n)| Name::from(n))),
             )
             .collect(),
         Stmt::Let { name, .. } => vec![name.clone()],
         Stmt::Inductive(d) => std::iter::once(d.name.clone())
             .chain(d.constructors.iter().map(|c| c.name.clone()))
-            .chain(d.generates.items.iter().map(|(_, n)| n.clone()))
+            .chain(d.generates.items.iter().map(|(_, n)| Name::from(n)))
             .collect(),
         Stmt::Struct(d) | Stmt::Enum(d) => std::iter::once(d.name.clone())
             .chain(d.constructors.iter().map(|c| c.name.clone()))
@@ -216,15 +234,15 @@ fn defines(s: &Stmt) -> Vec<String> {
 /// elsewhere (a local `t` of one file is not the theorem `t` of another).
 /// A name that is a constructor of a declaration in `stmts` binds nothing in a
 /// pattern: it is that constructor.
-fn mentions(s: &Stmt, ctors: &HashSet<String>) -> Vec<String> {
+fn mentions(s: &Stmt, ctors: &HashSet<Name>) -> Vec<Name> {
     let mut out = Vec::new();
     let mut s = s.clone();
     scan_stmt(&mut s, &mut Vec::new(), ctors, &mut out);
     out
 }
 
-fn constructors(stmts: &[Stmt]) -> HashSet<String> {
-    fn go(s: &Stmt, out: &mut HashSet<String>) {
+fn constructors(stmts: &[Stmt]) -> HashSet<Name> {
+    fn go(s: &Stmt, out: &mut HashSet<Name>) {
         match s {
             Stmt::Inductive(d) => out.extend(d.constructors.iter().map(|c| c.name.clone())),
             Stmt::Struct(d) | Stmt::Enum(d) => {
@@ -241,7 +259,7 @@ fn constructors(stmts: &[Stmt]) -> HashSet<String> {
     out
 }
 
-fn pattern_binders(p: &Pattern, ctors: &HashSet<String>, out: &mut Vec<String>) {
+fn pattern_binders(p: &Pattern, ctors: &HashSet<Name>, out: &mut Vec<Name>) {
     match p {
         Pattern::Bind(n) if !ctors.contains(n) => out.push(n.clone()),
         Pattern::Ctor { args, .. } => args.iter().for_each(|a| pattern_binders(a, ctors, out)),
@@ -253,12 +271,7 @@ fn pattern_binders(p: &Pattern, ctors: &HashSet<String>, out: &mut Vec<String>) 
     }
 }
 
-fn scan_stmt(
-    s: &mut Stmt,
-    bound: &mut Vec<String>,
-    ctors: &HashSet<String>,
-    out: &mut Vec<String>,
-) {
+fn scan_stmt(s: &mut Stmt, bound: &mut Vec<Name>, ctors: &HashSet<Name>, out: &mut Vec<Name>) {
     let depth = bound.len();
     match s {
         Stmt::Instance(i) => {
@@ -284,12 +297,7 @@ fn scan_stmt(
     bound.truncate(depth);
 }
 
-fn scan(
-    t: &mut SurfaceTerm,
-    bound: &mut Vec<String>,
-    ctors: &HashSet<String>,
-    out: &mut Vec<String>,
-) {
+fn scan(t: &mut SurfaceTerm, bound: &mut Vec<Name>, ctors: &HashSet<Name>, out: &mut Vec<Name>) {
     let depth = bound.len();
     match &mut *Arc::make_mut(&mut t.kind) {
         TermKind::Var(n) => {
@@ -410,4 +418,45 @@ fn scan(
         _ => crate::surface::walk::children(t, &mut |c| scan(c, bound, ctors, out)),
     }
     bound.truncate(depth);
+}
+
+/// The declarations of `later` (written after `decl`) that `decl` uses, with
+/// the ones they use in turn, in written order: what the whole file's check
+/// (`dependency_order`) declares ahead of `decl`. A declaration that uses
+/// `decl` is in a cycle with it and stays after it, as there.
+pub(super) fn used_later(decl: &Stmt, later: &[Stmt]) -> Vec<Stmt> {
+    let mut owner = Owners::default();
+    for (i, s) in later.iter().enumerate() {
+        for name in defines(s) {
+            owner.names.entry(name).or_insert(i);
+        }
+        if let Some(name) = type_name(s) {
+            owner.types.entry(name).or_insert(i);
+        }
+    }
+    let mut all = later.to_vec();
+    all.push(decl.clone());
+    let ctors = constructors(&all);
+    let own: HashSet<Name> = defines(decl).into_iter().collect();
+    let mut taken = vec![false; later.len()];
+    let mut pending = mentions(decl, &ctors);
+    while let Some(name) = pending.pop() {
+        let Some(j) = owner.find(&name) else {
+            continue;
+        };
+        if taken[j] {
+            continue;
+        }
+        let uses = mentions(&later[j], &ctors);
+        if uses.iter().any(|n| own.contains(n)) {
+            continue;
+        }
+        taken[j] = true;
+        pending.extend(uses);
+    }
+    later
+        .iter()
+        .zip(taken)
+        .filter_map(|(s, t)| t.then(|| s.clone()))
+        .collect()
 }

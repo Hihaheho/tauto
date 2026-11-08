@@ -15,7 +15,7 @@ import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub fn data_names_check(c: Checker, duplicate: Option(SurfaceData)): Mut1(Unit, Checker) {
-  match duplicate: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match duplicate {
     None => mut1(Star, c)
     Some(f) => ck_rewrap1(
       ck_error(c, cat3("type ", registration_name(f), " is declared twice"), registration_span(f))
@@ -26,7 +26,7 @@ pub theorem data_names_check_frame(
   c: Checker,
   duplicate: Option(SurfaceData)
 ): CkReadFrame(c, data_names_check(c, duplicate)) {
-  match duplicate: CkReadFrame(c, data_names_check(c, duplicate)) {
+  ⊢ CkReadFrame(c, data_names_check(c, duplicate)) from match duplicate {
     None => Refl
     Some(f) => Refl
   }
@@ -34,7 +34,10 @@ pub theorem data_names_check_frame(
 pub theorem data_names_check_unf(
   c: Checker,
   fs: List(SurfaceData)
-): ck_check_data_names(c, fs) = data_names_check(c, types_duplicate_data(fs, Ordmap::empty())) { Refl }
+): ck_check_data_names(
+  c,
+  fs
+) = data_names_check(c, types_duplicate_data(fs, Ordmap::empty())) { Refl }
 pub theorem ck_check_data_names_frame(
   c: Checker,
   fs: List(SurfaceData)
@@ -48,14 +51,10 @@ pub theorem ck_check_data_names_frame(
 
 // The map covers every name already encountered in this scope.
 pub def DataNameCover(seen: List(Text), map: Ordmap(Text, Bool)): Prop :=
-∀ n: Text. ∀ h: Mem(
-  Text,
-  n,
-  seen
-). Ordmap::get(map, n, Ordmap::compare_text) = Some(true)
+∀ n: Text. ∀ h: Mem(Text, n, seen). Ordmap::get(map, n, Ordmap::compare_text) = Some(true)
 
 pub fn data_names_present(o: Option(Bool)): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     None => false
     Some(v) => true
   }
@@ -75,8 +74,16 @@ pub theorem data_names_insert_old_at(
   ordered: Ordmap::ordered(map, Ordmap::compare_text),
   equal: Ordmap::compare_text(q, n) = cmp,
   old: Ordmap::get(map, q, Ordmap::compare_text) = Some(true)
-): Ordmap::get(Ordmap::insert(map, n, true, Ordmap::compare_text), q, Ordmap::compare_text) = Some(true) {
-  match cmp: Ordmap::get(Ordmap::insert(map, n, true, Ordmap::compare_text), q, Ordmap::compare_text) = Some(true) {
+): Ordmap::get(
+  Ordmap::insert(map, n, true, Ordmap::compare_text),
+  q,
+  Ordmap::compare_text
+) = Some(true) {
+  ⊢ Ordmap::get(
+    Ordmap::insert(map, n, true, Ordmap::compare_text),
+    q,
+    Ordmap::compare_text
+  ) = Some(true) from match cmp {
     Less => Eq::trans(
       Ordmap::get_insert_other(
         Ordmap::compare_text,
@@ -93,7 +100,11 @@ pub theorem data_names_insert_old_at(
       old
     )
     Equal => Eq::subst(
-      (key: Text) => Ordmap::get(Ordmap::insert(map, n, true, Ordmap::compare_text), key, Ordmap::compare_text) = Some(true),
+      (key: Text) => Ordmap::get(
+        Ordmap::insert(map, n, true, Ordmap::compare_text),
+        key,
+        Ordmap::compare_text
+      ) = Some(true),
       Eq::sym(Ordmap::compare_text_eq(q, n, equal)),
       Ordmap::text_get_insert_same(map, n, true, ordered)
     )
@@ -121,7 +132,11 @@ pub theorem data_names_insert_cover(
   ordered: Ordmap::ordered(map, Ordmap::compare_text),
   cover: DataNameCover(seen, map)
 ): DataNameCover(Cons(n, seen), Ordmap::insert(map, n, true, Ordmap::compare_text)) {
-  q => h => match h: Ordmap::get(Ordmap::insert(map, n, true, Ordmap::compare_text), q, Ordmap::compare_text) = Some(true) {
+  q => h => ⊢ Ordmap::get(
+    Ordmap::insert(map, n, true, Ordmap::compare_text),
+    q,
+    Ordmap::compare_text
+  ) = Some(true) from match h {
     MemHere(tail) => Ordmap::text_get_insert_same(map, n, true, ordered)
     MemThere(head, tail, member) => data_names_insert_old_at(
       map,
@@ -140,7 +155,7 @@ pub fn data_names_step(
   map: Ordmap(Text, Bool),
   duplicate: Bool
 ): Option(SurfaceData) {
-  match duplicate: Option(SurfaceData) {
+  ⊢ Option(SurfaceData) from match duplicate {
     true => Some(f)
     false => types_duplicate_data(
       rest,
@@ -152,7 +167,15 @@ pub theorem data_names_step_unf(
   f: SurfaceData,
   rest: List(SurfaceData),
   map: Ordmap(Text, Bool)
-): types_duplicate_data(Cons(f, rest), map) = data_names_step(f, rest, map, Ordmap::contains(map, decl_data_name(f), Ordmap::compare_text)) { Refl }
+): types_duplicate_data(
+  Cons(f, rest),
+  map
+) = data_names_step(
+  f,
+  rest,
+  map,
+  Ordmap::contains(map, decl_data_name(f), Ordmap::compare_text)
+) { Refl }
 
 pub def DataNamesIH(rest: List(SurfaceData)): Prop :=
 ∀ map: Ordmap(
@@ -180,7 +203,7 @@ pub theorem data_names_cons_sound(
   clean: data_names_step(f, rest, map, duplicate) = None,
   ih: DataNamesIH(rest)
 ): FreshDataNames(Cons(f, rest), seen) {
-  match duplicate: FreshDataNames(Cons(f, rest), seen) {
+  ⊢ FreshDataNames(Cons(f, rest), seen) from match duplicate {
     true => False::elim(ck_none_ne_some(f, Eq::sym(clean)))
     false => FreshDatasCons(
       f,
@@ -217,7 +240,7 @@ pub theorem types_duplicate_data_sound(
   cover: DataNameCover(seen, map),
   clean: types_duplicate_data(fs, map) = None
 ): FreshDataNames(fs, seen) {
-  match fs: FreshDataNames(fs, seen) {
+  ⊢ FreshDataNames(fs, seen) from match fs {
     Nil => FreshDatasNil(seen)
     Cons(f, rest) => data_names_cons_sound(
       f,
@@ -258,7 +281,7 @@ pub theorem types_data_names_unique(
 }
 pub fn data_names_errors(c: Checker): List(TypeError) { c.errors }
 pub fn data_names_empty(es: List(TypeError)): Bool {
-  match es: Bool {
+  ⊢ Bool from match es {
     Nil => true
     Cons(e, rest) => false
   }
@@ -268,7 +291,7 @@ pub theorem data_names_check_clean(
   duplicate: Option(SurfaceData),
   clean: data_names_errors(ck_st(data_names_check(c, duplicate))) = Nil
 ): duplicate = None {
-  match duplicate: duplicate = None {
+  ⊢ duplicate = None from match duplicate {
     None => Refl
     Some(f) => False::elim(false_ne_true(Eq::congr(data_names_empty, clean)))
   }

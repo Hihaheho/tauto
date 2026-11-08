@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
+use tauto_nir::Name;
 
 use tauto_nir::cps::{self, Cps, CpsPat, PathStep, Prim, Unary};
 use tauto_nir::{Arith, Cmp, Package, Quant, Width};
@@ -19,8 +20,8 @@ use crate::value::{Step, Value};
 /// names in order (`None` for a positional field).
 pub struct Ctor {
     pub id: u32,
-    pub owner: Rc<str>,
-    pub tag: Rc<str>,
+    pub owner: Name,
+    pub tag: Name,
     pub names: Vec<Option<Rc<str>>>,
     pub is_struct: bool,
 }
@@ -89,6 +90,12 @@ pub enum Op {
         name: u32,
         argc: u32,
     },
+    /// Calls the extern function `index` of the package (its place in
+    /// `Package::externs`) through the host (`Host::call_extern`).
+    Extern {
+        index: u32,
+        argc: u32,
+    },
     Prim {
         prim: u32,
         argc: u32,
@@ -147,8 +154,6 @@ pub enum Pat {
         ctor: u32,
         fields: Vec<Pat>,
     },
-    /// `#(…)` on a product: a pattern for each member, in its order.
-    Product(Vec<Pat>),
 }
 
 pub struct ClosureT {
@@ -200,7 +205,6 @@ pub enum PrimOp {
     Cmp(Cmp),
     Eq(bool),
     Construct { ctor: Rc<Ctor>, order: Vec<usize> },
-    Product(Vec<(usize, Option<usize>)>),
     Concat,
     TextOfInt,
     TextLen,
@@ -211,7 +215,6 @@ pub enum PrimOp {
 
 pub enum UnaryOp {
     Not,
-    Member(usize),
     Field(Step),
     Shown,
     TempRef,
@@ -222,6 +225,9 @@ pub enum UnaryOp {
 
 #[derive(Default)]
 pub struct Program {
+    /// Native code for some function instances (`native`).
+    pub native: Option<Rc<dyn crate::native::Native>>,
+    pub(crate) declarations: Vec<tauto_rt::identity::DeclRef>,
     pub codes: Vec<Code>,
     pub consts: Vec<Value>,
     pub paths: Vec<Vec<Step>>,
@@ -233,30 +239,34 @@ pub struct Program {
     pub budgets: Vec<BudgetT>,
     pub pats: Vec<Pat>,
     pub ctors: Vec<Rc<Ctor>>,
-    ctor_ids: HashMap<(Rc<str>, Rc<str>), u32>,
-    parsers: Vec<(String, String, tauto_nir::Ty, Rc<crate::syntax::SynRt>)>,
+    ctor_ids: HashMap<(Name, Name), u32>,
+    operation_symbols: HashMap<Name, Rc<str>>,
+    /// The runtime syntax parsers, by name, hash and result type.
+    pub(crate) parsers: Vec<(String, String, tauto_nir::Ty, Rc<crate::syntax::SynRt>)>,
     pub fns: Vec<u32>,
     pub top: Option<u32>,
+    /// The extern functions by their index, as `Op::Extern` names them.
+    pub externs: Vec<Name>,
 }
 
 impl Program {
     /// The constructor `tag` of `owner`, with its fields' names.
     pub fn ctor(
         &mut self,
-        owner: &str,
-        tag: &str,
+        owner: &Name,
+        tag: &Name,
         names: &[Option<&str>],
         is_struct: bool,
     ) -> Rc<Ctor> {
-        let key: (Rc<str>, Rc<str>) = (Rc::from(owner), Rc::from(tag));
+        let key = (owner.clone(), tag.clone());
         if let Some(&id) = self.ctor_ids.get(&key) {
             return self.ctors[id as usize].clone();
         }
         let id = self.ctors.len() as u32;
         let ctor = Rc::new(Ctor {
             id,
-            owner: key.0.clone(),
-            tag: key.1.clone(),
+            owner: owner.clone(),
+            tag: tag.clone(),
             names: names.iter().map(|n| n.map(Rc::from)).collect(),
             is_struct,
         });
@@ -265,13 +275,31 @@ impl Program {
         ctor
     }
 
-    fn ctor_id(&mut self, owner: &str, tag: &str) -> u32 {
-        let key: (Rc<str>, Rc<str>) = (Rc::from(owner), Rc::from(tag));
+    /// The constructor `tag` of the data type `owner`, when the program
+    /// has it.
+    pub fn ctor_of(&self, owner: &Name, tag: &Name) -> Option<Rc<Ctor>> {
+        let id = *self.ctor_ids.get(&(owner.clone(), tag.clone()))?;
+        Some(self.ctors[id as usize].clone())
+    }
+
+    fn ctor_id(&mut self, owner: &Name, tag: &Name) -> u32 {
+        let key = (owner.clone(), tag.clone());
         if let Some(&id) = self.ctor_ids.get(&key) {
             return id;
         }
         // Matched before any value of it is made: its names come later.
         self.ctor(owner, tag, &[], false).id
+    }
+
+    fn operation(&mut self, name: &Name) -> Rc<str> {
+        if tauto_nir::is_library(&name, name.as_str()) || matches!(name, Name::Spelled(_)) {
+            return Rc::from(name.as_str());
+        }
+        let next = self.operation_symbols.len();
+        self.operation_symbols
+            .entry(name.clone())
+            .or_insert_with(|| Rc::from(format!("\u{1}operation:{next}")))
+            .clone()
     }
 
     fn name(&mut self, n: &str) -> u32 {
@@ -286,19 +314,55 @@ impl Program {
 type Rs<T> = Result<T, String>;
 
 pub fn compile(pkg: &Package) -> Rs<Program> {
-    if !pkg.externs.is_empty() {
-        return Err("extern functions (the machine has no host bindings)".into());
-    }
-    let mut p = Program::default();
+    let mut p = Program {
+        declarations: pkg.declarations.clone(),
+        externs: pkg.externs.iter().map(|x| x.name.clone()).collect(),
+        ..Program::default()
+    };
     // The prelude's data types, so that the builtins make the values the
     // program matches.
-    p.ctor("Option", "Some", &[None], false);
-    p.ctor("Option", "None", &[], false);
-    p.ctor("Result", "Ok", &[None], false);
-    p.ctor("Result", "Err", &[None], false);
-    p.ctor("Pair", "Pair", &[Some("fst"), Some("snd")], true);
-    p.ctor("List", "Cons", &[None, None], false);
-    p.ctor("List", "Nil", &[], false);
+    p.ctor(
+        &tauto_nir::library_name("Option"),
+        &tauto_nir::library_name("Some"),
+        &[None],
+        false,
+    );
+    p.ctor(
+        &tauto_nir::library_name("Option"),
+        &tauto_nir::library_name("None"),
+        &[],
+        false,
+    );
+    p.ctor(
+        &tauto_nir::library_name("Result"),
+        &tauto_nir::library_name("Ok"),
+        &[None],
+        false,
+    );
+    p.ctor(
+        &tauto_nir::library_name("Result"),
+        &tauto_nir::library_name("Err"),
+        &[None],
+        false,
+    );
+    p.ctor(
+        &tauto_nir::library_name("Pair"),
+        &tauto_nir::library_name("Pair"),
+        &[Some("fst"), Some("snd")],
+        true,
+    );
+    p.ctor(
+        &tauto_nir::library_name("List"),
+        &tauto_nir::library_name("Cons"),
+        &[None, None],
+        false,
+    );
+    p.ctor(
+        &tauto_nir::library_name("List"),
+        &tauto_nir::library_name("Nil"),
+        &[],
+        false,
+    );
     for d in &pkg.datas {
         for c in &d.ctors {
             let names: Vec<Option<&str>> = c.fields.iter().map(|f| f.name.as_deref()).collect();
@@ -436,6 +500,9 @@ impl Compiler<'_> {
             cps::Value::Int(n) => self.konst(Value::Int(*n)),
             cps::Value::Float(x) => self.konst(Value::Float(*x)),
             cps::Value::Bool(b) => self.konst(Value::Bool(*b)),
+            cps::Value::Declaration(slot) => {
+                self.konst(Value::Declaration(self.p.declarations[*slot].clone()))
+            }
             cps::Value::Text(t) => self.konst(Value::text(t)),
             cps::Value::Fn(i) => self.konst(Value::Fn(*i as u32)),
         }
@@ -503,7 +570,19 @@ impl Compiler<'_> {
                     argc,
                 });
             }
-            Cps::External { name, .. } => return Err(format!("the extern {name}")),
+            Cps::External { name, args } => {
+                let index = self
+                    .p
+                    .externs
+                    .iter()
+                    .position(|n| n == name)
+                    .ok_or_else(|| format!("internal: no extern {name}"))?;
+                let argc = self.all(args)?;
+                self.ops.push(Op::Extern {
+                    index: index as u32,
+                    argc,
+                });
+            }
             Cps::Builtin { name, args } => {
                 if !crate::builtins::NAMES.contains(&name.as_str())
                     && !crate::hostcall::NAMES.contains(&name.as_str())
@@ -527,6 +606,7 @@ impl Compiler<'_> {
                         order,
                         is_struct,
                         data,
+                        ..
                     } => {
                         let names: Vec<Option<&str>> =
                             order.iter().map(|i| names[*i].as_deref()).collect();
@@ -554,7 +634,6 @@ impl Compiler<'_> {
                             }
                         }
                     }
-                    Prim::Product { picks } => PrimOp::Product(picks.clone()),
                     Prim::Concat => PrimOp::Concat,
                     Prim::TextOfInt => PrimOp::TextOfInt,
                     Prim::TextLen => PrimOp::TextLen,
@@ -583,7 +662,6 @@ impl Compiler<'_> {
                 self.expr(value)?;
                 let u = match op {
                     Unary::Not => UnaryOp::Not,
-                    Unary::Member(i) => UnaryOp::Member(*i),
                     Unary::Field { name, index } => UnaryOp::Field(match index {
                         Some(i) => Step::Index(*i),
                         None => Step::Name(Rc::from(name.as_str())),
@@ -694,7 +772,8 @@ impl Compiler<'_> {
             Cps::Closure(c) => self.closure(c)?,
             Cps::Perform { op, quant: q, args } => {
                 let argc = self.all(args)?;
-                let op = self.p.name(op);
+                let symbol = self.p.operation(op);
+                let op = self.p.name(&symbol);
                 self.ops.push(Op::Perform {
                     op,
                     quant: quant(*q),
@@ -791,12 +870,12 @@ impl Compiler<'_> {
                 cps::Value::Int(n) => Value::Int(*n),
                 cps::Value::Float(x) => Value::Float(*x),
                 cps::Value::Bool(b) => Value::Bool(*b),
+                cps::Value::Declaration(slot) => {
+                    Value::Declaration(self.p.declarations[*slot].clone())
+                }
                 cps::Value::Text(t) => Value::text(t),
                 cps::Value::Fn(i) => Value::Fn(*i as u32),
             }),
-            CpsPat::Product(fields) => {
-                Pat::Product(fields.iter().map(|f| self.pat_of(f)).collect())
-            }
             CpsPat::Ctor { ctor, fields, data } => Pat::Ctor {
                 ctor: self.p.ctor_id(data, ctor),
                 fields: fields.iter().map(|f| self.pat_of(f)).collect(),
@@ -872,7 +951,7 @@ impl Compiler<'_> {
                 |c| c.expr(&arm.body),
             )?;
             out.push(ArmT {
-                op: Rc::from(arm.op.as_str()),
+                op: self.p.operation(&arm.op),
                 pats,
                 k,
                 code,
@@ -951,5 +1030,26 @@ impl Compiler<'_> {
     fn find(&mut self, id: u32) -> Option<(u32, bool)> {
         let at = self.levels.len() - 1;
         resolve(self.levels, at, id)
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use tauto_nir::DeclRef;
+
+    #[test]
+    fn equal_display_operations_have_distinct_runtime_symbols() {
+        let mut program = Program::default();
+        let left = Name::from(DeclRef::fresh("show"));
+        let right = Name::from(DeclRef::fresh("show"));
+        let a = program.operation(&left);
+        assert_eq!(a, program.operation(&left));
+        assert_ne!(a, program.operation(&right));
+        assert_ne!(a, program.operation(&tauto_nir::library_name("show")));
+        assert_eq!(
+            program.operation(&tauto_nir::library_name("show")).as_ref(),
+            "show"
+        );
     }
 }

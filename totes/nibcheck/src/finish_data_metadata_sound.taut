@@ -16,7 +16,7 @@ pub theorem data_metadata_mark_k(
   found: datas_decl(d, n) = o,
   ordered: SummaryOrdered(d)
 ): DataMetadataPreserved(d, summary_mark_k(d, n, o)) {
-  match o: DataMetadataPreserved(d, summary_mark_k(d, n, o)) {
+  ⊢ DataMetadataPreserved(d, summary_mark_k(d, n, o)) from match o {
     None => key => Refl
     Some(data) => data_metadata_insert(
       summary_decls(d),
@@ -51,7 +51,7 @@ pub theorem ck_mark_preserves_metadata(
   c: Checker,
   ordered: SummaryOrdered(ck_datas_of(c))
 ): DataMetadataPreserved(ck_datas_of(c), ck_datas_of(ck_st(ck_mark_recursive(es, c)))) {
-  match es: DataMetadataPreserved(ck_datas_of(c), ck_datas_of(ck_st(ck_mark_recursive(es, c)))) {
+  ⊢ DataMetadataPreserved(ck_datas_of(c), ck_datas_of(ck_st(ck_mark_recursive(es, c)))) from match es {
     Nil => n => Refl
     Cons(e, rest) => {
       let next: Checker := summary_replace(c, datas_mark_recursive(ck_datas_of(c), summary_key(e)))
@@ -82,10 +82,10 @@ pub theorem data_metadata_finish_k(
   ck_datas_of(ck_st(m)),
   ck_datas_of(ck_st(summary_finish_datas_k(program, m)))
 ) {
-  match m: DataMetadataPreserved(
+  ⊢ DataMetadataPreserved(
     ck_datas_of(ck_st(m)),
     ck_datas_of(ck_st(summary_finish_datas_k(program, m)))
-  ) {
+  ) from match m {
     mut1(v, next) => Eq::subst(
       (d: Datas) => DataMetadataPreserved(ck_datas_of(next), d),
       Eq::sym(

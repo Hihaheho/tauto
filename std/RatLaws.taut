@@ -4,6 +4,7 @@ import "NatDiv.taut" { Nat }
 import "Base.taut" { Nat }
 import "Int.taut" { Int }
 import "IntLaws.taut" { Int, Nat }
+import "Calc.taut" { calc }
 
 module Rat {
   // The laws of `Rat`'s arithmetic (`std/Rat::taut`). A number has many
@@ -26,7 +27,7 @@ module Rat {
   }
 
   pub theorem equiv_trans(x: Rat, y: Rat, z: Rat, h1: equiv(x, y), h2: equiv(y, z)): equiv(x, z) {
-    match y: equiv(x, z) {
+    ⊢ equiv(x, z) from match y {
       Mk(b, q) => equiv_trans_at(num(x), IntOfNat(den(x)), b, q, num(z), IntOfNat(den(z)), h1, h2)
     }
   }
@@ -81,13 +82,14 @@ module Rat {
       Int::mul(X, R),
       Int::mul(Z, P),
       q,
-      calc Int::mul(Int::mul(X, R), Q) {
-        = Int::mul(Int::mul(X, Q), R) from s1
-        = Int::mul(Int::mul(b, P), R) from s2
-        = Int::mul(Int::mul(b, R), P) from s3
-        = Int::mul(Int::mul(Z, Q), P) from s4
-        = Int::mul(Int::mul(Z, P), Q) from s5
-      }
+      calc!(```
+        $Int::mul(Int::mul(X, R), Q)
+        = $Int::mul(Int::mul(X, Q), R) from $s1
+        = $Int::mul(Int::mul(b, P), R) from $s2
+        = $Int::mul(Int::mul(b, R), P) from $s3
+        = $Int::mul(Int::mul(Z, Q), P) from $s4
+        = $Int::mul(Int::mul(Z, P), Q) from $s5
+        ```)
     )
   }
 }
@@ -95,12 +97,12 @@ module Rat {
 module Int {
 
   pub theorem eq_sound(x: Int, y: Int, h: eq(x, y) = true): x = y {
-    match x: x = y {
-      IntOfNat(a) => match y: IntOfNat(a) = y {
+    ⊢ x = y from match x {
+      IntOfNat(a) => ⊢ IntOfNat(a) = y from match y {
         IntOfNat(b) => Eq::congr(IntOfNat, Nat::eq_sound(a, b, h))
         IntNegSucc(b) => False::elim(false_ne_true(h))
       }
-      IntNegSucc(a) => match y: IntNegSucc(a) = y {
+      IntNegSucc(a) => ⊢ IntNegSucc(a) = y from match y {
         IntOfNat(b) => False::elim(false_ne_true(h))
         IntNegSucc(b) => Eq::congr(IntNegSucc, Nat::eq_sound(a, b, h))
       }
@@ -176,11 +178,12 @@ module Rat {
     ) := by int_norm!(): Int::neg(
       Int::mul(IntOfNat(a), IntOfNat(j))
     ) = Int::mul(Int::neg(IntOfNat(a)), IntOfNat(j)) {}
-    calc Int::mul(Int::neg(IntOfNat(k)), IntOfNat(s)) {
-      = Int::neg(Int::mul(IntOfNat(k), IntOfNat(s))) from l
-      = Int::neg(Int::mul(IntOfNat(a), IntOfNat(j))) from Eq::congr(Int::neg, e)
-      = Int::mul(Int::neg(IntOfNat(a)), IntOfNat(j)) from r
-    }
+    calc!(```
+      $Int::mul(Int::neg(IntOfNat(k)), IntOfNat(s))
+      = $Int::neg(Int::mul(IntOfNat(k), IntOfNat(s))) from $l
+      = $Int::neg(Int::mul(IntOfNat(a), IntOfNat(j))) from $Eq::congr(Int::neg, e)
+      = $Int::mul(Int::neg(IntOfNat(a)), IntOfNat(j)) from $r
+      ```)
   }
 }
 
@@ -201,7 +204,7 @@ module Nat {
   }
 
   pub theorem factor_succ(m: Nat, g: Nat, j: Nat, h: Succ(m) = mul(g, j)): j = Succ(j - 1) {
-    match j: j = Succ(j - 1) {
+    ⊢ j = Succ(j - 1) from match j {
       Zero => False::elim(zero_ne_succ(m, Eq::sym(h)))
       Succ(k) => Refl
     }
@@ -227,10 +230,10 @@ module Rat {
       Nat::eq(Nat::rem_nz(Int::abs_nat(n), g, hg), 0),
       e
     )
-    match both: equiv(
+    ⊢ equiv(
       Rat::Mk(Int::div_nat(n, g, hg), Nat::div_nz(Succ(m), g, hg) - 1),
       Rat::Mk(n, m)
-    ) {
+    ) from match both {
       AndIntro(hd, hn) => divided_equiv_at(
         n,
         m,
@@ -253,7 +256,7 @@ module Rat {
     Eq::subst(
       (z: Nat) => Int::mul(Int::div_nat(n, g, hg), IntOfNat(Succ(m))) = Int::mul(n, IntOfNat(z)),
       Nat::factor_succ(m, g, Nat::div_nz(Succ(m), g, hg), hs),
-      match n: Int::mul(Int::div_nat(n, g, hg), IntOfNat(Succ(m))) = Int::mul(n, IntOfNat(Nat::div_nz(Succ(m), g, hg))) {
+      ⊢ Int::mul(Int::div_nat(n, g, hg), IntOfNat(Succ(m))) = Int::mul(n, IntOfNat(Nat::div_nz(Succ(m), g, hg))) from match n {
         IntOfNat(a) => div_cross(a, Succ(m), g, Nat::div_nz(a, g, hg), Nat::div_nz(Succ(m), g, hg), ha, hs)
         IntNegSucc(b) => div_cross_neg(Succ(b), Succ(m), g, Nat::div_nz(Succ(b), g, hg), Nat::div_nz(Succ(m), g, hg), ha, hs)
       }
@@ -280,20 +283,20 @@ module Rat {
     pick_by(o, Rat::Mk(n, m), Rat::Mk(Int::div_nat(n, g, hg), Nat::div_nz(Succ(m), g, hg) - 1)),
     Rat::Mk(n, m)
   ) {
-    match o: equiv(
+    ⊢ equiv(
       pick_by(o, Rat::Mk(n, m), Rat::Mk(Int::div_nat(n, g, hg), Nat::div_nz(Succ(m), g, hg) - 1)),
       Rat::Mk(n, m)
-    ) {
+    ) from match o {
       false => equiv_refl(Rat::Mk(n, m))
       true => divided_equiv(n, m, g, hg, e)
     }
   }
 
   pub theorem reduce_equiv(n: Int, m: Nat): equiv(reduce(n, Succ(m)), Rat::Mk(n, m)) {
-    match Nat::eq(
-      gcd(400, Succ(m), Int::abs_nat(n)),
-      0
-    ) eqn hg: equiv(reduce(n, Succ(m)), Rat::Mk(n, m)) {
+    ⊢ equiv(
+      reduce(n, Succ(m)),
+      Rat::Mk(n, m)
+    ) from match Nat::eq(gcd(400, Succ(m), Int::abs_nat(n)), 0) eqn hg {
       true => ⊢ equiv(Rat::Mk(n, Succ(m) - 1), Rat::Mk(n, m)) from equiv_refl(Rat::Mk(n, m))
       false => ⊢ equiv(
         reduce_by(
@@ -313,18 +316,18 @@ module Rat {
   }
 
   pub fn zero(): Rat {
-    Rat::Mk(0, 0)
+    Rat::Mk(IntOfNat(0), 0)
   }
 
   pub fn one(): Rat {
-    Rat::Mk(1, 0)
+    Rat::Mk(IntOfNat(1), 0)
   }
 
   // `a / P + b / Q = (a Q + b P) / (P Q)`, with `P Q = (P Q - 1) + 1` written so
   // that it is `Succ` of something.
   pub fn add_raw(x: Rat, y: Rat): Rat {
-    match x: Rat {
-      Mk(a, p) => match y: Rat {
+    ⊢ Rat from match x {
+      Mk(a, p) => ⊢ Rat from match y {
         Mk(b, q) => Rat::Mk(
           Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
           Nat::add(Nat::mul(Succ(p), q), p)
@@ -334,16 +337,16 @@ module Rat {
   }
 
   pub fn mul_raw(x: Rat, y: Rat): Rat {
-    match x: Rat {
-      Mk(a, p) => match y: Rat {
+    ⊢ Rat from match x {
+      Mk(a, p) => ⊢ Rat from match y {
         Mk(b, q) => Rat::Mk(Int::mul(a, b), Nat::add(Nat::mul(Succ(p), q), p))
       }
     }
   }
 
   pub theorem add_val(x: Rat, y: Rat): equiv(add(x, y), add_raw(x, y)) {
-    match x: equiv(add(x, y), add_raw(x, y)) {
-      Mk(a, p) => match y: equiv(add(Rat::Mk(a, p), y), add_raw(Rat::Mk(a, p), y)) {
+    ⊢ equiv(add(x, y), add_raw(x, y)) from match x {
+      Mk(a, p) => ⊢ equiv(add(Rat::Mk(a, p), y), add_raw(Rat::Mk(a, p), y)) from match y {
         Mk(b, q) => reduce_equiv(
           Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
           Nat::add(Nat::mul(Succ(p), q), p)
@@ -353,33 +356,31 @@ module Rat {
   }
 
   pub theorem mul_val(x: Rat, y: Rat): equiv(mul(x, y), mul_raw(x, y)) {
-    match x: equiv(mul(x, y), mul_raw(x, y)) {
-      Mk(a, p) => match y: equiv(mul(Rat::Mk(a, p), y), mul_raw(Rat::Mk(a, p), y)) {
+    ⊢ equiv(mul(x, y), mul_raw(x, y)) from match x {
+      Mk(a, p) => ⊢ equiv(mul(Rat::Mk(a, p), y), mul_raw(Rat::Mk(a, p), y)) from match y {
         Mk(b, q) => reduce_equiv(Int::mul(a, b), Nat::add(Nat::mul(Succ(p), q), p))
       }
     }
   }
 
   pub theorem add_raw_comm(x: Rat, y: Rat): equiv(add_raw(x, y), add_raw(y, x)) {
-    match x: equiv(add_raw(x, y), add_raw(y, x)) {
-      Mk(a, p) => {
-        match y: equiv(add_raw(Rat::Mk(a, p), y), add_raw(y, Rat::Mk(a, p))) {
-          Mk(b, q) => {
-            let e: Int::mul(
-              Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
-              Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(p)))
-            ) = Int::mul(
-              Int::add(Int::mul(b, IntOfNat(Succ(p))), Int::mul(a, IntOfNat(Succ(q)))),
-              Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
-            ) := by int_norm!(): Int::mul(
-              Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
-              Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(p)))
-            ) = Int::mul(
-              Int::add(Int::mul(b, IntOfNat(Succ(p))), Int::mul(a, IntOfNat(Succ(q)))),
-              Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
-            ) {}
-            e
-          }
+    ⊢ equiv(add_raw(x, y), add_raw(y, x)) from match x {
+      Mk(a, p) => ⊢ equiv(add_raw(Rat::Mk(a, p), y), add_raw(y, Rat::Mk(a, p))) from match y {
+        Mk(b, q) => {
+          let e: Int::mul(
+            Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
+            Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(p)))
+          ) = Int::mul(
+            Int::add(Int::mul(b, IntOfNat(Succ(p))), Int::mul(a, IntOfNat(Succ(q)))),
+            Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
+          ) := by int_norm!(): Int::mul(
+            Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
+            Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(p)))
+          ) = Int::mul(
+            Int::add(Int::mul(b, IntOfNat(Succ(p))), Int::mul(a, IntOfNat(Succ(q)))),
+            Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
+          ) {}
+          e
         }
       }
     }
@@ -390,58 +391,54 @@ module Rat {
     y: Rat,
     z: Rat
   ): equiv(add_raw(add_raw(x, y), z), add_raw(x, add_raw(y, z))) {
-    match x: equiv(add_raw(add_raw(x, y), z), add_raw(x, add_raw(y, z))) {
-      Mk(a, p) => {
-        match y: equiv(
-          add_raw(add_raw(Rat::Mk(a, p), y), z),
-          add_raw(Rat::Mk(a, p), add_raw(y, z))
-        ) {
-          Mk(b, q) => {
-            match z: equiv(
-              add_raw(add_raw(Rat::Mk(a, p), Rat::Mk(b, q)), z),
-              add_raw(Rat::Mk(a, p), add_raw(Rat::Mk(b, q), z))
-            ) {
-              Mk(c, r) => {
-                let e: Int::mul(
-                  Int::add(
-                    Int::mul(
-                      Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
-                      IntOfNat(Succ(r))
-                    ),
-                    Int::mul(c, Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))))
-                  ),
-                  Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
-                ) = Int::mul(
-                  Int::add(
-                    Int::mul(a, Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r)))),
-                    Int::mul(
-                      Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q)))),
-                      IntOfNat(Succ(p))
-                    )
-                  ),
-                  Int::mul(Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))), IntOfNat(Succ(r)))
-                ) := by int_norm!(): Int::mul(
-                  Int::add(
-                    Int::mul(
-                      Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
-                      IntOfNat(Succ(r))
-                    ),
-                    Int::mul(c, Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))))
-                  ),
-                  Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
-                ) = Int::mul(
-                  Int::add(
-                    Int::mul(a, Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r)))),
-                    Int::mul(
-                      Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q)))),
-                      IntOfNat(Succ(p))
-                    )
-                  ),
-                  Int::mul(Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))), IntOfNat(Succ(r)))
-                ) {}
-                e
-              }
-            }
+    ⊢ equiv(add_raw(add_raw(x, y), z), add_raw(x, add_raw(y, z))) from match x {
+      Mk(a, p) => ⊢ equiv(
+        add_raw(add_raw(Rat::Mk(a, p), y), z),
+        add_raw(Rat::Mk(a, p), add_raw(y, z))
+      ) from match y {
+        Mk(b, q) => ⊢ equiv(
+          add_raw(add_raw(Rat::Mk(a, p), Rat::Mk(b, q)), z),
+          add_raw(Rat::Mk(a, p), add_raw(Rat::Mk(b, q), z))
+        ) from match z {
+          Mk(c, r) => {
+            let e: Int::mul(
+              Int::add(
+                Int::mul(
+                  Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
+                  IntOfNat(Succ(r))
+                ),
+                Int::mul(c, Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))))
+              ),
+              Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
+            ) = Int::mul(
+              Int::add(
+                Int::mul(a, Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r)))),
+                Int::mul(
+                  Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q)))),
+                  IntOfNat(Succ(p))
+                )
+              ),
+              Int::mul(Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))), IntOfNat(Succ(r)))
+            ) := by int_norm!(): Int::mul(
+              Int::add(
+                Int::mul(
+                  Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
+                  IntOfNat(Succ(r))
+                ),
+                Int::mul(c, Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))))
+              ),
+              Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
+            ) = Int::mul(
+              Int::add(
+                Int::mul(a, Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r)))),
+                Int::mul(
+                  Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q)))),
+                  IntOfNat(Succ(p))
+                )
+              ),
+              Int::mul(Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))), IntOfNat(Succ(r)))
+            ) {}
+            e
           }
         }
       }
@@ -449,22 +446,20 @@ module Rat {
   }
 
   pub theorem mul_raw_comm(x: Rat, y: Rat): equiv(mul_raw(x, y), mul_raw(y, x)) {
-    match x: equiv(mul_raw(x, y), mul_raw(y, x)) {
-      Mk(a, p) => {
-        match y: equiv(mul_raw(Rat::Mk(a, p), y), mul_raw(y, Rat::Mk(a, p))) {
-          Mk(b, q) => {
-            let e: Int::mul(
-              Int::mul(a, b),
-              Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(p)))
-            ) = Int::mul(
-              Int::mul(b, a),
-              Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
-            ) := by int_norm!(): Int::mul(
-              Int::mul(a, b),
-              Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(p)))
-            ) = Int::mul(Int::mul(b, a), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))) {}
-            e
-          }
+    ⊢ equiv(mul_raw(x, y), mul_raw(y, x)) from match x {
+      Mk(a, p) => ⊢ equiv(mul_raw(Rat::Mk(a, p), y), mul_raw(y, Rat::Mk(a, p))) from match y {
+        Mk(b, q) => {
+          let e: Int::mul(
+            Int::mul(a, b),
+            Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(p)))
+          ) = Int::mul(
+            Int::mul(b, a),
+            Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
+          ) := by int_norm!(): Int::mul(
+            Int::mul(a, b),
+            Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(p)))
+          ) = Int::mul(Int::mul(b, a), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))) {}
+          e
         }
       }
     }
@@ -475,34 +470,30 @@ module Rat {
     y: Rat,
     z: Rat
   ): equiv(mul_raw(mul_raw(x, y), z), mul_raw(x, mul_raw(y, z))) {
-    match x: equiv(mul_raw(mul_raw(x, y), z), mul_raw(x, mul_raw(y, z))) {
-      Mk(a, p) => {
-        match y: equiv(
-          mul_raw(mul_raw(Rat::Mk(a, p), y), z),
-          mul_raw(Rat::Mk(a, p), mul_raw(y, z))
-        ) {
-          Mk(b, q) => {
-            match z: equiv(
-              mul_raw(mul_raw(Rat::Mk(a, p), Rat::Mk(b, q)), z),
-              mul_raw(Rat::Mk(a, p), mul_raw(Rat::Mk(b, q), z))
-            ) {
-              Mk(c, r) => {
-                let e: Int::mul(
-                  Int::mul(Int::mul(a, b), c),
-                  Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
-                ) = Int::mul(
-                  Int::mul(a, Int::mul(b, c)),
-                  Int::mul(Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))), IntOfNat(Succ(r)))
-                ) := by int_norm!(): Int::mul(
-                  Int::mul(Int::mul(a, b), c),
-                  Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
-                ) = Int::mul(
-                  Int::mul(a, Int::mul(b, c)),
-                  Int::mul(Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))), IntOfNat(Succ(r)))
-                ) {}
-                e
-              }
-            }
+    ⊢ equiv(mul_raw(mul_raw(x, y), z), mul_raw(x, mul_raw(y, z))) from match x {
+      Mk(a, p) => ⊢ equiv(
+        mul_raw(mul_raw(Rat::Mk(a, p), y), z),
+        mul_raw(Rat::Mk(a, p), mul_raw(y, z))
+      ) from match y {
+        Mk(b, q) => ⊢ equiv(
+          mul_raw(mul_raw(Rat::Mk(a, p), Rat::Mk(b, q)), z),
+          mul_raw(Rat::Mk(a, p), mul_raw(Rat::Mk(b, q), z))
+        ) from match z {
+          Mk(c, r) => {
+            let e: Int::mul(
+              Int::mul(Int::mul(a, b), c),
+              Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
+            ) = Int::mul(
+              Int::mul(a, Int::mul(b, c)),
+              Int::mul(Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))), IntOfNat(Succ(r)))
+            ) := by int_norm!(): Int::mul(
+              Int::mul(Int::mul(a, b), c),
+              Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
+            ) = Int::mul(
+              Int::mul(a, Int::mul(b, c)),
+              Int::mul(Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))), IntOfNat(Succ(r)))
+            ) {}
+            e
           }
         }
       }
@@ -514,52 +505,42 @@ module Rat {
     y: Rat,
     z: Rat
   ): equiv(mul_raw(x, add_raw(y, z)), add_raw(mul_raw(x, y), mul_raw(x, z))) {
-    match x: equiv(mul_raw(x, add_raw(y, z)), add_raw(mul_raw(x, y), mul_raw(x, z))) {
-      Mk(a, p) => {
-        match y: equiv(
-          mul_raw(Rat::Mk(a, p), add_raw(y, z)),
-          add_raw(mul_raw(Rat::Mk(a, p), y), mul_raw(Rat::Mk(a, p), z))
-        ) {
-          Mk(b, q) => {
-            match z: equiv(
-              mul_raw(Rat::Mk(a, p), add_raw(Rat::Mk(b, q), z)),
-              add_raw(mul_raw(Rat::Mk(a, p), Rat::Mk(b, q)), mul_raw(Rat::Mk(a, p), z))
-            ) {
-              Mk(c, r) => {
-                let e: Int::mul(
-                  Int::mul(
-                    a,
-                    Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q))))
-                  ),
-                  Int::mul(
-                    Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))),
-                    Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
-                  )
-                ) = Int::mul(
-                  Int::add(
-                    Int::mul(Int::mul(a, b), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))),
-                    Int::mul(Int::mul(a, c), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))))
-                  ),
-                  Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
-                ) := by int_norm!(): Int::mul(
-                  Int::mul(
-                    a,
-                    Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q))))
-                  ),
-                  Int::mul(
-                    Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))),
-                    Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
-                  )
-                ) = Int::mul(
-                  Int::add(
-                    Int::mul(Int::mul(a, b), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))),
-                    Int::mul(Int::mul(a, c), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))))
-                  ),
-                  Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
-                ) {}
-                e
-              }
-            }
+    ⊢ equiv(mul_raw(x, add_raw(y, z)), add_raw(mul_raw(x, y), mul_raw(x, z))) from match x {
+      Mk(a, p) => ⊢ equiv(
+        mul_raw(Rat::Mk(a, p), add_raw(y, z)),
+        add_raw(mul_raw(Rat::Mk(a, p), y), mul_raw(Rat::Mk(a, p), z))
+      ) from match y {
+        Mk(b, q) => ⊢ equiv(
+          mul_raw(Rat::Mk(a, p), add_raw(Rat::Mk(b, q), z)),
+          add_raw(mul_raw(Rat::Mk(a, p), Rat::Mk(b, q)), mul_raw(Rat::Mk(a, p), z))
+        ) from match z {
+          Mk(c, r) => {
+            let e: Int::mul(
+              Int::mul(a, Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q))))),
+              Int::mul(
+                Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))),
+                Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
+              )
+            ) = Int::mul(
+              Int::add(
+                Int::mul(Int::mul(a, b), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))),
+                Int::mul(Int::mul(a, c), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))))
+              ),
+              Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
+            ) := by int_norm!(): Int::mul(
+              Int::mul(a, Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q))))),
+              Int::mul(
+                Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))),
+                Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
+              )
+            ) = Int::mul(
+              Int::add(
+                Int::mul(Int::mul(a, b), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))),
+                Int::mul(Int::mul(a, c), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q))))
+              ),
+              Int::mul(IntOfNat(Succ(p)), Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r))))
+            ) {}
+            e
           }
         }
       }
@@ -567,7 +548,7 @@ module Rat {
   }
 
   pub theorem add_raw_zero(x: Rat): equiv(add_raw(x, zero()), x) {
-    match x: equiv(add_raw(x, zero()), x) {
+    ⊢ equiv(add_raw(x, zero()), x) from match x {
       Mk(a, p) => {
         let e: Int::mul(
           Int::add(Int::mul(a, 1), Int::mul(0, IntOfNat(Succ(p)))),
@@ -585,7 +566,7 @@ module Rat {
   }
 
   pub theorem add_raw_neg(x: Rat): equiv(add_raw(x, neg(x)), zero()) {
-    match x: equiv(add_raw(x, neg(x)), zero()) {
+    ⊢ equiv(add_raw(x, neg(x)), zero()) from match x {
       Mk(a, p) => {
         let e: Int::mul(
           Int::add(Int::mul(a, IntOfNat(Succ(p))), Int::mul(Int::neg(a), IntOfNat(Succ(p)))),
@@ -603,7 +584,7 @@ module Rat {
   }
 
   pub theorem mul_raw_one(x: Rat): equiv(mul_raw(x, one()), x) {
-    match x: equiv(mul_raw(x, one()), x) {
+    ⊢ equiv(mul_raw(x, one()), x) from match x {
       Mk(a, p) => {
         let e: Int::mul(
           Int::mul(a, 1),
@@ -626,93 +607,89 @@ module Rat {
     y: Rat,
     h: equiv(x, x2)
   ): equiv(add_raw(x, y), add_raw(x2, y)) {
-    match x: equiv(add_raw(x, y), add_raw(x2, y)) {
-      Mk(a, p) => {
-        match x2: equiv(add_raw(Rat::Mk(a, p), y), add_raw(x2, y)) {
-          Mk(a2, p2) => {
-            match y: equiv(add_raw(Rat::Mk(a, p), y), add_raw(Rat::Mk(a2, p2), y)) {
-              Mk(b, q) => {
-                let s1: Int::mul(
-                  Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
-                  Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(q)))
-                ) = Int::add(
-                  Int::mul(
-                    Int::mul(a, IntOfNat(Succ(p2))),
-                    Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
-                  ),
-                  Int::mul(
-                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
-                    IntOfNat(Succ(q))
-                  )
-                ) := by int_norm!(): Int::mul(
-                  Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
-                  Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(q)))
-                ) = Int::add(
-                  Int::mul(
-                    Int::mul(a, IntOfNat(Succ(p2))),
-                    Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
-                  ),
-                  Int::mul(
-                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
-                    IntOfNat(Succ(q))
-                  )
-                ) {}
-                let s2: Int::add(
-                  Int::mul(
-                    Int::mul(a, IntOfNat(Succ(p2))),
-                    Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
-                  ),
-                  Int::mul(
-                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
-                    IntOfNat(Succ(q))
-                  )
-                ) = Int::add(
-                  Int::mul(
-                    Int::mul(a2, IntOfNat(Succ(p))),
-                    Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
-                  ),
-                  Int::mul(
-                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
-                    IntOfNat(Succ(q))
-                  )
-                ) := Eq::congr(
-                  ⟦Int::add(
-                    Int::mul(□, Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))),
-                    Int::mul(
-                      Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
-                      IntOfNat(Succ(q))
-                    )
-                  )⟧,
-                  h
+    ⊢ equiv(add_raw(x, y), add_raw(x2, y)) from match x {
+      Mk(a, p) => ⊢ equiv(add_raw(Rat::Mk(a, p), y), add_raw(x2, y)) from match x2 {
+        Mk(a2, p2) => ⊢ equiv(add_raw(Rat::Mk(a, p), y), add_raw(Rat::Mk(a2, p2), y)) from match y {
+          Mk(b, q) => {
+            let s1: Int::mul(
+              Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
+              Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(q)))
+            ) = Int::add(
+              Int::mul(
+                Int::mul(a, IntOfNat(Succ(p2))),
+                Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
+              ),
+              Int::mul(
+                Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
+                IntOfNat(Succ(q))
+              )
+            ) := by int_norm!(): Int::mul(
+              Int::add(Int::mul(a, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p)))),
+              Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(q)))
+            ) = Int::add(
+              Int::mul(
+                Int::mul(a, IntOfNat(Succ(p2))),
+                Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
+              ),
+              Int::mul(
+                Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
+                IntOfNat(Succ(q))
+              )
+            ) {}
+            let s2: Int::add(
+              Int::mul(
+                Int::mul(a, IntOfNat(Succ(p2))),
+                Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
+              ),
+              Int::mul(
+                Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
+                IntOfNat(Succ(q))
+              )
+            ) = Int::add(
+              Int::mul(
+                Int::mul(a2, IntOfNat(Succ(p))),
+                Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
+              ),
+              Int::mul(
+                Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
+                IntOfNat(Succ(q))
+              )
+            ) := Eq::congr(
+              ⟦Int::add(
+                Int::mul(□, Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))),
+                Int::mul(
+                  Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
+                  IntOfNat(Succ(q))
                 )
-                let s3: Int::add(
-                  Int::mul(
-                    Int::mul(a2, IntOfNat(Succ(p))),
-                    Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
-                  ),
-                  Int::mul(
-                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
-                    IntOfNat(Succ(q))
-                  )
-                ) = Int::mul(
-                  Int::add(Int::mul(a2, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p2)))),
-                  Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
-                ) := by int_norm!(): Int::add(
-                  Int::mul(
-                    Int::mul(a2, IntOfNat(Succ(p))),
-                    Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
-                  ),
-                  Int::mul(
-                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
-                    IntOfNat(Succ(q))
-                  )
-                ) = Int::mul(
-                  Int::add(Int::mul(a2, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p2)))),
-                  Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
-                ) {}
-                Eq::trans(s1, Eq::trans(s2, s3))
-              }
-            }
+              )⟧,
+              h
+            )
+            let s3: Int::add(
+              Int::mul(
+                Int::mul(a2, IntOfNat(Succ(p))),
+                Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
+              ),
+              Int::mul(
+                Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
+                IntOfNat(Succ(q))
+              )
+            ) = Int::mul(
+              Int::add(Int::mul(a2, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p2)))),
+              Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
+            ) := by int_norm!(): Int::add(
+              Int::mul(
+                Int::mul(a2, IntOfNat(Succ(p))),
+                Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(q)))
+              ),
+              Int::mul(
+                Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
+                IntOfNat(Succ(q))
+              )
+            ) = Int::mul(
+              Int::add(Int::mul(a2, IntOfNat(Succ(q))), Int::mul(b, IntOfNat(Succ(p2)))),
+              Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
+            ) {}
+            Eq::trans(s1, Eq::trans(s2, s3))
           }
         }
       }
@@ -725,46 +702,43 @@ module Rat {
     y: Rat,
     h: equiv(x, x2)
   ): equiv(mul_raw(x, y), mul_raw(x2, y)) {
-    match x: equiv(mul_raw(x, y), mul_raw(x2, y)) {
-      Mk(a, p) => {
-        match x2: equiv(mul_raw(Rat::Mk(a, p), y), mul_raw(x2, y)) {
-          Mk(a2, p2) => {
-            match y: equiv(mul_raw(Rat::Mk(a, p), y), mul_raw(Rat::Mk(a2, p2), y)) {
-              Mk(b, q) => {
-                let s1: Int::mul(
-                  Int::mul(a, b),
-                  Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(q)))
-                ) = Int::mul(
-                  Int::mul(a, IntOfNat(Succ(p2))),
-                  Int::mul(b, IntOfNat(Succ(q)))
-                ) := by int_norm!(): Int::mul(
-                  Int::mul(a, b),
-                  Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(q)))
-                ) = Int::mul(Int::mul(a, IntOfNat(Succ(p2))), Int::mul(b, IntOfNat(Succ(q)))) {}
-                let s2: Int::mul(
-                  Int::mul(a, IntOfNat(Succ(p2))),
-                  Int::mul(b, IntOfNat(Succ(q)))
-                ) = Int::mul(
-                  Int::mul(a2, IntOfNat(Succ(p))),
-                  Int::mul(b, IntOfNat(Succ(q)))
-                ) := Eq::congr(⟦Int::mul(□, Int::mul(b, IntOfNat(Succ(q))))⟧, h)
-                let s3: Int::mul(
-                  Int::mul(a2, IntOfNat(Succ(p))),
-                  Int::mul(b, IntOfNat(Succ(q)))
-                ) = Int::mul(
-                  Int::mul(a2, b),
-                  Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
-                ) := by int_norm!(): Int::mul(
-                  Int::mul(a2, IntOfNat(Succ(p))),
-                  Int::mul(b, IntOfNat(Succ(q)))
-                ) = Int::mul(Int::mul(a2, b), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))) {}
-                calc Int::mul(Int::mul(a, b), Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(q)))) {
-                  = Int::mul(Int::mul(a, IntOfNat(Succ(p2))), Int::mul(b, IntOfNat(Succ(q)))) from s1
-                  = Int::mul(Int::mul(a2, IntOfNat(Succ(p))), Int::mul(b, IntOfNat(Succ(q)))) from s2
-                  = Int::mul(Int::mul(a2, b), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))) from s3
-                }
-              }
-            }
+    ⊢ equiv(mul_raw(x, y), mul_raw(x2, y)) from match x {
+      Mk(a, p) => ⊢ equiv(mul_raw(Rat::Mk(a, p), y), mul_raw(x2, y)) from match x2 {
+        Mk(a2, p2) => ⊢ equiv(mul_raw(Rat::Mk(a, p), y), mul_raw(Rat::Mk(a2, p2), y)) from match y {
+          Mk(b, q) => {
+            let s1: Int::mul(
+              Int::mul(a, b),
+              Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(q)))
+            ) = Int::mul(
+              Int::mul(a, IntOfNat(Succ(p2))),
+              Int::mul(b, IntOfNat(Succ(q)))
+            ) := by int_norm!(): Int::mul(
+              Int::mul(a, b),
+              Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(q)))
+            ) = Int::mul(Int::mul(a, IntOfNat(Succ(p2))), Int::mul(b, IntOfNat(Succ(q)))) {}
+            let s2: Int::mul(
+              Int::mul(a, IntOfNat(Succ(p2))),
+              Int::mul(b, IntOfNat(Succ(q)))
+            ) = Int::mul(
+              Int::mul(a2, IntOfNat(Succ(p))),
+              Int::mul(b, IntOfNat(Succ(q)))
+            ) := Eq::congr(⟦Int::mul(□, Int::mul(b, IntOfNat(Succ(q))))⟧, h)
+            let s3: Int::mul(
+              Int::mul(a2, IntOfNat(Succ(p))),
+              Int::mul(b, IntOfNat(Succ(q)))
+            ) = Int::mul(
+              Int::mul(a2, b),
+              Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
+            ) := by int_norm!(): Int::mul(
+              Int::mul(a2, IntOfNat(Succ(p))),
+              Int::mul(b, IntOfNat(Succ(q)))
+            ) = Int::mul(Int::mul(a2, b), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))) {}
+            calc!(```
+              $Int::mul(Int::mul(a, b), Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(q))))
+              = $Int::mul(Int::mul(a, IntOfNat(Succ(p2))), Int::mul(b, IntOfNat(Succ(q)))) from $s1
+              = $Int::mul(Int::mul(a2, IntOfNat(Succ(p))), Int::mul(b, IntOfNat(Succ(q)))) from $s2
+              = $Int::mul(Int::mul(a2, b), Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))) from $s3
+              ```)
           }
         }
       }
@@ -772,36 +746,35 @@ module Rat {
   }
 
   pub theorem neg_congr(x: Rat, x2: Rat, h: equiv(x, x2)): equiv(neg(x), neg(x2)) {
-    match x: equiv(neg(x), neg(x2)) {
-      Mk(a, p) => {
-        match x2: equiv(neg(Rat::Mk(a, p)), neg(x2)) {
-          Mk(a2, p2) => {
-            let s1: Int::mul(
-              Int::neg(a),
-              IntOfNat(Succ(p2))
-            ) = Int::neg(
-              Int::mul(a, IntOfNat(Succ(p2)))
-            ) := by int_norm!(): Int::mul(
-              Int::neg(a),
-              IntOfNat(Succ(p2))
-            ) = Int::neg(Int::mul(a, IntOfNat(Succ(p2)))) {}
-            let s2: Int::neg(
-              Int::mul(a, IntOfNat(Succ(p2)))
-            ) = Int::neg(Int::mul(a2, IntOfNat(Succ(p)))) := Eq::congr(⟦Int::neg(□)⟧, h)
-            let s3: Int::neg(
-              Int::mul(a2, IntOfNat(Succ(p)))
-            ) = Int::mul(
-              Int::neg(a2),
-              IntOfNat(Succ(p))
-            ) := by int_norm!(): Int::neg(
-              Int::mul(a2, IntOfNat(Succ(p)))
-            ) = Int::mul(Int::neg(a2), IntOfNat(Succ(p))) {}
-            calc Int::mul(Int::neg(a), IntOfNat(Succ(p2))) {
-              = Int::neg(Int::mul(a, IntOfNat(Succ(p2)))) from s1
-              = Int::neg(Int::mul(a2, IntOfNat(Succ(p)))) from s2
-              = Int::mul(Int::neg(a2), IntOfNat(Succ(p))) from s3
-            }
-          }
+    ⊢ equiv(neg(x), neg(x2)) from match x {
+      Mk(a, p) => ⊢ equiv(neg(Rat::Mk(a, p)), neg(x2)) from match x2 {
+        Mk(a2, p2) => {
+          let s1: Int::mul(
+            Int::neg(a),
+            IntOfNat(Succ(p2))
+          ) = Int::neg(
+            Int::mul(a, IntOfNat(Succ(p2)))
+          ) := by int_norm!(): Int::mul(
+            Int::neg(a),
+            IntOfNat(Succ(p2))
+          ) = Int::neg(Int::mul(a, IntOfNat(Succ(p2)))) {}
+          let s2: Int::neg(
+            Int::mul(a, IntOfNat(Succ(p2)))
+          ) = Int::neg(Int::mul(a2, IntOfNat(Succ(p)))) := Eq::congr(⟦Int::neg(□)⟧, h)
+          let s3: Int::neg(
+            Int::mul(a2, IntOfNat(Succ(p)))
+          ) = Int::mul(
+            Int::neg(a2),
+            IntOfNat(Succ(p))
+          ) := by int_norm!(): Int::neg(
+            Int::mul(a2, IntOfNat(Succ(p)))
+          ) = Int::mul(Int::neg(a2), IntOfNat(Succ(p))) {}
+          calc!(```
+            $Int::mul(Int::neg(a), IntOfNat(Succ(p2)))
+            = $Int::neg(Int::mul(a, IntOfNat(Succ(p2)))) from $s1
+            = $Int::neg(Int::mul(a2, IntOfNat(Succ(p)))) from $s2
+            = $Int::mul(Int::neg(a2), IntOfNat(Succ(p))) from $s3
+            ```)
         }
       }
     }
@@ -1132,9 +1105,9 @@ module Bool {
     f: (a = true) -> (b = true),
     g: (b = true) -> (a = true)
   ): a = b {
-    match a: a = b {
+    ⊢ a = b from match a {
       true => Eq::sym(f(Refl))
-      false => match b: false = b {
+      false => ⊢ false = b from match b {
         false => Refl
         true => False::elim(false_ne_true(g(Refl)))
       }
@@ -1162,74 +1135,70 @@ module Rat {
   }
 
   pub theorem le_congl(x: Rat, x2: Rat, y: Rat, h: equiv(x, x2), l: RatLe(x, y)): RatLe(x2, y) {
-    match x: RatLe(x2, y) {
-      Mk(a, p) => {
-        match x2: RatLe(x2, y) {
-          Mk(a2, p2) => {
-            match y: RatLe(Rat::Mk(a2, p2), y) {
-              Mk(b, q) => {
-                let l1: IntLe(
-                  Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(p2))),
-                  Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2)))
-                ) := Int::le_mul_pos(
-                  Int::mul(a, IntOfNat(Succ(q))),
-                  Int::mul(b, IntOfNat(Succ(p))),
-                  p2,
-                  l
-                )
-                let s1: Int::mul(
-                  Int::mul(a, IntOfNat(Succ(q))),
-                  IntOfNat(Succ(p2))
-                ) = Int::mul(
-                  Int::mul(a, IntOfNat(Succ(p2))),
-                  IntOfNat(Succ(q))
-                ) := by int_norm!(): Int::mul(
-                  Int::mul(a, IntOfNat(Succ(q))),
-                  IntOfNat(Succ(p2))
-                ) = Int::mul(Int::mul(a, IntOfNat(Succ(p2))), IntOfNat(Succ(q))) {}
-                let s2: Int::mul(
-                  Int::mul(a, IntOfNat(Succ(p2))),
-                  IntOfNat(Succ(q))
-                ) = Int::mul(
-                  Int::mul(a2, IntOfNat(Succ(p))),
-                  IntOfNat(Succ(q))
-                ) := Eq::congr(⟦Int::mul(□, IntOfNat(Succ(q)))⟧, h)
-                let s3: Int::mul(
-                  Int::mul(a2, IntOfNat(Succ(p))),
-                  IntOfNat(Succ(q))
-                ) = Int::mul(
-                  Int::mul(a2, IntOfNat(Succ(q))),
-                  IntOfNat(Succ(p))
-                ) := by int_norm!(): Int::mul(
-                  Int::mul(a2, IntOfNat(Succ(p))),
-                  IntOfNat(Succ(q))
-                ) = Int::mul(Int::mul(a2, IntOfNat(Succ(q))), IntOfNat(Succ(p))) {}
-                let s4: Int::mul(
-                  Int::mul(b, IntOfNat(Succ(p))),
-                  IntOfNat(Succ(p2))
-                ) = Int::mul(
-                  Int::mul(b, IntOfNat(Succ(p2))),
-                  IntOfNat(Succ(p))
-                ) := by int_norm!(): Int::mul(
-                  Int::mul(b, IntOfNat(Succ(p))),
-                  IntOfNat(Succ(p2))
-                ) = Int::mul(Int::mul(b, IntOfNat(Succ(p2))), IntOfNat(Succ(p))) {}
-                Int::le_mul_cancel(
-                  Int::mul(a2, IntOfNat(Succ(q))),
-                  Int::mul(b, IntOfNat(Succ(p2))),
-                  p,
-                  Int::le_rw(
-                    Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(p2))),
-                    Int::mul(Int::mul(a2, IntOfNat(Succ(q))), IntOfNat(Succ(p))),
-                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
-                    Int::mul(Int::mul(b, IntOfNat(Succ(p2))), IntOfNat(Succ(p))),
-                    Eq::trans(s1, Eq::trans(s2, s3)),
-                    s4,
-                    l1
-                  )
-                )
-              }
-            }
+    ⊢ RatLe(x2, y) from match x {
+      Mk(a, p) => ⊢ RatLe(x2, y) from match x2 {
+        Mk(a2, p2) => ⊢ RatLe(Rat::Mk(a2, p2), y) from match y {
+          Mk(b, q) => {
+            let l1: IntLe(
+              Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(p2))),
+              Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2)))
+            ) := Int::le_mul_pos(
+              Int::mul(a, IntOfNat(Succ(q))),
+              Int::mul(b, IntOfNat(Succ(p))),
+              p2,
+              l
+            )
+            let s1: Int::mul(
+              Int::mul(a, IntOfNat(Succ(q))),
+              IntOfNat(Succ(p2))
+            ) = Int::mul(
+              Int::mul(a, IntOfNat(Succ(p2))),
+              IntOfNat(Succ(q))
+            ) := by int_norm!(): Int::mul(
+              Int::mul(a, IntOfNat(Succ(q))),
+              IntOfNat(Succ(p2))
+            ) = Int::mul(Int::mul(a, IntOfNat(Succ(p2))), IntOfNat(Succ(q))) {}
+            let s2: Int::mul(
+              Int::mul(a, IntOfNat(Succ(p2))),
+              IntOfNat(Succ(q))
+            ) = Int::mul(
+              Int::mul(a2, IntOfNat(Succ(p))),
+              IntOfNat(Succ(q))
+            ) := Eq::congr(⟦Int::mul(□, IntOfNat(Succ(q)))⟧, h)
+            let s3: Int::mul(
+              Int::mul(a2, IntOfNat(Succ(p))),
+              IntOfNat(Succ(q))
+            ) = Int::mul(
+              Int::mul(a2, IntOfNat(Succ(q))),
+              IntOfNat(Succ(p))
+            ) := by int_norm!(): Int::mul(
+              Int::mul(a2, IntOfNat(Succ(p))),
+              IntOfNat(Succ(q))
+            ) = Int::mul(Int::mul(a2, IntOfNat(Succ(q))), IntOfNat(Succ(p))) {}
+            let s4: Int::mul(
+              Int::mul(b, IntOfNat(Succ(p))),
+              IntOfNat(Succ(p2))
+            ) = Int::mul(
+              Int::mul(b, IntOfNat(Succ(p2))),
+              IntOfNat(Succ(p))
+            ) := by int_norm!(): Int::mul(
+              Int::mul(b, IntOfNat(Succ(p))),
+              IntOfNat(Succ(p2))
+            ) = Int::mul(Int::mul(b, IntOfNat(Succ(p2))), IntOfNat(Succ(p))) {}
+            Int::le_mul_cancel(
+              Int::mul(a2, IntOfNat(Succ(q))),
+              Int::mul(b, IntOfNat(Succ(p2))),
+              p,
+              Int::le_rw(
+                Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(p2))),
+                Int::mul(Int::mul(a2, IntOfNat(Succ(q))), IntOfNat(Succ(p))),
+                Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(p2))),
+                Int::mul(Int::mul(b, IntOfNat(Succ(p2))), IntOfNat(Succ(p))),
+                Eq::trans(s1, Eq::trans(s2, s3)),
+                s4,
+                l1
+              )
+            )
           }
         }
       }
@@ -1237,74 +1206,70 @@ module Rat {
   }
 
   pub theorem le_congr(x: Rat, y: Rat, y2: Rat, h: equiv(y, y2), l: RatLe(x, y)): RatLe(x, y2) {
-    match x: RatLe(x, y2) {
-      Mk(a, p) => {
-        match y: RatLe(Rat::Mk(a, p), y2) {
-          Mk(b, q) => {
-            match y2: RatLe(Rat::Mk(a, p), y2) {
-              Mk(b2, q2) => {
-                let l1: IntLe(
-                  Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(q2))),
-                  Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(q2)))
-                ) := Int::le_mul_pos(
-                  Int::mul(a, IntOfNat(Succ(q))),
-                  Int::mul(b, IntOfNat(Succ(p))),
-                  q2,
-                  l
-                )
-                let s1: Int::mul(
-                  Int::mul(a, IntOfNat(Succ(q))),
-                  IntOfNat(Succ(q2))
-                ) = Int::mul(
-                  Int::mul(a, IntOfNat(Succ(q2))),
-                  IntOfNat(Succ(q))
-                ) := by int_norm!(): Int::mul(
-                  Int::mul(a, IntOfNat(Succ(q))),
-                  IntOfNat(Succ(q2))
-                ) = Int::mul(Int::mul(a, IntOfNat(Succ(q2))), IntOfNat(Succ(q))) {}
-                let t1: Int::mul(
-                  Int::mul(b, IntOfNat(Succ(p))),
-                  IntOfNat(Succ(q2))
-                ) = Int::mul(
-                  Int::mul(b, IntOfNat(Succ(q2))),
-                  IntOfNat(Succ(p))
-                ) := by int_norm!(): Int::mul(
-                  Int::mul(b, IntOfNat(Succ(p))),
-                  IntOfNat(Succ(q2))
-                ) = Int::mul(Int::mul(b, IntOfNat(Succ(q2))), IntOfNat(Succ(p))) {}
-                let t2: Int::mul(
-                  Int::mul(b, IntOfNat(Succ(q2))),
-                  IntOfNat(Succ(p))
-                ) = Int::mul(
-                  Int::mul(b2, IntOfNat(Succ(q))),
-                  IntOfNat(Succ(p))
-                ) := Eq::congr(⟦Int::mul(□, IntOfNat(Succ(p)))⟧, h)
-                let t3: Int::mul(
-                  Int::mul(b2, IntOfNat(Succ(q))),
-                  IntOfNat(Succ(p))
-                ) = Int::mul(
-                  Int::mul(b2, IntOfNat(Succ(p))),
-                  IntOfNat(Succ(q))
-                ) := by int_norm!(): Int::mul(
-                  Int::mul(b2, IntOfNat(Succ(q))),
-                  IntOfNat(Succ(p))
-                ) = Int::mul(Int::mul(b2, IntOfNat(Succ(p))), IntOfNat(Succ(q))) {}
-                Int::le_mul_cancel(
-                  Int::mul(a, IntOfNat(Succ(q2))),
-                  Int::mul(b2, IntOfNat(Succ(p))),
-                  q,
-                  Int::le_rw(
-                    Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(q2))),
-                    Int::mul(Int::mul(a, IntOfNat(Succ(q2))), IntOfNat(Succ(q))),
-                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(q2))),
-                    Int::mul(Int::mul(b2, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
-                    s1,
-                    Eq::trans(t1, Eq::trans(t2, t3)),
-                    l1
-                  )
-                )
-              }
-            }
+    ⊢ RatLe(x, y2) from match x {
+      Mk(a, p) => ⊢ RatLe(Rat::Mk(a, p), y2) from match y {
+        Mk(b, q) => ⊢ RatLe(Rat::Mk(a, p), y2) from match y2 {
+          Mk(b2, q2) => {
+            let l1: IntLe(
+              Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(q2))),
+              Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(q2)))
+            ) := Int::le_mul_pos(
+              Int::mul(a, IntOfNat(Succ(q))),
+              Int::mul(b, IntOfNat(Succ(p))),
+              q2,
+              l
+            )
+            let s1: Int::mul(
+              Int::mul(a, IntOfNat(Succ(q))),
+              IntOfNat(Succ(q2))
+            ) = Int::mul(
+              Int::mul(a, IntOfNat(Succ(q2))),
+              IntOfNat(Succ(q))
+            ) := by int_norm!(): Int::mul(
+              Int::mul(a, IntOfNat(Succ(q))),
+              IntOfNat(Succ(q2))
+            ) = Int::mul(Int::mul(a, IntOfNat(Succ(q2))), IntOfNat(Succ(q))) {}
+            let t1: Int::mul(
+              Int::mul(b, IntOfNat(Succ(p))),
+              IntOfNat(Succ(q2))
+            ) = Int::mul(
+              Int::mul(b, IntOfNat(Succ(q2))),
+              IntOfNat(Succ(p))
+            ) := by int_norm!(): Int::mul(
+              Int::mul(b, IntOfNat(Succ(p))),
+              IntOfNat(Succ(q2))
+            ) = Int::mul(Int::mul(b, IntOfNat(Succ(q2))), IntOfNat(Succ(p))) {}
+            let t2: Int::mul(
+              Int::mul(b, IntOfNat(Succ(q2))),
+              IntOfNat(Succ(p))
+            ) = Int::mul(
+              Int::mul(b2, IntOfNat(Succ(q))),
+              IntOfNat(Succ(p))
+            ) := Eq::congr(⟦Int::mul(□, IntOfNat(Succ(p)))⟧, h)
+            let t3: Int::mul(
+              Int::mul(b2, IntOfNat(Succ(q))),
+              IntOfNat(Succ(p))
+            ) = Int::mul(
+              Int::mul(b2, IntOfNat(Succ(p))),
+              IntOfNat(Succ(q))
+            ) := by int_norm!(): Int::mul(
+              Int::mul(b2, IntOfNat(Succ(q))),
+              IntOfNat(Succ(p))
+            ) = Int::mul(Int::mul(b2, IntOfNat(Succ(p))), IntOfNat(Succ(q))) {}
+            Int::le_mul_cancel(
+              Int::mul(a, IntOfNat(Succ(q2))),
+              Int::mul(b2, IntOfNat(Succ(p))),
+              q,
+              Int::le_rw(
+                Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(q2))),
+                Int::mul(Int::mul(a, IntOfNat(Succ(q2))), IntOfNat(Succ(q))),
+                Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(q2))),
+                Int::mul(Int::mul(b2, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                s1,
+                Eq::trans(t1, Eq::trans(t2, t3)),
+                l1
+              )
+            )
           }
         }
       }
@@ -1312,94 +1277,90 @@ module Rat {
   }
 
   pub theorem le_trans(x: Rat, y: Rat, z: Rat, l1: RatLe(x, y), l2: RatLe(y, z)): RatLe(x, z) {
-    match x: RatLe(x, z) {
-      Mk(a, p) => {
-        match y: RatLe(Rat::Mk(a, p), z) {
-          Mk(b, q) => {
-            match z: RatLe(Rat::Mk(a, p), z) {
-              Mk(c, r) => {
-                let l1: IntLe(
-                  Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
-                  Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(r)))
-                ) := Int::le_mul_pos(
-                  Int::mul(a, IntOfNat(Succ(q))),
-                  Int::mul(b, IntOfNat(Succ(p))),
-                  r,
-                  l1
-                )
-                let l2: IntLe(
-                  Int::mul(Int::mul(b, IntOfNat(Succ(r))), IntOfNat(Succ(p))),
-                  Int::mul(Int::mul(c, IntOfNat(Succ(q))), IntOfNat(Succ(p)))
-                ) := Int::le_mul_pos(
-                  Int::mul(b, IntOfNat(Succ(r))),
-                  Int::mul(c, IntOfNat(Succ(q))),
-                  p,
-                  l2
-                )
-                let s: Int::mul(
-                  Int::mul(b, IntOfNat(Succ(p))),
-                  IntOfNat(Succ(r))
-                ) = Int::mul(
-                  Int::mul(b, IntOfNat(Succ(r))),
-                  IntOfNat(Succ(p))
-                ) := by int_norm!(): Int::mul(
-                  Int::mul(b, IntOfNat(Succ(p))),
-                  IntOfNat(Succ(r))
-                ) = Int::mul(Int::mul(b, IntOfNat(Succ(r))), IntOfNat(Succ(p))) {}
-                let l3: IntLe(
-                  Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
-                  Int::mul(Int::mul(c, IntOfNat(Succ(q))), IntOfNat(Succ(p)))
-                ) := Int::le_trans(
-                  Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
-                  Int::mul(Int::mul(b, IntOfNat(Succ(r))), IntOfNat(Succ(p))),
-                  Int::mul(Int::mul(c, IntOfNat(Succ(q))), IntOfNat(Succ(p))),
-                  Int::le_rw(
-                    Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
-                    Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
-                    Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(r))),
-                    Int::mul(Int::mul(b, IntOfNat(Succ(r))), IntOfNat(Succ(p))),
-                    Refl,
-                    s,
-                    l1
-                  ),
-                  l2
-                )
-                let e1: Int::mul(
-                  Int::mul(a, IntOfNat(Succ(q))),
-                  IntOfNat(Succ(r))
-                ) = Int::mul(
-                  Int::mul(a, IntOfNat(Succ(r))),
-                  IntOfNat(Succ(q))
-                ) := by int_norm!(): Int::mul(
-                  Int::mul(a, IntOfNat(Succ(q))),
-                  IntOfNat(Succ(r))
-                ) = Int::mul(Int::mul(a, IntOfNat(Succ(r))), IntOfNat(Succ(q))) {}
-                let e2: Int::mul(
-                  Int::mul(c, IntOfNat(Succ(q))),
-                  IntOfNat(Succ(p))
-                ) = Int::mul(
-                  Int::mul(c, IntOfNat(Succ(p))),
-                  IntOfNat(Succ(q))
-                ) := by int_norm!(): Int::mul(
-                  Int::mul(c, IntOfNat(Succ(q))),
-                  IntOfNat(Succ(p))
-                ) = Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))) {}
-                Int::le_mul_cancel(
-                  Int::mul(a, IntOfNat(Succ(r))),
-                  Int::mul(c, IntOfNat(Succ(p))),
-                  q,
-                  Int::le_rw(
-                    Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
-                    Int::mul(Int::mul(a, IntOfNat(Succ(r))), IntOfNat(Succ(q))),
-                    Int::mul(Int::mul(c, IntOfNat(Succ(q))), IntOfNat(Succ(p))),
-                    Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
-                    e1,
-                    e2,
-                    l3
-                  )
-                )
-              }
-            }
+    ⊢ RatLe(x, z) from match x {
+      Mk(a, p) => ⊢ RatLe(Rat::Mk(a, p), z) from match y {
+        Mk(b, q) => ⊢ RatLe(Rat::Mk(a, p), z) from match z {
+          Mk(c, r) => {
+            let l1: IntLe(
+              Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
+              Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(r)))
+            ) := Int::le_mul_pos(
+              Int::mul(a, IntOfNat(Succ(q))),
+              Int::mul(b, IntOfNat(Succ(p))),
+              r,
+              l1
+            )
+            let l2: IntLe(
+              Int::mul(Int::mul(b, IntOfNat(Succ(r))), IntOfNat(Succ(p))),
+              Int::mul(Int::mul(c, IntOfNat(Succ(q))), IntOfNat(Succ(p)))
+            ) := Int::le_mul_pos(
+              Int::mul(b, IntOfNat(Succ(r))),
+              Int::mul(c, IntOfNat(Succ(q))),
+              p,
+              l2
+            )
+            let s: Int::mul(
+              Int::mul(b, IntOfNat(Succ(p))),
+              IntOfNat(Succ(r))
+            ) = Int::mul(
+              Int::mul(b, IntOfNat(Succ(r))),
+              IntOfNat(Succ(p))
+            ) := by int_norm!(): Int::mul(
+              Int::mul(b, IntOfNat(Succ(p))),
+              IntOfNat(Succ(r))
+            ) = Int::mul(Int::mul(b, IntOfNat(Succ(r))), IntOfNat(Succ(p))) {}
+            let l3: IntLe(
+              Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
+              Int::mul(Int::mul(c, IntOfNat(Succ(q))), IntOfNat(Succ(p)))
+            ) := Int::le_trans(
+              Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
+              Int::mul(Int::mul(b, IntOfNat(Succ(r))), IntOfNat(Succ(p))),
+              Int::mul(Int::mul(c, IntOfNat(Succ(q))), IntOfNat(Succ(p))),
+              Int::le_rw(
+                Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
+                Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
+                Int::mul(Int::mul(b, IntOfNat(Succ(p))), IntOfNat(Succ(r))),
+                Int::mul(Int::mul(b, IntOfNat(Succ(r))), IntOfNat(Succ(p))),
+                Refl,
+                s,
+                l1
+              ),
+              l2
+            )
+            let e1: Int::mul(
+              Int::mul(a, IntOfNat(Succ(q))),
+              IntOfNat(Succ(r))
+            ) = Int::mul(
+              Int::mul(a, IntOfNat(Succ(r))),
+              IntOfNat(Succ(q))
+            ) := by int_norm!(): Int::mul(
+              Int::mul(a, IntOfNat(Succ(q))),
+              IntOfNat(Succ(r))
+            ) = Int::mul(Int::mul(a, IntOfNat(Succ(r))), IntOfNat(Succ(q))) {}
+            let e2: Int::mul(
+              Int::mul(c, IntOfNat(Succ(q))),
+              IntOfNat(Succ(p))
+            ) = Int::mul(
+              Int::mul(c, IntOfNat(Succ(p))),
+              IntOfNat(Succ(q))
+            ) := by int_norm!(): Int::mul(
+              Int::mul(c, IntOfNat(Succ(q))),
+              IntOfNat(Succ(p))
+            ) = Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))) {}
+            Int::le_mul_cancel(
+              Int::mul(a, IntOfNat(Succ(r))),
+              Int::mul(c, IntOfNat(Succ(p))),
+              q,
+              Int::le_rw(
+                Int::mul(Int::mul(a, IntOfNat(Succ(q))), IntOfNat(Succ(r))),
+                Int::mul(Int::mul(a, IntOfNat(Succ(r))), IntOfNat(Succ(q))),
+                Int::mul(Int::mul(c, IntOfNat(Succ(q))), IntOfNat(Succ(p))),
+                Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                e1,
+                e2,
+                l3
+              )
+            )
           }
         }
       }
@@ -1412,148 +1373,144 @@ module Rat {
     z: Rat,
     l: RatLe(x, y)
   ): RatLe(add_raw(x, z), add_raw(y, z)) {
-    match x: RatLe(add_raw(x, z), add_raw(y, z)) {
-      Mk(a, p) => {
-        match y: RatLe(add_raw(Rat::Mk(a, p), z), add_raw(y, z)) {
-          Mk(b, q) => {
-            match z: RatLe(add_raw(Rat::Mk(a, p), z), add_raw(Rat::Mk(b, q), z)) {
-              Mk(c, r) => {
-                let l1: IntLe(
-                  Int::mul(
-                    Int::mul(a, IntOfNat(Succ(q))),
-                    Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
-                  ),
-                  Int::mul(
-                    Int::mul(b, IntOfNat(Succ(p))),
-                    Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
-                  )
-                ) := Int::le_mul_pos(
+    ⊢ RatLe(add_raw(x, z), add_raw(y, z)) from match x {
+      Mk(a, p) => ⊢ RatLe(add_raw(Rat::Mk(a, p), z), add_raw(y, z)) from match y {
+        Mk(b, q) => ⊢ RatLe(add_raw(Rat::Mk(a, p), z), add_raw(Rat::Mk(b, q), z)) from match z {
+          Mk(c, r) => {
+            let l1: IntLe(
+              Int::mul(
+                Int::mul(a, IntOfNat(Succ(q))),
+                Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+              ),
+              Int::mul(
+                Int::mul(b, IntOfNat(Succ(p))),
+                Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+              )
+            ) := Int::le_mul_pos(
+              Int::mul(a, IntOfNat(Succ(q))),
+              Int::mul(b, IntOfNat(Succ(p))),
+              Nat::add(Nat::mul(Succ(r), r), r),
+              l
+            )
+            let l2: IntLe(
+              Int::add(
+                Int::mul(
                   Int::mul(a, IntOfNat(Succ(q))),
+                  Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+                ),
+                Int::mul(
+                  Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                  IntOfNat(Succ(r))
+                )
+              ),
+              Int::add(
+                Int::mul(
                   Int::mul(b, IntOfNat(Succ(p))),
-                  Nat::add(Nat::mul(Succ(r), r), r),
-                  l
+                  Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+                ),
+                Int::mul(
+                  Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                  IntOfNat(Succ(r))
                 )
-                let l2: IntLe(
-                  Int::add(
-                    Int::mul(
-                      Int::mul(a, IntOfNat(Succ(q))),
-                      Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
-                    ),
-                    Int::mul(
-                      Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
-                      IntOfNat(Succ(r))
-                    )
-                  ),
-                  Int::add(
-                    Int::mul(
-                      Int::mul(b, IntOfNat(Succ(p))),
-                      Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
-                    ),
-                    Int::mul(
-                      Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
-                      IntOfNat(Succ(r))
-                    )
-                  )
-                ) := Int::le_add(
-                  Int::mul(
-                    Int::mul(a, IntOfNat(Succ(q))),
-                    Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
-                  ),
-                  Int::mul(
-                    Int::mul(b, IntOfNat(Succ(p))),
-                    Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
-                  ),
-                  Int::mul(
-                    Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
-                    IntOfNat(Succ(r))
-                  ),
-                  l1
+              )
+            ) := Int::le_add(
+              Int::mul(
+                Int::mul(a, IntOfNat(Succ(q))),
+                Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+              ),
+              Int::mul(
+                Int::mul(b, IntOfNat(Succ(p))),
+                Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+              ),
+              Int::mul(
+                Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                IntOfNat(Succ(r))
+              ),
+              l1
+            )
+            let e1: Int::add(
+              Int::mul(
+                Int::mul(a, IntOfNat(Succ(q))),
+                Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+              ),
+              Int::mul(
+                Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                IntOfNat(Succ(r))
+              )
+            ) = Int::mul(
+              Int::add(Int::mul(a, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(p)))),
+              Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r)))
+            ) := by int_norm!(): Int::add(
+              Int::mul(
+                Int::mul(a, IntOfNat(Succ(q))),
+                Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+              ),
+              Int::mul(
+                Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                IntOfNat(Succ(r))
+              )
+            ) = Int::mul(
+              Int::add(Int::mul(a, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(p)))),
+              Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r)))
+            ) {}
+            let e2: Int::add(
+              Int::mul(
+                Int::mul(b, IntOfNat(Succ(p))),
+                Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+              ),
+              Int::mul(
+                Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                IntOfNat(Succ(r))
+              )
+            ) = Int::mul(
+              Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q)))),
+              Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
+            ) := by int_norm!(): Int::add(
+              Int::mul(
+                Int::mul(b, IntOfNat(Succ(p))),
+                Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+              ),
+              Int::mul(
+                Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                IntOfNat(Succ(r))
+              )
+            ) = Int::mul(
+              Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q)))),
+              Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
+            ) {}
+            Int::le_rw(
+              Int::add(
+                Int::mul(
+                  Int::mul(a, IntOfNat(Succ(q))),
+                  Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+                ),
+                Int::mul(
+                  Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                  IntOfNat(Succ(r))
                 )
-                let e1: Int::add(
-                  Int::mul(
-                    Int::mul(a, IntOfNat(Succ(q))),
-                    Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
-                  ),
-                  Int::mul(
-                    Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
-                    IntOfNat(Succ(r))
-                  )
-                ) = Int::mul(
-                  Int::add(Int::mul(a, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(p)))),
-                  Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r)))
-                ) := by int_norm!(): Int::add(
-                  Int::mul(
-                    Int::mul(a, IntOfNat(Succ(q))),
-                    Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
-                  ),
-                  Int::mul(
-                    Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
-                    IntOfNat(Succ(r))
-                  )
-                ) = Int::mul(
-                  Int::add(Int::mul(a, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(p)))),
-                  Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r)))
-                ) {}
-                let e2: Int::add(
-                  Int::mul(
-                    Int::mul(b, IntOfNat(Succ(p))),
-                    Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
-                  ),
-                  Int::mul(
-                    Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
-                    IntOfNat(Succ(r))
-                  )
-                ) = Int::mul(
-                  Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q)))),
-                  Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
-                ) := by int_norm!(): Int::add(
-                  Int::mul(
-                    Int::mul(b, IntOfNat(Succ(p))),
-                    Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
-                  ),
-                  Int::mul(
-                    Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
-                    IntOfNat(Succ(r))
-                  )
-                ) = Int::mul(
-                  Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q)))),
-                  Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
-                ) {}
-                Int::le_rw(
-                  Int::add(
-                    Int::mul(
-                      Int::mul(a, IntOfNat(Succ(q))),
-                      Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
-                    ),
-                    Int::mul(
-                      Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
-                      IntOfNat(Succ(r))
-                    )
-                  ),
-                  Int::mul(
-                    Int::add(Int::mul(a, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(p)))),
-                    Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r)))
-                  ),
-                  Int::add(
-                    Int::mul(
-                      Int::mul(b, IntOfNat(Succ(p))),
-                      Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
-                    ),
-                    Int::mul(
-                      Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
-                      IntOfNat(Succ(r))
-                    )
-                  ),
-                  Int::mul(
-                    Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q)))),
-                    Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
-                  ),
-                  e1,
-                  e2,
-                  l2
+              ),
+              Int::mul(
+                Int::add(Int::mul(a, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(p)))),
+                Int::mul(IntOfNat(Succ(q)), IntOfNat(Succ(r)))
+              ),
+              Int::add(
+                Int::mul(
+                  Int::mul(b, IntOfNat(Succ(p))),
+                  Int::mul(IntOfNat(Succ(r)), IntOfNat(Succ(r)))
+                ),
+                Int::mul(
+                  Int::mul(Int::mul(c, IntOfNat(Succ(p))), IntOfNat(Succ(q))),
+                  IntOfNat(Succ(r))
                 )
-              }
-            }
+              ),
+              Int::mul(
+                Int::add(Int::mul(b, IntOfNat(Succ(r))), Int::mul(c, IntOfNat(Succ(q)))),
+                Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(r)))
+              ),
+              e1,
+              e2,
+              l2
+            )
           }
         }
       }
@@ -1566,49 +1523,47 @@ module Rat {
     l1: RatLe(zero(), x),
     l2: RatLe(zero(), y)
   ): RatLe(zero(), mul_raw(x, y)) {
-    match x: RatLe(zero(), mul_raw(x, y)) {
-      Mk(a, p) => {
-        match y: RatLe(zero(), mul_raw(Rat::Mk(a, p), y)) {
-          Mk(b, q) => {
-            let z1: Int::mul(
-              0,
-              IntOfNat(Succ(p))
-            ) = 0 := by int_norm!(): Int::mul(0, IntOfNat(Succ(p))) = 0 {}
-            let o1: Int::mul(a, 1) = a := by int_norm!(): Int::mul(a, 1) = a {}
-            let z2: Int::mul(
-              0,
-              IntOfNat(Succ(q))
-            ) = 0 := by int_norm!(): Int::mul(0, IntOfNat(Succ(q))) = 0 {}
-            let o2: Int::mul(b, 1) = b := by int_norm!(): Int::mul(b, 1) = b {}
-            let ha: IntLe(
-              0,
-              a
-            ) := Int::le_rw(Int::mul(0, IntOfNat(Succ(p))), 0, Int::mul(a, 1), a, z1, o1, l1)
-            let hb: IntLe(
-              0,
-              b
-            ) := Int::le_rw(Int::mul(0, IntOfNat(Succ(q))), 0, Int::mul(b, 1), b, z2, o2, l2)
-            let z3: 0 = Int::mul(
-              0,
-              Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
-            ) := by int_norm!(): 0 = Int::mul(0, Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))) {}
-            let o3: Int::mul(
-              a,
-              b
-            ) = Int::mul(
-              Int::mul(a, b),
-              1
-            ) := by int_norm!(): Int::mul(a, b) = Int::mul(Int::mul(a, b), 1) {}
-            Int::le_rw(
-              0,
-              Int::mul(0, Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))),
-              Int::mul(a, b),
-              Int::mul(Int::mul(a, b), 1),
-              z3,
-              o3,
-              Int::mul_nonneg(a, b, ha, hb)
-            )
-          }
+    ⊢ RatLe(zero(), mul_raw(x, y)) from match x {
+      Mk(a, p) => ⊢ RatLe(zero(), mul_raw(Rat::Mk(a, p), y)) from match y {
+        Mk(b, q) => {
+          let z1: Int::mul(
+            0,
+            IntOfNat(Succ(p))
+          ) = 0 := by int_norm!(): Int::mul(0, IntOfNat(Succ(p))) = 0 {}
+          let o1: Int::mul(a, 1) = a := by int_norm!(): Int::mul(a, 1) = a {}
+          let z2: Int::mul(
+            0,
+            IntOfNat(Succ(q))
+          ) = 0 := by int_norm!(): Int::mul(0, IntOfNat(Succ(q))) = 0 {}
+          let o2: Int::mul(b, 1) = b := by int_norm!(): Int::mul(b, 1) = b {}
+          let ha: IntLe(
+            0,
+            a
+          ) := Int::le_rw(Int::mul(0, IntOfNat(Succ(p))), 0, Int::mul(a, 1), a, z1, o1, l1)
+          let hb: IntLe(
+            0,
+            b
+          ) := Int::le_rw(Int::mul(0, IntOfNat(Succ(q))), 0, Int::mul(b, 1), b, z2, o2, l2)
+          let z3: 0 = Int::mul(
+            0,
+            Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))
+          ) := by int_norm!(): 0 = Int::mul(0, Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))) {}
+          let o3: Int::mul(
+            a,
+            b
+          ) = Int::mul(
+            Int::mul(a, b),
+            1
+          ) := by int_norm!(): Int::mul(a, b) = Int::mul(Int::mul(a, b), 1) {}
+          Int::le_rw(
+            0,
+            Int::mul(0, Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(q)))),
+            Int::mul(a, b),
+            Int::mul(Int::mul(a, b), 1),
+            z3,
+            o3,
+            Int::mul_nonneg(a, b, ha, hb)
+          )
         }
       }
     }

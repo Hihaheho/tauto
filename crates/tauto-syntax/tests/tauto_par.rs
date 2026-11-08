@@ -19,7 +19,9 @@ fn corpus() -> Vec<PathBuf> {
             let p = e.path();
             let name = e.file_name();
             if p.is_dir() {
-                if name != "target" && name != ".git" && name != ".tools" && name != "node_modules"
+                if name != "target"
+                    && name != "node_modules"
+                    && !name.as_encoded_bytes().starts_with(b".")
                 {
                     dirs.push(p);
                 }

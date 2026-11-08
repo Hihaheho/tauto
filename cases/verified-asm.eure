@@ -1,0 +1,116 @@
+@ cases.proof-terms-and-modular-boundaries
+source = path`../examples/verified-asm.taut`
+checks."sum_state" = "ok"
+checks."sum_contract" = "ok"
+checks."difference_state" = "ok"
+checks."double_state" = "ok"
+checks."subtract_into_rhs_state" = "ok"
+checks."addition_wraps" = "ok"
+checks."subtraction_wraps" = "ok"
+checks."Asm::read_write" = "ok"
+checks."Asm::run_nil" = "ok"
+checks."Asm::run_cons" = "ok"
+checks."Asm::run_append" = "ok"
+diagnostics = []
+
+@ cases.expansion-preserves-operands-and-order
+imports = [path`../std/asm.taut`, path`../std/UInt.taut`]
+source = ```taut
+fn code(): List(Asm::Instr) { asm!(`mov x0, x1; add x0, x0, x2; sub x2, x1, x0`) }
+theorem lowering_exact(): code() = [
+  Asm::Instr::Mov(Asm::Reg::X0, Asm::Reg::X1),
+  Asm::Instr::Add(Asm::Reg::X0, Asm::Reg::X0, Asm::Reg::X2),
+  Asm::Instr::Sub(Asm::Reg::X2, Asm::Reg::X1, Asm::Reg::X0)
+] { Refl }
+```
+checks.code = "ok"
+checks.lowering_exact = "ok"
+diagnostics = []
+
+@ cases.wrong-destination
+imports = [path`../std/asm.taut`, path`../std/UInt.taut`]
+source = ```taut
+fn code(): List(Asm::Instr) { asm!(`add x1, x1, x2`) }
+theorem wrong(s: Asm::State): Asm::read(Asm::run(code(), s), Asm::Reg::X0) = U64::wrapping_add(Asm::read(s, Asm::Reg::X1), Asm::read(s, Asm::Reg::X2)) { Refl }
+```
+checks.code = "ok"
+checks.wrong = "error: type mismatch"
+diagnostics = [{ name => "wrong", message => "type mismatch" }]
+
+@ cases.wrong-subtraction-order
+imports = [path`../std/asm.taut`, path`../std/UInt.taut`]
+source = ```taut
+fn code(): List(Asm::Instr) { asm!(`sub x0, x2, x1`) }
+theorem wrong(s: Asm::State): Asm::read(Asm::run(code(), s), Asm::Reg::X0) = U64::wrapping_sub(Asm::read(s, Asm::Reg::X1), Asm::read(s, Asm::Reg::X2)) { Refl }
+```
+checks.code = "ok"
+checks.wrong = "error: type mismatch"
+diagnostics = [{ name => "wrong", message => "type mismatch" }]
+
+@ cases.unbounded-addition-is-not-proved
+imports = [path`../std/asm.taut`, path`../std/UInt.taut`]
+source = ```taut
+fn code(): List(Asm::Instr) { asm!(`add x0, x1, x2`) }
+theorem wrong(): U64::val(Asm::read(Asm::run(code(), Asm::State {
+  x0: U64::of_nat_mod(0), x1: U64::of_nat_mod(18446744073709551615), x2: U64::of_nat_mod(1)
+}), Asm::Reg::X0)) = 18446744073709551616 { Refl }
+```
+checks.code = "ok"
+checks.wrong = "error: type mismatch"
+diagnostics = [{ name => "wrong", message => "type mismatch" }]
+
+@ cases.reject-unknown-register
+imports = [path`../std/asm.taut`, path`../std/UInt.taut`]
+source = ```taut
+fn code(): List(Asm::Instr) { asm!(`mov x3, x0`) }
+```
+macro_error = "macro.syntax_error"
+
+@ cases.reject-memory
+imports = [path`../std/asm.taut`, path`../std/UInt.taut`]
+source = ```taut
+fn code(): List(Asm::Instr) { asm!(`ldr x0, [x1]`) }
+```
+macro_error = "macro.syntax_error"
+
+@ cases.reject-flags
+imports = [path`../std/asm.taut`, path`../std/UInt.taut`]
+source = ```taut
+fn code(): List(Asm::Instr) { asm!(`adds x0, x1, x2`) }
+```
+macro_error = "macro.syntax_error"
+
+@ cases.reject-missing-operand
+imports = [path`../std/asm.taut`, path`../std/UInt.taut`]
+source = ```taut
+fn code(): List(Asm::Instr) { asm!(`add x0, x1`) }
+```
+macro_error = "macro.syntax_error"
+
+@ cases.reject-branch
+imports = [path`../std/asm.taut`, path`../std/UInt.taut`]
+source = ```taut
+fn code(): List(Asm::Instr) { asm!(`b loop`) }
+```
+macro_error = "macro.syntax_error"
+
+@ cases.reject-immediate
+imports = [path`../std/asm.taut`, path`../std/UInt.taut`]
+source = ```taut
+fn code(): List(Asm::Instr) { asm!(`add x0, x1, #1`) }
+```
+macro_error = "macro.syntax_error"
+
+@ cases.reject-zero-register
+imports = [path`../std/asm.taut`, path`../std/UInt.taut`]
+source = ```taut
+fn code(): List(Asm::Instr) { asm!(`mov x0, xzr`) }
+```
+macro_error = "macro.syntax_error"
+
+@ cases.reject-trailing-separator
+imports = [path`../std/asm.taut`, path`../std/UInt.taut`]
+source = ```taut
+fn code(): List(Asm::Instr) { asm!(`mov x0, x1;`) }
+```
+macro_error = "macro.syntax_error"

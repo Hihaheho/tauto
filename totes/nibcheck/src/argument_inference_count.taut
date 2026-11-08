@@ -19,7 +19,7 @@ pub theorem accepted_bind_value<A: Type, B: Type>(
   ). p(ck_val(k(value, state))),
   clean: DiagnosticClean(ck_st(frame_bind(A, B, k, m)))
 ): p(ck_val(frame_bind(A, B, k, m))) {
-  match m: p(ck_val(frame_bind(A, B, k, m))) { mut1(value, state) => tail(value, state, clean) }
+  ⊢ p(ck_val(frame_bind(A, B, k, m))) from match m { mut1(value, state) => tail(value, state, clean) }
 }
 pub def AppArgumentCount(
   k: Nat
@@ -42,7 +42,7 @@ pub theorem argument_count_prepend_sound(
   ih: ∀ clean: DiagnosticClean(ck_st(m)). list_len(ck_val(m)) = size,
   clean: DiagnosticClean(ck_st(argument_count_prepend(t, m)))
 ): list_len(ck_val(argument_count_prepend(t, m))) = Succ(size) {
-  match m: list_len(ck_val(argument_count_prepend(t, m))) = Succ(size) {
+  ⊢ list_len(ck_val(argument_count_prepend(t, m))) = Succ(size) from match m {
     mut1(tail, state) => Eq::congr((n: Nat) => Succ(n), ih(clean))
   }
 }
@@ -57,7 +57,9 @@ pub theorem inference_argument_count(
   expected: Option(Ty),
   ih: AppArgumentCount(j),
   clean: DiagnosticClean(ck_st(inference_argument(j, c, a, rest, known, env, i, expected)))
-): list_len(ck_val(inference_argument(j, c, a, rest, known, env, i, expected))) = Succ(list_len(rest)) {
+): list_len(
+  ck_val(inference_argument(j, c, a, rest, known, env, i, expected))
+) = Succ(list_len(rest)) {
   accepted_bind_value(
     Unit,
     List(Ty),
@@ -150,7 +152,7 @@ pub theorem inference_arguments_count(
   ih: AppArgumentCount(j),
   clean: DiagnosticClean(ck_st(inference_arguments(j, c, known, env, i, args)))
 ): list_len(ck_val(inference_arguments(j, c, known, env, i, args))) = list_len(args) {
-  match args: list_len(ck_val(inference_arguments(j, c, known, env, i, args))) = list_len(args) {
+  ⊢ list_len(ck_val(inference_arguments(j, c, known, env, i, args))) = list_len(args) from match args {
     Nil => Refl
     Cons(a, rest) => inference_argument_count(
       j,
@@ -175,7 +177,7 @@ pub theorem ck_app_args_count(
   i: Nat,
   clean: DiagnosticClean(ck_st(ck_app_args_in(k, c, args, known, env, i)))
 ): list_len(ck_val(ck_app_args_in(k, c, args, known, env, i))) = list_len(args) {
-  match k: list_len(ck_val(ck_app_args_in(k, c, args, known, env, i))) = list_len(args) {
+  ⊢ list_len(ck_val(ck_app_args_in(k, c, args, known, env, i))) = list_len(args) from match k {
     Zero => False::elim(
       diagnostic_error_impossible(
         c,

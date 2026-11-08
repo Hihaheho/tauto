@@ -51,7 +51,7 @@ pub theorem run_frame_bind<A: Type, B: Type>(
   hm: CkRunFrame(c, m),
   hk: ∀ v: A. ∀ next: Checker. ∀ ordered: CkOrdered(next). CkRunFrame(next, k(v, next))
 ): CkRunFrame(c, frame_bind(k, m)) {
-  match m: CkRunFrame(c, frame_bind(k, m)) {
+  ⊢ CkRunFrame(c, frame_bind(k, m)) from match m {
     mut1(v, next) => {
       let h: CkRunFrame(next, k(v, next)) := hk(v, next, And::left(hm))
       AndIntro(And::left(h), Eq::trans(And::right(h), And::right(hm)))
@@ -155,12 +155,7 @@ pub theorem run_expect_after_frame(
   run_frame_read(
     c,
     run_expect_after(c, a, b, span, what, fits),
-    frame_error_if_ok(
-      c,
-      ck_expect_message(ck_shown(c, a), ck_shown(c, b), what),
-      span,
-      not(fits)
-    ),
+    frame_error_if_ok(c, ck_expect_message(ck_shown(c, a), ck_shown(c, b), what), span, not(fits)),
     ordered
   )
 }

@@ -31,55 +31,20 @@ pub theorem written_unique_named<env: Datas, generics: Ordmap(
   unbound: Ordmap::get(generics, name, Ordmap::compare_text) = None,
   ih: WrittenTermsUnique(generics, partial, args, types)
 ): TyNamed(name, types) = other {
-  match meaning: TyNamed(name, types) = other {
+  ⊢ TyNamed(name, types) = other from match meaning {
     WrittenKindUnit(ctor_ast_occurrence, gs, Mode, borrowing, begin, finish) => False::elim(
       not_tuple(Refl)
     )
-    WrittenKindInfo(
-      ctor_ast_occurrence,
-      gs,
-      Mode,
-      borrowing,
-      first,
-      value,
-      begin,
-      finish,
-      argument
-    ) => False::elim(not_info(Refl, Refl))
-    WrittenKindNamed(
-      ctor_ast_occurrence,
-      gs,
-      Mode,
-      borrowing,
-      spelling,
-      terms,
-      values,
-      begin,
-      finish,
-      other_not_tuple,
-      other_not_info,
-      other_unbound,
-      SliceBorrowed,
-      arguments,
-      arity
-    ) => Eq::congr((ts: List(Ty)) => TyNamed(spelling, ts), ih(env, values, arguments))
-    WrittenKindGeneric(
-      ctor_ast_occurrence,
-      gs,
-      Mode,
-      borrowing,
-      spelling,
-      first,
-      head,
-      value,
-      bound,
-      begin,
-      finish,
-      other_not_info,
-      Parameter,
-      constructor,
-      argument
-    ) => False::elim(ck_none_ne_some(bound, Eq::trans(Eq::sym(unbound), Parameter)))
+    WrittenKindInfo(ctor_ast_occurrence, gs, Mode, borrowing, first, value, begin, finish, argument) => False::elim(
+      not_info(Refl, Refl)
+    )
+    WrittenKindNamed(ctor_ast_occurrence, gs, Mode, borrowing, spelling, terms, values, begin, finish, other_not_tuple, other_not_info, other_unbound, SliceBorrowed, arguments, arity) => Eq::congr(
+      (ts: List(Ty)) => TyNamed(spelling, ts),
+      ih(env, values, arguments)
+    )
+    WrittenKindGeneric(ctor_ast_occurrence, gs, Mode, borrowing, spelling, first, head, value, bound, begin, finish, other_not_info, Parameter, constructor, argument) => False::elim(
+      ck_none_ne_some(bound, Eq::trans(Eq::sym(unbound), Parameter))
+    )
   }
 }
 pub theorem written_unique_generic<env: Datas, generics: Ordmap(
@@ -103,52 +68,14 @@ pub theorem written_unique_generic<env: Datas, generics: Ordmap(
   constructor: WrittenTypeName(generics, name, head),
   ih: WrittenTermUnique(generics, partial, false, arg, t)
 ): ty_apply(head, t) = other {
-  match meaning: ty_apply(head, t) = other {
-    WrittenKindInfo(
-      ctor_ast_occurrence,
-      gs,
-      Mode,
-      borrowing,
-      first,
-      value,
-      begin,
-      finish,
-      argument
-    ) => False::elim(not_info(Refl))
-    WrittenKindNamed(
-      ctor_ast_occurrence,
-      gs,
-      Mode,
-      borrowing,
-      spelling,
-      terms,
-      values,
-      begin,
-      finish,
-      other_not_tuple,
-      other_not_info,
-      unbound,
-      SliceBorrowed,
-      arguments,
-      arity
-    ) => False::elim(ck_none_ne_some(bound, Eq::trans(Eq::sym(unbound), parameter)))
-    WrittenKindGeneric(
-      ctor_ast_occurrence,
-      gs,
-      Mode,
-      borrowing,
-      spelling,
-      first,
-      other_head,
-      value,
-      other_bound,
-      begin,
-      finish,
-      other_not_info,
-      other_parameter,
-      other_constructor,
-      argument
-    ) => Eq::trans(
+  ⊢ ty_apply(head, t) = other from match meaning {
+    WrittenKindInfo(ctor_ast_occurrence, gs, Mode, borrowing, first, value, begin, finish, argument) => False::elim(
+      not_info(Refl)
+    )
+    WrittenKindNamed(ctor_ast_occurrence, gs, Mode, borrowing, spelling, terms, values, begin, finish, other_not_tuple, other_not_info, unbound, SliceBorrowed, arguments, arity) => False::elim(
+      ck_none_ne_some(bound, Eq::trans(Eq::sym(unbound), parameter))
+    )
+    WrittenKindGeneric(ctor_ast_occurrence, gs, Mode, borrowing, spelling, first, other_head, value, other_bound, begin, finish, other_not_info, other_parameter, other_constructor, argument) => Eq::trans(
       Eq::congr(
         (h: Ty) => ty_apply(h, t),
         Eq::trans(
@@ -169,8 +96,14 @@ pub theorem written_named_extend_equal<name: Text, first: List(
   last: List(Ty),
   other_last: List(Ty),
   arguments: last = other_last
-): TyNamed(name, List::append(first, last)) = TyNamed(other_name, List::append(other_first, other_last)) {
-  match equal: TyNamed(name, List::append(first, last)) = TyNamed(other_name, List::append(other_first, other_last)) {
+): TyNamed(
+  name,
+  List::append(first, last)
+) = TyNamed(other_name, List::append(other_first, other_last)) {
+  ⊢ TyNamed(
+    name,
+    List::append(first, last)
+  ) = TyNamed(other_name, List::append(other_first, other_last)) from match equal {
     Refl => Eq::congr((ts: List(Ty)) => TyNamed(name, List::append(first, ts)), arguments)
   }
 }
@@ -203,24 +136,8 @@ pub theorem written_unique_nested<env: Datas, generics: Ordmap(
   ),
   ihtail: WrittenTermsUnique(generics, partial, args, last)
 ): TyNamed(name, List::append(first, last)) = other {
-  match meaning: TyNamed(name, List::append(first, last)) = other {
-    WrittenKindNested(
-      ctor_ast_occurrence,
-      gs,
-      Mode,
-      borrowing,
-      inner,
-      initial,
-      terms,
-      begin,
-      finish,
-      other_name,
-      other_first,
-      other_last,
-      constructor,
-      arguments,
-      arity
-    ) => written_named_extend_equal(
+  ⊢ TyNamed(name, List::append(first, last)) = other from match meaning {
+    WrittenKindNested(ctor_ast_occurrence, gs, Mode, borrowing, inner, initial, terms, begin, finish, other_name, other_first, other_last, constructor, arguments, arity) => written_named_extend_equal(
       ihhead(env, TyNamed(other_name, other_first), constructor),
       last,
       other_last,

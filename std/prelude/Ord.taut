@@ -6,43 +6,43 @@
 // `Classes.taut`; the kernel does not see those types, and their laws are
 // trusted.
 
-pub class Ord(A: Linear) {
+pub(open) class Ord(A: Linear) {
   fn compare(&a: A, &b: A): Ordering
-  law equal_iff<a: A, b: A>(): Ord::compare(a, b) = Equal ↔ a = b
-  law swap<a: A, b: A>(): Ord::compare(a, b) = Less ↔ Ord::compare(b, a) = Greater
-  law trans<a: A, b: A, c: A>(
+  theorem equal_iff<a: A, b: A>(): Ord::compare(a, b) = Equal ↔ a = b
+  theorem swap<a: A, b: A>(): Ord::compare(a, b) = Less ↔ Ord::compare(b, a) = Greater
+  theorem trans<a: A, b: A, c: A>(
     h1: Ord::compare(a, b) = Less,
     h2: Ord::compare(b, c) = Less
   ): Ord::compare(a, c) = Less
 }
 
 pub theorem less_ne_equal(e: Less = Equal): False {
-  match e: False {
+  ⊢ False from match e {
   }
 }
 
 pub theorem less_ne_greater(e: Less = Greater): False {
-  match e: False {
+  ⊢ False from match e {
   }
 }
 
 pub theorem equal_ne_less(e: Equal = Less): False {
-  match e: False {
+  ⊢ False from match e {
   }
 }
 
 pub theorem equal_ne_greater(e: Equal = Greater): False {
-  match e: False {
+  ⊢ False from match e {
   }
 }
 
 pub theorem greater_ne_less(e: Greater = Less): False {
-  match e: False {
+  ⊢ False from match e {
   }
 }
 
 pub theorem greater_ne_equal(e: Greater = Equal): False {
-  match e: False {
+  ⊢ False from match e {
   }
 }
 
@@ -84,12 +84,47 @@ pub theorem ord_trans<A>(
   Ord::trans(h1, h2)
 }
 
+// The order of `A` read through a key `f: A -> B`: an instance whose `compare(a, b)` is
+// `Ord::compare(f(a), f(b))` meets each law by one of these. Only `equal_iff` needs `f` to be
+// injective, for the keys of different values must not compare `Equal`.
+pub theorem ord_pullback_equal_iff<A, B>(
+  f: (A) -> B,
+  inj: ∀ x: A. ∀ y: A. (f(x) = f(y)) -> x = y,
+  a: A,
+  b: A
+): Ord::compare(f(a), f(b)) = Equal ↔ a = b where Ord(B) {
+  IffIntro(
+    (e: Ord::compare(f(a), f(b)) = Equal) => inj(a, b, ord_equal_eq(f(a), f(b), e)),
+    (e: a = b) => ord_eq_equal(
+      f(a),
+      f(b),
+      Eq::subst(<A: A, a: a, b: b>, (w: A) => f(a) = f(w), e, Refl)
+    )
+  )
+}
+
+pub theorem ord_pullback_swap<A, B>(
+  f: (A) -> B,
+  a: A,
+  b: A
+): Ord::compare(f(a), f(b)) = Less ↔ Ord::compare(f(b), f(a)) = Greater where Ord(B) {
+  let h: Ord::compare(f(a), f(b)) = Less ↔ Ord::compare(f(b), f(a)) = Greater := Ord::swap()
+  h
+}
+
+pub theorem ord_pullback_trans<A, B>(
+  f: (A) -> B,
+  a: A,
+  b: A,
+  c: A,
+  h1: Ord::compare(f(a), f(b)) = Less,
+  h2: Ord::compare(f(b), f(c)) = Less
+): Ord::compare(f(a), f(c)) = Less where Ord(B) {
+  ord_trans(f(a), f(b), f(c), h1, h2)
+}
+
 pub fn ord_then(o: Ordering, r: Ordering): Ordering {
-  match o: Ordering {
-    Less => Less
-    Equal => r
-    Greater => Greater
-  }
+  ⊢ Ordering from match o { Less => Less, Equal => r, Greater => Greater }
 }
 
 pub theorem ord_then_equal(
@@ -97,7 +132,7 @@ pub theorem ord_then_equal(
   r: Ordering,
   e: ord_then(o, r) = Equal
 ): o = Equal ∧ r = Equal {
-  match o: o = Equal ∧ r = Equal {
+  ⊢ o = Equal ∧ r = Equal from match o {
     Less => False::elim(less_ne_equal(e))
     Equal => AndIntro(Refl, e)
     Greater => False::elim(greater_ne_equal(e))
@@ -109,7 +144,7 @@ pub theorem ord_then_less(
   r: Ordering,
   e: ord_then(o, r) = Less
 ): o = Less ∨ o = Equal ∧ r = Less {
-  match o: o = Less ∨ o = Equal ∧ r = Less {
+  ⊢ o = Less ∨ o = Equal ∧ r = Less from match o {
     Less => OrInl(Refl)
     Equal => OrInr(AndIntro(Refl, e))
     Greater => False::elim(greater_ne_less(e))
@@ -121,7 +156,7 @@ pub theorem ord_then_greater(
   r: Ordering,
   e: ord_then(o, r) = Greater
 ): o = Greater ∨ o = Equal ∧ r = Greater {
-  match o: o = Greater ∨ o = Equal ∧ r = Greater {
+  ⊢ o = Greater ∨ o = Equal ∧ r = Greater from match o {
     Less => False::elim(less_ne_greater(e))
     Equal => OrInr(AndIntro(Refl, e))
     Greater => OrInl(Refl)
@@ -129,7 +164,7 @@ pub theorem ord_then_greater(
 }
 
 pub theorem ord_then_of_less(o: Ordering, r: Ordering, h: o = Less): ord_then(o, r) = Less {
-  match o: ord_then(o, r) = Less {
+  ⊢ ord_then(o, r) = Less from match o {
     Less => Refl
     Equal => False::elim(equal_ne_less(h))
     Greater => False::elim(greater_ne_less(h))
@@ -141,7 +176,7 @@ pub theorem ord_then_of_greater(
   r: Ordering,
   h: o = Greater
 ): ord_then(o, r) = Greater {
-  match o: ord_then(o, r) = Greater {
+  ⊢ ord_then(o, r) = Greater from match o {
     Less => False::elim(less_ne_greater(h))
     Equal => False::elim(equal_ne_greater(h))
     Greater => Refl
@@ -155,7 +190,7 @@ pub theorem ord_then_of_equal(
   ho: o = Equal,
   hr: r = p
 ): ord_then(o, r) = p {
-  match o: ord_then(o, r) = p {
+  ⊢ ord_then(o, r) = p from match o {
     Less => False::elim(less_ne_equal(ho))
     Equal => hr
     Greater => False::elim(greater_ne_equal(ho))
@@ -164,18 +199,18 @@ pub theorem ord_then_of_equal(
 
 module Option {
   pub theorem some_inj<A: Type>(x: A, y: A, e: Some(x) = Some(y)): x = y {
-    match e: x = y {
+    ⊢ x = y from match e {
       Refl => Refl
     }
   }
 
   pub theorem none_ne_some<A: Type>(y: A, e: None = Some(y)): False {
-    match e: False {
+    ⊢ False from match e {
     }
   }
 
   pub theorem some_ne_none<A: Type>(x: A, e: Some(x) = None): False {
-    match e: False {
+    ⊢ False from match e {
     }
   }
 }
@@ -183,27 +218,27 @@ module Option {
 // `None` first, then `Some` by its content.
 instance<A> Ord(Option(A)) where Ord(A) {
   fn compare(&a: Option(A), &b: Option(A)): Ordering {
-    match a: Ordering {
-      None => match b: Ordering {
+    ⊢ Ordering from match a {
+      None => ⊢ Ordering from match b {
         None => Equal
         Some(y) => Less
       }
-      Some(x) => match b: Ordering {
+      Some(x) => ⊢ Ordering from match b {
         None => Greater
         Some(y) => Ord::compare(&x, &y)
       }
     }
   }
-  law equal_iff<a: Option(A), b: Option(A)>(): Ord::compare(a, b) = Equal ↔ a = b {
-    match a: Ord::compare(a, b) = Equal ↔ a = b {
-      None => match b: Ord::compare(None, b) = Equal ↔ None = b {
+  theorem equal_iff<a: Option(A), b: Option(A)>(): Ord::compare(a, b) = Equal ↔ a = b {
+    ⊢ Ord::compare(a, b) = Equal ↔ a = b from match a {
+      None => ⊢ Ord::compare(None, b) = Equal ↔ None = b from match b {
         None => IffIntro((e: Equal = Equal) => Refl, (e: Eq(Option(A), None, None)) => Refl)
         Some(y) => IffIntro(
           (e: Less = Equal) => False::elim(less_ne_equal(e)),
           (e: None = Some(y)) => False::elim(Option::none_ne_some(y, e))
         )
       }
-      Some(x) => match b: Ord::compare(Some(x), b) = Equal ↔ Some(x) = b {
+      Some(x) => ⊢ Ord::compare(Some(x), b) = Equal ↔ Some(x) = b from match b {
         None => IffIntro(
           (e: Greater = Equal) => False::elim(greater_ne_equal(e)),
           (e: Some(x) = None) => False::elim(Option::some_ne_none(x, e))
@@ -221,16 +256,22 @@ instance<A> Ord(Option(A)) where Ord(A) {
       }
     }
   }
-  law swap<a: Option(A), b: Option(A)>(): Ord::compare(a, b) = Less ↔ Ord::compare(b, a) = Greater {
-    match a: Ord::compare(a, b) = Less ↔ Ord::compare(b, a) = Greater {
-      None => match b: Ord::compare(None, b) = Less ↔ Ord::compare(b, None) = Greater {
+  theorem swap<a: Option(A), b: Option(A)>(): Ord::compare(
+    a,
+    b
+  ) = Less ↔ Ord::compare(b, a) = Greater {
+    ⊢ Ord::compare(a, b) = Less ↔ Ord::compare(b, a) = Greater from match a {
+      None => ⊢ Ord::compare(None, b) = Less ↔ Ord::compare(b, None) = Greater from match b {
         None => IffIntro(
           (e: Equal = Less) => False::elim(equal_ne_less(e)),
           (e: Equal = Greater) => False::elim(equal_ne_greater(e))
         )
         Some(y) => IffIntro((e: Less = Less) => Refl, (e: Greater = Greater) => Refl)
       }
-      Some(x) => match b: Ord::compare(Some(x), b) = Less ↔ Ord::compare(b, Some(x)) = Greater {
+      Some(x) => ⊢ Ord::compare(
+        Some(x),
+        b
+      ) = Less ↔ Ord::compare(b, Some(x)) = Greater from match b {
         None => IffIntro(
           (e: Greater = Less) => False::elim(greater_ne_less(e)),
           (e: Less = Greater) => False::elim(less_ne_greater(e))
@@ -248,28 +289,25 @@ instance<A> Ord(Option(A)) where Ord(A) {
       }
     }
   }
-  law trans<a: Option(
-    A
-  ), b: Option(
-    A
-  ), c: Option(
-    A
-  )>(h1: Ord::compare(a, b) = Less, h2: Ord::compare(b, c) = Less): Ord::compare(a, c) = Less {
-    match a: Ord::compare(a, c) = Less {
-      None => match c: Ord::compare(None, c) = Less {
-        None => match b: Equal = Less {
-          None => match h1: Equal = Less {
+  theorem trans<a: Option(A), b: Option(A), c: Option(A)>(
+    h1: Ord::compare(a, b) = Less,
+    h2: Ord::compare(b, c) = Less
+  ): Ord::compare(a, c) = Less {
+    ⊢ Ord::compare(a, c) = Less from match a {
+      None => ⊢ Ord::compare(None, c) = Less from match c {
+        None => ⊢ Equal = Less from match b {
+          None => ⊢ Equal = Less from match h1 {
           }
-          Some(y) => match h2: Equal = Less {
+          Some(y) => ⊢ Equal = Less from match h2 {
           }
         }
         Some(z) => Refl
       }
-      Some(x) => match b: Ord::compare(Some(x), c) = Less {
-        None => match h1: Ord::compare(Some(x), c) = Less {
+      Some(x) => ⊢ Ord::compare(Some(x), c) = Less from match b {
+        None => ⊢ Ord::compare(Some(x), c) = Less from match h1 {
         }
-        Some(y) => match c: Ord::compare(Some(x), c) = Less {
-          None => match h2: Greater = Less {
+        Some(y) => ⊢ Ord::compare(Some(x), c) = Less from match c {
+          None => ⊢ Greater = Less from match h2 {
           }
           Some(z) => {
             let h: Ord::compare(x, z) = Less := ord_trans(x, y, z, h1, h2)
@@ -283,12 +321,12 @@ instance<A> Ord(Option(A)) where Ord(A) {
 
 module List {
   pub theorem nil_ne_cons<A: Type>(y: A, ys: List(A), e: Nil = Cons(y, ys)): False {
-    match e: False {
+    ⊢ False from match e {
     }
   }
 
   pub theorem cons_ne_nil<A: Type>(x: A, xs: List(A), e: Cons(x, xs) = Nil): False {
-    match e: False {
+    ⊢ False from match e {
     }
   }
 
@@ -299,7 +337,7 @@ module List {
     ys: List(A),
     e: Cons(x, xs) = Cons(y, ys)
   ): x = y ∧ xs = ys {
-    match e: x = y ∧ xs = ys {
+    ⊢ x = y ∧ xs = ys from match e {
       Refl => AndIntro(Refl, Refl)
     }
   }
@@ -312,37 +350,37 @@ module List {
     hx: x = y,
     hs: xs = ys
   ): Cons(x, xs) = Cons(y, ys) {
-    calc Cons(x, xs) {
-      = Cons(y, xs) from Eq::congr(A, List(A), x, y, ⟦Cons(□, xs)⟧, hx)
-      = Cons(y, ys) from Eq::congr(List(A), List(A), xs, ys, ⟦Cons(y, □)⟧, hs)
-    }
+    Eq::trans(
+      Eq::congr(<A: A, B: List(A), a: x, b: y>, ⟦Cons(□, xs)⟧, hx),
+      Eq::congr(<A: List(A), B: List(A), a: xs, b: ys>, ⟦Cons(y, □)⟧, hs)
+    )
   }
 }
 
 // Element by element; a list that ends first is the smaller.
 instance<A> Ord(List(A)) where Ord(A) {
   fn compare(&xs: List(A), &ys: List(A)): Ordering {
-    match xs: Ordering {
-      Nil => match ys: Ordering {
+    ⊢ Ordering from match xs {
+      Nil => ⊢ Ordering from match ys {
         Nil => Equal
         Cons(y, ys2) => Less
       }
-      Cons(x, xs2) => match ys: Ordering {
+      Cons(x, xs2) => ⊢ Ordering from match ys {
         Nil => Greater
         Cons(y, ys2) => ord_then(Ord::compare(&x, &y), Ord::compare(&xs2, &ys2))
       }
     }
   }
-  law equal_iff<a: List(A), b: List(A)>(): Ord::compare(a, b) = Equal ↔ a = b {
-    match a: Ord::compare(a, b) = Equal ↔ a = b {
-      Nil => match b: Ord::compare(Nil, b) = Equal ↔ Nil = b {
+  theorem equal_iff<a: List(A), b: List(A)>(): Ord::compare(a, b) = Equal ↔ a = b {
+    ⊢ Ord::compare(a, b) = Equal ↔ a = b from match a {
+      Nil => ⊢ Ord::compare(Nil, b) = Equal ↔ Nil = b from match b {
         Nil => IffIntro((e: Equal = Equal) => Refl, (e: Eq(List(A), Nil, Nil)) => Refl)
         Cons(y, ys) => IffIntro(
           (e: Less = Equal) => False::elim(less_ne_equal(e)),
           (e: Nil = Cons(y, ys)) => False::elim(List::nil_ne_cons(y, ys, e))
         )
       }
-      Cons(x, xs) => match b: Ord::compare(Cons(x, xs), b) = Equal ↔ Cons(x, xs) = b {
+      Cons(x, xs) => ⊢ Ord::compare(Cons(x, xs), b) = Equal ↔ Cons(x, xs) = b from match b {
         Nil => IffIntro(
           (e: Greater = Equal) => False::elim(greater_ne_equal(e)),
           (e: Cons(x, xs) = Nil) => False::elim(List::cons_ne_nil(x, xs, e))
@@ -350,7 +388,7 @@ instance<A> Ord(List(A)) where Ord(A) {
         Cons(y, ys) => IffIntro(
           (
             e: ord_then(Ord::compare(x, y), Ord::compare(xs, ys)) = Equal
-          ) => match ord_then_equal(Ord::compare(x, y), Ord::compare(xs, ys), e): Cons(x, xs) = Cons(y, ys) {
+          ) => ⊢ Cons(x, xs) = Cons(y, ys) from match ord_then_equal(Ord::compare(x, y), Ord::compare(xs, ys), e) {
             AndIntro(hx, hxs) => List::cons_congr(
               x,
               y,
@@ -360,10 +398,10 @@ instance<A> Ord(List(A)) where Ord(A) {
               Iff::mp(Ord::equal_iff(xs, ys), hxs)
             )
           },
-          (e: Cons(x, xs) = Cons(y, ys)) => match List::cons_inj(x, y, xs, ys, e): ord_then(
+          (e: Cons(x, xs) = Cons(y, ys)) => ⊢ ord_then(
             Ord::compare(x, y),
             Ord::compare(xs, ys)
-          ) = Equal {
+          ) = Equal from match List::cons_inj(x, y, xs, ys, e) {
             AndIntro(hx, hxs) => ord_then_of_equal(
               Ord::compare(x, y),
               Ord::compare(xs, ys),
@@ -376,19 +414,19 @@ instance<A> Ord(List(A)) where Ord(A) {
       }
     }
   }
-  law swap<a: List(A), b: List(A)>(): Ord::compare(a, b) = Less ↔ Ord::compare(b, a) = Greater {
-    match a: Ord::compare(a, b) = Less ↔ Ord::compare(b, a) = Greater {
-      Nil => match b: Ord::compare(Nil, b) = Less ↔ Ord::compare(b, Nil) = Greater {
+  theorem swap<a: List(A), b: List(A)>(): Ord::compare(a, b) = Less ↔ Ord::compare(b, a) = Greater {
+    ⊢ Ord::compare(a, b) = Less ↔ Ord::compare(b, a) = Greater from match a {
+      Nil => ⊢ Ord::compare(Nil, b) = Less ↔ Ord::compare(b, Nil) = Greater from match b {
         Nil => IffIntro(
           (e: Equal = Less) => False::elim(equal_ne_less(e)),
           (e: Equal = Greater) => False::elim(equal_ne_greater(e))
         )
         Cons(_, _) => IffIntro((e: Less = Less) => Refl, (e: Greater = Greater) => Refl)
       }
-      Cons(x, xs) => match b: Ord::compare(
+      Cons(x, xs) => ⊢ Ord::compare(
         Cons(x, xs),
         b
-      ) = Less ↔ Ord::compare(b, Cons(x, xs)) = Greater {
+      ) = Less ↔ Ord::compare(b, Cons(x, xs)) = Greater from match b {
         Nil => IffIntro(
           (e: Greater = Less) => False::elim(greater_ne_less(e)),
           (e: Less = Greater) => False::elim(less_ne_greater(e))
@@ -396,10 +434,10 @@ instance<A> Ord(List(A)) where Ord(A) {
         Cons(y, ys) => IffIntro(
           (
             e: ord_then(Ord::compare(x, y), Ord::compare(xs, ys)) = Less
-          ) => match ord_then_less(Ord::compare(x, y), Ord::compare(xs, ys), e): ord_then(
+          ) => ⊢ ord_then(
             Ord::compare(y, x),
             Ord::compare(ys, xs)
-          ) = Greater {
+          ) = Greater from match ord_then_less(Ord::compare(x, y), Ord::compare(xs, ys), e) {
             OrInl(h) => ord_then_of_greater(Ord::compare(y, x), Ord::compare(ys, xs), ord_swap_less(x, y, h))
             OrInr(AndIntro(hx, hxs)) => ord_then_of_equal(
               Ord::compare(y, x),
@@ -411,10 +449,10 @@ instance<A> Ord(List(A)) where Ord(A) {
           },
           (
             e: ord_then(Ord::compare(y, x), Ord::compare(ys, xs)) = Greater
-          ) => match ord_then_greater(Ord::compare(y, x), Ord::compare(ys, xs), e): ord_then(
+          ) => ⊢ ord_then(
             Ord::compare(x, y),
             Ord::compare(xs, ys)
-          ) = Less {
+          ) = Less from match ord_then_greater(Ord::compare(y, x), Ord::compare(ys, xs), e) {
             OrInl(h) => ord_then_of_less(Ord::compare(x, y), Ord::compare(xs, ys), ord_swap_greater(y, x, h))
             OrInr(AndIntro(hx, hxs)) => ord_then_of_equal(
               Ord::compare(x, y),
@@ -428,35 +466,30 @@ instance<A> Ord(List(A)) where Ord(A) {
       }
     }
   }
-  law trans<a: List(
-    A
-  ), b: List(
-    A
-  ), c: List(
-    A
-  )>(h1: Ord::compare(a, b) = Less, h2: Ord::compare(b, c) = Less): Ord::compare(a, c) = Less {
-    match a: Ord::compare(a, c) = Less {
-      Nil => match c: Ord::compare(Nil, c) = Less {
-        Nil => match b: Equal = Less {
+  theorem trans<a: List(A), b: List(A), c: List(A)>(
+    h1: Ord::compare(a, b) = Less,
+    h2: Ord::compare(b, c) = Less
+  ): Ord::compare(a, c) = Less {
+    ⊢ Ord::compare(a, c) = Less from match a {
+      Nil => ⊢ Ord::compare(Nil, c) = Less from match c {
+        Nil => ⊢ Equal = Less from match b {
           Nil => False::elim(equal_ne_less(h1))
           Cons(_, _) => False::elim(greater_ne_less(h2))
         }
         Cons(_, _) => Refl
       }
-      Cons(x, xs) => match b: Ord::compare(Cons(x, xs), c) = Less {
+      Cons(x, xs) => ⊢ Ord::compare(Cons(x, xs), c) = Less from match b {
         Nil => False::elim(greater_ne_less(h1))
-        Cons(y, ys) => match c: Ord::compare(Cons(x, xs), c) = Less {
+        Cons(y, ys) => ⊢ Ord::compare(Cons(x, xs), c) = Less from match c {
           Nil => False::elim(greater_ne_less(h2))
-          Cons(z, zs) => match ord_then_less(
-            Ord::compare(x, y),
-            Ord::compare(xs, ys),
-            h1
-          ): ord_then(Ord::compare(x, z), Ord::compare(xs, zs)) = Less {
-            OrInl(p1) => match ord_then_less(
-              Ord::compare(y, z),
-              Ord::compare(ys, zs),
-              h2
-            ): ord_then(Ord::compare(x, z), Ord::compare(xs, zs)) = Less {
+          Cons(z, zs) => ⊢ ord_then(
+            Ord::compare(x, z),
+            Ord::compare(xs, zs)
+          ) = Less from match ord_then_less(Ord::compare(x, y), Ord::compare(xs, ys), h1) {
+            OrInl(p1) => ⊢ ord_then(
+              Ord::compare(x, z),
+              Ord::compare(xs, zs)
+            ) = Less from match ord_then_less(Ord::compare(y, z), Ord::compare(ys, zs), h2) {
               OrInl(p2) => ord_then_of_less(
                 Ord::compare(x, z),
                 Ord::compare(xs, zs),
@@ -465,21 +498,23 @@ instance<A> Ord(List(A)) where Ord(A) {
               OrInr(AndIntro(q2, _)) => ord_then_of_less(
                 Ord::compare(x, z),
                 Ord::compare(xs, zs),
-                Eq::subst(A, y, z, (w: A) => Ord::compare(x, w) = Less, ord_equal_eq(y, z, q2), p1)
+                Eq::subst(
+                  <A: A, a: y, b: z>,
+                  (w: A) => Ord::compare(x, w) = Less,
+                  ord_equal_eq(y, z, q2),
+                  p1
+                )
               )
             }
-            OrInr(AndIntro(q1, r1)) => match ord_then_less(
-              Ord::compare(y, z),
-              Ord::compare(ys, zs),
-              h2
-            ): ord_then(Ord::compare(x, z), Ord::compare(xs, zs)) = Less {
+            OrInr(AndIntro(q1, r1)) => ⊢ ord_then(
+              Ord::compare(x, z),
+              Ord::compare(xs, zs)
+            ) = Less from match ord_then_less(Ord::compare(y, z), Ord::compare(ys, zs), h2) {
               OrInl(p2) => ord_then_of_less(
                 Ord::compare(x, z),
                 Ord::compare(xs, zs),
                 Eq::subst(
-                  A,
-                  y,
-                  x,
+                  <A: A, a: y, b: x>,
                   (w: A) => Ord::compare(w, z) = Less,
                   Eq::sym(ord_equal_eq(x, y, q1)),
                   p2
@@ -489,14 +524,7 @@ instance<A> Ord(List(A)) where Ord(A) {
                 Ord::compare(x, z),
                 Ord::compare(xs, zs),
                 Less,
-                ord_eq_equal(
-                  x,
-                  z,
-                  calc x {
-                    = y from ord_equal_eq(x, y, q1)
-                    = z from ord_equal_eq(y, z, q2)
-                  }
-                ),
+                ord_eq_equal(x, z, Eq::trans(ord_equal_eq(x, y, q1), ord_equal_eq(y, z, q2))),
                 Ord::trans(xs, ys, zs, r1, r2)
               )
             }
@@ -513,9 +541,9 @@ module Pair {
     y1: B,
     x2: A,
     y2: B,
-    e: (Pair { fst: x1, snd: y1 }) = (Pair { fst: x2, snd: y2 })
+    e: (#(x1, y1)) = (#(x2, y2))
   ): x1 = x2 ∧ y1 = y2 {
-    match e: x1 = x2 ∧ y1 = y2 {
+    ⊢ x1 = x2 ∧ y1 = y2 from match e {
       Refl => AndIntro(Refl, Refl)
     }
   }
@@ -527,175 +555,11 @@ module Pair {
     y2: B,
     hx: x1 = x2,
     hy: y1 = y2
-  ): (Pair { fst: x1, snd: y1 }) = (Pair { fst: x2, snd: y2 }) {
-    calc (Pair { fst: x1, snd: y1 }) {
-      = (
-        Pair { fst: x2, snd: y1 }
-      ) from Eq::congr(A, Pair(A, B), x1, x2, ⟦(Pair { fst: □, snd: y1 })⟧, hx)
-      = (
-        Pair { fst: x2, snd: y2 }
-      ) from Eq::congr(B, Pair(A, B), y1, y2, ⟦(Pair { fst: x2, snd: □ })⟧, hy)
-    }
-  }
-}
-
-instance<A, B> Ord(Pair(A, B)) where Ord(A), Ord(B) {
-  fn compare(&p: Pair(A, B), &q: Pair(A, B)): Ordering {
-    match p: Ordering {
-      Pair { fst: x1, snd: y1 } => match q: Ordering {
-        Pair { fst: x2, snd: y2 } => ord_then(Ord::compare(&x1, &x2), Ord::compare(&y1, &y2))
-      }
-    }
-  }
-  law equal_iff<p: Pair(A, B), q: Pair(A, B)>(): Ord::compare(p, q) = Equal ↔ p = q {
-    match p: Ord::compare(p, q) = Equal ↔ p = q {
-      Pair { fst: x1, snd: y1 } => match q: Ord::compare(
-        Pair { fst: x1, snd: y1 },
-        q
-      ) = Equal ↔ (Pair { fst: x1, snd: y1 }) = q {
-        Pair { fst: x2, snd: y2 } => IffIntro(
-          (
-            e: ord_then(Ord::compare(x1, x2), Ord::compare(y1, y2)) = Equal
-          ) => match ord_then_equal(Ord::compare(x1, x2), Ord::compare(y1, y2), e): (Pair { fst: x1, snd: y1 }) = (Pair { fst: x2, snd: y2 }) {
-            AndIntro(hx, hy) => Pair::congr(x1, y1, x2, y2, ord_equal_eq(x1, x2, hx), ord_equal_eq(y1, y2, hy))
-          },
-          (e: (Pair { fst: x1, snd: y1 }) = Pair { fst: x2, snd: y2 }) => match Pair::inj(x1, y1, x2, y2, e): ord_then(
-            Ord::compare(x1, x2),
-            Ord::compare(y1, y2)
-          ) = Equal {
-            AndIntro(hx, hy) => ord_then_of_equal(
-              Ord::compare(x1, x2),
-              Ord::compare(y1, y2),
-              Equal,
-              ord_eq_equal(x1, x2, hx),
-              ord_eq_equal(y1, y2, hy)
-            )
-          }
-        )
-      }
-    }
-  }
-  law swap<p: Pair(
-    A,
-    B
-  ), q: Pair(A, B)>(): Ord::compare(p, q) = Less ↔ Ord::compare(q, p) = Greater {
-    match p: Ord::compare(p, q) = Less ↔ Ord::compare(q, p) = Greater {
-      Pair { fst: x1, snd: y1 } => match q: Ord::compare(
-        Pair { fst: x1, snd: y1 },
-        q
-      ) = Less ↔ Ord::compare(q, (Pair { fst: x1, snd: y1 })) = Greater {
-        Pair { fst: x2, snd: y2 } => IffIntro(
-          (
-            e: ord_then(Ord::compare(x1, x2), Ord::compare(y1, y2)) = Less
-          ) => match ord_then_less(Ord::compare(x1, x2), Ord::compare(y1, y2), e): ord_then(
-            Ord::compare(x2, x1),
-            Ord::compare(y2, y1)
-          ) = Greater {
-            OrInl(h) => ord_then_of_greater(Ord::compare(x2, x1), Ord::compare(y2, y1), ord_swap_less(x1, x2, h))
-            OrInr(AndIntro(hx, hy)) => ord_then_of_equal(
-              Ord::compare(x2, x1),
-              Ord::compare(y2, y1),
-              Greater,
-              ord_eq_equal(x2, x1, Eq::sym(ord_equal_eq(x1, x2, hx))),
-              ord_swap_less(y1, y2, hy)
-            )
-          },
-          (
-            e: ord_then(Ord::compare(x2, x1), Ord::compare(y2, y1)) = Greater
-          ) => match ord_then_greater(Ord::compare(x2, x1), Ord::compare(y2, y1), e): ord_then(
-            Ord::compare(x1, x2),
-            Ord::compare(y1, y2)
-          ) = Less {
-            OrInl(h) => ord_then_of_less(Ord::compare(x1, x2), Ord::compare(y1, y2), ord_swap_greater(x2, x1, h))
-            OrInr(AndIntro(hx, hy)) => ord_then_of_equal(
-              Ord::compare(x1, x2),
-              Ord::compare(y1, y2),
-              Less,
-              ord_eq_equal(x1, x2, Eq::sym(ord_equal_eq(x2, x1, hx))),
-              ord_swap_greater(y2, y1, hy)
-            )
-          }
-        )
-      }
-    }
-  }
-  law trans<p: Pair(
-    A,
-    B
-  ), q: Pair(
-    A,
-    B
-  ), r: Pair(
-    A,
-    B
-  )>(h1: Ord::compare(p, q) = Less, h2: Ord::compare(q, r) = Less): Ord::compare(p, r) = Less {
-    match p: Ord::compare(p, r) = Less {
-      Pair { fst: x1, snd: y1 } => match q: Ord::compare(Pair { fst: x1, snd: y1 }, r) = Less {
-        Pair { fst: x2, snd: y2 } => match r: Ord::compare(Pair { fst: x1, snd: y1 }, r) = Less {
-          Pair { fst: x3, snd: y3 } => match ord_then_less(
-            Ord::compare(x1, x2),
-            Ord::compare(y1, y2),
-            h1
-          ): ord_then(Ord::compare(x1, x3), Ord::compare(y1, y3)) = Less {
-            OrInl(p1) => match ord_then_less(
-              Ord::compare(x2, x3),
-              Ord::compare(y2, y3),
-              h2
-            ): ord_then(Ord::compare(x1, x3), Ord::compare(y1, y3)) = Less {
-              OrInl(p2) => ord_then_of_less(
-                Ord::compare(x1, x3),
-                Ord::compare(y1, y3),
-                ord_trans(x1, x2, x3, p1, p2)
-              )
-              OrInr(AndIntro(q2, _)) => ord_then_of_less(
-                Ord::compare(x1, x3),
-                Ord::compare(y1, y3),
-                Eq::subst(
-                  A,
-                  x2,
-                  x3,
-                  (w: A) => Ord::compare(x1, w) = Less,
-                  ord_equal_eq(x2, x3, q2),
-                  p1
-                )
-              )
-            }
-            OrInr(AndIntro(q1, r1)) => match ord_then_less(
-              Ord::compare(x2, x3),
-              Ord::compare(y2, y3),
-              h2
-            ): ord_then(Ord::compare(x1, x3), Ord::compare(y1, y3)) = Less {
-              OrInl(p2) => ord_then_of_less(
-                Ord::compare(x1, x3),
-                Ord::compare(y1, y3),
-                Eq::subst(
-                  A,
-                  x2,
-                  x1,
-                  (w: A) => Ord::compare(w, x3) = Less,
-                  Eq::sym(ord_equal_eq(x1, x2, q1)),
-                  p2
-                )
-              )
-              OrInr(AndIntro(q2, r2)) => ord_then_of_equal(
-                Ord::compare(x1, x3),
-                Ord::compare(y1, y3),
-                Less,
-                ord_eq_equal(
-                  x1,
-                  x3,
-                  calc x1 {
-                    = x2 from ord_equal_eq(x1, x2, q1)
-                    = x3 from ord_equal_eq(x2, x3, q2)
-                  }
-                ),
-                ord_trans(y1, y2, y3, r1, r2)
-              )
-            }
-          }
-        }
-      }
-    }
+  ): (#(x1, y1)) = (#(x2, y2)) {
+    Eq::trans(
+      Eq::congr(<A: A, B: (A × B), a: x1, b: x2>, ⟦(#(□, y1))⟧, hx),
+      Eq::congr(<A: B, B: (A × B), a: y1, b: y2>, ⟦(#(x2, □))⟧, hy)
+    )
   }
 }
 
@@ -703,25 +567,25 @@ instance<A, B> Ord(Pair(A, B)) where Ord(A), Ord(B) {
 // of its members, so `Pair::congr` and `Pair::inj` are its own.
 instance<A, B> Ord(A × B) where Ord(A), Ord(B) {
   fn compare(&p: A × B, &q: A × B): Ordering {
-    match p: Ordering {
-      #(x1, y1) => match q: Ordering {
+    ⊢ Ordering from match p {
+      #(x1, y1) => ⊢ Ordering from match q {
         #(x2, y2) => ord_then(Ord::compare(&x1, &x2), Ord::compare(&y1, &y2))
       }
     }
   }
-  law equal_iff<p: A × B, q: A × B>(): Ord::compare(p, q) = Equal ↔ p = q {
-    match p: Ord::compare(p, q) = Equal ↔ p = q {
-      #(x1, y1) => match q: Ord::compare(#(x1, y1), q) = Equal ↔ #(x1, y1) = q {
+  theorem equal_iff<p: A × B, q: A × B>(): Ord::compare(p, q) = Equal ↔ p = q {
+    ⊢ Ord::compare(p, q) = Equal ↔ p = q from match p {
+      #(x1, y1) => ⊢ Ord::compare(#(x1, y1), q) = Equal ↔ #(x1, y1) = q from match q {
         #(x2, y2) => IffIntro(
           (
             e: ord_then(Ord::compare(x1, x2), Ord::compare(y1, y2)) = Equal
-          ) => match ord_then_equal(Ord::compare(x1, x2), Ord::compare(y1, y2), e): #(x1, y1) = #(x2, y2) {
+          ) => ⊢ #(x1, y1) = #(x2, y2) from match ord_then_equal(Ord::compare(x1, x2), Ord::compare(y1, y2), e) {
             AndIntro(hx, hy) => Pair::congr(x1, y1, x2, y2, ord_equal_eq(x1, x2, hx), ord_equal_eq(y1, y2, hy))
           },
-          (e: #(x1, y1) = #(x2, y2)) => match Pair::inj(x1, y1, x2, y2, e): ord_then(
+          (e: #(x1, y1) = #(x2, y2)) => ⊢ ord_then(
             Ord::compare(x1, x2),
             Ord::compare(y1, y2)
-          ) = Equal {
+          ) = Equal from match Pair::inj(x1, y1, x2, y2, e) {
             AndIntro(hx, hy) => ord_then_of_equal(
               Ord::compare(x1, x2),
               Ord::compare(y1, y2),
@@ -734,19 +598,19 @@ instance<A, B> Ord(A × B) where Ord(A), Ord(B) {
       }
     }
   }
-  law swap<p: A × B, q: A × B>(): Ord::compare(p, q) = Less ↔ Ord::compare(q, p) = Greater {
-    match p: Ord::compare(p, q) = Less ↔ Ord::compare(q, p) = Greater {
-      #(x1, y1) => match q: Ord::compare(
+  theorem swap<p: A × B, q: A × B>(): Ord::compare(p, q) = Less ↔ Ord::compare(q, p) = Greater {
+    ⊢ Ord::compare(p, q) = Less ↔ Ord::compare(q, p) = Greater from match p {
+      #(x1, y1) => ⊢ Ord::compare(
         #(x1, y1),
         q
-      ) = Less ↔ Ord::compare(q, #(x1, y1)) = Greater {
+      ) = Less ↔ Ord::compare(q, #(x1, y1)) = Greater from match q {
         #(x2, y2) => IffIntro(
           (
             e: ord_then(Ord::compare(x1, x2), Ord::compare(y1, y2)) = Less
-          ) => match ord_then_less(Ord::compare(x1, x2), Ord::compare(y1, y2), e): ord_then(
+          ) => ⊢ ord_then(
             Ord::compare(x2, x1),
             Ord::compare(y2, y1)
-          ) = Greater {
+          ) = Greater from match ord_then_less(Ord::compare(x1, x2), Ord::compare(y1, y2), e) {
             OrInl(h) => ord_then_of_greater(Ord::compare(x2, x1), Ord::compare(y2, y1), ord_swap_less(x1, x2, h))
             OrInr(AndIntro(hx, hy)) => ord_then_of_equal(
               Ord::compare(x2, x1),
@@ -758,10 +622,10 @@ instance<A, B> Ord(A × B) where Ord(A), Ord(B) {
           },
           (
             e: ord_then(Ord::compare(x2, x1), Ord::compare(y2, y1)) = Greater
-          ) => match ord_then_greater(Ord::compare(x2, x1), Ord::compare(y2, y1), e): ord_then(
+          ) => ⊢ ord_then(
             Ord::compare(x1, x2),
             Ord::compare(y1, y2)
-          ) = Less {
+          ) = Less from match ord_then_greater(Ord::compare(x2, x1), Ord::compare(y2, y1), e) {
             OrInl(h) => ord_then_of_less(Ord::compare(x1, x2), Ord::compare(y1, y2), ord_swap_greater(x2, x1, h))
             OrInr(AndIntro(hx, hy)) => ord_then_of_equal(
               Ord::compare(x1, x2),
@@ -775,23 +639,21 @@ instance<A, B> Ord(A × B) where Ord(A), Ord(B) {
       }
     }
   }
-  law trans<p: A × B, q: A × B, r: A × B>(
+  theorem trans<p: A × B, q: A × B, r: A × B>(
     h1: Ord::compare(p, q) = Less,
     h2: Ord::compare(q, r) = Less
   ): Ord::compare(p, r) = Less {
-    match p: Ord::compare(p, r) = Less {
-      #(x1, y1) => match q: Ord::compare(#(x1, y1), r) = Less {
-        #(x2, y2) => match r: Ord::compare(#(x1, y1), r) = Less {
-          #(x3, y3) => match ord_then_less(
-            Ord::compare(x1, x2),
-            Ord::compare(y1, y2),
-            h1
-          ): ord_then(Ord::compare(x1, x3), Ord::compare(y1, y3)) = Less {
-            OrInl(p1) => match ord_then_less(
-              Ord::compare(x2, x3),
-              Ord::compare(y2, y3),
-              h2
-            ): ord_then(Ord::compare(x1, x3), Ord::compare(y1, y3)) = Less {
+    ⊢ Ord::compare(p, r) = Less from match p {
+      #(x1, y1) => ⊢ Ord::compare(#(x1, y1), r) = Less from match q {
+        #(x2, y2) => ⊢ Ord::compare(#(x1, y1), r) = Less from match r {
+          #(x3, y3) => ⊢ ord_then(
+            Ord::compare(x1, x3),
+            Ord::compare(y1, y3)
+          ) = Less from match ord_then_less(Ord::compare(x1, x2), Ord::compare(y1, y2), h1) {
+            OrInl(p1) => ⊢ ord_then(
+              Ord::compare(x1, x3),
+              Ord::compare(y1, y3)
+            ) = Less from match ord_then_less(Ord::compare(x2, x3), Ord::compare(y2, y3), h2) {
               OrInl(p2) => ord_then_of_less(
                 Ord::compare(x1, x3),
                 Ord::compare(y1, y3),
@@ -810,11 +672,10 @@ instance<A, B> Ord(A × B) where Ord(A), Ord(B) {
                 )
               )
             }
-            OrInr(AndIntro(q1, r1)) => match ord_then_less(
-              Ord::compare(x2, x3),
-              Ord::compare(y2, y3),
-              h2
-            ): ord_then(Ord::compare(x1, x3), Ord::compare(y1, y3)) = Less {
+            OrInr(AndIntro(q1, r1)) => ⊢ ord_then(
+              Ord::compare(x1, x3),
+              Ord::compare(y1, y3)
+            ) = Less from match ord_then_less(Ord::compare(x2, x3), Ord::compare(y2, y3), h2) {
               OrInl(p2) => ord_then_of_less(
                 Ord::compare(x1, x3),
                 Ord::compare(y1, y3),
@@ -831,14 +692,7 @@ instance<A, B> Ord(A × B) where Ord(A), Ord(B) {
                 Ord::compare(x1, x3),
                 Ord::compare(y1, y3),
                 Less,
-                ord_eq_equal(
-                  x1,
-                  x3,
-                  calc x1 {
-                    = x2 from ord_equal_eq(x1, x2, q1)
-                    = x3 from ord_equal_eq(x2, x3, q2)
-                  }
-                ),
+                ord_eq_equal(x1, x3, Eq::trans(ord_equal_eq(x1, x2, q1), ord_equal_eq(x2, x3, q2))),
                 ord_trans(y1, y2, y3, r1, r2)
               )
             }

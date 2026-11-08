@@ -1,0 +1,520 @@
+import "cmdline.taut"
+import std::Base
+import std::Text
+import std::TextOps
+import "laws.taut"
+
+// ---- rendering what was read as a command line --------------------------------
+//
+// `render` writes options as `--long` and `--long=v`, then `--` and the
+// positional arguments. `Lex::render_read` proves that `lex` reads that command
+// line back as the same items, for any declaration `renderable` accepts.
+
+// Whether a long name has no `=`.
+fn eq_step(q: Bool, r: Bool): Bool {
+  ⊢ Bool from match q {
+    true => false
+    false => r
+  }
+}
+
+fn no_eq(l: List(Nat)): Bool {
+  ⊢ Bool from match l {
+    Nil => true
+    Cons(x, xs) => eq_step(Nat::eq(x, 61), no_eq(xs))
+  }
+}
+
+theorem eq_step_head(q: Bool, r: Bool, h: eq_step(q, r) = true): q = false {
+  ⊢ q = false from match q {
+    true => False::elim(yes_not_no(Eq::sym(h)))
+    false => Refl
+  }
+}
+
+theorem eq_step_tail(q: Bool, r: Bool, h: eq_step(q, r) = true): r = true {
+  ⊢ r = true from match q {
+    true => False::elim(yes_not_no(Eq::sym(h)))
+    false => h
+  }
+}
+
+// What a hit becomes when the word goes on with `=v`.
+fn extend_hit(h: Hit, v: List(Nat)): Hit {
+  ⊢ Hit from match h {
+    Miss => Miss
+    Exact => Glue(v)
+    Glue(u) => Glue(List::append(u, Cons(61, v)))
+  }
+}
+
+fn extend_found(f: Option(Found), v: List(Nat)): Option(Found) {
+  ⊢ Option(Found) from match f {
+    None => None
+    Some(x) => ⊢ Option(Found) from match x {
+      Mk(i, h) => Some(Found::Mk(i, extend_hit(h, v)))
+    }
+  }
+}
+
+module Hit {
+  theorem after_extend(q: Bool, h: Hit, v: List(Nat)): Hit::after(q, extend_hit(h, v)) = extend_hit(Hit::after(q, h), v) {
+    ⊢ Hit::after(q, extend_hit(h, v)) = extend_hit(Hit::after(q, h), v) from match q {
+      false => Refl
+      true => Refl
+    }
+  }
+
+  theorem end_extend(w: List(Nat), v: List(Nat)): Hit::end(List::append(w, Cons(61, v))) = extend_hit(Hit::end(w), v) {
+    ⊢ Hit::end(List::append(w, Cons(61, v))) = extend_hit(Hit::end(w), v) from match w {
+      Nil => Refl
+      Cons(c, u) => Hit::after_extend(Nat::eq(c, 61), Glue(u), v)
+    }
+  }
+}
+
+// A long name with no `=` is hit by `w=v` as it is hit by `w`, extended.
+theorem long_hit_extend(
+  l: List(Nat),
+  w: List(Nat),
+  v: List(Nat),
+  nl: no_eq(l) = true
+): long_hit(l, List::append(w, Cons(61, v))) = extend_hit(long_hit(l, w), v) {
+  ⊢ long_hit(l, List::append(w, Cons(61, v))) = extend_hit(long_hit(l, w), v) from match l {
+    Nil => Hit::end_extend(w, v)
+    Cons(x, xs) => ⊢ long_hit(Cons(x, xs), List::append(w, Cons(61, v))) = extend_hit(long_hit(Cons(x, xs), w), v) from match w {
+      Nil => Eq::subst(
+        (q: Bool) => (Hit::after(q, long_hit(xs, v)) = Miss),
+        Eq::sym(eq_step_head(Nat::eq(x, 61), no_eq(xs), nl)),
+        Refl
+      )
+      Cons(y, ys) => Eq::trans(
+        Eq::congr((h: Hit) => Hit::after(Nat::eq(x, y), h), long_hit_extend(xs, ys, v, eq_step_tail(Nat::eq(x, 61), no_eq(xs), nl))),
+        Hit::after_extend(Nat::eq(x, y), long_hit(xs, ys), v)
+      )
+    }
+  }
+}
+
+fn both(l: Bool, r: Bool): Bool {
+  ⊢ Bool from match l {
+    false => false
+    true => r
+  }
+}
+
+theorem both_left(l: Bool, r: Bool, h: both(l, r) = true): l = true {
+  ⊢ l = true from match l {
+    false => h
+    true => Refl
+  }
+}
+
+theorem both_right(l: Bool, r: Bool, h: both(l, r) = true): r = true {
+  ⊢ r = true from match l {
+    false => False::elim(yes_not_no(Eq::sym(h)))
+    true => h
+  }
+}
+
+// Whether no long name of the declaration has a `=`.
+fn longs_no_eq(os: List(Opt)): Bool {
+  ⊢ Bool from match os {
+    Nil => true
+    Cons(o, rest) => both(no_eq(Text::bytes(Opt::long(o))), longs_no_eq(rest))
+  }
+}
+
+theorem found_succ_extend(r: Option(Found), v: List(Nat)): found_succ(extend_found(r, v)) = extend_found(found_succ(r), v) {
+  ⊢ found_succ(extend_found(r, v)) = extend_found(found_succ(r), v) from match r {
+    None => Refl
+    Some(x) => ⊢ found_succ(extend_found(Some(x), v)) = extend_found(found_succ(Some(x)), v) from match x {
+      Mk(i, h) => Refl
+    }
+  }
+}
+
+theorem long_step_extend(h: Hit, r: Option(Found), v: List(Nat)): long_step(extend_hit(h, v), extend_found(r, v)) = extend_found(long_step(h, r), v) {
+  ⊢ long_step(extend_hit(h, v), extend_found(r, v)) = extend_found(long_step(h, r), v) from match h {
+    Miss => found_succ_extend(r, v)
+    Exact => Refl
+    Glue(u) => Refl
+  }
+}
+
+// With no `=` in the long names, `--w=v` finds the option `--w` finds.
+theorem lookup_long_extend(
+  os: List(Opt),
+  w: List(Nat),
+  v: List(Nat),
+  n: longs_no_eq(os) = true
+): lookup_long(os, List::append(w, Cons(61, v))) = extend_found(lookup_long(os, w), v) {
+  ⊢ lookup_long(os, List::append(w, Cons(61, v))) = extend_found(lookup_long(os, w), v) from match os {
+    Nil => Refl
+    Cons(o, rest) => Eq::trans(
+      Eq::congr(
+        (h: Hit) => long_step(h, lookup_long(rest, List::append(w, Cons(61, v)))),
+        long_hit_extend(Text::bytes(Opt::long(o)), w, v, both_left(no_eq(Text::bytes(Opt::long(o))), longs_no_eq(rest), n))
+      ),
+      Eq::trans(
+        Eq::congr(
+          (r: Option(Found)) => long_step(extend_hit(long_hit(Text::bytes(Opt::long(o)), w), v), r),
+          lookup_long_extend(rest, w, v, both_right(no_eq(Text::bytes(Opt::long(o))), longs_no_eq(rest), n))
+        ),
+        long_step_extend(long_hit(Text::bytes(Opt::long(o)), w), lookup_long(rest, w), v)
+      )
+    )
+  }
+}
+
+// ---- which declarations and items can be rendered ------------------------------
+
+fn is_exact(h: Hit): Bool {
+  ⊢ Bool from match h {
+    Miss => false
+    Exact => true
+    Glue(v) => false
+  }
+}
+
+fn found_is(f: Option(Found), i: Nat): Bool {
+  ⊢ Bool from match f {
+    None => false
+    Some(x) => ⊢ Bool from match x {
+      Mk(j, h) => both(Nat::eq(j, i), is_exact(h))
+    }
+  }
+}
+
+theorem found_is_sound(f: Option(Found), i: Nat, e: found_is(f, i) = true): f = Some(Found::Mk(i, Exact)) {
+  ⊢ f = Some(Found::Mk(i, Exact)) from match f {
+    None => False::elim(yes_not_no(Eq::sym(e)))
+    Some(x) => ⊢ Some(x) = Some(Found::Mk(i, Exact)) from match x {
+      Mk(j, h) => ⊢ Some(Found::Mk(j, h)) = Some(Found::Mk(i, Exact)) from match h {
+        Miss => False::elim(yes_not_no(Eq::sym(both_right(Nat::eq(j, i), false, e))))
+        Exact => Eq::congr((k: Nat) => Some(Found::Mk(k, Exact)), Nat::eq_sound(j, i, both_left(Nat::eq(j, i), true, e)))
+        Glue(v) => False::elim(yes_not_no(Eq::sym(both_right(Nat::eq(j, i), false, e))))
+      }
+    }
+  }
+}
+
+fn nonempty(l: List(Nat)): Bool {
+  ⊢ Bool from match l {
+    Nil => false
+    Cons(x, xs) => true
+  }
+}
+
+// Each option of `os`, numbered by `f`, is the first `--long` of `all` names,
+// and its long name is not empty.
+fn names_from(all: List(Opt), os: List(Opt), f: (Nat) -> Nat): Bool {
+  ⊢ Bool from match os {
+    Nil => true
+    Cons(o, rest) => both(
+      both(found_is(lookup_long(all, Text::bytes(Opt::long(o))), f(Zero)), nonempty(Text::bytes(Opt::long(o)))),
+      names_from(all, rest, (k: Nat) => f(Succ(k)))
+    )
+  }
+}
+
+// A declaration whose options `render` can write: no long name is empty or
+// has a `=`, and no two are the same. `cli!` declarations are; `Refl`
+// shows it for each.
+pub fn renderable(os: List(Opt)): Bool {
+  both(longs_no_eq(os), names_from(os, os, (k: Nat) => k))
+}
+
+theorem some_inj<A: Type>(x: A, y: A, e: Some(x) = Some(y)): x = y {
+  ⊢ x = y from match e {
+    Refl => Refl
+  }
+}
+
+theorem names_at(
+  all: List(Opt),
+  os: List(Opt),
+  f: (Nat) -> Nat,
+  k: Nat,
+  o: Opt,
+  ho: List::nth(os, k) = Some(o),
+  h: names_from(all, os, f) = true
+): both(found_is(lookup_long(all, Text::bytes(Opt::long(o))), f(k)), nonempty(Text::bytes(Opt::long(o)))) = true {
+  ⊢ both(found_is(lookup_long(all, Text::bytes(Opt::long(o))), f(k)), nonempty(Text::bytes(Opt::long(o)))) = true from match os {
+    Nil => False::elim(none_not_some(o, ho))
+    Cons(p, rest) => ⊢ both(found_is(lookup_long(all, Text::bytes(Opt::long(o))), f(k)), nonempty(Text::bytes(Opt::long(o)))) = true from match k {
+      Zero => Eq::subst(
+        (q: Opt) => (both(found_is(lookup_long(all, Text::bytes(Opt::long(q))), f(Zero)), nonempty(Text::bytes(Opt::long(q)))) = true),
+        some_inj(p, o, ho),
+        both_left(
+          both(found_is(lookup_long(all, Text::bytes(Opt::long(p))), f(Zero)), nonempty(Text::bytes(Opt::long(p)))),
+          names_from(all, rest, (j: Nat) => f(Succ(j))),
+          h
+        )
+      )
+      Succ(j) => names_at(
+        all,
+        rest,
+        (n: Nat) => f(Succ(n)),
+        j,
+        o,
+        ho,
+        both_right(
+          both(found_is(lookup_long(all, Text::bytes(Opt::long(p))), f(Zero)), nonempty(Text::bytes(Opt::long(p)))),
+          names_from(all, rest, (n: Nat) => f(Succ(n))),
+          h
+        )
+      )
+    }
+  }
+}
+
+// Whether an option item gives a value exactly when its option takes one.
+fn takes_fit(t: Takes, v: Option(Text)): Bool {
+  ⊢ Bool from match t {
+    Nothing => ⊢ Bool from match v {
+      None => true
+      Some(x) => false
+    }
+    Value(m) => ⊢ Bool from match v {
+      None => false
+      Some(x) => true
+    }
+  }
+}
+
+fn fit_at(mo: Option(Opt), v: Option(Text)): Bool {
+  ⊢ Bool from match mo {
+    None => false
+    Some(o) => takes_fit(Opt::takes(o), v)
+  }
+}
+
+fn fit(os: List(Opt), x: Item): Bool {
+  ⊢ Bool from match x {
+    ItemOpt(i, v) => fit_at(List::nth(os, i), v)
+    ItemPos(t) => false
+    ItemSub(k, rest) => false
+  }
+}
+
+// Whether every item is an option of the declaration, with a value exactly
+// when it takes one.
+pub fn fits(os: List(Opt), xs: List(Item)): Bool {
+  ⊢ Bool from match xs {
+    Nil => true
+    Cons(x, rest) => both(fit(os, x), fits(os, rest))
+  }
+}
+
+// ---- rendering --------------------------------------------------------------------
+
+fn long_tail(l: List(Nat), v: Option(Text)): List(Nat) {
+  ⊢ List(Nat) from match v {
+    None => l
+    Some(t) => List::append(l, Cons(61, Text::bytes(t)))
+  }
+}
+
+// `--long` or `--long=v`.
+fn render_opt(o: Opt, v: Option(Text)): Text {
+  text(Cons(45, Cons(45, long_tail(Text::bytes(Opt::long(o)), v))))
+}
+
+fn render_at(mo: Option(Opt), v: Option(Text)): Text {
+  ⊢ Text from match mo {
+    None => ""
+    Some(o) => render_opt(o, v)
+  }
+}
+
+fn render_item(os: List(Opt), x: Item): Text {
+  ⊢ Text from match x {
+    ItemOpt(i, v) => render_at(List::nth(os, i), v)
+    ItemPos(t) => t
+    ItemSub(k, rest) => ""
+  }
+}
+
+// The option items, then `--` and the positional arguments.
+pub fn render(os: List(Opt), xs: List(Item), ps: List(Text)): List(Text) {
+  ⊢ List(Text) from match xs {
+    Nil => Cons("--", ps)
+    Cons(x, rest) => Cons(render_item(os, x), render(os, rest, ps))
+  }
+}
+
+// ---- reading it back ----------------------------------------------------------------
+
+fn hit_for(v: Option(Text)): Hit {
+  ⊢ Hit from match v {
+    None => Exact
+    Some(t) => Glue(Text::bytes(t))
+  }
+}
+
+theorem tail_nonempty(l: List(Nat), v: Option(Text), h: nonempty(l) = true): nonempty(long_tail(l, v)) = true {
+  ⊢ nonempty(long_tail(l, v)) = true from match v {
+    None => h
+    Some(t) => ⊢ nonempty(List::append(l, Cons(61, Text::bytes(t)))) = true from match l {
+      Nil => Refl
+      Cons(x, xs) => Refl
+    }
+  }
+}
+
+theorem after_dashes_cons(os: List(Opt), a: Text, l: List(Nat), h: nonempty(l) = true): after_dashes(os, a, l) = long_word(os, a, lookup_long(os, l)) {
+  ⊢ after_dashes(os, a, l) = long_word(os, a, lookup_long(os, l)) from match l {
+    Nil => False::elim(yes_not_no(Eq::sym(h)))
+    Cons(x, xs) => Refl
+  }
+}
+
+theorem lookup_tail(
+  os: List(Opt),
+  l: List(Nat),
+  i: Nat,
+  v: Option(Text),
+  n: longs_no_eq(os) = true,
+  fi: lookup_long(os, l) = Some(Found::Mk(i, Exact))
+): lookup_long(os, long_tail(l, v)) = Some(Found::Mk(i, hit_for(v))) {
+  ⊢ lookup_long(os, long_tail(l, v)) = Some(Found::Mk(i, hit_for(v))) from match v {
+    None => fi
+    Some(t) => Eq::trans(lookup_long_extend(os, l, Text::bytes(t), n), Eq::congr((f: Option(Found)) => extend_found(f, Text::bytes(t)), fi))
+  }
+}
+
+theorem takes_step(a: Text, i: Nat, t: Takes, v: Option(Text), h: takes_fit(t, v) = true): long_takes(a, i, hit_for(v), t) = StItems(Cons(ItemOpt(i, v), Nil), None) {
+  ⊢ long_takes(a, i, hit_for(v), t) = StItems(Cons(ItemOpt(i, v), Nil), None) from match t {
+    Nothing => ⊢ long_takes(a, i, hit_for(v), Nothing) = StItems(Cons(ItemOpt(i, v), Nil), None) from match v {
+      None => Refl
+      Some(x) => False::elim(yes_not_no(Eq::sym(h)))
+    }
+    Value(m) => ⊢ long_takes(a, i, hit_for(v), Value(m)) = StItems(Cons(ItemOpt(i, v), Nil), None) from match v {
+      None => False::elim(yes_not_no(Eq::sym(h)))
+      Some(x) => Eq::congr((y: Text) => StItems(Cons(ItemOpt(i, Some(y)), Nil), None), Text::eta(x))
+    }
+  }
+}
+
+theorem word_render_at(
+  os: List(Opt),
+  i: Nat,
+  mo: Option(Opt),
+  v: Option(Text),
+  r: renderable(os) = true,
+  en: List::nth(os, i) = mo,
+  h: fit_at(mo, v) = true
+): word(os, None, render_at(mo, v)) = StItems(Cons(ItemOpt(i, v), Nil), None) {
+  ⊢ word(os, None, render_at(mo, v)) = StItems(Cons(ItemOpt(i, v), Nil), None) from match mo {
+    None => False::elim(yes_not_no(Eq::sym(h)))
+    Some(o) => {
+      let l := Text::bytes(Opt::long(o))
+      let nf := names_at(os, os, (k: Nat) => k, i, o, en, both_right(longs_no_eq(os), names_from(os, os, (k: Nat) => k), r))
+      let fi := found_is_sound(lookup_long(os, l), i, both_left(found_is(lookup_long(os, l), i), nonempty(l), nf))
+      let ne := both_right(found_is(lookup_long(os, l), i), nonempty(l), nf)
+      Eq::trans(
+        after_dashes_cons(os, render_opt(o, v), long_tail(l, v), tail_nonempty(l, v, ne)),
+        Eq::trans(
+          Eq::congr(
+            (f: Option(Found)) => long_word(os, render_opt(o, v), f),
+            lookup_tail(os, l, i, v, both_left(longs_no_eq(os), names_from(os, os, (k: Nat) => k), r), fi)
+          ),
+          Eq::trans(
+            Eq::congr((m: Option(Opt)) => long_takes(render_opt(o, v), i, hit_for(v), takes_of(m)), en),
+            takes_step(render_opt(o, v), i, Opt::takes(o), v, h)
+          )
+        )
+      )
+    }
+  }
+}
+
+theorem word_render_item(
+  os: List(Opt),
+  x: Item,
+  r: renderable(os) = true,
+  h: fit(os, x) = true
+): word(os, None, render_item(os, x)) = StItems(Cons(x, Nil), None) {
+  ⊢ word(os, None, render_item(os, x)) = StItems(Cons(x, Nil), None) from match x {
+    ItemOpt(i, v) => word_render_at(os, i, List::nth(os, i), v, r, Refl, h)
+    ItemPos(t) => False::elim(yes_not_no(Eq::sym(h)))
+    ItemSub(k, rest) => False::elim(yes_not_no(Eq::sym(h)))
+  }
+}
+
+module Lex {
+  // What `render` writes, `lex` reads back: the option items, then the
+  // positional arguments.
+  theorem render_read(
+    os: List(Opt),
+    xs: List(Item),
+    ps: List(Text),
+    r: renderable(os) = true,
+    h: fits(os, xs) = true
+  ): lex(os, render(os, xs, ps)) = LexOk(List::append(xs, List::map(positional, ps))) {
+    ⊢ lex(os, render(os, xs, ps)) = LexOk(List::append(xs, List::map(positional, ps))) from match xs {
+      Nil => Refl
+      Cons(x, rest) => Eq::subst(
+        (s: Step) => (Lex::join(s, render(os, rest, ps), lex_from(os, render(os, rest, ps), step_wait(s))) = LexOk(Cons(x, List::append(rest, List::map(positional, ps))))),
+        Eq::sym(word_render_item(os, x, r, both_left(fit(os, x), fits(os, rest), h))),
+        Eq::congr(
+          (l: Lexed) => lexed_prepend(Cons(x, Nil), l),
+          Lex::render_read(os, rest, ps, r, both_right(fit(os, x), fits(os, rest), h))
+        )
+      )
+    }
+  }
+}
+
+module Split {
+  // The rendered command line names no subcommand: its words before `--` are
+  // options.
+  theorem render_read(
+    os: List(Opt),
+    subs: List(Spec),
+    xs: List(Item),
+    ps: List(Text),
+    r: renderable(os) = true,
+    h: fits(os, xs) = true
+  ): split_from(os, subs, render(os, xs, ps), None) = Split::Mk(render(os, xs, ps), None, Nil) {
+    ⊢ split_from(os, subs, render(os, xs, ps), None) = Split::Mk(render(os, xs, ps), None, Nil) from match xs {
+      Nil => Refl
+      Cons(x, rest) => ⊢ split_from(os, subs, render(os, Cons(x, rest), ps), None) = Split::Mk(render(os, Cons(x, rest), ps), None, Nil) from match x {
+        ItemOpt(i, v) => Eq::subst(
+          (s: Step) => (split_at(
+              s,
+              render_item(os, ItemOpt(i, v)),
+              render(os, rest, ps),
+              Subcommand::index(subs, render_item(os, ItemOpt(i, v))),
+              split_from(os, subs, render(os, rest, ps), step_wait(s))
+            ) = Split::Mk(Cons(render_item(os, ItemOpt(i, v)), render(os, rest, ps)), None, Nil)),
+          Eq::sym(word_render_item(os, ItemOpt(i, v), r, both_left(fit(os, ItemOpt(i, v)), fits(os, rest), h))),
+          Eq::congr(
+            (q: Split) => split_cons(render_item(os, ItemOpt(i, v)), q),
+            Split::render_read(os, subs, rest, ps, r, both_right(fit(os, ItemOpt(i, v)), fits(os, rest), h))
+          )
+        )
+        ItemPos(t) => False::elim(yes_not_no(Eq::sym(h)))
+        ItemSub(k, more) => False::elim(yes_not_no(Eq::sym(h)))
+      }
+    }
+  }
+}
+
+module Lex {
+  // The same through `Lex::cmd`, whatever subcommands are declared.
+  pub theorem cmd_render(
+    os: List(Opt),
+    subs: List(Spec),
+    xs: List(Item),
+    ps: List(Text),
+    r: renderable(os) = true,
+    h: fits(os, xs) = true
+  ): Lex::cmd(os, subs, render(os, xs, ps)) = LexOk(List::append(xs, List::map(positional, ps))) {
+    Eq::trans(
+      Eq::congr((q: Split) => Lex::split(os, q), Split::render_read(os, subs, xs, ps, r, h)),
+      Eq::trans(lexed_append_nil(lex(os, render(os, xs, ps))), Lex::render_read(os, xs, ps, r, h))
+    )
+  }
+}

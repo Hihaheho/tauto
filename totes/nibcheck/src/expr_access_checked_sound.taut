@@ -22,7 +22,7 @@ pub theorem access_hint_arity_frame_checked(
   same: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, access_hint_arity(c, ps, hs, same)) {
-  match same: CkCheckedFrame(c, access_hint_arity(c, ps, hs, same)) {
+  ⊢ CkCheckedFrame(c, access_hint_arity(c, ps, hs, same)) from match same {
     true => checked_frame_rewrap(
       c,
       ck_lambda_hint(ps, c, hs),
@@ -38,7 +38,7 @@ pub theorem access_hint_type_frame_checked(
   t: Ty,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, access_hint_type(c, ps, t)) {
-  match t: CkCheckedFrame(c, access_hint_type(c, ps, t)) {
+  ⊢ CkCheckedFrame(c, access_hint_type(c, ps, t)) from match t {
     TyInt(pat_w) => checked_frame_return(c, Star, ordered)
     TyBool => checked_frame_return(c, Star, ordered)
     TyText => checked_frame_return(c, Star, ordered)
@@ -72,7 +72,7 @@ pub theorem access_hint_frame_checked(
   hint: Option(Ty),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, access_hint(c, ps, hint)) {
-  match hint: CkCheckedFrame(c, access_hint(c, ps, hint)) {
+  ⊢ CkCheckedFrame(c, access_hint(c, ps, hint)) from match hint {
     None => checked_frame_return(c, Star, ordered)
     Some(h) => access_hint_type_frame_checked(c, ps, ty_unborrowed(ck_resolve(c, h)), ordered)
   }
@@ -97,7 +97,7 @@ pub theorem access_join_frame_checked(
   result: Option(Ty),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, access_join(c, b, result)) {
-  match result: CkCheckedFrame(c, access_join(c, b, result)) {
+  ⊢ CkCheckedFrame(c, access_join(c, b, result)) from match result {
     None => checked_frame_return(c, b, ordered)
     Some(r) => checked_frame_rewrap(
       c,
@@ -134,7 +134,7 @@ pub theorem access_poly_frame_checked(
   f: Ty,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, access_poly(c, function, original, f)) {
-  match f: CkCheckedFrame(c, access_poly(c, function, original, f)) {
+  ⊢ CkCheckedFrame(c, access_poly(c, function, original, f)) from match f {
     TyInt(pat_w) => checked_frame_return(c, original, ordered)
     TyBool => checked_frame_return(c, original, ordered)
     TyText => checked_frame_return(c, original, ordered)

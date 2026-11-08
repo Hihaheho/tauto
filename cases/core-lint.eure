@@ -1,0 +1,317 @@
+@ cases.a-braced-name-in-a-syntax-literal-is-found
+source = ```tauto
+theorem t(n: Nat): nat!(`${n} + ${Succ(n)} = $n`) { ?x }
+```
+lint = ["a hole `?x`: a finished file has none", "braced-name: write `$n`, not `${n}`", "braced-name: write `$Succ(n)`, not `${Succ(n)}`"]
+
+@ cases.a-braced-operation-in-a-syntax-literal-gets-parentheses
+source = ```tauto
+theorem t(n: Nat): nat!(`${n + 0} = $n`) { ?x }
+```
+lint = ["a hole `?x`: a finished file has none", "braced-name: write `$(n + 0)`, not `${n + 0}`"]
+
+@ cases.braces-around-statements-in-a-syntax-literal-are-fine
+source = ```tauto
+theorem t(n: Nat): nat!(`${ let m := n; m } = $n`) { ?x }
+```
+lint = ["a hole `?x`: a finished file has none"]
+
+@ cases.a-default-arm-is-found
+source = ```tauto
+fn f(n: Nat): Nat { match n { Zero => 1, _ => 0 } }
+```
+lint = ["a `_ =>` arm: name every constructor instead"]
+
+@ cases.a-wildcard-inside-a-pattern-is-fine
+source = ```tauto
+fn f(n: Nat): Nat { match n { Zero => 1, Succ(_) => 0 } }
+```
+lint = []
+
+@ cases.a-hole-is-found
+source = ```tauto
+theorem t(n: Nat): n = n { ?h }
+```
+lint = ["a hole `?h`: a finished file has none"]
+
+@ cases.a-typed-macro-in-a-proof-is-found
+source = ```tauto
+macro fn m(c: Judgement): SynExpr { c }
+theorem t(): Eq(Nat, 3, 3) { m!(Refl(Nat, 3)) }
+```
+lint = ["typed-macro-in-proof: `m!(…)` in a proof; write the expansion (tauto macro expand)"]
+
+@ cases.a-typed-macro-in-a-program-is-fine
+source = ```tauto
+macro fn m(c: Judgement): SynExpr { c }
+fn g(x: i64): i64 { m!(x) }
+```
+lint = []
+
+@ cases.a-capture-is-found
+source = ```tauto
+fn f(c: Judgement): SynIdent { Syn::ident_like(c, "it") }
+```
+lint = ["macro-capture: `Syn::ident_like` captures a name of the caller"]
+
+@ cases.a-step-calls-a-tactic-of-std
+source = ```tauto
+theorem t(a: Nat, h: a = Zero): a = Zero {
+  by rewrite!(h): a = Zero {
+    ⊢ Eq(Nat, Zero, Zero) from Refl
+  }
+}
+```
+lint = []
+
+@ cases.a-step-calls-a-tactic-of-std-nonstandard
+source = ```tauto
+theorem t(a: Nat, h: a = Zero): a = Zero {
+  by auto!(h): a = Zero {
+    ⊢ Eq(Nat, Zero, Zero) from Refl
+  }
+}
+```
+lint = ["step-tactic: `by auto!(…)` calls a tactic std does not have (rewrite, nat_norm, nat_le, int_norm)"]
+
+@ cases.inside-a-theorem
+source = ```tauto
+theorem t(n: Nat): Eq(n, n) { match n { Zero => Refl, _ => Refl } }
+```
+lint = ["a `_ =>` arm: name every constructor instead"]
+
+
+@ cases.a-named-rest-arm-after-literals-is-fine
+source = ```tauto
+fn f(n: i64): i64 { match n { 1 => 10, 2 => 20, other => other } }
+```
+lint = []
+
+@ cases.a-named-rest-arm-after-text-literals-is-fine
+source = ```tauto
+fn f(s: Text): i64 { match s { "a" => 1, rest => 0 } }
+```
+lint = []
+
+@ cases.a-named-rest-arm-after-a-constructor-is-found
+source = ```tauto
+fn f(n: Nat): Nat { match n { Zero => 1, k => k } }
+```
+lint = ["rest-arm: a named rest arm follows only literals of an integer, a character or `Text`; name every constructor instead"]
+
+@ cases.a-nullary-constructor-last-arm-is-not-a-rest-arm
+source = ```tauto
+enum K { Special, NotSpecial }
+fn f(k: K): i64 { match k { Special => 1, NotSpecial => 0 } }
+fn g(o: Option(i64)): i64 { match o { Some(x) => x, None => 0 } }
+```
+lint = []
+
+@ cases.a-named-rest-arm-after-a-bool-is-found
+source = ```tauto
+fn f(b: Bool): Nat { match b { true => 1, c => 0 } }
+```
+lint = ["rest-arm: a named rest arm follows only literals of an integer, a character or `Text`; name every constructor instead"]
+
+@ cases.an-indexed-match-with-goals-is-fine
+source = ```tauto
+inductive Le: (n: Nat, m: Nat) -> Prop {
+  LeRefl<n: Nat>: Le(n, n),
+}
+theorem t(a: Nat, b: Nat, h: Le(a, b)): Le(a, b) {
+  ⊢ Le(a, b) from match h {
+    LeRefl => ⊢ Le(a, a) from LeRefl,
+  }
+}
+```
+lint = []
+
+@ cases.an-indexed-match-without-goals-is-found
+source = ```tauto
+inductive Le: (n: Nat, m: Nat) -> Prop {
+  LeRefl<n: Nat>: Le(n, n),
+}
+theorem t(a: Nat, b: Nat, h: Le(a, b)): Le(a, b) {
+  ⊢ Le(a, b) from match h {
+    LeRefl => LeRefl,
+  }
+}
+```
+lint = ["indexed-arm-goal: an arm of a `match` over a type with indices writes its goal (`C => ⊢ G from p`)"]
+
+@ cases.a-motive-that-takes-the-hypothesis-again-is-found
+source = ```tauto
+theorem t(b: Bool, h: b = true): b = true {
+  (⊢ (b = true) -> b = true from match b {
+    true => (h2: true = true) => h2,
+    false => (h2: false = true) => h2,
+  })(h)
+}
+```
+lint = ["hand-generalize: "]
+
+@ cases.a-case-split-by-bool-cases-is-found
+source = ```tauto
+fn f(b: Bool): Nat { Bool::cases(b, Zero, Succ(Zero)) }
+```
+lint = ["bool-cases: "]
+
+@ cases.and-and-or-mixed-without-parentheses-is-found
+source = ```tauto
+fn f(a: Bool, b: Bool, c: Bool): Bool { a && b || c }
+```
+lint = ["bool-mix: "]
+
+@ cases.and-and-or-mixed-in-parentheses-is-fine
+source = ```tauto
+fn f(a: Bool, b: Bool, c: Bool): Bool { (a && b) || (c && a) }
+```
+lint = []
+
+@ cases.mk-on-a-type-with-several-constructors-is-found
+source = ```tauto
+inductive Head: Type {
+  MkHead(n: Nat): Head,
+  Other: Head,
+}
+```
+lint = ["mk-constructor: `MkHead`"]
+
+@ cases.mk-on-a-type-with-one-constructor-is-fine
+source = ```tauto
+inductive Wrap: Type {
+  Mk(n: Nat): Wrap,
+}
+```
+lint = []
+
+@ cases.a-raw-local-is-found
+source = ```tauto
+fn f(r#from: Nat): Nat { let r#view: Nat := r#from; r#view }
+```
+lint = ["raw-local: the local `r#from`", "raw-local: the local `r#view`"]
+
+@ cases.a-raw-field-is-fine
+source = ```tauto
+struct S { r#view: Nat }
+fn f(s: S): Nat { s.r#view }
+```
+lint = []
+
+@ cases.a-named-pair-projection-keeps-its-function
+source = ```tauto
+fn f(p: Nat × Nat): Nat { Pair::fst(p) }
+```
+lint = []
+
+@ cases.a-proposition-by-name-is-found
+source = ```tauto
+theorem t(a: Prop, b: Prop, h: And(a, b)): a ∧ b { h }
+```
+lint = ["named-prop: write `A ∧ B`, not `And(…)`"]
+
+@ cases.an-unused-forall-is-found
+source = ```tauto
+theorem t(a: Prop, b: Prop, f: ∀ h: a. b, x: a): b { f(x) }
+```
+lint = ["unused-forall: `∀ h`"]
+
+@ cases.a-used-forall-is-fine
+source = ```tauto
+theorem t(p: (n: Nat) -> Prop, f: ∀ n: Nat. p(n)): p(Zero) { f(Zero) }
+```
+lint = []
+
+@ cases.an-implicit-argument-written-out-is-found
+source = ```tauto
+theorem id_eq<a: Nat, b: Nat>(h: a = b): a = b { h }
+theorem t(x: Nat, y: Nat, h: x = y): x = y { id_eq(x, y, h) }
+```
+lint = ["explicit-implicit: `id_eq(…)`"]
+
+@ cases.an-implicit-argument-left-out-is-fine
+source = ```tauto
+theorem id_eq<a: Nat, b: Nat>(h: a = b): a = b { h }
+theorem t(x: Nat, y: Nat, h: x = y): x = y { id_eq(h) }
+```
+lint = []
+
+@ cases.an-import-without-a-list-is-found
+source = ```tauto
+import std::Text
+import "value.taut"
+fn f(): Nat { 0 }
+```
+lint = ["import-list: `import std::Text` writes no list of the names it brings; `tauto lint --fix` writes it", 'import-list: `import "value.taut"` writes no list of the names it brings; `tauto lint --fix` writes it']
+
+@ cases.an-import-with-a-list-is-fine
+source = ```tauto
+import std::Text { Text, concat }
+import "value.taut" { Value }
+fn f(): Nat { 0 }
+```
+lint = []
+
+@ cases.a-pair-type-written-by-its-name-is-found
+source = ```tauto
+pub def NamedPair(): Type := Pair(Nat, Nat)
+```
+lint = ["pair-name: "]
+
+@ cases.a-pair-record-written-by-its-name-is-found
+source = ```tauto
+fn f(): Nat × Nat { Pair { fst: 1, snd: 2 } }
+```
+lint = ["pair-name: "]
+
+@ cases.a-pair-pattern-written-by-its-name-is-found
+source = ```tauto
+fn f(p: Nat × Nat): Nat {
+  match p {
+    Pair { fst: a, snd: b } => a
+  }
+}
+```
+lint = ["pair-name: "]
+
+@ cases.a-product-and-a-tuple-are-fine
+source = ```tauto
+fn f(p: Nat × Nat): Nat × Nat {
+  match p {
+    #(a, b) => #(b, a)
+  }
+}
+```
+lint = []
+
+@ cases.a-step-a-literal-says-calls-a-tactic-of-std-nonstandard
+source = ````tauto
+theorem t(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(b, a) {
+  proof!(```
+    We have Nat::add(a, b) = Nat::add(b, a) by auto!.
+    ```)
+}
+````
+lint = ["step-tactic: `by auto!(…)` calls a tactic std does not have (rewrite, nat_norm, nat_le, int_norm)"]
+
+@ cases.a-step-a-literal-says-calls-a-tactic-of-std-standard
+source = ````tauto
+theorem t(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(b, a) {
+  proof!(```
+    We have Nat::add(a, b) = Nat::add(b, a) by nat_norm!.
+    ```)
+}
+````
+lint = []
+
+@ cases.both-fields-of-a-pair-are-found
+source = ```tauto
+fn f(p: Nat × Bool): Bool × Nat { #(p.snd, p.fst) }
+```
+lint = ["pair-fields: "]
+
+@ cases.one-field-of-a-pair-is-fine
+source = ```tauto
+fn f(p: Nat × Bool): Nat { p.fst }
+```
+lint = []

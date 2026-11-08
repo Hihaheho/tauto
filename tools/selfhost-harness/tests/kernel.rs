@@ -41,6 +41,7 @@ fn kernel_replays_a_declaration_in_the_evaluator() {
             input: format!("{}\n", replay.input.lines().last().unwrap()),
             expected: "accepted\n".into(),
             unread: 0,
+            time: Default::default(),
         },
         false,
     );
@@ -60,6 +61,7 @@ fn kernel_replays_one_shared_declaration_on_selected_backend() {
             input: format!("{}\n", replay.input.lines().last().unwrap()),
             expected: "accepted\n".into(),
             unread: 0,
+            time: Default::default(),
         },
         true,
     );
@@ -163,6 +165,7 @@ fn kernel_rejects_malformed_input_and_restores_registration() {
         input: "D bad b 0 0 0\nD bad s P 0 0\nD bad s P 0 0\nQ b 0 s P\nunknown\nD missing\nD extra s P 0 0 trailing\n".into(),
         expected: "rejected\naccepted\nrejected\nrejected\nmalformed\nmalformed\nmalformed\n".into(),
         unread: 0,
+        time: Default::default(),
     }, true);
 }
 

@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use tauto_message::msg;
+use tauto_message::{Message, msg};
 use tauto_parol::Span;
 
 use super::program::{FnDecl, Handler, Pattern, Stmt};
@@ -22,14 +22,35 @@ use super::{SurfaceTerm, TermKind};
 
 /// Flattens the modules of `stmts`, and writes out the sets of effects
 /// (`effect_sets`).
-pub fn resolve(stmts: Vec<Stmt>) -> (Vec<Stmt>, Vec<(String, Span)>) {
+pub fn resolve(stmts: Vec<Stmt>) -> (Vec<Stmt>, Vec<(Message, Span)>) {
     resolve_with(stmts, &super::effect_sets::Sets::new(), &[])
+}
+
+/// Flattens module names against the prelude without consuming effect sets.
+/// `ctors` are the constructors the files read before declare: a pattern
+/// that writes one alone matches it, even when a module of the prelude has
+/// its name (`Pending` of an imported `enum State { Pending, … }` is not the
+/// prelude's module `Pending`).
+pub fn flatten_in_prelude(
+    stmts: Vec<Stmt>,
+    ctors: &HashSet<String>,
+) -> (Vec<Stmt>, Vec<(Message, Span)>) {
+    let mut r = Resolver::default();
+    r.know(prelude_fns().iter().map(|n| n.as_str()));
+    r.program_ctors = ctors.clone();
+    flatten_with(stmts, r)
+}
+
+/// The constructors `stmts` declare, by their full names and their short
+/// ones, as a pattern may write them.
+pub fn declared_ctors(stmts: &[Stmt], names: &mut HashSet<String>) {
+    constructors(stmts, names)
 }
 
 /// [`resolve`] where the functions of the prelude's modules (`Code.term`,
 /// `Eq.trans`) are known: statements read apart from the program, such as
 /// the files before a macro, name them as the program does.
-pub fn resolve_in_prelude(stmts: Vec<Stmt>) -> (Vec<Stmt>, Vec<(String, Span)>) {
+pub fn resolve_in_prelude(stmts: Vec<Stmt>) -> (Vec<Stmt>, Vec<(Message, Span)>) {
     resolve_in_prelude_against(stmts, std::iter::empty())
 }
 
@@ -38,10 +59,15 @@ pub fn resolve_in_prelude(stmts: Vec<Stmt>) -> (Vec<Stmt>, Vec<(String, Span)>) 
 pub fn resolve_in_prelude_against<'a>(
     stmts: Vec<Stmt>,
     known: impl IntoIterator<Item = &'a str>,
-) -> (Vec<Stmt>, Vec<(String, Span)>) {
+) -> (Vec<Stmt>, Vec<(Message, Span)>) {
     let mut r = Resolver::default();
     r.know(prelude_fns().iter().map(|n| n.as_str()));
     r.know(known);
+    // The files read apart are joined here, though a file sees only the
+    // modules of the files it imports: whether a local takes the name of a
+    // module its file sees was told when that file was read with its imports
+    // ([`flatten_files`]), and the modules of the others are not its to take.
+    r.joined_files = true;
     let (mut stmts, mut errors) = flatten_with(stmts, r);
     errors.extend(super::effect_sets::expand(
         &mut stmts,
@@ -79,12 +105,35 @@ pub fn resolve_with(
     stmts: Vec<Stmt>,
     others: &super::effect_sets::Sets,
     known: &[String],
-) -> (Vec<Stmt>, Vec<(String, Span)>) {
-    let (mut stmts, mut errors) = if known.is_empty() {
+) -> (Vec<Stmt>, Vec<(Message, Span)>) {
+    resolve_with_files(stmts, others, known, false)
+}
+
+/// [`resolve_with`] of the statements of several files joined: a file sees
+/// only the modules of the files it imports, and a local that takes the name
+/// of a module its file sees was reported when that file was read with its
+/// imports ([`flatten_files`]). Here the modules of the others are not its
+/// to take.
+pub fn resolve_joined_files(
+    stmts: Vec<Stmt>,
+    others: &super::effect_sets::Sets,
+    known: &[String],
+) -> (Vec<Stmt>, Vec<(Message, Span)>) {
+    resolve_with_files(stmts, others, known, true)
+}
+
+fn resolve_with_files(
+    stmts: Vec<Stmt>,
+    others: &super::effect_sets::Sets,
+    known: &[String],
+    joined_files: bool,
+) -> (Vec<Stmt>, Vec<(Message, Span)>) {
+    let (mut stmts, mut errors) = if known.is_empty() && !joined_files {
         flatten(stmts)
     } else {
         let mut r = Resolver::default();
         r.know(known.iter().map(|k| k.as_str()));
+        r.joined_files = joined_files;
         flatten_with(stmts, r)
     };
     errors.extend(super::effect_sets::expand(&mut stmts, others));
@@ -96,7 +145,7 @@ pub fn resolve_with(
 pub fn resolve_against<'a>(
     stmts: Vec<Stmt>,
     known: impl IntoIterator<Item = &'a str>,
-) -> (Vec<Stmt>, Vec<(String, Span)>) {
+) -> (Vec<Stmt>, Vec<(Message, Span)>) {
     let mut r = Resolver::default();
     r.know(known);
     let (mut stmts, mut errors) = flatten_with(stmts, r);
@@ -131,7 +180,7 @@ pub fn flatten_files<'a>(
     known: impl IntoIterator<Item = &'a str>,
     ctors: &HashSet<String>,
     imports: Option<&[Vec<usize>]>,
-) -> Vec<(String, Span)> {
+) -> Vec<(Message, Span)> {
     let base: Vec<String> = known.into_iter().map(str::to_string).collect();
     let by_file: Vec<Vec<String>> = files
         .iter()
@@ -141,6 +190,7 @@ pub fn flatten_files<'a>(
             names
         })
         .collect();
+    let by_top: Vec<HashSet<String>> = files.iter().map(|f| top_level(f)).collect();
     let mut errors = Vec::new();
     for (i, f) in files.iter_mut().enumerate() {
         // A file knows the modules of the prelude, of itself and of the files
@@ -164,6 +214,15 @@ pub fn flatten_files<'a>(
             }
         }
         r.program_ctors = ctors.clone();
+        r.outer
+            .extend(super::qualify::prelude_names().iter().cloned());
+        let visible: Vec<usize> = match imports {
+            Some(imports) => imports[i].clone(),
+            None => (0..by_top.len()).collect(),
+        };
+        for j in visible {
+            r.outer.extend(by_top[j].iter().cloned());
+        }
         let (stmts, mut e) = flatten_with(std::mem::take(f), r);
         *f = stmts;
         errors.append(&mut e);
@@ -171,18 +230,57 @@ pub fn flatten_files<'a>(
     errors
 }
 
-fn flatten(stmts: Vec<Stmt>) -> (Vec<Stmt>, Vec<(String, Span)>) {
+fn flatten(stmts: Vec<Stmt>) -> (Vec<Stmt>, Vec<(Message, Span)>) {
     if !has_module(&stmts) {
         return (stmts, Vec::new());
     }
     flatten_with(stmts, Resolver::default())
 }
 
-fn flatten_with(stmts: Vec<Stmt>, mut r: Resolver) -> (Vec<Stmt>, Vec<(String, Span)>) {
+fn constructors(statements: &[Stmt], names: &mut HashSet<String>) {
+    for statement in statements {
+        match statement {
+            Stmt::Struct(data) | Stmt::Enum(data) => {
+                for constructor in &data.constructors {
+                    names.insert(constructor.name.to_string());
+                    names.insert(constructor.name.rsplit("::").next().unwrap().to_string());
+                }
+            }
+            Stmt::Inductive(data) => {
+                for constructor in &data.constructors {
+                    names.insert(constructor.name.to_string());
+                    names.insert(constructor.name.rsplit("::").next().unwrap().to_string());
+                }
+            }
+            Stmt::Module { items, .. } | Stmt::Mutual { items, .. } => constructors(items, names),
+            Stmt::Attributed { stmt, .. } => constructors(std::slice::from_ref(stmt), names),
+            _ => {}
+        }
+    }
+}
+
+/// The short names the top level of `stmts` declares, outside every module.
+fn top_level(stmts: &[Stmt]) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for s in stmts {
+        super::qualify::declared(s, &mut |n| {
+            if !n.contains(SEPARATOR) {
+                names.insert(n.to_string());
+            }
+        });
+    }
+    names
+}
+
+fn flatten_with(stmts: Vec<Stmt>, mut r: Resolver) -> (Vec<Stmt>, Vec<(Message, Span)>) {
+    constructors(&stmts, &mut r.program_ctors);
+    r.outer
+        .extend(super::qualify::BUILTIN_TYPES.iter().map(|n| n.to_string()));
+    r.outer.extend(top_level(&stmts));
     r.classes = stmts
         .iter()
         .filter_map(|s| match s {
-            Stmt::Class(c) => Some(c.name.clone()),
+            Stmt::Class(c) => Some(c.name.to_string()),
             _ => None,
         })
         .collect();
@@ -203,6 +301,8 @@ fn has_module(stmts: &[Stmt]) -> bool {
 
 #[derive(Default)]
 struct Resolver {
+    /// The statements are the files of a program joined, not one file's.
+    joined_files: bool,
     modules: HashSet<String>,
     fns: HashSet<String>,
     types: HashSet<String>,
@@ -213,11 +313,16 @@ struct Resolver {
     /// Every class: its members are the flat names `Class::member`, so a
     /// module of the same name would put its functions among them.
     classes: HashSet<String>,
-    errors: RefCell<Vec<(String, Span)>>,
+    errors: RefCell<Vec<(Message, Span)>>,
     /// The constructors of the program: a pattern that writes one alone
     /// matches it and binds nothing (the names are not qualified yet).
     program_ctors: HashSet<String>,
     locals: RefCell<Vec<String>>,
+    /// The short names declared outside every module: the prelude's (and the
+    /// builtin types), and the top level of this file and of the files it
+    /// imports. Writing such a name short in a module that also declares it
+    /// is ambiguous ([`Resolver::name_at`]).
+    outer: HashSet<String>,
 }
 
 /// The full names of the functions and theorems the modules of `stmts` declare: what another file
@@ -233,9 +338,9 @@ pub fn declared_flat(stmts: &[Stmt]) -> Vec<String> {
     let mut names = Vec::new();
     for s in stmts {
         match s {
-            Stmt::Fn(f) => names.push(f.name.clone()),
-            Stmt::Theorem(t) | Stmt::Def(t) => names.push(t.name.clone()),
-            Stmt::Extern { fns, .. } => names.extend(fns.iter().map(|f| f.name.clone())),
+            Stmt::Fn(f) => names.push(f.name.to_string()),
+            Stmt::Theorem(t) | Stmt::Def(t) => names.push(t.name.to_string()),
+            Stmt::Extern { fns, .. } => names.extend(fns.iter().map(|f| f.name.to_string())),
             _ => {}
         }
     }
@@ -278,8 +383,7 @@ impl Resolver {
                                 "surface-module-collides-with-class",
                                 module = &full,
                                 name = name
-                            )
-                            .to_string(),
+                            ),
                             *span,
                         ));
                     }
@@ -380,11 +484,11 @@ impl Resolver {
 
     fn rename(s: &mut Stmt, path: &[String]) {
         match s {
-            Stmt::Fn(f) => f.name = join(path, &f.name),
-            Stmt::Theorem(t) | Stmt::Def(t) => t.name = join(path, &t.name),
+            Stmt::Fn(f) => f.name.edit_spelling(|n| *n = join(path, n)),
+            Stmt::Theorem(t) | Stmt::Def(t) => t.name.edit_spelling(|n| *n = join(path, n)),
             Stmt::Extern { fns, .. } => {
                 for f in fns {
-                    f.name = join(path, &f.name);
+                    f.name.edit_spelling(|n| *n = join(path, n));
                 }
             }
             Stmt::Mutual { items, .. } => {
@@ -394,22 +498,34 @@ impl Resolver {
             }
             Stmt::Attributed { stmt, .. } => Self::rename(stmt, path),
             Stmt::Struct(d) | Stmt::Enum(d) => {
-                let full = join(path, &d.name);
+                let full = if d.name.is_resolved() {
+                    d.name.to_string()
+                } else {
+                    join(path, &d.name)
+                };
                 for c in &mut d.constructors {
+                    if c.name.is_resolved() {
+                        continue;
+                    }
                     c.name = if c.name == d.name {
-                        full.clone()
+                        crate::identity::Name::Spelled(full.clone())
                     } else {
-                        format!("{full}{SEPARATOR}{}", c.name)
+                        format!("{full}{SEPARATOR}{}", c.name).into()
                     };
                 }
-                d.name = full;
+                d.name.edit_spelling(|name| *name = full);
             }
             Stmt::Inductive(d) => {
-                let full = join(path, &d.name);
+                let full = if d.name.is_resolved() {
+                    d.name.to_string()
+                } else {
+                    join(path, &d.name)
+                };
                 for c in &mut d.constructors {
-                    c.name = format!("{full}{SEPARATOR}{}", c.name);
+                    c.name
+                        .edit_spelling(|name| *name = format!("{full}{SEPARATOR}{name}"));
                 }
-                d.name = full;
+                d.name.edit_spelling(|name| *name = full);
             }
             _ => {}
         }
@@ -418,9 +534,13 @@ impl Resolver {
     /// The full name of `name` written in the module `path`. A name that
     /// the module (or an inner one) and an outer module both declare is
     /// ambiguous (the outer one is written with its module path, `A::f`);
-    /// `span`, when given, is where that is reported. A name of the top level
-    /// of the file has no such path, so the module's own declaration is
-    /// the one meant.
+    /// `span`, when given, is where that is reported. A name declared outside
+    /// every module (the prelude's, a builtin type, the top level of the file
+    /// or of an imported file) that the module also declares is an error
+    /// too: `u8` written in `module Font { fn u8 … }` neither silently means
+    /// `Font::u8` nor silently means the builtin type. The module's one is
+    /// written `Font::u8`; the outer one has no path, so the module's
+    /// declaration is renamed to write it.
     fn name_at(&self, name: &str, path: &[String], span: Option<Span>) -> String {
         if self.locals.borrow().iter().any(|bound| bound == name) {
             return name.to_string();
@@ -434,7 +554,15 @@ impl Resolver {
                 found.push(ctor.clone());
             }
         }
-        if found.len() > 1
+        if !found.is_empty()
+            && self.outer.contains(name)
+            && let Some(span) = span
+        {
+            self.errors.borrow_mut().push((
+                msg!("surface-name-shadows-outer", name = name, inner = &found[0]),
+                span,
+            ));
+        } else if found.len() > 1
             && let Some(span) = span
         {
             self.errors.borrow_mut().push((
@@ -442,8 +570,7 @@ impl Resolver {
                     "surface-name-shadowed",
                     name = name,
                     names = found.join(", ")
-                )
-                .to_string(),
+                ),
                 span,
             ));
         }
@@ -493,14 +620,14 @@ impl Resolver {
             Pattern::Ctor { name, args } => {
                 // `@a p`: a label, which names no declaration.
                 if !name.starts_with('@') {
-                    self.ctor_name(name, path);
+                    (name).edit_spelling(|spelling| self.ctor_name(spelling, path));
                 }
                 for a in args {
                     self.pattern(a, path);
                 }
             }
             Pattern::Record { name, fields } => {
-                self.ctor_name(name, path);
+                (name).edit_spelling(|spelling| self.ctor_name(spelling, path));
                 for (_, f) in fields {
                     self.pattern(f, path);
                 }
@@ -511,11 +638,11 @@ impl Resolver {
                 }
             }
             // A constructor without fields, written bare (`C` of `M::T::C`).
-            Pattern::Bind(n) => {
+            Pattern::Bind(crate::identity::Name::Spelled(n)) => {
                 let full = self.name(n, path);
                 if full != *n && self.ctors.values().any(|c| c.as_deref() == Some(&full)) {
                     *p = Pattern::Ctor {
-                        name: full,
+                        name: crate::identity::Name::Spelled(full),
                         args: Vec::new(),
                     };
                 }
@@ -555,7 +682,7 @@ impl Resolver {
 
     fn dotted(t: &SurfaceTerm) -> Option<Vec<&str>> {
         match &*t.kind {
-            TermKind::Var(n) => Some(vec![n.as_str()]),
+            TermKind::Var(crate::identity::Name::Spelled(n)) => Some(vec![n.as_str()]),
             TermKind::Field { base, name } => {
                 let mut v = Self::dotted(base)?;
                 v.push(name.as_str());
@@ -566,11 +693,10 @@ impl Resolver {
     }
 
     fn check_local(&self, name: &str, path: &[String], span: Span) {
-        if self.module(name, path).is_some() {
-            self.errors.borrow_mut().push((
-                msg!("surface-name-of-a-module", name = name).to_string(),
-                span,
-            ));
+        if !self.joined_files && self.module(name, path).is_some() {
+            self.errors
+                .borrow_mut()
+                .push((msg!("surface-name-of-a-module", name = name), span));
         }
     }
 
@@ -580,19 +706,19 @@ impl Resolver {
         self.locals.borrow_mut().truncate(depth);
     }
 
-    fn bind(&self, names: &[String], path: &[String], span: Span) {
+    fn bind<N: AsRef<str>>(&self, names: &[N], path: &[String], span: Span) {
         for name in names {
-            if self.program_ctors.contains(name) {
+            if self.program_ctors.contains(name.as_ref()) {
                 continue;
             }
-            self.check_local(name, path, span);
-            self.locals.borrow_mut().push(name.clone());
+            self.check_local(name.as_ref(), path, span);
+            self.locals.borrow_mut().push(name.as_ref().to_string());
         }
     }
 
     fn pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
         match pattern {
-            Pattern::Bind(name) => names.push(name.clone()),
+            Pattern::Bind(crate::identity::Name::Spelled(name)) => names.push(name.clone()),
             Pattern::Ctor { args, .. } => {
                 for arg in args {
                     Self::pattern_names(arg, names);
@@ -625,7 +751,7 @@ impl Resolver {
                     self.term(ty, path);
                 }
                 self.term(value, path);
-                self.locals.borrow_mut().push(name.clone());
+                self.locals.borrow_mut().push(name.to_string());
             }
             Stmt::Assign { value, .. } => self.term(value, path),
             Stmt::Fn(f) => self.fn_decl(f, path),
@@ -707,12 +833,12 @@ impl Resolver {
 
     fn term(&self, t: &mut SurfaceTerm, path: &[String]) {
         // A qualified name: `M::f`, `M::N::f`, one name.
-        if let TermKind::Var(n) = &*t.kind
+        if let TermKind::Var(crate::identity::Name::Spelled(n)) = &*t.kind
             && n.contains(SEPARATOR)
         {
             let parts: Vec<&str> = n.split(SEPARATOR).collect();
             if let Some(full) = self.dotted_name(&parts, path) {
-                t.kind = Arc::new(TermKind::Var(full));
+                t.kind = Arc::new(TermKind::Var(crate::identity::Name::Spelled(full)));
             }
             return;
         }
@@ -725,16 +851,17 @@ impl Resolver {
                 msg!(
                     "surface-dot-names-a-declaration",
                     name = parts.join(SEPARATOR)
-                )
-                .to_string(),
+                ),
                 t.span,
             ));
-            t.kind = Arc::new(TermKind::Var(full));
+            t.kind = Arc::new(TermKind::Var(crate::identity::Name::Spelled(full)));
             return;
         }
         let span = t.span;
         match Arc::make_mut(&mut t.kind) {
-            TermKind::Var(n) => *n = self.name_at(n, path, Some(span)),
+            TermKind::Var(crate::identity::Name::Spelled(n)) => {
+                *n = self.name_at(n, path, Some(span))
+            }
             TermKind::App {
                 function,
                 arguments,
@@ -802,7 +929,9 @@ impl Resolver {
             TermKind::BorrowLam { lam, .. } => self.term(lam, path),
             TermKind::Borrow { term, .. } | TermKind::Tagged { term, .. } => self.term(term, path),
             TermKind::Record { name, fields, base } => {
-                self.ctor_name(name, path);
+                if name.spelling() != Some(crate::IMPLICITS) {
+                    (name).edit_spelling(|spelling| self.ctor_name(spelling, path));
+                }
                 for (_, v) in fields {
                     self.term(v, path);
                 }
@@ -858,7 +987,7 @@ impl Resolver {
                             for pattern in patterns {
                                 Self::pattern_names(pattern, &mut names);
                             }
-                            names.extend(cont.iter().cloned());
+                            names.extend(cont.iter().map(ToString::to_string));
                             self.bind(&names, path, body.span);
                             if let Some(g) = guard {
                                 self.term(g, path);
@@ -883,7 +1012,7 @@ impl Resolver {
                         self.pattern(&mut a.pattern, path);
                         let mut names = Vec::new();
                         Self::pattern_names(&a.pattern, &mut names);
-                        names.extend(binder.iter().cloned());
+                        names.extend(binder.iter().map(ToString::to_string));
                         self.bind(&names, path, a.body.span);
                         if let Some(g) = &mut a.guard {
                             self.term(g, path);
@@ -915,7 +1044,7 @@ mod tests {
         let mut names = Vec::new();
         walk::term(&mut body, &mut |term| {
             if let TermKind::Var(name) = &*term.kind {
-                names.push(name.clone());
+                names.push(name.to_string());
             }
         });
         names
@@ -1012,9 +1141,78 @@ fn h(): i64 { f() } }"#,
         let mut references = Vec::new();
         walk::term(&mut body, &mut |t| {
             if let TermKind::Var(n) = &*t.kind {
-                references.push(n.clone());
+                references.push(n.to_string());
             }
         });
         assert_eq!(references, ["M::f"]);
+    }
+}
+
+#[cfg(test)]
+mod reference_tests {
+    use super::*;
+    use crate::identity::{DeclRef, Name};
+
+    #[test]
+    fn module_resolution_does_not_replace_a_bound_reference() {
+        let reference = Name::Global(DeclRef::fresh("Module::value"));
+        let term = SurfaceTerm::var(&reference, Span::new(0, 1));
+        let (statements, errors) =
+            resolve_in_prelude_against(vec![Stmt::Expr(term)], ["Module::value"]);
+        assert!(errors.is_empty(), "{errors:?}");
+        let Stmt::Expr(term) = &statements[0] else {
+            panic!("expression")
+        };
+        assert!(matches!(&*term.kind, TermKind::Var(name) if name == &reference));
+    }
+}
+
+#[cfg(test)]
+mod bound_declaration_tests {
+    use super::*;
+    use crate::identity::{DeclRef, Name};
+    use crate::surface::program::{DataConstructor, DataDecl, Vis};
+
+    #[test]
+    fn module_declaration_renaming_preserves_existing_identities() {
+        let owner = DeclRef::fresh("T");
+        let constructor = owner.constructor(0, "C");
+        let mut statement = Stmt::Enum(DataDecl {
+            kind: None,
+            name: owner.clone().into(),
+            vis: Vis::Private,
+            generics: vec![],
+            rows: vec![],
+            host: false,
+            span: Span::new(0, 1),
+            constructors: vec![DataConstructor {
+                name: constructor.clone().into(),
+                fields: vec![],
+            }],
+        });
+        Resolver::rename(&mut statement, &["M".into()]);
+        let Stmt::Enum(data) = statement else {
+            unreachable!()
+        };
+        assert_eq!(data.name, Name::Global(owner));
+        assert_eq!(data.constructors[0].name, Name::Global(constructor));
+    }
+
+    #[test]
+    fn model_renaming_preserves_an_already_bound_reference() {
+        let reference = Name::Global(DeclRef::fresh("Text::of_nat"));
+        let mut statements = [Stmt::Expr(SurfaceTerm::var(&reference, Span::new(0, 1)))];
+        super::super::qualify::rename_models(
+            &mut statements,
+            &[super::super::qualify::Model {
+                file: 0,
+                name: "Text::of_nat".into(),
+                full: "std::Text::Text::of_nat".into(),
+            }],
+        );
+        let Stmt::Expr(term) = &statements[0] else {
+            unreachable!()
+        };
+        assert!(matches!(&*term.kind, TermKind::Var(name) if name == &reference));
     }
 }

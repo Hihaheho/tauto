@@ -14,7 +14,7 @@ pub fn allocation_state_view(
   c: Checker
 ): Pair(Nat, Ordmap(Nat, Ty)) { Pair { fst: ck_next_of(c), snd: ck_subst_of(c) } }
 pub fn allocation_view_valid(r#view: Pair(Nat, Ordmap(Nat, Ty))): Prop {
-  match r#view: Prop {
+  ⊢ Prop from match r#view {
     Pair { fst: limit, snd: subst } => And(
       SubstFutureEmpty(limit, subst),
       SubstValuesAllocated(limit, subst)
@@ -36,7 +36,7 @@ pub theorem allocation_rigid_state_after(
   m: Mut1(Ordmap(Text, Ty), Checker),
   same: allocation_state_view(c) = allocation_state_view(ck_st(m))
 ): allocation_state_view(c) = allocation_state_view(ck_st(ck_rigid_k(generic, value, m))) {
-  match m: allocation_state_view(c) = allocation_state_view(ck_st(ck_rigid_k(generic, value, m))) {
+  ⊢ allocation_state_view(c) = allocation_state_view(ck_st(ck_rigid_k(generic, value, m))) from match m {
     mut1(map, next) => same
   }
 }
@@ -44,7 +44,7 @@ pub theorem ck_rigid_allocation_state(
   gs: List(Pair(Text, Kind)),
   c: Checker
 ): allocation_state_view(c) = allocation_state_view(ck_st(ck_rigid(gs, c))) {
-  match gs: allocation_state_view(c) = allocation_state_view(ck_st(ck_rigid(gs, c))) {
+  ⊢ allocation_state_view(c) = allocation_state_view(ck_st(ck_rigid(gs, c))) from match gs {
     Nil => Refl
     Cons(generic, rest) => allocation_rigid_state_after(
       c,
@@ -73,7 +73,9 @@ pub theorem ck_keep_allocation_state(
   b: Ty
 ): allocation_state_view(c) = allocation_state_view(ck_st(ck_keep(c, gs, rigid, a, b))) {
   Bool::cases(
-    (flag: Bool) => allocation_state_view(c) = allocation_state_view(ck_st(ck_keep_k(c, gs, rigid, a, b, flag))),
+    (flag: Bool) => allocation_state_view(
+      c
+    ) = allocation_state_view(ck_st(ck_keep_k(c, gs, rigid, a, b, flag))),
     ck_rigid_kept(c, gs, rigid, a, b),
     ignored => Refl,
     ignored => Refl

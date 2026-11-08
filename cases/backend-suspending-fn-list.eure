@@ -1,0 +1,59 @@
+// A list of function values whose row suspends: each element is made for the
+// tier the written element type gives, whatever its own body performs, and a
+// name a pattern takes out of the list is called, passed and lent at that
+// tier.
+@ cases.list-literal-elements-take-the-written-tier
+backends = ["rust", "javascript"]
+source = ```nib
+import std::prelude::Os
+
+fn run_all(bs: List(() -> u64 ! {sleep})): u64 ! {sleep} {
+  match bs {
+    Nil => 0
+    Cons(f, rest) => f() + run_all(rest)
+  }
+}
+let r := run_all([() => { perform sleep(1); 1 }, () => 2])
+perform show("r", r)
+```
+shows = ["r = 3"]
+
+@ cases.pattern-bound-function-specializes-a-row-variable
+backends = ["rust", "javascript"]
+source = ```nib
+import std::prelude::Os
+
+fn call<!e>(g: () -> u64 ! e): u64 ! e {
+  g()
+}
+fn run_all(bs: List(() -> u64 ! {sleep})): u64 ! {sleep} {
+  match bs {
+    Nil => 0
+    Cons(f, rest) => call(f) + run_all(rest)
+  }
+}
+perform show("r", run_all([() => { perform sleep(1); 1 }, () => 2]))
+```
+shows = ["r = 3"]
+
+@ cases.pattern-bound-function-lent-to-a-borrowed-callback
+backends = ["rust", "javascript"]
+source = ```nib
+import std::prelude::Os
+
+fn call_ref<!e>(&g: () -> u64 ! e): u64 ! e {
+  g()
+}
+fn run_all(bs: List(() -> u64 ! {sleep})): u64 ! {sleep} {
+  match bs {
+    Nil => 0
+    Cons(f, rest) => call_ref(&f) + run_all(rest)
+  }
+}
+fn lend(f: () -> u64 ! {sleep}): u64 ! {sleep} {
+  call_ref(&f)
+}
+perform show("r", run_all([() => { perform sleep(1); 4 }, () => 5]))
+perform show("p", lend(() => { perform sleep(1); 6 }))
+```
+shows = ["r = 9", "p = 6"]

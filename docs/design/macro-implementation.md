@@ -10,13 +10,13 @@
 
 ```text
 crates/tauto-parol         tauto.par（呼び出しのトークンと、syntax・macro・NAME!(…)・quote の構文を含む）とその表
-crates/tauto-syntax       文法の表のデータ型、表の読み込み、字句の駆動部、LL(k) の駆動部、型付き AST の汎用の木
+crates/tauto-syntax       文法の表のデータ型、表の読み込み、字句の駆動部、LL(k) と LALR(1) の駆動部、型付き AST の汎用の木
                            依存：なし（std だけ）
 totes/llkgen               （Nib）文法の文字列から表を作る。コミットした参照の表と一字一句同じ
-crates/tauto               macros/：構文の値、衛生、展開、下ろし、由来、登録、Code、型付きマクロの変換、ステップ
+crates/tauto               macros/：構文の値、衛生、展開、下ろし、由来、登録、Judgement、型付きマクロの変換、ステップ
                            eval.rs：関数を値の引数で呼ぶ入口と、マクロのホスト
 crates/tauto-cli           tauto macro …、tauto syntax … のコマンド
-std/prelude/Macro.taut          構文の値の型、Code の操作、macro_error などの効果、syn_* の builtin の宣言
+std/prelude/Macro.taut          構文の値の型、Judgement の操作、macro_error などの効果、syn_* の builtin の宣言
 lean/Proto/Macro/          `macro-semantics.md`「Lean のモジュールと証明義務」
 meta/MacroScope.taut      同上（Scope.lean の tauto への移植）
 cases/macro/               受け入れのケース（.eure）
@@ -29,7 +29,7 @@ cases/macro/               受け入れのケース（.eure）
 - `tauto.par` の構文解析器を作る道具は `tools/tauto-parol-gen` にだけある。道具の依存は多い（CLI、乱数、並列、生成器の道具など）ので、
   道具はワークスペースの外に自分の `Cargo.lock` を持ち、その依存はルートの `Cargo.lock` と tauto の本体の供給網に入らない。
 - 利用者の `syntax` の表は `totes/llkgen`（Nib）が作るので、表を作るのに道具は要らない。
-  `crates/tauto-selfhost/tests/llkgen.rs` が、コミットした参照の表（`crates/tauto-syntax/tests/data`、
+  `tools/selfhost-harness/tests/llkgen.rs` が、コミットした参照の表（`crates/tauto-syntax/tests/data`、
   `crates/tauto/tests/syntax_fixtures/.tauto-syntax`、`examples/*/.tauto-syntax`）について、`totes/llkgen` の出力が一字一句同じであることを確かめる。
 - 実行部は自前（「`crates/tauto-syntax`」）。実行時に読んだ表をそのまま駆動部に渡せるように、表は実行時に作る値で持つ（`&'static` の定数にしない）。
 
@@ -71,23 +71,23 @@ MacroBlock: MacroBlock3 | MacroBlock4 | MacroBlock5 | MacroBlock6 ;
 MacroBlock3: MacroBlockStart3 { MacroChunk | MacroTicks2 } MacroBlockEnd3 ;  // 4・5・6 も同じ
 Text: <INITIAL, InParen, InBrace>/"([^"\\]|\\[\\"'nrt0]|\\u\{[0-9a-fA-F]{1,6}\})*"|'[^']*'|plaintext`[^`\r\n]*`/ ;
 
-// マクロの呼び出し NAME!( … )（`macro.md`「`macro` 宣言（登録）と呼び出し `NAME!(…)`」）。名前・!・( が空白なしで続くときだけ。
-// 否定 !x、!=、効果の行 -> T ! {e} とは字句で分かれる（どれも名前の直後に !( が来ない）。
-MacroBang: <INITIAL, InParen, InBrace>/[\p{L}_][\p{L}\p{N}_]*!/ ?= /\(/ ;
-KwSyntax: <INITIAL, InBrace>/syntax/ ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*=/ ;
-KwMacro:  <INITIAL, InBrace>/macro/  ?= /[ \t]+[\p{L}_][\p{L}\p{N}_]*[ \t]*=/ ;
+// マクロの呼び出し NAME!( … )（`macro.md`「`macro` 宣言（登録）と呼び出し `NAME!(…)`」）。名前の後ろに ! と ( が続くとき（空白は問わない）、
+// その名前がマクロの名前になる。! は Bang の一つのトークンで、!=、効果の行 -> T ! {e} とは ! の次のトークンで分かれる。
+MacroName: <INITIAL, InParen, InBrace>/[\p{L}_][\p{L}\p{N}_]*/ ?= /[ \t]*![ \t]*\(/ ;
+KwSyntaxMacro: <INITIAL, InParen, InBrace>'syntax!' ;
+KwMacro: <INITIAL, InParen, InBrace>'macro' ;
 KwQuote:  <INITIAL, InParen, InBrace>/quote/ ?= /[ \t]*\{|[ \t]+stmts[ \t]*\{/ ;
 Dollar:   <INITIAL, InParen, InBrace>'$' ;
 
-SyntaxDecl: KwSyntax Ident Eq MacroBlock ;          // 塊の名前は par でなければならない（読み込みで検査）
-MacroDecl:  KwMacro Ident Eq Ident ;
+SyntaxDecl: SyntaxMacro LParen Expr Comma Expr [Comma SyntaxWith] RParen Generates ;  // 塊の名前は par でなければならない（読み込みで検査）
+MacroFnDecl: KwMacro FnDecl ;
 SyntaxLit:  MacroText | MacroDelim | MacroBlock ;
-MacroCall:  MacroBang LParen Expr RParen ;       // 中身はリテラルか式。どちらとして使うかは展開のとき（`macro.md`「`macro` 宣言（登録）と呼び出し `NAME!(…)`」）
+MacroCall:  MacroName Bang LParen [ Expr ] RParen ;       // 中身はリテラルか式。どちらとして使うかは展開のとき（`macro.md`「`macro` 宣言（登録）と呼び出し `NAME!(…)`」）
 QuoteExpr:  KwQuote [ Ident ] Block ;               // Ident は stmts だけ
 Splice:     Dollar Ident | Dollar LParen Expr RParen ;
 ```
 
-- `Primary` の選択肢に `SyntaxLit`、`MacroCall`、`QuoteExpr`、`Splice` がある。`OtherStmt` の選択肢に `SyntaxDecl`、`MacroDecl` がある。
+- `Primary` の選択肢に `SyntaxLit`、`MacroCall`、`QuoteExpr`、`Splice` がある。`OtherStmt` の選択肢に `SyntaxDecl`、`MacroFnDecl` がある。
   `surface.rs` は `SyntaxLit` を `TermKind::SyntaxLit`、`MacroCall` を `TermKind::MacroCall` にし、式の文として書かれた
   `MacroCall` を `Stmt::MacroCall` にする（文の位置）。名前のない `SyntaxLit` は `MacroCall` の引数そのもののときだけ受け付ける。
   型付きマクロの引数の式の中に名前のないリテラルがあれば、展開のときにエラー。
@@ -95,6 +95,7 @@ Splice:     Dollar Ident | Dollar LParen Expr RParen ;
   （DSL の位置から書かれた位置を引くため。`origin.rs`）。浅い行は `macro.block_indent`。
 - `Splice` は構文としてはどこでも読めるが、`surface.rs` が `quote` の外の `$` をエラーにする（`"$ is written only inside quote"`）。
 - `fmt.rs`：`SyntaxLit` の中身に触れない（`Text` のリテラルの中身に触れないのと同じ）。`quote { … }` は普通のブロックと同じ字下げ。
+  `fmt_literals.rs` は、ファイルの構文木（`surface::lexical` が返すリテラルとコメント、`surface::fence` が読むコメントの中のフェンス）だけから候補を探し、`syntax` が `fmt` の関数を登録しうる候補があるときだけ、整形後のファイルを読み込み、そのリテラルとフェンスの中身を関数の結果で置き換える（`macro.md`「構文に付ける関数（`with`）」。関数の実行と検査は `registered.rs`）。
 - ケース `untagged-backtick-text-needs-the-syntax-name`（`cases/types/syntax-literals.eure`。`` `abc` `` は拒否）：`` `abc` `` は字句では名前のない `MacroText` として読めるが、
   マクロの引数の外なので `surface.rs` が拒む。
 - `tauto.par` を変えたら `bash scripts/generate-tauto-parol.sh` で作り直し、`self-host.md` の表（`bash scripts/generate-syntax-tables.sh`：`totes/syntax/src/tables.taut` と `tables/*.txt`）も作り直す。
@@ -103,14 +104,16 @@ Splice:     Dollar Ident | Dollar LParen Expr RParen ;
 
 ```text
 totes/llkgen/
-  src/main.taut  標準入力から文法の文字列、標準出力に表のファイル
+  src/tables.taut  文法の文字列から表のファイルの文字列（llkgen_tables）。ファイルは読まない
+totes/syntaxgen/
+  src/main.taut    文法をファイル（または標準入力）から読み、`%grammar_type` に応じて llkgen_tables（LL(k)）か lalrgen_tables（LALR(1)、`totes/lalrgen`）の結果を標準出力に書く
 ```
 
-- 入力の文法を `macro.md`「`syntax` 宣言」の規則で検査する（禁止の指示、`%start` が一つ、`k ≤ 3`）。
+- 入力の文法を `macro.md`「`syntax` 宣言」の規則で検査する（禁止の指示、`%start` が一つ、LL(k) の `k ≤ 3`、LALR(1) の衝突）。
 - 型の生成規則のために、**書かれた文法の形**（変形の前）を読み、非終端記号ごとに選択肢・記号・`[ ]`・`{ }`・`( )`・`^` を書き出す。
 - `TautoExpr` は終端記号として予約する（文法に定義を書かせず、生成器が番号を割り当て、字句の DFA には入れない）。
-- `tauto syntax gen` は tote の中の `syntax` をすべて集め、表がない・指紋が合わないものについて、`totes/llkgen` を
-  `tauto build --release` でビルドして走らせる。`TAUTO_GRAMMAR_GEN` で別の実行ファイルを指せる。使われていない表は消す。
+- `tauto syntax gen` は tote の中の `syntax` をすべて集め、表がない・指紋が合わないものについて、`totes/syntaxgen` を走らせる。
+  `totes/syntaxgen` は `tauto` のビルド時に Rust へコンパイルされて実行ファイルに組み込まれており（`crates/tauto-cli-totes`）、実行時には何もコンパイルしない。`tauto` 自身を内部の入口（`--tote-main syntaxgen`）で起動し直し、文法は専用の一時ファイルに書き、`--allow-read=FILE -- --gen FILE` で渡す（読める範囲はそのファイルだけ）。使われていない表は消す。
 
 表のファイル `.tauto-syntax/<grammar_sha256>.tables`（tote の直下。コミットする）。形は `self-host.md` の `totes/syntax` の
 表と同じ考え方（数は空白区切り、列の先頭に要素の数、名前は空白区切り）で、節の名前を行頭に置く：
@@ -121,6 +124,7 @@ grammar_sha256 <64 桁>
 generator <表を作った生成器と、表の書き方の版>
 title <名前か ->
 max_k <数>
+describe <終端記号の名前> <意味（行末まで）>   `%describe` ごとに一行。なくてよい
 terminals <N> <名前…>
 tauto_expr <終端記号の番号か -1>
 non_terminals <N> <名前…>
@@ -152,11 +156,11 @@ schema <N> { 型の宣言（`macro.md`「型付き AST の生成規則」）：<
 ### 評価器（`eval.rs`）
 
 - `call_function`：検査済みのプログラムの関数を名前で、値の引数で呼び、値と使ったステップ・確保の数を返す。
-- `Host`：呼べる builtin の許可リスト（`macro-security.md`「マクロのホストの許可リスト」）、ステップと確保の上限、
-  `macro_warn` の記録、`elab_*` に答える関数、`syn_expand` の答え。許可リストの外の builtin を呼べば実行時エラー。
-- 値に `Code`（不透明）がある。`code_*` の builtin はこれだけを受け付ける。
+- `Host`：ステップと確保の上限、`macro_warn` の記録、`elab_*` に答える関数、`syn_expand` の答え。標準エフェクトには答えず、
+  実行されたら実行時エラー。それに答える builtin（`Os::*`）を呼んでも実行時エラー。
+- 値に `Judgement`（不透明）がある。`Judgement.*` の builtin はこれだけを受け付ける。
 - 確保の数え上げ：データ、資源（`Buf` など）、セル、継続の捕獲で 1 を足す。
-- 普通の `tauto run` は、すべてを許すホストで同じ振る舞い。
+- 普通の `tauto run` は、標準エフェクトに答える `host_run` を足して同じ評価器を使う。
 
 ### マクロの実装
 
@@ -169,8 +173,8 @@ schema <N> { 型の宣言（`macro.md`「型付き AST の生成規則」）：<
 |---|---|
 | `mod.rs` | 入口。プログラムの展開 |
 | `checker.rs` | 型付きマクロが使う検査器のインターフェース |
-| `expand.rs` | ファイルごとの展開：`syntax` の表を読み、`quote` を構成子の呼び出しにし、リテラルを型付き AST の値にし、外側から呼び出しを展開する。登録（関数の型から種類を決める、行の検査、builtin の到達性の検査）、深さ・出力の大きさ・禁止の出力の検査 |
-| `expand/typed.rs` | 型付きマクロ：`macro.md`「呼び出しと段」の 1〜6。`Code` と、その使用の要約 `U` を作る |
+| `expand.rs` | ファイルごとの展開：`syntax` の表を読み、`quote` を構成子の呼び出しにし、リテラルを型付き AST の値にし、外側から呼び出しを展開する。登録（関数の型から種類を決める、行の検査）、深さ・出力の大きさ・禁止の出力の検査 |
+| `expand/typed.rs` | 型付きマクロ：`macro.md`「呼び出しと段」の 1〜6。`Judgement` と、その使用の要約 `U` を作る |
 | `expand/elab.rs` | `elab_*` の操作を凍結した環境で答える（読むだけ） |
 | `expand/step.rs` | 証明のステップ（[`macro-steps.md`](macro-steps.md)） |
 | `syn.rs` | 表面の構文と構文の値（`Syn…`）の行き来（`Lift`、`Lower`）。原子の結びつけ（`macro.unknown_atom`、`macro.scope_extrusion`） |
@@ -195,6 +199,6 @@ schema <N> { 型の宣言（`macro.md`「型付き AST の生成規則」）：<
 | 文書 | 関係 |
 |---|---|
 | [`self-host.md`](self-host.md)（`totes/scan`・`totes/llk`・`totes/syntax`） | 表の形と駆動部の振る舞いを共有する。`self-host.md` の表の書き出し（`nib_tables`）と、この文書の表のファイルは同じ項目 |
-| `self-host.md`（OS の builtin） | 許可リストの外。OS の操作は効果 `Os` にする（`macro.md`「マクロ関数の行」） |
-| [`rust-backend.md`](rust-backend.md) の名前空間 | 生成した型の名前（`math_Eqn` → `math.Eqn`）。`macro.md` の未決定の問い「OQ-11 生成した型の名前と名前空間」 |
+| `self-host.md`（OS の builtin） | マクロのホストは答えない。OS の操作は効果 `Os` にする（`macro.md`「マクロ関数の行」） |
+| [`rust-backend.md`](rust-backend.md) の名前空間 | 生成した型の名前（`math::Eqn`）。`macro.md` の未決定の問い「OQ-6 生成した型の名前と名前空間」 |
 | [`ownership.md`](ownership.md)「Lean での証明」 | `macro-semantics.md` の T3・T5 が使う |

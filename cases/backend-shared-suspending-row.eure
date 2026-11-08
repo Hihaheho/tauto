@@ -1,0 +1,98 @@
+// Two function arguments that share a row variable, called with functions
+// that suspend: each argument is made for the same tier, and both are
+// called in the body.
+@ cases.two-callbacks-share-a-suspending-row
+backends = ["rust", "javascript"]
+source = ```nib
+import std::prelude::Os
+
+fn both<!e>(load: (k: u64) -> u64 ! e, put: (v: u64) -> u64 ! e): u64 ! e {
+  put(load(1)) + put(load(2))
+}
+fn load(k: u64): u64 ! {sleep} { perform sleep(1); k * 10 }
+fn put(v: u64): u64 ! {sleep} { perform sleep(1); v + 1 }
+perform show("r", both(load, put))
+```
+shows = ["r = 32"]
+
+@ cases.two-callbacks-share-a-suspending-row-passed-down
+backends = ["rust", "javascript"]
+source = ```nib
+import std::prelude::Os
+
+fn steps<!e>(ks: List(u64), load: (k: u64) -> Result(u64, u64) ! {Div} ∪ e, put: (v: u64) -> Bool ! {Div} ∪ e): Option(u64) ! {Div} ∪ e {
+  match ks {
+    Nil => Some(0)
+    Cons(k, rest) => match load(k) {
+      Ok(v) => if put(v) {
+        match steps(rest, load, put) {
+          Some(n) => Some(n + v)
+          None => None
+        }
+      } else { None }
+      Err(_) => None
+    }
+  }
+}
+fn go<!e>(load: (k: u64) -> Result(u64, u64) ! {Div} ∪ e, put: (v: u64) -> Bool ! {Div} ∪ e): Option(u64) ! {Div} ∪ e {
+  if put(0) { steps([1, 2, 3], load, put) } else { None }
+}
+let r := go((k) => { perform sleep(1); Ok(k * 10) }, (v) => { perform sleep(1); perform show("put", v); true })
+match r {
+  Some(n) => perform show("r", n)
+  None => perform show("r", 0)
+}
+```
+shows = ["put = 0", "put = 10", "put = 20", "put = 30", "r = 60"]
+
+@ cases.two-callbacks-share-a-suspending-row-captured
+backends = ["rust", "javascript"]
+source = ```nib
+import std::prelude::Os
+
+fn each<!e>(ks: List(u64), f: (k: u64) -> u64 ! e): u64 ! e {
+  match ks {
+    Nil => 0
+    Cons(k, rest) => f(k) + each(rest, f)
+  }
+}
+fn go<!e>(load: (k: u64) -> u64 ! {Div} ∪ e, put: (v: u64) -> u64 ! {Div} ∪ e): u64 ! {Div} ∪ e {
+  each([1, 2, 3], (k) => put(load(k)))
+}
+perform show("r", go((k) => { perform sleep(1); k * 10 }, (v) => { perform sleep(1); v + 1 }))
+```
+shows = ["r = 63"]
+
+@ cases.callback-of-a-smaller-row-passed-with-a-suspending-one
+backends = ["rust", "javascript"]
+source = ```nib
+import std::prelude::Os
+
+fn both<!e>(load: (k: u64) -> u64 ! {Div} ∪ e, put: (v: u64) -> u64 ! {Div} ∪ e): u64 ! {Div} ∪ e {
+  put(load(1)) + put(load(2))
+}
+fn go<!e>(load: (k: u64) -> u64 ! {Div} ∪ e): u64 ! {Div, sleep} ∪ e {
+  both(load, (v) => { perform sleep(1); v + 1 })
+}
+perform show("r", go((k) => k * 10))
+```
+shows = ["r = 32"]
+
+@ cases.wrapped-callback-of-a-smaller-row-passed-with-a-suspending-one
+backends = ["rust", "javascript"]
+source = ```nib
+import std::prelude::Os
+
+fn both<!e>(load: (k: u64) -> Result(u64, u64) ! {Div} ∪ e, put: (v: u64) -> Bool ! {Div} ∪ e): Bool ! {Div} ∪ e {
+  match load(1) {
+    Ok(v) => put(v)
+    Err(_) => false
+  }
+}
+fn go<!e>(load: (k: u64) -> Result(u64, u64) ! {Div} ∪ e): Bool ! {Div, sleep} ∪ e {
+  let fetch := (k) => load(k)
+  both(fetch, (v) => { perform sleep(1); v == 10 })
+}
+perform show("r", go((k) => Ok(k * 10)))
+```
+shows = ["r = true"]

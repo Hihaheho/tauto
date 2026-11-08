@@ -34,7 +34,7 @@ pub theorem signature_store_after_sound(
   ). SignatureElaborated(env, partial, source, ck_val(m)),
   clean: DiagnosticClean(ck_st(signature_store_after(source, m)))
 ): SignatureElaborated(env, partial, source, ck_val(signature_store_after(source, m))) {
-  match m: SignatureElaborated(env, partial, source, ck_val(signature_store_after(source, m))) {
+  ⊢ SignatureElaborated(env, partial, source, ck_val(signature_store_after(source, m))) from match m {
     mut1(scheme, next) => derived(clean)
   }
 }
@@ -86,7 +86,7 @@ pub theorem signature_none_after_sound(
   partial: Bool,
   m: Mut1(Unit, Checker)
 ): OptionalSignature(env, partial, ck_val(signature_none_after(m))) {
-  match m: OptionalSignature(env, partial, ck_val(signature_none_after(m))) {
+  ⊢ OptionalSignature(env, partial, ck_val(signature_none_after(m))) from match m {
     mut1(ignored, next) => OptionalSignatureNone
   }
 }
@@ -111,7 +111,7 @@ pub theorem signature_some_after_sound(
   ). SignatureElaborated(env, partial, source, ck_val(m)),
   clean: DiagnosticClean(ck_st(signature_some_after(source, m)))
 ): OptionalSignature(env, partial, ck_val(signature_some_after(source, m))) {
-  match m: OptionalSignature(env, partial, ck_val(signature_some_after(source, m))) {
+  ⊢ OptionalSignature(env, partial, ck_val(signature_some_after(source, m))) from match m {
     mut1(scheme, next) => OptionalSignatureSome(source, scheme, derived(clean))
   }
 }
@@ -126,11 +126,11 @@ pub theorem ck_program_decl_elaborates(
   frame_constructor_position(c),
   ck_val(ck_program_decl(c, stmt))
 ) {
-  match stmt: OptionalSignature(
+  ⊢ OptionalSignature(
     ck_datas_of(c),
     frame_constructor_position(c),
     ck_val(ck_program_decl(c, stmt))
-  ) {
+  ) from match stmt {
     StLet(name, ty, value, borrow, mutable) => OptionalSignatureNone
     StVar(name, ty, value, borrow) => OptionalSignatureNone
     StModule(name, stmts, start, end) => OptionalSignatureNone
@@ -209,7 +209,7 @@ pub theorem signature_optional_cons<env: Datas, partial: Bool, item: Option(
   head: OptionalSignature(env, partial, item),
   tail: ElaboratedSignatures(env, partial, rest)
 ): ElaboratedSignatures(env, partial, opt_cons(item, rest)) {
-  match head: ElaboratedSignatures(env, partial, opt_cons(item, rest)) {
+  ⊢ ElaboratedSignatures(env, partial, opt_cons(item, rest)) from match head {
     OptionalSignatureNone => tail
     OptionalSignatureSome(source, scheme, derived) => ElaboratedSignaturesCons(
       source,
@@ -246,7 +246,9 @@ pub theorem signature_program_after_sound(
   head: ∀ accepted: DiagnosticClean(
     ck_st(m)
   ). OptionalSignature(ck_datas_of(c), frame_constructor_position(c), ck_val(m)),
-  ih: ∀ next: Checker. ∀ ordinary_next: frame_under_borrow(next) = false. ∀ accepted: DiagnosticClean(
+  ih: ∀ next: Checker. ∀ ordinary_next: frame_under_borrow(
+    next
+  ) = false. ∀ accepted: DiagnosticClean(
     ck_st(ck_program_decls(rest, next))
   ). ElaboratedSignatures(
     ck_datas_of(next),
@@ -259,11 +261,11 @@ pub theorem signature_program_after_sound(
   frame_constructor_position(c),
   ck_val(signature_program_after(rest, m))
 ) {
-  match m: ElaboratedSignatures(
+  ⊢ ElaboratedSignatures(
     ck_datas_of(c),
     frame_constructor_position(c),
     ck_val(signature_program_after(rest, m))
-  ) {
+  ) from match m {
     mut1(item, next) => {
       let accepted: DiagnosticClean(
         ck_st(ck_program_decls(rest, next))
@@ -328,11 +330,11 @@ pub theorem ck_program_decls_elaborates(
   frame_constructor_position(c),
   ck_val(ck_program_decls(program, c))
 ) {
-  match program: ElaboratedSignatures(
+  ⊢ ElaboratedSignatures(
     ck_datas_of(c),
     frame_constructor_position(c),
     ck_val(ck_program_decls(program, c))
-  ) {
+  ) from match program {
     Nil => ElaboratedSignaturesNil
     Cons(Stmt, rest) => Eq::subst(
       (m: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => ElaboratedSignatures(

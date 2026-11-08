@@ -29,7 +29,7 @@ pub(open) inductive RsAbnormal(A: Type): (RsOutcome(A)) -> Prop {
 }
 
 pub fn rs_abnormal<A, B>(out: RsOutcome(A)): RsOutcome(B) {
-  match out: RsOutcome(B) {
+  ⊢ RsOutcome(B) from match out {
     RsDone(value) => RsPanic
     RsReturned(value) => RsReturned(value)
     RsBroken(label, value) => RsBroken(label, value)
@@ -41,7 +41,7 @@ pub fn rs_abnormal<A, B>(out: RsOutcome(A)): RsOutcome(B) {
 }
 
 pub fn rs_returned(out: RsOutcome(RsValue)): RsOutcome(RsValue) {
-  match out: RsOutcome(RsValue) {
+  ⊢ RsOutcome(RsValue) from match out {
     RsDone(value) => RsDone(value)
     RsReturned(value) => RsDone(value)
     RsBroken(label, value) => RsBroken(label, value)
@@ -70,7 +70,7 @@ pub(open) inductive RsUnwinds: (RsOutcome(RsValue)) -> Prop {
 }
 
 pub fn rs_drop_panic(out: RsOutcome(RsValue)): RsOutcome(RsValue) {
-  match out: RsOutcome(RsValue) {
+  ⊢ RsOutcome(RsValue) from match out {
     RsDone(v) => RsPanic
     RsReturned(v) => RsPanic
     RsBroken(label, v) => RsPanic
@@ -82,7 +82,7 @@ pub fn rs_drop_panic(out: RsOutcome(RsValue)): RsOutcome(RsValue) {
 }
 
 pub fn rs_drop_result(out: RsOutcome(RsValue), dropped: RsOutcome(RsValue)): RsOutcome(RsValue) {
-  match dropped: RsOutcome(RsValue) {
+  ⊢ RsOutcome(RsValue) from match dropped {
     RsDone(v) => out
     RsReturned(v) => RsAbort
     RsBroken(label, v) => RsAbort
@@ -94,7 +94,7 @@ pub fn rs_drop_result(out: RsOutcome(RsValue), dropped: RsOutcome(RsValue)): RsO
 }
 
 pub fn rs_unwinding(out: RsOutcome(RsValue)): Bool {
-  match out: Bool {
+  ⊢ Bool from match out {
     RsPanic => true
     RsDone(value) => false
     RsReturned(value) => false
@@ -110,7 +110,7 @@ pub fn rs_drop_pending(unwinding: Bool): RsOutcome(RsValue) {
 }
 
 pub fn rs_drop_completed(unwinding: Bool, out: RsOutcome(RsValue)): RsOutcome(RsValue) {
-  match out: RsOutcome(RsValue) {
+  ⊢ RsOutcome(RsValue) from match out {
     RsPanic => if unwinding { RsDone(RsScalar(RsUnit)) } else { RsPanic }
     RsDone(value) => RsDone(value)
     RsReturned(value) => RsReturned(value)
@@ -368,7 +368,7 @@ pub(open) inductive RsFinishValues(
 }
 
 pub fn rs_call_store(kind: RsCallable, heap: RsStore, slot: Nat): RsStore {
-  match kind: RsStore {
+  ⊢ RsStore from match kind {
     RsFn => heap
     RsFnMut => heap
     RsFnOnce => rs_store_cell(heap, slot, None)
@@ -394,7 +394,7 @@ pub(open) inductive RsCallCleanupOrder: (RsCallable, List(Nat), List(Nat), List(
 }
 
 pub fn rs_forget(slots: List(Nat), heap: RsStore): RsStore {
-  match slots: RsStore {
+  ⊢ RsStore from match slots {
     Nil => heap
     Cons(slot, rest) => rs_forget(rest, rs_store_cell(heap, slot, None))
   }

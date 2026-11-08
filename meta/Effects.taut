@@ -1,73 +1,66 @@
-import "../std/Row.taut"
+import "../std/Row.taut" { Equiv, Sub, append, append_comm, nil_sub }
+import std::prelude::Std { List }
 
 // A port of the types and effects of lean/Proto/Nib/Row.lean. An effect is
-// its declaration with its type arguments (`Get(i64)` and `Get(Text)` are two
+// its declaration with its type arguments (`Get(I64)` and `Get(Text)` are two
 // effects); a function type carries the row it may perform. `Ty` and `Eff`
 // are mutually recursive and nest `List`, so this needs both mutual and
 // nested inductive types.
 
-// The width of an integer type.
-inductive Width(): Type {
-  i32(): Width
-  i64(): Width
-}
+pub(open) inductive Width: Type { I32: Width, I64: Width }
 
 mutual {
-  inductive Ty(): Type {
-    // `i32`, `i64`
-    tint(w: Width): Ty
-    tbool(): Ty
-    tunit(): Ty
+  pub(open) inductive Ty: Type {
+    Tint(w: Width): Ty
+    Tbool: Ty
+    Tunit: Ty
     // The type of an expression that never gives a value (`Div`'s result).
-    tnever(): Ty
-    // `(ps) -> ret ! row`
-    tfn(ps: List(Ty), ret: Ty, row: List(Eff)): Ty
+    Tnever: Ty
+    Tfn(ps: List(Ty), ret: Ty, row: List(Eff)): Ty
     // A union, kept as written.
-    tunion(ts: List(Ty)): Ty
+    Tunion(ts: List(Ty)): Ty
   }
 
-  inductive Eff(): Type {
-    eff(decl: Nat, args: List(Ty)): Eff
+  pub(open) inductive Eff: Type {
+    Mk(decl: Nat, args: List(Ty)): Eff
   }
 }
 
 // `Div` and `Exceeded(T)` are declared by Nib's standard library; here they are
 // given fixed numbers.
-fn divDecl() -> Nat { 1000 }
-fn exceededDecl() -> Nat { 1001 }
+pub fn divDecl(): Nat { 1000 }
+pub fn exceededDecl(): Nat { 1001 }
 
-fn divEff() -> Eff { eff(1000, Nil) }
+pub fn divEff(): Eff { Eff::Mk(1000, Nil) }
 
-// `Exceeded(T)`, `T` the type of the budgeted body.
-fn exceededEff(T: Ty) -> Eff { eff(1001, Cons(T, Nil)) }
+pub fn exceededEff(T: Ty): Eff { Eff::Mk(1001, Cons(T, Nil)) }
 
 // A row is read as a set, so the lemmas of `Row.taut` apply to rows of
 // effects: the row of a handled call is below the row with the handler.
-theorem row_order_irrelevant(
+pub theorem row_order_irrelevant(
   a: List(Eff),
   b: List(Eff)
 ): Equiv(Eff, append(Eff, a, b), append(Eff, b, a)) {
   append_comm(a, b)
 }
 
-theorem pure_below_all(r: List(Eff)): Sub(Eff, Nil(Eff), r) {
+pub theorem pure_below_all(r: List(Eff)): Sub(Eff, Nil(<A: Eff>), r) {
   nil_sub(r)
 }
 
-fn decl_of(e: Eff) -> Nat {
-  match e -> Nat {
-    eff(d, args) => d
+pub fn decl_of(e: Eff): Nat {
+  ⊢ Nat from match e {
+    Mk(d, args) => d
   }
 }
 
-theorem Nat_ne_succ(n: Nat, e: Eq(Nat, n, succ(n))): False {
-  match n -> False {
-    zero => Nat_noconf(False, zero, succ(zero), e)
-    succ(k) => Nat_noconf(False, succ(k), succ(succ(k)), e, h => Nat_ne_succ(k, h))
+pub theorem Nat_ne_succ(n: Nat, e: n = Succ(n)): False {
+  ⊢ False from match n {
+    Zero => Nat::noconf(False, Zero, Succ(Zero), e)
+    Succ(k) => Nat::noconf(False, Succ(k), Succ(Succ(k)), e, h => Nat_ne_succ(k, h))
   }
 }
 
-// The two budget effects are different effects.
-theorem div_is_not_exceeded<T: Ty>(e: Eq(Eff, divEff(), exceededEff(T))): False {
-  Nat_ne_succ(1000, Eq_congr(decl_of, e))
+pub theorem div_is_not_exceeded<T: Ty>(e: divEff() = exceededEff(T)): False {
+  Nat_ne_succ(1000, Eq::congr(decl_of, e))
 }

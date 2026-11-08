@@ -18,7 +18,7 @@ fn verdict(dir: &std::path::Path) -> Verdict {
     k.use_cache();
     k.declare_program(&loaded.program)
         .into_iter()
-        .find(|e| e.name == "t")
+        .find(|e| e.name.as_str() == "t")
         .unwrap()
         .verdict
 }

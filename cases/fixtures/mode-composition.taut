@@ -1,0 +1,100 @@
+import "../../std/Mode.taut"
+
+inductive BoolDecision(a: Bool, b: Bool): Type {
+  Same(e: Eq(Bool, a, b)): BoolDecision(a, b)
+  Different(refute: (Eq(Bool, a, b)) -> False): BoolDecision(a, b)
+}
+fn decide_bool(a: Bool, b: Bool): BoolDecision(a, b) {
+  ⊢ BoolDecision(a, b) from match a {
+    false => ⊢ BoolDecision(false, b) from match b {
+      false => Same(Refl)
+      true => Different(e => ⊢ False from match e {})
+    }
+    true => ⊢ BoolDecision(true, b) from match b {
+      false => Different(e => ⊢ False from match e {})
+      true => Same(Refl)
+    }
+  }
+}
+inductive Program: Type {
+  Pass: Program
+  Flip: Program
+  RequireTrue: Program
+  Compose(first: Program, second: Program): Program
+  Triple(first: Program, second: Program, third: Program): Program
+  Agree(first: Program, second: Program): Program
+}
+@mode!(
+  ```
+check_program(rec program, in input, out output) -> Decision { Accepted | Rejected }
+  eq Bool: decide_bool { Same | Different }
+```
+) => inductive Decision, fn check_program
+inductive Transforms: (Program, Bool, Bool) -> Prop {
+  RPass<input: Bool>: Transforms(Pass, input, input)
+  RFlipFalse: Transforms(Flip, false, true)
+  RFlipTrue: Transforms(Flip, true, false)
+  RRequire: Transforms(RequireTrue, true, true)
+  RCompose<first: Program, second: Program, input: Bool, middle: Bool, output: Bool>(
+    hfirst: Transforms(first, input, middle),
+    hsecond: Transforms(second, middle, output)
+  ): Transforms(Compose(first, second), input, output)
+  RTriple<first: Program, second: Program, third: Program, input: Bool, one: Bool, two: Bool, output: Bool>(
+    hfirst: Transforms(first, input, one),
+    hsecond: Transforms(second, one, two),
+    hthird: Transforms(third, two, output)
+  ): Transforms(Triple(first, second, third), input, output)
+  RAgree<first: Program, second: Program, input: Bool, output: Bool>(
+    hfirst: Transforms(first, input, output),
+    hsecond: Transforms(second, input, output)
+  ): Transforms(Agree(first, second), input, output)
+}
+fn answer(program: Program, input: Bool): Option(Bool) {
+  ⊢ Option(Bool) from match check_program(program, input) {
+    Accepted(output, derivation, unique) => Some(output)
+    Rejected(refute) => None
+  }
+}
+theorem compose_ok(): Eq(
+  Option(Bool),
+  answer(Compose(Flip, RequireTrue), false),
+  Some(true)
+) { Refl }
+theorem compose_no(): Eq(Option(Bool), answer(Compose(Flip, RequireTrue), true), None) { Refl }
+theorem triple_ok(): Eq(
+  Option(Bool),
+  answer(Triple(Flip, RequireTrue, Flip), false),
+  Some(false)
+) { Refl }
+theorem triple_second_no(): Eq(
+  Option(Bool),
+  answer(Triple(Flip, RequireTrue, Flip), true),
+  None
+) { Refl }
+theorem triple_third_no(): Eq(
+  Option(Bool),
+  answer(Triple(Flip, Flip, RequireTrue), false),
+  None
+) { Refl }
+theorem agree_ok(): Eq(
+  Option(Bool),
+  answer(Agree(Compose(Flip, Flip), Pass), false),
+  Some(false)
+) { Refl }
+theorem agree_no(): Eq(Option(Bool), answer(Agree(Flip, Pass), false), None) { Refl }
+theorem unique<program: Program, input: Bool, a: Bool, b: Bool>(
+  ha: Transforms(program, input, a),
+  hb: Transforms(program, input, b)
+): Eq(Bool, a, b) {
+  ⊢ Eq(Bool, a, b) from match check_program(program, input) {
+    Accepted(output, derivation, one) => Eq::trans(one(a, ha), Eq::sym(one(b, hb)))
+    Rejected(refute) => False::elim(refute(a, ha))
+  }
+}
+
+perform show("compose", answer(Compose(Flip, RequireTrue), false))
+perform show("compose rejected", answer(Compose(Flip, RequireTrue), true))
+perform show("triple", answer(Triple(Flip, RequireTrue, Flip), false))
+perform show("third rejected", answer(Triple(Flip, Flip, RequireTrue), false))
+perform show("agree", answer(Agree(Compose(Flip, Flip), Pass), false))
+perform show("disagree", answer(Agree(Flip, Pass), false))

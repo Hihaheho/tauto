@@ -8,7 +8,7 @@ import "ty.taut"
 pub theorem substitute_without_empty(
   gs: List(Pair(Text, Kind))
 ): ty_map_without(gs, Ordmap::empty()) = Ordmap::empty() {
-  match gs: ty_map_without(gs, Ordmap::empty()) = Ordmap::empty() {
+  ⊢ ty_map_without(gs, Ordmap::empty()) = Ordmap::empty() from match gs {
     Nil => Refl
     Cons(g, rest) => substitute_without_empty(rest)
   }
@@ -20,12 +20,12 @@ pub theorem substitute_empty_named(
   ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
   items: TyEqList(subst, ok, args, ty_map_list(args, Ordmap::empty()))
 ): TyEq(subst, ok, TyNamed(name, args), ty_substitute(TyNamed(name, args), Ordmap::empty())) {
-  match args: TyEq(
+  ⊢ TyEq(
     subst,
     ok,
     TyNamed(name, args),
     ty_substitute(TyNamed(name, args), Ordmap::empty())
-  ) {
+  ) from match args {
     Nil => TyeqRefl(TyNamed(name, Nil))
     Cons(head, rest) => TyeqNamed(name, items)
   }
@@ -36,7 +36,7 @@ mutual {
     subst: Ordmap(Nat, Ty),
     ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
   ): TyEq(subst, ok, t, ty_substitute(t, Ordmap::empty())) {
-    match t: TyEq(subst, ok, t, ty_substitute(t, Ordmap::empty())) {
+    ⊢ TyEq(subst, ok, t, ty_substitute(t, Ordmap::empty())) from match t {
       TyVar(v) => TyeqRefl(TyVar(v))
       TyParam(name, kind) => TyeqRefl(TyParam(name, kind))
       TyInt(width) => TyeqRefl(TyInt(width))
@@ -96,7 +96,7 @@ mutual {
     subst: Ordmap(Nat, Ty),
     ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
   ): TyEqList(subst, ok, types, ty_map_list(types, Ordmap::empty())) {
-    match types: TyEqList(subst, ok, types, ty_map_list(types, Ordmap::empty())) {
+    ⊢ TyEqList(subst, ok, types, ty_map_list(types, Ordmap::empty())) from match types {
       Nil => TyeqNil
       Cons(head, rest) => TyeqCons(
         ty_substitute_empty_equal(head, subst, ok),

@@ -11,11 +11,29 @@ use tauto_message::{Message, msg};
 /// The directory the standard library's files are read from.
 pub const ROOT: &str = "/<tauto-std>";
 
+/// The parser tables of the syntaxes the standard library declares
+/// (`std/.tauto-syntax/` and `std/proof/.tauto-syntax/`), as they were when
+/// tauto was built: a program that imports `std::Mode` has no
+/// `.tauto-syntax` beside the library's files to read them from.
+pub const SYNTAX_TABLES: &[&str] = &[
+    include_str!("../../../std/.tauto-syntax/e3a1daede76b420879e8b463d6b4ff34d67accf16ce8b669437837ce7fb0d8ad.tables"),
+    include_str!("../../../std/.tauto-syntax/8002b584d6ccfb34dd9822833dd92f3dfac96ef475b74066dbc58eaa6ea4fba7.tables"),
+    include_str!("../../../std/.tauto-syntax/d082dbd36acfbc610dde69051b3d77d25305e8106db261bb13452d874f1277de.tables"),
+    include_str!("../../../std/proof/.tauto-syntax/8ea91dead6c8a3d9aadf0ccad902e4728eac1b7ebe3a984f8a7f12e735dfed0b.tables"),
+];
+
 /// Each file of `std/` (the prelude aside, which every program has) and its text.
 pub const FILES: &[(&str, &str)] = &[
+("proof/Forms.taut", include_str!("../../../std/proof/Forms.taut")),
+("proof/Lang.taut", include_str!("../../../std/proof/Lang.taut")),
+    (
+        "proof/Tooling.taut",
+        include_str!("../../../std/proof/Tooling.taut"),
+    ),
     ("Array.taut", include_str!("../../../std/Array.taut")),
     ("Base.taut", include_str!("../../../std/Base.taut")),
     ("BinNat.taut", include_str!("../../../std/BinNat.taut")),
+    ("Calc.taut", include_str!("../../../std/Calc.taut")),
     ("Bytes.taut", include_str!("../../../std/Bytes.taut")),
     ("Data.taut", include_str!("../../../std/Data.taut")),
     ("Deque.taut", include_str!("../../../std/Deque.taut")),
@@ -96,6 +114,7 @@ pub const FILES: &[(&str, &str)] = &[
     ("Stack.taut", include_str!("../../../std/Stack.taut")),
     ("State.taut", include_str!("../../../std/State.taut")),
     ("Std.taut", include_str!("../../../std/Std.taut")),
+    ("SynTree.taut", include_str!("../../../std/SynTree.taut")),
     ("Tactic.taut", include_str!("../../../std/Tactic.taut")),
     ("Text.taut", include_str!("../../../std/Text.taut")),
     ("TextOps.taut", include_str!("../../../std/TextOps.taut")),
@@ -125,9 +144,9 @@ pub const FILES: &[(&str, &str)] = &[
 /// The file the module import `import std::List` names, or why it names none.
 /// A name other than `std::` is a dependency of the importing file's tote:
 /// [`import_target`].
-pub fn import_path(name: &str) -> Result<PathBuf, String> {
-    match name.strip_prefix("std::") {
-        Some(module) => {
+pub fn import_path(name: &str) -> Result<PathBuf, Message> {
+    match tauto_surface::surface::qualify::module_root(name) {
+        (tauto_surface::surface::qualify::STD_ROOT, Some(module)) => {
             let file = format!("{}.taut", module.replace("::", "/"));
             if FILES.iter().any(|(f, _)| *f == file) {
                 Ok(Path::new(ROOT).join(file))
@@ -138,11 +157,13 @@ pub fn import_path(name: &str) -> Result<PathBuf, String> {
                 ))
             }
         }
-        None => Err(import_error(
+        _ => Err(import_error(
             name,
             msg!(
                 "tauto-import-not-dependency",
-                dependency = name.split("::").next().unwrap_or(name)
+                dependency = crate::manifest::tote_of_import_name(
+                    name.split("::").next().unwrap_or(name)
+                )
             ),
         )),
     }
@@ -151,16 +172,48 @@ pub fn import_path(name: &str) -> Result<PathBuf, String> {
 /// The file an import in `from` names: `import std::List` from the standard
 /// library, `import text::Utf8` (`Utf8.taut`) from the `src` of
 /// the dependency `text` (`import text::proof::Utf8` from its additional source `proof`) in the `dependencies` of `from`'s tote, and a quoted
-/// path (not `module`) relative to `from`, whatever it is spelled like.
-pub fn import_target(from: &Path, name: &str, module: bool) -> Result<PathBuf, String> {
+/// path (not `module`) relative to `from`, whatever it is spelled like, and
+/// `import self::b` (`b.taut` in the directory named like `from`, without `.taut`).
+pub fn import_target(from: &Path, name: &str, module: bool) -> Result<PathBuf, Message> {
     if !module {
-        return Ok(from.parent().unwrap_or(Path::new(".")).join(name));
+        let joined = from.parent().unwrap_or(Path::new(".")).join(name);
+        // The standard library's files are not on disk, so nothing resolves
+        // `..` in an import such as `import "../Tactic.taut"` from a file of `proof/`: the path
+        // is folded here, staying under [`ROOT`].
+        if from.starts_with(ROOT) {
+            return Ok(fold_parents(&joined));
+        }
+        return Ok(joined);
+    }
+    // `import self::b::c` in `a.taut` is `a/b/c.taut`: the file's own
+    // modules, in the directory named like the file.
+    if let (crate::manifest::SELF_ROOT, rest) =
+        tauto_surface::surface::qualify::module_root(name)
+    {
+        let Some(rest) = rest else {
+            return Err(import_error(name, msg!("tauto-import-self-alone")));
+        };
+        let stem = from.file_stem().unwrap_or_default();
+        let joined = from
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join(stem)
+            .join(format!("{}.taut", rest.replace("::", "/")));
+        if from.starts_with(ROOT) {
+            return Ok(fold_parents(&joined));
+        }
+        return Ok(joined);
     }
     let named = import_path(name);
-    if name.starts_with("std::") {
+    if matches!(
+        tauto_surface::surface::qualify::module_root(name),
+        (tauto_surface::surface::qualify::STD_ROOT, Some(_))
+    ) {
         return named;
     }
-    let (dependency, module) = name.split_once("::").unwrap_or((name, ""));
+    let (written, module) = name.split_once("::").unwrap_or((name, ""));
+    let dependency = &crate::manifest::tote_of_import_name(written);
+    let dependency = dependency.as_str();
     let tote = (text(from).is_none())
         .then(|| crate::program::canonical_path(from))
         .and_then(|f| {
@@ -200,7 +253,7 @@ pub fn import_target(from: &Path, name: &str, module: bool) -> Result<PathBuf, S
     {
         return Err(import_error(
             name,
-            msg!("tauto-import-name-module", dependency = dependency),
+            msg!("tauto-import-name-module", dependency = written),
         ));
     }
     let stem = module.replace("::", "/");
@@ -225,8 +278,25 @@ pub fn import_target(from: &Path, name: &str, module: bool) -> Result<PathBuf, S
             hits.push(path);
         }
     }
+    // A file that is there but outside the sources: the dependency has not
+    // made it readable, and says how it can.
+    let outside = ["taut", "tauto"]
+        .iter()
+        .map(|ext| dir.join(format!("{stem}.{ext}")))
+        .find(|path| path.is_file());
     match hits.len() {
         1 => Ok(hits.pop().unwrap()),
+        0 if let Some(path) = outside => Err(import_error(
+            name,
+            msg!(
+                "tauto-import-outside-sources",
+                dependency = dependency,
+                module = module,
+                path = path.display().to_string(),
+                sources = found.package.source_paths().join(", "),
+                source = stem.split('/').next().unwrap_or_default()
+            ),
+        )),
         0 => Err(import_error(
             name,
             msg!(
@@ -272,44 +342,77 @@ pub fn not_imported_name(name: &str) -> Option<tauto_message::Message> {
 /// `import std::MODULE` names it: for a built-in of the prelude such as
 /// `text_len`, the model the kernel checks of it.
 pub fn module_of(name: &str) -> Option<&'static str> {
-    // `M::f` is `f` in a `module M { … }` block (a declaration at column 0 ends it).
-    let (module, short) = match name.rsplit_once("::") {
-        Some((m, s)) => (Some(m), s),
-        None => (None, name),
-    };
-    FILES.iter().find_map(|(file, text)| {
-        let mut current: Option<&str> = None;
-        let declares = text.lines().any(|raw| {
-            if let Some(rest) = raw.strip_prefix("module ") {
-                current = rest.strip_suffix('{').map(str::trim);
-                return false;
+    declaration_modules().get(name).copied()
+}
+
+fn declaration_modules() -> &'static std::collections::HashMap<String, &'static str> {
+    static MODULES: std::sync::OnceLock<std::collections::HashMap<String, &'static str>> =
+        std::sync::OnceLock::new();
+    MODULES.get_or_init(|| {
+        let mut modules = std::collections::HashMap::new();
+        for (file, text) in FILES {
+            let mut current = None;
+            for raw in text.lines() {
+                if let Some(rest) = raw.strip_prefix("module ") {
+                    current = rest.strip_suffix('{').map(str::trim);
+                    continue;
+                }
+                if raw.starts_with('}') {
+                    current = None;
+                    continue;
+                }
+                let line = raw.trim_start();
+                let line = line
+                    .strip_prefix("pub(open) ")
+                    .or_else(|| line.strip_prefix("pub "))
+                    .unwrap_or(line);
+                let mut words = line
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .filter(|word| !word.is_empty());
+                if matches!(
+                    words.next(),
+                    Some("fn" | "theorem" | "def" | "inductive" | "struct" | "class" | "axiom")
+                ) && let Some(short) = words.next()
+                {
+                    let name = current
+                        .map_or_else(|| short.to_string(), |module| format!("{module}::{short}"));
+                    modules
+                        .entry(name)
+                        .or_insert_with(|| file.strip_suffix(".taut").unwrap_or(file));
+                }
             }
-            if raw.starts_with('}') {
-                current = None;
-                return false;
-            }
-            if current != module {
-                return false;
-            }
-            let line = raw.trim_start();
-            let line = line
-                .strip_prefix("pub(open) ")
-                .or_else(|| line.strip_prefix("pub "))
-                .unwrap_or(line);
-            let mut words = line
-                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-                .filter(|w| !w.is_empty());
-            matches!(
-                words.next(),
-                Some("fn" | "theorem" | "def" | "inductive" | "struct" | "class" | "axiom")
-            ) && words.next() == Some(short)
-        });
-        declares.then(|| file.strip_suffix(".taut").unwrap_or(file))
+        }
+        modules
     })
+}
+
+/// `path` with each `a/..` and `.` removed, without reading the disk.
+fn fold_parents(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir if out.file_name().is_some() => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 pub fn text(path: &Path) -> Option<&'static str> {
     let name = path.strip_prefix(ROOT).ok()?.to_str()?;
+    // A syntax of the library is read with its file, on whichever thread and
+    // through whichever command reads it.
+    static TABLES: std::sync::Once = std::sync::Once::new();
+    TABLES.call_once(|| {
+        for text in SYNTAX_TABLES {
+            // Tables embedded at build time and checked by a test.
+            let _ = crate::syntax::register_tables(text);
+        }
+    });
     FILES.iter().find(|(f, _)| *f == name).map(|(_, t)| *t)
 }
 
@@ -348,6 +451,86 @@ pub fn read(path: &Path) -> std::io::Result<String> {
 }
 
 /// "`import NAME`: MESSAGE", as text.
-fn import_error(name: &str, message: Message) -> String {
-    msg!("tauto-import-error", name = name, message = message).to_string()
+fn import_error(name: &str, message: Message) -> Message {
+    msg!("tauto-import-error", name = name, message = message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn linear_module_of(name: &str) -> Option<&'static str> {
+        // `M::f` is `f` in a `module M { … }` block (a declaration at column 0 ends it).
+        let (module, short) = match name.rsplit_once("::") {
+            Some((m, s)) => (Some(m), s),
+            None => (None, name),
+        };
+        FILES.iter().find_map(|(file, text)| {
+            let mut current: Option<&str> = None;
+            let declares = text.lines().any(|raw| {
+                if let Some(rest) = raw.strip_prefix("module ") {
+                    current = rest.strip_suffix('{').map(str::trim);
+                    return false;
+                }
+                if raw.starts_with('}') {
+                    current = None;
+                    return false;
+                }
+                if current != module {
+                    return false;
+                }
+                let line = raw.trim_start();
+                let line = line
+                    .strip_prefix("pub(open) ")
+                    .or_else(|| line.strip_prefix("pub "))
+                    .unwrap_or(line);
+                let mut words = line
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .filter(|w| !w.is_empty());
+                matches!(
+                    words.next(),
+                    Some("fn" | "theorem" | "def" | "inductive" | "struct" | "class" | "axiom")
+                ) && words.next() == Some(short)
+            });
+            declares.then(|| file.strip_suffix(".taut").unwrap_or(file))
+        })
+    }
+
+    #[test]
+    fn indexed_declaration_modules_match_source_lookup() {
+        let modules = declaration_modules();
+        let mut names: Vec<_> = modules.keys().collect();
+        names.sort();
+        for name in names.iter().step_by(101) {
+            assert_eq!(module_of(name), linear_module_of(name), "{name}");
+        }
+        for name in [
+            "Nat::add",
+            "List::map",
+            "Rat::add",
+            "Text",
+            "no_such_declaration",
+            "Missing::add",
+            "",
+            "Nat::",
+        ] {
+            assert_eq!(module_of(name), linear_module_of(name), "{name}");
+        }
+    }
+
+    /// Every table under `std/` is listed in [`SYNTAX_TABLES`], so adding a
+    /// syntax to the library cannot leave `import std::…` without its tables.
+    #[test]
+    fn every_std_table_is_embedded() {
+        let std = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+        let mut found = 0;
+        for dir in [std.join(".tauto-syntax"), std.join("proof/.tauto-syntax")] {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let text = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+                assert!(SYNTAX_TABLES.contains(&text.as_str()));
+                found += 1;
+            }
+        }
+        assert_eq!(found, SYNTAX_TABLES.len());
+    }
 }

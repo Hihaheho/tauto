@@ -27,28 +27,53 @@ thread_local! {
 /// `--format`, `--skip` and similar are dropped, and so is `name` itself, so
 /// `cargo nextest` and `cargo test -- <filter>` both run it.
 pub fn harness_args(name: &str) -> Option<Vec<String>> {
+    match harness_tests(|| vec![name.to_string()]) {
+        Harness::Listed => None,
+        Harness::Run { positional, .. } => {
+            Some(positional.into_iter().filter(|a| a != name).collect())
+        }
+    }
+}
+
+/// What a test binary with its own `main` and several tests is asked to do.
+pub enum Harness {
+    /// The runner asked for the list, and it was printed.
+    Listed,
+    /// Run: the positional arguments, and whether `--exact` was given (the
+    /// way `cargo nextest` runs one listed test).
+    Run {
+        positional: Vec<String>,
+        exact: bool,
+    },
+}
+
+/// As [`harness_args`], for a binary whose tests are `tests()`: `--list`
+/// prints each of them.
+pub fn harness_tests(tests: impl FnOnce() -> Vec<String>) -> Harness {
     let mut args = std::env::args().skip(1);
     let mut positional = Vec::new();
-    let (mut list, mut ignored) = (false, false);
+    let (mut list, mut ignored, mut exact) = (false, false, false);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--list" => list = true,
             "--ignored" => ignored = true,
+            "--exact" => exact = true,
             "--format" | "--skip" | "--test-threads" | "--logfile" | "--color" | "-Z" => {
                 args.next();
             }
             _ if a.starts_with('-') => {}
-            _ if a == name => {}
             _ => positional.push(a),
         }
     }
     if list {
         if !ignored {
-            println!("{name}: test");
+            for test in tests() {
+                println!("{test}: test");
+            }
         }
-        return None;
+        return Harness::Listed;
     }
-    Some(positional)
+    Harness::Run { positional, exact }
 }
 
 pub fn with_deep_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
@@ -326,21 +351,60 @@ fn files(root: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Runs the cases whose `category/file/case` contains `filter`.
-pub fn run_all(root: &Path, filter: Option<&str>) -> std::io::Result<Vec<FileReport>> {
+/// Which cases a run takes, by their `category/file/case` name.
+#[derive(Clone, Copy, Debug)]
+pub enum Filter<'a> {
+    /// The cases whose name contains the text.
+    Contains(&'a str),
+    /// The cases of the file `category/file`.
+    File(&'a str),
+}
+
+impl Filter<'_> {
+    /// Whether the case `name` (`category/file/case`) is in the run.
+    pub fn admits(self, name: &str) -> bool {
+        match self {
+            Filter::Contains(text) => name.contains(text),
+            Filter::File(file) => name
+                .strip_prefix(file)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/')),
+        }
+    }
+}
+
+/// The names (`category/file`) of the case files under `root`, in order.
+pub fn case_file_names(root: &Path) -> std::io::Result<Vec<String>> {
+    let mut paths = Vec::new();
+    files(root, &mut paths)?;
+    Ok(paths.iter().map(|path| file_name(root, path)).collect())
+}
+
+fn file_name(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .with_extension("")
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// Runs the cases the filter admits.
+pub fn run_all(root: &Path, filter: Option<Filter>) -> std::io::Result<Vec<FileReport>> {
     run_all_with(root, filter, |_| {})
 }
 
 /// Visits each completed file immediately, in the same order as `run_all`.
 pub fn run_all_with(
     root: &Path,
-    filter: Option<&str>,
+    filter: Option<Filter>,
     mut visit: impl FnMut(&FileReport),
 ) -> std::io::Result<Vec<FileReport>> {
     // The expected messages of the cases are the English ones.
     tauto_messages::install();
     let mut paths = Vec::new();
     files(root, &mut paths)?;
+    if let Some(Filter::File(file)) = filter {
+        paths.retain(|path| file_name(root, path) == file);
+    }
     // Each file is independent (its fixture root is per thread); the reports
     // are visited in the order of the files whatever order they finish in.
     let results = parallel_map(
@@ -348,12 +412,7 @@ pub fn run_all_with(
         |_| (),
         |_, _, path| -> std::io::Result<FileReport> {
             ROOT.with(|r| *r.borrow_mut() = root.to_path_buf());
-            let name = path
-                .strip_prefix(root)
-                .unwrap_or(path)
-                .with_extension("")
-                .to_string_lossy()
-                .replace('\\', "/");
+            let name = file_name(root, path);
             let text = std::fs::read_to_string(path)?;
             let mut report = FileReport {
                 name: name.clone(),
@@ -380,7 +439,7 @@ pub fn run_all_with(
 
 /// Runs one case file with the same assertions as the repository suite.
 /// The root supplies the optional grammar fixtures used by multi-file cases.
-pub fn run_path(path: &Path, root: &Path, filter: Option<&str>) -> std::io::Result<FileReport> {
+pub fn run_path(path: &Path, root: &Path, filter: Option<Filter>) -> std::io::Result<FileReport> {
     // The expected messages of the cases are the English ones.
     tauto_messages::install();
     let absolute_path = std::path::absolute(path)?;
@@ -482,14 +541,14 @@ fn case_nodes(
 fn run_file(
     text: &str,
     file: &str,
-    filter: Option<&str>,
+    filter: Option<Filter>,
     path: &Path,
 ) -> Result<Vec<(String, Outcome)>, String> {
     let doc = eure_reader::parse_to_document(text, file).map_err(|e| e.to_string())?;
     let named = case_nodes(&doc, file.rsplit('/').next().unwrap_or(file))?;
     let mut results = Vec::new();
     for (case, id) in named {
-        if filter.is_some_and(|f| !format!("{file}/{case}").contains(f)) {
+        if filter.is_some_and(|f| !f.admits(&format!("{file}/{case}"))) {
             continue;
         }
         // Invalid cases fail even when marked unimplemented.
@@ -638,10 +697,12 @@ impl RustCase {
             let loaded = case
                 .load_for_compilation(path)
                 .map_err(tauto_nir::CompileError::Front)?;
-            tauto_nir::compile_loaded_with_observer(
+            let entries = loaded.javascript_exports.iter().cloned().collect();
+            tauto_nir::compile_loaded_entries_with_observer(
                 &loaded.loaded,
-                false,
+                backend == "javascript" && !loaded.javascript_exports.is_empty(),
                 backend == "javascript",
+                (backend == "javascript").then_some(&entries),
                 |_| {},
             )
         } else {
@@ -663,7 +724,7 @@ impl RustCase {
         if let Some(path) = &self.source_path {
             let loaded = tauto::program::load(path)?;
             if let Some((error, _)) = loaded.program.errors.first() {
-                return Err(error.clone());
+                return Err(error.to_string());
             }
             Ok(tauto::surface::print::print_stmts(&loaded.program.stmts).into())
         } else if !self.imports.is_empty() {

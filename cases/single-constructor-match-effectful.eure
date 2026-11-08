@@ -1,0 +1,28 @@
+// A single-constructor inductive is matched without a written result type
+// inside a function with effects, as in a pure one, on every backend.
+@ cases.single-constructor-in-effectful-fn
+extract = true
+source = ```tauto
+import std::prelude::Os
+
+inductive ZEntry: Type {
+  Zentry(name: Nat, data: Nat): ZEntry
+}
+
+fn show_all(es: List(ZEntry)): Unit ! {stdout} {
+  match es {
+    Nil => perform stdout("end\n")
+    Cons(e, t) => {
+      match e {
+        Zentry(n, d) => perform stdout("entry\n")
+      }
+      show_all(t)
+    }
+  }
+}
+
+show_all([Zentry(1, 2), Zentry(3, 4)])
+```
+stdout = "entry\nentry\nend\n"
+rust_shows = []
+javascript_shows = []

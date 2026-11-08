@@ -20,6 +20,7 @@
 
 use super::strict::{self, Doc};
 use crate::spec::Rev;
+use tauto_message::{Message, msg};
 
 pub const CONFIG_FILE: &str = "Index.eure";
 pub const BATCH_FILE: &str = "observations.eure";
@@ -38,6 +39,10 @@ pub struct Config {
 }
 
 pub fn config(bytes: &[u8]) -> Result<Config, String> {
+    config_message(bytes).map_err(|e| e.to_string())
+}
+
+pub(crate) fn config_message(bytes: &[u8]) -> Result<Config, Message> {
     let doc = Doc::parse(bytes, CONFIG_FILE, MAX_CONFIG)?;
     let mut f = doc.fields(doc.root(), CONFIG_FILE)?;
     expect_format(&mut f, "index")?;
@@ -45,17 +50,17 @@ pub fn config(bytes: &[u8]) -> Result<Config, String> {
         if (1..=128).contains(&s.len()) {
             Ok(s.to_string())
         } else {
-            Err(say!("totebag-name-length"))
+            Err(msg!("totebag-name-length"))
         }
     })?;
     f.text_as("history", |s| {
         (s == "commit-batches")
             .then_some(())
-            .ok_or_else(|| say!("totebag-only-history", value = format!("{s:?}")))
+            .ok_or_else(|| msg!("totebag-only-history", value = format!("{s:?}")))
     })?;
     let git_object_format = f.text_as("git_object_format", |s| match s {
         "sha1" | "sha256" => Ok(s.to_string()),
-        _ => Err(say!("totebag-not-object-format", value = format!("{s:?}"))),
+        _ => Err(msg!("totebag-not-object-format", value = format!("{s:?}"))),
     })?;
     f.finish()?;
     Ok(Config {
@@ -64,14 +69,14 @@ pub fn config(bytes: &[u8]) -> Result<Config, String> {
     })
 }
 
-fn expect_format(f: &mut strict::Fields<'_>, kind: &str) -> Result<(), String> {
+fn expect_format(f: &mut strict::Fields<'_>, kind: &str) -> Result<(), Message> {
     let format = f.integer("format")?;
     if format != 1 {
-        return Err(say!("totebag-unknown-format", format = format));
+        return Err(msg!("totebag-unknown-format", format = format));
     }
     f.text_as("kind", |s| {
         (s == kind).then_some(()).ok_or_else(|| {
-            say!(
+            msg!(
                 "totebag-expected-value",
                 value = format!("{s:?}"),
                 want = format!("{kind:?}")
@@ -215,6 +220,10 @@ pub fn quote(s: &str) -> String {
 }
 
 pub fn batch(bytes: &[u8], object_format: &str) -> Result<Batch, String> {
+    batch_message(bytes, object_format).map_err(|e| e.to_string())
+}
+
+pub(crate) fn batch_message(bytes: &[u8], object_format: &str) -> Result<Batch, Message> {
     let doc = Doc::parse(bytes, BATCH_FILE, MAX_BATCH)?;
     let mut f = doc.fields(doc.root(), BATCH_FILE)?;
     expect_format(&mut f, "batch")?;
@@ -222,24 +231,23 @@ pub fn batch(bytes: &[u8], object_format: &str) -> Result<Batch, String> {
     let issued_at = f.text_as("issued_at", strict::time)?;
     let valid_until = f.text_as("valid_until", strict::time)?;
     if valid_until <= issued_at {
-        return Err(say!("totebag-valid-until-early", file = BATCH_FILE));
+        return Err(msg!("totebag-valid-until-early", file = BATCH_FILE));
     }
     let items = f.read("events", |d, id| d.list(id, MAX_EVENTS))?;
     f.finish()?;
     let mut events = Vec::with_capacity(items.len());
     for (i, id) in items.into_iter().enumerate() {
         let what = format!("{BATCH_FILE}: events[{i}]");
-        // An error that already names the event, in the chosen language, is not
-        // named again; the written text is read for that.
+        // An error that already names the event is not named again.
         let event = event(&doc, id, &what, object_format).map_err(|e| {
-            if e.starts_with(&what) {
+            if names_place(&e, &what) {
                 e
             } else {
-                say!("totebag-at", place = &what, error = e)
+                msg!("totebag-at", place = &what, error = e)
             }
         })?;
         if matches!(events.last(), Some(Event::Retirement { .. })) {
-            return Err(say!("totebag-after-retirement", what = &what));
+            return Err(msg!("totebag-after-retirement", what = &what));
         }
         events.push(event);
     }
@@ -256,10 +264,10 @@ fn event(
     id: eure_document::document::NodeId,
     what: &str,
     object_format: &str,
-) -> Result<Event, String> {
+) -> Result<Event, Message> {
     let mut f = doc.fields(id, what)?;
     let kind = f.read("kind", |d, id| d.text(id))?;
-    let key = |f: &mut strict::Fields<'_>| -> Result<Key, String> {
+    let key = |f: &mut strict::Fields<'_>| -> Result<Key, Message> {
         Ok(Key {
             project: f.text_as("project", strict::sha256)?,
             rev: f.text_as("rev", strict::package_rev)?,
@@ -280,7 +288,7 @@ fn event(
                 if rev.format() == object_format {
                     Ok(rev)
                 } else {
-                    Err(say!(
+                    Err(msg!(
                         "totebag-not-commit-of-format",
                         value = format!("{s:?}"),
                         format = object_format
@@ -295,7 +303,7 @@ fn event(
             accept: f.text_as("verdict", |s| match s {
                 "accept" => Ok(true),
                 "reject" => Ok(false),
-                _ => Err(say!("totebag-not-verdict", value = format!("{s:?}"))),
+                _ => Err(msg!("totebag-not-verdict", value = format!("{s:?}"))),
             })?,
             reason: f.text_as("reason", strict::reason)?,
         },
@@ -306,7 +314,7 @@ fn event(
         "retirement" => Event::Retirement {
             reason: f.text_as("reason", strict::reason)?,
         },
-        other => return Err(say!("totebag-not-event-kind", value = format!("{other:?}"))),
+        other => return Err(msg!("totebag-not-event-kind", value = format!("{other:?}"))),
     };
     f.finish()?;
     Ok(event)
@@ -414,4 +422,11 @@ mod tests {
         assert!(config(format!("{good}pin = \"x\"\n").as_bytes()).is_err());
         assert!(config(good.replace("name = \"alice\"\n", "").as_bytes()).is_err());
     }
+}
+
+/// Whether `e` is a `totebag-at` that already says it happened at a place
+/// starting with `what`.
+fn names_place(e: &Message, what: &str) -> bool {
+    e.id == "totebag-at"
+        && matches!(e.get("place"), Some(tauto_message::Value::Text(p)) if p.starts_with(what))
 }

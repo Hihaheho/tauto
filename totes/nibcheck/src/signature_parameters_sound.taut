@@ -73,14 +73,14 @@ pub theorem signature_parameters_after_sound(
   borrows,
   ck_val(signature_parameters_after(rest, borrows, generics, m))
 ) {
-  match m: SignatureParameters(
+  ⊢ SignatureParameters(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
     Cons(source, rest),
     borrows,
     ck_val(signature_parameters_after(rest, borrows, generics, m))
-  ) {
+  ) from match m {
     mut1(t, next) => {
       let tail_clean: DiagnosticClean(
         ck_st(ck_sig_params(rest, next, signature_remaining_borrows(borrows), generics))
@@ -173,14 +173,14 @@ pub theorem ck_sig_params_sound(
   borrows,
   ck_val(ck_sig_params(sources, c, borrows, generics))
 ) {
-  match sources: SignatureParameters(
+  ⊢ SignatureParameters(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
     sources,
     borrows,
     ck_val(ck_sig_params(sources, c, borrows, generics))
-  ) {
+  ) from match sources {
     Nil => SignatureParametersNil(borrows)
     Cons(source, rest) => signature_parameters_after_sound(
       c,

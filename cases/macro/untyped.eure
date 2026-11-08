@@ -2,22 +2,24 @@
 
 @ cases.an-untyped-macro-reads-an-expression-and-nests
 files."nat.nib" = ````nib
-fn add(n: Nat, m: Nat) -> Nat {
+import std::prelude::Macro
+
+pub fn add(n: Nat, m: Nat): Nat {
   match n {
-    zero => m
-    succ(k) => succ(add(k, m))
+    Zero => m
+    Succ(k) => Succ(add(k, m))
   }
 }
 
-fn nat_bin(op: Text, l: SynExpr, r: SynExpr, e: SynExpr) -> SynExpr ! {macro_error, Div} {
-  let a = nat_expand(l)
-  let b = nat_expand(r)
+pub fn nat_bin(op: Text, l: SynExpr, r: SynExpr, e: SynExpr): SynExpr ! {macro_error, Div} {
+  let a := nat(l)
+  let b := nat(r)
   if op == "==" { quote { Eq(Nat, $a, $b) } } else {
     if op == "+" { quote { add($a, $b) } } else { e }
   }
 }
 
-fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr) -> SynExpr ! {macro_error, Div} {
+pub fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr): SynExpr ! {macro_error, Div} {
   match f {
     ExVar(op) => match args {
       Cons(l, rest) => match rest {
@@ -33,46 +35,45 @@ fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr) -> SynExpr ! {macro_erro
   }
 }
 
-fn nat_expand(e: SynExpr) -> SynExpr ! {macro_error, Div} {
+pub macro fn nat(e: SynExpr): SynExpr ! {macro_error, Div} {
   match e {
     ExApp(f, args, _) => nat_app(f, args, e)
     _ => e
   }
 }
 
-macro nat = nat_expand
-fn ident(c: Code) -> SynExpr { code_term(c) }
-macro keep = ident
+pub macro fn keep(c: Judgement): SynExpr { Judgement::term(c) }
 ````
 files."main.nib" = ````nib
 import "nat.nib"
-theorem plain(b: Nat): nat!(zero + b == b) { refl(Nat, b) }
-theorem nested(b: Nat): nat!(nat!(zero + b) == b) { refl(Nat, b) }
-theorem inner_typed(b: Nat): nat!(keep!(zero) + b == b) { refl(Nat, b) }
+theorem plain(b: Nat): nat!(Zero + b == b) { Refl(Nat, b) }
+theorem nested(b: Nat): nat!(nat!(Zero + b) == b) { Refl(Nat, b) }
+theorem inner_typed(b: Nat): nat!(keep!(Zero) + b == b) { Refl(Nat, b) }
 ````
 expands = ```nib
-theorem plain(b: Nat): Eq(Nat, add(zero, b), b) { refl(Nat, b) }
-theorem nested(b: Nat): Eq(Nat, add(zero, b), b) { refl(Nat, b) }
-theorem inner_typed(b: Nat): Eq(Nat, add(zero, b), b) { refl(Nat, b) }
+theorem plain(b: Nat): add(Zero, b) = b { Eq::Refl(Nat, b) }
+theorem nested(b: Nat): add(Zero, b) = b { Eq::Refl(Nat, b) }
+theorem inner_typed(b: Nat): add(Zero, b) = b { Eq::Refl(Nat, b) }
 ```
 trace = ["nat", "nat", "nat", "nat", "keep"]
 
 @ cases.a-typed-macro-in-a-return-type-and-a-field
 files."lib.nib" = ````nib
-fn ident(c: Code) -> SynExpr { code_term(c) }
-macro keep = ident
+import std::prelude::Macro
+
+pub macro fn keep(c: Judgement): SynExpr { Judgement::term(c) }
 ````
 files."main.nib" = ````nib
 import "lib.nib"
-fn f(x: u64) -> keep!(u64) { x }
-fn g(h: (u64) -> keep!(u64)) -> keep!(u64) ! {Div} { h(1) }
+fn f(x: u64): keep!(u64) { x }
+fn g(h: (u64) -> keep!(u64)): keep!(u64) ! {Div} { h(1) }
 struct P {
   a: keep!(u64)
 }
 ````
 expands = ```nib
-fn f(x: u64) -> u64 { x }
-fn g(h: (u64) -> u64) -> u64 ! {Div} { h(1) }
+fn f(x: u64): u64 { x }
+fn g(h: (u64) -> u64): u64 ! {Div} { h(1) }
 struct P {
   a: u64
 }
@@ -82,22 +83,24 @@ struct P {
 // library's. Hygiene tells them apart, and the user's is shown as `add#r1`.
 @ cases.an-untyped-macro-does-not-take-the-users-name
 files."nat.nib" = ````nib
-fn add(n: Nat, m: Nat) -> Nat {
+import std::prelude::Macro
+
+pub fn add(n: Nat, m: Nat): Nat {
   match n {
-    zero => m
-    succ(k) => succ(add(k, m))
+    Zero => m
+    Succ(k) => Succ(add(k, m))
   }
 }
 
-fn nat_bin(op: Text, l: SynExpr, r: SynExpr, e: SynExpr) -> SynExpr ! {macro_error, Div} {
-  let a = nat_expand(l)
-  let b = nat_expand(r)
+pub fn nat_bin(op: Text, l: SynExpr, r: SynExpr, e: SynExpr): SynExpr ! {macro_error, Div} {
+  let a := nat(l)
+  let b := nat(r)
   if op == "==" { quote { Eq(Nat, $a, $b) } } else {
     if op == "+" { quote { add($a, $b) } } else { e }
   }
 }
 
-fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr) -> SynExpr ! {macro_error, Div} {
+pub fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr): SynExpr ! {macro_error, Div} {
   match f {
     ExVar(op) => match args {
       Cons(l, rest) => match rest {
@@ -113,44 +116,42 @@ fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr) -> SynExpr ! {macro_erro
   }
 }
 
-fn nat_expand(e: SynExpr) -> SynExpr ! {macro_error, Div} {
+pub macro fn nat(e: SynExpr): SynExpr ! {macro_error, Div} {
   match e {
     ExApp(f, args, _) => nat_app(f, args, e)
     _ => e
   }
 }
 
-macro nat = nat_expand
-fn ident(c: Code) -> SynExpr { code_term(c) }
-macro keep = ident
+pub macro fn keep(c: Judgement): SynExpr { Judgement::term(c) }
 ````
 files."main.nib" = ````nib
 import "nat.nib"
-theorem shadow(add: Nat): nat!(zero + add == add) { refl(Nat, add) }
+theorem shadow(add: Nat): nat!(Zero + add == add) { Refl(Nat, add) }
 ````
 expands = ```nib
-theorem shadow(add#r1: Nat): Eq(Nat, add(zero, add#r1), add#r1) { refl(Nat, add#r1) }
+theorem shadow(add#r1: Nat): add(Zero, add#r1) = add#r1 { Eq::Refl(Nat, add#r1) }
 ```
 checks.shadow = "ok"
 
 @ cases.an-untyped-macro-takes-no-syntax-literal
 files."nat.nib" = ````nib
-fn add(n: Nat, m: Nat) -> Nat {
+pub fn add(n: Nat, m: Nat): Nat {
   match n {
-    zero => m
-    succ(k) => succ(add(k, m))
+    Zero => m
+    Succ(k) => Succ(add(k, m))
   }
 }
 
-fn nat_bin(op: Text, l: SynExpr, r: SynExpr, e: SynExpr) -> SynExpr ! {macro_error, Div} {
-  let a = nat_expand(l)
-  let b = nat_expand(r)
+pub fn nat_bin(op: Text, l: SynExpr, r: SynExpr, e: SynExpr): SynExpr ! {macro_error, Div} {
+  let a := nat(l)
+  let b := nat(r)
   if op == "==" { quote { Eq(Nat, $a, $b) } } else {
     if op == "+" { quote { add($a, $b) } } else { e }
   }
 }
 
-fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr) -> SynExpr ! {macro_error, Div} {
+pub fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr): SynExpr ! {macro_error, Div} {
   match f {
     ExVar(op) => match args {
       Cons(l, rest) => match rest {
@@ -166,19 +167,40 @@ fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr) -> SynExpr ! {macro_erro
   }
 }
 
-fn nat_expand(e: SynExpr) -> SynExpr ! {macro_error, Div} {
+pub macro fn nat(e: SynExpr): SynExpr ! {macro_error, Div} {
   match e {
     ExApp(f, args, _) => nat_app(f, args, e)
     _ => e
   }
 }
 
-macro nat = nat_expand
-fn ident(c: Code) -> SynExpr { code_term(c) }
-macro keep = ident
+pub macro fn keep(c: Judgement): SynExpr { Judgement::term(c) }
 ````
 files."main.nib" = ````nib
 import "nat.nib"
-theorem lit(b: Nat): nat!(`zero + b == b`) { refl(Nat, b) }
+theorem lit(b: Nat): nat!(`Zero + b == b`) { Refl(Nat, b) }
 ````
 macro_error = "macro.argument: macro nat takes an expression, not a syntax literal"
+
+@ cases.a-product-type-is-written-in-a-quote
+files."pair.nib" = ````nib
+import std::prelude::Macro
+
+pub macro fn with_count(e: SynExpr): SynExpr { quote { $e × Nat × Bool } }
+````
+files."main.nib" = ````nib
+import "pair.nib"
+fn count_of(p: with_count!(Text)): Nat {
+  match p {
+    #(_, n, _) => n
+  }
+}
+fn main() { count_of(#("a", 3, true)); }
+````
+expands = ```nib
+fn count_of(p: Text × Nat × Bool): Nat { match p {
+  #(_, n, _) => n
+} }
+fn main() { count_of(#("a", 3, true)) }
+```
+trace = ["with_count"]

@@ -6,7 +6,7 @@ use super::*;
 /// The continuation of a `direct` arm: every path ends in `k(e)`, and the
 /// arm's value is the `e`.
 pub(crate) struct TailK {
-    pub k: String,
+    pub k: Name,
     pub ans: TTy,
 }
 
@@ -25,7 +25,7 @@ impl<'a> Lowerer<'a> {
 
     /// The index of the operation `effect` in the package, declared on first
     /// use.
-    pub fn op_index(&mut self, effect: &str) -> usize {
+    pub fn op_index(&mut self, effect: &Name) -> usize {
         if let Some(i) = self.op_ids.get(effect) {
             return *i;
         }
@@ -42,26 +42,29 @@ impl<'a> Lowerer<'a> {
         let quant = self.quant(effect);
         // `show` is 0 and the budget's `exceeded` is 1 (`tauto_rt::budget`).
         let id = match effect {
-            "show" => 0,
-            "exceeded" => 1,
+            name if tauto::bindings::is_library(name, "show") => 0,
+            name if tauto::bindings::is_library(name, "exceeded") => 1,
             _ => {
                 self.ops
                     .iter()
-                    .filter(|o| o.name != "show" && o.name != "exceeded")
+                    .filter(|o| {
+                        !tauto::bindings::is_library(&o.name, "show")
+                            && !tauto::bindings::is_library(&o.name, "exceeded")
+                    })
                     .count() as u32
                     + 2
             }
         };
         self.ops.push(OpDef {
             id,
-            name: effect.to_string(),
+            name: effect.clone(),
             quant,
             generics,
             params,
             result,
         });
         let i = self.ops.len() - 1;
-        self.op_ids.insert(effect.to_string(), i);
+        self.op_ids.insert(effect.clone(), i);
         i
     }
 
@@ -71,7 +74,7 @@ impl<'a> Lowerer<'a> {
     fn spawn(&mut self, cx: &mut Cx, t: &SurfaceTerm, f: &SurfaceTerm) -> R<Expr> {
         let span = t.span;
         self.spawns = true;
-        let Some(ctor) = self.ctor_ref("Task::Task") else {
+        let Some(ctor) = self.ctor_ref(&tauto::bindings::library_name("Task::Mk")) else {
             return unsupported(msg!("nir-spawn-without-the-std-task"), span);
         };
         let ret = match self.types.term(f).map(|t| t.unborrowed().clone()) {
@@ -86,7 +89,7 @@ impl<'a> Lowerer<'a> {
         }
         let result = self.conv(&ret);
         let pending = Expr {
-            ty: Ty::Std("Pending".into(), vec![result]),
+            ty: Ty::Std(crate::StdType::Pending, vec![result]),
             kind: ExprKind::Call(Box::new(CallNode {
                 callee: Callee::Builtin("pending_spawn".into()),
                 args: vec![body],
@@ -113,14 +116,14 @@ impl<'a> Lowerer<'a> {
         &mut self,
         cx: &mut Cx,
         t: &SurfaceTerm,
-        effect: &str,
+        effect: &Name,
         args: &[SurfaceTerm],
     ) -> R<Expr> {
         let span = t.span;
-        if effect == "spawn" && args.len() == 1 {
+        if tauto::bindings::is_library(&effect, "spawn") && args.len() == 1 {
             return self.spawn(cx, t, &args[0]);
         }
-        let quant = if effect == "show" {
+        let quant = if tauto::bindings::is_library(&effect, "show") {
             Quant::Direct
         } else {
             self.quant(effect)
@@ -147,7 +150,7 @@ impl<'a> Lowerer<'a> {
                 None => self.expr(cx, a)?,
             };
             let e = self.deref_if_ref(e);
-            if effect == "show" && i == 1 {
+            if tauto::bindings::is_library(&effect, "show") && i == 1 {
                 let ety = e.ty.clone();
                 self.need(cx, &ety, Bound::Show);
                 out.push(Expr {
@@ -197,7 +200,7 @@ impl<'a> Lowerer<'a> {
             self.rust_unsupported
                 .borrow_mut()
                 .get_or_insert_with(|| Unsupported {
-                    what: msg!("nir-kept-continuation-multi-shot").to_string(),
+                    what: msg!("nir-kept-continuation-multi-shot"),
                     span: Some(at),
                 });
         }
@@ -296,16 +299,16 @@ impl<'a> Lowerer<'a> {
                     body,
                     ..
                 } => {
-                    if effect == "spawn" {
+                    if tauto::bindings::is_library(&effect, "spawn") {
                         continue;
                     }
-                    if effect == "exceeded" {
+                    if tauto::bindings::is_library(&effect, "exceeded") {
                         let arm =
                             self.exceeded_arm(cx, patterns, cont, guard, body, &result_t, &body_e)?;
                         susp.push(arm);
                         continue;
                     }
-                    let quant = if effect == "show" {
+                    let quant = if tauto::bindings::is_library(&effect, "show") {
                         Quant::Direct
                     } else {
                         self.quant(effect)
@@ -331,7 +334,7 @@ impl<'a> Lowerer<'a> {
                             .and_then(|s| s.params.get(i))
                             .cloned()
                             .unwrap_or(TTy::Var(0));
-                        let (pty, nty) = if effect == "show" && i == 1 {
+                        let (pty, nty) = if tauto::bindings::is_library(&effect, "show") && i == 1 {
                             (TTy::Var(0), Ty::Shown)
                         } else {
                             let pty = match admitted.and_then(|instance| instance.params.get(i)) {
@@ -346,7 +349,7 @@ impl<'a> Lowerer<'a> {
                             let n = self.conv(&pty);
                             (pty, n)
                         };
-                        let pat = if effect == "show" && i == 1 {
+                        let pat = if tauto::bindings::is_library(&effect, "show") && i == 1 {
                             self.show_pattern(cx, p, body.id())
                         } else {
                             self.pattern(cx, p, &pty, body.id(), false)?
@@ -479,7 +482,7 @@ impl<'a> Lowerer<'a> {
         &mut self,
         cx: &mut Cx,
         patterns: &[tauto::surface::Pattern],
-        cont: &Option<String>,
+        cont: &Option<Name>,
         guard: &Option<SurfaceTerm>,
         body: &SurfaceTerm,
         result_t: &TTy,
@@ -492,7 +495,7 @@ impl<'a> Lowerer<'a> {
         if guard.is_some() {
             return unsupported(msg!("nir-a-guard-on-an-exceeded-arm"), body.span);
         }
-        let op = self.op_index("exceeded");
+        let op = self.op_index(&tauto::bindings::library_name("exceeded"));
         let kty = self.types.local(k, at).cloned().unwrap_or(TTy::Var(0));
         let budget_ty = match &kty {
             TTy::Fn(ps, _, _) => self.conv(ps.first().unwrap_or(&TTy::Unit)),

@@ -1,0 +1,27 @@
+// A type that reaches itself through a member of a product (`List(Text × Node)`, with `Node`
+// mutual with `Value`) holds that field through an indirection in the Rust it is extracted to.
+@ cases.a-mutual-type-in-a-product-in-a-list
+extract = true
+imports = [path`../std/Base.taut`, path`../std/List.taut`, path`../std/Text.taut`]
+source = ```tauto
+mutual {
+  pub(open) inductive Value: Type {
+    Vnull: Value
+    Varr(items: List(Node)): Value
+  }
+  pub(open) inductive Node: Type {
+    Mk(v: Value, ext: List(Text × Node)): Node
+  }
+}
+
+fn count(n: Node): Nat {
+  ⊢ Nat from match n {
+    Mk(v, ext) => List::length(ext)
+  }
+}
+
+perform show("count", count(Mk(Vnull, Cons(#("a", Mk(Vnull, Nil)), Nil))))
+```
+shows = ["count = 1"]
+rust_shows = ["count = 1"]
+javascript_shows = ["count = 1"]

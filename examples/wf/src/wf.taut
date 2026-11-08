@@ -13,9 +13,9 @@ pub fn id_nat(n: Nat): Nat {
 }
 
 pub fn half(n: Nat): Nat decreasing_by measure(id_nat) => theorem half::eq {
-  match n: Nat {
+  ⊢ Nat from match n {
     Zero => Zero
-    Succ(m) => match m: Nat {
+    Succ(m) => ⊢ Nat from match m {
       Zero => Zero
       Succ(k) => Succ(half(k, Nat::le_succ(k)))
     }
@@ -26,9 +26,9 @@ pub fn half(n: Nat): Nat decreasing_by measure(id_nat) => theorem half::eq {
 pub fn pair_up(
   l: List(Nat)
 ): List(Nat) decreasing_by measure(l => List::length(l)) => theorem pair_up::eq {
-  match l: List(Nat) {
+  ⊢ List(Nat) from match l {
     Nil => Nil
-    Cons(x, rest) => match rest: List(Nat) {
+    Cons(x, rest) => ⊢ List(Nat) from match rest {
       Nil => Cons(x, Nil)
       Cons(y, t) => Cons(Nat::add(x, y), pair_up(t, Nat::le_succ(List::length(t))))
     }
@@ -37,7 +37,7 @@ pub fn pair_up(
 
 // The first parameter decreases in the call and `acc`, the one after it, grows.
 pub fn count_up(n: Nat, acc: Nat): Nat decreasing_by measure(id_nat) => theorem count_up::eq {
-  match n: Nat {
+  ⊢ Nat from match n {
     Zero => acc
     Succ(m) => count_up(m, Succ(acc), Nat::le_refl(m))
   }

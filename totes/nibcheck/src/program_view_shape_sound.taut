@@ -16,7 +16,7 @@ import "types_run.taut"
 import "unify_sound.taut"
 
 pub fn DataStmtViewShape(stmt: SurfaceStmt): Prop {
-  match stmt: Prop {
+  ⊢ Prop from match stmt {
     StLet(name, ty, value, borrow, mutable) => True
     StVar(name, ty, value, borrow) => True
     StModule(name, stmts, start, end) => True
@@ -57,7 +57,7 @@ pub theorem ck_program_data_one_view_shape(
   c: Checker,
   clean: DiagnosticClean(ck_st(ck_program_data_one(c, stmt)))
 ): DataStmtViewShape(stmt) {
-  match stmt: DataStmtViewShape(stmt) {
+  ⊢ DataStmtViewShape(stmt) from match stmt {
     StLet(name, ty, value, borrow, mutable) => Trivial
     StVar(name, ty, value, borrow) => Trivial
     StModule(name, stmts, start, end) => Trivial
@@ -116,7 +116,7 @@ pub theorem program_view_tail<P: Prop>(
   ih: ∀ next: Checker. ∀ clean: DiagnosticClean(ck_st(ck_program_data(rest, next))). P,
   clean: DiagnosticClean(ck_st(body_program_after(rest, m)))
 ): P {
-  match m: P {
+  ⊢ P from match m {
     mut1(ignored, next) => ih(next, recheck_clean_unwrap(ck_program_data(rest, next), clean))
   }
 }
@@ -125,7 +125,7 @@ pub theorem ck_program_data_view_shapes(
   c: Checker,
   clean: DiagnosticClean(ck_st(ck_program_data(stmts, c)))
 ): ProgramViewShapes(stmts) {
-  match stmts: ProgramViewShapes(stmts) {
+  ⊢ ProgramViewShapes(stmts) from match stmts {
     Nil => ProgramViewShapesNil
     Cons(Stmt, rest) => {
       let accepted: DiagnosticClean(
@@ -159,7 +159,7 @@ pub theorem program_view_after(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(registration_program_after(program, m)))
 ): ProgramViewShapes(program) {
-  match m: ProgramViewShapes(program) {
+  ⊢ ProgramViewShapes(program) from match m {
     mut1(ignored, next) => ck_program_data_view_shapes(
       program,
       next,

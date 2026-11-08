@@ -11,7 +11,7 @@ import "written_composite_sound.taut"
 pub theorem signature_none_source(
   m: Mut1(Unit, Checker)
 ): (signature_option_source(ck_val(signature_none_after(m))) = None) {
-  match m: (signature_option_source(ck_val(signature_none_after(m))) = None) {
+  ⊢ (signature_option_source(ck_val(signature_none_after(m))) = None) from match m {
     mut1(ignored, next) => Refl
   }
 }
@@ -19,7 +19,7 @@ pub theorem signature_some_source(
   source: SurfaceFn,
   m: Mut1(Scheme, Checker)
 ): signature_option_source(ck_val(signature_some_after(source, m))) = Some(source) {
-  match m: signature_option_source(ck_val(signature_some_after(source, m))) = Some(source) {
+  ⊢ signature_option_source(ck_val(signature_some_after(source, m))) = Some(source) from match m {
     mut1(scheme, next) => Refl
   }
 }
@@ -27,7 +27,9 @@ pub theorem ck_program_decl_source(
   stmt: SurfaceStmt,
   c: Checker
 ): signature_option_source(ck_val(ck_program_decl(c, stmt))) = signature_statement_source(stmt) {
-  match stmt: signature_option_source(ck_val(ck_program_decl(c, stmt))) = signature_statement_source(stmt) {
+  ⊢ signature_option_source(
+    ck_val(ck_program_decl(c, stmt))
+  ) = signature_statement_source(stmt) from match stmt {
     StLet(name, ty, value, borrow, mutable) => Refl
     StVar(name, ty, value, borrow) => Refl
     StModule(name, stmts, start, end) => Refl
@@ -75,8 +77,12 @@ pub theorem ck_program_decl_source(
 pub theorem signature_opt_cons_sources(
   item: Option(Pair(SurfaceFn, Scheme)),
   rest: List(Pair(SurfaceFn, Scheme))
-): signature_list_sources(opt_cons(item, rest)) = opt_cons(signature_option_source(item), signature_list_sources(rest)) {
-  match item: signature_list_sources(opt_cons(item, rest)) = opt_cons(signature_option_source(item), signature_list_sources(rest)) {
+): signature_list_sources(
+  opt_cons(item, rest)
+) = opt_cons(signature_option_source(item), signature_list_sources(rest)) {
+  ⊢ signature_list_sources(
+    opt_cons(item, rest)
+  ) = opt_cons(signature_option_source(item), signature_list_sources(rest)) from match item {
     None => Refl
     Some(entry) => Refl
   }
@@ -86,9 +92,15 @@ pub theorem signature_program_after_sources(
   rest: List(SurfaceStmt),
   m: Mut1(Option(Pair(SurfaceFn, Scheme)), Checker),
   head: signature_option_source(ck_val(m)) = signature_statement_source(stmt),
-  ih: ∀ next: Checker. signature_list_sources(ck_val(ck_program_decls(rest, next))) = signature_program_sources(rest)
-): signature_list_sources(ck_val(signature_program_after(rest, m))) = signature_program_sources(Cons(stmt, rest)) {
-  match m: signature_list_sources(ck_val(signature_program_after(rest, m))) = signature_program_sources(Cons(stmt, rest)) {
+  ih: ∀ next: Checker. signature_list_sources(
+    ck_val(ck_program_decls(rest, next))
+  ) = signature_program_sources(rest)
+): signature_list_sources(
+  ck_val(signature_program_after(rest, m))
+) = signature_program_sources(Cons(stmt, rest)) {
+  ⊢ signature_list_sources(
+    ck_val(signature_program_after(rest, m))
+  ) = signature_program_sources(Cons(stmt, rest)) from match m {
     mut1(item, next) => Eq::trans(
       Eq::congr(
         signature_list_sources,
@@ -121,8 +133,12 @@ pub theorem signature_program_after_sources(
 pub theorem ck_program_decls_sources(
   program: List(SurfaceStmt),
   c: Checker
-): signature_list_sources(ck_val(ck_program_decls(program, c))) = signature_program_sources(program) {
-  match program: signature_list_sources(ck_val(ck_program_decls(program, c))) = signature_program_sources(program) {
+): signature_list_sources(
+  ck_val(ck_program_decls(program, c))
+) = signature_program_sources(program) {
+  ⊢ signature_list_sources(
+    ck_val(ck_program_decls(program, c))
+  ) = signature_program_sources(program) from match program {
     Nil => Refl
     Cons(Stmt, rest) => Eq::trans(
       Eq::congr(

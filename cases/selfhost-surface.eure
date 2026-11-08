@@ -1,0 +1,384 @@
+// Differential cases: each named route compares the self-hosted component with its oracle, not only evaluator success.
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-001
+source = ```tauto
+let &x := f(&v)
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-002
+source = ```tauto
+let f := (&v: A, &mut w, x) => v
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-003
+source = ```tauto
+let f := (1, x) => x
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-004
+source = ```tauto
+let t: A | B | C := x
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-005
+source = ```tauto
+theorem t(a: P, b: Q): a ∧ b ∨ a ↔ b { Refl }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-006
+source = ```tauto
+theorem t(): ∃ x: Nat. x = x { Refl }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-007
+source = ```tauto
+theorem t(): ∀ x: Nat. x = x { Refl }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-008
+source = ```tauto
+fn f(g: (i64, i64) -> i64, h: affine (A) -> B ! {e}): Unit ! {e} ∪ r { #() }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-009
+source = ```tauto
+fn f(g: (&x: A, y: B) -> C): Unit { #() }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-010
+source = ```tauto
+fn f(g: (A) -> &B ! {e}): &C { g }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-011
+source = ```tauto
+let a: @t A := @t x
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-012
+source = ```tauto
+theorem t(): Eq(Nat, 1, 2) -> ¬P { x }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-013
+source = ```tauto
+let a := if x { 1 } else if y { 2 } else { 3 }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-014
+source = ```tauto
+let a := match x { 0 => 1  -3 => 2  true => 3  "s" => 4  _ => 5  n => n  C(a, b) => a  P { x, y: 0 } => x }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-015
+source = ```tauto
+let a := match x { n if n > 0 => n
+ _ => 0 }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-016
+source = ```tauto
+let a := match x { 1 | 2 => 3
+ _ => 0 }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-017
+source = ```tauto
+let a := ⊢ T from match x { _ => 0 }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-018
+source = ```tauto
+let a := handle { perform e(1) } with { e(x), k => k(x)
+ return y => y }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-019
+source = ```tauto
+let a := handle { 1 } with { return y => y } with { e(), k if c => 1 }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-020
+source = ```tauto
+let a := budget(steps: 3) { 1 }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-021
+source = ```tauto
+let p := P { x: 1, y: 2 }
+let e := E {}
+let q := a.B
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-022
+source = ```tauto
+let a := p.x.y(1)(2)
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-023
+source = ```tauto
+mutual {
+ inductive A: Type { C: A }
+ fn f(): Unit { #() }
+ theorem t(): P { x }
+}
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-024
+source = ```tauto
+inductive Vec(A: Type, n: Nat): Type { nil<B>(x: B): Vec(A, n)
+ cons(x: A): Vec(A, n) }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-025
+source = ```tauto
+def f(x: Nat): Type := Vec(Nat, x)
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-026
+source = ```tauto
+axiom a<T: Type>(x: T): P
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-027
+source = ```tauto
+effect e<G>(A, B): C resume <=1
+effect f(): Unit resume ω
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-028
+source = ```tauto
+affine struct S(A: Type) { a: A, b: Nat }
+enum E(A: Type) { X, Y(A, A), Z { f: A } }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-029
+source = ```tauto
+extern "rust" { fn f(x: i64): i64
+ fn g(): Unit }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-030
+source = ```tauto
+import "a/b.nib"
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-031
+source = ```tauto
+theorem t(): P { ⊢ G from match f(n) eqn e {
+ Less => ⊢ G1 from a
+ Equal if c => ⊢ G2 from b
+ _ => d } }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-032
+source = ```tauto
+fn f(): Unit { var i := 0
+ while i < 3 { i := i + 1 }
+ return }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-033
+source = ```tauto
+fn f(): Unit { 1 := 2 }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-034
+source = ```tauto
+fn f<A: Shared, !B: <=1, C>(x: A): A { x }
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-035
+source = ```tauto
+let a := ?h
+let b := ??x
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-036
+source = ```tauto
+let a := "x\n\u{e9}"
+let b := 'y\n'
+let c := plaintext`z\n`
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-037
+source = ```tauto
+let a := 1.5
+let b := 123
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-038
+source = ```tauto
+let a := -x
+let b := not(x)
+let c := &mut y
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-039
+source = ```tauto
+let a := #()
+let b := (1)
+let c := (1,)
+let d := (1, 2)
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-040
+source = ```tauto
+fn f(
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-041
+source = ```tauto
+let xs := [[1, 2], [], [
+  3
+]]
+```
+differential = "surface"
+
+// surface_matches_on_hard_cases
+@ cases.surface-matches-on-hard-cases-043
+source = ```tauto
+effect ask<K, V>(k: K): V
+fn rule(): i64 ! {ask(Text, i64), ∀ A, B. ask(A, B)} { perform ask("a") }
+let r := handle { rule() } with { ask<Text, i64>(k), c => c(1); ∀ A, B. ask<A, B>(k), c => c(2) }
+```
+differential = "surface"
+
+// parse_program_is_the_unresolved_reader_at_base_0
+@ cases.parse-program-is-the-unresolved-reader-at-base-0-041
+source = ```tauto
+let a := 1
+```
+differential = "surface"
+
+// qualified_constructor_patterns_keep_the_full_path
+@ cases.qualified-constructor-patterns-keep-the-full-path-042
+source = ```tauto
+enum Left { Same(i64), Empty, Record { n: i64 } }
+fn get(x: Left): i64 { match x { Left::Same(n) => n, Left::Empty => 0, Left::Record { n } => n } }
+```
+differential = "surface"
+
+@ cases.surface-hard-empty
+source = ```tauto
+
+```
+differential = "surface"
+
+@ cases.function-term-generic-types
+source = ```tauto
+fn choose<A: Type, value: A, count: Nat>(w: At(count)): A { value }
+```
+differential = "surface"
+
+@ cases.class-typed-telescope
+source = ```tauto
+class Lookup(A: Type, key: Text, n: Nat) { fn find(value: A): Nat }
+```
+differential = "surface"
+
+@ cases.instance-term-arguments
+source = ```tauto
+instance<n: Nat> Lookup(Nat, "one", n) { fn find(value: Nat): Nat { value } }
+```
+differential = "surface"
+
+@ cases.constraint-term-arguments
+source = ```tauto
+fn find<n: Nat>(value: Nat): Nat where Lookup(Nat, "one", n) { value }
+```
+differential = "surface"
+
+@ cases.class-first-term-parameter
+source = ```tauto
+class Label(key: Text) { fn label(): Text }
+```
+differential = "surface"
+
+@ cases.surface-arm-instance-takes-a-row
+source = ```tauto
+effect cur<A, !e>(): Unit
+fn f<!r>(): Unit { handle { perform cur() } with { cur<Text, !{out} ∪ r>(), k => k(#()) } }
+```
+differential = "surface"

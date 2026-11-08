@@ -25,7 +25,7 @@
 //!   `tauto fmt` writes the sign; `std/` and `meta/` write the sign.
 //! - **`step-tactic`.** A step (`by t!(…): G { … }`) calls a tactic of
 //!   std's own ([`STD_TACTICS`]): a proof of std reads without a tactic of a
-//!   user's tote.
+//!   user's tote. A step a literal says (`by t!` in a `proof!` document) too.
 //! - **`hand-generalize`.** A `match` whose motive ends in `->` and whose arms
 //!   take the hypothesis again with a λ (`: (P) -> G { C => (h: P') => … }(h)`)
 //!   generalizes by hand; the arguments after the matched one are generalized
@@ -38,9 +38,8 @@
 //!   a public name and a name at a boundary with the outside.
 //! - **`bool-mix`.** `&&` and `||` mixed are parenthesized: `(a && b) || c`,
 //!   not `a && b || c`.
-//! - **`pair-projection`.** `e.fst` and `e.snd`, not `Pair::fst(e)`.
-//! - **`named-prop`.** A connective is written as its sign (`A ∧ B`, `A × B`,
-//!   `∃ x: T. P`), not by name (`And(A, B)`, `Pair(A, B)`, `Ex(…)`).
+//! - **`named-prop`.** A connective is written as its sign (`A ∧ B`,
+//!   `∃ x: T. P`), not by name (`And(A, B)`, `Ex(…)`).
 //! - **`unused-forall`.** `∀ h: P. Q` binds a value `Q` uses; a hypothesis
 //!   no one names is `(P) -> Q`.
 //! - **`explicit-implicit`.** A call of a theorem or a constructor this file
@@ -50,8 +49,13 @@
 //!   (`import std::Text { Text, concat }`), so the file's dependencies read
 //!   from its imports. `tauto lint --fix` writes each list from the names the
 //!   file uses through the import, as name resolution reads them.
+//! - **`pair-name`.** A pair is written `A × B` for its type and `#(a, b)` for its
+//!   value and pattern, not `Pair(A, B)` and `Pair { fst: a, snd: b }`: they are
+//!   the same, and the product signs are the one way to write it.
+//! - **`pair-fields`.** A declaration that takes both `p.fst` and `p.snd` of one
+//!   name `p` takes the pair apart: `let #(a, b) := p` names its members once.
 
-use tauto_message::msg;
+use tauto_message::{Message, msg};
 use tauto_parol::Span;
 
 use std::collections::HashMap;
@@ -62,7 +66,7 @@ use crate::surface::{
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Finding {
-    pub message: String,
+    pub message: tauto_message::Message,
     pub span: Span,
 }
 
@@ -72,7 +76,7 @@ impl std::fmt::Display for Finding {
     }
 }
 
-pub fn lint(source: &str) -> Result<Vec<Finding>, String> {
+pub fn lint(source: &str) -> Result<Vec<Finding>, Message> {
     // The file as written: what a macro makes is not what the file says, and
     // a step is gone once expanded.
     let program = parse_program_as_written(source)?;
@@ -87,13 +91,15 @@ pub fn lint(source: &str) -> Result<Vec<Finding>, String> {
     }
     for (start, end) in crate::fmt::escapes(source) {
         out.push(Finding {
-            message: msg!("tauto-lint-escape", escape = &source[start..end]).to_string(),
+            message: msg!("tauto-lint-escape", escape = &source[start..end]),
             span: Span::new(start as u32, end as u32),
         });
     }
     for s in &program.stmts {
         raw_locals(s, source, &mut out);
         import_list(s, &mut out);
+        pair_fields(s, &mut out);
+        pair_name(s, &mut out);
     }
     Ok(out)
 }
@@ -113,14 +119,14 @@ fn import_list(s: &Stmt, out: &mut Vec<Finding>) {
             crate::surface::print::quoted(path)
         };
         out.push(Finding {
-            message: msg!("tauto-lint-import-list", import = spelling.as_str()).to_string(),
+            message: msg!("tauto-lint-import-list", import = spelling.as_str()),
             span: *span,
         });
     }
 }
 
-/// The tactics a step of `std/` and `meta/` calls: `std/Tactic.taut`.
-pub const STD_TACTICS: &[&str] = &["rewrite", "nat_norm", "nat_le"];
+/// The tactics a step of `std/` and `meta/` calls.
+pub const STD_TACTICS: &[&str] = &["rewrite", "nat_norm", "nat_le", "int_norm"];
 
 /// The constructors of the inductive types with indices the file declares:
 /// a type whose sort is a function type (`inductive Vec(A: Type): Nat -> Type`).
@@ -129,7 +135,7 @@ fn indexed_constructors(stmts: &[Stmt]) -> Vec<String> {
     for s in stmts {
         match s {
             Stmt::Inductive(d) if matches!(&*d.sort.kind, TermKind::Pi { .. }) => {
-                out.extend(d.constructors.iter().map(|c| c.name.clone()))
+                out.extend(d.constructors.iter().map(|c| c.name.to_string()))
             }
             Stmt::Mutual { items, .. } => out.extend(indexed_constructors(items)),
             _ => {}
@@ -140,7 +146,7 @@ fn indexed_constructors(stmts: &[Stmt]) -> Vec<String> {
 
 fn pattern_ctor(p: &Pattern) -> Option<&str> {
     match p {
-        Pattern::Ctor { name, .. } | Pattern::Record { name, .. } => {
+        Pattern::Ctor { name, .. } | Pattern::Record { name, .. } | Pattern::Bind(name) => {
             Some(name.rsplit("::").next().unwrap_or(name))
         }
         _ => None,
@@ -160,7 +166,7 @@ fn indexed_arm_goals(s: &Stmt, indexed: &[String], out: &mut Vec<Finding>) {
         {
             for arm in arms.iter().filter(|a| a.goal.is_none()) {
                 out.push(Finding {
-                    message: msg!("tauto-lint-indexed-arm-goal").to_string(),
+                    message: msg!("tauto-lint-indexed-arm-goal"),
                     span: arm.body.span,
                 });
             }
@@ -177,6 +183,7 @@ fn macro_rules(s: &Stmt, out: &mut Vec<Finding>) {
             && let TermKind::SyntaxLit(lit) = &*arg.kind
         {
             braced_names(&lit.text, arg.span, out);
+            literal_tactics(&lit.text, arg.span, out);
         }
         match &*t.kind {
             // `include_text!` is not a macro: the reader makes it a literal.
@@ -186,7 +193,7 @@ fn macro_rules(s: &Stmt, out: &mut Vec<Finding>) {
                     && !matches!(&*arg.kind, TermKind::SyntaxLit(_)) =>
             {
                 out.push(Finding {
-                    message: msg!("tauto-lint-typed-macro-in-proof", name = name).to_string(),
+                    message: msg!("tauto-lint-typed-macro-in-proof", name = name),
                     span: t.span,
                 })
             }
@@ -196,15 +203,16 @@ fn macro_rules(s: &Stmt, out: &mut Vec<Finding>) {
                         "tauto-lint-step-tactic",
                         tactic = &step.tactic,
                         tactics = STD_TACTICS.join(", ")
-                    )
-                    .to_string(),
+                    ),
                     span: step.call,
                 })
             }
-            TermKind::Var(n) if n == "Syn::ident_like" => out.push(Finding {
-                message: msg!("tauto-lint-macro-capture").to_string(),
-                span: t.span,
-            }),
+            TermKind::Var(n) if crate::bindings::is_library(n, "Syn::ident_like") => {
+                out.push(Finding {
+                    message: msg!("tauto-lint-macro-capture"),
+                    span: t.span,
+                })
+            }
             _ => {}
         }
     });
@@ -240,7 +248,7 @@ fn term(t: &SurfaceTerm, out: &mut Vec<Finding>) {
             for arm in arms {
                 if arm.pattern == Pattern::Wild {
                     out.push(Finding {
-                        message: msg!("tauto-lint-wild-arm").to_string(),
+                        message: msg!("tauto-lint-wild-arm"),
                         span: arm.body.span,
                     });
                 }
@@ -261,7 +269,7 @@ fn term(t: &SurfaceTerm, out: &mut Vec<Finding>) {
                     .any(|a| !matches!(a.pattern, Pattern::Int(_) | Pattern::Text(_)))
             {
                 out.push(Finding {
-                    message: msg!("tauto-lint-rest-arm").to_string(),
+                    message: msg!("tauto-lint-rest-arm"),
                     span: last.body.span,
                 });
             }
@@ -319,14 +327,15 @@ fn term(t: &SurfaceTerm, out: &mut Vec<Finding>) {
             term(body, out);
         }
         TermKind::Hole(name) => out.push(Finding {
-            message: msg!("tauto-lint-hole", name = name).to_string(),
+            message: msg!("tauto-lint-hole", name = name),
             span: t.span,
         }),
         TermKind::Record { fields, .. } => fields.iter().for_each(|(_, v)| term(v, out)),
         TermKind::Borrow { term: inner, .. }
         | TermKind::FnKind { ty: inner, .. }
         | TermKind::BorrowLam { lam: inner, .. } => term(inner, out),
-        TermKind::Var(_)
+        TermKind::Declaration(_)
+        | TermKind::Var(_)
         | TermKind::Nat(_)
         | TermKind::Float(_)
         | TermKind::Text(_)
@@ -381,7 +390,7 @@ fn bool_mix(
             continue;
         }
         out.push(Finding {
-            message: msg!("tauto-lint-bool-mix").to_string(),
+            message: msg!("tauto-lint-bool-mix"),
             span: a.span,
         });
     }
@@ -408,32 +417,170 @@ fn parenthesized(span: Span, source: &str) -> bool {
     before.ends_with('(') && after.starts_with(')')
 }
 
-/// `braced-name`: a syntax literal embeds a name as `$n`, never `${n}`; the
-/// braces are for an expression (`${Succ(n)}`).
+/// The steps a literal says, `by t!`, which the macro puts in its output
+/// (`We have G by t!.` of `proof!`): the same rule as a written step.
+fn literal_tactics(text: &str, span: Span, out: &mut Vec<Finding>) {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut rest = text;
+    let mut before = None::<char>;
+    while let Some(at) = rest.find("by") {
+        let previous = rest[..at].chars().last().or(before);
+        let after = &rest[at + 2..];
+        let name: String = after
+            .trim_start_matches([' ', '\t'])
+            .chars()
+            .take_while(|c| word(*c))
+            .collect();
+        let call = after.trim_start_matches([' ', '\t'])[name.len()..].starts_with('!');
+        if !previous.is_some_and(word)
+            && after.starts_with([' ', '\t'])
+            && !name.is_empty()
+            && call
+            && !STD_TACTICS.contains(&name.as_str())
+        {
+            out.push(Finding {
+                message: msg!(
+                    "tauto-lint-step-tactic",
+                    tactic = &name,
+                    tactics = STD_TACTICS.join(", ")
+                ),
+                span,
+            });
+        }
+        before = rest[..at + 2].chars().last();
+        rest = &rest[at + 2..];
+    }
+}
+
+/// `braced-name`: a syntax literal embeds one expression as `$n`, `$f(x)` or `$(a + b)`, never
+/// `${n}`, `${f(x)}` or `${a + b}`; the braces are for statements before the last expression
+/// (`${ let m := …; m }`).
 fn braced_names(text: &str, span: Span, out: &mut Vec<Finding>) {
     let mut rest = text;
     while let Some(i) = rest.find("${") {
         rest = &rest[i + 2..];
-        let Some(j) = rest.find('}') else { break };
-        let name = rest[..j].trim();
-        let mut cs = name.chars();
-        if cs
-            .next()
-            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-            && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
-        {
-            out.push(Finding {
-                message: msg!("tauto-lint-braced-name", name = name).to_string(),
-                span,
-            });
+        let Some(j) = closing_brace(rest) else { break };
+        let inner = rest[..j].trim();
+        rest = &rest[j + 1..];
+        if inner.is_empty() || has_statement(inner) {
+            continue;
+        }
+        let to = if is_postfix(inner) {
+            format!("${inner}")
+        } else {
+            format!("$({inner})")
+        };
+        out.push(Finding {
+            message: msg!("tauto-lint-braced-name", to = to, from = format!("${{{inner}}}")),
+            span,
+        });
+    }
+}
+
+/// The `}` that closes the brace just opened in `s`.
+fn closing_brace(s: &str) -> Option<usize> {
+    let (mut depth, mut text) = (0usize, false);
+    let mut chars = s.char_indices();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' if text => {
+                chars.next();
+            }
+            '"' => text = !text,
+            '{' | '(' | '[' if !text => depth += 1,
+            ')' | ']' if !text => depth = depth.saturating_sub(1),
+            '}' if !text => {
+                if depth == 0 {
+                    return Some(i);
+                }
+                depth -= 1;
+            }
+            _ => {}
         }
     }
+    None
+}
+
+/// Whether a block's body is more than one expression: a `let`, or a `;` or a line break outside
+/// every bracket.
+fn has_statement(inner: &str) -> bool {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    if let Some(rest) = inner.strip_prefix("let")
+        && !rest.starts_with(word)
+    {
+        return true;
+    }
+    let (mut depth, mut text) = (0usize, false);
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if text => {
+                chars.next();
+            }
+            '"' => text = !text,
+            '{' | '(' | '[' if !text => depth += 1,
+            '}' | ')' | ']' if !text => depth = depth.saturating_sub(1),
+            ';' | '\n' if !text && depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// An expression the `$` form reads whole: a name, a call, a macro call, or a parenthesized
+/// expression.
+fn is_postfix(e: &str) -> bool {
+    let b = e.as_bytes();
+    let name_end = |from: usize| {
+        let mut k = from;
+        while k < b.len() && (b[k].is_ascii_alphanumeric() || b[k] == b'_') {
+            k += 1;
+        }
+        k
+    };
+    let closes_at_end = |from: usize| {
+        let (mut depth, mut text) = (0usize, false);
+        let mut skip = false;
+        for (k, c) in e[from..].char_indices() {
+            if skip {
+                skip = false;
+                continue;
+            }
+            match c {
+                '\\' if text => skip = true,
+                '"' => text = !text,
+                '(' | '[' | '{' if !text => depth += 1,
+                ')' | ']' | '}' if !text => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return from + k + 1 == e.len();
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    };
+    if b.first() == Some(&b'(') {
+        return closes_at_end(0);
+    }
+    if !b.first().is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_') {
+        return false;
+    }
+    let mut k = name_end(0);
+    while e[k..].starts_with("::") && name_end(k + 2) > k + 2 {
+        k = name_end(k + 2);
+    }
+    if e[k..].starts_with('!') {
+        k += 1;
+    }
+    k == e.len() || (e[k..].starts_with('(') && closes_at_end(k))
 }
 
 /// A name written with dots: `Bool::cases` as one name or as a field of `Bool`.
 fn dotted(t: &SurfaceTerm) -> Option<String> {
     match &*t.kind {
-        TermKind::Var(n) => Some(n.clone()),
+        TermKind::Var(n) => Some(n.to_string()),
         TermKind::Field { base, name } => Some(format!("{}::{name}", dotted(base)?)),
         _ => None,
     }
@@ -450,7 +597,7 @@ fn names_in(t: &SurfaceTerm, out: &mut Vec<String>) {
     let mut t = t.clone();
     walk::term(&mut t, &mut |x| {
         if let TermKind::Var(n) = &*x.kind {
-            out.push(n.clone());
+            out.push(n.to_string());
         }
     });
 }
@@ -468,11 +615,11 @@ fn implicit_decls(stmts: &[Stmt]) -> HashMap<String, ImplicitDecl> {
         match s {
             Stmt::Theorem(d) | Stmt::Def(d) if d.implicit > 0 => {
                 out.insert(
-                    d.name.clone(),
+                    d.name.to_string(),
                     ImplicitDecl {
                         generics: d.params[..d.implicit]
                             .iter()
-                            .map(|(n, _)| n.clone())
+                            .map(|(n, _)| n.to_string())
                             .collect(),
                         explicit: d.params[d.implicit..]
                             .iter()
@@ -487,11 +634,11 @@ fn implicit_decls(stmts: &[Stmt]) -> HashMap<String, ImplicitDecl> {
                         .params
                         .iter()
                         .chain(&c.params[..c.implicit])
-                        .map(|(n, _)| n.clone())
+                        .map(|(n, _)| n.to_string())
                         .collect();
                     if !generics.is_empty() {
                         out.insert(
-                            c.name.clone(),
+                            c.name.to_string(),
                             ImplicitDecl {
                                 generics,
                                 explicit: c.params[c.implicit..]
@@ -515,7 +662,7 @@ fn implicit_decls(stmts: &[Stmt]) -> HashMap<String, ImplicitDecl> {
 /// application, a binder or a λ.
 fn matchable(g: &str, t: &SurfaceTerm) -> bool {
     match &*t.kind {
-        TermKind::Var(n) => n == g,
+        TermKind::Var(n) => n.spelling() == Some(g),
         TermKind::App {
             function,
             arguments,
@@ -550,7 +697,7 @@ fn mk_constructors<'a>(
     }
     for c in ctors.filter(|c| mk_name(c)) {
         out.push(Finding {
-            message: msg!("tauto-lint-mk-constructor", name = c, ty = ty).to_string(),
+            message: msg!("tauto-lint-mk-constructor", name = c, ty = ty),
             span,
         });
     }
@@ -602,7 +749,7 @@ fn style_rules(
             }) =>
         {
             out.push(Finding {
-                message: msg!("tauto-lint-hand-generalize").to_string(),
+                message: msg!("tauto-lint-hand-generalize"),
                 span: t.span,
             })
         }
@@ -610,7 +757,7 @@ fn style_rules(
             if dotted(t).as_deref() == Some("Bool::cases") =>
         {
             out.push(Finding {
-                message: msg!("tauto-lint-bool-cases").to_string(),
+                message: msg!("tauto-lint-bool-cases"),
                 span: t.span,
             })
         }
@@ -623,21 +770,16 @@ fn style_rules(
                 return;
             };
             match n.as_str() {
-                "Pair::fst" | "Pair::snd" => out.push(Finding {
-                    message: msg!("tauto-lint-pair-projection", name = &n, field = &n[6..])
-                        .to_string(),
-                    span: t.span,
-                }),
-                "And" | "Or" | "Iff" | "Ex" | "Pair" => {
+                "And" | "Or" | "Iff" | "Ex" => {
                     let sign = match n.as_str() {
                         "And" => "A ∧ B",
                         "Or" => "A ∨ B",
                         "Iff" => "A ↔ B",
                         "Ex" => "∃ x: T. P",
-                        _ => "A × B",
+                        _ => unreachable!(),
                     };
                     out.push(Finding {
-                        message: msg!("tauto-lint-named-prop", name = &n, sign = sign).to_string(),
+                        message: msg!("tauto-lint-named-prop", name = &n, sign = sign),
                         span: t.span,
                     })
                 }
@@ -650,7 +792,7 @@ fn style_rules(
                     .all(|g| d.explicit.iter().any(|e| matchable(g, e)))
             {
                 out.push(Finding {
-                    message: msg!("tauto-lint-explicit-implicit", name = &n).to_string(),
+                    message: msg!("tauto-lint-explicit-implicit", name = &n),
                     span: t.span,
                 })
             }
@@ -671,7 +813,7 @@ fn style_rules(
                 names_in(result, &mut used);
                 if !used.iter().any(|u| u == h) {
                     out.push(Finding {
-                        message: msg!("tauto-lint-unused-forall", name = h).to_string(),
+                        message: msg!("tauto-lint-unused-forall", name = h),
                         span: t.span,
                     })
                 }
@@ -683,7 +825,7 @@ fn style_rules(
 
 fn pattern_binds(p: &Pattern, out: &mut Vec<String>) {
     match p {
-        Pattern::Bind(n) => out.push(n.clone()),
+        Pattern::Bind(n) => out.push(n.to_string()),
         Pattern::Ctor { args, .. } => args.iter().for_each(|a| pattern_binds(a, out)),
         Pattern::Record { fields, .. } => fields.iter().for_each(|(_, a)| pattern_binds(a, out)),
         Pattern::Tuple(items) => items.iter().for_each(|a| pattern_binds(a, out)),
@@ -695,10 +837,17 @@ fn pattern_binds(p: &Pattern, out: &mut Vec<String>) {
 /// them is first written `r#name` in it.
 fn raw_locals(s: &Stmt, source: &str, out: &mut Vec<Finding>) {
     let (mut names, span) = match s {
-        Stmt::Fn(f) => (f.params.clone(), f.span),
-        Stmt::Theorem(d) | Stmt::Def(d) => {
-            (d.params.iter().map(|(n, _)| n.clone()).collect(), d.span)
-        }
+        Stmt::Fn(f) => (
+            f.params
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<String>>(),
+            f.span,
+        ),
+        Stmt::Theorem(d) | Stmt::Def(d) => (
+            d.params.iter().map(|(n, _)| n.to_string()).collect(),
+            d.span,
+        ),
         Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => {
             return items.iter().for_each(|i| raw_locals(i, source, out));
         }
@@ -707,22 +856,22 @@ fn raw_locals(s: &Stmt, source: &str, out: &mut Vec<Finding>) {
     };
     let mut s = s.clone();
     walk::stmt(&mut s, &mut |t| match &*t.kind {
-        TermKind::Lam { params, .. } => names.extend(params.iter().cloned()),
+        TermKind::Lam { params, .. } => names.extend(params.iter().map(ToString::to_string)),
         TermKind::Block(stmts) => {
             for st in stmts {
                 if let Stmt::Let { name, .. } | Stmt::Var { name, .. } = st {
-                    names.push(name.clone());
+                    names.push(name.to_string());
                 }
             }
         }
         TermKind::Match { arms, binder, .. } => {
-            names.extend(binder.iter().cloned());
+            names.extend(binder.iter().map(ToString::to_string));
             arms.iter()
                 .for_each(|a| pattern_binds(&a.pattern, &mut names));
         }
         TermKind::Step(step) => {
             for a in &step.arms {
-                names.extend(a.binders.iter().map(|(n, _)| n.clone()));
+                names.extend(a.binders.iter().map(|(n, _)| n.to_string()));
             }
         }
         _ => {}
@@ -748,8 +897,113 @@ fn raw_locals(s: &Stmt, source: &str, out: &mut Vec<Finding>) {
         reported.push(name);
         let start = span.start as usize + at;
         out.push(Finding {
-            message: msg!("tauto-lint-raw-local", name = name).to_string(),
+            message: msg!("tauto-lint-raw-local", name = name),
             span: Span::new(start as u32, (start + 2 + len) as u32),
         });
+    }
+}
+
+/// Whether `pattern` writes the `Pair` record, itself or in a member.
+fn pair_pattern(pattern: &Pattern) -> bool {
+    match pattern {
+        Pattern::Record { name, fields } => {
+            name.as_str() == "Pair" || fields.iter().any(|(_, p)| pair_pattern(p))
+        }
+        Pattern::Ctor { args, .. } => args.iter().any(pair_pattern),
+        Pattern::Tuple(items) => items.iter().any(pair_pattern),
+        _ => false,
+    }
+}
+
+/// `pair-name`: `Pair(A, B)` and `Pair { fst: a, snd: b }`, in a term or a pattern.
+fn pair_name(s: &Stmt, out: &mut Vec<Finding>) {
+    let mut s = s.clone();
+    walk::stmt(&mut s, &mut |t| {
+        let found = match &*t.kind {
+            TermKind::App {
+                function,
+                arguments,
+            } => {
+                arguments.len() == 2
+                    && matches!(&*function.kind, TermKind::Var(n) if n.as_str() == "Pair")
+            }
+            TermKind::Record { name, .. } => name.as_str() == "Pair",
+            TermKind::Match { arms, .. } => {
+                if let Some(arm) = arms.iter().find(|a| pair_pattern(&a.pattern)) {
+                    out.push(Finding {
+                        message: msg!("tauto-lint-pair-name"),
+                        span: arm.body.span,
+                    });
+                }
+                false
+            }
+            TermKind::Handle { handlers, .. } => {
+                for h in handlers {
+                    let (hit, span) = match h {
+                        Handler::Return { pattern, body } => (pair_pattern(pattern), body.span),
+                        Handler::Operation { patterns, body, .. } => {
+                            (patterns.iter().any(pair_pattern), body.span)
+                        }
+                    };
+                    if hit {
+                        out.push(Finding {
+                            message: msg!("tauto-lint-pair-name"),
+                            span,
+                        });
+                    }
+                }
+                false
+            }
+            _ => false,
+        };
+        if found {
+            out.push(Finding {
+                message: msg!("tauto-lint-pair-name"),
+                span: t.span,
+            });
+        }
+    });
+}
+
+/// `pair-fields`: the names of which a declaration takes both `.fst` and `.snd`.
+fn pair_fields(s: &Stmt, out: &mut Vec<Finding>) {
+    match s {
+        Stmt::Fn(_) | Stmt::Theorem(_) | Stmt::Def(_) => {}
+        Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => {
+            return items.iter().for_each(|i| pair_fields(i, out));
+        }
+        Stmt::Attributed { stmt, .. } => return pair_fields(stmt, out),
+        _ => return,
+    }
+    // Each name, with the first span it is taken at and the fields taken of it.
+    let mut taken: Vec<(String, Span, bool, bool)> = Vec::new();
+    let mut s = s.clone();
+    walk::stmt(&mut s, &mut |t| {
+        if let TermKind::Field { base, name } = &*t.kind
+            && let TermKind::Var(v) = &*base.kind
+            && (name == "fst" || name == "snd")
+        {
+            let v = v.to_string();
+            let i = match taken.iter().position(|(n, ..)| *n == v) {
+                Some(i) => i,
+                None => {
+                    taken.push((v, t.span, false, false));
+                    taken.len() - 1
+                }
+            };
+            if name == "fst" {
+                taken[i].2 = true;
+            } else {
+                taken[i].3 = true;
+            }
+        }
+    });
+    for (name, span, fst, snd) in taken {
+        if fst && snd {
+            out.push(Finding {
+                message: msg!("tauto-lint-pair-fields", name = name.as_str()),
+                span,
+            });
+        }
     }
 }

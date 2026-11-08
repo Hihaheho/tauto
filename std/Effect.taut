@@ -20,43 +20,37 @@ pub(open) inductive CompEq(
 }
 
 module Comp {
-  pub theorem eq_refl<Op: Type, Res: (
-    Op
-  ) -> Type, A: Type>(c: Comp(Op, Res, A)): CompEq(Op, Res, A, c, c) {
-    match c: CompEq(Op, Res, A, c, c) {
+  pub theorem eq_refl<Op: Type, Res: (Op) -> Type, A: Type>(
+    c: Comp(Op, Res, A)
+  ): CompEq(Op, Res, A, c, c) {
+    ⊢ CompEq(Op, Res, A, c, c) from match c {
       CompPure(a) => CeqPure(a)
       CompOp(o, k) => CeqOp(o, k, k, (r: Res(o)) => eq_refl(k(r)))
     }
   }
 
-  pub theorem bind_pure_left<Op: Type, Res: (
-    Op
-  ) -> Type, A: Type, B: Type>(
+  pub theorem bind_pure_left<Op: Type, Res: (Op) -> Type, A: Type, B: Type>(
     a: A,
     f: (A) -> Comp(Op, Res, B)
-  ): bind(Op, Res, CompPure(a), f) = f(a) {
+  ): Comp::bind(Op, Res, CompPure(a), f) = f(a) {
     Refl
   }
 
-  pub theorem bind_pure_right<Op: Type, Res: (
-    Op
-  ) -> Type, A: Type>(
+  pub theorem bind_pure_right<Op: Type, Res: (Op) -> Type, A: Type>(
     c: Comp(Op, Res, A)
-  ): CompEq(Op, Res, A, bind(Op, Res, c, (a: A) => CompPure(a)), c) {
-    match c: CompEq(Op, Res, A, bind(Op, Res, c, (a: A) => CompPure(a)), c) {
+  ): CompEq(Op, Res, A, Comp::bind(Op, Res, c, (a: A) => CompPure(a)), c) {
+    ⊢ CompEq(Op, Res, A, Comp::bind(Op, Res, c, (a: A) => CompPure(a)), c) from match c {
       CompPure(a) => CeqPure(a)
       CompOp(o, k) => CeqOp(
         o,
-        (r: Res(o)) => bind(Op, Res, k(r), (a: A) => CompPure(a)),
+        (r: Res(o)) => Comp::bind(Op, Res, k(r), (a: A) => CompPure(a)),
         k,
         (r: Res(o)) => bind_pure_right(k(r))
       )
     }
   }
 
-  pub theorem bind_assoc<Op: Type, Res: (
-    Op
-  ) -> Type, A: Type, B: Type, C: Type>(
+  pub theorem bind_assoc<Op: Type, Res: (Op) -> Type, A: Type, B: Type, C: Type>(
     c: Comp(Op, Res, A),
     f: (A) -> Comp(Op, Res, B),
     g: (B) -> Comp(Op, Res, C)
@@ -64,44 +58,46 @@ module Comp {
     Op,
     Res,
     C,
-    bind(Op, Res, bind(Op, Res, c, f), g),
-    bind(Op, Res, c, (a: A) => bind(Op, Res, f(a), g))
+    Comp::bind(Op, Res, Comp::bind(Op, Res, c, f), g),
+    Comp::bind(Op, Res, c, (a: A) => Comp::bind(Op, Res, f(a), g))
   ) {
-    match c: CompEq(
+    ⊢ CompEq(
       Op,
       Res,
       C,
-      bind(Op, Res, bind(Op, Res, c, f), g),
-      bind(Op, Res, c, (a: A) => bind(Op, Res, f(a), g))
-    ) {
-      CompPure(a) => eq_refl(bind(Op, Res, f(a), g))
+      Comp::bind(Op, Res, Comp::bind(Op, Res, c, f), g),
+      Comp::bind(Op, Res, c, (a: A) => Comp::bind(Op, Res, f(a), g))
+    ) from match c {
+      CompPure(a) => eq_refl(Comp::bind(Op, Res, f(a), g))
       CompOp(o, k) => CeqOp(
         o,
-        (r: Res(o)) => bind(Op, Res, bind(Op, Res, k(r), f), g),
-        (r: Res(o)) => bind(Op, Res, k(r), (a: A) => bind(Op, Res, f(a), g)),
+        (r: Res(o)) => Comp::bind(Op, Res, Comp::bind(Op, Res, k(r), f), g),
+        (r: Res(o)) => Comp::bind(Op, Res, k(r), (a: A) => Comp::bind(Op, Res, f(a), g)),
         (r: Res(o)) => bind_assoc(k(r), f, g)
       )
     }
   }
 
-  pub theorem handle_pure<Op: Type, Res: (
-    Op
-  ) -> Type, A: Type, B: Type>(
+  pub theorem handle_pure<Op: Type, Res: (Op) -> Type, A: Type, B: Type>(
     ret: (A) -> B,
     arm: ∀ o: Op. ((Res(o)) -> B) -> B,
     a: A
-  ): fold(Op, Res, ret, arm, CompPure(a)) = ret(a) {
+  ): Comp::fold(Op, Res, ret, arm, CompPure(a)) = ret(a) {
     Refl
   }
 
-  pub theorem handle_op<Op: Type, Res: (
-    Op
-  ) -> Type, A: Type, B: Type>(
+  pub theorem handle_op<Op: Type, Res: (Op) -> Type, A: Type, B: Type>(
     ret: (A) -> B,
     arm: ∀ o: Op. ((Res(o)) -> B) -> B,
     o: Op,
     k: (Res(o)) -> Comp(Op, Res, A)
-  ): fold(Op, Res, ret, arm, CompOp(o, k)) = arm(o, (r: Res(o)) => fold(Op, Res, ret, arm, k(r))) {
+  ): Comp::fold(
+    Op,
+    Res,
+    ret,
+    arm,
+    CompOp(o, k)
+  ) = arm(o, (r: Res(o)) => Comp::fold(Op, Res, ret, arm, k(r))) {
     Refl
   }
 }
@@ -113,54 +109,84 @@ pub def ArmExt(Op: Type, Res: (Op) -> Type, B: Type, arm: ∀ o: Op. ((Res(o)) -
 ) -> B, k2: (Res(o)) -> B. (∀ r: Res(o). k1(r) = k2(r)) -> (arm(o, k1) = arm(o, k2))
 
 module Comp {
-  pub theorem handle_respects<Op: Type, Res: (
-    Op
-  ) -> Type, A: Type, B: Type>(
+  pub theorem handle_respects<Op: Type, Res: (Op) -> Type, A: Type, B: Type>(
     ret: (A) -> B,
     arm: ∀ o: Op. ((Res(o)) -> B) -> B,
     ext: ArmExt(Op, Res, B, arm),
     c1: Comp(Op, Res, A),
     c2: Comp(Op, Res, A),
     h: CompEq(Op, Res, A, c1, c2)
-  ): fold(Op, Res, ret, arm, c1) = fold(Op, Res, ret, arm, c2) {
-    match h: fold(Op, Res, ret, arm, c1) = fold(Op, Res, ret, arm, c2) {
-      CeqPure(_) => Refl
-      CeqOp(o, k1, k2, hk) => ext(
+  ): Comp::fold(Op, Res, ret, arm, c1) = Comp::fold(Op, Res, ret, arm, c2) {
+    ⊢ Comp::fold(Op, Res, ret, arm, c1) = Comp::fold(Op, Res, ret, arm, c2) from match h {
+      CeqPure(value) => ⊢ Comp::fold(
+        <A: A, B: B>,
+        Op,
+        Res,
+        ret,
+        arm,
+        Comp::CompPure(<Op: Op, Res: Res, A: A>, value)
+      ) = Comp::fold(
+        <A: A, B: B>,
+        Op,
+        Res,
+        ret,
+        arm,
+        Comp::CompPure(<Op: Op, Res: Res, A: A>, value)
+      ) from Refl
+      CeqOp(o, k1, k2, hk) => ⊢ Comp::fold(
+        <A: A, B: B>,
+        Op,
+        Res,
+        ret,
+        arm,
+        Comp::CompOp(<Op: Op, Res: Res, A: A>, o, k1)
+      ) = Comp::fold(
+        <A: A, B: B>,
+        Op,
+        Res,
+        ret,
+        arm,
+        Comp::CompOp(<Op: Op, Res: Res, A: A>, o, k2)
+      ) from ext(
         o,
-        (r: Res(o)) => fold(Op, Res, ret, arm, k1(r)),
-        (r: Res(o)) => fold(Op, Res, ret, arm, k2(r)),
+        (r: Res(o)) => Comp::fold(Op, Res, ret, arm, k1(r)),
+        (r: Res(o)) => Comp::fold(Op, Res, ret, arm, k2(r)),
         (r: Res(o)) => handle_respects(ret, arm, ext, k1(r), k2(r), hk(r))
       )
     }
   }
 
-  pub theorem handle_bind<Op: Type, Res: (
-    Op
-  ) -> Type, A: Type, B: Type, C: Type>(
+  pub theorem handle_bind<Op: Type, Res: (Op) -> Type, A: Type, B: Type, C: Type>(
     ret: (B) -> C,
     arm: ∀ o: Op. ((Res(o)) -> C) -> C,
     ext: ArmExt(Op, Res, C, arm),
     c: Comp(Op, Res, A),
     f: (A) -> Comp(Op, Res, B)
-  ): fold(
+  ): Comp::fold(
     Op,
     Res,
     ret,
     arm,
-    bind(Op, Res, c, f)
-  ) = fold(Op, Res, (a: A) => fold(Op, Res, ret, arm, f(a)), arm, c) {
-    match c: fold(
+    Comp::bind(Op, Res, c, f)
+  ) = Comp::fold(Op, Res, (a: A) => Comp::fold(Op, Res, ret, arm, f(a)), arm, c) {
+    ⊢ Comp::fold(
       Op,
       Res,
       ret,
       arm,
-      bind(Op, Res, c, f)
-    ) = fold(Op, Res, (a: A) => fold(Op, Res, ret, arm, f(a)), arm, c) {
+      Comp::bind(Op, Res, c, f)
+    ) = Comp::fold(Op, Res, (a: A) => Comp::fold(Op, Res, ret, arm, f(a)), arm, c) from match c {
       CompPure(_) => Refl
       CompOp(o, k) => ext(
         o,
-        (r: Res(o)) => fold(Op, Res, ret, arm, bind(Op, Res, k(r), f)),
-        (r: Res(o)) => fold(Op, Res, (a: A) => fold(Op, Res, ret, arm, f(a)), arm, k(r)),
+        (r: Res(o)) => Comp::fold(Op, Res, ret, arm, Comp::bind(Op, Res, k(r), f)),
+        (r: Res(o)) => Comp::fold(
+          Op,
+          Res,
+          (a: A) => Comp::fold(Op, Res, ret, arm, f(a)),
+          arm,
+          k(r)
+        ),
         (r: Res(o)) => handle_bind(ret, arm, ext, k(r), f)
       )
     }

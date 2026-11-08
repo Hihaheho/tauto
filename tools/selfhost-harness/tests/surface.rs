@@ -97,7 +97,7 @@ fn parse_program_is_the_unresolved_reader_at_base_0() {
     let source = r#"let a := 1
 "#;
     assert_eq!(
-        parse_program(source).map(|p| dump_program(&p)),
+        parse_program(source).map(|p| dump_program(&p)).map_err(|m| m.to_string()),
         parse_program_at(source, 0).map(|p| dump_program(&p))
     );
 }
@@ -166,5 +166,22 @@ let a: i64 := (p: @x i64)
             ),
         ],
         1 << 31,
+    );
+}
+
+/// `f(<x: v>, h)`: the implicit arguments written by name come first, as the
+/// record `@implicits`, as the Rust reader carries them.
+#[test]
+fn surface_reads_named_implicit_arguments() {
+    compare(
+        "surface-named-implicits",
+        vec![(
+            "named-implicits".into(),
+            r#"fn id<A>(x: A): A { x }
+fn one(): u64 { id(<A: u64>, 1) }
+fn two(): u64 { pick(<x: [1, 2], y: (a + b)>, h, k) }
+"#
+            .into(),
+        )],
     );
 }

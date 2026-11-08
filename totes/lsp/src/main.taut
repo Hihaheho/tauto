@@ -1,0 +1,273 @@
+import std::Base
+import std::prelude::Affine
+import std::prelude::Shared
+import std::prelude::Os
+import json::json
+import text::text
+import query_flow::flow
+import "../src/analysis.taut"
+import "../src/queries.taut"
+
+// `tauto lsp`: a language server on standard input and output. This file
+// reads and writes the protocol (JSON-RPC messages framed by
+// `Content-Length`) and keeps the session (initialize, shutdown, exit); what
+// a file says is asked of the analysis (`analysis.taut`).
+
+fn main(): Unit ! {stdin, stdin_bytes, stdout, stdout_flush, stderr, Div} {
+  let rt := new_runtime()
+  var shut_down := false
+  var running := true
+  while running {
+    match read_message() {
+      None => {
+        running := false
+      }
+      Some(body) => match json_parse(body) {
+        Err(e) => send(error_reply(JNull, "-32700", concat("parse error: ", e.message)))
+        Ok(m) => match json_str(json_get(m, "method")) {
+          None => match json_get(m, "id") {
+            // A response to a request of the server: it sends none.
+            Some(id) => #()
+            None => send(error_reply(JNull, "-32600", "invalid request"))
+          }
+          Some(method) => if text_same(method, "exit") {
+            if shut_down {
+              #()
+            } else {
+              perform stderr("lsp: exit before shutdown\n")
+            }
+            running := false
+          } else if text_same(method, "shutdown") {
+            shut_down := true
+            reply(json_get(m, "id"), JNull)
+          } else {
+            on_message(rt, method, json_get(m, "id"), json_get(m, "params"))
+          }
+        }
+      }
+    }
+  }
+}
+
+// --- Messages -------------------------------------------------------------
+
+// The header lines up to the empty one, then as many bytes of body as
+// `Content-Length` says. `None` at the end of the input.
+fn read_message(): Option(Text) ! {stdin, stdin_bytes, Div} {
+  var length: Option(Nat) := Some(0)
+  var ended := false
+  var reading := true
+  while reading {
+    match perform stdin() {
+      None => {
+        ended := true
+        reading := false
+      }
+      Some(line) => {
+        let l := strip_cr(line)
+        if Text::len(l) == 0 {
+          reading := false
+        } else if text_starts_with(l, "Content-Length:", 0) {
+          length := text_parse_u64(text_trim(lk_rest(l, 15)))
+        }
+      }
+    }
+  }
+  if ended {
+    None
+  } else {
+    match length {
+      None => Some("")
+      Some(n) => Text::of_bytes(read_body(U64::of_nat(n)))
+    }
+  }
+}
+
+fn lk_rest(t: Text, start: u64): Text {
+  match Text::slice(t, start, Text::len(t)) {
+    None => ""
+    Some(s) => s
+  }
+}
+
+fn text_trim(t: Text): Text {
+  var start: u64 := 0
+  var end := Text::len(t)
+  while start < end && byte_is(t, start, 32) {
+    start := start + 1
+  }
+  while end > start && byte_is(t, end - 1, 32) {
+    end := end - 1
+  }
+  match Text::slice(t, start, end) {
+    None => ""
+    Some(s) => s
+  }
+}
+
+fn strip_cr(t: Text): Text {
+  if Text::len(t) > 0 && byte_is(t, Text::len(t) - 1, 13) {
+    lk_text_slice(t, 0, Text::len(t) - 1)
+  } else {
+    t
+  }
+}
+
+fn read_body(want: u64): Bytes ! {stdin_bytes, Div} {
+  var got := Bytes::of_text("")
+  var reading := true
+  while reading && Bytes::len(got) < want {
+    let more := perform stdin_bytes(want - Bytes::len(got))
+    if Bytes::len(more) == 0 {
+      reading := false
+    } else {
+      got := Bytes::concat(got, more)
+    }
+  }
+  got
+}
+
+fn send(v: Json): Unit ! {stdout, stdout_flush, Div} {
+  let body := json_text(v)
+  var b := Buf::new()
+  Buf::push(&mut b, &"Content-Length: ")
+  Buf::push(&mut b, &Text::of_u64(Text::len(body)))
+  Buf::push(&mut b, &"\r\n\r\n")
+  Buf::push(&mut b, &body)
+  perform stdout(Text::of(b))
+  perform stdout_flush()
+}
+
+fn error_reply(id: Json, code: Text, message: Text): Json {
+  JObj([
+    #("jsonrpc", JStr("2.0")),
+    #("id", id),
+    #("error", JObj([#("code", JNum(code)), #("message", JStr(message))]))
+  ])
+}
+
+// Answers a request; a notification (no id) gets no answer.
+fn reply(id: Option(Json), result: Json): Unit ! {stdout, stdout_flush, Div} {
+  match id {
+    None => #()
+    Some(i) => send(JObj([#("jsonrpc", JStr("2.0")), #("id", i), #("result", result)]))
+  }
+}
+
+fn publish(uri: Text, diagnostics: Json): Unit ! {stdout, stdout_flush, Div} {
+  send(JObj([
+    #("jsonrpc", JStr("2.0")),
+    #("method", JStr("textDocument/publishDiagnostics")),
+    #("params", JObj([#("uri", JStr(uri)), #("diagnostics", diagnostics)]))
+  ]))
+}
+
+fn parse_or_null(t: Text): Json {
+  match json_parse(t) {
+    Ok(v) => v
+    Err(e) => JNull
+  }
+}
+
+// --- What the server does -------------------------------------------------
+
+// What the server can do, as `initialize` answers.
+fn capabilities(): Json {
+  JObj([
+    #("capabilities", JObj([
+      #("textDocumentSync", JNum("1")),
+      // `\` begins an escape (`\forall`), which completes to its sign.
+      #("completionProvider", JObj([#("triggerCharacters", JArr([JStr("\\")]))])),
+      // An escape just written becomes its sign once one of these follows it.
+      #("documentOnTypeFormattingProvider", JObj([
+        #("firstTriggerCharacter", JStr(" ")),
+        #("moreTriggerCharacter", JArr([
+          JStr("\t"), JStr("("), JStr(")"), JStr("["), JStr("]"),
+          JStr("{"), JStr("}"), JStr(","), JStr("."), JStr(":")
+        ]))
+      ])),
+      #("codeActionProvider", JObj([#("codeActionKinds", JArr([JStr("quickfix")]))])),
+      #("hoverProvider", JBool(true)),
+      #("definitionProvider", JBool(true)),
+      #("referencesProvider", JBool(true)),
+      #("renameProvider", JObj([#("prepareProvider", JBool(true))])),
+      #("semanticTokensProvider", JObj([
+        #("legend", JObj([
+          #("tokenTypes", parse_or_null(token_kinds())),
+          #("tokenModifiers", JArr([]))
+        ])),
+        #("full", JBool(true))
+      ]))
+    ])),
+    #("serverInfo", JObj([#("name", JStr("tauto"))]))
+  ])
+}
+
+fn opt_text(t: Option(Text)): Text {
+  match t {
+    None => ""
+    Some(s) => s
+  }
+}
+
+fn on_message(rt: Runtime, method: Text, id: Option(Json), params: Option(Json)): Unit ! {stdout, stdout_flush, Div} {
+  let p := match params {
+    None => JNull
+    Some(x) => x
+  }
+  let uri := opt_text(json_str(json_at(p, ["textDocument", "uri"])))
+  if text_same(method, "initialize") {
+    let root := match json_arr(json_get(p, "workspaceFolders")) {
+      Cons(f, rest) => json_str(json_get(f, "uri"))
+      Nil => json_str(json_get(p, "rootUri"))
+    }
+    set_root(opt_text(root))
+    reply(id, capabilities())
+  } else if text_same(method, "textDocument/didOpen") {
+    match json_str(json_at(p, ["textDocument", "text"])) {
+      None => #()
+      Some(text) => {
+        open_text(rt, uri, text)
+        publish(uri, parse_or_null(ask_diagnostics(rt, uri)))
+      }
+    }
+  } else if text_same(method, "textDocument/didChange") {
+    // The server asks for whole texts (`textDocumentSync` 1).
+    match json_arr(json_get(p, "contentChanges")) {
+      Cons(first, rest) => match json_str(json_get(first, "text")) {
+        None => #()
+        Some(text) => {
+        open_text(rt, uri, text)
+        publish(uri, parse_or_null(ask_diagnostics(rt, uri)))
+      }
+      }
+      Nil => #()
+    }
+  } else if text_same(method, "textDocument/didClose") {
+    close_text(rt, uri)
+    publish(uri, JArr([]))
+  } else {
+    match id {
+      None => #()
+      Some(i) => {
+        let answer := parse_or_null(ask_reply(rt, method, uri, json_text(p)))
+        match json_get(answer, "result") {
+          Some(r) => reply(id, r)
+          None => match json_get(answer, "error") {
+            Some(e) => send(JObj([#("jsonrpc", JStr("2.0")), #("id", i), #("error", e)]))
+            None => send(error_reply(i, "-32601", concat("unknown method ", method)))
+          }
+        }
+      }
+    }
+  }
+}
+
+fn byte_is(t: Text, i: u64, b: u64): Bool {
+  match Text::byte(t, i) {
+    None => false
+    Some(c) => U64::of_u8(c) == b
+  }
+}
+
+main()

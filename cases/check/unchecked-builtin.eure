@@ -1,0 +1,28 @@
+@ cases.imports-the-model-and-calls-the-builtin-by-path
+description = "A file that imports std::Text and calls the prelude's built-in by its full path has chosen it, so nothing is warned."
+files_tote = "app"
+tote_warnings = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/other.taut" = ```tauto
+import std::Text
+pub fn size(s: Text): Nat { Text::len(s) }
+```
+files."app/src/main.taut" = ```tauto
+import "other.taut"
+import std::Text
+pub fn len(s: Text): u64 { std::prelude::Text::len(s) }
+```
+
+@ cases.reads-the-model-without-importing-it
+description = "The program reads std::Text through another file, but this file does not import it, so its Text::len is the prelude's built-in."
+files_tote = "app"
+tote_warnings = ["`len` runs as written and is not checked by the kernel: it calls the prelude's built-in `Text::len`, not `std::Text::Text::len`"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/other.taut" = ```tauto
+import std::Text
+pub fn size(s: Text): Nat { Text::len(s) }
+```
+files."app/src/main.taut" = ```tauto
+import "other.taut"
+pub fn len(s: Text): u64 { Text::len(s) }
+```

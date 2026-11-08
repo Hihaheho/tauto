@@ -4,7 +4,7 @@ import Proto.Kernel.Syntax
 # Reduction and conversion
 
 `Red1` is one step of beta or iota (the iota rules are the ones the kernel
-generates for `Nat_rec`), anywhere in a term. `Reds` is its reflexive
+generates for `Nat::rec`), anywhere in a term. `Reds` is its reflexive
 transitive closure and `Conv` the conversion the kernel decides.
 
 Confluence is proved with parallel reduction and its complete development

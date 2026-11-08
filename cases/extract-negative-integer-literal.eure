@@ -1,0 +1,17 @@
+// A negative integer literal in a proof-language function is the unary `-`
+// of a literal; extraction writes it back as a negative literal instead of
+// refusing it as a subtraction with one operand.
+@ cases.negative-integer-literal
+extract = true
+imports = [path`../std/Int.taut`]
+source = ```tauto
+fn in_range(v: Int): Bool {
+  Int::le(-5, v) && Int::lt(v, 5)
+}
+
+perform show("low", in_range(Int::neg(IntOfNat(5))))
+perform show("under", in_range(Int::neg(IntOfNat(6))))
+```
+shows = ["low = true", "under = false"]
+rust_shows = ["low = true", "under = false"]
+javascript_shows = ["low = true", "under = false"]

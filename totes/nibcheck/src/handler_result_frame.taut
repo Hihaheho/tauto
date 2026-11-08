@@ -22,7 +22,9 @@ pub theorem handler_fits_any_ok(
             And::right(
               And::right(
                 And::right(
-                  And::right(And::right(And::right(And::right(And::right(And::right(fits_all(k)))))))
+                  And::right(
+                    And::right(And::right(And::right(And::right(And::right(fits_all(k))))))
+                  )
                 )
               )
             )
@@ -54,7 +56,7 @@ pub fn handler_validate_after(
   span: TySpan,
   fits: Bool
 ): Mut1(Unit, Checker) {
-  match fits: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match fits {
     true => mut1(Star, c)
     false => ck_rewrap1(ck_expect(c, arm, result, span, "a handler arm"))
   }
@@ -68,7 +70,7 @@ pub theorem handler_validate_after_frame(
   fits: Bool,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, handler_validate_after(c, arm, result, span, fits)) {
-  match fits: CkRunFrame(c, handler_validate_after(c, arm, result, span, fits)) {
+  ⊢ CkRunFrame(c, handler_validate_after(c, arm, result, span, fits)) from match fits {
     true => run_frame_return(c, Star, ordered)
     false => run_frame_rewrap(
       c,
@@ -121,7 +123,12 @@ pub theorem handler_validate_unf(
   arm: Ty,
   result: Ty,
   span: TySpan
-): ck_handle_validate(c, arm, result, span) = handler_validate_unfolded(c, arm, result, span) { Refl }
+): ck_handle_validate(
+  c,
+  arm,
+  result,
+  span
+) = handler_validate_unfolded(c, arm, result, span) { Refl }
 pub theorem ck_handle_validate_frame(
   c: Checker,
   arm: Ty,
@@ -143,7 +150,7 @@ pub theorem ck_handle_arm_result_run_frame(
   span: TySpan,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, ck_handle_arm_result(c, arm, result, variable, span)) {
-  match variable: CkRunFrame(c, ck_handle_arm_result(c, arm, result, variable, span)) {
+  ⊢ CkRunFrame(c, ck_handle_arm_result(c, arm, result, variable, span)) from match variable {
     Some(rv) => run_frame_rewrap(
       c,
       ck_handle_widen(c, arm, result, rv),

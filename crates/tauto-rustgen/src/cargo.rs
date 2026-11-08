@@ -15,6 +15,7 @@ impl Options {
         let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
         Options {
             threads: m.rust.executor.as_deref() == Some("threads"),
+            stack_mb: m.rust.stack_mb,
             dependencies: m
                 .rust
                 .dependencies
@@ -37,6 +38,8 @@ pub struct Options {
     /// program that starts tasks runs them on the reactor
     /// (`tauto_rt::reactor`, on tokio).
     pub threads: bool,
+    /// `rust.stack-mb`: the stack the generated `main` asks for, in MiB.
+    pub stack_mb: Option<u32>,
     /// `rust.dependencies`: `(name, Cargo.toml value)`.
     pub dependencies: Vec<(String, String)>,
     /// The bridge crate: its name and the path of its directory.
@@ -122,6 +125,7 @@ const RT: &[(&str, &str)] = rt_files!(
     "probe.rs",
     "reactor.rs",
     "show.rs",
+    "shutdown.rs",
     "signal.rs",
     "stdlib.rs",
     "tcp.rs",
@@ -142,6 +146,8 @@ reactor = [\"sync\", \"dep:tokio\"]
 tls = [\"dep:rustls\", \"dep:rustls-platform-verifier\"]
 
 [dependencies]
+tauto-identity = { path = \"../tauto-identity\" }
+tauto-rt-signal = { path = \"../tauto-rt-signal\" }
 reqwest = { version = \"=0.13.5\", optional = true, default-features = false, features = [\"blocking\", \"rustls\"] }
 url = { version = \"=2.5.8\", optional = true }
 rustls = { version = \"=0.23.46\", optional = true, default-features = false, features = [\"aws_lc_rs\", \"std\", \"tls12\"] }
@@ -149,6 +155,9 @@ rustls-platform-verifier = { version = \"=0.7.1\", optional = true }
 
 [target.'cfg(not(all(target_arch = \"wasm32\", target_os = \"unknown\")))'.dependencies]
 getrandom = \"=0.3.4\"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = \"=1.1.2\", default-features = false, features = [\"std\", \"fs\"] }
 
 [target.'cfg(not(target_family = \"wasm\"))'.dependencies]
 tokio = { version = \"=1.53.3\", optional = true, default-features = false, features = [\"rt\", \"time\", \"sync\"] }
@@ -208,9 +217,17 @@ pub fn workspace(
          [profile.release]\npanic = \"unwind\"\nlto = \"thin\"\n"
     );
     let ident = crate_ident(&name.replace('-', "_"));
+    let stack = opts
+        .stack_mb
+        .map(|mb| {
+            let mb = mb as usize;
+            quote!(tauto_rt::set_default_stack_mb(#mb);)
+        })
+        .unwrap_or_default();
     let main = if reactor {
         quote!(
             fn main() -> std::process::ExitCode {
+                #stack
                 tauto_rt::reactor::install();
                 tauto_rt::run_main(#ident::run)
             }
@@ -218,6 +235,7 @@ pub fn workspace(
     } else {
         quote!(
             fn main() -> std::process::ExitCode {
+                #stack
                 tauto_rt::run_main(#ident::run)
             }
         )
@@ -228,6 +246,24 @@ pub fn workspace(
         ("src/lib.rs".to_string(), lib),
         ("src/main.rs".to_string(), main),
         ("tauto-rt/Cargo.toml".to_string(), RT_CARGO.to_string()),
+        (
+            "tauto-identity/Cargo.toml".into(),
+            "[package]\nname = \"tauto-identity\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"
+                .into(),
+        ),
+        (
+            "tauto-identity/src/lib.rs".into(),
+            include_str!("../../tauto-identity/src/lib.rs").into(),
+        ),
+        (
+            "tauto-rt-signal/Cargo.toml".into(),
+            "[package]\nname = \"tauto-rt-signal\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[target.'cfg(unix)'.dependencies]\nlibc = \"=0.2.190\"\n"
+                .into(),
+        ),
+        (
+            "tauto-rt-signal/src/lib.rs".into(),
+            include_str!("../../tauto-rt-signal/src/lib.rs").into(),
+        ),
     ];
     for (p, t) in RT {
         files.push((p.to_string(), t.to_string()));
@@ -252,7 +288,7 @@ impl Workspace {
         Some(
             msg!(
                 "rustgen-extern-misfit",
-                name = name,
+                name = name.to_string(),
                 declared = declared,
                 bound = bound,
                 path = path,
@@ -278,7 +314,7 @@ impl Workspace {
         Some(
             msg!(
                 "rustgen-extern-type-not-send",
-                name = name,
+                name = name.to_string(),
                 at = at,
                 first = first
             )

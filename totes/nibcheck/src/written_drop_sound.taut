@@ -15,9 +15,9 @@ import "written_context_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub fn written_drop_parameters(params: List(SurfaceParam), skip: Nat): List(SurfaceParam) {
-  match params: List(SurfaceParam) {
+  ⊢ List(SurfaceParam) from match params {
     Nil => Nil
-    Cons(first, rest) => match skip: List(SurfaceParam) {
+    Cons(first, rest) => ⊢ List(SurfaceParam) from match skip {
       Zero => Cons(first, rest)
       Succ(count) => written_drop_parameters(rest, count)
     }
@@ -26,7 +26,7 @@ pub fn written_drop_parameters(params: List(SurfaceParam), skip: Nat): List(Surf
 pub theorem written_drop_zero(
   params: List(SurfaceParam)
 ): written_drop_parameters(params, 0) = params {
-  match params: written_drop_parameters(params, 0) = params {
+  ⊢ written_drop_parameters(params, 0) = params from match params {
     Nil => Refl
     Cons(first, rest) => Refl
   }
@@ -40,18 +40,12 @@ pub theorem written_prefix_drop<params: List(
 )>(
   split: WrittenBindersPrefix(params, binders, suffix)
 ): written_drop_parameters(params, list_len(binders)) = suffix {
-  match split: written_drop_parameters(params, list_len(binders)) = suffix {
+  ⊢ written_drop_parameters(params, list_len(binders)) = suffix from match split {
     WrittenBindersNil => Refl
     WrittenBindersStop(first, rest, ordinary) => Refl
-    WrittenBindersCons(
-      first,
-      rest,
-      binder,
-      binders_tail,
-      remaining,
-      head,
+    WrittenBindersCons(first, rest, binder, binders_tail, remaining, head, tail) => written_prefix_drop(
       tail
-    ) => written_prefix_drop(tail)
+    )
   }
 }
 
@@ -86,7 +80,9 @@ pub theorem written_function_drop_sound(
       )
     )
   ),
-  ihresult: ∀ next: Checker. ∀ ordinary_next: frame_under_borrow(next) = false. ∀ clean: DiagnosticClean(
+  ihresult: ∀ next: Checker. ∀ ordinary_next: frame_under_borrow(
+    next
+  ) = false. ∀ clean: DiagnosticClean(
     ck_st(ck_written_in(result, next, frame_pi_generics(params, generics)))
   ). WrittenTerm(
     ck_datas_of(next),

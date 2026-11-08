@@ -39,7 +39,7 @@ pub theorem obligation_state_trans(
 pub theorem obligation_bound_of_mem<bs: List(
   TyBound
 ), b: TyBound>(member: Mem(TyBound, b, bs)): BoundIn(bs, b) {
-  match member: BoundIn(bs, b) {
+  ⊢ BoundIn(bs, b) from match member {
     MemHere(rest) => BoundHere(b, rest)
     MemThere(head, rest, tail) => BoundThere(head, obligation_bound_of_mem(tail))
   }
@@ -47,7 +47,7 @@ pub theorem obligation_bound_of_mem<bs: List(
 pub theorem obligation_mem_of_bound<bs: List(
   TyBound
 ), b: TyBound>(member: BoundIn(bs, b)): Mem(TyBound, b, bs) {
-  match member: Mem(TyBound, b, bs) {
+  ⊢ Mem(TyBound, b, bs) from match member {
     BoundHere(head, rest) => MemHere(rest)
     BoundThere(rest, item, head, tail) => MemThere(head, rest, obligation_mem_of_bound(tail))
   }
@@ -57,10 +57,14 @@ pub theorem grows_obligations(
   next: Checker,
   grows: Grows(c, next)
 ): ObligationState(c, next) {
-  let unchanged: ck_deferred_view(c) = ck_deferred_view(next) := And::right(And::right(And::right(And::right(And::right(And::right(grows))))))
+  let unchanged: ck_deferred_view(
+    c
+  ) = ck_deferred_view(
+    next
+  ) := And::right(And::right(And::right(And::right(And::right(And::right(grows))))))
   let fixed: CkFixed(c, next) := And::right(And::right(And::right(grows)))
-  match fixed: ObligationState(c, next) {
-    AndIntro(datas_equal, rest) => match rest: ObligationState(c, next) {
+  ⊢ ObligationState(c, next) from match fixed {
+    AndIntro(datas_equal, rest) => ⊢ ObligationState(c, next) from match rest {
       AndIntro(extended, preservation) => AndIntro(
         AndIntro(
           item => member => obligation_mem_of_bound(

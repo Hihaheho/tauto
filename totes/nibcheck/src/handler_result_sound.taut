@@ -11,7 +11,7 @@ import "types_match.taut"
 import "unify.taut"
 import "unify_sound.taut"
 
-pub theorem handler_any_empty(c: Checker, a: Ty, h: SubAnyAt(c, a, Nil)): False { match h: False {
+pub theorem handler_any_empty(c: Checker, a: Ty, h: SubAnyAt(c, a, Nil)): False { ⊢ False from match h {
   } }
 
 pub theorem handler_any_single(
@@ -20,7 +20,7 @@ pub theorem handler_any_single(
   b: Ty,
   h: SubAnyAt(c, a, Cons(b, Nil))
 ): SubAt(c, a, b) {
-  match h: SubAt(c, a, b) {
+  ⊢ SubAt(c, a, b) from match h {
     TysubAnyHere(a1, b1, rest, fit) => fit
     TysubAnyThere(a1, rest, b1, tail) => False::elim(handler_any_empty(c, a1, tail))
   }
@@ -31,7 +31,7 @@ pub theorem handler_any_union(
   ys: List(Ty),
   h: SubAnyAt(c, a, Cons(TyUnion(ys), ys))
 ): SubAt(c, a, TyUnion(ys)) {
-  match h: SubAt(c, a, TyUnion(ys)) {
+  ⊢ SubAt(c, a, TyUnion(ys)) from match h {
     TysubAnyHere(a1, b1, rest, fit) => fit
     TysubAnyThere(a1, rest, b1, tail) => sub_union_r_at(c, a1, ys, tail)
   }
@@ -42,7 +42,7 @@ pub theorem handler_choices_sound(
   b: Ty,
   h: SubAnyAt(c, a, ck_handle_result_choices(b))
 ): SubAt(c, a, b) {
-  match b: SubAt(c, a, b) {
+  ⊢ SubAt(c, a, b) from match b {
     TyInt(w) => handler_any_single(c, a, TyInt(w), h)
     TyBool => handler_any_single(c, a, TyBool, h)
     TyText => handler_any_single(c, a, TyText, h)
@@ -88,7 +88,7 @@ pub theorem handler_validate_after_sound(
   ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(handler_validate_after(c, a, b, span, fits)))
 ): SubAt(ck_st(handler_validate_after(c, a, b, span, fits)), a, b) {
-  match fits: SubAt(ck_st(handler_validate_after(c, a, b, span, fits)), a, b) {
+  ⊢ SubAt(ck_st(handler_validate_after(c, a, b, span, fits)), a, b) from match fits {
     true => h(Refl)
     false => {
       let unwrapped: DiagnosticClean(
@@ -136,7 +136,7 @@ pub theorem handler_validate_bind_sound(
   a,
   b
 ) {
-  match m: SubAt(
+  ⊢ SubAt(
     ck_st(
       frame_bind(
         Bool,
@@ -147,7 +147,7 @@ pub theorem handler_validate_bind_sound(
     ),
     a,
     b
-  ) {
+  ) from match m {
     mut1(value, state) => handler_validate_after_sound(
       state,
       a,

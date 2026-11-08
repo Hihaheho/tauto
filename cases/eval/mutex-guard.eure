@@ -1,0 +1,192 @@
+// A mutex's content is held by the guard `Mutex::lock` returns, which gives it back when dropped.
+
+@ cases.a-guard-released-at-the-end-of-its-block-lets-the-next-lock-in
+description = "The guard of `Mutex::lock` gives the content back when its block ends, so a second lock in the same task does not wait; the content is read and written through borrows of the guard."
+source = ```nib
+import std::prelude::Par
+
+struct Counter { count: u64 }
+
+let m := Mutex::new(Counter { count: 0 })
+{
+  var g: MutexGuard(Counter) := Mutex::lock(m)
+  let &mut c := MutexGuard::get_mut(&mut g)
+  c.count := c.count + 1
+}
+{
+  var g: MutexGuard(Counter) := Mutex::lock(m)
+  let &mut c := MutexGuard::get_mut(&mut g)
+  c.count := c.count + 10
+}
+let n := {
+  let g: MutexGuard(Counter) := Mutex::lock(m)
+  let &c := MutexGuard::get(&g)
+  c.count
+}
+perform show("n", n)
+```
+shows = ["n = 11"]
+
+@ cases.a-task-locks-the-mutex-once-the-guard-of-another-block-is-dropped
+description = "A task started after a guard was dropped finds the mutex full; the task's own guard is dropped when its body ends, so the task that locks next finds it full again."
+source = ```nib
+import std::prelude::Par
+
+let m := Mutex::new(0)
+{
+  var g := Mutex::lock(m)
+  let &mut n := MutexGuard::get_mut(&mut g)
+  n := n + 1
+}
+let a := perform spawn(() => {
+  var g := Mutex::lock(m)
+  let &mut n := MutexGuard::get_mut(&mut g)
+  n := n + 10
+  1
+})
+let b := perform spawn(() => {
+  var g := Mutex::lock(m)
+  let &mut n := MutexGuard::get_mut(&mut g)
+  n := n + 100
+  2
+})
+let joined := Task::join(a) + Task::join(b)
+let total := {
+  let g := Mutex::lock(m)
+  let &n := MutexGuard::get(&g)
+  n + 0
+}
+perform show("joined", joined)
+perform show("total", total)
+```
+shows = ["joined = 3", "total = 111"]
+
+@ cases.a-guard-dropped-without-an-explicit-unlock-releases-the-lock
+description = "A guard moved into a function is dropped when the function ends; nothing unlocks it by name."
+source = ```nib
+import std::prelude::Par
+
+fn touch(g: MutexGuard(u64)): Unit { #() }
+
+let m := Mutex::new(5)
+touch(Mutex::lock(m))
+touch(Mutex::lock(m))
+let n := {
+  let g := Mutex::lock(m)
+  let &n := MutexGuard::get(&g)
+  n + 0
+}
+perform show("n", n)
+```
+shows = ["n = 5"]
+
+@ cases.a-program-s-own-signal-type-meets-mutex-without-importing-os
+description = "The program names its own `Signal(T)` explicitly, keeping it distinct from the host flag without importing `std::prelude::Os`."
+source = ```nib
+import std::prelude::Par
+
+struct Signal(T: Type) { payload: T }
+
+let m := Mutex::new(1)
+let s := main::Signal { payload: 3 }
+let n := {
+  var g := Mutex::lock(m)
+  let &mut c := MutexGuard::get_mut(&mut g)
+  c := c + s.payload
+  c + 0
+}
+perform show("n", n)
+```
+shows = ["n = 4"]
+
+@ cases.the-callback-form-of-mutex-lock-is-gone
+description = "`Mutex::lock` takes the mutex alone."
+source = ```nib
+import std::prelude::Par
+
+let m := Mutex::new(0)
+Mutex::lock(m, (&mut v) => v)
+```
+types = "error: a function of 1 values is given 2"
+
+@ cases.a-guard-cannot-be-moved-while-a-borrow-of-its-content-lives
+description = "The borrow `MutexGuard::get_mut` gives freezes the guard, whatever the content is, so the lock cannot be released under it."
+source = ```nib
+import std::prelude::Par
+
+struct Counter { count: u64 }
+
+fn eat(g: MutexGuard(Counter)): Unit { #() }
+
+let m := Mutex::new(Counter { count: 0 })
+{
+  var g := Mutex::lock(m)
+  let &mut c := MutexGuard::get_mut(&mut g)
+  eat(g)
+  c.count := c.count + 1
+}
+```
+lin = "error: g is frozen by c"
+
+@ cases.a-guard-cannot-be-moved-while-a-borrow-of-an-affine-content-lives
+description = "The same for a content that is not copied."
+source = ```nib
+import std::prelude::Affine
+import std::prelude::Par
+
+fn eat(g: MutexGuard(Vec(u64))): Unit { #() }
+
+let m := Mutex::new(Vec::new())
+{
+  var g := Mutex::lock(m)
+  let &mut c := MutexGuard::get_mut(&mut g)
+  eat(g)
+  Vec::push(&mut c, 1)
+}
+```
+lin = "error: g is frozen by c"
+
+@ cases.a-guard-borrow-passed-straight-to-hash-map-insert-writes-the-content
+description = "A `&mut` returned by `MutexGuard::get_mut` is an argument of a builtin as it is, and the content is read back through `MutexGuard::get`."
+source = ```nib
+import std::prelude::Affine
+import std::prelude::Par
+
+var guard := Mutex::lock(Mutex::new(HashMap::new()))
+HashMap::insert(MutexGuard::get_mut(&mut guard), (1: u64), "ok")
+perform show("entry", HashMap::get(MutexGuard::get(&guard), (1: u64)))
+```
+shows = ["entry = Some(\"ok\")"]
+
+@ cases.a-guard-borrow-passed-straight-to-vec-push-writes-the-content
+description = "A `&mut` returned by `MutexGuard::get_mut` is the vector `Vec::push` appends to."
+source = ```nib
+import std::prelude::Affine
+import std::prelude::Par
+
+var guard := Mutex::lock(Mutex::new(Vec::new()))
+Vec::push(MutexGuard::get_mut(&mut guard), (1: u64))
+Vec::push(MutexGuard::get_mut(&mut guard), (2: u64))
+perform show("len", Vec::len(MutexGuard::get(&guard)))
+```
+shows = ["len = 2"]
+
+@ cases.a-guard-borrow-bound-by-let-writes-a-field-of-the-content
+description = "A field of the content is written through a `&mut` of `MutexGuard::get_mut` inside a function, and read back through `MutexGuard::get`."
+source = ```nib
+import std::prelude::Par
+
+struct Counter { count: u64 }
+
+fn bump(g: &mut MutexGuard(Counter)): Unit {
+  let &mut c := MutexGuard::get_mut(g)
+  c.count := c.count + 1
+}
+
+var g: MutexGuard(Counter) := Mutex::lock(Mutex::new(Counter { count: 0 }))
+bump(&mut g)
+bump(&mut g)
+let &c := MutexGuard::get(&g)
+perform show("count", c.count)
+```
+shows = ["count = 2"]

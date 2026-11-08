@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauto_message::msg;
+use tauto_message::{Message, msg};
 
 use totebag::spec::GitSource;
 
@@ -48,7 +48,7 @@ pub(crate) fn git_dependency(
     dir: &Path,
     name: &str,
     source: &GitSource,
-) -> Result<PathBuf, String> {
+) -> Result<PathBuf, Message> {
     let project = project_of(dir);
     let cache = totebag::cache::Cache::from_env()?;
     if cache.tree_of(&project).is_some() {
@@ -56,8 +56,7 @@ pub(crate) fn git_dependency(
             "tauto-dep-fetched-from-git",
             name = name,
             dir = dir.display().to_string()
-        )
-        .to_string());
+        ));
     }
     let lock = totebag::lock::read(&project)?;
     let Some(locked) = lock.as_ref().and_then(|l| l.get(name)) else {
@@ -66,8 +65,7 @@ pub(crate) fn git_dependency(
             name = name,
             source = source.to_string(),
             lock = project.join(totebag::lock::FILE).display().to_string()
-        )
-        .to_string());
+        ));
     };
     if locked.source != *source {
         return Err(msg!(
@@ -77,8 +75,7 @@ pub(crate) fn git_dependency(
             locked = locked.source.to_string(),
             source = source.to_string(),
             project = project.display().to_string()
-        )
-        .to_string());
+        ));
     }
     if cache.has(&locked.id) {
         return Ok(totebag::tote_dir(&cache, locked));
@@ -91,8 +88,7 @@ pub(crate) fn git_dependency(
             url = locked.source.url.to_string(),
             rev = locked.rev.short().to_string(),
             project = project.display().to_string()
-        )
-        .to_string());
+        ));
     }
     eprintln!(
         "{}",
@@ -104,5 +100,5 @@ pub(crate) fn git_dependency(
         )
     );
     totebag::fetch_locked(&cache, locked)
-        .map_err(|e| msg!("tauto-dep-error", name = name, error = e.to_string()).to_string())
+        .map_err(|e| msg!("tauto-dep-error", name = name, error = e.to_string()))
 }

@@ -1,0 +1,157 @@
+@ cases.an-empty-first-list-does-not-fix-a-shared-row
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Shared
+
+shared struct Stored(!e) { run: (n: u64) -> u64 ! {Div} ∪ e }
+fn invoke<!e>(values: List(Stored(!e)), n: u64): u64 ! {Div} ∪ e {
+  match values { Nil => n, Cons(value, rest) => (value.run)(n) }
+}
+fn dispatch<!e>(first: List(Stored(!e)), second: List(Stored(!e)), n: u64): u64 ! {Div} ∪ e {
+  if n == 0 { invoke(first, n) } else { invoke(second, n) }
+}
+fn plus_one(n: u64): u64 ! {Div} { n + 1 }
+fn handlers(): List(Stored(!{})) { [Stored { run: plus_one }] }
+let functions := handlers()
+perform show("result", dispatch(Nil, functions, 1))
+```
+shows = ["result = 2"]
+
+@ cases.an-empty-second-list-does-not-fix-a-shared-row
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Shared
+
+shared struct Stored(!e) { run: (n: u64) -> u64 ! {Div} ∪ e }
+fn invoke<!e>(values: List(Stored(!e)), n: u64): u64 ! {Div} ∪ e {
+  match values { Nil => n, Cons(value, rest) => (value.run)(n) }
+}
+fn dispatch<!e>(first: List(Stored(!e)), second: List(Stored(!e)), n: u64): u64 ! {Div} ∪ e {
+  if n == 0 { invoke(first, n) } else { invoke(second, n) }
+}
+fn plus_one(n: u64): u64 ! {Div} { n + 1 }
+fn handlers(): List(Stored(!{})) { [Stored { run: plus_one }] }
+let functions := handlers()
+perform show("result", dispatch(functions, Nil, 0))
+```
+shows = ["result = 1"]
+
+@ cases.two-empty-lists-have-no-callback-effects
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Shared
+
+shared struct Stored(!e) { run: (n: u64) -> u64 ! {Div} ∪ e }
+fn invoke<!e>(values: List(Stored(!e)), n: u64): u64 ! {Div} ∪ e {
+  match values { Nil => n, Cons(value, rest) => (value.run)(n) }
+}
+fn dispatch<!e>(first: List(Stored(!e)), second: List(Stored(!e)), n: u64): u64 ! {Div} ∪ e {
+  if n == 0 { invoke(first, n) } else { invoke(second, n) }
+}
+perform show("result", dispatch(Nil, Nil, 1))
+```
+shows = ["result = 1"]
+
+@ cases.an-empty-first-list-preserves-a-shared-effect
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Shared
+
+shared struct Stored(!e) { run: (n: u64) -> u64 ! {Div} ∪ e }
+fn invoke<!e>(values: List(Stored(!e)), n: u64): u64 ! {Div} ∪ e {
+  match values { Nil => n, Cons(value, rest) => (value.run)(n) }
+}
+fn dispatch<!e>(first: List(Stored(!e)), second: List(Stored(!e)), n: u64): u64 ! {Div} ∪ e {
+  if n == 0 { invoke(first, n) } else { invoke(second, n) }
+}
+effect request(): u64 direct
+fn queried(n: u64): u64 ! {Div, request} { n + perform request() }
+fn handlers(): List(Stored(!{request})) { [Stored { run: queried }] }
+let functions := handlers()
+let result := handle { dispatch(Nil, functions, 1) } with {
+  request(), k => k(4)
+  return value => value
+}
+perform show("result", result)
+```
+shows = ["result = 5"]
+
+@ cases.an-empty-second-list-preserves-a-shared-effect
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Shared
+
+shared struct Stored(!e) { run: (n: u64) -> u64 ! {Div} ∪ e }
+fn invoke<!e>(values: List(Stored(!e)), n: u64): u64 ! {Div} ∪ e {
+  match values { Nil => n, Cons(value, rest) => (value.run)(n) }
+}
+fn dispatch<!e>(first: List(Stored(!e)), second: List(Stored(!e)), n: u64): u64 ! {Div} ∪ e {
+  if n == 0 { invoke(first, n) } else { invoke(second, n) }
+}
+effect request(): u64 direct
+fn queried(n: u64): u64 ! {Div, request} { n + perform request() }
+fn handlers(): List(Stored(!{request})) { [Stored { run: queried }] }
+let functions := handlers()
+let result := handle { dispatch(functions, Nil, 0) } with {
+  request(), k => k(4)
+  return value => value
+}
+perform show("result", result)
+```
+shows = ["result = 4"]
+
+@ cases.an-empty-list-cannot-erase-the-other-lists-effect
+source = ```tauto
+import std::prelude::Shared
+
+shared struct Stored(!e) { run: (n: u64) -> u64 ! {Div} ∪ e }
+fn invoke<!e>(values: List(Stored(!e)), n: u64): u64 ! {Div} ∪ e {
+  match values { Nil => n, Cons(value, rest) => (value.run)(n) }
+}
+fn dispatch<!e>(first: List(Stored(!e)), second: List(Stored(!e)), n: u64): u64 ! {Div} ∪ e {
+  if n == 0 { invoke(first, n) } else { invoke(second, n) }
+}
+effect request(): u64 direct
+fn queried(n: u64): u64 ! {Div, request} { n + perform request() }
+fn handlers(): List(Stored(!{request})) { [Stored { run: queried }] }
+fn pure(): u64 ! {Div} { dispatch(Nil, handlers(), 1) }
+```
+types = "ok"
+rows = "error: `pure` may perform request but its row is {Div}"
+
+@ cases.a-fixed-empty-row-is-not-an-uninferred-row
+source = ```tauto
+import std::prelude::Shared
+
+shared struct Stored(!e) { run: (n: u64) -> u64 ! {Div} ∪ e }
+fn invoke<!e>(values: List(Stored(!e)), n: u64): u64 ! {Div} ∪ e {
+  match values { Nil => n, Cons(value, rest) => (value.run)(n) }
+}
+fn dispatch<!e>(first: List(Stored(!e)), second: List(Stored(!e)), n: u64): u64 ! {Div} ∪ e {
+  if n == 0 { invoke(first, n) } else { invoke(second, n) }
+}
+effect request(): u64 direct
+fn queried(n: u64): u64 ! {Div, request} { n + perform request() }
+fn handlers(): List(Stored(!{request})) { [Stored { run: queried }] }
+fn quiet(): List(Stored(!{})) { Nil }
+let result := dispatch(quiet(), handlers(), 1)
+```
+types = "ok"
+rows = "error: a function value may perform request but its type permits {}"
+
+@ cases.an-inline-callback-list-fixes-a-shared-row
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Shared
+
+shared struct Stored(!e) { run: (n: u64) -> u64 ! {Div} ∪ e }
+fn invoke<!e>(values: List(Stored(!e)), n: u64): u64 ! {Div} ∪ e {
+  match values { Nil => n, Cons(value, rest) => (value.run)(n) }
+}
+fn dispatch<!e>(first: List(Stored(!e)), second: List(Stored(!e)), n: u64): u64 ! {Div} ∪ e {
+  if n == 0 { invoke(first, n) } else { invoke(second, n) }
+}
+fn plus_one(n: u64): u64 ! {Div} { n + 1 }
+perform show("result", dispatch(Nil, [Stored { run: plus_one }], 1))
+```
+shows = ["result = 2"]

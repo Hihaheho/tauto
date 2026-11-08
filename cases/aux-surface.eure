@@ -1,0 +1,172 @@
+@ cases.tests_eq_of_two_names
+source = ```tauto
+theorem t(a: Nat): a = b { Refl }
+```
+parses = true
+differential = "surface"
+
+@ cases.tests_a_term_is_an_argument
+source = ```tauto
+theorem t(): Vector(i64, n + 1) { Refl }
+```
+parses = true
+differential = "surface"
+
+@ cases.tests_a_call_in_a_type_argument
+source = ```tauto
+theorem t(): State(i64, keyOf(config)) { Refl }
+```
+parses = true
+differential = "surface"
+
+@ cases.tests_a_function_type_is_an_argument
+source = ```tauto
+theorem t(): List((Nat) -> Nat) { Refl }
+```
+parses = true
+differential = "surface"
+
+@ cases.tests_angle_type_arguments_do_not_parse
+source = ```tauto
+theorem t(): Eq<a, b> { Refl }
+```
+parses = false
+differential = "surface"
+
+@ cases.tests_a_term_in_the_place_of_a_type
+source = ```tauto
+theorem t(): { if b { Nat } else { Bool } } { Refl }
+```
+parses = true
+differential = "surface"
+
+@ cases.tests_quantifiers_and_connectives
+source = ```tauto
+theorem t(): ∀ x: Nat. x = x { Refl }
+```
+parses = true
+differential = "surface"
+
+@ cases.tests_quantifiers_and_connectives_2
+source = ```tauto
+theorem t(): A ∧ B { Refl }
+```
+parses = true
+differential = "surface"
+
+@ cases.tests_quantifiers_and_connectives_3
+source = ```tauto
+theorem t(): ∃ x: Nat. x = x { Refl }
+```
+parses = true
+differential = "surface"
+
+@ cases.tests_function_types_carry_their_effects
+source = ```tauto
+fn f(x: (i64) -> Bool): i64 { 0 }
+```
+parses = true
+differential = "surface"
+
+@ cases.tests_unions_and_tags
+source = ```tauto
+theorem t(): @a i64 | Text { Refl }
+```
+parses = true
+differential = "surface"
+
+@ cases.tests_effects_after_a_function_type
+source = ```tauto
+fn f(x: (i64) -> Bool ! {Div, ask}): i64 { 0 }
+```
+parses = true
+differential = "surface"
+
+@ cases.modules_arguments_do_not_hide_names_in_the_next_function
+source = ```tauto
+module M { fn f(): i64 { 1 }
+fn g(f: i64): i64 { f }
+fn h(): i64 { f() } }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+differential = "surface"
+
+@ cases.module_scope_1
+source = ```tauto
+module M { fn f(): i64 { 1 }
+fn g(): i64 { let f := f()
+f } }
+```
+parses = true
+differential = "surface"
+
+@ cases.module_scope_2
+source = ```tauto
+module M { fn f(): i64 { 1 }
+fn g(): i64 { var f := f()
+f } }
+```
+parses = true
+differential = "surface"
+
+@ cases.module_scope_3
+source = ```tauto
+module M { fn f(): i64 { 1 }
+fn g(): i64 { let callback := (f) => f()
+f() } }
+```
+parses = true
+differential = "surface"
+
+@ cases.module_scope_4
+source = ```tauto
+module M { fn f(): i64 { 1 }
+fn g(): i64 { { let f := 2
+f }
+f() } }
+```
+parses = true
+differential = "surface"
+
+@ cases.module_scope_5
+source = ```tauto
+module M { fn f(): i64 { 1 }
+fn g(): i64 { match Some(2) { Some(f) if f == 2 => f
+None => f() } } }
+```
+parses = true
+differential = "surface"
+
+@ cases.module_scope_6
+source = ```tauto
+module M { fn f(): i64 { 1 }
+fn g(): i64 { handle { 2 } with { return f => f } } }
+```
+parses = true
+differential = "surface"
+
+@ cases.module_scope_7
+source = ```tauto
+module M { fn f(): i64 { 1 }
+fn g(): i64 { handle { perform ask() } with { ask(), f => f(42) } } }
+```
+parses = true
+differential = "surface"
+
+@ cases.tests_an_arm_instance_takes_a_row
+source = ```tauto
+effect cur<!e>(): Unit
+fn f(): Unit { handle { perform cur() } with { cur<!{out}>(), k => k(#()) } }
+```
+parses = true
+differential = "surface"
+
+@ cases.tests_an_arm_instance_takes_a_row_with_a_variable_and_a_type
+source = ```tauto
+effect cur<A, !e>(): Unit
+fn f<!r>(): Unit { handle { perform cur() } with { cur<Text, !{out} ∪ r>(), k => k(#()) } }
+```
+parses = true
+differential = "surface"

@@ -4,7 +4,7 @@
 //! chosen, so that the machine decides nothing about the schema itself. The machine of this
 //! crate (`TAUTO_VM=rust`) parses with `tauto_syntax`, as the other backends do.
 
-use tauto_nir::{Package, SyntaxParser};
+use tauto_nir::{Name, Package, SyntaxParser};
 use tauto_syntax::{Element, Payload, Shape, Sym, Tables, TypeDef};
 
 use crate::wire::Writer;
@@ -16,13 +16,19 @@ type Rs<T> = Result<T, String>;
 /// such data type (the parse never makes its values).
 fn ctor_of<'a>(
     pkg: &'a Package,
+    parser: &SyntaxParser,
     data: &str,
     ctor: &str,
     default: &'a [&'a str],
-) -> Rs<(String, Vec<Option<String>>, bool)> {
-    let Some(d) = pkg.datas.iter().find(|d| d.name == data) else {
+) -> Rs<(Name, Name, Vec<Option<String>>, bool)> {
+    let Some(d) = pkg
+        .datas
+        .iter()
+        .find(|d| parser.data_bindings.get(data) == Some(&d.name))
+    else {
         return Ok((
-            ctor.to_string(),
+            Name::from(data),
+            Name::from(ctor),
             default.iter().map(|n| Some(n.to_string())).collect(),
             true,
         ));
@@ -30,19 +36,34 @@ fn ctor_of<'a>(
     let c = d
         .ctors
         .iter()
-        .find(|c| d.is_struct || c.name == ctor || c.name.rsplit(['.', ':']).next() == Some(ctor))
+        .find(|c| {
+            d.is_struct
+                || parser
+                    .constructor_bindings
+                    .get(&(data.to_string(), ctor.to_string()))
+                    == Some(&c.name)
+        })
         .ok_or_else(|| format!("a runtime syntax parser whose type {data} has no {ctor}"))?;
     Ok((
+        d.name.clone(),
         c.name.clone(),
         c.fields.iter().map(|f| f.name.clone()).collect(),
         d.is_struct,
     ))
 }
 
-fn id(w: &mut Writer, pkg: &Package, data: &str, ctor: &str, default: &[&str]) -> Rs<u32> {
-    let (name, names, is_struct) = ctor_of(pkg, data, ctor, default)?;
+/// The machine's number of the constructor.
+fn id(
+    w: &mut Writer,
+    pkg: &Package,
+    parser: &SyntaxParser,
+    data: &str,
+    ctor: &str,
+    default: &[&str],
+) -> Rs<u32> {
+    let (data, name, names, is_struct) = ctor_of(pkg, parser, data, ctor, default)?;
     let names: Vec<Option<&str>> = names.iter().map(Option::as_deref).collect();
-    Ok(w.ctor(data, &name, &names, is_struct))
+    Ok(w.ctor(&data, &name, &names, is_struct))
 }
 
 /// The parser as the machine reads it (`syn_read` in `totes/vm/src/syn.taut`), after the tag of
@@ -53,16 +74,18 @@ pub(crate) fn write(w: &mut Writer, pkg: &Package, p: &SyntaxParser) -> Rs<Strin
         return Err("a runtime syntax parser of a grammar with TautoExpr".into());
     }
     // The constructors first: they are written as numbers.
-    let span = id(w, pkg, "SynSpan", "SynSpan", &["id"])?;
-    let ctx = id(w, pkg, "SynCtx", "SynCtx", &["scopes"])?;
-    let token = id(w, pkg, "SynToken", "SynToken", &["text", "span", "ctx"])?;
+    let span = id(w, pkg, p, "SynSpan", "SynSpan", &["id"])?;
+    let ctx = id(w, pkg, p, "SynCtx", "SynCtx", &["scopes"])?;
+    let token = id(w, pkg, p, "SynToken", "SynToken", &["text", "span", "ctx"])?;
     let diag = id(
         w,
         pkg,
+        p,
         "SynDiag",
         "SynDiag",
-        &["message", "at", "expected", "code"],
+        &["message", "at", "expected", "code", "args"],
     )?;
+    let arg = id(w, pkg, p, "SynArg", "SynArg", &["name", "value"])?;
     let schema = &tables.schema().types;
     // (machine constructor, whether its first field is the span) by (type, constructor).
     let node = |w: &mut Writer, ty: u32, c: u32| -> Rs<(u32, bool)> {
@@ -83,7 +106,7 @@ pub(crate) fn write(w: &mut Writer, pkg: &Package, p: &SyntaxParser) -> Rs<Strin
             }
         };
         let data = tauto_syntax::type_name(&p.name, name);
-        Ok((id(w, pkg, &data, ctor, &[])?, spanned))
+        Ok((id(w, pkg, p, &data, ctor, &[])?, spanned))
     };
     let shapes = tables.shapes();
     let mut nodes = Vec::with_capacity(shapes.len());
@@ -205,7 +228,7 @@ pub(crate) fn write(w: &mut Writer, pkg: &Package, p: &SyntaxParser) -> Rs<Strin
             }
         }
     }
-    for c in [span, ctx, token, diag] {
+    for c in [span, ctx, token, diag, arg] {
         w.num(c);
     }
     Ok(std::mem::replace(&mut w.out, saved))
@@ -232,6 +255,7 @@ pub struct SynRt {
     ctx: std::rc::Rc<crate::code::Ctor>,
     token: std::rc::Rc<crate::code::Ctor>,
     diag: std::rc::Rc<crate::code::Ctor>,
+    arg: std::rc::Rc<crate::code::Ctor>,
 }
 
 /// The parser of `p`, with its constructors made in the program.
@@ -242,9 +266,9 @@ pub(crate) fn prepare(
 ) -> Rs<SynRt> {
     let tables = Tables::read(&p.tables).map_err(|e| e.to_string())?;
     let mut make = |data: &str, ctor: &str, default: &[&str]| -> Rs<_> {
-        let (name, names, is_struct) = ctor_of(pkg, data, ctor, default)?;
+        let (data, name, names, is_struct) = ctor_of(pkg, p, data, ctor, default)?;
         let names: Vec<Option<&str>> = names.iter().map(Option::as_deref).collect();
-        let c = prog.ctor(data, &name, &names, is_struct);
+        let c = prog.ctor(&data, &name, &names, is_struct);
         Ok(c)
     };
     let mut types = Vec::new();
@@ -275,7 +299,12 @@ pub(crate) fn prepare(
         span: make("SynSpan", "SynSpan", &["id"])?,
         ctx: make("SynCtx", "SynCtx", &["scopes"])?,
         token: make("SynToken", "SynToken", &["text", "span", "ctx"])?,
-        diag: make("SynDiag", "SynDiag", &["message", "at", "expected", "code"])?,
+        diag: make(
+            "SynDiag",
+            "SynDiag",
+            &["message", "at", "expected", "code", "args"],
+        )?,
+        arg: make("SynArg", "SynArg", &["name", "value"])?,
         tables,
         types,
     })
@@ -360,6 +389,15 @@ impl SynRt {
                         Value::Int(d.at as i128),
                         expected,
                         Value::text("macro.syntax_error"),
+                        k.list(
+                            d.args
+                                .iter()
+                                .map(|(n, v)| {
+                                    self.data(&self.arg, vec![Value::text(n), Value::text(v)])
+                                })
+                                .collect::<Vec<_>>()
+                                .into_iter(),
+                        ),
                     ],
                 ))
             }

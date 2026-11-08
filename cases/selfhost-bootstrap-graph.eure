@@ -1,0 +1,91 @@
+// Differential cases: each named route compares the self-hosted component with its oracle, not only evaluator success.
+
+// portable_bundle_is_sorted_and_keeps_source_bytes
+@ cases.portable-bundle-is-sorted-and-keeps-source-bytes-001
+source = ```tauto
+fn z(): Text { "日本語" }
+```
+differential = "bootstrap_graph"
+
+// portable_bundle_is_sorted_and_keeps_source_bytes
+@ cases.portable-bundle-is-sorted-and-keeps-source-bytes-002
+source = ```tauto
+import "../z.taut"
+fn main(): Text { z() }
+```
+differential = "bootstrap_graph"
+
+// diamond_imports_are_dependency_ordered_and_deduplicated
+@ cases.diamond-imports-are-dependency-ordered-and-deduplicated-003
+source = ```tauto
+import "left.taut"
+import "right.taut"
+fn main(): i64 { left() + right() }
+```
+differential = "bootstrap_graph"
+
+// diamond_imports_are_dependency_ordered_and_deduplicated
+@ cases.diamond-imports-are-dependency-ordered-and-deduplicated-004
+source = ```tauto
+import "shared.taut"
+fn left(): i64 { r#shared() }
+```
+differential = "bootstrap_graph"
+
+// diamond_imports_are_dependency_ordered_and_deduplicated
+@ cases.diamond-imports-are-dependency-ordered-and-deduplicated-005
+source = ```tauto
+import "./shared.taut"
+fn right(): i64 { r#shared() }
+```
+differential = "bootstrap_graph"
+
+// diamond_imports_are_dependency_ordered_and_deduplicated
+@ cases.diamond-imports-are-dependency-ordered-and-deduplicated-006
+source = ```tauto
+fn r#shared(): i64 { 21 }
+```
+differential = "bootstrap_graph"
+
+// errors_do_not_discard_imports_or_proofs
+@ cases.errors-do-not-discard-imports-or-proofs-007
+source = ```tauto
+import "b.taut"
+```
+differential = "bootstrap_graph"
+
+// errors_do_not_discard_imports_or_proofs
+@ cases.errors-do-not-discard-imports-or-proofs-008
+source = ```tauto
+import "a.taut"
+```
+differential = "bootstrap_graph"
+
+// errors_do_not_discard_imports_or_proofs
+@ cases.errors-do-not-discard-imports-or-proofs-009
+source = ```tauto
+import "missing.taut"
+```
+differential = "bootstrap_graph"
+
+// errors_do_not_discard_imports_or_proofs
+@ cases.errors-do-not-discard-imports-or-proofs-010
+source = ```tauto
+theorem retained(): Eq(Nat, 0, 0) { Refl(Nat, 0) }
+fn main(): i64 { 0 }
+```
+differential = "bootstrap_graph"
+
+// host_boundary_rejects_symlinks
+@ cases.host-boundary-rejects-symlinks-011
+source = ```tauto
+fn hidden(): i64 { 1 }
+```
+differential = "bootstrap_graph"
+
+// bundle_command_refuses_to_overwrite_existing_input
+@ cases.bundle-command-refuses-to-overwrite-existing-input-012
+source = ```tauto
+fn main(): i64 { 42 }
+```
+differential = "bootstrap_graph"

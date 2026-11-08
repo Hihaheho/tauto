@@ -56,7 +56,7 @@
 
 ---
 
-# 第 I 部　言語の側
+# 第 I 部 言語の側
 
 六つの機能はどれも **Nib の層**（`surface.rs`、`types.rs`、`rows.rs`、`lin.rs`、`fmt.rs`、`tauto.par`）にあり、カーネルに規則を足さない。カーネルから見れば、これらの構文はカーネルの扱う項に展開されるか、型の位置で消えるか、中身のない公理（extern）になる。
 
@@ -73,15 +73,15 @@
 ### 構文
 
 ```nib
-effect log: (t: Text) -> () direct
-effect get: () -> i64 direct
-effect put: (v: i64) -> () direct
-effect Store = {get, put}          // 効果の集まりの書き方は direct でない効果と同じ
+effect log(t: Text): Unit direct
+effect get(): i64 direct
+effect put(v: i64): Unit direct
+effect Store { get, put }          // 効果の集まりの書き方は direct でない効果と同じ
 
-var out = buf_new()
-var s = 0
+var out := Buf::new()
+var s := 0
 handle { body } with {
-  log(t), k => k(buf_push(&mut out, &t))
+  log(t), k => k(Buf::push(&mut out, &t))
   get(), k => k(s)
   put(v), k => k({ s := v })
 }
@@ -91,7 +91,7 @@ handle { body } with {
 
 - キーワード `KwDirect: 'direct'` がある（`KwResume` と同じ状態集合）。
 - `EffectSignature` の末尾：`[ KwResume Quant | KwDirect ]`。`resume` と `direct` を両方は書けない（構文で一つしか書けない形にする）。
-- `Generic` の行変数の境界に `direct` を許す：`<e: direct>`。
+- `Generic` の行変数の境界に `direct` を許す：`<!e: direct>`。
 - 腕の構文は他の効果と同じ（`op(p…), k => e`）。
 
 `surface.rs`：効果の宣言の `resume: Quant` を `Quant` の値 `Quant::Direct` で表す（別のフィールドにしない）。`fmt.rs` は `direct` を `resume` と同じ位置に出す。
@@ -110,12 +110,12 @@ T ::= k(e)                                  e に k が現れない
 - つまり **どの実行経路も、最後に `k(e)` を一度だけ呼んで終わる**。`k` はその位置以外に現れない（閉包の中、`let` の右辺、引数、入れ子の `handle` の中にも現れない）。
 - 腕の中の `return`、`break`、`continue`（腕の外へ抜けるもの）は不可。腕の中に書いたループの中の `break` は、そのループが D2 で不可なので起こらない。
 - 通る：
-  - `log(t), k => k(())`
-  - `log(t), k => { let s = fmt(t); buf_push(&mut out, &s); k(()) }`
+  - `log(t), k => k(#())`
+  - `log(t), k => { let s := fmt(t); Buf::push(&mut out, &s); k(#()) }`
   - `get(), k => if s > 0 { k(s) } else { k(0) }`
   - `get(), k => match m { Some(v) => k(v), None => { log_miss(); k(0) } }`
-  - `log(t), k => k({ buf_push(&mut out, &t) })`（`e` がブロックでもよい）
-- 通らない：`log(t), k => k(k(()))`、`log(t), k => ()`、`log(t) => ()`（`k` がない）、`log(t), k => { k(()); () }`（`k` が末尾でない）、`log(t), k => if b { k(()) } else { () }`（一つの経路が `k` で終わらない）、`log(t), k => { let g = () => k(()); g() }`（`k` を閉包が捕まえる）、`log(t), k => if b { k(()) }`（`else` がない）。
+  - `log(t), k => k({ Buf::push(&mut out, &t) })`（`e` がブロックでもよい）
+- 通らない：`log(t), k => k(k(#()))`、`log(t), k => #()`、`log(t) => #()`（`k` がない）、`log(t), k => { k(#()); #() }`（`k` が末尾でない）、`log(t), k => if b { k(#()) } else { #() }`（一つの経路が `k` で終わらない）、`log(t), k => { let g := () => k(#()); g() }`（`k` を閉包が捕まえる）、`log(t), k => if b { k(#()) }`（`else` がない）。
 - エラー（`types`）：`"error: log is direct; every path of its arm must end in k(e)"`。`log` のところは操作の名前。
 - 腕のパターン（`log("x"), k => …`）とガードは他の腕と同じに許す。
 - **意味**：末尾形の腕は、各末尾 `k(e)` を `e` に置き換えた式 `T[e/k(e)]` を計算して、その値で一度 `k` を呼ぶのと同じ（評価の順が同じなので）。生成器（「direct のハンドラの生成」）はこの置き換えた式を腕の答えとして生成する。
@@ -128,7 +128,7 @@ T ::= k(e)                                  e に k が現れない
 
 **D3（行の量）。** `rows.rs` の行の量 `q(e)` には `Direct` がある。CFL（OWN「制御フロー線形性（CFL）の規則」）では `Direct` を `1` と同じに扱う（`q(ρ) \ {1}` の計算で `Direct` を `1` と見なす）。したがって linear の値も direct の効果を跨いで生きられる。
 
-**D4（行変数の境界）。** `<e: direct>` に代入できるのは、direct の操作だけからなる行（空の行を含む）。`<e: <=1>` には direct の操作も代入できる（`1` と同じ扱い）。エラー（`rows`）：`"error: ask is not direct but e is direct"`。
+**D4（行変数の境界）。** `<!e: direct>` に代入できるのは、direct の操作だけからなる行（空の行を含む）。`<!e: <=1>` には direct の操作も代入できる（`1` と同じ扱い）。エラー（`rows`）：`"error: ask is not direct but e is direct"`。
 
 **D5（腕の捕獲）。** OWN「腕と `k`」の「腕が外から捕まえる変数は複製可」は、**direct でない腕にだけ** 掛かる。direct の腕は、OWN「借用閉包」の借用閉包と同じ規則で、`handle` の外の借用の変数、`&x`、`&mut x`、affine な `var` を使ってよい。
 
@@ -138,7 +138,7 @@ T ::= k(e)                                  e に k が現れない
 - 衝突のエラー（`lin`）：`"error: out is borrowed by the arm of log"`。
 - 腕が `k` を捕まえる閉包を作ることは D1 によって起こらない。
 
-**D6（`show`）。** 組み込みの `show` は direct：`effect show<A>: (name: Text, value: A) -> () direct`。ホストの応答は `()` を返すだけなので、末尾再開の腕と同じに動く。
+**D6（`show`）。** 組み込みの `show` は direct：`effect show<A>(name: Text, value: A): Unit direct`。ホストの応答は `#()` を返すだけなので、末尾再開の腕と同じに動く。
 
 ### 実行時
 
@@ -159,12 +159,12 @@ T ::= k(e)                                  e に k が現れない
 `std/prelude/Std.taut`（`Option` と同じファイル）に次がある。
 
 ```nib
-enum Result<T, E> { Ok(T), Err(E) }
+enum Result(T: Type, E: Type) { Ok(T), Err(E) }
 
-effect fail<E>: (e: E) -> Never resume 0
+effect fail<E>(e: E): Never resume 0
 
 // Result を効果に変える。Err なら fail(E) を行い、戻らない。
-fn raise<T, E>(r: Result(T, E)) -> T ! {fail(E)} {
+fn raise<T, E>(r: Result(T, E)): T ! {fail(E)} {
   match r {
     Ok(v) => v,
     Err(e) => perform fail(e),
@@ -172,7 +172,7 @@ fn raise<T, E>(r: Result(T, E)) -> T ! {fail(E)} {
 }
 
 // 効果を Result に戻す。body の中の fail(E) を捕まえる。
-fn catch<T, E, e>(&body: () -> T ! {fail(E), e}) -> Result(T, E) ! {e} {
+fn catch<T, E, !e>(&body: () -> T ! {fail(E)} ∪ e): Result(T, E) ! e {
   handle { Ok(body()) } with {
     fail(x) => Err(x)
   }
@@ -186,7 +186,7 @@ fn catch<T, E, e>(&body: () -> T ! {fail(E), e}) -> Result(T, E) ! {e} {
 
 ### 効果の型引数の同一性
 
-`fail` は型引数つきの効果で、`fail(IoError)` と `fail(ParseError)` は **別の効果**（行の別の要素）。ハンドラの腕 `fail(x) => …` がどちらを処理するかは、`rows.rs` / `types.rs` が `State(T)` や `Exceeded(T)` の腕で型引数を決めているのと同じ方法で、本体の行と単一化して決める。本体の行に `fail(…)` が二つあって決まらなければエラー（`rows`）：`"error: fail is ambiguous here: fail(IoError) or fail(ParseError)"`。この場合は内側にもう一つ `catch` を書けばよい。
+`fail` は型引数つきの効果で、`fail(IoError)` と `fail(ParseError)` は **別の効果**（行の別の要素）。展開（`semantics.md`「Effects indexed by type」）がそれぞれに別の名前を付け、`catch` はその `E` ごとに複製される。腕 `fail<E>(x) => Err(x)` は書いた実体 `E` を処理し、その `E` は `catch` の結果の型 `Result(T, E)` で決まる。決まらなければエラー（`types`）：`"error: `catch` indexes an effect by `E`, which is not known here"`。この場合は結果の型を書けばよい。
 
 ### 所有権
 
@@ -194,14 +194,14 @@ fn catch<T, E, e>(&body: () -> T ! {fail(E), e}) -> Result(T, E) ! {e} {
 
 ### `&Slice(A)`
 
-- std に型 `Slice(A)` がある。`Slice(A)` は **借用の後ろにしか書けない**：`&s: Slice(A)` の引数、`&mut s: Slice(A)` の引数、`-> &Slice(A)` の結果、`let &s = …`。それ以外（`x: Slice(A)`、`Vec(Slice(A))`、構造体のフィールド）は型エラー `"error: Slice(A) can only be borrowed"`。
+- std に型 `Slice(A)` がある。`Slice(A)` は **借用の後ろにしか書けない**：`&s: Slice(A)` の引数、`&mut s: Slice(A)` の引数、`-> &Slice(A)` の結果、`let &s := …`。それ以外（`x: Slice(A)`、`Vec(Slice(A))`、構造体のフィールド）は型エラー `"error: Slice(A) can only be borrowed"`。
 - 関数（組み込み）：
 
 ```nib
-fn vec_as_slice<A: linear>(&v: Vec(A)) -> &Slice(A)
-fn vec_as_mut_slice<A: linear>(&mut v: Vec(A)) -> &mut Slice(A)     // 「`-> &mut A` と `let &mut x`」の後
-fn slice_len<A: linear>(&s: Slice(A)) -> u64
-fn slice_get<A: linear>(&s: Slice(A), i: u64) -> Option(&A)          // 「view 型」の後
+fn Vec::as_slice<A: Linear>(&v: Vec(A)): &Slice(A)
+fn Vec::as_mut_slice<A: Linear>(&mut v: Vec(A)): &mut Slice(A)     // 「`-> &mut A` と `let &mut x`」の後
+fn Slice::len<A: Linear>(&s: Slice(A)): u64
+fn Slice::get<A: Linear>(&s: Slice(A), i: u64): Option(&A)          // 「view 型」の後
 ```
 
 - `eval.rs` では `Slice(A)` の借用は `Vec(A)` の借用と同じ値で表してよい。
@@ -230,16 +230,16 @@ Rust の API の多くは借用を抱える値を返す：`Option<&T>`、`slice:
 借用の変数（OWN「どこに書けるか」〜「借用の変数」）と同じ。
 
 - 関数の結果：`-> Option(&A)`、`-> Iter(A)`。関数に少なくとも一つの借用の引数が要る（OWN「結果」と同じ。`"error: -> Option(&F) needs a borrowed parameter"`）。結果は **すべての借用の引数から派生する** と見なす。
-- 受け取り：`let &x = f(&v)`、`var &x = f(&v)`（「`var &x`（view の可変な束縛）」）、`match f(&v) { … }`（その `match` の間だけ凍結）。
+- 受け取り：`let &x := f(&v)`、`var &x := f(&v)`（「`var &x`（view の可変な束縛）」）、`match f(&v) { … }`（その `match` の間だけ凍結）。
 - 引数：view 型の値を `&x` / `&mut x` で渡す（`iter_next(&mut it)`）。
-- できないこと：`let x = f(&v)`（`&` を書かずに受ける）、構造体・セル・`Vec` に入れる、効果の引数・結果にする、脱出する閉包に捕まえさせる、関数の結果として返す（返せるのは借用の引数から派生した view を、その関数の結果の型として返すときだけ）。エラーは OWN の借用のエラーと同じ文（`"error: a borrow cannot be stored"` など）を使う。
+- できないこと：`let x := f(&v)`（`&` を書かずに受ける）、構造体・セル・`Vec` に入れる、効果の引数・結果にする、脱出する閉包に捕まえさせる、関数の結果として返す（返せるのは借用の引数から派生した view を、その関数の結果の型として返すときだけ）。エラーは OWN の借用のエラーと同じ文（`"error: a borrow cannot be stored"` など）を使う。
 
 ### `var &x`（view の可変な束縛）
 
 イテレータのように **view 自身を進める** には `&mut` が要る。OWN では「`&mut` は `var` だけ」なので、view を可変に持つ束縛は `var &x` で書く。
 
 ```nib
-var &it = vec_iter(&v)            // it: Iter(i64)。v はブロックの終わりまで凍結
+var &it := vec_iter(&v)            // it: Iter(i64)。v はブロックの終わりまで凍結
 while true {
   match iter_next(&mut it) {      // iter_next(&mut it: Iter(A)) -> Option(&A)
     Some(x) => perform show("x", x),
@@ -248,7 +248,7 @@ while true {
 }
 ```
 
-- `var &x = e` は、`e` が view 型の値を返す呼び出しのときだけ書ける。`x` は view 型の借用の変数で、`&mut x` を渡せる。
+- `var &x := e` は、`e` が view 型の値を返す呼び出しのときだけ書ける。`x` は view 型の借用の変数で、`&mut x` を渡せる。
 - `x := e2` は **できない**（`"error: a view var cannot be reassigned"`）。凍結の範囲が変わるのを避けるため。
 - 凍結は `let &x` と同じ（OWN「凍結」）：`x` の生きている間、`e` の借用の引数の持ち主は凍結される。
 
@@ -262,8 +262,8 @@ while true {
 ```nib
 view struct Iter(A) {}               // 借用を抱える不透明な型
 extern {
-  fn vec_iter<A: linear>(&v: Vec(A)) -> Iter(A)
-  fn iter_next<A: linear>(&mut it: Iter(A)) -> Option(&A)
+  fn vec_iter<A: Linear>(&v: Vec(A)): Iter(A)
+  fn iter_next<A: Linear>(&mut it: Iter(A)): Option(&A)
 }
 ```
 
@@ -276,7 +276,7 @@ extern {
 
 ### std の関数
 
-- std は、無いことを `Option` で返す `vec_get<A: linear>(&v: Vec(A), i: u64) -> Option(&A)` と `hashmap_get<K: linear, V: linear>(&m: HashMap(K, V), &k: K) -> Option(&V) where DecEq(K), Hash(K)` を持つ。効果で知らせる `vec_index(…) -> &A ! {out_of_bounds}` と `hashmap_index(…) -> &V ! {missing}` も持つ（OWN「affine の std（Rust と同じコストモデル）」）。`hashmap_get` の名前は `Option(&V)` を返す方のもので、`vec_get` と揃う。`Option<&T>` を効果にしない（「`Result`、`fail` / `raise` / `catch`、`Slice`」の「方針」）のは std も同じ。
+- std は、無いことを `Option` で返す `Vec::get<A: Linear>(&v: Vec(A), i: u64) -> Option(&A)` と `HashMap::get<K: Linear, V: Linear>(&m: HashMap(K, V), &k: K) -> Option(&V) where DecEq(K), Hash(K)` を持つ。効果で知らせる `Vec::index(…) -> &A ! {out_of_bounds}` と `HashMap::index(…) -> &V ! {missing}` も持つ（OWN「affine の std（Rust と同じコストモデル）」）。`HashMap::get` の名前は `Option(&V)` を返す方のもので、`Vec::get` と揃う。`Option<&T>` を効果にしない（「`Result`、`fail` / `raise` / `catch`、`Slice`」の「方針」）のは std も同じ。
 
 ---
 
@@ -284,22 +284,22 @@ extern {
 
 ### 規則
 
-`-> &mut A` は次の規則で書ける（OWN「結果」の「`-> &mut A` は ない」より、この節が優先する）。
+`-> &mut A`（OWN「結果」）の規則はこの節に書く。
 
-- `fn f(…) -> &mut A`：関数に少なくとも一つの `&mut` の引数が要る（`"error: -> &mut A needs a &mut parameter"`）。結果は **すべての借用の引数から派生する**（`&` の引数も含む）。
+- `fn f(…): &mut A`：関数に少なくとも一つの `&mut` の引数が要る（`"error: -> &mut A needs a &mut parameter"`）。結果は **すべての借用の引数から派生する**（`&` の引数も含む）。
 - 本体で返せるのは、`&mut` の引数そのもの、その field path、または `-> &mut A` の関数を `&mut` の引数に適用した結果だけ。
-- 受け取り：`let &mut x = f(&mut v, &w)`。`x` は `&mut` の借用の変数（OWN「借用の変数」：`x := e`、`&mut x`、`&mut x.f`、`&x` ができる）。
+- 受け取り：`let &mut x := f(&mut v, &w)`。`x` は `&mut` の借用の変数（OWN「借用の変数」：`x := e`、`&mut x`、`&mut x.f`、`&x` ができる）。
 - 凍結：`x` の生きている間（ブロックの終わりまで）、`v` は **一切** 使えない（`&v` もできない）。`&w` で渡した `w` は、`&` だけできる。
 - `&mut A` は `A` が複製可でも `A` と同じにならない（書き込みが持ち主に届かなければならないので）。
-- view：`Option(&mut A)` も view 型（「何が view 型か」）。`match hashmap_get_mut(&mut m, &k) { Some(x) => { x := x + 1 }, None => () }`。
+- view：`Option(&mut A)` も view 型（「何が view 型か」）。`match HashMap::get_mut(&mut m, &k) { Some(x) => { x := x + 1 }, None => #() }`。
 - 閉包は `&mut` を返せない（`&` と同じ）。
 
 ### std にあるもの
 
 ```nib
-fn vec_get_mut<A: linear>(&mut v: Vec(A), i: u64) -> Option(&mut A)
-fn vec_last_mut<A: linear>(&mut v: Vec(A)) -> Option(&mut A)
-fn hashmap_get_mut<K: linear, V: linear>(&mut m: HashMap(K, V), &k: K) -> Option(&mut V) where DecEq(K), Hash(K)
+fn Vec::get_mut<A: Linear>(&mut v: Vec(A), i: u64): Option(&mut A)
+fn Vec::last_mut<A: Linear>(&mut v: Vec(A)): Option(&mut A)
+fn HashMap::get_mut<K: Linear, V: Linear>(&mut m: HashMap(K, V), &k: K): Option(&mut V) where DecEq(K), Hash(K)
 ```
 
 ### 実行時
@@ -317,19 +317,18 @@ fn hashmap_get_mut<K: linear, V: linear>(&mut m: HashMap(K, V), &k: K) -> Option
 ### 構文
 
 ```nib
-affine struct File {}
-affine struct IoError {}
-
 extern {
-  fn file_open(&path: Text) -> Result(File, IoError)
-  fn file_read_to_buf(&mut f: File, &mut buf: Buf) -> Result(u64, IoError)
-  fn io_error_message(&e: IoError) -> Text
+  affine type File
+  affine type IoError
+  fn file_open(&path: Text): Result(File, IoError)
+  fn file_read_to_buf(&mut f: File, &mut buf: Buf): Result(u64, IoError)
+  fn io_error_message(&e: IoError): Text
 }
 ```
 
-- `tauto.par`：`ExternDecl: KwExtern OpenBrace { ExternItem } RBrace`。`ExternItem` は本体のない `fn` の署名。`KwExtern` の後に文字列は書けない（`extern "rust"` は構文エラーにして、エラーの文で `extern { … }` を案内する：`"error: write extern { … }; the rust path goes in Tauto.eure"`）。
+- `tauto.par`：`ExternDecl: KwExtern OpenBrace { ExternItem } RBrace`。`ExternItem` は本体のない `fn` の署名、`instance C(T)`、extern の型 `[種] type T`（OWN「`extern`」）。`KwExtern` の後に文字列は書けない（`extern "rust"` は構文エラーにして、エラーの文で `extern { … }` を案内する：`"error: write extern { … }; the rust path goes in Tauto.eure"`）。
 - extern の行は **空でなければならない**（「extern と効果」）。失敗は `Result(T, E)` の値で返す。
-- 名前空間（「名前空間」）の中に書ける：`module File { extern { fn open(&path: Text) -> Result(File, IoError) } }`。
+- 名前空間（「名前空間」）の中に書ける：`module File { extern { fn open(&path: Text): Result(File, IoError) } }`。
 
 ### `Tauto.eure` の `rust` 節
 
@@ -339,7 +338,6 @@ extern {
 package {
   name = "files-demo"
   version = "0.1.0"
-  sources = ["src"]
 }
 
 rust {
@@ -355,7 +353,7 @@ rust {
     Iter = "std::slice::Iter<'_, A>"
   }
 
-  # extern の関数 → Rust のパス。名前空間の中の関数は修飾名で書く（"File.open" = …）。
+  # extern の関数 → Rust のパス。名前空間の中の関数は修飾名で書く（"File::open" = …）。
   extern {
     file_open = "std::fs::File::open"
     file_read_to_buf = "files_demo_bridge::read_to_buf"      # 橋渡しクレートの関数
@@ -377,10 +375,10 @@ extern の関数 `f`（修飾名なら `M.f`）の Rust のパスは次の順で
 
 1. `Tauto.eure` の `rust.extern` の `f`。
 2. `rust.bindings` の各ファイルの `extern` の `f`（ファイルの順に、最初に見つかったもの）。二つ以上のファイルにあればエラー `"error: file_open is bound twice: bind/a.eure and bind/b.eure"`。
-3. 橋渡しクレートの同じ名前の関数：`rust.bridge` があれば `<bridge>::f`（`<bridge>` は橋渡しクレートの Rust での名前、例 `files_demo_bridge`）。修飾名 `M.f` なら `<bridge>::m::f`（モジュールの名前を snake_case にする。`File.open` → `files_demo_bridge::file::open`）。
+3. 橋渡しクレートの同じ名前の関数：`rust.bridge` があれば `<bridge>::f`（`<bridge>` は橋渡しクレートの Rust での名前、例 `files_demo_bridge`）。修飾名 `M.f` なら `<bridge>::m::f`（モジュールの名前を snake_case にする。`File::open` → `files_demo_bridge::file::open`）。
 4. どれもなければ、`tauto build` がエラー：`"error: file_open has no rust binding (add it to rust.extern in Tauto.eure)"`。`tauto check` はこのエラーを出さない（Rust のことを知らない）。
 
-型も同じ順（`rust.types`、bindings の `types`、`<bridge>::Type`）。
+型も同じ順（`rust.types`、bindings の `types`、`<bridge>::Type`）。`<bridge>::Type` になるのは extern の型（`extern { type Type }`）だけで、ふつうの `struct` は橋渡しクレートの型にならない。どれもない extern の型は `tauto build` のエラー：`"error: Tally has no rust binding (add it to rust.types in Tauto.eure)"`。
 
 ### 信頼の一覧
 
@@ -391,34 +389,47 @@ extern の関数 `f`（修飾名なら `M.f`）の Rust のパスは次の順で
 ### 前提
 
 - 名前空間は **単純なモジュールと修飾名** だけ。型ごとの特別な仕組み（メソッド、`impl`、`self`）は入れない。
-- `tauto bind` は Rust の型ごとに同じ名前のモジュールを作る：Rust の `File::open` は tauto の `File.open`。
+- `tauto bind` は Rust の型ごとに同じ名前のモジュールを作る：Rust の `File::open` は tauto の `File::open`。
 
 ### 名前空間の規則
 
 ```nib
-affine struct File {}
+extern { affine type File }
 
 module File {
   extern {
-    fn open(&path: Text) -> Result(File, IoError)
+    fn open(&path: Text): Result(File, IoError)
   }
-  fn open_or_default(&path: Text) -> … { … open(&path) … }   // 中では修飾なしで書ける
+  fn open_or_default(&path: Text): … { … open(&path) … }   // 中では修飾なしで書ける
 }
 
-fn main() -> () {
-  let r = File.open(&"a.txt")
+fn main(): Unit {
+  let r := File::open(&"a.txt")
   …
 }
 ```
 
-1. **宣言**：`module M { 宣言… }`。トップレベルと、他の `module` の中に書ける（入れ子：`A.B.f`）。一つの tote で同じ名前の `module` は一度だけ（`"error: module File is declared twice"`）。
-2. **型とモジュールは別の名前の空間**。`affine struct File {}` と `module File` は並んでよい。型の位置の `File` は型、項の位置の `File.open` はモジュールの関数。
-3. **修飾名**：項の位置で `M.f`、`M.N.f`。型の位置で `M.T`。
+1. **宣言**：`module M { 宣言… }`。トップレベルと、他の `module` の中に書ける（入れ子：`A::B::f`）。一つの tote で同じ名前の `module` は一度だけ（`"error: module File is declared twice"`）。
+2. **型とモジュールは別の名前の空間**。`extern { affine type File }` と `module File` は並んでよい。型の位置の `File` は型、項の位置の `File::open` はモジュールの関数。
+3. **修飾名**：項の位置で `M.f`、`M::N::f`。型の位置で `M::T`。
 4. **解決**：修飾のない名前は、内側のモジュール → 外側のモジュール → トップレベル の順に探す。`import "x.taut"`（ファイルの宣言を取り込む）はそのまま。`use` / `open` のような「修飾を省く」宣言は **入れない**（短さより明示性）。
-5. **フィールドとの区別**：`x.f` の `x` が局所変数ならフィールド（と `info.more(…)` のような、フィールドの関数の呼び出し）、そうでなく `x` がモジュールの名前なら修飾名。局所変数にモジュールと同じ名前を付けるのはエラー（`"error: file is the name of a module"`。名前の大文字・小文字は区別するので、`file` と `File` はぶつからない）。
-6. **カーネル**：名前の解決は `surface.rs` の段で済ませ、カーネルには **点を含む平らな名前**（`File.open`）を渡す。カーネルは名前を見ないので、名前空間はカーネルに現れない。点はモジュールの区切りとクラスの member の区切りに使われるので、モジュール名はクラス名・効果名と衝突してはならず、`@` を含められない（衝突は `error: module X collides with class X`）。
+5. **フィールドとの区別**：`x.f` の `x` が局所変数ならフィールド（と `info.more(…)` のような、フィールドの関数の呼び出し）、そうでなく `x` がモジュールの名前なら修飾名。局所変数にモジュールと同じ名前を付けるのはエラー（`` "error: file is the name of a module, so `file.f` would not tell a field from a qualified name; give the local another name" ``。名前の大文字・小文字は区別するので、`file` と `File` はぶつからない）。
+6. **カーネル**：名前の解決は `surface.rs` の段で済ませ、カーネルには **点を含む平らな名前**（`File::open`）を渡す。カーネルは名前を見ないので、名前空間はカーネルに現れない。点はモジュールの区切りとクラスの member の区切りに使われるので、モジュール名はクラス名・効果名と衝突してはならず、`@` を含められない（衝突は `error: module X collides with class X`）。
 7. **公開**：すべて公開（`pub` は入れない）。
 8. `fmt.rs`：`module M {` の中を一段字下げする。
+9. **まとめ方**：tote の中でも、関係する宣言は名前の接頭辞（`out_rev`、`hs_`）でなく `module` でまとめ、`Module::name` で書く。
+
+### 完全修飾名
+
+宣言はすべて、名前ではなく **完全修飾名**（モジュールのパスと名前を `.` でつないだもの）で区別する。利用者が prelude と同じ名前（`List`、`Nat`、`Some`）を宣言しても、それは prelude のものとは別の宣言になる。
+
+1. **ファイルのモジュール**：tote のファイルは tote の名前と tote の中のパス（`text/src/text.taut` → `text.src.text`）、tote の外のファイルは読むファイル全体を含むディレクトリからのパスで、どちらも拡張子を除き `/` を `.` にしたもの（`app/List.taut` → `app.List`）。標準ライブラリは `std.List`、prelude は `std.prelude`。名前に使えない文字は `_` にする。
+2. **対象**：関数（`extern` を含む）、型、構成子、効果、クラス、定理。
+3. **解決**：修飾のない名前は、そのファイルの宣言 → そのファイルが `import` したファイルの宣言 → prelude の順に探す。`import` していない別のファイルの宣言は、prelude にない名前に限って見つかる（これまでどおり）。
+4. **曖昧さ**：そのファイルが宣言せず、`import` した二つのファイルが宣言する名前はエラー（`` "`t` is ambiguous: it is declared as `a.t` and `b.t`; write the full name" ``）。prelude にある名前を、`import` した先がさらに `import` したファイル（直接は `import` していないファイル）が宣言するときも、どちらとも決めずに同じエラーにする（`` "`map` is ambiguous: it is declared as `a.map` and `std.prelude.map`; write the full name" ``）。prelude を選ぶと、そのファイルの宣言が黙って隠れるため。完全修飾名（`a.t`、`std.prelude.List`）で書けば通る。
+5. **構成子**：`T::C` は型 `T` の構成子 `C`。構成子の完全修飾名は、モジュールのパス、型、構成子の順につなぐ（`std.Text.Text.Mk`）。`T` が利用者の型なら、その型の構成子になる。`Mk` と `Mk` で始まる構成子の名前は、一つの型の構成子にだけ使う。中身を包むだけの型の構成子は `Mk` と名付け（`Text::Mk`、`Secret::Mk`）、不変条件を表す名前はそのまま付けてよい。
+6. **カーネルとバックエンド**：解決は読み込みの段（`surface/qualify.rs`）で済ませる。ほかの宣言と名前がぶつかる宣言だけを完全修飾名に付け替え、その使用もすべて付け替える。ぶつからない宣言と prelude は短い名前のまま。以後の段（カーネル、独立カーネル、評価器、バックエンド、証明のキャッシュ）は付け替えた名前を一つの宣言の名前として見る。Rust の識別子では `.` を `__` にする。値を表示するときの構成子は、書かれた短い名前で表示する。
+7. **マクロ**：読み込みの段はマクロを展開する前と後の二度走る。マクロの関数の名前は、その関数を書いたファイルの規則で解決される（`import std::Text` したファイルがあっても、それを `import` しないファイルのマクロの `Text::len` は prelude のもの）。`import std::Text` したファイルのマクロでは `Text::len` は `std::Text::Text::len`（`Nat` を返す証明の側のモデル）で、マクロが走る組み込みは `std::prelude::Text::len` と書く。型が合わずにマクロの関数が登録できないとき、診断は呼んでいるモデルとこの完全名を挙げる。
 
 ## 入れないもの
 
@@ -426,7 +437,7 @@ fn main() -> () {
 |---|---|---|
 | `?` 演算子 | `raise` / `catch`（「`Result`、`fail` / `raise` / `catch`、`Slice`」） | 一つのことに書き方は一つ。どこで効果に変えたかが呼び出しとして見える |
 | `direct` の腕の `k` を省く糖衣（`log(t) => e`） | `log(t), k => k(e)` | 再開が腕の上で見える方がよい |
-| メソッド呼び出し（`f.read(…)`） | `File.read(&mut f, …)` | 型ごとの名前空間の仕組みを持たない（「名前空間」） |
+| メソッド呼び出し（`f.read(…)`） | `File::read(&mut f, …)` | 型ごとの名前空間の仕組みを持たない（「名前空間」） |
 | 利用者の定義する view の struct | extern の `view struct` だけ | 借用を抱える構造体の規則は未設計 |
 | `use` / `open` | 修飾名 | 明示性 |
 | extern の `copy` / `shared` の型 | `affine struct` だけ | 未決定（「未決定の問い」の「extern の型を `copy` / `shared` と宣言できるようにするか」。方向は許す）。決めるまでは入れない |
@@ -437,7 +448,7 @@ fn main() -> () {
 
 ---
 
-# 第 II 部　Rust バックエンド
+# 第 II 部 Rust バックエンド
 
 ## 全体像とクレート
 
@@ -470,14 +481,22 @@ target/tauto/<package>/            生成した Cargo のワークスペース
 - NIR は **A 正規形**：関数の引数・コンストラクタのフィールド・演算の項は、局所変数かリテラルか、借用の place。入れ子の式は一時変数の `let` に切り出す。
 - NIR は `lin.rs` の結果を **写すだけ**。どの使用が move か、どこが借用か、どこで凍結が解けるかは `LinReport` から取る。NIR を作る途中で所有権を判断し直さない。
 - NIR の各ノードは元の位置（`Span`）を持つ。生成コードのコメントと実行時エラーの位置に使う。
+- NIR は所有権の規則が決めたことを書き、Rust での格納方法は書かない。閉包と共有する `var` は `Repr::SharedVar(copy)` と `Ty::SharedVar(copy, A)`（`copy` は中身が copy 種か）、自分の型を含むフィールドは `Indirect::Shared`（共有種のデータ）か `Indirect::Unique`（affine なデータ）、共有種のデータの大きなフィールドは `Indirect::Shared`。Rust 生成器はここから `Rc<Cell<A>>`/`Rc<RefCell<A>>` と `Rc<T>`/`Box<T>` を選ぶ。共有 `var` の中身の格納を区別しない生成器は `Local::storage()`（`Storage`：所有、共有 `var`、共有借用、可変借用、借用した関数、借用を持つ閉包）を読む。所有権の意味を NIR の一か所で決め、各バックエンドが同じ意味を読むためである。継続を明示する（CPS の）バックエンドは、さらに `tauto_nir::cps::lower` が NIR から作る `Cps` の木を読み、印字だけを受け持つ。
+- 型・行・借用の検査結果は、表示位置ではなく表層の出現ごとの識別子で結び付ける。プログラム全体とファイルごとの複製は同じ識別子を保ち、マクロが同じ表示位置に作る別の出現は区別する。引数の借用方法は、その呼び出しの検査結果から下げる。
 
 ### 名前
 
-Rust の名前は衝突しないように機械的に作る：局所変数 `{name}_{id}`、関数の実体 `{name}__{tier}{b?}`（例：`map__o`、`count__ob`。`b` は budget の下）、修飾名は `__` でつなぐ（`File.open` → `File__open__s`）、型はそのまま（tauto の型名は大文字始まりで Rust と同じ規約）、Rust の予約語に当たる名前は `r#` を付ける。
+Rust の名前は衝突しないように機械的に作る：局所変数 `{name}_{id}`、関数の実体 `{name}__{tier}{b?}`（例：`map__o`、`count__ob`。`b` は budget の下）、修飾名は `__` でつなぐ（`File::open` → `File__open__s`）、型はそのまま（tauto の型名は大文字始まりで Rust と同じ規約）、Rust の予約語に当たる名前は `r#` を付ける。
 
 ### 消去
 
 `theorem`、`axiom`、`inductive`、`def` はコードを生成しない。実行される `fn` の中の型の位置の出現（OWN「型・命題・証明との関係（tauto）」）も消す。`@a T` のタグは消して `T` にする。証明の引数を持つ `fn` は、その引数を消した署名にする（OWN「型・命題・証明との関係（tauto）」で「使用に数えない」とされた位置）。
+
+### 届かない定義
+
+生成するのは根から届く `fn` だけである。根はトップレベルの `fn` 以外の文と、ライブラリとして生成するときに書き出す `fn` で、そこから参照をたどって届く `fn` を生成する。依存する tote の `additional-sources`（証明や例）の `fn` も、届かなければ生成しない。
+
+型の検査と kernel の検査は、届くかどうかによらずすべての定義に行う。届くかどうかで変わるのは、生成のための検査（行の検査と使用の検査）が報告するエラーだけで、届かない `fn` の中のエラーは報告せず、警告にもしない。生成しないものは実行されないので、それが Div を起こしうるかは実行に関係しない。届かないと判断した `fn` を生成の途中で使うことになったときは、そのエラーを報告する。
 
 ---
 
@@ -501,7 +520,7 @@ Rust の名前は衝突しないように機械的に作る：局所変数 `{nam
 ### 単相化の鍵
 
 - **型変数は単相化しない**：Rust のジェネリクスにし、rustc に任せる。
-- **行変数は層で単相化する**：`fn map<A, B, e>(…)` を `e` に S の行で呼べば `map__s`、O の行で呼べば `map__o`。鍵は `InstKey`（層と budget の下かどうかと、行変数・型変数の実体化の組）。同じ鍵の実体は一つだけ作る。
+- **行変数は層で単相化する**：`fn map<A, B, !e>(…)` を `e` に S の行で呼べば `map__s`、O の行で呼べば `map__o`。鍵は `InstKey`（層と budget の下かどうかと、行変数・型変数の実体化の組）。同じ鍵の実体は一つだけ作る。
 - 呼び出しの鍵の求め方：呼ばれる関数の行変数ごとに、その呼び出しで代入された行（型検査が単一化で決めたもの）の層を取る。代入された行がさらに呼ぶ側の行変数を含むなら、呼ぶ側の実体の鍵の層を使う。
 
 ### 層を上げる場合
@@ -528,7 +547,7 @@ A の関数は O / M の中からそのまま呼ぶ（`Err` を受けて、そ�
 | `i32` `i64` `u8` `u32` `u64` | copy | 同名 | 演算は `checked_*`。溢れ・0 での除算は実行時エラー（「`show`、実行時エラー、位置」） |
 | `Bool` | copy | `bool` | |
 | `Float` | copy | `f64` | |
-| `()` | copy | `()` | |
+| `Unit` | copy | `()` | 値 `#()` は `()` |
 | `Never` | copy | `tauto_rt::Never`（空の enum） | `Never` から任意の型へは `match x {}` |
 | `Decimal` | 未決定 | — | **生成しない**。使うプログラムは `tauto build` がエラー `"error: Decimal is not supported by the rust backend"`（OWN「未決定」） |
 | `Text` | shared | `tauto_rt::Text`（`Rc<str>` の型の別名） | `&Text` は `&str` に deref |
@@ -542,18 +561,20 @@ A の関数は O / M の中からそのまま呼ぶ（`Err` を受けて、そ�
 | tauto の `struct` | 構造 | 同名の `struct`（フィールドは `pub`） | 「struct と enum」 |
 | tauto の `enum` | 構造 | 同名の `enum` | 「struct と enum」 |
 | `A \| B` | join | 生成する enum | 「union」 |
+| `A × B` | join | `(A, B)`（`Pair(A, B)` と同じ） | 「直積」 |
 | `@a T` | kind(T) | `T` | タグは消す |
 | 関数の型 | 種による | 「関数の型（呼び出し規約）」 | |
 | `Info(T)` | affine | `tauto_rt::Info<'a, T>` | 「`budget`、`Div`、`Interrupted`」 |
 | extern の型 | affine | `Tauto.eure` の `rust.types` の Rust の型 | 「extern の生成と橋渡しクレート」 |
 | extern の `view struct` | view | lifetime を一つ持つ Rust の型 | 「extern の生成と橋渡しクレート」 |
 | `&T` / `&mut T`（引数、`let &x`） | — | `&'a T` / `&'a mut T` | 「借用、lifetime、型変数」 |
-| 型変数 `<A>` / `<A: shared>` / `<A: linear>` | 境界 | `A: 'static + Show` / `A: 'static + Show + Clone` / `A: 'static + Show` | 「借用、lifetime、型変数」 |
+| 型変数 `<A>` / `<A: Shared>` / `<A: Linear>` | 境界 | `A: 'static + Show` / `A: 'static + Show + Clone` / `A: 'static + Show` | 「借用、lifetime、型変数」 |
 
 ### struct と enum
 
 - copy の型：`#[derive(Clone, Copy)]`。shared の型：`#[derive(Clone)]`。affine で clone 可能（OWN「Drop と clone」）な型：`#[derive(Clone)]`。それ以外の affine と linear：derive しない。
 - **再帰する位置**（enum のフィールドが自分自身、または相互再帰する型を含む）は `Rc<…>` にする。再帰する enum は OWN では shared 以上なので `Rc` で正しい。affine な再帰型（`affine enum Expr { … Buf … }`）は `Box<…>` にする（`Rc` は中身を move で取り出せないので）。
+- **大きなフィールド**：共有種のデータ（copy 種・view・extern を除く）で、型の見積もりが 8 語を超えるデータ型のフィールドも `Rc<…>` にする（`tauto_nir` の `box_large_fields`）。enum の大きさは一番大きいコンストラクタで決まり、値は丸ごと move されるので、大きな値をインラインに持つと、その型の move のたびにそれだけ memcpy する（state にコードとフレームを持つ機械なら一歩ごとに state を写す）。`Rc` の後ろなら move はポインタ一つで、clone も中身を写さず共有する。affine なデータは所有を保つためインラインのままにする。見積もりは `Ty` から語数で数え、箱に入れるとデータが小さくなるので、箱に入れるものがなくなるまで繰り返す。フィールドの Rust の型が変わるので、生成された型を使う Rust のコードは `.into()` で包み、`Rc` を外して読む。
 - `match` で中身を取り出すとき、`Rc<T>` の位置は `(*rc).clone()` で取り出す（shared なので複製してよい）。`Box<T>` の位置は `*boxed` で move する。
 - linear の型には debug ビルドでだけ drop bomb を付ける（「drop bomb（linear）」）。
 
@@ -565,6 +586,12 @@ A の関数は O / M の中からそのまま呼ぶ（`Err` を受けて、そ�
 - **出口**（すべての成員が `C` の部分型なら `A | B <: C`）：`match u { V0(x) => <x を C へ>, V1(y) => <y を C へ> }` を挟む。
 - 種は成員の join。derive は 「struct と enum」と同じ規則。
 - `show` の表示は中身の表示（union は表示に現れない）。eval がそう表示することを確かめる。違えば eval に合わせる。
+
+### 直積
+
+- 直積は `Pair` の糖衣で、実行経路に直積専用の表現はない。`A × B × C` は `Pair(A, Pair(B, C))`、値 `#(a, b, c)` は `Pair { fst: a, snd: Pair { fst: b, snd: c } }` で、Rust では入れ子のタプル `(A, (B, C))`。
+- 型注釈 `(x: T)` など、型検査が成員を忘れさせたり並べ替えたりする位置（`A × B <: A`、`A × B × C <: A × C`、`A × B <: B × A`）は、NIR の lower が `Pair` の `fst` / `snd` の読みと `Pair` の構築に展開する。バックエンドは特別な扱いをしない。場所からは copy か clone、一時的な値からは move。
+- `show` は `Pair` と同じ表示。
 
 ### drop bomb（linear）
 
@@ -601,7 +628,7 @@ impl Drop for Bomb { fn drop(&mut self) { if cfg!(debug_assertions) && self.arme
 - 借用の引数のない S / A の関数は lifetime を書かない。
 - **型変数にはいつも `'static` を付ける**。「何が view 型か」で view は型変数にならないと決めたので、tauto の値の型はいつも借用を含まない（閉包の型は 「関数の型（呼び出し規約）」の `Rc<dyn …>` で、`'static` でない捕獲を持たない。借用を捕まえた閉包は借用閉包で、型変数にならない）。`'static` があると効果の引数を `Box<dyn Any>` で運べる（「O 層（`resume <=1` と `resume 1`）」）。
 - **型変数にはいつも `Show` を付ける**（`show` の引数にできるように。「`show`、実行時エラー、位置」）。`Show` は生成したクレートの中で定義する trait。
-- `<A: shared>` は `Clone` を足す。copy の境界は tauto にないので `Copy` は付けない（copy の値も `Clone` で複製する）。
+- `<A: Shared>` は `Clone` を足す。copy の境界は tauto にないので `Copy` は付けない（copy の値も `Clone` で複製する）。
 
 ---
 
@@ -612,7 +639,7 @@ impl Drop for Bomb { fn drop(&mut self) { if cfg!(debug_assertions) && self.arme
 ### 関数
 
 ```nib
-fn add(p: P, &q: P) -> i64 { p.x + q.y }
+fn add(p: P, &q: P): i64 { p.x + q.y }
 ```
 
 ```rust
@@ -643,13 +670,14 @@ pub fn add__s(ev: &Ev<'_>, p_0: P, q_1: &P) -> i64 {
 - shared の値の **値としての使用は `.clone()`**。ただし **最後の使用は move** にする（`crates/tauto-nir/src/last_use.rs`）：関数の式を Rust の評価順に後ろ向きの生存解析で辿り、後で誰も読まない局所変数の clone を move に変える。追えないもの（閉包、`handle`、`budget`）は不透明で、中で触れる名前はすべて生きているものとし、中は変えない。これがないと、ループや再帰で辿るリストが一歩ごとに複製される。
 - これと 「struct と enum」の `Rc` の取り出し、「`var` の表現」のセルの読み出し、「`match`」の配列要素の所有束縛が、clone を書いてよい **すべての** 場所。
 - 引数の借用（`crates/tauto-nir/src/borrow.rs`：読むだけの再帰的な値を参照で受ける）と最後の使用の move は、環境変数で切れる。`TAUTO_KEEP_OWNED=1` ではすべての引数が所有のまま、`TAUTO_KEEP_CLONES=1` では clone がすべて残る。
+- 末尾の自己呼び出し（`crates/tauto-nir/src/tail.rs`）：本体の末尾の位置（ブロックの末尾、文の `return` の値、`match` の腕、`if` の枝。`handle`・`budget`・閉包の本体には入らない）で同じ実体を同じ型引数で呼ぶ呼び出しに、`CallNode::recur` の印を付ける。借用か関数を持つ引数は、受けたものをそのまま渡す場合に限る。`extern` 型の値を持つ関数と M 層の関数には付けない。本体をもう一度走らせると、フレームが持つ値をその呼び出しの前に捨てることになり、観測できる `extern` 型の Drop の時点が変わるからである。M 層では、何度も再開する継続が、新しい値を取る引数を共有してしまう。Rust 生成器は、印のある呼び出しを持つ S / A 層の関数の本体を `'tauto_tail: loop` で包む。印のある呼び出しは、引数を左から順に評価してから引数へ渡し、本体の先頭に戻る形で書く。燃料は戻るところで数える。JavaScript 生成器も同じ印を読む（`javascript-backend.md`「Runtime and validation」）。印は普通の呼び出しとして読んでもよい。
 
 ### 一時値と Drop の順
 
 OWN「Drop の時点と順序」：束縛は宣言の逆順に、ブロックの終わりで捨てる。式の途中の一時値は **その文の終わりで** 捨てる。
 
 - tauto のブロックを Rust のブロックに写す。束縛の順を変えない（Rust も宣言の逆順に捨てるので一致する）。
-- A 正規形で切り出した一時変数は、元の文ごとに Rust のブロックで囲む：`f(g())` の `g()` が affine で `f` が借用で受けるなら `{ let t_5 = g(); f(&t_5) }`。`let x = f(&g())` なら `let x = { let t_5 = g(); f(&t_5) };`。一時変数を関数の先頭やブロックの外に出さない（Drop の時点が変わる）。
+- A 正規形で切り出した一時変数は、元の文ごとに Rust のブロックで囲む：`f(g())` の `g()` が affine で `f` が借用で受けるなら `{ let t_5 := g(); f(&t_5) }`。`let x := f(&g())` なら `let x := { let t_5 := g(); f(&t_5) };`。一時変数を関数の先頭やブロックの外に出さない（Drop の時点が変わる）。
 - `x := v`（`var`）は Rust の代入 `x = v;`。Rust は古い値をその場で捨てる。OWN「`let` と `var`」と同じ。
 - move された束縛は Rust も捨てない。`lin.rs` が move と言った使用を `Use::Move` にすれば、Rust の Drop は OWN と一致する。
 - struct のフィールドは Rust の順（宣言の順）に捨てられる。OWN はフィールドの順を決めていない。動的所有権検査（「検証の方針」の drop bomb と動的所有権検査の照合）でフィールドの順が食い違えば、eval の方を Rust の順に合わせる（tauto の型だけなら観測できないので）。
@@ -672,12 +700,13 @@ OWN「Drop の時点と順序」：束縛は宣言の逆順に、ブロックの
 - 網羅的でない `match`（`exhaustive: false`）には最後に `_ => tauto_rt::no_arm(L…)` を足す。文は eval の「どの腕も合わない」ときの文（`messages.rs`）。
 - 借用の `match`（OWN「借用の `match`」）は `match &v { … }`（Rust の default binding modes で、パターン変数が `&` になる）。
 - 所有の `match` は値を消費する（Rust と同じ）。linear の値なら、腕の始めで `bomb.defuse()` する（パターンで `bomb` を束縛して）。
-- 直接生成する `match` の対象が純粋な `array_get` で、腕が所有の `Some` / `None` / `_` のパターンだけでガードを書いていなければ、配列要素の形を参照で調べる。配列と添字は元の順で一度ずつ評価し、配列の所有値を保持してから調べる。配列が単独所有なら通常の `array_get` と所有の `match` を実行し、再帰的なフィールドを move できる性質を保つ。ほかにも所有者がいる配列では、選ばれたパターンの束縛だけを clone して所有値にし、配列の保持を解いてから腕の本体を実行する。無視するフィールドは clone しない。束縛の型と公開 API は所有のままで、`array_get` 自体の `Option(A)` を返す契約は変わらない。分岐した腕の複製が増殖しないよう、腕の本体に別の `array_get` の `match` や `handle` を含む外側の `match` は通常の生成に従う。入れ子のパターン自体は参照で調べられる。`Option` 全体を束縛する腕、ガード、保存した取得結果、継続に分割する `match` も通常の生成に従う。
+- `Array::len` と `Array::get` の runtime は所有する配列と借用した配列を受け取る。借用した配列の所有権は移さず、取得結果は所有する `Option(A)`。借用配列の取得は通常の呼び出しとして生成し、所有値の解放を前提とするパターン検査の最適化には渡さない。
+- 直接生成する `match` の対象が純粋な `Array::get` で、腕が所有の `Some` / `None` / `_` のパターンだけでガードを書いていなければ、配列要素の形を参照で調べる。配列と添字は元の順で一度ずつ評価し、配列の所有値を保持してから調べる。配列が単独所有なら通常の `Array::get` と所有の `match` を実行し、再帰的なフィールドを move できる性質を保つ。ほかにも所有者がいる配列では、選ばれたパターンの束縛だけを clone して所有値にし、配列の保持を解いてから腕の本体を実行する。無視するフィールドは clone しない。束縛の型と公開 API は所有のままで、`Array::get` 自体の `Option(A)` を返す契約は変わらない。分岐した腕の複製が増殖しないよう、腕の本体に別の `Array::get` の `match` や `handle` を含む外側の `match` は通常の生成に従う。入れ子のパターン自体は参照で調べられる。`Option` 全体を束縛する腕、ガード、保存した取得結果、継続に分割する `match` も通常の生成に従う。
 
 ### 閉包
 
 - S / A 層の閉包リテラルは Rust の閉包：`Rc::new(move |ev: &Ev<'_>, x_3: i64| -> i64 { … })`。捕まえ方は 「`var` の表現」の `var` の表現と、`lin.rs` の捕獲の判断（move か借用か）に従う。
-- 借用閉包は `&mut |ev: &Ev<'_>, x_3: i64| -> i64 { … }` を `&f` の引数の位置にその場で書く。名前の付いた借用閉包（`let g = (s) => write_line(&mut f, s)` を後で `&g` で渡す）は `let mut g_4 = |ev: &Ev<'_>, s_5: Text| { … };` として、渡すときに `&mut g_4`。
+- 借用閉包は `&mut |ev: &Ev<'_>, x_3: i64| -> i64 { … }` を `&f` の引数の位置にその場で書く。名前の付いた借用閉包（`let g := (s) => write_line(&mut f, s)` を後で `&g` で渡す）は `let mut g_4 := |ev: &Ev<'_>, s_5: Text| { … };` として、渡すときに `&mut g_4`。
 - affine な閉包は `Box::new(move |…| …)`。
 - O / M 層の閉包は 「O 層の閉包」 / 「M 層（`resume ω`）」。
 
@@ -742,10 +771,10 @@ impl<'a> Ev<'a> {
 ### direct のハンドラの生成
 
 ```nib
-effect log: (t: Text) -> () direct
-var out = buf_new()
+effect log(t: Text): Unit direct
+var out := Buf::new()
 handle { body } with {
-  log(t), k => k(buf_push(&mut out, &t))
+  log(t), k => k(Buf::push(&mut out, &t))
 }
 ```
 
@@ -812,7 +841,7 @@ pub struct Abort { pub op: OpId, pub args: Payload, pub at: Loc }
 ### `handle`（本体が A 層のとき）
 
 ```nib
-let r = handle { risky() } with {
+let r := handle { risky() } with {
   fail(e) => recover(e)
   return v => v + 1
 }
@@ -849,7 +878,7 @@ let v = match f__a(&ev, x) { Ok(v) => v, Err(a) => tauto_rt::o::reraise(a).await
 
 ### 考え方
 
-one-shot の継続は「途中で止まった Future」そのもの。Rust の `async` が状態機械への変換をしてくれるので、tauto は `perform` を「入れ物に要求を置いて `Pending` を返す Future」にし、`handle` を「本体の Future を自分で poll するループ」にする。Waker は使わない（何もしない Waker）。スレッドもランタイムも使わない。
+one-shot の継続は「途中で止まった Future」そのもの。Rust の `async` が状態機械への変換をしてくれるので、tauto は `perform` を「入れ物に要求を置いて `Pending` を返す Future」にし、`handle` を「本体の Future を自分で poll するループ」にする。ハンドラは何もしない Waker で poll する。Waker を使うのは、プログラムやタスクを終わりまで走らせるホスト（`o::run_top`）だけで、`wait` の旗が上がったときに起こしてもらう（「タスク（`spawn`）」）。
 
 ### 実行時（`tauto-rt/src/o.rs`）
 
@@ -902,8 +931,8 @@ pub fn count__o<'a>(ev: &Ev<'a>, n_0: i64) -> Fut<'a, i64> {
 ### `handle`（本体が O 層のとき）
 
 ```nib
-effect ask: (n: i64) -> i64
-let r = handle { perform ask(5) + 1 } with {
+effect ask(n: i64): i64
+let r := handle { perform ask(5) + 1 } with {
   ask(n), k => k(n * 10)
   return v => v + 100
 }
@@ -1046,6 +1075,19 @@ M 層のコードの `budget(steps: n) { body }` は、ハンドラの連鎖 `M`
 - budget の下の `Div` のある関数と `while` は、M 層のコードの中では M の実体（`under_budget` と `m` の両方を持つ実体）になり、`tick` を呼ぶ。
 - 位置が観測の対象でないのは 「budget の下」と同じ。Rust 側の期待値は別に持つ。
 
+### 値として保存される継続
+
+腕が `k` を呼ぶだけでなく値として使う（返す、データに入れる、閉包に入れる）とき、継続は `handle` が終わったあとで、別の場所から呼ばれる。O 層の継続（本体の future）は関数の局所変数とその場の `Ev` を借りており、保存できない。そこでそういう `handle`（`HandleNode::kept`、`lin::kept_continuation` で決める）は、本体の層によらず M 層で書き、**外の `direct` のハンドラを持たない** 形にする。
+
+- 駆動は `run_in(ev, …)`（`run_a_in` / `run_o_in` / `run_r_in` など）。本体の中では `ev` を `Ev::empty()` にする。継続が持つのは複製した値と `'static` な `Kont` だけになり、`Resume<'static>` を値にできる。
+- 本体と腕の `direct` の `perform` は `cps::perform_direct`：本体の中の `direct` のハンドラが取ればその場で答え、なければ `Escape` で駆動に出る。駆動はそのとき自分を回しているコードの `ev` で答える。最初の実行では `handle` の位置のハンドラ、保存した `k` を呼んだときは呼んだ側のハンドラになり、評価器（再開でハンドラを付け直す）と同じ意味になる。
+- 本体の中の `handle` の `direct` の腕も M 層のハンドラにする（`HandleNode::detached`）。`k` で組み直されるのは連鎖 `M` だけなので。腕の値が答えで、`Resume::call` で本体に戻る。
+- 本体から呼ぶ関数で、行に `direct` の操作があるものは、M 層の実体（`InstKey::detached`）を呼ぶ。その実体の中も同じ規則で書く。
+- 値としての `k` は `cps::resume_rc` / `resume_box`（A 層なら `_a`）で S 層の関数の値になる。呼ぶたびに `run_in` を、呼んだ側の `ev` で回す。腕の外で `k(v)` と呼ぶときは `cps::resume` / `resume_a` / `resume_o`。
+- 書けないもの（`Package::rust_unsupported` で、Rust backend だけが拒否する）：
+  - 本体の中で、`direct` の操作をする関数の値を呼ぶ。関数の値は呼ばれた場所の `Ev` を受け取る S 層の形なので、持たないハンドラを渡せない。
+  - M 層のコードの中（保存される継続の外）で `k` を値にする。外の連鎖 `M` の継続が `'static` でないため。
+
 ### 借用の引数
 
 継続は `&'a T` を持てる（外から借りたもの）。M の関数の局所変数を `&` で渡すのは、CFL により複製可の値でしか起こらない。継続は `Fn` なので `&mut` を持ち越さない。これも rustc が確かめる。
@@ -1066,7 +1108,7 @@ M 層のコードの `budget(steps: n) { body }` は、ハンドラの連鎖 `M`
 
 ### budget の外
 
-`Tick` は `tauto_rt::host_tick(at)`（同期）。スレッドに一つの数を一つ増やし、ホストの上限（`TAUTO_STEP_LIMIT` の環境変数、なければ `tauto_rt::DEFAULT_STEP_LIMIT`、`eval.rs` の `DEFAULT_BUDGET` と同じ値）を超えたら実行時エラー `interrupted: the step limit ran out`（`messages.rs`）。Div を持つ関数でも、budget の外なら S 層のまま。
+`Tick` は `tauto_rt::host_tick(at)`（同期）。スレッドに一つの数を一つ増やし、ホストの上限（`TAUTO_STEP_LIMIT` の環境変数、なければ `tauto_rt::DEFAULT_STEP_LIMIT`、`eval.rs` の `DEFAULT_BUDGET` と同じ値）を超えたら実行時エラー `interrupted: the step limit ran out`（`messages.rs`）。`--allow-div`（`host-effects.md`）のときは数えない。Div を持つ関数でも、budget の外なら S 層のまま。
 
 ### budget の下
 
@@ -1112,11 +1154,22 @@ O 層の呼び出しには `Result<T, Interrupted>` を返す別の実体を使�
   補助関数へ渡す未知の callback に流用しない。Rust から来る未知の `Fn` は、
   共有借用や空の効果行だけではこの検査を通らない。
 - 値・局所変数・引数・フィールド・コンテナの要素を再帰的に調べる。linear、
-  extern に束縛された型、内容を確認できない型変数や標準型、所有する関数値、
+  extern に束縛された型、内容を確認できない型変数や標準型、出自を確認できない関数値、
   `RcRefCell` の借用ガードを持ちうる式は対象外になる。生成された非 `Copy`
   データ型、union、`Shown` も、埋込み側が独自の `Drop` を実装できるため、
   通常の入口では対象外になる。埋込み全体の明示的な信頼契約がある入口では扱えるが、
   データ型と union は内部の型も検査する。契約は他の型や借用の検査を省かない。
+- 契約付き入口では、呼び出しの具体型引数を補助関数の型変数に対応させ、引数・結果・
+  本体と、その先の呼び出しを同じ対応の下で検査する。検査済みの文脈は関数の実体、
+  具体型引数、callback の出自、検査の役割ごとに区別する。型引数が欠ける場合や、
+  型変数・推論待ちの型が残る場合は通常経路を使う。型の展開と呼び出し文脈の数には
+  上限があり、上限に達しても安全と見なさない。
+- 契約付き入口では、捕獲を持たない所有する共有関数値も、本体と推移的な呼び出しが
+  同期・燃料検査なしの callback 検査を通るときに扱う。名前付き関数、捕獲のない
+  閉包、変更しない局所変数の別名、補助関数の引数への転送を、局所変数の識別子と
+  実引数に結び付けて追う。捕獲なしという印だけでは本体の安全性を認めない。
+  変更可能な別名、関数値の cast、所有する捕獲付き閉包、関数値を結果・コンテナ・
+  フィールド・操作のペイロードとして外へ渡す経路は通常経路を使う。
 - 同期的な巻き戻しは、通常の Future が腕の実行中まで保持する値を先に破棄する。
   その差を観測させないため、`exceeded`・abort・return の腕とその推移的な
   呼び出し先も別に検査する。暗黙の `Clone`・`Drop` を含む型の検査に加え、
@@ -1125,7 +1178,7 @@ O 層の呼び出しには `Result<T, Interrupted>` を返す別の実体を使�
   非 panic builtin は扱う。腕だけで参照する関数を同期実体へ変えることはない。
 - 入れ子の budget・ハンドラ、追跡できない呼び出し、複数回再開する制御は対象外に
   なる。extern は、rust-backend.md「非再開 budget の信頼契約」にある入口の契約と個別の
-  束縛の契約を両方必要とする。契約があっても同期の scalar 引数・結果に限る。
+  束縛の契約を両方必要とする。契約があっても、同節で定める同期の引数・結果に限る。
 
 呼び出し前・ループ本体の先頭という NIR の燃料検査の位置と消費量を保つ。
 燃料切れは同じ位置と `Info(T)` を持つ `Exceeded` 要求になり、元の腕が受ける。
@@ -1158,6 +1211,53 @@ variant ごとの適格性と理由を返す。理由には機械可読な分類
 のカウンタはその実行を観測するためのもので、任意の Rust callback の契約を
 証明するものではない。
 
+### 契約付き同期実体の読み取り専用引数
+
+契約付き入口の同期本体では、保持された局所変数の複製を、非公開の補助関数へ
+渡す借用にできる。公開関数、通常の Future、共有する同期補助関数の所有する
+引数は変えない。非公開実体は NIR の関数実体識別子と具体型引数で区別し、
+再帰呼び出しにも同じ型の対応を用いる。表示名の一致で実体を共有しない。
+
+- 元の引数は、通常表現の局所変数か、その非 boxed フィールドを複製する単純な読み取りに限る。所有者は
+  呼び出しの間残る。最後の使用で移動する引数や一時値は所有する経路を保つ。
+  他の引数は副作用のない単純な読み取りかリテラルに限り、後続の引数で元の値を
+  変更する場合の複製された値を失わない。燃料検査は借用を含む引数の評価より前にある。
+- 引数の型を再帰的に調べ、生成器が複製を定める不変なデータ型とスカラーだけを
+  扱う。Text と、検査を通る要素を含む Option も型の検査を通るが、要素の使用は別に検査する。extern 型、linear、view、所有する Box、可変状態、借用、関数値、
+  未確定な型変数は対象外になる。信頼契約だけを複製の読み取り専用性の根拠にしない。
+- 補助関数と推移的な呼び出し先の結果はスカラーに限る。借用する引数と、その
+  パターンが束縛する子は、場合分け、非 boxed の Copy フィールドの読み取り、
+  同じ検査を通る引数への転送にだけ使う。子の移動を借用にする根拠は、保持された
+  根からのパターンの出自であり、独立した所有する値の移動には適用しない。
+- 局所変数のカーソルは、保持された引数か、その場合分けで束縛された子から
+  初期化する。各カーソルの根は一つの引数に固定し、代入の右辺にも同じ根からの
+  単純な読み取りを要求する。不変な局所別名もその根を引き継ぐ。根の保持は
+  カーソルの位置によらないので、進めた後にも以前の子や別名を読める。
+- スカラーの局所状態の更新と、上の不変条件を保つカーソルの代入をループ内でも
+  検査する。分岐の各腕とループの戻り辺で同じ根が保たれる。生成するカーソルは
+  参照を持つ局所スロットで、代入は参照先への書き込みでなくスロットの付け替えに
+  なる。元のループ、燃料検査、位置、評価順は保ち、再帰には変換しない。
+- 引数やフィールドへの代入、捕獲されたセルへの書き込み、別の根や構築した値への
+  カーソルの付け替えはこの検査を通らない。閉包、捕獲、入れ子のハンドラや budget、
+  効果操作、間接呼び出し、コンテナや結果への所有する値の脱出も対象外になる。
+  型、呼び出し文脈、局所状態の検査には上限があり、上限は拒否理由になる。
+
+構造体などを返して借用化の検査を通らない補助関数も、契約付き同期文脈では
+引数を所有したままの非公開実体を持てる。その内部の呼び出しを個別に検査する。
+所有する非公開実体も関数実体識別子と具体型引数で区別し、通常の同期実体や
+Future と共有しない。再帰的な到達先は重複なく生成し、生成数の上限に達した
+呼び出しは元の所有する同期実体を使う。外側の結果型の制約を緩めて、その入力を
+借用したまま結果へ逃がす処理を認めるものではない。
+
+非公開のジェネリック実体は、具体型が検査された呼び出しからだけ選ぶ。借用した
+フィールドの読み取りは複製として生成し、必要な Clone 境界をその非公開実体に
+持たせる。公開のジェネリック境界は変えない。実行中の外側の budget や実行時の
+sync feature があれば、非公開実体を呼ばず、元の Future が走る。
+
+`borrowed_budget_diagnostics` はこの選択を関数実体、具体型引数、引数番号とともに
+返し、所有する経路を保つ呼び出しには機械可読な拒否理由を付ける。budget 自体の
+適格性とは別の診断である。`TAUTO_KEEP_OWNED` はこの非公開実体の生成も止める。
+
 ---
 
 ## `show`、実行時エラー、位置
@@ -1187,24 +1287,35 @@ pub trait Show { fn show(&self) -> String; }
 
 ---
 
-## スレッド（`spawn`）
+## タスク（`spawn`）
 
-[`nib.md`](nib.md)「並列のプリミティブ」の `spawn`・`Task`・`Ref`・`Mutex`・`Atomic` を、スレッドで走らせる。
+[`nib.md`](nib.md)「並列のプリミティブ」の `spawn`・`Task`・`Ref`・`Mutex`・`Atomic` を、リアクターかスレッドで走らせる。
 
 - `perform spawn(f)` はハンドラを通らず `Task { result: pending_spawn(f) }` になり、本体は `Executor` が走らせる。
+  本体はハンドラのない状態で始まる。本体が標準エフェクトを行うなら、包む段階で `f` が `() => host_run(f)` になっているので、そのスレッドの `host_run` が答える（[`host-effects.md`](host-effects.md)）。
   `spawn` のハンドラの腕は生成しない（`spawn<A>` の `A` は、ペイロードの型を消した腕の形では書けないため）。
 - `spawn` を実行するプログラムは `sync` で作られる：`tauto_rt::Rc` が `Arc`、関数の値は
   `Send + Sync`、型パラメータは `Send + Sync`、`Ref` / `Mutex` / `Atomic` はスレッド安全。
   使わないプログラムは `Rc` のまま（`Arc` の参照カウントは原子的な操作なので `Rc` より遅い）。`TAUTO_SYNC=1` で強制できる。
-- `tauto_rt::exec::Executor` が本体を走らせる。既定はタスクごとのスレッド。
-  `Tauto.eure` の `rust { executor = "tokio" }` を書くと、生成する `main` が tokio の runtime を作り、
-  本体を blocking pool に載せる（生成する `Cargo.toml` が `tokio` を版を固定して依存に足す。「生成するワークスペース」）。別の実行系は
-  `Executor` を橋渡しクレートで実装して `set_executor` で選ぶ。
+- 待つことはすべて `wait` で、`host_run` は答えずにホストへ渡す（[`host-effects.md`](host-effects.md)「時間のかかる答え」）。
+  `wait` を行うプログラムの最上位とタスクの本体は O 層の Future で、`tauto_rt::o::run_top` が終わりまで走らせ、残った `wait` に答える。
+- どこで走らせるかは `Tauto.eure` の `rust.executor` で選ぶ。
+  - `"tokio"`（既定）：リアクター（`tauto_rt::reactor`）。コアの数だけスレッドを作り、それぞれが tokio の current_thread の runtime と `LocalSet` を持つ。
+    新しいタスクはスレッドに順に配る。`wait` の旗が上がっていなければ、タスクは Waker を旗に預けてスレッドを譲る（`o::Hosted`）。
+    `sleep` は runtime のタイマー、`net` 系は runtime の blocking pool で答え、終わったら旗を上げる。何千ものタスクが少しのスレッドで待てる。
+    ステップの数（`TAUTO_STEP_LIMIT`）はタスクごとに数える。各スレッドのスタックは主のスレッドと同じ大きさ（下の「スタックの大きさ」）。
+    生成する `main` は `tauto_rt::reactor::install()` を呼び、`tauto-rt` を `reactor` の機能で作る（`tokio` は `tauto-rt` の依存で、版を `=` で固定する）。
+  - `"threads"`：タスクごとのスレッド（`tauto_rt::exec::Executor`）。`wait` はそのスレッドを止める。別の実行系は
+    `Executor` を橋渡しクレートで実装して `set_executor` で選ぶ。
+  - `spawn` しないプログラムはどちらでもリアクターを作らない。待つ相手がいないので、`wait` はその場で答える。
+- スタックの大きさ：主のスレッド、各タスクのスレッド、リアクターの各スレッドは同じ大きさのスタックで走る。tauto は長いリストを再帰でたどり、再帰で捨てるので、既定は 1024 MiB と大きい（メモリは触った分しか使わない）。
+  - tote が深い再帰を前提にするなら、`Tauto.eure` の `rust.stack-mb` に MiB 単位の正の整数で書く（例：`rust { stack-mb = 4096 }`）。生成する `main` は `tauto_rt::set_default_stack_mb` でそれを既定にしてから走る。必要な大きさがコードの外の環境変数ではなくマニフェストに残るので、読む人にも AI にも見える。
+  - 走らせる時の環境変数 `TAUTO_STACK_MB` はマニフェストより優先する。スレッドの無い wasm32 では効かず、スタックはリンカーが決める。
 - 外部の型が `Send + Sync` でなければ、`spawn` を使うプログラムではその型の束縛の位置で拒否する。
   `Send` でない資源はホストに置き、`direct` の効果に id（affine）を渡して使う。
 - 使い方は `examples/rust/tasks`。
 
-# 第 III 部　Rust 資産を使う
+# 第 III 部 Rust 資産を使う
 
 ## extern の生成と橋渡しクレート
 
@@ -1258,7 +1369,7 @@ src/files.taut:5:3: error: the rust function std::fs::File::open does not fit th
 - **名前は tote ごとに決まっている**：橋渡しクレートの `package.name` は `<tote 名>-bridge`（`package.name` が `files-demo` なら `files-demo-bridge`、Rust での名前は `files_demo_bridge`）。違えば `tauto build` がエラー `"error: the bridge crate must be named files-demo-bridge (bridge/Cargo.toml says glue)"`。こうすると crates.io のクレート（`rust.dependencies`）と名前がぶつからず、読み手も生成コードの `files_demo_bridge::…` を見ればどの tote の手書きの Rust か分かる。
 - 生成した `Cargo.toml` には、その名前のまま依存に足す：`files-demo-bridge = { path = "<絶対パス>" }`（`package = …` で付け替えない）。`rust.dependencies` に同じ名前があればエラー（`"error: files-demo-bridge is the bridge crate and cannot be a dependency"`）。
 - 橋渡しの関数は、包み関数（「extern の包み関数」）と同じ署名で書く（`pub fn read_to_buf(f: &mut std::fs::File, buf: &mut String) -> Result<u64, std::io::Error>`）。
-- 修飾名の extern `File.open` の橋渡しは `files_demo_bridge::file::open`（モジュールの名前を snake_case にする）。
+- 修飾名の extern `File::open` の橋渡しは `files_demo_bridge::file::open`（モジュールの名前を snake_case にする）。
 - 橋渡しクレートは `tauto-rt` に依存してよい（O 層の閉包 `OFnMut` を受けたいとき）。そのときは生成したワークスペースの `tauto-rt`（「`tauto-rt` のソースを埋め込む」）を path で指す。
 - `tauto-build`（「`tauto-build`（Rust のプロジェクトから使う）」）で使うときも同じ名前で、利用者のクレートの `Cargo.toml` の依存に足す。
 
@@ -1266,7 +1377,9 @@ src/files.taut:5:3: error: the rust function std::fs::File::open does not fit th
 
 - extern の行は **空でなければならない**（direct も不可）。エラー（`rows`）：`"error: an extern cannot perform effects; wrap it in a tauto function"`。失敗は `Result(T, E)` の値で返し、呼ぶ側が必要なら `raise` する（「`Result`、`fail` / `raise` / `catch`、`Slice`」）。
 - extern に渡す閉包は **S 層だけ**（効果がないか、direct だけ）。Rust の関数の中のフレームは中断できないので。エラー（`rows`）：`"error: a closure passed to an extern cannot perform ask, which may suspend"`（`ask` は閉包の行の、direct でない最初の操作）。
-- extern の副作用（IO）は行に出ない。信頼の一覧に出るだけ（「未決定の問い」の「extern の副作用を行に出すか」）。
+- extern の副作用（IO）は行に出ない。信頼の一覧に出るだけ（「未決定の問い」の「extern の副作用を行に出すか」）。そのため依存の tote の extern は、プロジェクトの `trust { extern = [...] }` で名指ししない限り読み込みで拒否する（[`host-effects.md`](host-effects.md)「依存の extern」）。
+- **依存の tote の `rust` も効く**：`trust { extern = [...] }` で名指しした依存の tote の `rust.types`・`rust.extern`・`usize`・`rust.dependencies` と橋渡しクレートは、プロジェクトのビルドに足される（推移的な依存も同じ）。依存の橋渡しクレートは `<依存の tote 名>-bridge` として生成した `Cargo.toml` に入り、その tote が `rust.extern` で束縛しない extern はその橋渡しクレートの同名の関数になる。extern の型（`extern { type T }`）も同じで、`rust.types` で束縛しなければ橋渡しクレートの同名の型になる。プロジェクトの `Tauto.eure` に同じ名前があればそちらが勝つ。二つの依存が一つの名前を違う Rust に束縛していればエラー（`"error: twice is bound twice: … and …"`）。名指ししていない依存の `rust` は読まない（その tote は extern を持てないので）。
+- **`rust.dependencies` の `path` は書いた tote から**：`helper { path = "helper" }` は、その `Tauto.eure` のあるディレクトリからの相対パスで、生成した `Cargo.toml` には絶対パスで書く（生成先 `target/tauto/ws/<名前>` からではない）。
 - Rust の panic は効果ではなく、`Interrupted` になる（「実行時エラー」）。
 
 ### 信頼の一覧
@@ -1287,6 +1400,8 @@ rustc が確かめるもの：引数と結果の型、値渡し・`&`・`&mut` �
 ## Cargo の生成と `tauto build`
 
 ### 生成するワークスペース
+
+置き場所は `$TAUTO_TARGET_DIR`、なければ tote のディレクトリの `target/tauto/`。単独のソースファイルは、カレントディレクトリの `target/tauto/run-<正準な絶対パスの SHA-256>/` を使う。同じファイル名でも、別のディレクトリのソースは生成物を共有しない。
 
 ```text
 target/tauto/<package>/
@@ -1313,14 +1428,22 @@ tauto-rt = { path = "tauto-rt" }
 regex = "1.11.1"
 # rust.bridge があれば（名前は <tote 名>-bridge のまま）
 files-demo-bridge = { path = "<絶対パス>" }
-# rust.executor = "tokio" なら（版は `=` で固定。crates/tauto-rustgen/src/cargo.rs の TOKIO_DEPENDENCY）
-tokio = { version = "=<版>", default-features = false, features = ["rt", "rt-multi-thread"] }
 
-[profile.dev]
-panic = "unwind"
+[workspace]
+
+[profile.dev.package.tauto-rt]
+opt-level = 3
+
 [profile.release]
 panic = "unwind"
+lto = "thin"
 ```
+
+ビルドの設定は debug と release の二つで、最適化の度合いを選ぶ指定は持たない。どちらも意味は同じで（`tauto-rt` は `unsafe` を使わず、整数のあふれは明示的に検査する）、違うのは速さと、スタックの使い方と、debug だけの drop bomb である。
+
+- debug（`tauto build`、`tauto run --backend rust`）：生成したクレートは最適化せず、編集のたびの再ビルドを短くする。`tauto-rt` だけは最適化する。`tauto-rt` は一度ビルドすれば target に残るので、再ビルドの時間は増えない。debug-assertions は変えないので drop bomb は残る。
+- release（`--release`、`tauto bench`）：全体を最適化し、LTO で `tauto-rt` の関数も生成コードに展開する。LTO は thin で、codegen units は Cargo の既定のまま並列にビルドする。fat LTO と 1 unit にしても実行は速くならず、ビルドが長くなる。
+- `tauto-rt` の関数に `#[inline]` は付けない。付けた関数は呼んだ側のクレートで作り直されるので、debug では最適化しない生成コードの中に複製され、`tauto-rt` を最適化した効果が消える。release では LTO が展開する。
 
 ### `tauto-rt` のソースを埋め込む
 
@@ -1336,7 +1459,19 @@ panic = "unwind"
 
 ### `tauto run --backend rust FILE`
 
-`FILE` だけの一時的な tote（`target/tauto/run-<ファイル名のハッシュ>/`）を作り、`cargo build`（debug）して走らせる。`Tauto.eure` がなくても動く（extern がなければ）。出力の形は `tauto run`（eval）と同じ。
+`FILE` だけの一時的な tote（`target/tauto/run-<正準な絶対パスの SHA-256>/`）を作り、`cargo build`（debug）して走らせる。`Tauto.eure` がなくても動く（extern がなければ）。出力の形は `tauto run`（eval）と同じ。
+
+### wasm32（`tauto build --target`）
+
+`tauto build --backend rust --target wasm32-wasip1 FILE` と `--target wasm32-unknown-unknown` は、生成したクレートと `tauto-rt` を wasm32 に向けて作り（`cargo build --target`）、`.wasm` のパスを出す。Rust の対象を足すのは `rustup target add` で、tauto は入れない。`tauto run` は対象を取らない。
+
+- **答えるのは誰か。** 標準エフェクトは、権限の検査を通ったあと、`tauto_rt::host` の `Host` に頼む（[`host-effects.md`](host-effects.md)「バックエンド」）。
+  - `wasm32-wasip1`：`System`（標準ライブラリ）。ファイル・時計・入出力は WASI のホストが答え、そのホストが渡したもの（preopen したディレクトリなど）より広くは届かない。そのうえで `--allow-*` が、今までどおりプログラムに許す範囲を決める。権限と WASI の能力の両方が通したものだけが届く。
+  - `wasm32-unknown-unknown`：システムがないので `Absent`。何も答えない：失敗できる要求（`fs_read`、`fs_write`）は `Failed`、`stdin` は終わり、`env` は無し、それ以外（出力、時計、`sleep`、`random`）は効果の名前を挙げた実行時エラー。0 を読む時計のような作り物の値は答えない。生成した `.wasm` は何も import しない。組み込む側（ページのグルー）が `tauto_rt::host::set` で自分の `Host` を入れ、権限を `tauto_rt::run_embedded` に渡したときだけ、外に届く。
+- **スレッドがない。** `run_main` は呼んだスレッドで本体を走らせる（スタックはリンカの大きさ）。`spawn` の既定の `Executor` は `Inline`（`spawn` の場で本体を終わりまで走らせる）。
+- **panic は abort。** wasm32 は unwind しないので、実行時エラーの報告は panic のフックが出し、そのあとモジュールは trap する。
+- **リアクターがない。** `tauto_rt::reactor` は wasm32 では何もしない。タスクは `Inline` で走る。
+- **`net` は使えない**（ビルドの前に拒否する）：`net`（HTTP クライアントがスレッドを止める）。
 
 ---
 
@@ -1365,6 +1500,14 @@ mod logic {
 |---|---|
 | 空 | `pub fn f(args…) -> R`（中で空の `Ev` を作って `f__s` を呼ぶ） |
 | 空でない（direct、`Div`、`resume 0`、中断する効果を含む） | 公開しない。既定では関数名と残る効果を `cargo:warning=` で知らせる。`rust.exports` で指定した関数ならエラー。Tauto 側でハンドラを張り、行が空の関数を入口にする |
+
+### UniFFI（Swift・Kotlin・Python から使う）
+
+`Tauto.eure` の `rust { uniffi = true }` を書くと、`compile` は公開する関数ごとに `#[uniffi::export]` を付けた関数を `generated::uniffi_api` に足す。中身は `generated::api` の同名の関数を呼ぶだけで、`Text` と `String` を変換する。利用者のクレートは `uniffi` に依存し、クレートの根で `uniffi::setup_scaffolding!();` を呼ぶ（依存がなければ `Tauto.eure needs the rust dependency uniffi` のエラー）。Swift などのバインディングは `uniffi-bindgen generate --library` で作る。
+
+- 渡せる型：整数、`Float`、`Bool`、`Text`（`String` になる）、`Buf`、それらの `Vec` と `Option`。結果は `()` でもよい。引数の名前は tauto の名前のまま。
+- それ以外（生成データ型、`Result`、`Pair`、`HashMap`、callback、借用）を引数か結果に持つ関数は `uniffi_api` に出さず、`<名前> has a type that is not exposed to UniFFI` の警告にする。`rust.exports` で選んだ関数ならエラー。`api` の側は変わらない。
+- 実行できる確認は `crates/tauto-build/tests/exports.rs` の `uniffi_exports_wrap_the_facade`（生成されるコードの検査）。
 
 ### Rust から渡す借用 callback
 
@@ -1416,9 +1559,14 @@ ABI は変えない。契約付き実体は入口ごとに分け、通常の呼�
 
 extern には、さらに `rust.nonresuming.extern` で各 Tauto extern 名に
 `closed-host-v1` を明記する。個別の束縛だけでは通常の入口を適格にせず、入口の
-契約だけでも未宣言の extern を適格にしない。認める署名は同期で、引数と結果が
-整数・浮動小数点・Bool・単位型・Never のいずれかであるものに限る。Text、コンテナ、
-借用や外部型を含む署名は通常経路を使う。
+契約だけでも未宣言の extern を適格にしない。認める署名は同期で、引数は
+整数・浮動小数点・Bool・単位型・Never・Text・`&Text`、結果は
+整数・浮動小数点・Bool・単位型・Never・Text・`Option(Text)` に限る。
+`Option(Text)` の引数、変更可能な借用、借用を含む結果、その他のコンテナや外部型は
+通常経路を使う。型の破棄を観測しないという検査だけで extern の署名を認めない。
+`&Text` 引数の文字列への借用と、Text・`Option(Text)` 結果の所有する Text への変換は、
+通常経路と同じ extern wrapper が一度だけ行う。暗黙の変換も埋込み全体の契約に含み、
+型が Text であることは host の非 panic 性や観測不能性の証明ではない。
 
 契約は主マニフェストからだけ読み、生成された bindings ファイルから取り込まない。
 未知の契約版、存在しない extern、選択されていない公開関数、Rust に公開できない
@@ -1450,6 +1598,12 @@ tauto bind regex --config bind/regex.config.eure
 
 三つのファイルの先頭に、クレートの名前・版・rustdoc JSON の `format_version`・設定ファイルの名前を書く。生成物は手で直さない（直したければ設定を変える）。
 
+生成物はすべて一時ディレクトリへ準備し、既存の内容を退避してから置き換える。
+置き換えが失敗した場合は、すでに置き換えたファイルを元に戻す。復元できない場合は
+退避したファイルを残し、その場所を報告する。同じ crate の生成物の置き換えを同時に行うことは
+できない。プロセスの強制終了で残った一時ディレクトリは、自動で削除せず復旧用に保持する。
+`--check` は未作成のファイルを不一致とし、読み取りエラーは原因を報告する。
+
 ### 設定 `bind/<crate>.config.eure`
 
 ```eure
@@ -1475,15 +1629,15 @@ rename {
 | `pub struct S`（フィールドに関係なく） | `affine struct S {}`（中身の見えない型）。透明な struct の写像は対象外 |
 | `pub enum E` | 同上（`affine struct E {}`）。透明な enum の写像は対象外 |
 | lifetime を持つ型（`Captures<'h>`、`Iter<'a, T>`、`Matches<'r, 'h>`） | `view struct S(…) {}`（「extern の view 型」）。Rust の型の lifetime は数だけ `'_` で書く（`Matches<'_, '_>`） |
-| `impl S { pub fn f(&self, a: A) -> R }` | `module S { extern { fn f(&s: S, a: A) -> R } }` |
+| `impl S { pub fn f(&self, a: A) -> R }` | `module S { extern { fn f(&s: S, a: A): R } }` |
 | `&mut self` / `self` | `&mut s: S` / `s: S` |
-| 関連関数（`self` なし、`Regex::new`） | `module S { extern { fn new(…) -> … } }` |
+| 関連関数（`self` なし、`Regex::new`） | `module S { extern { fn new(…): … } }` |
 | クレートの直下・モジュールの関数（`regex::escape`） | Rust のモジュールのパスと同じ名前の tauto のモジュール（`module regex { extern { fn escape(…) } }`） |
-| `Display` | `module S { extern { fn to_text(&s: S) -> Text } }` |
-| `Clone` | `fn clone(&s: S) -> S` |
-| `PartialEq` | `fn eq(&a: S, &b: S) -> Bool` |
-| `Iterator<Item = T>` | `fn next(&mut it: S) -> Option(T)`（`S` は view なら `var &it` で受ける）。`Item = &str` は `Option(Text)`（写し。印 `u`） |
-| `Default` | `fn default() -> S` |
+| `Display` | `module S { extern { fn to_text(&s: S): Text } }` |
+| `Clone` | `fn clone(&s: S): S` |
+| `PartialEq` | `fn eq(&a: S, &b: S): Bool` |
+| `Iterator<Item = T>` | `fn next(&mut it: S): Option(T)`（`S` は view なら `var &it` で受ける）。`Item = &str` は `Option(Text)`（写し。印 `u`） |
+| `Default` | `fn default(): S` |
 | `-> &T`、`-> Option<&T>`、`-> &mut T` | 「view 型」・「`-> &mut A` と `let &mut x`」の view と `-> &mut`（view に対応していなければ、その項目を出さずに report に書く） |
 | `&str` の引数 | `&s: Text` |
 | `Cow<str>` の結果 | `Buf`（所有する写し。印 `c`）。`replace` の `R: Replacer` は `instances` に `"&str"` を書く |
@@ -1491,7 +1645,9 @@ rename {
 | `&[T]` | `&Slice(T)` |
 | `Vec<T>`、`Option<T>`、`Result<T, E>`、`(A, B)` | `Vec(T)`、`Option(T)`、`Result(T, E)`、`Pair(A, B)` |
 | `usize` / `isize` | `u64` / `i64`（「`usize` の変換」） |
-| `bool`、`i32`、`i64`、`u8`、`u32`、`u64`、`f64` | 同じもの |
+| `bool` | `Bool` |
+| `f64` | `Float` |
+| `i32`、`i64`、`u8`、`u32`、`u64` | 同じもの |
 | `impl FnMut(A) -> B` などの閉包の引数 | `&f: (A) -> B`（S 層だけを受ける。「extern と効果」） |
 | `dyn Trait`、`Send` / `Sync` の境界、`unsafe fn`、const generics、`async fn`、`i8` `i16` `u16` `i128` `u128` `f32` `char`、型引数の実体化が設定にないジェネリックな関数、マクロ | 出さない。report に「項目のパス：理由」を書く |
 
@@ -1501,7 +1657,7 @@ rename {
 
 同じ表には、結果の変換の印もある：`Cow<str>` の結果は `c`（`.into_owned()`）、`Iterator<Item = &str>` の `next` は `u`（`.map(Text::from)`）。
 
-# 第 IV 部　検証
+# 第 IV 部 検証
 
 ## 検証の方針
 
@@ -1517,10 +1673,10 @@ rename {
 | 問い | 方向 |
 |---|---|
 | extern の型を `copy` / `shared` と宣言できるようにするか | 許す。生成側が `Copy` / `Clone` の実装を rustc に確かめさせ、`shared` は「`Clone` が安く純粋」という信頼にする。 |
-| extern の副作用を行に出すか（ホストの direct の効果 `io`） | 信頼の一覧だけに置く。 |
+| extern の副作用を行に出すか | 利用者の extern は信頼の一覧だけに置く。ホストへの操作は標準エフェクト（[`host-effects.md`](host-effects.md)）で行に出る。 |
 | `direct ! {Div}`（direct の腕で `while` や再帰を許す） | 許すなら「行に `Div` のある direct は budget の下では O 層」となり、linear は跨げなくなる。 |
 | `Decimal` の表現（OWN「未決定」） | 任意精度なら shared。 |
-| Rust の `async` との相互運用 | 扱わない。スレッドは [`nib.md`](nib.md)「並列のプリミティブ」。 |
+| Rust の `async` との相互運用 | 利用者の extern は同期の関数のまま。ホストの答えは非同期にできる（「タスク（`spawn`）」のリアクター）。利用者の `async fn` を extern にするかは、ネットワークの答えをリアクターの上で直に返すときに決める。 |
 
 ---
 

@@ -1,0 +1,17 @@
+// 宣言の順序づけは、束縛された名前を宣言の使用として数えない。std の関数が
+// パターン変数 `t` や `h` で束縛している名前と同じ名前の定理を利用者が書いても、
+// その定理が std の宣言より前に置かれて std の検査を壊すことはない。
+
+@ cases.global_named_like_a_pattern_variable_of_std
+source = ```tauto
+theorem t(x: Int): Int::add(x, IntOfNat(Zero)) = x {
+  by int_norm!(): (Int::add(x, IntOfNat(Zero)) = x) {}
+}
+
+theorem h(a: Int, b: Int): Int::add(Int::mul(a, b), a) = Int::add(a, Int::mul(b, a)) {
+  by int_norm!(): (Int::add(Int::mul(a, b), a) = Int::add(a, Int::mul(b, a))) {}
+}
+```
+imports = [path`../std/IntNorm.taut`]
+checks."t" = "ok"
+checks."h" = "ok"

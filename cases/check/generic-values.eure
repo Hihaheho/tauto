@@ -1,0 +1,227 @@
+@ cases.a-generic-function-passed-bare-takes-its-generics-from-the-expected-type
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+theorem cons_eq<A: Type>(x: A, l: List(A), m: List(A), e: l = m): Cons(x, l) = Cons(x, m) {
+  Eq::congr((z: List(A)) => Cons(x, z), e)
+}
+
+theorem length_eq<A: Type>(x: A, l: List(A), m: List(A), e: l = m): List::length(Cons(x, l)) = List::length(Cons(x, m)) {
+  Eq::congr(List::length, cons_eq(x, l, m, e))
+}
+```
+checks_all = "ok"
+checks.cons_eq = "ok"
+checks.length_eq = "ok"
+
+@ cases.nested-congruences-on-functions-take-their-types-from-the-inner-one
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+theorem length_eq<A: Type>(x: A, l: List(A), m: List(A), e: l = m): List::length(Cons(x, l)) = List::length(Cons(x, m)) {
+  Eq::congr((z: List(A)) => List::length(z), Eq::congr((z: List(A)) => Cons(x, z), e))
+}
+
+theorem succ_add(a: Nat, b: Nat, e: a = b): Nat::add(Succ(a), 1) = Nat::add(Succ(b), 1) {
+  Eq::congr((z: Nat) => Nat::add(z, 1), Eq::congr(Succ, e))
+}
+```
+checks_all = "ok"
+checks.length_eq = "ok"
+checks.succ_add = "ok"
+
+@ cases.a-bare-nil-whose-type-nothing-fixes-names-the-generic
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+theorem t(): List::length(Nil) = 0 {
+  Refl
+}
+```
+checks_all = "ok"
+checks.t = "error: cannot infer the generic `A` of `List::Nil`: neither its arguments nor the expected type fix it; write the generics as its first arguments, `List::Nil(A, …)`"
+
+@ cases.nil-with-its-generic-written-out
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+theorem t(): List::length(Nil(Nat)) = 0 {
+  Refl
+}
+```
+checks_all = "ok"
+checks.t = "ok"
+
+@ cases.a-function-without-parameters-is-called-with-parentheses
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+fn none_of<A>(): Option(A) {
+  None
+}
+fn three(): Nat {
+  3
+}
+fn called(): Option(Nat) {
+  let x: Option(Nat) := none_of();
+  x
+}
+fn bare(): Option(Nat) {
+  let x: Option(Nat) := none_of;
+  x
+}
+fn bare_plain(): Nat {
+  three
+}
+fn take(n: Nat): Nat {
+  n
+}
+fn bare_argument(): Nat {
+  take(three)
+}
+```
+checks_all = "ok"
+checks.none_of = "ok"
+checks.three = "ok"
+checks.called = "ok"
+checks.take = "ok"
+checks.bare = "error: `none_of` has no parameters and is named without `()`: write `none_of()` to call it"
+checks.bare_plain = "error: `three` has no parameters and is named without `()`: write `three()` to call it"
+checks.bare_argument = "error: `three` has no parameters and is named without `()`: write `three()` to call it"
+
+@ cases.a-lambda-waiting-for-its-type-is-not-compared-with-the-expected-type-as-written
+// `at2` is generic in its result `R`. Its λ argument is elaborated only once
+// `R` is known; as written it lacks the generics of the calls in its body
+// (`expose(br)` for `expose(U64, br)`), so comparing the call's type with the
+// expected one while the λ is still as written can never succeed, and tried
+// to by unfolding the word arithmetic of both sides as far as it goes.
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::Secret
+import std::UInt
+import std::prelude::Secret
+
+fn w_0(): U64 {
+  U64::Mk(0, Refl)
+}
+fn w_1(): U64 {
+  U64::Mk(1, Refl)
+}
+fn w_base(): U64 {
+  U64::Mk(65536, Refl)
+}
+fn w_at(l: List(U64)): U64 {
+  ⊢ U64 from match l {
+    Nil => w_0()
+    Cons(h, t) => h
+  }
+}
+fn w_tail(l: List(U64)): List(U64) {
+  ⊢ List(U64) from match l {
+    Nil => Nil
+    Cons(h, t) => t
+  }
+}
+fn w_diff(x: U64, y: U64, br: U64): U64 {
+  U64::wrapping_sub(U64::wrapping_add(x, w_base()), U64::wrapping_add(y, br))
+}
+fn w_next(d: U64): U64 {
+  U64::wrapping_sub(w_1(), U64::shr(d, 16))
+}
+fn w_borrow(n: Nat, a: List(U64), b: List(U64), br: U64): U64 {
+  ⊢ U64 from match n {
+    Zero => br
+    Succ(k) => w_borrow(k, w_tail(a), w_tail(b), w_next(w_diff(w_at(a), w_at(b), br)))
+  }
+}
+fn s_at(l: List(Secret(U64))): Secret(U64) {
+  ⊢ Secret(U64) from match l {
+    Nil => Secret::Mk(w_0())
+    Cons(h, t) => h
+  }
+}
+fn s_tail(l: List(Secret(U64))): List(Secret(U64)) {
+  ⊢ List(Secret(U64)) from match l {
+    Nil => Nil
+    Cons(h, t) => t
+  }
+}
+fn s_expose(l: List(Secret(U64))): List(U64) {
+  ⊢ List(U64) from match l {
+    Nil => Nil
+    Cons(h, t) => Cons(expose(h), s_expose(t))
+  }
+}
+fn s_diff(x: Secret(U64), y: Secret(U64), br: Secret(U64)): Secret(U64) {
+  Ct::u64_sub(Ct::u64_add(x, Secret::Mk(w_base())), Ct::u64_add(y, br))
+}
+fn s_next(d: Secret(U64)): Secret(U64) {
+  Ct::u64_sub(Secret::Mk(w_1()), Ct::u64_shr(d, 16))
+}
+fn s_borrow(n: Nat, a: List(Secret(U64)), b: List(Secret(U64)), br: Secret(U64)): Secret(U64) {
+  ⊢ Secret(U64) from match n {
+    Zero => br
+    Succ(k) => s_borrow(k, s_tail(a), s_tail(b), s_next(s_diff(s_at(a), s_at(b), br)))
+  }
+}
+theorem at1<R>(f: (U64, List(U64)) -> R, a: List(Secret(U64))): f(expose(s_at(a)), s_expose(s_tail(a))) = f(w_at(s_expose(a)), w_tail(s_expose(a))) {
+  ⊢ f(expose(s_at(a)), s_expose(s_tail(a))) = f(w_at(s_expose(a)), w_tail(s_expose(a))) from match a {
+    Nil => Refl
+    Cons(h, t) => Refl
+  }
+}
+theorem at2<R>(f: (U64, U64, List(U64), List(U64)) -> R, a: List(Secret(U64)), b: List(Secret(U64))): f(expose(s_at(a)), expose(s_at(b)), s_expose(s_tail(a)), s_expose(s_tail(b))) = f(w_at(s_expose(a)), w_at(s_expose(b)), w_tail(s_expose(a)), w_tail(s_expose(b))) {
+  Eq::trans(
+    at1((x: U64, ta: List(U64)) => f(x, expose(s_at(b)), ta, s_expose(s_tail(b))), a),
+    at1((y: U64, tb: List(U64)) => f(w_at(s_expose(a)), y, w_tail(s_expose(a)), tb), b)
+  )
+}
+theorem borrow_eq(n: Nat, a: List(Secret(U64)), b: List(Secret(U64)), br: Secret(U64)): expose(s_borrow(n, a, b, br)) = w_borrow(n, s_expose(a), s_expose(b), expose(br)) {
+  ⊢ expose(s_borrow(n, a, b, br)) = w_borrow(n, s_expose(a), s_expose(b), expose(br)) from match n {
+    Zero => Refl
+    Succ(k) => {
+      let bv := expose(br)
+      Eq::trans(
+        borrow_eq(k, s_tail(a), s_tail(b), s_next(s_diff(s_at(a), s_at(b), br))),
+        at2((x: U64, y: U64, ta: List(U64), tb: List(U64)) => w_borrow(k, ta, tb, w_next(w_diff(x, y, bv))), a, b)
+      )
+    }
+  }
+}
+```
+
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+
+// A recursive call in a nested match takes its generic from the arm's expected
+// type, the motive applied to the pattern (`(t => A)(Succ(k))`): applied, it is
+// `A`, so the call passes the generic unchanged and the recursion is structural.
+@ cases.a-recursive-call-in-a-nested-match-passes-its-generic-unchanged
+source = ```tauto
+pub fn get<A>(zero: A, env: List(A), i: Nat): A {
+  ⊢ A from match env {
+    Nil => zero
+    Cons(h, t) => ⊢ A from match i {
+      Zero => h
+      Succ(k) => get(zero, t, k)
+    }
+  }
+}
+```
+checks.get = "ok"
+diagnostics = []

@@ -32,7 +32,7 @@ pub theorem accepted_bind_fact<A: Type, B: Type, P: Prop>(
   after: ∀ v: A. ∀ next: Checker. CkErrorFrame(next, k(v, next)),
   clean: DiagnosticClean(ck_st(frame_bind(k, m)))
 ): P {
-  match m: P { mut1(v, next) => first(after(v, next, clean)) }
+  ⊢ P from match m { mut1(v, next) => first(after(v, next, clean)) }
 }
 pub theorem accepted_checked_bind_fact<A: Type, B: Type, P: Prop>(
   m: Mut1(A, Checker),
@@ -42,7 +42,7 @@ pub theorem accepted_checked_bind_fact<A: Type, B: Type, P: Prop>(
   after: ∀ v: A. ∀ next: Checker. ∀ ord: CkOrdered(next). CkCheckedFrame(next, k(v, next)),
   clean: DiagnosticClean(ck_st(frame_bind(k, m)))
 ): P {
-  match m: P { mut1(v, next) => first(And::right(after(v, next, ordered))(clean)) }
+  ⊢ P from match m { mut1(v, next) => first(And::right(after(v, next, ordered))(clean)) }
 }
 pub theorem ck_prepare_fns_data_names_unique(
   c: Checker,
@@ -123,12 +123,17 @@ pub theorem names_after_datas_unf(
   prelude: List(SurfaceStmt),
   program: List(SurfaceStmt),
   own: Ordmap(Text, Bool)
-): run_after_datas(c, prelude, program, own) = frame_bind(
-    List(Pair(SurfaceFn, Scheme)),
-    Unit,
-    (fns: List(Pair(SurfaceFn, Scheme)), next: Checker) => names_function_body(next, program, fns),
-    ck_prepare_fns(c, prelude, program, own)
-  ) { Refl }
+): run_after_datas(
+  c,
+  prelude,
+  program,
+  own
+) = frame_bind(
+  List(Pair(SurfaceFn, Scheme)),
+  Unit,
+  (fns: List(Pair(SurfaceFn, Scheme)), next: Checker) => names_function_body(next, program, fns),
+  ck_prepare_fns(c, prelude, program, own)
+) { Refl }
 pub theorem run_finish_after_fact<P: Prop>(
   m: Mut1(Unit, Checker),
   ordered: CkOrdered(ck_st(m)),
@@ -184,7 +189,7 @@ pub theorem run_after_data_result_prepared_fact<P: Prop>(
   clean: DiagnosticClean(ck_st(run_after_data_result(prelude, program, own, m))),
   prepared: PreparedProgramFact(P, prelude, program)
 ): P {
-  match m: P {
+  ⊢ P from match m {
     mut1(v, next) => run_after_datas_prepared_fact(
       P,
       next,
@@ -205,7 +210,7 @@ pub theorem run_after_builtins_prepared_fact<P: Prop>(
   clean: DiagnosticClean(ck_st(run_after_builtins(prelude, program, m))),
   prepared: PreparedProgramFact(P, prelude, program)
 ): P {
-  match m: P {
+  ⊢ P from match m {
     mut1(v, next) => run_after_data_result_prepared_fact(
       P,
       prelude,
@@ -254,7 +259,7 @@ pub theorem run_after_module_errors_prepared_fact<P: Prop>(
   clean: DiagnosticReportClean(run_after_module_errors(prelude, program, m)),
   prepared: PreparedProgramFact(P, prelude, program)
 ): P {
-  match m: P {
+  ⊢ P from match m {
     mut1(v, next) => run_finish_after_fact(
       P,
       ck_run(next, prelude, program),
@@ -292,7 +297,9 @@ pub theorem types_check_prepared_fact<P: Prop>(
 ): P {
   ck_types_run_prepared_fact(
     P,
-    checker_new(Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))),
+    checker_new(
+      Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))
+    ),
     prelude,
     program,
     errors,
@@ -323,7 +330,7 @@ pub theorem accepted_bind_tail_fact<A: Type, B: Type, P: Prop>(
   after: ∀ v: A. ∀ next: Checker. ∀ clean: DiagnosticClean(ck_st(k(v, next))). P,
   clean: DiagnosticClean(ck_st(frame_bind(k, m)))
 ): P {
-  match m: P { mut1(v, next) => after(v, next, clean) }
+  ⊢ P from match m { mut1(v, next) => after(v, next, clean) }
 }
 pub theorem registration_after_data_names_functions_unique(
   c: Checker,

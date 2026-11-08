@@ -57,9 +57,15 @@ fn local_calls_have_checked_rows_and_lexical_quantities() {
         assert!(
             r.functions
                 .iter()
-                .any(|(n, row)| n == "outer" && row.contains(effect))
+                .any(|(n, row)| n.as_str() == "outer" && row.contains(&Name::from(effect)))
         );
-        assert!(r.calls.values().filter(|row| row.contains(effect)).count() >= 2);
+        assert!(
+            r.calls
+                .values()
+                .filter(|row| row.contains(&Name::from(effect)))
+                .count()
+                >= 2
+        );
         assert!(r.normalized_calls().is_ok());
     }
     let r = report(
@@ -70,8 +76,16 @@ fn local_calls_have_checked_rows_and_lexical_quantities() {
 "#
         .to_string(),
     );
-    let outer = r.declarations.iter().find(|d| d.name == "outer").unwrap();
-    let inner = r.declarations.iter().find(|d| d.name == "apply").unwrap();
+    let outer = r
+        .declarations
+        .iter()
+        .find(|d| d.name.as_str() == "outer")
+        .unwrap();
+    let inner = r
+        .declarations
+        .iter()
+        .find(|d| d.name.as_str() == "apply")
+        .unwrap();
     let captured = outer.row.iter().next().unwrap();
     let owned = inner.row.iter().next().unwrap();
     assert_ne!(captured, owned);
@@ -94,7 +108,11 @@ fn captured_rows_are_fixed_not_quantified_and_lowering_fails_closed() {
     .to_string();
     let r = report(&source);
     assert!(r.errors.is_empty(), "{:?}", r.errors);
-    let inner = r.declarations.iter().find(|d| d.name == "inner").unwrap();
+    let inner = r
+        .declarations
+        .iter()
+        .find(|d| d.name.as_str() == "inner")
+        .unwrap();
     assert_eq!(inner.inferred.len(), 2);
     assert!(r.normalize_row(&inner.inferred, Some(inner.owner)).is_err());
     assert!(r.normalized_calls().is_err());
@@ -118,14 +136,17 @@ fn second<!e>(callback: () -> Text ! e): Text ! e { "ok" }
     second.body = body.clone();
     let r = check_program_rows(&program);
     assert!(r.errors.is_empty(), "{:?}", r.errors);
-    let a = r.declaration_row("first", body.id()).unwrap().unwrap();
-    let b = r.declaration_row("second", body.id()).unwrap().unwrap();
+    let a = r
+        .declaration_row(&Name::from("first"), body.id())
+        .unwrap()
+        .unwrap();
+    let b = r
+        .declaration_row(&Name::from("second"), body.id())
+        .unwrap()
+        .unwrap();
     assert_ne!(a.owner, b.owner);
     assert_ne!(a.row, b.row);
-    assert_eq!(
-        r.normalize_row(&a.row, Some(a.owner)).unwrap(),
-        Row::from(["|e".into()])
-    );
+    assert_eq!(r.normalize_row(&a.row, Some(a.owner)).unwrap(), a.row);
 }
 
 #[test]
@@ -185,25 +206,43 @@ fn independent_reports_merge_only_matching_declaration_evidence() {
 fn second<!e>(callback: () -> Text ! e): Text ! e { "ok" }
 "#
     .to_string();
-    let program = crate::surface::parse_program_as_written(&source).unwrap();
-    let mut a = check_program_rows(&program);
-    let b = check_program_rows(&program);
-    a.merge_prelude(b);
-    assert_eq!(
-        a.declarations.iter().filter(|d| d.name == "first").count(),
-        1
-    );
-    let mut different = check_program_rows(&program);
-    different
-        .declarations
-        .iter_mut()
-        .find(|d| d.name == "first")
-        .unwrap()
-        .inferred
-        .insert("ask".into());
-    a.merge_prelude(different);
-    let first = a.declarations.iter().find(|d| d.name == "first").unwrap();
-    assert!(a.declaration_row("first", first.body).is_err());
+    for resolved in [false, true] {
+        let mut program = crate::surface::parse_program_as_written(&source).unwrap();
+        if resolved {
+            tauto_surface::resolve::Resolver::default().statements(&mut program.stmts);
+        }
+        let mut a = check_program_rows(&program);
+        let b = check_program_rows(&program);
+        a.merge_prelude(b);
+        assert_eq!(
+            a.declarations
+                .iter()
+                .filter(|d| d.name.as_str() == "first")
+                .count(),
+            1
+        );
+        for declaration in &a.declarations {
+            assert!(
+                a.normalize_row(&declaration.row, Some(declaration.owner))
+                    .is_ok()
+            );
+        }
+        let mut different = check_program_rows(&program);
+        different
+            .declarations
+            .iter_mut()
+            .find(|d| d.name.as_str() == "first")
+            .unwrap()
+            .inferred
+            .insert("ask".into());
+        a.merge_prelude(different);
+        let first = a
+            .declarations
+            .iter()
+            .find(|d| d.name.as_str() == "first")
+            .unwrap();
+        assert!(a.declaration_row(&first.name, first.body).is_err());
+    }
 }
 
 #[test]
@@ -222,10 +261,10 @@ fn local_recursion_does_not_inherit_a_same_named_total_certificate() {
     assert!(
         r.declarations
             .iter()
-            .find(|d| d.name == "inner")
+            .find(|d| d.name.as_str() == "inner")
             .unwrap()
             .inferred
-            .contains("Div")
+            .contains(&Name::from("Div"))
     );
 }
 
@@ -354,7 +393,8 @@ fn outer(): Text {
     .to_string();
     let program = crate::surface::parse_program_as_written(&source).unwrap();
     let mut analysis = Analysis::new(&program);
-    analysis.inferred_row("outer");
+    let outer = Name::from("outer");
+    analysis.inferred_row(&outer);
     assert!(!analysis.nominal_owners_checked);
 
     let source = r#"enum Reader { Read(Text) }
@@ -367,7 +407,8 @@ fn outer(): Reader ! {} {
     .to_string();
     let program = crate::surface::parse_program_as_written(&source).unwrap();
     let mut analysis = Analysis::new(&program);
-    analysis.inferred_row("outer");
+    let outer = Name::from("outer");
+    analysis.inferred_row(&outer);
     assert!(analysis.nominal_owners_checked);
     assert!(analysis.nominal_owners.is_some());
 }

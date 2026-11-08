@@ -1,0 +1,86 @@
+// An `Ord` instance read through an injective key meets each law by one line of
+// `ord_pullback_equal_iff`, `ord_pullback_swap` and `ord_pullback_trans`.
+
+@ cases.an-ord-instance-through-an-injective-key-proves-its-laws-by-the-pullback-lemmas
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::prelude::Ord {
+  Ord,
+  Pair,
+  ord_pullback_equal_iff,
+  ord_pullback_swap,
+  ord_pullback_trans
+}
+import std::Ord
+
+pub(open) inductive struct Digit { num: Nat, replica: Nat, counter: Nat }
+
+module Digit {
+  pub fn key(d: Digit): Pair(Nat, Pair(Nat, Nat)) {
+    ⊢ Pair(Nat, Pair(Nat, Nat)) from match d {
+      Digit { num: n, replica: r, counter: c } => Pair { fst: n, snd: Pair { fst: r, snd: c } }
+    }
+  }
+
+  pub theorem key_inj(x: Digit, y: Digit, e: key(x) = key(y)): x = y {
+    ⊢ x = y from match x {
+      Digit { num: n1, replica: r1, counter: c1 } => ⊢ (
+        Digit { num: n1, replica: r1, counter: c1 }
+      ) = y from match y {
+        Digit { num: n2, replica: r2, counter: c2 } => ⊢ (
+          Digit { num: n1, replica: r1, counter: c1 }
+        ) = (Digit { num: n2, replica: r2, counter: c2 }) from match Pair::inj(
+          n1,
+          Pair { fst: r1, snd: c1 },
+          n2,
+          Pair { fst: r2, snd: c2 },
+          e
+        ) {
+          AndIntro(hn, hp) => ⊢ (
+            Digit { num: n1, replica: r1, counter: c1 }
+          ) = (Digit { num: n2, replica: r2, counter: c2 }) from match Pair::inj(
+            r1,
+            c1,
+            r2,
+            c2,
+            hp
+          ) {
+            AndIntro(hr, hc) => ⊢ (
+              Digit { num: n1, replica: r1, counter: c1 }
+            ) = (Digit { num: n2, replica: r2, counter: c2 }) from match hn {
+              Refl => ⊢ (
+                Digit { num: n1, replica: r1, counter: c1 }
+              ) = (Digit { num: n1, replica: r2, counter: c2 }) from match hr {
+                Refl => ⊢ (
+                  Digit { num: n1, replica: r1, counter: c1 }
+                ) = (Digit { num: n1, replica: r1, counter: c2 }) from match hc {
+                  Refl => Refl
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+instance Ord(Digit) {
+  fn compare(&a: Digit, &b: Digit): Ordering { Ord::compare(&Digit::key(a), &Digit::key(b)) }
+  theorem equal_iff<a: Digit, b: Digit>(): Ord::compare(
+    a,
+    b
+  ) = Equal ↔ a = b { ord_pullback_equal_iff(Digit::key, Digit::key_inj, a, b) }
+  theorem swap<a: Digit, b: Digit>(): Ord::compare(
+    a,
+    b
+  ) = Less ↔ Ord::compare(b, a) = Greater { ord_pullback_swap(Digit::key, a, b) }
+  theorem trans<a: Digit, b: Digit, c: Digit>(
+    h1: Ord::compare(a, b) = Less,
+    h2: Ord::compare(b, c) = Less
+  ): Ord::compare(a, c) = Less { ord_pullback_trans(Digit::key, a, b, c, h1, h2) }
+}
+```
+
+checks_all = "ok"

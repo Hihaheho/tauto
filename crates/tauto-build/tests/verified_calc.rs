@@ -197,7 +197,7 @@ fn existing_calc_proofs_are_axiom_free_and_the_evaluator_still_runs() {
         tauto::syntax::with_search_dirs(vec![example.clone()], || {
             let entries = tauto::check::check_file(&example.join("proof/calc.taut")).unwrap();
             for required in ["lower_expr_ok", "fold_correct", "calc_run_correct", "calc_run_folded_correct"] {
-                assert!(entries.iter().any(|entry| entry.entry.name == required));
+                assert!(entries.iter().any(|entry| entry.entry.name.as_str() == required));
             }
             for entry in entries {
                 match entry.entry.verdict {
@@ -208,7 +208,7 @@ fn existing_calc_proofs_are_axiom_free_and_the_evaluator_still_runs() {
             }
             let loaded = tauto::program::load_tote(&example).unwrap();
             let run = tauto::eval::run_program_with(&loaded.program, 100_000_000, Default::default()).unwrap();
-            assert_eq!(run.stdout, "(2 + 3) * (4 + 5) => 45\n1 + 2 * 3 => 7\n2 + * 3 => error: macro.syntax_error: in arith: expected Num or LParen, found Star\n");
+            assert_eq!(run.stdout, "(2 + 3) * (4 + 5) => 45\n1 + 2 * 3 => 7\n2 + * 3 => error: expected Num or LParen, found Star\n");
         });
     }).unwrap().join().unwrap();
 }

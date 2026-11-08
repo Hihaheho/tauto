@@ -17,7 +17,12 @@ pub fn closest_name<'a>(
         if c == name {
             continue;
         }
-        let d = distance(&want, &key(c));
+        let compared = if name.contains("::") {
+            c
+        } else {
+            c.rsplit("::").next().unwrap_or(c)
+        };
+        let d = distance(&want, &key(compared));
         if d == 0 {
             return Some(c);
         }
@@ -89,6 +94,13 @@ mod tests {
             closest_name("mk_calc_Expr_I", ["Mk_calc_Expr_I"]),
             Some("Mk_calc_Expr_I")
         );
+    }
+
+    #[test]
+    fn constructor_hints_compare_the_written_part_and_keep_the_owner() {
+        assert_eq!(closest_name("mk", ["Pair::Mk"]), Some("Pair::Mk"));
+        assert_eq!(closest_name("Pair::mk", ["Pair::Mk"]), Some("Pair::Mk"));
+        assert_eq!(closest_name("Other::mk", ["Pair::Mk"]), None);
     }
 
     #[test]

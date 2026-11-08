@@ -1,0 +1,40 @@
+import std::prelude::Par
+import std::prelude::Std
+
+// The ticket must be consumed on both the normal and cancellation paths.
+linear struct Ticket {}
+fn release(ticket: Ticket, cleaned: Atomic): Unit {
+  match ticket { Ticket {} => Atomic::store(cleaned, 1) }
+}
+
+fn work(
+  cancel: CancelToken,
+  input: Signal,
+  cleaned: Atomic,
+  started: Channel(Unit)
+): Result(u64, Cancelled) ! {wait} {
+  let ticket := Ticket {}
+  Channel::send(started, #())
+  perform wait(Signal::either(input, CancelToken::signal(cancel)))
+  if CancelToken::is_requested(cancel) {
+    release(ticket, cleaned)
+    Err(Cancelled)
+  } else {
+    release(ticket, cleaned)
+    Ok(42)
+  }
+}
+
+let cancellation := Cancellation::new()
+let input := Cancellation::new()
+let token := Cancellation::token(cancellation)
+let ready := CancelToken::signal(Cancellation::token(input))
+let cleaned := Atomic::new(0)
+let started: Channel(Unit) := Channel::new(1)
+let task := perform spawn(() => work(token, ready, cleaned, started))
+let notice := Channel::recv(started)
+perform show("before", Atomic::load(cleaned))
+Cancellation::request(cancellation)
+let outcome := Task::join(task)
+perform show("outcome", outcome)
+perform show("cleaned", Atomic::load(cleaned))

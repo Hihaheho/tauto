@@ -24,7 +24,7 @@ pub struct DslToken {
 pub struct DslNote {
     pub start: usize,
     pub end: usize,
-    pub message: String,
+    pub message: tauto_message::Message,
 }
 
 /// The kinds a token is coloured as, in the order a client's legend lists them.

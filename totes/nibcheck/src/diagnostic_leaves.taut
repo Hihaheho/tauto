@@ -9,7 +9,7 @@ import "ty.taut"
 import "types_classes.taut"
 import "types_run.taut"
 import "unify_sound.taut"
-pub fn DiagnosticLiteralType(l: TyLiteral, t: Ty): Prop { match t: Prop {
+pub fn DiagnosticLiteralType(l: TyLiteral, t: Ty): Prop { ⊢ Prop from match t {
     TyInt(pat_w) => width_fits(pat_w, finish_literal_negative(l), finish_literal_magnitude(l)) = true
     TyBool => False
     TyText => False
@@ -41,18 +41,15 @@ pub theorem diagnostic_literal_step(
 ): And(
   DiagnosticLiteralType(l, t),
   finish_literal(c, l, t) = mut1(Star, c)
-) { match t: And(
-  DiagnosticLiteralType(l, t),
-  finish_literal(c, l, t) = mut1(Star, c)
-) {
+) { ⊢ And(DiagnosticLiteralType(l, t), finish_literal(c, l, t) = mut1(Star, c)) from match t {
     TyInt(pat_w) => { let accepted: And(
       not(width_fits(pat_w, finish_literal_negative(l), finish_literal_magnitude(l))) = false,
       frame_error_if(
-          c,
-          cat3(literal_text(l), " does not fit ", ty_show(TyInt(pat_w))),
-          finish_literal_span(l),
-          not(width_fits(pat_w, finish_literal_negative(l), finish_literal_magnitude(l)))
-        ) = mut1(Star, c)
+        c,
+        cat3(literal_text(l), " does not fit ", ty_show(TyInt(pat_w))),
+        finish_literal_span(l),
+        not(width_fits(pat_w, finish_literal_negative(l), finish_literal_magnitude(l)))
+      ) = mut1(Star, c)
     ) := diagnostic_if_sound(
       c,
       cat3(literal_text(l), " does not fit ", ty_show(TyInt(pat_w))),
@@ -216,7 +213,11 @@ pub theorem ck_check_literal_accepts(
     c,
     l,
     ck_resolve(c, finish_literal_ty(l)),
-    Eq::subst((z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)), finish_literal_unf(c, l), clean)
+    Eq::subst(
+      (z: Mut1(Unit, Checker)) => DiagnosticClean(ck_st(z)),
+      finish_literal_unf(c, l),
+      clean
+    )
   )
   AndIntro(And::left(accepted), Eq::trans(finish_literal_unf(c, l), And::right(accepted)))
 }
@@ -228,10 +229,7 @@ pub theorem diagnostic_class_step(
 ): And(
   r = UnresolvedNone,
   finish_class(c, p, r) = mut1(Star, c)
-) { match r: And(
-  r = UnresolvedNone,
-  finish_class(c, p, r) = mut1(Star, c)
-) {
+) { ⊢ And(r = UnresolvedNone, finish_class(c, p, r) = mut1(Star, c)) from match r {
     UnresolvedNone => AndIntro(Refl, Refl)
     UnresolvedUndetermined => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     UnresolvedAssumption(shown) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
@@ -240,7 +238,12 @@ pub theorem diagnostic_class_step(
 pub def DiagnosticClass(
   c: Checker,
   p: TyPending
-): Prop := ck_resolve_class(c, finish_pending_class(p), finish_pending_ty(p), finish_pending_assume(p)) = UnresolvedNone
+): Prop := ck_resolve_class(
+  c,
+  finish_pending_class(p),
+  finish_pending_ty(p),
+  finish_pending_assume(p)
+) = UnresolvedNone
 pub theorem ck_check_class_pending_accepts(
   c: Checker,
   p: TyPending,
@@ -249,10 +252,10 @@ pub theorem ck_check_class_pending_accepts(
   let accepted: And(
     DiagnosticClass(c, p),
     finish_class(
-        c,
-        p,
-        ck_resolve_class(c, finish_pending_class(p), finish_pending_ty(p), finish_pending_assume(p))
-      ) = mut1(Star, c)
+      c,
+      p,
+      ck_resolve_class(c, finish_pending_class(p), finish_pending_ty(p), finish_pending_assume(p))
+    ) = mut1(Star, c)
   ) := diagnostic_class_step(
     c,
     p,
@@ -263,7 +266,7 @@ pub theorem ck_check_class_pending_accepts(
 }
 
 pub fn DiagnosticConstructorType(c: Checker, b: TyCtorBound, made: Option(Ty)): Prop {
-  match made: Prop { None => True
+  ⊢ Prop from match made { None => True
     Some(m) => kind_fits(ck_kind(c, m), finish_ctor_result(b)) = true }
 }
 pub def DiagnosticConstructor(
@@ -279,14 +282,8 @@ pub theorem diagnostic_constructor_step(
   b: TyCtorBound,
   made: Option(Ty),
   clean: DiagnosticClean(ck_st(finish_ctor(c, b, made)))
-): And(
-  DiagnosticConstructorType(c, b, made),
-  finish_ctor(c, b, made) = mut1(Star, c)
-) {
-  match made: And(
-    DiagnosticConstructorType(c, b, made),
-    finish_ctor(c, b, made) = mut1(Star, c)
-  ) {
+): And(DiagnosticConstructorType(c, b, made), finish_ctor(c, b, made) = mut1(Star, c)) {
+  ⊢ And(DiagnosticConstructorType(c, b, made), finish_ctor(c, b, made) = mut1(Star, c)) from match made {
     None => AndIntro(Trivial, Refl)
     Some(m) => {
       let accepted: And(
@@ -321,17 +318,14 @@ pub theorem ck_check_ctor_bound_accepts(
   c: Checker,
   b: TyCtorBound,
   clean: DiagnosticClean(ck_st(ck_check_ctor_bound(c, b)))
-): And(
-  DiagnosticConstructor(c, b),
-  ck_check_ctor_bound(c, b) = mut1(Star, c)
-) {
+): And(DiagnosticConstructor(c, b), ck_check_ctor_bound(c, b) = mut1(Star, c)) {
   let accepted: And(
     DiagnosticConstructor(c, b),
     finish_ctor(
-        c,
-        b,
-        finish_ctor_made(b, ck_resolve(c, finish_ctor_ty(b)), ck_resolve(c, finish_ctor_ty(b)))
-      ) = mut1(Star, c)
+      c,
+      b,
+      finish_ctor_made(b, ck_resolve(c, finish_ctor_ty(b)), ck_resolve(c, finish_ctor_ty(b)))
+    ) = mut1(Star, c)
   ) := diagnostic_constructor_step(
     c,
     b,
@@ -342,7 +336,7 @@ pub theorem ck_check_ctor_bound_accepts(
 }
 
 pub fn DiagnosticPendingKind(c: Checker, p: TyPending, nonstructural: Bool): Prop {
-  match nonstructural: Prop { true => DiagnosticClass(c, p)
+  ⊢ Prop from match nonstructural { true => DiagnosticClass(c, p)
     false => finish_pending_bad(c, p) = false }
 }
 pub def DiagnosticPending(
@@ -358,10 +352,10 @@ pub theorem diagnostic_pending_step(
   DiagnosticPendingKind(c, p, nonstructural),
   finish_pending(c, p, nonstructural) = mut1(Star, c)
 ) {
-  match nonstructural: And(
+  ⊢ And(
     DiagnosticPendingKind(c, p, nonstructural),
     finish_pending(c, p, nonstructural) = mut1(Star, c)
-  ) {
+  ) from match nonstructural {
     true => {
       let accepted: And(
         DiagnosticClass(c, p),

@@ -75,25 +75,25 @@ pub(open) inductive RsSourceLocal: Type {
 }
 
 pub fn rs_source_types(sig: RsSourceSignature): List(RsSourceType) {
-  match sig: List(RsSourceType) {
+  ⊢ List(RsSourceType) from match sig {
     RsSourceSignatureOf(types, functions, natives, constructors, closures, futures, word_bits) => types
   }
 }
 
 pub fn rs_source_functions(sig: RsSourceSignature): List(RsSourceFunction) {
-  match sig: List(RsSourceFunction) {
+  ⊢ List(RsSourceFunction) from match sig {
     RsSourceSignatureOf(types, functions, natives, constructors, closures, futures, word_bits) => functions
   }
 }
 
 pub fn rs_source_natives(sig: RsSourceSignature): List(RsSourceNative) {
-  match sig: List(RsSourceNative) {
+  ⊢ List(RsSourceNative) from match sig {
     RsSourceSignatureOf(types, functions, natives, constructors, closures, futures, word_bits) => natives
   }
 }
 
 pub fn rs_source_constructors(sig: RsSourceSignature): List(RsSourceConstructor) {
-  match sig: List(RsSourceConstructor) {
+  ⊢ List(RsSourceConstructor) from match sig {
     RsSourceSignatureOf(types, functions, natives, constructors, closures, futures, word_bits) => constructors
   }
 }
@@ -103,40 +103,40 @@ pub fn rs_source_type(sig: RsSourceSignature, index: Nat): Option(RsSourceType) 
 }
 
 pub fn rs_source_local_id(local: RsSourceLocal): Nat {
-  match local: Nat { RsSourceLocalOf(id, ty) => id }
+  ⊢ Nat from match local { RsSourceLocalOf(id, ty) => id }
 }
 
 pub fn rs_source_local_type(local: RsSourceLocal): Nat {
-  match local: Nat { RsSourceLocalOf(id, ty) => ty }
+  ⊢ Nat from match local { RsSourceLocalOf(id, ty) => ty }
 }
 
 pub fn rs_source_fresh(id: Nat, scope: List(RsSourceLocal)): Bool {
-  match scope: Bool {
+  ⊢ Bool from match scope {
     Nil => true
     Cons(local, rest) => not(Nat::eq(id, rs_source_local_id(local))) && rs_source_fresh(id, rest)
   }
 }
 
 pub fn rs_source_is_copy(mode: RsUse): Bool {
-  match mode: Bool {
+  ⊢ Bool from match mode {
     RsCopy => true
     RsMove => false
   }
 }
 
 pub fn rs_source_ref_mode(kind: RsBorrow): RsUse {
-  match kind: RsUse {
+  ⊢ RsUse from match kind {
     RsShared => RsCopy
     RsUnique => RsMove
   }
 }
 
 pub fn rs_source_call_params(callable: RsSourceCall): List(Nat) {
-  match callable: List(Nat) { RsSourceCallOf(kind, params, result) => params }
+  ⊢ List(Nat) from match callable { RsSourceCallOf(kind, params, result) => params }
 }
 
 pub fn rs_source_call_result(callable: RsSourceCall): Nat {
-  match callable: Nat { RsSourceCallOf(kind, params, result) => result }
+  ⊢ Nat from match callable { RsSourceCallOf(kind, params, result) => result }
 }
 
 pub(open) inductive RsSourceLoop: Type {
@@ -148,11 +148,11 @@ pub(open) inductive RsSourceControl: Type {
 }
 
 pub fn rs_source_return_type(control: RsSourceControl): Nat {
-  match control: Nat { RsSourceControlOf(result, loops) => result }
+  ⊢ Nat from match control { RsSourceControlOf(result, loops) => result }
 }
 
 pub fn rs_source_loop_type_in(loops: List(RsSourceLoop), label: Nat): Option(Nat) {
-  match loops: Option(Nat) {
+  ⊢ Option(Nat) from match loops {
     Nil => None
     Cons(RsSourceLoopOf(current, ty), rest) => if Nat::eq(current, label) {
       Some(ty)
@@ -161,13 +161,13 @@ pub fn rs_source_loop_type_in(loops: List(RsSourceLoop), label: Nat): Option(Nat
 }
 
 pub fn rs_source_loop_type(control: RsSourceControl, label: Nat): Option(Nat) {
-  match control: Option(Nat) {
+  ⊢ Option(Nat) from match control {
     RsSourceControlOf(result, loops) => rs_source_loop_type_in(loops, label)
   }
 }
 
 pub fn rs_source_push_loop(control: RsSourceControl, label: Nat, ty: Nat): RsSourceControl {
-  match control: RsSourceControl {
+  ⊢ RsSourceControl from match control {
     RsSourceControlOf(result, loops) => RsSourceControlOf(
       result,
       Cons(RsSourceLoopOf(label, ty), loops)
@@ -176,16 +176,16 @@ pub fn rs_source_push_loop(control: RsSourceControl, label: Nat, ty: Nat): RsSou
 }
 
 pub fn rs_source_type_spelling(ty: RsSourceType): rs::Ty::I {
-  match ty: rs::Ty::I {
+  ⊢ rs::Ty::I from match ty {
     RsSourceTypeOf(spelling, mode, target, fields, callable) => spelling
   }
 }
 
 pub fn rs_source_path_clear(scope: List(RsSourceLocal), path: rs::Path::I): Bool {
-  match scope: Bool {
+  ⊢ Bool from match scope {
     Nil => true
-    Cons(local, remaining) => match path: Bool {
-      Mk(name, rest, types) => match rest: Bool {
+    Cons(local, remaining) => ⊢ Bool from match path {
+      Mk(name, rest, types) => ⊢ Bool from match rest {
         Nil => not(
           Text::eq(name, Text::concat("v", Text::of_nat(rs_source_local_id(local))))
         ) && rs_source_path_clear(remaining, path)
@@ -200,7 +200,7 @@ pub fn rs_source_path_avoids_id(path: rs::Path::I, id: Nat): Bool {
 }
 
 pub fn rs_source_function_names_fresh(functions: List(RsSourceFunction), id: Nat): Bool {
-  match functions: Bool {
+  ⊢ Bool from match functions {
     Nil => true
     Cons(RsSourceFunctionOf(path, ty), rest) => rs_source_path_avoids_id(
       path,
@@ -210,7 +210,7 @@ pub fn rs_source_function_names_fresh(functions: List(RsSourceFunction), id: Nat
 }
 
 pub fn rs_source_native_names_fresh(natives: List(RsSourceNative), id: Nat): Bool {
-  match natives: Bool {
+  ⊢ Bool from match natives {
     Nil => true
     Cons(RsSourceNativeOf(name, path, params, result), rest) => rs_source_path_avoids_id(
       path,
@@ -220,7 +220,7 @@ pub fn rs_source_native_names_fresh(natives: List(RsSourceNative), id: Nat): Boo
 }
 
 pub fn rs_source_constructor_names_fresh(constructors: List(RsSourceConstructor), id: Nat): Bool {
-  match constructors: Bool {
+  ⊢ Bool from match constructors {
     Nil => true
     Cons(RsSourceConstructorOf(tag, owner, path, family, variant, style, fields), rest) => rs_source_path_avoids_id(
       path,
@@ -245,53 +245,53 @@ pub fn rs_source_id_fresh(sig: RsSourceSignature, scope: List(RsSourceLocal), id
 }
 
 pub fn rs_source_scope_good(sig: RsSourceSignature, scope: List(RsSourceLocal)): Bool {
-  match scope: Bool {
+  ⊢ Bool from match scope {
     Nil => true
     Cons(RsSourceLocalOf(id, ty), rest) => rs_source_id_fresh(
       sig,
       rest,
       id
-    ) && match rs_source_type(sig, ty): Bool {
+    ) && (⊢ Bool from match rs_source_type(sig, ty) {
       None => false
       Some(declaration) => rs_source_scope_good(sig, rest)
-    }
+    })
   }
 }
 
 pub fn rs_source_closures(sig: RsSourceSignature): List(RsSourceClosureType) {
-  match sig: List(RsSourceClosureType) {
+  ⊢ List(RsSourceClosureType) from match sig {
     RsSourceSignatureOf(types, functions, natives, constructors, closures, futures, word_bits) => closures
   }
 }
 
 pub fn rs_source_futures(sig: RsSourceSignature): List(RsSourceFutureType) {
-  match sig: List(RsSourceFutureType) {
+  ⊢ List(RsSourceFutureType) from match sig {
     RsSourceSignatureOf(types, functions, natives, constructors, closures, futures, word_bits) => futures
   }
 }
 
 pub fn rs_source_word_bits(sig: RsSourceSignature): Nat {
-  match sig: Nat {
+  ⊢ Nat from match sig {
     RsSourceSignatureOf(types, functions, natives, constructors, closures, futures, word_bits) => word_bits
   }
 }
 
 pub fn rs_source_name_absent(name: Text, names: List(Text)): Bool {
-  match names: Bool {
+  ⊢ Bool from match names {
     Nil => true
     Cons(current, rest) => not(Text::eq(name, current)) && rs_source_name_absent(name, rest)
   }
 }
 
 pub fn rs_source_names_unique(names: List(Text)): Bool {
-  match names: Bool {
+  ⊢ Bool from match names {
     Nil => true
     Cons(name, rest) => rs_source_name_absent(name, rest) && rs_source_names_unique(rest)
   }
 }
 
 pub fn rs_source_constructor_style_valid(style: RsSourceConstructorStyle, fields: List(Nat)): Bool {
-  match style: Bool {
+  ⊢ Bool from match style {
     RsTupleConstructor => true
     RsUnitConstructor => Nat::eq(List::length(fields), 0)
     RsRecordConstructor(names) => Nat::eq(

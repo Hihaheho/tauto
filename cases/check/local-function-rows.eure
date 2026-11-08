@@ -1,0 +1,768 @@
+// Local declarations keep checked callable contracts in their lexical scope.
+
+@ cases.direct-local-call-keeps-inferred-effects
+source = ```nib
+effect ask(): Text
+fn outer(): Text {
+  fn inner(): Text { perform ask() }
+  inner()
+}
+```
+types = "ok"
+rows = "ok"
+inferred_rows.outer = ["ask"]
+
+@ cases.local-alias-cannot-hide-effects
+source = ```nib
+effect ask(): Text
+fn outer(): Text ! {} {
+  fn inner(): Text { perform ask() }
+  let alias := inner
+  alias()
+}
+```
+types = "ok"
+rows = "error: `outer` may perform ask"
+
+@ cases.unused-local-written-pure-body-is-checked
+source = ```nib
+effect ask(): Text
+fn outer(): Text ! {} {
+  fn inner(): Text ! {} { perform ask() }
+  "ok"
+}
+```
+types = "ok"
+rows = "error: `inner` may perform ask"
+
+@ cases.local-recursive-alias-keeps-div
+source = ```nib
+fn outer(): i64 {
+  fn inner(n: i64): i64 {
+    let again := inner
+    again(n)
+  }
+  inner(0)
+}
+```
+types = "ok"
+rows = "ok"
+inferred_rows.outer = ["Div"]
+
+@ cases.local-recursive-alias-cannot-claim-pure
+source = ```nib
+fn outer(): i64 {
+  fn inner(n: i64): i64 ! {} {
+    let again := inner
+    again(n)
+  }
+  inner(0)
+}
+```
+types = "ok"
+rows = "error: `inner` may perform Div"
+
+@ cases.local-captured-callable-keeps-effects
+source = ```nib
+effect ask(): Text
+fn outer(captured: () -> Text ! {ask}): Text ! {ask} {
+  fn inner(): Text { captured() }
+  let alias := inner
+  alias()
+}
+```
+types = "ok"
+rows = "ok"
+inferred_rows.outer = ["ask"]
+
+@ cases.local-callable-result-contract-is-checked
+source = ```nib
+effect ask(): Text
+fn outer(): Text ! {} {
+  fn inner(): (() -> Text ! {}) ! {} { () => perform ask() }
+  "ok"
+}
+```
+types = "ok"
+rows = "error: a function value may perform ask"
+
+@ cases.local-function-shadowing-restores-outer-binding
+source = ```nib
+effect ask(): Text
+fn helper(): Text ! {ask} { perform ask() }
+fn outer(): Text ! {ask} {
+  let first := {
+    fn helper(): Text ! {} { "inner" }
+    helper()
+  }
+  helper()
+}
+```
+types = "ok"
+rows = "ok"
+inferred_rows.outer = ["ask"]
+
+@ cases.local-function-name-does-not-make-outer-recursive
+source = ```nib
+fn outer(): Text ! {} {
+  fn outer(): Text ! {} { "inner" }
+  outer()
+}
+```
+types = "ok"
+rows = "ok"
+inferred_rows.outer = []
+
+@ cases.captured-and-owned-same-name-rows-stay-distinct
+source = ```nib
+fn outer<!e>(captured: () -> Text ! e): Text ! e {
+  fn inner<!e>(own: () -> Text ! e): Text {
+    captured()
+    own()
+  }
+  let alias := inner
+  alias(() => "ok")
+}
+```
+types = "ok"
+rows = "ok"
+inferred_rows.outer = ["|e"]
+
+@ cases.owned-row-instantiation-cannot-erase-captured-row
+source = ```nib
+effect ask(): Text
+fn outer<!e>(captured: () -> Text ! e): Text ! e {
+  fn inner<!e>(own: () -> Text ! e): Text {
+    captured()
+    own()
+  }
+  inner(() => "ok")
+}
+fn caller(): Text ! {} { outer(() => perform ask()) }
+```
+types = "ok"
+rows = "error: `caller` may perform ask"
+
+@ cases.owned-written-row-cannot-cover-same-named-capture
+source = ```nib
+fn outer<!e>(captured: () -> Text ! e): Text ! e {
+  fn inner<!e>(own: () -> Text ! e): Text ! e {
+    captured()
+    own()
+  }
+  inner(() => "ok")
+}
+```
+types = "ok"
+rows = "error: `inner` may perform |e"
+
+@ cases.local-polymorphic-row-is-instantiated
+source = ```nib
+effect ask(): Text
+fn outer(): Text ! {ask} {
+  fn apply<!e>(callback: () -> Text ! e): Text ! e { callback() }
+  let alias := apply
+  alias(() => perform ask())
+}
+```
+types = "ok"
+rows = "ok"
+inferred_rows.outer = ["ask"]
+
+@ cases.local-direct-bound-rejects-suspension
+source = ```nib
+effect ask(): Text
+fn outer(): Text ! {ask} {
+  fn apply<!e: direct>(callback: () -> Text ! e): Text ! e { callback() }
+  let alias := apply
+  alias(() => perform ask())
+}
+```
+types = "ok"
+rows = "error: ask is not direct"
+
+@ cases.local-at-most-once-bound-rejects-many
+source = ```nib
+effect choose(): Text resume ω
+fn outer(): Text ! {choose} {
+  fn apply<!e: <=1>(callback: () -> Text ! e): Text ! e { callback() }
+  apply(() => perform choose())
+}
+```
+types = "ok"
+rows = "error: choose resumes ω"
+
+@ cases.local-bound-rejects-unbounded-captured-row
+source = ```nib
+fn outer<!e>(captured: () -> Text ! e): Text ! e {
+  fn apply<!e: <=1>(callback: () -> Text ! e): Text ! e { callback() }
+  apply(captured)
+}
+```
+types = "ok"
+rows = "error: resumes ω"
+
+@ cases.local-bound-keeps-captured-direct-evidence
+source = ```nib
+fn outer<!e: direct>(captured: () -> Text ! e): Text ! e {
+  fn apply<!e: <=1>(callback: () -> Text ! e): Text ! e { callback() }
+  apply(captured)
+}
+```
+types = "ok"
+rows = "ok"
+
+@ cases.local-unknown-call-is-not-empty
+source = ```nib
+fn outer(): Text {
+  fn inner(callback): Text { callback() }
+  inner(() => "ok")
+}
+```
+rows = "error: cannot follow the effects of calling `callback`"
+
+@ cases.local-missing-row-argument-is-not-empty
+source = ```nib
+fn outer(): Text {
+  fn inner<!e>(): Text ! e { "ok" }
+  inner()
+}
+```
+rows = "error: cannot follow the effects of the row variable `e`"
+
+@ cases.distinct-declaration-identity-base
+source = ```nib
+fn first<!e>(callback: () -> Text ! e): Text ! e { "ok" }
+fn second<!e>(callback: () -> Text ! e): Text ! e { "ok" }
+```
+types = "ok"
+rows = "ok"
+
+@ cases.shared-call-identity-base
+source = ```nib
+fn first(callback: () -> Text ! {}): Text ! {} { callback() }
+fn second(callback: () -> Text ! {}): Text ! {} { callback() }
+```
+types = "ok"
+rows = "ok"
+
+@ cases.unbound-annotation-row-is-not-a-pure-call
+source = ```nib
+fn outer(): Text {
+  let callback: () -> Text ! e := () => "ok"
+  callback()
+}
+```
+types = "ok"
+rows = "error: cannot follow the effects of the row variable `e`"
+
+@ cases.known-pure-integer-primitives-remain-pure
+source = ```nib
+fn outer(): i64 ! {} { div(6, 2) + mod(7, 2) }
+```
+types = "ok"
+rows = "ok"
+
+@ cases.local-binding-shadows-pure-primitive
+source = ```nib
+effect ask(): i64
+fn outer(): i64 ! {} {
+  fn div(a: i64, b: i64): i64 { perform ask() }
+  div(6, 2)
+}
+```
+types = "ok"
+rows = "error: `outer` may perform ask"
+
+@ cases.resolved-constructor-still-evaluates-effectful-arguments
+source = ```nib
+effect ask(): Text direct
+enum Reader { Read(Text) }
+enum Number { Read(i64) }
+fn outer(): Reader ! {} {
+  let value: Reader := Read(perform ask())
+  value
+}
+```
+types = "ok"
+rows = "error: `outer` may perform ask"
+
+@ cases.local-callable-wins-over-constructor-spelling
+source = ```nib
+effect ask(): Text direct
+enum Reader { Read(Text) }
+enum Number { Read(i64) }
+fn outer(): Reader ! {} {
+  fn Read(value: Text): Reader ! {ask} {
+    perform ask()
+    Reader::Read(value)
+  }
+  let value: Reader := Read("ok")
+  value
+}
+```
+types = "ok"
+rows = "error: `outer` may perform ask"
+
+@ cases.global-callable-wins-over-constructor-spelling
+source = ```nib
+effect ask(): Text direct
+enum Reader { Read(Text) }
+enum Number { Read(i64) }
+fn Read(value: Text): Reader ! {ask} {
+  perform ask()
+  Reader::Read(value)
+}
+fn outer(): Reader ! {} {
+  let value: Reader := Read("ok")
+  value
+}
+```
+types = "ok"
+rows = "error: `outer` may perform ask"
+
+@ cases.constructor-owner-follows-return-contract
+source = ```nib
+enum Reader { Read(Text) }
+enum Number { Read(i64) }
+fn outer(): Reader ! {} { Read("ok") }
+```
+types = "ok"
+rows = "ok"
+
+@ cases.constructor-owner-follows-argument-contract
+source = ```nib
+enum Reader { Read(Text) }
+enum Number { Read(i64) }
+fn read(value: Reader): Text ! {} { match value { Read(text) => text } }
+fn outer(): Text ! {} { read(Read("ok")) }
+```
+types = "ok"
+rows = "ok"
+
+@ cases.linearity-displays-owned-row-name-not-private-identity
+source = ```nib
+affine struct Token {}
+fn outer<!e: direct>(): Text ! {} {
+  fn inner<!e>(callback: () -> Text ! e): Text ! e {
+    let token := Token {}
+    callback()
+    match token { Token {} => "ok" }
+  }
+  "outer"
+}
+```
+types = "ok"
+rows = "ok"
+lin = "error: token is live across e, which resumes ω"
+
+@ cases.unknown-returned-container-cannot-claim-callable-effects
+source = ```nib
+fn make(value): Option(() -> Text ! {}) ! {} { value }
+```
+types = "ok"
+rows = "error: cannot follow the effects stored in a value required by its type"
+
+@ cases.implicit-row-direct-call-keeps-suspension
+source = ```nib
+effect ask(): i64
+fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
+let result := handle { apply(() => perform ask()) } with {
+  ask(), k => k(42)
+  return value => value
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = 42"]
+
+@ cases.implicit-row-direct-call-keeps-many-resumptions
+source = ```nib
+effect choose(): i64 resume ω
+fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
+let result := handle { apply(() => perform choose()) } with {
+  choose(), k => k(1) + k(2)
+  return value => value
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = 3"]
+
+@ cases.local-owned-row-shadows-outer-direct-bound-at-runtime
+source = ```nib
+effect ask(): i64
+fn outer<!e: direct>(): i64 ! {ask} {
+  fn inner<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
+  inner(() => perform ask())
+}
+let result := handle { outer() } with {
+  ask(), k => k(42)
+  return value => value
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = 42"]
+
+@ cases.computed-callback-row-requires-backend-evidence
+source = ```nib
+effect ask(): i64
+fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
+let result := handle {
+  apply(if true { () => perform ask() } else { () => perform ask() })
+} with {
+  ask(), k => k(42)
+  return value => value
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.record-carried-row-specializes-from-the-call
+source = ```nib
+effect ask(): i64 direct
+struct View(!e) { callback: () -> i64 ! e }
+fn apply<!e: direct>(value: View(e)): i64 ! e { value.callback() }
+let result := handle { apply(View { callback: () => perform ask() }) } with {
+  ask(), k => k(42)
+  return value => value
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.record-carried-row-suspends-the-call
+source = ```nib
+effect ask(n: i64): i64 resume 1
+struct Handlers(!e) { on_key: (k: i64) -> i64 ! e }
+fn dispatch<!e>(&h: Handlers(e), k: i64): i64 ! e { (h.on_key)(k) }
+let r := handle {
+  let h := Handlers { on_key: (k) => perform ask(k) + 1 }
+  dispatch(&h, 3)
+} with { ask(n), k => k(n * 10) }
+perform show("r", r)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.record-carried-row-resumes-many-times
+source = ```nib
+effect pick(): i64 resume ω
+struct Handlers(!e) { on_key: (k: i64) -> i64 ! e }
+fn dispatch<!e>(h: Handlers(e), k: i64): i64 ! e { (h.on_key)(k) }
+let r := handle {
+  dispatch(Handlers { on_key: (k) => perform pick() + k }, 3)
+} with {
+  pick(), k => k(1) + k(2)
+  return v => v
+}
+perform show("r", r)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.implicit-row-function-value-requires-backend-evidence
+source = ```nib
+effect ask(): i64
+fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
+let alias := apply
+let result := handle { alias(() => perform ask()) } with {
+  ask(), k => k(42)
+  return value => value
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.constructor-owner-follows-lambda-result-contract
+source = ```nib
+enum Reader { Read(Text) }
+enum Number { Read(i64) }
+let make: () -> Reader ! {} := () => Read("ok")
+let value := make()
+```
+types = "ok"
+rows = "ok"
+
+@ cases.lambda-constructor-argument-effects-cannot-hide
+source = ```nib
+effect ask(): Text direct
+enum Reader { Read(Text) }
+enum Number { Read(i64) }
+let make: () -> Reader ! {} := () => Read(perform ask())
+```
+types = "ok"
+rows = "error: a function value may perform ask"
+
+@ cases.constructor-owner-follows-deferred-let-result
+source = ```nib
+enum Reader { Read(Text) }
+enum Number { Read(i64) }
+fn outer(): Reader ! {} {
+  let value := Read("ok")
+  value
+}
+```
+types = "ok"
+rows = "ok"
+
+@ cases.constructor-owner-follows-host-argument
+source = ```nib
+enum Reader { Read(Text) }
+enum Number { Read(i64) }
+extern { fn consume(value: Reader): Text }
+fn outer(): Text ! {} { consume(Read("ok")) }
+```
+types = "ok"
+rows = "ok"
+
+@ cases.constructor-owner-follows-budget-result
+source = ```nib
+enum Reader { Read(Text) }
+enum Number { Read(i64) }
+fn outer(): Reader ! {Exceeded} { budget(steps: 10) { Read("ok") } }
+```
+types = "ok"
+rows = "ok"
+
+@ cases.constructor-owner-follows-handler-result
+source = ```nib
+enum Reader { Read(Text) }
+enum Number { Read(i64) }
+fn outer(): Reader ! {} {
+  handle { Read("ok") } with { return value => value }
+}
+```
+types = "ok"
+rows = "ok"
+
+@ cases.deferred-constructor-owner-still-checks-callback-contract
+source = ```nib
+effect ask(): Text direct
+enum Reader { Read(() -> Text ! {}) }
+enum Number { Read(i64) }
+fn outer(): Reader ! {} {
+  let value := Read(() => perform ask())
+  value
+}
+```
+types = "ok"
+rows = "error: a function value may perform ask but its type permits {}"
+
+@ cases.failed-type-report-cannot-resolve-constructor-owner
+source = ```nib
+enum Reader { Read(Text) }
+enum Number { Read(i64) }
+fn outer(): Reader ! {} {
+  let value := Read("ok")
+  value
+}
+fn invalid(): i64 { "bad" }
+```
+types = "error: the result of `invalid`: Text does not fit i64"
+rows = "error: cannot follow the effects of calling `Read`"
+
+@ cases.constructor-alias-owner-follows-deferred-let-result
+source = ```nib
+enum Reader { Read(Text) }
+enum Number { Read(i64) }
+fn outer(): Reader ! {} {
+  let make := Read
+  let value := make("ok")
+  value
+}
+```
+types = "ok"
+rows = "ok"
+
+@ cases.nested-sync-lambda-handles-implicit-suspending-callback
+source = ```nib
+effect ask(): i64
+fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
+let invoke: () -> i64 ! {} := () => {
+  handle { apply(() => perform ask()) } with {
+    ask(), k => k(42)
+    return value => value
+  }
+}
+perform show("value", invoke())
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = 42"]
+
+@ cases.borrowed-result-keeps-independent-lifetime-after-handled-callback
+source = ```nib
+effect ask(): i64
+struct Holder { text: Text }
+fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
+fn select(&holder: Holder): &Text ! {} {
+  let ignored := handle { apply(() => perform ask()) } with {
+    ask(), k => k(42)
+    return value => value
+  }
+  &holder.text
+}
+let holder := Holder { text: "kept" }
+let &text := select(&holder)
+perform show("value", clone(text))
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ['value = "kept"']
+
+@ cases.borrowed-sync-callback-survives-locally-handled-suspension
+source = ```nib
+effect ask(): i64
+fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
+fn invoke(&callback: () -> i64 ! {}): i64 ! {} {
+  let handled := handle { apply(() => perform ask()) } with {
+    ask(), k => k(40)
+    return value => value
+  }
+  handled + callback()
+}
+perform show("value", invoke(() => 2))
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = 42"]
+
+@ cases.suspending-callback-capturing-borrowed-record-copies-it
+source = ```nib
+effect ask(): i64
+struct Holder { text: Text }
+fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
+fn select(&holder: Holder): &Text ! {} {
+  let ignored := handle {
+    apply(() => if holder.text == "kept" { perform ask() } else { 0 })
+  } with {
+    ask(), k => k(42)
+    return value => value
+  }
+  &holder.text
+}
+let holder := Holder { text: "kept" }
+let &text := select(&holder)
+perform show("value", clone(text))
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ['value = "kept"']
+
+@ cases.suspending-callback-capturing-borrowed-sync-callback-remains-unsupported
+source = ```nib
+effect ask(): i64
+fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
+fn invoke(&callback: () -> i64 ! {}): i64 ! {} {
+  handle { apply(() => perform ask() + callback()) } with {
+    ask(), k => k(40)
+    return value => value
+  }
+}
+perform show("value", invoke(() => 2))
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+compile_errors.rust = "unsupported: a closure that may suspend and borrows what it captures"
+compile_errors.javascript = "unsupported: a closure that may suspend and borrows what it captures"
+shows = ["value = 42"]
+backend_known_failure.vm = "unsupported: a closure that may suspend and borrows what it captures"
+
+@ cases.top-level-row-diagnostic-uses-declared-name
+source = ```nib
+fn veiled<!e: <=1>(): Text ! e { "ok" }
+veiled()
+```
+types = "ok"
+rows = "error: cannot follow the effects of the row variable `e`"
+
+@ cases.top-level-row-diagnostic-independent-of-unrelated-declarations
+source = ```nib
+fn unrelated<!before: <=1>(): Text ! before { "unused" }
+fn veiled<!e: <=1>(): Text ! e { "ok" }
+veiled()
+```
+types = "ok"
+rows = "error: cannot follow the effects of the row variable `e`"
+
+@ cases.suspending-callback-types-do-not-collide-with-user-data
+source = ```nib
+effect ask(): i64
+struct __TautoOFn0 { value: i64 }
+struct __TautoOFn0_ { value: i64 }
+fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
+let first := __TautoOFn0 { value: 1 }
+let second := __TautoOFn0_ { value: 1 }
+let result := handle { apply(() => perform ask()) } with {
+  ask(), k => k(40)
+  return value => value
+}
+perform show("value", result + first.value + second.value)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = 42"]
+
+@ cases.suspending-callback-types-do-not-shadow-user-generics
+source = ```nib
+effect ask(): i64
+fn apply<!e>(callback: () -> i64 ! e): i64 ! e { callback() }
+fn keep<__TautoOFn0: Shared>(value: __TautoOFn0): __TautoOFn0 ! {} {
+  let ignored := handle { apply(() => perform ask()) } with {
+    ask(), k => k(42)
+    return answer => answer
+  }
+  value
+}
+perform show("value", keep("kept"))
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ['value = "kept"']
+
+@ cases.affine-suspending-callback-keeps-owned-capture
+source = ```nib
+import std::prelude::Affine
+
+effect ask(): i64
+fn apply_once(callback: affine () -> Text ! {ask}): Text ! {ask} { callback() }
+let text := "kept"
+let buffer := Buf::of(&text)
+let result := handle {
+  apply_once(() => {
+    let ignored := perform ask()
+    Text::of(buffer)
+  })
+} with {
+  ask(), k => k(42)
+  return value => value
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ['value = "kept"']

@@ -29,13 +29,22 @@ pub fn utf8_round(t: Text, c: Nat): Prop {
 
 // The UTF-8 encoding of a number from 65536 on: four bytes below 0x110000.
 pub fn text_utf8_from_65536(c: Nat): Text {
-  match Nat::lt(c, 1114112): Text {
+  ⊢ Text from match Nat::lt(c, 1114112) {
     true => Text::Mk(
       Cons(
         Nat::add(Nat::div_nz(c, 262144, Nat::ne_zero(262144, Refl)), 240),
         Cons(
-          Nat::add(Nat::rem_nz(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 64, Nat::ne_zero(64, Refl)), 128),
-          Cons(Nat::add(Nat::rem_nz(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 64, Nat::ne_zero(64, Refl)), 128), Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil))
+          Nat::add(
+            Nat::rem_nz(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 64, Nat::ne_zero(64, Refl)),
+            128
+          ),
+          Cons(
+            Nat::add(
+              Nat::rem_nz(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 64, Nat::ne_zero(64, Refl)),
+              128
+            ),
+            Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil)
+          )
         )
       )
     )
@@ -45,11 +54,17 @@ pub fn text_utf8_from_65536(c: Nat): Text {
 
 // From 2048 on, past the surrogates: three bytes below 65536.
 pub fn text_utf8_past_surrogates(c: Nat): Text {
-  match Nat::lt(c, 65536): Text {
+  ⊢ Text from match Nat::lt(c, 65536) {
     true => Text::Mk(
       Cons(
         Nat::add(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 224),
-        Cons(Nat::add(Nat::rem_nz(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 64, Nat::ne_zero(64, Refl)), 128), Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil))
+        Cons(
+          Nat::add(
+            Nat::rem_nz(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 64, Nat::ne_zero(64, Refl)),
+            128
+          ),
+          Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil)
+        )
       )
     )
     false => text_utf8_from_65536(c)
@@ -58,7 +73,7 @@ pub fn text_utf8_past_surrogates(c: Nat): Text {
 
 // From 2048 on: nothing for a surrogate.
 pub fn text_utf8_from_2048(c: Nat): Text {
-  match Bool::and(Nat::le(55296, c), Nat::lt(c, 57344)): Text {
+  ⊢ Text from match Bool::and(Nat::le(55296, c), Nat::lt(c, 57344)) {
     true => Text::Mk(Nil)
     false => text_utf8_past_surrogates(c)
   }
@@ -66,8 +81,13 @@ pub fn text_utf8_from_2048(c: Nat): Text {
 
 // From 128 on: two bytes below 2048.
 pub fn text_utf8_from_128(c: Nat): Text {
-  match Nat::lt(c, 2048): Text {
-    true => Text::Mk(Cons(Nat::add(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 192), Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil)))
+  ⊢ Text from match Nat::lt(c, 2048) {
+    true => Text::Mk(
+      Cons(
+        Nat::add(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 192),
+        Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil)
+      )
+    )
     false => text_utf8_from_2048(c)
   }
 }
@@ -83,26 +103,38 @@ pub theorem utf8_digits(
     (z: Nat) => Nat::add(Nat::mul(64, z), Nat::rem_nz(n, 64, Nat::ne_zero(64, Refl))) = n,
     e,
     Eq::trans(
-      Eq::congr((z: Nat) => Nat::add(z, Nat::rem_nz(n, 64, Nat::ne_zero(64, Refl))), Nat::mul_comm(64, Nat::div_nz(n, 64, Nat::ne_zero(64, Refl)))),
+      Eq::congr(
+        (z: Nat) => Nat::add(z, Nat::rem_nz(n, 64, Nat::ne_zero(64, Refl))),
+        Nat::mul_comm(64, Nat::div_nz(n, 64, Nat::ne_zero(64, Refl)))
+      ),
       nat_div_mod_r(n, 64, Refl)
     )
   )
 }
 
-pub theorem utf8_div_64_64(c: Nat): Nat::div_nz(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 64, Nat::ne_zero(64, Refl)) = Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)) {
+pub theorem utf8_div_64_64(
+  c: Nat
+): Nat::div_nz(
+  Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)),
+  64,
+  Nat::ne_zero(64, Refl)
+) = Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)) {
   nat_div_div(c, 64, 64, Refl, Refl, Refl)
 }
 
-pub theorem utf8_div_4096_64(c: Nat): Nat::div_nz(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 64, Nat::ne_zero(64, Refl)) = Nat::div_nz(c, 262144, Nat::ne_zero(262144, Refl)) {
+pub theorem utf8_div_4096_64(
+  c: Nat
+): Nat::div_nz(
+  Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)),
+  64,
+  Nat::ne_zero(64, Refl)
+) = Nat::div_nz(c, 262144, Nat::ne_zero(262144, Refl)) {
   nat_div_div(c, 4096, 64, Refl, Refl, Refl)
 }
 
-pub theorem utf8_round_1(
-  c: Nat,
-  h: Nat::lt(c, 128) = true
-): utf8_round(Text::Mk(Cons(c, Nil)), c) {
+pub theorem utf8_round_1(c: Nat, h: Nat::lt(c, 128) = true): utf8_round(Text::Mk(Cons(c, Nil)), c) {
   bool_rewrite(
-    (z: Bool) => (match z: Option(@code Nat × @len Nat) {
+    (z: Bool) => (⊢ Option(@code Nat × @len Nat) from match z {
         true => Some(#(@code c, @len 1))
         false => text_decode_from_128(Text::Mk(Cons(c, Nil)), 0, c)
       }) = Some(#(@code c, @len 1)),
@@ -116,9 +148,17 @@ pub theorem utf8_round_1(
 pub theorem utf8_round_2(
   c: Nat,
   h: Nat::lt(c, 2048) = true
-): utf8_round(Text::Mk(Cons(Nat::add(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 192), Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil))), c) {
+): utf8_round(
+  Text::Mk(
+    Cons(
+      Nat::add(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 192),
+      Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil)
+    )
+  ),
+  c
+) {
   bool_rewrite(
-    (z: Bool) => (match z: Option(@code Nat × @len Nat) {
+    (z: Bool) => (⊢ Option(@code Nat × @len Nat) from match z {
         true => None
         false => text_decode_from_192(
           Text::Mk(Cons(Nat::add(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 192), Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil))),
@@ -130,7 +170,7 @@ pub theorem utf8_round_2(
     Nat::lt(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 0),
     Eq::sym(nat_lt_zero_right(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)))),
     bool_rewrite(
-      (z: Bool) => (match z: Option(@code Nat × @len Nat) {
+      (z: Bool) => (⊢ Option(@code Nat × @len Nat) from match z {
           true => text_decode_with(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 2, Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 0, 0)
           false => text_decode_from_224(
             Text::Mk(Cons(Nat::add(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 192), Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil))),
@@ -153,13 +193,19 @@ pub theorem utf8_round_3(
   Text::Mk(
     Cons(
       Nat::add(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 224),
-      Cons(Nat::add(Nat::rem_nz(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 64, Nat::ne_zero(64, Refl)), 128), Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil))
+      Cons(
+        Nat::add(
+          Nat::rem_nz(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 64, Nat::ne_zero(64, Refl)),
+          128
+        ),
+        Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil)
+      )
     )
   ),
   c
 ) {
   bool_rewrite(
-    (z: Bool) => (match z: Option(@code Nat × @len Nat) {
+    (z: Bool) => (⊢ Option(@code Nat × @len Nat) from match z {
         true => text_decode_with(
           Nat::sub(Nat::add(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 224), 192),
           2,
@@ -182,7 +228,7 @@ pub theorem utf8_round_3(
     Nat::lt(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 0),
     Eq::sym(nat_lt_zero_right(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)))),
     bool_rewrite(
-      (z: Bool) => (match z: Option(@code Nat × @len Nat) {
+      (z: Bool) => (⊢ Option(@code Nat × @len Nat) from match z {
           true => text_decode_with(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 3, Nat::rem_nz(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 64, Nat::ne_zero(64, Refl)), Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 0)
           false => text_decode_with(
             Nat::sub(Nat::add(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 224), 240),
@@ -216,15 +262,24 @@ pub theorem utf8_round_4(
     Cons(
       Nat::add(Nat::div_nz(c, 262144, Nat::ne_zero(262144, Refl)), 240),
       Cons(
-        Nat::add(Nat::rem_nz(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 64, Nat::ne_zero(64, Refl)), 128),
-        Cons(Nat::add(Nat::rem_nz(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 64, Nat::ne_zero(64, Refl)), 128), Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil))
+        Nat::add(
+          Nat::rem_nz(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 64, Nat::ne_zero(64, Refl)),
+          128
+        ),
+        Cons(
+          Nat::add(
+            Nat::rem_nz(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 64, Nat::ne_zero(64, Refl)),
+            128
+          ),
+          Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil)
+        )
       )
     )
   ),
   c
 ) {
   bool_rewrite(
-    (z: Bool) => (match z: Option(@code Nat × @len Nat) {
+    (z: Bool) => (⊢ Option(@code Nat × @len Nat) from match z {
         true => text_decode_with(
           Nat::sub(Nat::add(Nat::div_nz(c, 262144, Nat::ne_zero(262144, Refl)), 240), 224),
           3,
@@ -268,7 +323,7 @@ pub theorem utf8_round_from_65536(
 ): utf8_round(text_utf8_from_65536(c), c) {
   bool_rewrite(
     (z: Bool) => utf8_round(
-      match z: Text {
+      ⊢ Text from match z {
         true => Text::Mk(
           Cons(
             Nat::add(Nat::div_nz(c, 262144, Nat::ne_zero(262144, Refl)), 240),
@@ -295,7 +350,7 @@ pub theorem utf8_round_past_surrogates(
 ): utf8_round(text_utf8_past_surrogates(c), c) {
   Bool::cases(
     (z: Bool) => utf8_round(
-      match z: Text {
+      ⊢ Text from match z {
         true => Text::Mk(
           Cons(
             Nat::add(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 224),
@@ -319,7 +374,7 @@ pub theorem utf8_round_from_2048(
 ): utf8_round(text_utf8_from_2048(c), c) {
   bool_rewrite(
     (z: Bool) => utf8_round(
-      match z: Text {
+      ⊢ Text from match z {
         true => Text::Mk(Nil)
         false => text_utf8_past_surrogates(c)
       },
@@ -339,7 +394,7 @@ pub theorem utf8_round_from_128(
 ): utf8_round(text_utf8_from_128(c), c) {
   Bool::cases(
     (z: Bool) => utf8_round(
-      match z: Text {
+      ⊢ Text from match z {
         true => Text::Mk(Cons(Nat::add(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 192), Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil)))
         false => text_utf8_from_2048(c)
       },
@@ -352,21 +407,21 @@ pub theorem utf8_round_from_128(
 }
 
 pub theorem bool_and_left(a: Bool, b: Bool, h: Bool::and(a, b) = true): a = true {
-  match a: a = true {
+  ⊢ a = true from match a {
     false => False::elim(false_ne_true(h))
     true => Refl
   }
 }
 
 pub theorem bool_and_right(a: Bool, b: Bool, h: Bool::and(a, b) = true): b = true {
-  match a: b = true {
+  ⊢ b = true from match a {
     false => False::elim(false_ne_true(h))
     true => h
   }
 }
 
 pub theorem bool_not_true(a: Bool, h: not(a) = true): a = false {
-  match a: a = false {
+  ⊢ a = false from match a {
     false => Refl
     true => False::elim(false_ne_true(h))
   }
@@ -376,10 +431,13 @@ pub theorem bool_not_true(a: Bool, h: not(a) = true): a = false {
 pub theorem text_decode_of_code_point(
   c: Nat,
   h: text_is_char(c) = true
-): text_decode(Text::utf8_of_code_point(c), 0) = Some(#(@code c, @len Text::len(Text::utf8_of_code_point(c)))) {
+): text_decode(
+  Text::utf8_of_code_point(c),
+  0
+) = Some(#(@code c, @len Text::len(Text::utf8_of_code_point(c)))) {
   Bool::cases(
     (z: Bool) => utf8_round(
-      match z: Text {
+      ⊢ Text from match z {
         true => Text::Mk(Cons(c, Nil))
         false => text_utf8_from_128(c)
       },
@@ -398,6 +456,9 @@ pub theorem text_decode_of_code_point(
   )
 }
 
-pub theorem utf8_round_example(): text_decode(Text::utf8_of_code_point(233), 0) = Some(#(@code 233, @len 2)) {
+pub theorem utf8_round_example(): text_decode(
+  Text::utf8_of_code_point(233),
+  0
+) = Some(#(@code 233, @len 2)) {
   text_decode_of_code_point(233, Refl)
 }

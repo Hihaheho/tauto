@@ -182,23 +182,25 @@ fn cursor_target_cannot_be_a_field_parameter_or_captured_cell() {
         let f = pkg
             .fns
             .iter_mut()
-            .find(|f| f.source == "all_matches" && f.tier == Tier::O)
+            .find(|f| f.source.as_str() == "all_matches" && f.tier == Tier::O)
             .unwrap();
         let parameter = f.params[0].local.clone();
         fn block(b: &mut Block, mode: usize, parameter: &Local) {
             for stmt in &mut b.stmts {
                 match stmt {
                     Stmt::While { body, .. } => block(body, mode, parameter),
-                    Stmt::Assign { target, .. } if target.local.name == "cursor" => match mode {
-                        0 => target.path.push(FieldRef {
-                            name: "field".into(),
-                            index: None,
-                            indirect: Indirect::None,
-                        }),
-                        1 => target.local = parameter.clone(),
-                        2 => target.local.repr = Repr::SharedVar(false),
-                        _ => unreachable!(),
-                    },
+                    Stmt::Assign { target, .. } if target.local.name.as_str() == "cursor" => {
+                        match mode {
+                            0 => target.path.push(FieldRef {
+                                name: "field".into(),
+                                index: None,
+                                indirect: Indirect::None,
+                            }),
+                            1 => target.local = parameter.clone(),
+                            2 => target.local.repr = Repr::SharedVar(false),
+                            _ => unreachable!(),
+                        }
+                    }
                     Stmt::Expr(e) => change(e, mode, parameter),
                     _ => {}
                 }
@@ -279,7 +281,10 @@ fn run(steps: i64, numbers: List(u64), nested: List(List(u64)), choose: Bool): u
     );
     for ty in [
         Ty::Int(Width::U64),
-        Ty::Data("List".into(), vec![Ty::Int(Width::U64)]),
+        Ty::Data(
+            tauto::bindings::library_name("List"),
+            vec![Ty::Int(Width::U64)],
+        ),
     ] {
         assert!(
             reports.iter().any(|r| r.function == "count"

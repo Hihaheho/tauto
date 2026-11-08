@@ -21,7 +21,7 @@ module Bytes {
 
   // Mapped: the bytes, in order.
   pub fn to_list(b: Bytes): List(U8) {
-    match b: List(U8) {
+    ⊢ List(U8) from match b {
       Mk(l) => l
     }
   }
@@ -42,7 +42,7 @@ module Bytes {
 
   // Mapped: the bytes from `start` to `end`, when `start <= end <= len`.
   pub fn slice(b: Bytes, start: Nat, end: Nat): Option(Bytes) {
-    match start <= end && end <= len(b): Option(Bytes) {
+    ⊢ Option(Bytes) from match start <= end && end <= Bytes::len(b) {
       false => None
       true => Some(Bytes::Mk(List::take(end - start, List::drop(start, to_list(b)))))
     }
@@ -55,7 +55,7 @@ module Bytes {
 
   // Mapped: whether the two are the same bytes.
   pub fn eq(a: Bytes, b: Bytes): Bool {
-    match compare(values(a), values(b)): Bool {
+    ⊢ Bool from match compare(values(a), values(b)) {
       Less => false
       Equal => true
       Greater => false
@@ -78,7 +78,7 @@ module Bytes {
     Bytes::Mk(List::map((n: Nat) => U8::of_byte(n), Text::bytes(t)))
   }
 
-  pub theorem len_of_list(l: List(U8)): len(of_list(l)) = List::length(l) {
+  pub theorem len_of_list(l: List(U8)): Bytes::len(of_list(l)) = List::length(l) {
     Refl
   }
 
@@ -86,7 +86,7 @@ module Bytes {
     Refl
   }
 
-  pub theorem get_of_list(l: List(U8), i: Nat): get(of_list(l), i) = List::nth(l, i) {
+  pub theorem get_of_list(l: List(U8), i: Nat): Bytes::get(of_list(l), i) = List::nth(l, i) {
     Refl
   }
 
@@ -110,14 +110,14 @@ module Text {
   }
 
   // A cut through the middle of a character is bytes, not text.
-  pub theorem of_bytes_half_a_character(): match Bytes::slice(
+  pub theorem of_bytes_half_a_character(): (⊢ Option(Text) from match Bytes::slice(
     Bytes::of_text("é"),
     0,
     1
-  ): Option(Text) {
+  ) {
     None => None
     Some(b) => of_bytes(b)
-  } = None {
+  }) = None {
     Refl
   }
 }

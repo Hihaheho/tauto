@@ -3,24 +3,24 @@
 @ cases.clone-structural
 source = ```nib
 affine enum Expr { Lit(Buf), Add(Expr, Expr) }
-let e = Add(Lit(buf_of("a")), Lit(buf_of("b")))
-let e2 = clone(&e)
+let e := Add(Lit(Buf::of("a")), Lit(Buf::of("b")))
+let e2 := clone(&e)
 ```
 lin = "ok"
 
 @ cases.clone-of-opaque-rejected
 source = ```nib
 affine struct File {}
-let f = File {}
-let g = clone(&f)
+let f := File {}
+let g := clone(&f)
 ```
 types = "error: File has no clone"
 
 @ cases.clone-of-linear-rejected
 source = ```nib
 linear struct H {}
-let h = H {}
-let g = clone(&h)
+let h := H {}
+let g := clone(&h)
 ```
 types = "error: H is linear"
 
@@ -28,8 +28,8 @@ types = "error: H is linear"
 source = ```nib
 affine struct A {}
 affine struct B {}
-let a = A {}
-let b = B {}
+let a := A {}
+let b := B {}
 ```
 drops = ["B", "A"]
 
@@ -37,9 +37,9 @@ drops = ["B", "A"]
 source = ```nib
 affine struct A {}
 affine struct B {}
-fn keep(a: A) -> () { }
-let a = A {}
-let b = B {}
+fn keep(a: A): Unit { }
+let a := A {}
+let b := B {}
 keep(a)
 ```
 drops = ["A", "B"]

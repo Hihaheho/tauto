@@ -1,0 +1,120 @@
+description = "What a macro makes for the proofs is extracted once: the program calls it, and the call is not expanded again in the program."
+
+// An attribute macro that makes, after the declaration it is given, a
+// family, a function on it in the proof language, and a function of Nib.
+@ cases.a-program-uses-what-a-macro-made-in-the-same-file
+extract = true
+entry = "main.taut"
+files."mk.taut" = ````tauto
+import std::Base
+import std::prelude::Macro
+
+pub fn mk_made(at: SynIdent): List(SynStmt) {
+  let t := Syn::decl_name(at, "Unit1")
+  let c := Syn::decl_name(at, "Uno")
+  let f := Syn::decl_name(at, "size")
+  let g := Syn::decl_name(at, "twice")
+  quote stmts {
+    inductive $t: Type {
+      $c: $t
+    }
+    fn $f(x: $t): Nat { ⊢ Nat from match x { $c => 1 } }
+    fn $g(x: i64): i64 { x + x }
+  }
+}
+
+pub macro fn mk(e: SynExpr, s: SynStmt): List(SynStmt) {
+  match s {
+    StFn(f) => mk_made(f.name)
+    _ => Nil
+  }
+}
+````
+files."main.taut" = ````tauto
+import "mk.taut"
+@mk!(0) => inductive Unit1, fn size, fn twice
+fn base(): Nat { 0 }
+theorem size_uno(): size(Uno) = 1 { Refl }
+perform show("size", size(Uno))
+perform show("twice", twice(4))
+````
+shows = ["size = 1", "twice = 8"]
+
+// The same declarations, made in a file the program imports: they are
+// declared once, where they were made.
+@ cases.a-program-uses-what-a-macro-made-in-another-file
+extract = true
+entry = "main.taut"
+files."mk.taut" = ````tauto
+import std::Base
+import std::prelude::Macro
+
+pub fn mk_made(at: SynIdent): List(SynStmt) {
+  let t := Syn::decl_name(at, "Unit1")
+  let c := Syn::decl_name(at, "Uno")
+  let f := Syn::decl_name(at, "size")
+  let g := Syn::decl_name(at, "twice")
+  quote stmts {
+    inductive $t: Type {
+      $c: $t
+    }
+    fn $f(x: $t): Nat { ⊢ Nat from match x { $c => 1 } }
+    fn $g(x: i64): i64 { x + x }
+  }
+}
+
+pub macro fn mk(e: SynExpr, s: SynStmt): List(SynStmt) {
+  match s {
+    StFn(f) => mk_made(f.name)
+    _ => Nil
+  }
+}
+````
+files."lib.taut" = ````tauto
+import "mk.taut"
+@mk!(0) => inductive Unit1, fn size, fn twice
+pub fn base(): Nat { 0 }
+pub theorem size_uno(): size(Uno) = 1 { Refl }
+pub fn the_uno(): Unit1 { Uno }
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+perform show("size", size(the_uno()))
+perform show("twice", twice(4))
+````
+shows = ["size = 1", "twice = 8"]
+
+// A constructor of a family of the proofs is called with `()` as the proofs
+// call it; the program reads it as the value it is.
+@ cases.a-program-calls-a-constructor-without-arguments
+extract = true
+source = ```tauto
+import std::Text
+inductive Step: Type {
+  Hi: Step
+}
+fn step_id(s: Step): Text { ⊢ Text from match s { Hi => "hi" } }
+theorem step_id_hi(): step_id(Hi) = "hi" { Refl }
+perform show("id", step_id(Hi))
+```
+shows = ['id = "hi"']
+
+// The standard library's constructor of `Text`, written by its full name
+// in a file that also imports another file's declaration of its short name,
+// runs as the text it makes. The two files only meet in the importer: a file
+// that imported `std.Text` and declared `text` itself would be rejected.
+@ cases.a-program-calls-the-text-constructor-by-its-full-name
+extract = true
+entry = "main.taut"
+files."num.taut" = ```tauto
+pub fn text(n: Nat): Nat { n }
+```
+files."main.taut" = ```tauto
+import std::Text
+import "num.taut"
+fn hi(): Text { std::Text::Text::Mk(Cons(104, Cons(105, Nil))) }
+theorem hi_len(): Text::len(hi()) = 2 { Refl }
+perform show("hi", hi())
+perform show("n", text(3))
+```
+shows = ['hi = "hi"', "n = 3"]

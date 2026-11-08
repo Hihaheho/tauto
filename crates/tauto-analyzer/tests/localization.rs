@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use tauto::program::LoadError;
 use tauto::report::{self, Report};
 use tauto_analyzer::{Options, Workspace};
 
@@ -39,13 +40,13 @@ impl Drop for RestoreLanguage {
     }
 }
 
-fn same(incremental: &Result<Report, String>, batch: &Result<Report, String>) {
+fn same(incremental: &Result<Report, LoadError>, batch: &Result<Report, String>) {
     match (incremental, batch) {
         (Ok(a), Ok(b)) => {
             assert_eq!(a.text(), b.text());
             assert_eq!(a.json().render(), b.json().render());
         }
-        (Err(a), Err(b)) => assert_eq!(a, b),
+        (Err(a), Err(b)) => assert_eq!(&a.to_string(), b),
         (a, b) => panic!(
             "incremental {:?}, batch {:?}",
             a.as_ref().map(|_| "ok"),
@@ -62,7 +63,7 @@ fn workspace() -> Workspace {
 }
 
 fn batch(path: &Path, text: &str) -> Result<Report, String> {
-    report::check_report(path, Some(text))
+    report::check_report(path, Some(text)).map_err(|e| e.to_string())
 }
 
 #[test]
@@ -128,6 +129,8 @@ theorem t(): Nat { math!(`1 = 1`) }
         let after = ws.report(&path);
         assert!(after.as_ref().unwrap().text().contains(phrase));
         same(&after, &batch(&path, &moved));
-        assert!(ws.stats(&path).checked > before.checked);
+        // The statement only moved and its expansion was made again as it was: what the
+        // kernel said of it is placed again, not checked again.
+        assert_eq!(ws.stats(&path).checked, before.checked);
     }
 }

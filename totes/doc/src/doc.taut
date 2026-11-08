@@ -1,0 +1,650 @@
+import "../../highlight/src/highlight.taut"
+import "../../names/src/names.taut"
+import "../../surface/src/surface.taut"
+import "../../syntax/src/syntax.taut"
+import "../../text/src/text.taut"
+import "../../unicode/src/classes.taut"
+import "../../unicode/src/unicode.taut"
+import std::prelude::Affine
+import std::Base
+import std::Text
+import std::Sort
+import std::List
+
+// A source file: its path under the root, its text, and what `totes/names`
+// reads of it (nothing when it does not parse). `imports` are the paths
+// under the root of the files it imports.
+pub(open) inductive DocFile: Type {
+  Mk(
+    path: Text,
+    source: Text,
+    decls: List(NamesDecl),
+    // The line of each declaration's name, in the order of `decls`.
+    lines: List(Nat),
+    uses: List(NamesUse),
+    imports: List(Text)
+  ): DocFile
+}
+
+// A piece of the page: the bytes `start` to `end` of the source, with the
+// opening and closing tags around them.
+pub(open) inductive DocPiece: Type {
+  Mk(start: Nat, end: Nat, open: Text, close: Text): DocPiece
+}
+
+pub fn doc_nat_cmp(a: Nat, b: Nat): Ordering {
+  if a < b { Less } else if a == b { Equal } else { Greater }
+}
+
+pub fn doc_piece_cmp(a: DocPiece, b: DocPiece): Ordering {
+  doc_nat_cmp(a.start, b.start)
+}
+
+pub fn doc_text_cmp(a: Text, b: Text): Ordering {
+  Text::ordering(a, b)
+}
+
+pub fn doc_concat(parts: List(Text)): Text {
+  Text::concat_all(parts)
+}
+
+// --- Paths -----------------------------------------------------------------
+
+pub fn doc_dir_parts(path: Text): List(Text) {
+  match text_list_reverse(text_split(path, "/")) {
+    Nil => Nil
+    Cons(file, dirs) => text_list_reverse(dirs)
+  }
+}
+
+// `parts` after the directories `kept` (last first), with `.` and `x/..`
+// taken out; `None` when it leaves the root.
+pub fn doc_normalize_onto(kept: List(Text), parts: List(Text)): Option(List(Text)) {
+  ⊢ Option(List(Text)) from match parts {
+    Nil => Some(text_list_reverse(kept))
+    Cons(p, rest) => if p == "" || p == "." {
+      doc_normalize_onto(kept, rest)
+    } else if p == ".." {
+      ⊢ Option(List(Text)) from match kept {
+        Nil => None
+        Cons(k, up) => doc_normalize_onto(up, rest)
+      }
+    } else {
+      doc_normalize_onto(Cons(p, kept), rest)
+    }
+  }
+}
+
+pub fn doc_normalize(parts: List(Text)): Option(List(Text)) {
+  doc_normalize_onto(Nil, parts)
+}
+
+// The path under the root that `import "written"` in the file `origin` names.
+pub fn doc_import_path(origin: Text, written: Text): Option(Text) {
+  match doc_normalize(List::append(doc_dir_parts(origin), text_split(written, "/"))) {
+    None => None
+    Some(parts) => Some(text_join(parts, "/"))
+  }
+}
+
+pub fn doc_imports(origin: Text, written: List(Text)): List(Text) {
+  match written {
+    Nil => Nil
+    Cons(w, rest) => match doc_import_path(origin, w) {
+      None => doc_imports(origin, rest)
+      Some(p) => Cons(p, doc_imports(origin, rest))
+    }
+  }
+}
+
+// From the page of `path` back to the root: `../` for each directory.
+pub fn doc_up(origin: Text): Text {
+  text_repeat("../", List::length(doc_dir_parts(origin)))
+}
+
+pub fn doc_page(path: Text): Text {
+  Text::concat(path, ".html")
+}
+
+// --- Lines -----------------------------------------------------------------
+
+// The line (from 1) the byte `at` is on.
+pub fn doc_line_of(source: Text, at: Nat): Nat {
+  List::length(text_split(Text::slice_or_empty(source, 0, at), "\n"))
+}
+
+pub fn doc_is_name_byte(b: Nat): Bool {
+  (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95 || b >= 128
+}
+
+// The last part of `a::b::c`.
+pub fn doc_last_part(name: Text): Text {
+  match text_list_reverse(text_split(name, "::")) {
+    Nil => name
+    Cons(last, rest) => last
+  }
+}
+
+// Where the declaration's name is written: the first time it stands as a
+// whole word in the declaration from `at`, or its start; at most `k` tries.
+pub fn doc_name_in(k: Nat, source: Text, name: Text, at: Nat, d: NamesDecl): Nat {
+  ⊢ Nat from match k {
+    Zero => d.start
+    Succ(k1) => ⊢ Nat from match text_find(source, name, at) {
+      None => d.start
+      Some(i) => if i >= d.end {
+        d.start
+      } else if (i == 0 || not(doc_is_name_byte(Text::byte_value(source, i - 1)))) && not(doc_is_name_byte(Text::byte_value(source, i + Text::len(name)))) {
+        i
+      } else {
+        doc_name_in(k1, source, name, i + 1, d)
+      }
+    }
+  }
+}
+
+pub fn doc_name_at(source: Text, d: NamesDecl): Nat {
+  doc_name_in(d.end - d.start, source, doc_last_part(d.name), d.start, d)
+}
+
+// The lines of the names of `ds`, counted on from the byte `at` on the line
+// `line`; a name before `at` is counted from the start.
+pub fn doc_lines_from(source: Text, at: Nat, line: Nat, ds: List(NamesDecl)): List(Nat) {
+  ⊢ List(Nat) from match ds {
+    Nil => Nil
+    Cons(d, rest) => {
+      let pos := doc_name_at(source, d)
+      let here := if pos >= at {
+        line + doc_line_of(Text::slice_or_empty(source, at, pos), Text::len(Text::slice_or_empty(source, at, pos))) - 1
+      } else {
+        doc_line_of(source, pos)
+      }
+      Cons(here, doc_lines_from(source, pos, here, rest))
+    }
+  }
+}
+
+pub fn doc_line_in(ds: List(NamesDecl), lines: List(Nat), d: NamesDecl): Nat {
+  ⊢ Nat from match ds {
+    Nil => 1
+    Cons(x, rest) => ⊢ Nat from match lines {
+      Nil => 1
+      Cons(l, more) => if doc_same(x, d) { l } else { doc_line_in(rest, more, d) }
+    }
+  }
+}
+
+pub fn doc_decl_line(f: DocFile, d: NamesDecl): Nat {
+  doc_line_in(f.decls, f.lines, d)
+}
+
+// --- HTML ------------------------------------------------------------------
+
+pub fn doc_escape_byte(b: Nat): Option(Text) {
+  if b == 38 {
+    Some("&amp;")
+  } else if b == 60 {
+    Some("&lt;")
+  } else if b == 62 {
+    Some("&gt;")
+  } else if b == 34 {
+    Some("&quot;")
+  } else {
+    None
+  }
+}
+
+pub fn doc_escape(t: Text): Text {
+  var b := Buf::new()
+  var i := 0
+  var origin := 0
+  let n := Text::len(t)
+  while i < n {
+    match doc_escape_byte(Text::byte_value(t, i)) {
+      None => #()
+      Some(e) => {
+        Buf::push(&mut b, &Text::slice_or_empty(t, origin, i))
+        Buf::push(&mut b, &e)
+        origin := i + 1
+      }
+    }
+    i := i + 1
+  }
+  Buf::push(&mut b, &Text::slice_or_empty(t, origin, n))
+  Text::of(b)
+}
+
+pub fn doc_style(): Text {
+  doc_concat(Cons(
+    ":root{color-scheme:light dark;--bg:#fff;--fg:#1f2328;--mut:#6e7781;--kw:#cf222e;--str:#0a3069;--num:#0550ae;--com:#6e7781;--mac:#8250df;--ty:#953800;--fn:#6639ba;--var:#116329;--link:#0969da;--sel:#fff8c5}",
+    Cons(
+      "@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--mut:#7d8590;--kw:#ff7b72;--str:#a5d6ff;--num:#79c0ff;--com:#8b949e;--mac:#d2a8ff;--ty:#ffa657;--fn:#d2a8ff;--var:#7ee787;--link:#58a6ff;--sel:#3a3000}}",
+      Cons(
+        "body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif}nav,main{padding:8px 16px}a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}",
+        Cons(
+          "pre{margin:0;padding:8px 0;font:13px/1.5 ui-monospace,monospace;overflow-x:auto}pre a{color:inherit}pre a[href^=\"#\"],pre a[href*=\".html\"]{text-decoration:underline dotted}",
+          Cons(
+            ".ln{display:inline-block;width:5ch;margin-right:2ch;text-align:right;color:var(--mut);user-select:none;text-decoration:none!important}.ln:target{background:var(--sel)}",
+            Cons(
+              ".kw{color:var(--kw)}.str{color:var(--str)}.num{color:var(--num)}.com{color:var(--com)}.mac{color:var(--mac)}.ty{color:var(--ty)}.fn{color:var(--fn)}.var{color:var(--var)}ul{list-style:none;padding-left:0}li li{padding-left:2ch}.kind{color:var(--mut)}",
+              Nil
+            )
+          )
+        )
+      )
+    )
+  ))
+}
+
+pub fn doc_head(title: Text): Text {
+  doc_concat(Cons(
+    "<!doctype html>\n<html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>",
+    Cons(doc_escape(title), Cons("</title><style>", Cons(doc_style(), Cons("</style>\n", Nil))))
+  ))
+}
+
+pub fn doc_line_mark(n: Nat): Text {
+  let s := Text::of_nat(n)
+  doc_concat(Cons("<a class=\"ln\" id=\"L", Cons(s, Cons("\" href=\"#L", Cons(s, Cons("\">", Cons(s, Cons("</a>", Nil))))))))
+}
+
+// The bytes `start` to `to` of the source, escaped, with the number of
+// each line that starts in them.
+pub fn doc_push_plain(&mut b: Buf, &mut line: Nat, source: Text, origin: Nat, to: Nat): Unit {
+  var i := origin
+  var start := origin
+  while i < to {
+    if Text::byte_value(source, i) == 10 {
+      Buf::push(&mut b, &doc_escape(Text::slice_or_empty(source, start, i + 1)))
+      line := line + 1
+      if i + 1 < Text::len(source) {
+        Buf::push(&mut b, &doc_line_mark(line))
+      }
+      start := i + 1
+    }
+    i := i + 1
+  }
+  Buf::push(&mut b, &doc_escape(Text::slice_or_empty(source, start, to)))
+}
+
+// The source with its pieces (sorted by start), each line after its
+// number. A piece that overlaps the one before it is left out.
+pub fn doc_source_html(source: Text, pieces: List(DocPiece)): Text {
+  var b := Buf::new()
+  var line := 1
+  var pos := 0
+  let n := Text::len(source)
+  Buf::push(&mut b, &doc_line_mark(1))
+  var rest := pieces
+  var running := true
+  while running {
+    match rest {
+      Nil => {
+        running := false
+      }
+      Cons(p, more) => {
+        rest := more
+        if p.start < pos || p.end > n || p.end <= p.start {
+          #()
+        } else {
+          doc_push_plain(&mut b, &mut line, source, pos, p.start)
+          Buf::push(&mut b, &p.open)
+          doc_push_plain(&mut b, &mut line, source, p.start, p.end)
+          Buf::push(&mut b, &p.close)
+          pos := p.end
+        }
+      }
+    }
+  }
+  doc_push_plain(&mut b, &mut line, source, pos, n)
+  Text::of(b)
+}
+
+// --- Resolution ------------------------------------------------------------
+
+pub fn doc_find_file(files: List(DocFile), path: Text): Option(DocFile) {
+  match files {
+    Nil => None
+    Cons(f, rest) => if f.path == path { Some(f) } else { doc_find_file(rest, path) }
+  }
+}
+
+pub fn doc_files_named(files: List(DocFile), paths: List(Text)): List(DocFile) {
+  match paths {
+    Nil => Nil
+    Cons(p, rest) => match doc_find_file(files, p) {
+      None => doc_files_named(files, rest)
+      Some(f) => Cons(f, doc_files_named(files, rest))
+    }
+  }
+}
+
+// One declaration listed as `C` and as `T::C` is one target.
+pub fn doc_same(a: NamesDecl, b: NamesDecl): Bool {
+  a.start == b.start && doc_last_part(a.name) == doc_last_part(b.name)
+}
+
+pub fn doc_has_target(ts: List(Pair(Text, NamesDecl)), path: Text, d: NamesDecl): Bool {
+  ⊢ Bool from match ts {
+    Nil => false
+    Cons(t, rest) => if t.fst == path && doc_same(t.snd, d) { true } else { doc_has_target(rest, path, d) }
+  }
+}
+
+pub fn doc_targets_in(path: Text, ds: List(NamesDecl), name: Text, out: List(Pair(Text, NamesDecl))): List(Pair(Text, NamesDecl)) {
+  ⊢ List(Pair(Text, NamesDecl)) from match ds {
+    Nil => out
+    Cons(d, rest) => if d.name == name && not(doc_has_target(out, path, d)) {
+      doc_targets_in(path, rest, name, Cons(Pair { fst: path, snd: d }, out))
+    } else {
+      doc_targets_in(path, rest, name, out)
+    }
+  }
+}
+
+// The files and places a name is declared at in `scope`; each place once.
+pub fn doc_targets_of(scope: List(DocFile), name: Text, out: List(Pair(Text, NamesDecl))): List(Pair(Text, NamesDecl)) {
+  ⊢ List(Pair(Text, NamesDecl)) from match scope {
+    Nil => out
+    Cons(f, rest) => doc_targets_of(rest, name, doc_targets_in(f.path, f.decls, name, out))
+  }
+}
+
+pub fn doc_targets(scope: List(DocFile), name: Text): List(Pair(Text, NamesDecl)) {
+  doc_targets_of(scope, name, Nil)
+}
+
+// Where a use links to: the one declaration of its name, looked up first
+// under its module path and then as written. None when there is none, or
+// more than one.
+pub fn doc_only(found: List(Pair(Text, NamesDecl))): Option(Pair(Text, NamesDecl)) {
+  ⊢ Option(Pair(Text, NamesDecl)) from match found {
+    Nil => None
+    Cons(only, more) => ⊢ Option(Pair(Text, NamesDecl)) from match more {
+      Nil => Some(only)
+      Cons(x, r) => None
+    }
+  }
+}
+
+pub fn doc_or_written(inner: List(Pair(Text, NamesDecl)), scope: List(DocFile), u: NamesUse): List(Pair(Text, NamesDecl)) {
+  ⊢ List(Pair(Text, NamesDecl)) from match inner {
+    Nil => doc_targets(scope, u.name)
+    Cons(x, r) => inner
+  }
+}
+
+pub fn doc_resolve(scope: List(DocFile), u: NamesUse): Option(Pair(Text, NamesDecl)) {
+  if u.scope == "" {
+    doc_only(doc_targets(scope, u.name))
+  } else {
+    doc_only(doc_or_written(doc_targets(scope, Text::concat(u.scope, u.name)), scope, u))
+  }
+}
+
+pub fn doc_link(files: List(DocFile), origin: DocFile, target: Pair(Text, NamesDecl)): Option(Text) {
+  match doc_find_file(files, target.fst) {
+    None => None
+    Some(f) => {
+      let anchor := Text::concat("#L", Text::of_nat(doc_decl_line(f, target.snd)))
+      if f.path == origin.path {
+        Some(anchor)
+      } else {
+        Some(doc_concat(Cons(doc_up(origin.path), Cons(doc_escape(doc_page(f.path)), Cons(anchor, Nil)))))
+      }
+    }
+  }
+}
+
+pub fn doc_link_pieces(files: List(DocFile), f: DocFile): List(DocPiece) {
+  let scope := Cons(f, doc_files_named(files, f.imports))
+  var out := Nil
+  var us := f.uses
+  var running := true
+  while running {
+    match us {
+      Nil => {
+        running := false
+      }
+      Cons(u, rest) => {
+        us := rest
+        match doc_resolve(scope, u) {
+          None => #()
+          Some(t) => match doc_link(files, f, t) {
+            None => #()
+            Some(href) => {
+              out := Cons(DocPiece { start: u.start, end: u.end, open: doc_concat(Cons("<a href=\"", Cons(href, Cons("\">", Nil)))), close: "</a>" }, out)
+            }
+          }
+        }
+      }
+    }
+  }
+  out
+}
+
+pub fn doc_hl_pieces(spans: List(HlSpan)): List(DocPiece) {
+  List::map(
+    (s: HlSpan) => DocPiece {
+      start: s.start,
+      end: s.end,
+      open: doc_concat(Cons("<span class=\"", Cons(hl_class_name(s.kind), Cons("\">", Nil)))),
+      close: "</span>"
+    },
+    spans
+  )
+}
+
+// --- Tokens inside macros --------------------------------------------------
+
+// The tokens an editor colours inside the macros of the file at `path` (the
+// syntax literals and the fenced blocks in comments), as the caller gives
+// them: one argument per file, its first line the path and each other line
+// `START END KIND`, bytes of the file and the kind of an editor's semantic
+// token.
+pub(open) inductive DocDsl: Type {
+  Mk(path: Text, pieces: List(DocPiece)): DocDsl
+}
+
+// The class of an editor's kind of token; "" when it is left plain.
+pub fn doc_dsl_class(kind: Text): Text {
+  if kind == "keyword" || kind == "modifier" {
+    "kw"
+  } else if kind == "number" || kind == "enumMember" {
+    "num"
+  } else if kind == "string" || kind == "regexp" {
+    "str"
+  } else if kind == "comment" {
+    "com"
+  } else if kind == "type" || kind == "struct" || kind == "enum" || kind == "class" || kind == "interface" || kind == "typeParameter" || kind == "namespace" {
+    "ty"
+  } else if kind == "function" || kind == "method" || kind == "decorator" {
+    "fn"
+  } else if kind == "macro" {
+    "mac"
+  } else if kind == "parameter" || kind == "property" || kind == "event" {
+    "var"
+  } else {
+    ""
+  }
+}
+
+pub fn doc_dsl_piece(line: Text): Option(DocPiece) {
+  match text_split(line, " ") {
+    Cons(s, Cons(e, Cons(kind, Nil))) => match text_parse_u64(s) {
+      None => None
+      Some(start) => match text_parse_u64(e) {
+        None => None
+        Some(end) => {
+          let cls := doc_dsl_class(kind)
+          if cls == "" {
+            // A plain token still takes its bytes from the text around it.
+            Some(DocPiece { start: start, end: end, open: "", close: "" })
+          } else {
+            Some(DocPiece { start: start, end: end, open: doc_concat(Cons("<span class=\"", Cons(cls, Cons("\">", Nil)))), close: "</span>" })
+          }
+        }
+      }
+    }
+    _ => None
+  }
+}
+
+pub fn doc_dsl_pieces(lines: List(Text)): List(DocPiece) {
+  match lines {
+    Nil => Nil
+    Cons(l, rest) => match doc_dsl_piece(l) {
+      None => doc_dsl_pieces(rest)
+      Some(p) => Cons(p, doc_dsl_pieces(rest))
+    }
+  }
+}
+
+// An argument with a line break is a file's tokens; the others are paths.
+pub fn doc_is_dsl_arg(arg: Text): Bool {
+  match text_find(arg, "\n", 0) {
+    None => false
+    Some(i) => true
+  }
+}
+
+pub fn doc_dsl_arg(arg: Text): DocDsl {
+  match text_split(arg, "\n") {
+    Nil => DocDsl { path: "", pieces: Nil }
+    Cons(path, lines) => DocDsl { path: path, pieces: List::sort(doc_piece_cmp, doc_dsl_pieces(lines)) }
+  }
+}
+
+pub fn doc_dsl_of(dsl: List(DocDsl), path: Text): List(DocPiece) {
+  match dsl {
+    Nil => Nil
+    Cons(d, rest) => if d.path == path { d.pieces } else { doc_dsl_of(rest, path) }
+  }
+}
+
+// Whether one of the tokens `inner` (sorted) lies inside the piece `p`.
+pub fn doc_dsl_inside(p: DocPiece, inner: List(DocPiece)): Bool {
+  match inner {
+    Nil => false
+    Cons(d, more) => if p.end <= d.start {
+      false
+    } else if p.start <= d.start && d.end <= p.end {
+      true
+    } else {
+      doc_dsl_inside(p, more)
+    }
+  }
+}
+
+pub fn doc_dsl_coloured(d: DocPiece): Bool {
+  not(d.open == "")
+}
+
+pub fn doc_dsl_holds(p: DocPiece): Bool {
+  p.open == "<span class=\"str\">" || p.open == "<span class=\"com\">"
+}
+
+// The scanner's pieces with the editor's tokens in place of the text or
+// comment that holds them: the bytes no token colours are plain, as in an
+// editor.
+pub fn doc_dsl_merge(scanned: List(DocPiece), inner: List(DocPiece)): List(DocPiece) {
+  match scanned {
+    Nil => List::filter(doc_dsl_coloured, inner)
+    Cons(p, more) => if doc_dsl_holds(p) && doc_dsl_inside(p, inner) {
+      doc_dsl_merge(more, inner)
+    } else {
+      Cons(p, doc_dsl_merge(more, inner))
+    }
+  }
+}
+
+// --- Pages -----------------------------------------------------------------
+
+pub fn doc_source_page(&t: SyntaxTables, files: List(DocFile), dsl: List(DocDsl), f: DocFile): Text {
+  let inner := doc_dsl_of(dsl, f.path)
+  let hl := doc_dsl_merge(doc_hl_pieces(hl_spans(t, f.source)), inner)
+  let pieces := List::sort(doc_piece_cmp, List::append(hl, doc_link_pieces(files, f)))
+  doc_concat(Cons(
+    doc_head(f.path),
+    Cons(
+      "<nav><a href=\"",
+      Cons(
+        doc_up(f.path),
+        Cons(
+          "index.html\">index</a> / ",
+          Cons(doc_escape(f.path), Cons("</nav>\n<pre><code>", Cons(doc_source_html(f.source, pieces), Cons("</code></pre>\n</html>\n", Nil))))
+        )
+      )
+    )
+  ))
+}
+
+// A declaration as the index lists it; constructors, `Type::Ctor` and
+// `Class::method` are left to the source page.
+pub fn doc_listed(d: NamesDecl): Bool {
+  not(d.kind == "ctor") && not(d.kind == "method" && Text::len(doc_last_part(d.name)) < Text::len(d.name))
+}
+
+pub fn doc_index_entry(f: DocFile): Text {
+  var b := Buf::new()
+  let page := doc_escape(doc_page(f.path))
+  Buf::push(&mut b, &doc_concat(Cons("<li><a href=\"", Cons(page, Cons("\">", Cons(doc_escape(f.path), Cons("</a>", Nil)))))))
+  let listed := List::filter(doc_listed, f.decls)
+  match listed {
+    Nil => #()
+    Cons(x, r) => {
+      Buf::push(&mut b, &"<ul>")
+      var ds := listed
+      var running := true
+      while running {
+        match ds {
+          Nil => {
+            running := false
+          }
+          Cons(d, rest) => {
+            ds := rest
+            let line := Text::of_nat(doc_decl_line(f, d))
+            let item := Cons("<li><span class=\"kind\">", Cons(doc_escape(d.kind), Cons("</span> <a href=\"", Cons(page, Cons("#L", Cons(line, Cons("\">", Cons(doc_escape(d.name), Cons("</a></li>", Nil)))))))))
+            Buf::push(&mut b, &doc_concat(item))
+          }
+        }
+      }
+      Buf::push(&mut b, &"</ul>")
+    }
+  }
+  Buf::push(&mut b, &"</li>\n")
+  Text::of(b)
+}
+
+pub fn doc_index_entries(files: List(DocFile)): Text {
+  match files {
+    Nil => ""
+    Cons(f, rest) => Text::concat(doc_index_entry(f), doc_index_entries(rest))
+  }
+}
+
+pub fn doc_index_page(title: Text, files: List(DocFile)): Text {
+  doc_concat(Cons(
+    doc_head(title),
+    Cons(
+      "<main><ul>\n",
+      Cons(doc_index_entries(files), Cons("</ul></main>\n</html>\n", Nil))
+    )
+  ))
+}
+
+// --- Reading ---------------------------------------------------------------
+
+pub fn doc_read(&t: SyntaxTables, classes: UnicodeClasses, path: Text, source: Text): DocFile {
+  match surface_parse_program(t, classes, source, 0) {
+    None => DocFile { path: path, source: source, decls: Nil, lines: Nil, uses: Nil, imports: Nil }
+    Some(stmts) => DocFile {
+      path: path,
+      source: source,
+      decls: names_decls(stmts),
+      lines: doc_lines_from(source, 0, 1, names_decls(stmts)),
+      uses: names_uses(source, stmts),
+      imports: doc_imports(path, names_imports(stmts))
+    }
+  }
+}

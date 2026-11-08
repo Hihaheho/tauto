@@ -1,0 +1,18 @@
+description = "A class over a type constructor is the program's class: it runs as written, with its instances and the functions it constrains."
+
+@ cases.type-constructor-class-runs-as-written
+extract = true
+source = ```tauto
+import std::prelude::Os { print }
+import std::prelude::Shared
+pub shared struct Box(T: Shared) { v: T }
+pub class Peekable(F: (Shared) -> Shared) {
+  fn look<T: Shared>(s: F(T)): T
+}
+instance Peekable(Box) {
+  fn look<T: Shared>(s: Box(T)): T { s.v }
+}
+pub fn peek<F: (Shared) -> Shared, T: Shared>(s: F(T)): T where Peekable(F) { Peekable::look(s) }
+print(peek(Box { v: "ok" }))
+```
+stdout = "ok"

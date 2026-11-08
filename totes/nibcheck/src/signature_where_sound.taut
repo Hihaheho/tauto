@@ -32,7 +32,7 @@ pub theorem signature_finish_preds_clean(
   m: Mut1(List(Pair(Text, Text)), Checker),
   clean: DiagnosticClean(ck_st(signature_finish_preds(g, params, result, m)))
 ): DiagnosticClean(ck_st(m)) {
-  match m: DiagnosticClean(ck_st(m)) {
+  ⊢ DiagnosticClean(ck_st(m)) from match m {
     mut1(preds, next) => clean
   }
 }
@@ -50,7 +50,7 @@ pub theorem signature_finish_preds_where(
     ck_val(m)
   )
 ): SignatureWhereResult(source, g, signature_finish_preds(g, params, result, m)) {
-  match m: SignatureWhereResult(source, g, signature_finish_preds(g, params, result, m)) {
+  ⊢ SignatureWhereResult(source, g, signature_finish_preds(g, params, result, m)) from match m {
     mut1(preds, next) => WhereClauses::Mk(preds, derived, Refl)
   }
 }
@@ -62,7 +62,7 @@ pub theorem signature_finish_report_where(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(signature_finish_report(source, g, params, result, m)))
 ): SignatureWhereResult(source, g, signature_finish_report(source, g, params, result, m)) {
-  match m: SignatureWhereResult(source, g, signature_finish_report(source, g, params, result, m)) {
+  ⊢ SignatureWhereResult(source, g, signature_finish_report(source, g, params, result, m)) from match m {
     mut1(ignored, next) => signature_finish_preds_where(
       source,
       g,
@@ -131,7 +131,7 @@ pub theorem signature_answer_where(
   m: Mut1(Ty, Checker),
   clean: DiagnosticClean(ck_st(signature_answer_after(source, g, params, m)))
 ): SignatureWhereResult(source, g, signature_answer_after(source, g, params, m)) {
-  match m: SignatureWhereResult(source, g, signature_answer_after(source, g, params, m)) {
+  ⊢ SignatureWhereResult(source, g, signature_answer_after(source, g, params, m)) from match m {
     mut1(result, next) => signature_finish_report_where(
       source,
       g,
@@ -148,7 +148,7 @@ pub theorem signature_parameters_where(
   m: Mut1(List(Ty), Checker),
   clean: DiagnosticClean(ck_st(signature_parameters_finish(source, g, m)))
 ): SignatureWhereResult(source, g, signature_parameters_finish(source, g, m)) {
-  match m: SignatureWhereResult(source, g, signature_parameters_finish(source, g, m)) {
+  ⊢ SignatureWhereResult(source, g, signature_parameters_finish(source, g, m)) from match m {
     mut1(params, next) => signature_answer_where(
       source,
       g,

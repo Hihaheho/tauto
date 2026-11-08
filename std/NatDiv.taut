@@ -11,8 +11,8 @@ module Nat {
   // `r < b` are the ones division finds (`div_of`, `mod_of`).
 
   pub fn dm_step(b: Nat, p: Nat × Nat): Nat × Nat {
-    match p: Nat × Nat {
-      #(q, r) => match Succ(r) == b: Nat × Nat {
+    ⊢ Nat × Nat from match p {
+      #(q, r) => ⊢ Nat × Nat from match Succ(r) == b {
         false => #(q, Succ(r))
         true => #(Succ(q), Zero)
       }
@@ -25,11 +25,14 @@ module Nat {
     q: Nat,
     r: Nat
   ): Nat::divmod(Succ(a), b, q, r) = dm_step(b, Nat::divmod(a, b, q, r)) {
-    match a: Nat::divmod(Succ(a), b, q, r) = dm_step(b, Nat::divmod(a, b, q, r)) {
+    ⊢ Nat::divmod(Succ(a), b, q, r) = dm_step(b, Nat::divmod(a, b, q, r)) from match a {
       Zero => Refl
-      Succ(a2) => match Succ(
+      Succ(a2) => ⊢ Nat::divmod(
+        Succ(Succ(a2)),
+        b,
+        q,
         r
-      ) == b: Nat::divmod(Succ(Succ(a2)), b, q, r) = dm_step(b, Nat::divmod(Succ(a2), b, q, r)) {
+      ) = dm_step(b, Nat::divmod(Succ(a2), b, q, r)) from match Succ(r) == b {
         false => ⊢ Nat::divmod(
           Succ(a2),
           b,
@@ -47,27 +50,24 @@ module Nat {
   }
 
   pub fn dm_fst(p: Nat × Nat): Nat {
-    match p: Nat {
+    ⊢ Nat from match p {
       #(q, r) => q
     }
   }
 
   pub fn dm_snd(p: Nat × Nat): Nat {
-    match p: Nat {
+    ⊢ Nat from match p {
       #(q, r) => r
     }
   }
 
   pub fn bool_ind(y: Bool): Nat {
-    match y: Nat {
-      false => 0
-      true => 1
-    }
+    ⊢ Nat from match y { false => 0, true => 1 }
   }
 
   // `r + 1`, or 0 when it has reached the divisor (`e` says whether it has).
   pub fn wrap_succ(e: Bool, r: Nat): Nat {
-    match e: Nat {
+    ⊢ Nat from match e {
       false => Succ(r)
       true => Zero
     }
@@ -77,8 +77,8 @@ module Nat {
     b: Nat,
     p: Nat × Nat
   ): dm_snd(dm_step(b, p)) = wrap_succ(Succ(dm_snd(p)) == b, dm_snd(p)) {
-    match p: dm_snd(dm_step(b, p)) = wrap_succ(Succ(dm_snd(p)) == b, dm_snd(p)) {
-      #(q, r) => match Succ(r) == b: dm_snd(dm_step(b, #(q, r))) = wrap_succ(Succ(r) == b, r) {
+    ⊢ dm_snd(dm_step(b, p)) = wrap_succ(Succ(dm_snd(p)) == b, dm_snd(p)) from match p {
+      #(q, r) => ⊢ dm_snd(dm_step(b, #(q, r))) = wrap_succ(Succ(r) == b, r) from match Succ(r) == b {
         false => ⊢ dm_snd(#(q, Succ(r))) = wrap_succ(false, r) from Refl
         true => ⊢ dm_snd(#(Succ(q), Zero)) = wrap_succ(true, r) from Refl
       }
@@ -97,19 +97,19 @@ module Nat {
   }
 
   pub theorem lt_succ_self(n: Nat): n < Succ(n) = true {
-    match n: n < Succ(n) = true {
+    ⊢ n < Succ(n) = true from match n {
       Zero => Refl
       Succ(k) => lt_succ_self(k)
     }
   }
 
   pub theorem lt_of_succ_lt(a: Nat, b: Nat, h: Succ(a) < b = true): a < b = true {
-    match a: a < b = true {
-      Zero => match b: Zero < b = true {
+    ⊢ a < b = true from match a {
+      Zero => ⊢ Zero < b = true from match b {
         Zero => False::elim(false_ne_true(h))
         Succ(b2) => Refl
       }
-      Succ(a2) => match b: Succ(a2) < b = true {
+      Succ(a2) => ⊢ Succ(a2) < b = true from match b {
         Zero => False::elim(false_ne_true(h))
         Succ(b2) => lt_of_succ_lt(a2, b2, h)
       }
@@ -122,15 +122,15 @@ module Nat {
     h: r < b = true,
     e: Succ(r) == b = false
   ): Succ(r) < b = true {
-    match r: Succ(r) < b = true {
-      Zero => match b: Succ(Zero) < b = true {
+    ⊢ Succ(r) < b = true from match r {
+      Zero => ⊢ Succ(Zero) < b = true from match b {
         Zero => False::elim(false_ne_true(h))
-        Succ(b2) => match b2: Succ(Zero) < Succ(b2) = true {
+        Succ(b2) => ⊢ Succ(Zero) < Succ(b2) = true from match b2 {
           Zero => False::elim(true_ne_false(e))
           Succ(b3) => Refl
         }
       }
-      Succ(r2) => match b: Succ(Succ(r2)) < b = true {
+      Succ(r2) => ⊢ Succ(Succ(r2)) < b = true from match b {
         Zero => False::elim(false_ne_true(h))
         Succ(b2) => lt_succ_of_ne(r2, b2, h, e)
       }
@@ -138,12 +138,12 @@ module Nat {
   }
 
   pub theorem ne_of_lt(r: Nat, b: Nat, h: r < b = true): r == b = false {
-    match r: r == b = false {
-      Zero => match b: Zero == b = false {
+    ⊢ r == b = false from match r {
+      Zero => ⊢ Zero == b = false from match b {
         Zero => False::elim(false_ne_true(h))
         Succ(b2) => Refl
       }
-      Succ(r2) => match b: Succ(r2) == b = false {
+      Succ(r2) => ⊢ Succ(r2) == b = false from match b {
         Zero => Refl
         Succ(b2) => ne_of_lt(r2, b2, h)
       }
@@ -154,12 +154,12 @@ module Nat {
     n: Nat,
     b: Nat
   ): Nat::rem_nz(n, Succ(b), Nat::succ_ne_zero(b)) < Succ(b) = true {
-    match n: Nat::rem_nz(n, Succ(b), Nat::succ_ne_zero(b)) < Succ(b) = true {
+    ⊢ Nat::rem_nz(n, Succ(b), Nat::succ_ne_zero(b)) < Succ(b) = true from match n {
       Zero => Refl
       Succ(m) => Eq::subst(
         (x: Nat) => x < Succ(b) = true,
         Eq::sym(mod_succ(m, Succ(b), Nat::succ_ne_zero(b))),
-        match Succ(Nat::rem_nz(m, Succ(b), Nat::succ_ne_zero(b))) == Succ(b) eqn e: wrap_succ(Succ(Nat::rem_nz(m, Succ(b), Nat::succ_ne_zero(b))) == Succ(b), Nat::rem_nz(m, Succ(b), Nat::succ_ne_zero(b))) < Succ(b) = true {
+        ⊢ wrap_succ(Succ(Nat::rem_nz(m, Succ(b), Nat::succ_ne_zero(b))) == Succ(b), Nat::rem_nz(m, Succ(b), Nat::succ_ne_zero(b))) < Succ(b) = true from match Succ(Nat::rem_nz(m, Succ(b), Nat::succ_ne_zero(b))) == Succ(b) eqn e {
           false => ⊢ wrap_succ(false, Nat::rem_nz(m, Succ(b), Nat::succ_ne_zero(b))) < Succ(b) = true from lt_succ_of_ne(
             Nat::rem_nz(m, Succ(b), Nat::succ_ne_zero(b)),
             Succ(b),
@@ -180,10 +180,11 @@ module Nat {
     b: Nat,
     p: Nat × Nat
   ): dm_value(b, dm_step(b, p)) = Succ(dm_value(b, p)) {
-    match p: dm_value(b, dm_step(b, p)) = Succ(dm_value(b, p)) {
-      #(q, r) => match Succ(
-        r
-      ) == b eqn e: dm_value(b, dm_step(b, #(q, r))) = Succ(dm_value(b, #(q, r))) {
+    ⊢ dm_value(b, dm_step(b, p)) = Succ(dm_value(b, p)) from match p {
+      #(q, r) => ⊢ dm_value(
+        b,
+        dm_step(b, #(q, r))
+      ) = Succ(dm_value(b, #(q, r))) from match Succ(r) == b eqn e {
         false => ⊢ dm_value(b, #(q, Succ(r))) = Succ(add(mul(b, q), r)) from Refl
         true => ⊢ dm_value(
           b,
@@ -200,7 +201,7 @@ module Nat {
     b: Nat,
     h: ¬(b = 0)
   ): add(mul(b, Nat::div_nz(n, b, h)), Nat::rem_nz(n, b, h)) = n {
-    match n: dm_value(b, Nat::divmod(n, b, Zero, Zero)) = n {
+    ⊢ dm_value(b, Nat::divmod(n, b, Zero, Zero)) = n from match n {
       Zero => Refl
       Succ(m) => Eq::trans(
         Eq::congr(⟦dm_value(b, □)⟧, divmod_succ(m, b, Zero, Zero)),
@@ -217,13 +218,13 @@ module Nat {
     b: Nat,
     h: r < b = true
   ): Nat::divmod(r, b, Zero, Zero) = #(Zero, r) {
-    match r: Nat::divmod(r, b, Zero, Zero) = #(Zero, r) {
+    ⊢ Nat::divmod(r, b, Zero, Zero) = #(Zero, r) from match r {
       Zero => Refl
       Succ(k) => Eq::trans(
         divmod_succ(k, b, Zero, Zero),
         Eq::trans(
           Eq::congr(⟦dm_step(b, □)⟧, divmod_small(k, b, lt_of_succ_lt(k, b, h))),
-          match Succ(k) == b eqn e: dm_step(b, #(Zero, k)) = #(Zero, Succ(k)) {
+          ⊢ dm_step(b, #(Zero, k)) = #(Zero, Succ(k)) from match Succ(k) == b eqn e {
             false => ⊢ #(Zero, Succ(k)) = #(Zero, Succ(k)) from Refl
             true => ⊢ #(Succ(Zero), Zero) = #(Zero, Succ(k)) from False::elim(true_ne_false(Eq::trans(Eq::sym(e), ne_of_lt(Succ(k), b, h))))
           }
@@ -233,7 +234,7 @@ module Nat {
   }
 
   pub fn pair_shift(p: Nat × Nat): Nat × Nat {
-    match p: Nat × Nat {
+    ⊢ Nat × Nat from match p {
       #(q, r) => #(Succ(q), r)
     }
   }
@@ -242,10 +243,11 @@ module Nat {
     b: Nat,
     p: Nat × Nat
   ): dm_step(b, pair_shift(p)) = pair_shift(dm_step(b, p)) {
-    match p: dm_step(b, pair_shift(p)) = pair_shift(dm_step(b, p)) {
-      #(q, r) => match Succ(
-        r
-      ) == b: dm_step(b, pair_shift(#(q, r))) = pair_shift(dm_step(b, #(q, r))) {
+    ⊢ dm_step(b, pair_shift(p)) = pair_shift(dm_step(b, p)) from match p {
+      #(q, r) => ⊢ dm_step(
+        b,
+        pair_shift(#(q, r))
+      ) = pair_shift(dm_step(b, #(q, r))) from match Succ(r) == b {
         false => ⊢ #(Succ(q), Succ(r)) = pair_shift(#(q, Succ(r))) from Refl
         true => ⊢ #(Succ(Succ(q)), Zero) = pair_shift(#(Succ(q), Zero)) from Refl
       }
@@ -257,10 +259,10 @@ module Nat {
       divmod_succ(b, Succ(b), Zero, Zero),
       Eq::trans(
         Eq::congr(⟦dm_step(Succ(b), □)⟧, divmod_small(b, Succ(b), lt_succ_self(b))),
-        match b == b eqn e: match b == b: Nat × Nat {
+        ⊢ (⊢ Nat × Nat from match b == b {
             false => #(Zero, Succ(b))
             true => #(Succ(Zero), Zero)
-          } = #(Succ(Zero), Zero) {
+          }) = #(Succ(Zero), Zero) from match b == b eqn e {
           false => ⊢ #(Zero, Succ(b)) = #(Succ(Zero), Zero) from False::elim(true_ne_false(Eq::trans(Eq::sym(Nat::eq_refl(b)), e)))
           true => ⊢ #(Succ(Zero), Zero) = #(Succ(Zero), Zero) from Refl
         }
@@ -277,12 +279,12 @@ module Nat {
     Zero,
     Zero
   ) = pair_shift(Nat::divmod(n, Succ(b), Zero, Zero)) {
-    match n: Nat::divmod(
+    ⊢ Nat::divmod(
       add(n, Succ(b)),
       Succ(b),
       Zero,
       Zero
-    ) = pair_shift(Nat::divmod(n, Succ(b), Zero, Zero)) {
+    ) = pair_shift(Nat::divmod(n, Succ(b), Zero, Zero)) from match n {
       Zero => Eq::trans(
         Eq::congr(⟦Nat::divmod(Succ(□), Succ(b), Zero, Zero)⟧, add_zero_left(b)),
         divmod_self(b)
@@ -317,7 +319,7 @@ module Nat {
     b: Nat,
     h: r < Succ(b) = true
   ): Nat::divmod(add(mul(Succ(b), q), r), Succ(b), Zero, Zero) = #(q, r) {
-    match q: Nat::divmod(add(mul(Succ(b), q), r), Succ(b), Zero, Zero) = #(q, r) {
+    ⊢ Nat::divmod(add(mul(Succ(b), q), r), Succ(b), Zero, Zero) = #(q, r) from match q {
       Zero => Eq::trans(
         Eq::congr(⟦Nat::divmod(□, Succ(b), Zero, Zero)⟧, add_zero_left(r)),
         divmod_small(r, Succ(b), h)
@@ -424,10 +426,10 @@ module Nat {
     b: Nat,
     p: Nat × Nat
   ): dm_fst(dm_step(b, p)) = add(dm_fst(p), bool_ind(dm_snd(dm_step(b, p)) == Zero)) {
-    match p: dm_fst(dm_step(b, p)) = add(dm_fst(p), bool_ind(dm_snd(dm_step(b, p)) == Zero)) {
-      #(q, r) => match Succ(
-        r
-      ) == b: dm_fst(dm_step(b, #(q, r))) = add(q, bool_ind(dm_snd(dm_step(b, #(q, r))) == Zero)) {
+    ⊢ dm_fst(dm_step(b, p)) = add(dm_fst(p), bool_ind(dm_snd(dm_step(b, p)) == Zero)) from match p {
+      #(q, r) => ⊢ dm_fst(
+        dm_step(b, #(q, r))
+      ) = add(q, bool_ind(dm_snd(dm_step(b, #(q, r))) == Zero)) from match Succ(r) == b {
         false => ⊢ dm_fst(#(q, Succ(r))) = add(q, bool_ind(dm_snd(#(q, Succ(r))) == Zero)) from Refl
         true => ⊢ dm_fst(
           #(Succ(q), Zero)

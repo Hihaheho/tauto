@@ -10,11 +10,11 @@ import "../../surface/src/surface.taut"
 
 pub fn fuel_errors(c: Checker): List(TypeError) { c.errors }
 pub fn fuel_has_errors(es: List(TypeError)): Bool {
-  match es: Bool { Nil => false
+  ⊢ Bool from match es { Nil => false
     Cons(e, rest) => true }
 }
 pub fn fuel_second_state<A: Type>(m: Mut2(A, Checker, Scope)): Checker {
-  match m: Checker { mut2(v, c, env) => c }
+  ⊢ Checker from match m { mut2(v, c, env) => c }
 }
 
 pub theorem ck_infer_in_fuel_error(
@@ -73,7 +73,9 @@ pub theorem ck_block_in_fuel_error(
   env: Scope,
   stopped: Bool,
   last: Ty
-): fuel_has_errors(fuel_errors(fuel_second_state(ck_block_in(Zero, c, stmts, env, stopped, last)))) = true { Refl }
+): fuel_has_errors(
+  fuel_errors(fuel_second_state(ck_block_in(Zero, c, stmts, env, stopped, last)))
+) = true { Refl }
 
 pub theorem ck_app_args_in_fuel_error(
   c: Checker,
@@ -81,7 +83,9 @@ pub theorem ck_app_args_in_fuel_error(
   known: Option(List(Ty)),
   env: List(Local),
   i: Nat
-): fuel_has_errors(fuel_errors(ck_st(ck_app_args_in(Zero, c, arguments, known, env, i)))) = true { Refl }
+): fuel_has_errors(
+  fuel_errors(ck_st(ck_app_args_in(Zero, c, arguments, known, env, i)))
+) = true { Refl }
 
 pub theorem ck_app_in_fuel_error(
   c: Checker,
@@ -89,7 +93,9 @@ pub theorem ck_app_in_fuel_error(
   function: SurfaceTerm,
   arguments: List(SurfaceTerm),
   env: List(Local)
-): fuel_has_errors(fuel_errors(ck_st(ck_app_in(Zero, c, term, function, arguments, env)))) = true { Refl }
+): fuel_has_errors(
+  fuel_errors(ck_st(ck_app_in(Zero, c, term, function, arguments, env)))
+) = true { Refl }
 
 pub theorem ck_app_call_in_fuel_error(
   c: Checker,
@@ -97,7 +103,9 @@ pub theorem ck_app_call_in_fuel_error(
   function: SurfaceTerm,
   arguments: List(SurfaceTerm),
   env: List(Local)
-): fuel_has_errors(fuel_errors(ck_st(ck_app_call_in(Zero, c, term, function, arguments, env)))) = true { Refl }
+): fuel_has_errors(
+  fuel_errors(ck_st(ck_app_call_in(Zero, c, term, function, arguments, env)))
+) = true { Refl }
 
 pub theorem ck_operands_in_fuel_error(
   c: Checker,
@@ -110,7 +118,9 @@ pub theorem ck_clone_of_in_fuel_error(
   arguments: List(SurfaceTerm),
   env: List(Local),
   span: TySpan
-): fuel_has_errors(fuel_errors(ck_st(ck_clone_of_in(Zero, c, arguments, env, span)))) = true { Refl }
+): fuel_has_errors(fuel_errors(ck_st(ck_clone_of_in(Zero, c, arguments, env, span)))) = true {
+  Refl
+}
 
 pub theorem ck_lambda_in_fuel_error(
   c: Checker,
@@ -127,8 +137,8 @@ pub theorem ck_record_fields_in_fuel_error(
   env: List(Local),
   seen: List(Text)
 ): fuel_has_errors(
-    fuel_errors(ck_st(ck_record_fields_in(Zero, c, name, fields, declared, env, seen)))
-  ) = true { Refl }
+  fuel_errors(ck_st(ck_record_fields_in(Zero, c, name, fields, declared, env, seen)))
+) = true { Refl }
 
 pub theorem ck_record_in_fuel_error(
   c: Checker,
@@ -136,7 +146,9 @@ pub theorem ck_record_in_fuel_error(
   fields: List(SurfaceField),
   env: List(Local),
   span: TySpan
-): fuel_has_errors(fuel_errors(ck_st(ck_record_in(Zero, c, name, fields, env, span)))) = true { Refl }
+): fuel_has_errors(
+  fuel_errors(ck_st(ck_record_in(Zero, c, name, fields, env, span)))
+) = true { Refl }
 
 pub theorem ck_match_arms_in_fuel_error(
   c: Checker,
@@ -144,7 +156,9 @@ pub theorem ck_match_arms_in_fuel_error(
   s: Ty,
   env: List(Local),
   result: Option(Ty)
-): fuel_has_errors(fuel_errors(ck_st(ck_match_arms_in(Zero, c, arms, s, env, result)))) = true { Refl }
+): fuel_has_errors(
+  fuel_errors(ck_st(ck_match_arms_in(Zero, c, arms, s, env, result)))
+) = true { Refl }
 
 pub theorem ck_match_expr_in_fuel_error(
   c: Checker,
@@ -152,7 +166,9 @@ pub theorem ck_match_expr_in_fuel_error(
   arms: List(SurfaceArm),
   env: List(Local),
   span: TySpan
-): fuel_has_errors(fuel_errors(ck_st(ck_match_expr_in(Zero, c, scrutinee, arms, env, span)))) = true { Refl }
+): fuel_has_errors(
+  fuel_errors(ck_st(ck_match_expr_in(Zero, c, scrutinee, arms, env, span)))
+) = true { Refl }
 
 pub theorem ck_handle_in_fuel_error(
   c: Checker,
@@ -166,7 +182,9 @@ pub theorem ck_handle_first_in_fuel_error(
   handlers: List(SurfaceHandler),
   b: Ty,
   env: List(Local)
-): fuel_has_errors(fuel_errors(ck_st(ck_handle_first_in(Zero, c, handlers, b, env)))) = true { Refl }
+): fuel_has_errors(fuel_errors(ck_st(ck_handle_first_in(Zero, c, handlers, b, env)))) = true {
+  Refl
+}
 
 pub theorem ck_handle_result_in_fuel_error(
   c: Checker,
@@ -176,8 +194,8 @@ pub theorem ck_handle_result_in_fuel_error(
   first: Ty,
   budget_ty: Ty
 ): fuel_has_errors(
-    fuel_errors(ck_st(ck_handle_result_in(Zero, c, handlers, env, result, first, budget_ty)))
-  ) = true { Refl }
+  fuel_errors(ck_st(ck_handle_result_in(Zero, c, handlers, env, result, first, budget_ty)))
+) = true { Refl }
 
 pub theorem ck_handle_arms_in_fuel_error(
   c: Checker,
@@ -186,7 +204,9 @@ pub theorem ck_handle_arms_in_fuel_error(
   result: Ty,
   rv: Option(Nat),
   budget_ty: Ty
-): fuel_has_errors(fuel_errors(ck_st(ck_handle_arms_in(Zero, c, hs, env, result, rv, budget_ty)))) = true { Refl }
+): fuel_has_errors(
+  fuel_errors(ck_st(ck_handle_arms_in(Zero, c, hs, env, result, rv, budget_ty)))
+) = true { Refl }
 
 pub theorem ck_handle_one_in_fuel_error(
   c: Checker,
@@ -195,7 +215,9 @@ pub theorem ck_handle_one_in_fuel_error(
   result: Ty,
   rv: Option(Nat),
   budget_ty: Ty
-): fuel_has_errors(fuel_errors(ck_st(ck_handle_one_in(Zero, c, h, env, result, rv, budget_ty)))) = true { Refl }
+): fuel_has_errors(
+  fuel_errors(ck_st(ck_handle_one_in(Zero, c, h, env, result, rv, budget_ty)))
+) = true { Refl }
 
 pub theorem ck_handle_arm_in_fuel_error(
   c: Checker,
@@ -211,10 +233,26 @@ pub theorem ck_handle_arm_in_fuel_error(
   guard: Option(SurfaceTerm),
   body: SurfaceTerm
 ): fuel_has_errors(
-    fuel_errors(
-      ck_st(ck_handle_arm_in(Zero, c, env, result, rv, budget_ty, eff, binds, types, patterns, cont, guard, body))
+  fuel_errors(
+    ck_st(
+      ck_handle_arm_in(
+        Zero,
+        c,
+        env,
+        result,
+        rv,
+        budget_ty,
+        eff,
+        binds,
+        types,
+        patterns,
+        cont,
+        guard,
+        body
+      )
     )
-  ) = true { Refl }
+  )
+) = true { Refl }
 
 pub theorem ck_handle_body_in_fuel_error(
   c: Checker,
@@ -231,27 +269,27 @@ pub theorem ck_handle_body_in_fuel_error(
   guard: Option(SurfaceTerm),
   body: SurfaceTerm
 ): fuel_has_errors(
-    fuel_errors(
-      ck_st(
-        ck_handle_body_in(
-          Zero,
-          c,
-          env,
-          result,
-          rv,
-          eff,
-          params,
-          answer,
-          rigid,
-          names,
-          patterns,
-          cont,
-          guard,
-          body
-        )
+  fuel_errors(
+    ck_st(
+      ck_handle_body_in(
+        Zero,
+        c,
+        env,
+        result,
+        rv,
+        eff,
+        params,
+        answer,
+        rigid,
+        names,
+        patterns,
+        cont,
+        guard,
+        body
       )
     )
-  ) = true { Refl }
+  )
+) = true { Refl }
 
 pub theorem ck_pattern_in_fuel_error(
   c: Checker,
@@ -260,7 +298,9 @@ pub theorem ck_pattern_in_fuel_error(
   env: Scope,
   span: TySpan,
   at: Nat
-): fuel_has_errors(fuel_errors(fuel_second_state(ck_pattern_in(Zero, c, p, t, env, span, at)))) = true { Refl }
+): fuel_has_errors(
+  fuel_errors(fuel_second_state(ck_pattern_in(Zero, c, p, t, env, span, at)))
+) = true { Refl }
 
 pub theorem ck_ctor_pattern_in_fuel_error(
   c: Checker,
@@ -271,8 +311,8 @@ pub theorem ck_ctor_pattern_in_fuel_error(
   span: TySpan,
   at: Nat
 ): fuel_has_errors(
-    fuel_errors(fuel_second_state(ck_ctor_pattern_in(Zero, c, name, args, t, env, span, at)))
-  ) = true { Refl }
+  fuel_errors(fuel_second_state(ck_ctor_pattern_in(Zero, c, name, args, t, env, span, at)))
+) = true { Refl }
 
 pub theorem ck_ctor_args_in_fuel_error(
   c: Checker,
@@ -283,5 +323,5 @@ pub theorem ck_ctor_args_in_fuel_error(
   span: TySpan,
   at: Nat
 ): fuel_has_errors(
-    fuel_errors(fuel_second_state(ck_ctor_args_in(Zero, c, args, fields, borrowed, env, span, at)))
-  ) = true { Refl }
+  fuel_errors(fuel_second_state(ck_ctor_args_in(Zero, c, args, fields, borrowed, env, span, at)))
+) = true { Refl }

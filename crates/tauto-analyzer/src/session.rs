@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use tauto::check::Checker;
+use tauto::check::{Checker, KernelStatements};
 use tauto::program::Loaded;
 
 use crate::queries::Decl;
@@ -22,6 +22,8 @@ use crate::queries::Decl;
 pub(crate) struct Session {
     /// The program of the last load.
     pub loaded: Option<Rc<Loaded>>,
+    /// What the kernel is given of it, as `tauto check` gives it.
+    pub kernel: Option<Rc<KernelStatements>>,
     /// The file and the place in it of each statement, in checking order.
     pub index: Vec<(usize, usize)>,
     /// The kernel after the first `n` statements, for `n` a multiple of the
@@ -54,6 +56,12 @@ pub(crate) fn with<R>(ws: u64, entry: &Path, f: impl FnOnce(&mut Session) -> R) 
         let mut sessions = s.borrow_mut();
         f(sessions.entry((ws, entry.to_path_buf())).or_default())
     })
+}
+
+/// Forgets what was kept for the program of `entry`: its load, kernels and
+/// memo. It is made again when asked for.
+pub(crate) fn drop_entry(ws: u64, entry: &Path) {
+    SESSIONS.with(|s| s.borrow_mut().remove(&(ws, entry.to_path_buf())));
 }
 
 pub(crate) fn drop_workspace(ws: u64) {

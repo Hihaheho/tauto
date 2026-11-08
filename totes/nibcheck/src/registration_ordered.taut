@@ -22,7 +22,7 @@ pub theorem ck_register_ctors_subst_ordered(
   i: Nat,
   ordered: CkOrdered(c)
 ): CkOrdered(ck_st(ck_register_ctors(cs, c, dname, i))) {
-  match cs: CkOrdered(ck_st(ck_register_ctors(cs, c, dname, i))) {
+  ⊢ CkOrdered(ck_st(ck_register_ctors(cs, c, dname, i))) from match cs {
     Nil => ordered
     Cons(ctor, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
@@ -57,7 +57,7 @@ pub theorem registration_bind_subst_ordered<A: Type, B: Type>(
   hm: CkOrdered(ck_st(m)),
   hk: ∀ v: A. ∀ next: Checker. (CkOrdered(next)) -> CkOrdered(ck_st(k(v, next)))
 ): CkOrdered(ck_st(frame_bind(k, m))) {
-  match m: CkOrdered(ck_st(frame_bind(k, m))) {
+  ⊢ CkOrdered(ck_st(frame_bind(k, m))) from match m {
     mut1(v, next) => hk(v, next, hm)
   }
 }
@@ -221,7 +221,7 @@ pub theorem registration_if_subst_ordered(
   ordered: CkOrdered(c),
   hm: CkOrdered(ck_st(m))
 ): CkOrdered(ck_st(registration_if(c, m, take))) {
-  match take: CkOrdered(ck_st(registration_if(c, m, take))) {
+  ⊢ CkOrdered(ck_st(registration_if(c, m, take))) from match take {
     true => registration_rewrap_subst_ordered(m, hm)
     false => ordered
   }
@@ -232,7 +232,7 @@ pub theorem ck_program_data_one_subst_ordered(
   s: SurfaceStmt,
   ordered: CkOrdered(c)
 ): CkOrdered(ck_st(ck_program_data_one(c, s))) {
-  match s: CkOrdered(ck_st(ck_program_data_one(c, s))) {
+  ⊢ CkOrdered(ck_st(ck_program_data_one(c, s))) from match s {
     StLet(name, ty, value, borrow, mutable) => ordered
     StVar(name, ty, value, borrow) => ordered
     StModule(name, stmts, start, end) => ordered
@@ -279,7 +279,7 @@ pub theorem ck_program_data_subst_ordered(
   c: Checker,
   ordered: CkOrdered(c)
 ): CkOrdered(ck_st(ck_program_data(ss, c))) {
-  match ss: CkOrdered(ck_st(ck_program_data(ss, c))) {
+  ⊢ CkOrdered(ck_st(ck_program_data(ss, c))) from match ss {
     Nil => ordered
     Cons(s, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
@@ -305,7 +305,7 @@ pub theorem ck_prelude_data_one_subst_ordered(
   own: Ordmap(Text, Bool),
   ordered: CkOrdered(c)
 ): CkOrdered(ck_st(ck_prelude_data_one(c, s, own))) {
-  match s: CkOrdered(ck_st(ck_prelude_data_one(c, s, own))) {
+  ⊢ CkOrdered(ck_st(ck_prelude_data_one(c, s, own))) from match s {
     StLet(name, ty, value, borrow, mutable) => ordered
     StVar(name, ty, value, borrow) => ordered
     StModule(name, stmts, start, end) => ordered
@@ -369,7 +369,7 @@ pub theorem ck_prelude_data_subst_ordered(
   own: Ordmap(Text, Bool),
   ordered: CkOrdered(c)
 ): CkOrdered(ck_st(ck_prelude_data(ss, c, own))) {
-  match ss: CkOrdered(ck_st(ck_prelude_data(ss, c, own))) {
+  ⊢ CkOrdered(ck_st(ck_prelude_data(ss, c, own))) from match ss {
     Nil => ordered
     Cons(s, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
@@ -394,7 +394,7 @@ pub theorem ck_mark_subst_ordered(
   c: Checker,
   ordered: CkOrdered(c)
 ): CkOrdered(ck_st(ck_mark_recursive(es, c))) {
-  match es: CkOrdered(ck_st(ck_mark_recursive(es, c))) {
+  ⊢ CkOrdered(ck_st(ck_mark_recursive(es, c))) from match es {
     Nil => ordered
     Cons(e, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
@@ -423,7 +423,7 @@ pub theorem summary_finish_decl_k_same_subst(
   d: SurfaceData,
   o: Option(Text)
 ): ck_subst_of(ck_st(summary_finish_decl_k(c, d, o))) = ck_subst_of(c) {
-  match o: ck_subst_of(ck_st(summary_finish_decl_k(c, d, o))) = ck_subst_of(c) {
+  ⊢ ck_subst_of(ck_st(summary_finish_decl_k(c, d, o))) = ck_subst_of(c) from match o {
     None => Refl
     Some(m) => Refl
   }
@@ -443,7 +443,7 @@ pub theorem ck_finish_stmt_datas_subst(
   c: Checker,
   s: SurfaceStmt
 ): ck_subst_of(ck_st(ck_finish_stmt(c, s))) = ck_subst_of(c) {
-  match s: ck_subst_of(ck_st(ck_finish_stmt(c, s))) = ck_subst_of(c) {
+  ⊢ ck_subst_of(ck_st(ck_finish_stmt(c, s))) = ck_subst_of(c) from match s {
     StLet(n, ty, v, b, m) => Refl
     StVar(n, ty, v, b) => Refl
     StModule(n, ss, start, end) => Refl
@@ -488,7 +488,7 @@ pub theorem summary_finish_stmts_k_same_subst(
   m: Mut1(Unit, Checker),
   ih: ∀ c: Checker. ck_subst_of(ck_st(ck_finish_stmts(rest, c))) = ck_subst_of(c)
 ): ck_subst_of(ck_st(summary_finish_stmts_k(rest, m))) = ck_subst_of(ck_st(m)) {
-  match m: ck_subst_of(ck_st(summary_finish_stmts_k(rest, m))) = ck_subst_of(ck_st(m)) {
+  ⊢ ck_subst_of(ck_st(summary_finish_stmts_k(rest, m))) = ck_subst_of(ck_st(m)) from match m {
     mut1(v, next) => Eq::trans(
       Eq::congr(
         (z: Mut1(Unit, Checker)) => ck_subst_of(ck_st(z)),
@@ -503,7 +503,7 @@ pub theorem ck_finish_stmts_datas_subst(
   ss: List(SurfaceStmt),
   c: Checker
 ): ck_subst_of(ck_st(ck_finish_stmts(ss, c))) = ck_subst_of(c) {
-  match ss: ck_subst_of(ck_st(ck_finish_stmts(ss, c))) = ck_subst_of(c) {
+  ⊢ ck_subst_of(ck_st(ck_finish_stmts(ss, c))) = ck_subst_of(c) from match ss {
     Nil => Refl
     Cons(s, rest) => Eq::trans(
       Eq::congr(
@@ -527,7 +527,7 @@ pub theorem registration_finish_subst_k(
   m: Mut1(Unit, Checker),
   ordered: CkOrdered(ck_st(m))
 ): CkOrdered(ck_st(summary_finish_datas_k(program, m))) {
-  match m: CkOrdered(ck_st(summary_finish_datas_k(program, m))) {
+  ⊢ CkOrdered(ck_st(summary_finish_datas_k(program, m))) from match m {
     mut1(v, next) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkOrdered(ck_st(z)),
       Eq::sym(
@@ -568,7 +568,7 @@ pub theorem registration_finish_after_subst(
   m: Mut1(Unit, Checker),
   ordered: CkOrdered(ck_st(m))
 ): CkOrdered(ck_st(registration_finish_after(program, m))) {
-  match m: CkOrdered(ck_st(registration_finish_after(program, m))) {
+  ⊢ CkOrdered(ck_st(registration_finish_after(program, m))) from match m {
     mut1(v, next) => registration_rewrap_subst_ordered(
       ck_finish_datas(next, program),
       ck_finish_datas_subst_ordered(next, program, ordered)
@@ -580,7 +580,7 @@ pub theorem registration_program_after_subst(
   m: Mut1(Unit, Checker),
   ordered: CkOrdered(ck_st(m))
 ): CkOrdered(ck_st(registration_program_after(program, m))) {
-  match m: CkOrdered(ck_st(registration_program_after(program, m))) {
+  ⊢ CkOrdered(ck_st(registration_program_after(program, m))) from match m {
     mut1(v, next) => registration_finish_after_subst(
       program,
       ck_program_data(program, next),

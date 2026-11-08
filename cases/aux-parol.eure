@@ -1,0 +1,278 @@
+@ cases.cst_flattened_parameters_keep_order_and_skip_trivia
+source = ```tauto
+fn f(a /* comment */ : i64, b: Text): i64 { 1 }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_statements_and_effects
+source = ```tauto
+fn double(x: i64): i64 { x * 2 }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_statements_and_effects_2
+source = ```tauto
+struct Point { x: i64, y: i64 }
+enum Shape { Circle(i64), Empty }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_statements_and_effects_3
+source = ```tauto
+effect ask(q: Text): i64
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_statements_and_effects_4
+source = ```tauto
+module checked { fn f(): i64 { 1 } }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_statements_and_effects_5
+source = ```tauto
+let r := budget(steps: 100) { 1 + 2 }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_statements_and_effects_6
+source = ```tauto
+let r := handle { perform ask("a") } with {
+  return v => v * 2
+  ask(q), k => k(10)
+}
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_statements_and_effects_7
+source = ```tauto
+let s := match x { Circle(r) => r, Empty => 0 }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_inductive_families
+source = ```tauto
+inductive Typing(g: Ctx, t: Term, a: Term): Prop {
+  OfVar(i: Nat, h: Lookup(g, i, a)): Typing(g, Variable(i), a)
+}
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_dependent_match_and_termination
+source = ```tauto
+fn f(v: Vector(i64, n)): i64 { ⊢ i64 from match v { Nil => 0, Cons(h, t) => h } }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_dependent_match_and_termination_2
+source = ```tauto
+fn size(t: Term): Nat decreasing_by measure(t) { 0 }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_theorems_and_axioms
+source = ```tauto
+theorem swap<A, B>(p: A ∧ B): B ∧ A { conj(snd(p), fst(p)) }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_theorems_and_axioms_2
+source = ```tauto
+axiom em<P: Prop>(): P ∨ ¬P
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_quantifiers_and_universes
+source = ```tauto
+theorem t(): ∀ x: Nat. x = x { Refl }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_quantifiers_and_universes_2
+source = ```tauto
+theorem u(): ∀ x: Nat. ∃ y: Nat. x = y { Refl }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_quantifiers_and_universes_3
+source = ```tauto
+fn id<u: Level, A: Type(u)>(x: A): A { x }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_rejects_a_dangling_fn
+source = ```tauto
+fn id(
+```
+parses = false
+differential = "syntax"
+
+@ cases.tests_terms_in_type_arguments
+source = ```tauto
+theorem t(a: Nat): a = a { Refl }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_terms_in_type_arguments_2
+source = ```tauto
+fn f(v: Vector(i64, n + 1)): i64 { 0 }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_terms_in_type_arguments_3
+source = ```tauto
+fn g(s: State(i64, keyOf(config))): i64 { 0 }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_terms_in_type_arguments_4
+source = ```tauto
+theorem e(f: (Nat) -> Nat): f = (x => f(x)) { Refl }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_terms_in_type_arguments_5
+source = ```tauto
+theorem n(): Iff(¬A, ∀ x: Nat. x = x) { Refl }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_a_type_is_applied_one_way
+source = ```tauto
+fn f(v: Vector<i64, 3>): i64 { 0 }
+```
+parses = false
+differential = "syntax"
+
+@ cases.tests_a_type_is_applied_one_way_2
+source = ```tauto
+fn f(): i64 ! {State<i64>} { 0 }
+```
+parses = false
+differential = "syntax"
+
+@ cases.tests_rejects_what_is_not_in_the_language
+source = ```tauto
+let a := 3'km
+```
+parses = false
+differential = "syntax"
+
+@ cases.tests_rejects_what_is_not_in_the_language_2
+source = ```tauto
+let a := 5%
+```
+parses = false
+differential = "syntax"
+
+@ cases.tests_rejects_what_is_not_in_the_language_3
+source = ```tauto
+let a := ?
+```
+parses = false
+differential = "syntax"
+
+@ cases.tests_rejects_what_is_not_in_the_language_4
+source = ```tauto
+let a := try { f()? }
+```
+parses = false
+differential = "syntax"
+
+@ cases.tests_rejects_what_is_not_in_the_language_5
+source = ```tauto
+let a := "x" & "y"
+```
+parses = false
+differential = "syntax"
+
+@ cases.tests_rejects_what_is_not_in_the_language_6
+source = ```tauto
+let a := 1 <> 2
+```
+parses = false
+differential = "syntax"
+
+@ cases.tests_rejects_what_is_not_in_the_language_7
+source = ```tauto
+let a = 1
+```
+parses = false
+differential = "syntax"
+
+@ cases.tests_rejects_what_is_not_in_the_language_8
+source = ```tauto
+let a := xs[0]
+```
+parses = false
+differential = "syntax"
+
+@ cases.tests_rejects_what_is_not_in_the_language_9
+source = ```tauto
+let a := 2 ^ 3
+```
+parses = false
+differential = "syntax"
+
+@ cases.tests_rejects_what_is_not_in_the_language_10
+source = ```tauto
+for x in xs { }
+```
+parses = false
+differential = "syntax"
+
+@ cases.tests_rejects_what_is_not_in_the_language_11
+source = ```tauto
+fn f(...xs: i64): i64 { 0 }
+```
+parses = false
+differential = "syntax"
+
+@ cases.tests_rejects_what_is_not_in_the_language_12
+source = ```tauto
+fn f(x: i64 := 1): i64 { x }
+```
+parses = false
+differential = "syntax"
+
+@ cases.tests_a_term_stands_for_a_type
+source = ```tauto
+fn h(x: { if b { Nat } else { Bool } }): i64 { 0 }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_a_term_stands_for_a_type_2
+source = ```tauto
+fn m(v: Vector(i64, n)): i64 { ⊢ Vector(i64, n + 1) from match v { Nil => 0 } }
+```
+parses = true
+differential = "syntax"
+
+@ cases.tests_a_result_type_depending_on_the_scrutinee
+source = ```tauto
+fn m(v: Vec): i64 { ⊢ motive(v) from match v { Nil => 0, Cons(h, t) => 1 } }
+```
+parses = true
+differential = "syntax"

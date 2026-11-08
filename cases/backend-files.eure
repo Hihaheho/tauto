@@ -1,0 +1,627 @@
+@ cases.programs-import_brings_functions
+backends = ["rust", "javascript"]
+shows = ["x = 1"]
+files."a.nib" = 'pub fn one(): i64 { 1 }'
+files."main.nib" = 'import "a.nib"
+perform show("x", one())'
+
+@ cases.programs-import_is_relative_to_the_importer
+backends = ["rust", "javascript"]
+shows = ["x = 3"]
+files."sub/c.nib" = 'pub fn two(): i64 { 2 }'
+files."sub/b.nib" = 'import "c.nib"
+pub fn three(): i64 { two() + 1 }'
+files."main.nib" = 'import "sub/b.nib"
+perform show("x", three())'
+
+@ cases.programs-import_twice_reads_once
+backends = ["rust", "javascript"]
+shows = ["x = 2"]
+files."a.nib" = 'pub fn one(): i64 { 1 }'
+files."b.nib" = 'import "a.nib"
+pub fn two(): i64 { one() + 1 }'
+files."main.nib" = 'import "a.nib"
+import "b.nib"
+perform show("x", two())'
+
+@ cases.programs-import_cycle_is_an_error
+entry = "a.nib"
+load_error = "imports itself through a cycle"
+files."a.nib" = 'import "b.nib"'
+files."b.nib" = 'import "a.nib"'
+
+@ cases.programs-same_name_in_two_files
+backends = ["rust", "javascript"]
+shows = ["a = 1", "b = 2"]
+files."a.nib" = 'pub fn f(): i64 { 1 }'
+files."b.nib" = 'pub fn f(): i64 { 2 }'
+files."main.nib" = 'import "a.nib"
+import "b.nib"
+perform show("a", a::f())
+perform show("b", b::f())'
+
+@ cases.programs-error_is_located_in_its_file
+types = "error: Bool does not fit i64"
+files."b.nib" = ```nib
+pub fn ok(): i64 { 1 }
+
+let x: i64 := true
+```
+files."main.nib" = 'import "b.nib"
+perform show("x", 1)'
+
+@ cases.programs-the_spans_of_files_do_not_overlap
+backends = ["rust", "javascript"]
+shows = ["x = 1"]
+files."a.nib" = ```nib
+pub fn one(): i64 { 1 }
+```
+files."main.nib" = 'import "a.nib"
+perform show("x", one())'
+
+@ cases.macro_borrow_identity-nested_repeated_and_generic_quoted_borrows_agree_in_all_backends
+backends = ["rust", "javascript"]
+shows = ["direct = 10", "repeated = 10", "nested = 7", "duplicated = 20", "integer = 6", "generic = 10", "named = 10", "typed = 10", "typed_duplicated = 20"]
+files."support/lib.tauto" = ```tauto
+import std::prelude::Classes
+import std::prelude::Macro
+
+
+pub(open) enum Item { Item(Text) }
+pub fn inspect(item: Item): u64 { match item { Item(text) => Text::len(text) } }
+pub fn forward(item: Item, read: () -> Text): u64 { inspect(item) + Text::len(read()) }
+pub macro fn example(expr: SynExpr): SynExpr {
+    let read := quote { { let value := $expr; ToText::to_text(&value) } }
+    quote { forward(Item("hello"), () => $read) }
+}
+pub macro fn named(expr: SynExpr): SynExpr {
+    let read := quote { { let value := $expr; ToText::to_text(&value) } }
+    quote { { let item := Item("hello"); forward(item, () => $read) } }
+}
+pub macro fn twice(expr: SynExpr): SynExpr { quote { Pair { fst: $expr, snd: $expr } } }
+pub fn identity<A: Shared>(&value: A): A { value }
+pub macro fn generic_example(expr: SynExpr): SynExpr {
+    let read := quote { { let value := $expr; let r#copy := identity(&value); ToText::to_text(&r#copy) } }
+    quote { forward(Item("hello"), () => $read) }
+}
+pub macro fn keep(code: Judgement): SynExpr { Judgement::term(code) }
+```
+files."app/main.tauto" = ```tauto
+
+
+perform show("direct", example!("hello"))
+perform show("repeated", example!("world"))
+perform show("nested", example!(example!("hello")))
+let pair := twice!(example!("hello"))
+perform show("duplicated", pair.fst + pair.snd)
+perform show("integer", example!(7))
+perform show("generic", generic_example!("hello"))
+perform show("named", named!("hello"))
+perform show("typed", keep!(example!("hello")))
+let typed_pair := twice!(keep!(example!("hello")))
+perform show("typed_duplicated", typed_pair.fst + typed_pair.snd)
+```
+files."main.nib" = ```nib
+import "support/lib.tauto"
+import "app/main.tauto"
+```
+
+@ cases.checked-extraction-recursive-callback
+backends = ["rust", "javascript"]
+extract = true
+entry = "main.tauto"
+imports = [path`../std/Base.taut`]
+shows = ["value = Cons(4, Nil)"]
+files."lib.tauto" = ```tauto
+import std::Base
+pub fn twice(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(k) => Succ(Succ(twice(k)))
+  }
+}
+pub fn mapped(xs: List(Nat)): List(Nat) { List::map(twice, xs) }
+```
+files."app.tauto" = ```tauto
+import "lib.tauto"
+perform show("value", mapped(Cons(2, Nil)))
+```
+files."main.tauto" = ```tauto
+import "lib.tauto"
+import "app.tauto"
+```
+
+@ cases.checked-extraction-mutual-callback
+description = "Mutual recursion on Nat the kernel accepts as structural; the row check does not derive it from the extracted text alone."
+backends = ["rust", "javascript"]
+extract = true
+entry = "main.tauto"
+imports = [path`../std/Base.taut`]
+// The evaluator runs the row check on the extracted text, which wrongly
+// rejects the callback; it is marked unimplemented until the row check
+// accepts it.
+unimplemented = true
+shows = ["value = Cons(true, Nil)"]
+files."lib.tauto" = ```tauto
+mutual {
+  pub fn even(n: Nat): Bool {
+    ⊢ Bool from match n {
+      Zero => true
+      Succ(k) => odd(k)
+    }
+  }
+  pub fn odd(n: Nat): Bool {
+    ⊢ Bool from match n {
+      Zero => false
+      Succ(k) => even(k)
+    }
+  }
+}
+pub fn evens(xs: List(Nat)): List(Bool) { List::map(even, xs) }
+```
+files."app.tauto" = ```tauto
+perform show("value", evens(Cons(2, Nil)))
+```
+files."main.tauto" = ```tauto
+import "lib.tauto"
+import "app.tauto"
+```
+
+@ cases.runtime-syntax-tree-and-diagnostic
+entry = "main.taut"
+backends = ["rust", "javascript"]
+shows = ["tree = Ok(math::Eqn { span: SynSpan { id: 0 }, sum: math::Sum { span: SynSpan { id: 0 }, term: Paren(math::Paren { span: SynSpan { id: 0 }, l_paren: SynToken { text: \"(\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }, sum: math::Sum { span: SynSpan { id: 1 }, term: Num(SynToken { text: \"1\", span: SynSpan { id: 1 }, ctx: SynCtx { scopes: Nil } }), rep: Cons(math::Sum_Rep1 { span: SynSpan { id: 2 }, plus: SynToken { text: \"+\", span: SynSpan { id: 2 }, ctx: SynCtx { scopes: Nil } }, term: Num(SynToken { text: \"2\", span: SynSpan { id: 3 }, ctx: SynCtx { scopes: Nil } }) }, Nil) }, r_paren: SynToken { text: \")\", span: SynSpan { id: 4 }, ctx: SynCtx { scopes: Nil } } }), rep: Nil }, equals: SynToken { text: \"=\", span: SynSpan { id: 5 }, ctx: SynCtx { scopes: Nil } }, sum_2: math::Sum { span: SynSpan { id: 6 }, term: Num(SynToken { text: \"3\", span: SynSpan { id: 6 }, ctx: SynCtx { scopes: Nil } }), rep: Nil } })", "error = Err(SynDiag { message: \"macro-syntax-expected-found\", at: 2, expected: Cons(\"Num\", Cons(\"LParen\", Nil)), code: \"macro.syntax_error\", args: Cons(SynArg { name: \"syntax\", value: \"math\" }, Cons(SynArg { name: \"expected\", value: \"Num\" }, Cons(SynArg { name: \"expected\", value: \"LParen\" }, Cons(SynArg { name: \"found\", value: \"Equals\" }, Nil)))) })"]
+files."main.taut" = ````tauto
+import std::prelude::Macro
+
+syntax!(math, ```par
+%start Eqn
+%title "math"
+%%
+Eqn: Sum Equals Sum;
+Sum: Term { Plus Term };
+Term: Num | Paren;
+Paren: LParen Sum RParen;
+Num: /[0-9]+/;
+Equals: '=';
+Plus: '+';
+LParen: '(';
+RParen: ')';
+```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term, fn parse
+perform show("tree", math::parse("(1+2)=3"))
+perform show("error", math::parse("1+="))
+````
+
+@ cases.runtime-syntax-multiple-grammars
+entry = "inputs/main.taut"
+backends = ["rust", "javascript"]
+shows = ["true_field = \"true\"", "false_field = \"false\"", "keyword_error = \"macro.syntax_error\"", "alias = Ok(alias::Decl { span: SynSpan { id: 0 }, name: SynToken { text: \"別名\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }, equals: SynToken { text: \"=\", span: SynSpan { id: 6 }, ctx: SynCtx { scopes: Nil } }, value: SynToken { text: \"3\", span: SynSpan { id: 7 }, ctx: SynCtx { scopes: Nil } } })", "alias_error = Err(SynDiag { message: \"macro-syntax-expected-end\", at: 7, expected: Cons(\"Value\", Nil), code: \"macro.syntax_error\", args: Cons(SynArg { name: \"syntax\", value: \"alias\" }, Cons(SynArg { name: \"expected\", value: \"Value\" }, Nil)) })", "record = Ok(LParenExprRParen { span: SynSpan { id: 0 }, l_paren: SynToken { text: \"(\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }, expr: LParenExprRParen { span: SynSpan { id: 1 }, l_paren: SynToken { text: \"(\", span: SynSpan { id: 1 }, ctx: SynCtx { scopes: Nil } }, expr: NameColonName { span: SynSpan { id: 2 }, name: SynToken { text: \"日本語\", span: SynSpan { id: 2 }, ctx: SynCtx { scopes: Nil } }, colon: SynToken { text: \":\", span: SynSpan { id: 11 }, ctx: SynCtx { scopes: Nil } }, name_2: SynToken { text: \"値\", span: SynSpan { id: 12 }, ctx: SynCtx { scopes: Nil } } }, r_paren: SynToken { text: \")\", span: SynSpan { id: 15 }, ctx: SynCtx { scopes: Nil } } }, r_paren: SynToken { text: \")\", span: SynSpan { id: 16 }, ctx: SynCtx { scopes: Nil } } })", "single = Ok(Bang(SynToken { text: \"!\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }))", "recursive = Ok(math::Eqn { span: SynSpan { id: 0 }, sum: math::Sum { span: SynSpan { id: 0 }, term: Paren(math::Paren { span: SynSpan { id: 0 }, l_paren: SynToken { text: \"(\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }, sum: math::Sum { span: SynSpan { id: 1 }, term: Paren(math::Paren { span: SynSpan { id: 1 }, l_paren: SynToken { text: \"(\", span: SynSpan { id: 1 }, ctx: SynCtx { scopes: Nil } }, sum: math::Sum { span: SynSpan { id: 2 }, term: Num(SynToken { text: \"1\", span: SynSpan { id: 2 }, ctx: SynCtx { scopes: Nil } }), rep: Cons(math::Sum_Rep1 { span: SynSpan { id: 3 }, plus: SynToken { text: \"+\", span: SynSpan { id: 3 }, ctx: SynCtx { scopes: Nil } }, term: Num(SynToken { text: \"2\", span: SynSpan { id: 4 }, ctx: SynCtx { scopes: Nil } }) }, Nil) }, r_paren: SynToken { text: \")\", span: SynSpan { id: 5 }, ctx: SynCtx { scopes: Nil } } }), rep: Cons(math::Sum_Rep1 { span: SynSpan { id: 6 }, plus: SynToken { text: \"+\", span: SynSpan { id: 6 }, ctx: SynCtx { scopes: Nil } }, term: Num(SynToken { text: \"3\", span: SynSpan { id: 7 }, ctx: SynCtx { scopes: Nil } }) }, Nil) }, r_paren: SynToken { text: \")\", span: SynSpan { id: 8 }, ctx: SynCtx { scopes: Nil } } }), rep: Nil }, equals: SynToken { text: \"=\", span: SynSpan { id: 9 }, ctx: SynCtx { scopes: Nil } }, sum_2: math::Sum { span: SynSpan { id: 10 }, term: Num(SynToken { text: \"6\", span: SynSpan { id: 10 }, ctx: SynCtx { scopes: Nil } }), rep: Nil } })", "list_some = Ok(lists::Doc { span: SynSpan { id: 0 }, head: Some(lists::Head { span: SynSpan { id: 0 }, kw_head: SynToken { text: \"head\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }, name: SynToken { text: \"first\", span: SynSpan { id: 5 }, ctx: SynCtx { scopes: Nil } } }), item: Cons(lists::Item { span: SynSpan { id: 11 }, name: SynToken { text: \"one\", span: SynSpan { id: 11 }, ctx: SynCtx { scopes: Nil } }, opt: Some(lists::Item_Opt1 { span: SynSpan { id: 14 }, colon: SynToken { text: \":\", span: SynSpan { id: 14 }, ctx: SynCtx { scopes: Nil } }, name: SynToken { text: \"two\", span: SynSpan { id: 15 }, ctx: SynCtx { scopes: Nil } } }) }, Cons(lists::Item { span: SynSpan { id: 19 }, name: SynToken { text: \"three\", span: SynSpan { id: 19 }, ctx: SynCtx { scopes: Nil } }, opt: None }, Nil)), group: Bang(SynToken { text: \"!\", span: SynSpan { id: 25 }, ctx: SynCtx { scopes: Nil } }) })", "list_none = Ok(lists::Doc { span: SynSpan { id: 0 }, head: None, item: Nil, group: Tilde(SynToken { text: \"~\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }) })", "japanese = Ok(ident::Decl { span: SynSpan { id: 0 }, name: SynToken { text: \"日本語\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }, equals: SynToken { text: \"=\", span: SynSpan { id: 9 }, ctx: SynCtx { scopes: Nil } }, value: SynToken { text: \"12\", span: SynSpan { id: 10 }, ctx: SynCtx { scopes: Nil } } })", "syntax_error = Err(SynDiag { message: \"macro-syntax-expected-found\", at: 2, expected: Cons(\"Num\", Cons(\"LParen\", Nil)), code: \"macro.syntax_error\", args: Cons(SynArg { name: \"syntax\", value: \"math\" }, Cons(SynArg { name: \"expected\", value: \"Num\" }, Cons(SynArg { name: \"expected\", value: \"LParen\" }, Cons(SynArg { name: \"found\", value: \"Equals\" }, Nil)))) })", "eof = Err(SynDiag { message: \"macro-syntax-expected-end\", at: 2, expected: Cons(\"Num\", Cons(\"LParen\", Nil)), code: \"macro.syntax_error\", args: Cons(SynArg { name: \"syntax\", value: \"math\" }, Cons(SynArg { name: \"expected\", value: \"Num\" }, Cons(SynArg { name: \"expected\", value: \"LParen\" }, Nil))) })", "lexical = Err(SynDiag { message: \"macro-syntax-not-a-token\", at: 10, expected: Nil, code: \"macro.syntax_error\", args: Cons(SynArg { name: \"syntax\", value: \"ident\" }, Nil) })"]
+files."inputs/main.taut" = ````tauto
+import std::prelude::Macro
+
+syntax!(math, ```par
+%start Eqn
+%title "math"
+%%
+Eqn: Sum Equals Sum;
+Sum: Term { Plus Term };
+Term: Num | Paren;
+Paren: LParen Sum RParen;
+Num: /[0-9]+/;
+Equals: '=';
+Plus: '+';
+LParen: '(';
+RParen: ')';
+```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term, fn parse
+syntax!(lists, ```par
+%start Doc
+%title "lists"
+%%
+Doc: [ Head ] { Item } ( Bang | Tilde );
+Head: KwHead Name;
+Item: Name [ Colon Name ];
+KwHead: 'head';
+Name: /[a-z]+/;
+Colon: ':';
+Bang: '!';
+Tilde: '~';
+```) => struct Doc, enum Doc_Group1, struct Head, struct Item, struct Item_Opt1, fn parse
+syntax!(ident, ```par
+%start Decl
+%title "ident"
+%%
+Decl: Name Equals Value;
+Name: /[\p{L}_][\p{L}\p{N}_]*/;
+Equals: '=';
+Value: /[0-9]+/;
+```) => struct Decl, fn parse
+syntax!(records, ```par
+%start Expr
+%title "records"
+%%
+Expr: Name Colon Name | LParen Expr RParen | Bang;
+Name: /[\p{L}_][\p{L}\p{N}_]*/;
+Colon: ':';
+LParen: '(';
+RParen: ')';
+Bang: '!';
+```) => enum Expr, fn parse
+syntax!(alias, ```par
+%start Decl
+%title "ident"
+%%
+Decl: Name Equals Value;
+Name: /[\p{L}_][\p{L}\p{N}_]*/;
+Equals: '=';
+Value: /[0-9]+/;
+```) => struct Decl, fn parse
+syntax!(keywords, ```par
+%start Root
+%title "keyword fields"
+%%
+Root: '['^ Value ']'^;
+Value: 'true' | 'false';
+```) => struct Root, enum Value, fn parse
+
+fn keyword_text(root: keywords::Root): Text {
+  match root {
+    keywords::Root { span: root_span, value: node } => match node {
+      True { span: true_span, true_field: yes } => yes.text
+      False { span: false_span, false_field: no } => no.text
+    }
+  }
+}
+fn keyword_result(text: Text): Text {
+  match keywords::parse(text) {
+    Ok(root) => keyword_text(root)
+    Err(diag) => diag.code
+  }
+}
+perform show("true_field", keyword_result("[true]"))
+perform show("false_field", keyword_result("[false]"))
+perform show("keyword_error", keyword_result("[maybe]"))
+perform show("alias", alias::parse("別名=3"))
+perform show("alias_error", alias::parse("別名="))
+perform show("record", records::parse("((日本語:値))"))
+perform show("single", records::parse("!"))
+perform show("recursive", math::parse("((1+2)+3)=6"))
+perform show("list_some", lists::parse("head first one:two three !"))
+perform show("list_none", lists::parse("~"))
+perform show("japanese", ident::parse("日本語=12"))
+perform show("syntax_error", math::parse("1+=3"))
+perform show("eof", math::parse("1="))
+perform show("lexical", ident::parse("日本語=@"))
+````
+
+files."inputs/.tauto-syntax/b86f53836c1c73c63bc2cafa5aef421cbe7ea84ad052a16d711e2a5dadfcaec4.tables" = path`../crates/tauto/tests/syntax_fixtures/.tauto-syntax/b86f53836c1c73c63bc2cafa5aef421cbe7ea84ad052a16d711e2a5dadfcaec4.tables`
+files."inputs/.tauto-syntax/bf312ce6787529a699581c388659b45282560a771a1173f30b476be713b94dd0.tables" = path`../crates/tauto/tests/syntax_fixtures/.tauto-syntax/bf312ce6787529a699581c388659b45282560a771a1173f30b476be713b94dd0.tables`
+files."inputs/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
+files."inputs/.tauto-syntax/815e83a9c712310879ba006b2a96d5253d2f5fe23563c51b0436af78e16239a4.tables" = path`../crates/tauto/tests/syntax_fixtures/.tauto-syntax/815e83a9c712310879ba006b2a96d5253d2f5fe23563c51b0436af78e16239a4.tables`
+files."inputs/.tauto-syntax/d47d6b952cf70281395b77d5b02c41432a000a0d194d476decce1cad470cf951.tables" = path`../crates/tauto/tests/syntax_fixtures/.tauto-syntax/d47d6b952cf70281395b77d5b02c41432a000a0d194d476decce1cad470cf951.tables`
+
+@ cases.runtime-syntax-name-must-be-literal
+entry = "main.taut"
+compile_errors.rust = "unsupported: literal syntax name"
+compile_errors.javascript = "unsupported: literal syntax name"
+files."main.taut" = ````tauto
+import std::prelude::Macro
+syntax!(ident, ```par
+%start Decl
+%title "ident"
+%%
+Decl: Name Equals Value;
+Name: /[\p{L}_][\p{L}\p{N}_]*/;
+Equals: '=';
+Value: /[0-9]+/;
+```) => struct Decl, fn parse
+fn bad(name: Text): Result(ident::Decl, SynDiag) { Syn::parse(name, "68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011", "x=1") }
+perform show("x", bad("ident"))
+````
+
+@ cases.runtime-syntax-result-must-match
+entry = "main.taut"
+compile_errors.rust = "unsupported: result must match"
+compile_errors.javascript = "unsupported: result must match"
+files."main.taut" = ````tauto
+import std::prelude::Macro
+syntax!(ident, ```par
+%start Decl
+%title "ident"
+%%
+Decl: Name Equals Value;
+Name: /[\p{L}_][\p{L}\p{N}_]*/;
+Equals: '=';
+Value: /[0-9]+/;
+```) => struct Decl, fn parse
+fn bad(): Result(i64, SynDiag) { Syn::parse("ident", "68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011", "x=1") }
+perform show("x", bad())
+````
+
+@ cases.runtime-syntax-rejects-forged-schema
+entry = "main.taut"
+compile_errors.rust = "unsupported: schema does not match"
+compile_errors.javascript = "unsupported: schema does not match"
+files."main.taut" = ```tauto
+import std::prelude::Macro
+module ident { struct Decl { value: i64 } }
+fn bad(): Result(ident::Decl, SynDiag) { Syn::parse("ident", "68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011", "x=1") }
+perform show("x", bad())
+```
+
+@ cases.runtime-syntax-expression-holes-unsupported
+entry = "main.taut"
+compile_errors.rust = "unsupported: TautoExpr holes"
+compile_errors.javascript = "unsupported: TautoExpr holes"
+files."main.taut" = ````tauto
+syntax!(math, ```par
+%start Eqn
+%title "math"
+%%
+Eqn: Sum Equals Sum;
+Sum: Term { Plus Term };
+Term: Num | Paren | Embed;
+Paren: LParen Sum RParen;
+Embed: TautoExpr;
+Num: /[0-9]+/;
+Equals: '=';
+Plus: '+';
+LParen: '(';
+RParen: ')';
+```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term, fn parse
+perform show("x", math::parse("1=1"))
+````
+
+@ cases.runtime-syntax-keyword-literal
+entry = "main.taut"
+backends = ["rust", "javascript"]
+shows = ["literal = keywords::Root { span: SynSpan { id: 216 }, value: True { span: SynSpan { id: 217 }, true_field: SynToken { text: \"true\", span: SynSpan { id: 217 }, ctx: SynCtx { scopes: Nil } } } }"]
+files."main.taut" = ````tauto
+import std::prelude::Macro
+
+syntax!(keywords, ```par
+%start Root
+%title "keyword fields"
+%%
+Root: '['^ Value ']'^;
+Value: 'true' | 'false';
+```) => struct Root, enum Value, fn parse
+perform show("literal", keywords`[true]`)
+````
+
+@ cases.runtime-syntax-prelude-name-terminals
+entry = "main.taut"
+backends = ["rust", "javascript"]
+shows = ["eq = Ok(Eq(SynToken { text: \"=\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }))", "text = Ok(Text(SynToken { text: \"\\\"ab\\\"\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }))", "true = Ok(True(SynToken { text: \"yes\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }))", "false = Ok(False(SynToken { text: \"no\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }))", "float = Ok(Float(SynToken { text: \"1.5\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }))", "decimal = Ok(Decimal(SynToken { text: \"2d\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }))"]
+files."main.taut" = ````tauto
+syntax!(names, ```par
+{{par:prelude_names}}```) => enum Value, fn parse
+perform show("eq", names::parse("="))
+perform show("text", names::parse("\"ab\""))
+perform show("true", names::parse("yes"))
+perform show("false", names::parse("no"))
+perform show("float", names::parse("1.5"))
+perform show("decimal", names::parse("2d"))
+````
+
+@ cases.runtime-syntax-multiple-grammars-literal
+entry = "inputs/main.taut"
+backends = ["rust", "javascript"]
+shows = ["true_field = \"true\"", "false_field = \"false\"", "keyword_error = \"macro.syntax_error\"", "alias = Ok(alias::Decl { span: SynSpan { id: 0 }, name: SynToken { text: \"別名\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }, equals: SynToken { text: \"=\", span: SynSpan { id: 6 }, ctx: SynCtx { scopes: Nil } }, value: SynToken { text: \"3\", span: SynSpan { id: 7 }, ctx: SynCtx { scopes: Nil } } })", "alias_error = Err(SynDiag { message: \"macro-syntax-expected-end\", at: 7, expected: Cons(\"Value\", Nil), code: \"macro.syntax_error\", args: Cons(SynArg { name: \"syntax\", value: \"alias\" }, Cons(SynArg { name: \"expected\", value: \"Value\" }, Nil)) })", "record = Ok(LParenExprRParen { span: SynSpan { id: 0 }, l_paren: SynToken { text: \"(\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }, expr: LParenExprRParen { span: SynSpan { id: 1 }, l_paren: SynToken { text: \"(\", span: SynSpan { id: 1 }, ctx: SynCtx { scopes: Nil } }, expr: NameColonName { span: SynSpan { id: 2 }, name: SynToken { text: \"日本語\", span: SynSpan { id: 2 }, ctx: SynCtx { scopes: Nil } }, colon: SynToken { text: \":\", span: SynSpan { id: 11 }, ctx: SynCtx { scopes: Nil } }, name_2: SynToken { text: \"値\", span: SynSpan { id: 12 }, ctx: SynCtx { scopes: Nil } } }, r_paren: SynToken { text: \")\", span: SynSpan { id: 15 }, ctx: SynCtx { scopes: Nil } } }, r_paren: SynToken { text: \")\", span: SynSpan { id: 16 }, ctx: SynCtx { scopes: Nil } } })", "single = Ok(Bang(SynToken { text: \"!\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }))", "recursive = Ok(math::Eqn { span: SynSpan { id: 0 }, sum: math::Sum { span: SynSpan { id: 0 }, term: Paren(math::Paren { span: SynSpan { id: 0 }, l_paren: SynToken { text: \"(\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }, sum: math::Sum { span: SynSpan { id: 1 }, term: Paren(math::Paren { span: SynSpan { id: 1 }, l_paren: SynToken { text: \"(\", span: SynSpan { id: 1 }, ctx: SynCtx { scopes: Nil } }, sum: math::Sum { span: SynSpan { id: 2 }, term: Num(SynToken { text: \"1\", span: SynSpan { id: 2 }, ctx: SynCtx { scopes: Nil } }), rep: Cons(math::Sum_Rep1 { span: SynSpan { id: 3 }, plus: SynToken { text: \"+\", span: SynSpan { id: 3 }, ctx: SynCtx { scopes: Nil } }, term: Num(SynToken { text: \"2\", span: SynSpan { id: 4 }, ctx: SynCtx { scopes: Nil } }) }, Nil) }, r_paren: SynToken { text: \")\", span: SynSpan { id: 5 }, ctx: SynCtx { scopes: Nil } } }), rep: Cons(math::Sum_Rep1 { span: SynSpan { id: 6 }, plus: SynToken { text: \"+\", span: SynSpan { id: 6 }, ctx: SynCtx { scopes: Nil } }, term: Num(SynToken { text: \"3\", span: SynSpan { id: 7 }, ctx: SynCtx { scopes: Nil } }) }, Nil) }, r_paren: SynToken { text: \")\", span: SynSpan { id: 8 }, ctx: SynCtx { scopes: Nil } } }), rep: Nil }, equals: SynToken { text: \"=\", span: SynSpan { id: 9 }, ctx: SynCtx { scopes: Nil } }, sum_2: math::Sum { span: SynSpan { id: 10 }, term: Num(SynToken { text: \"6\", span: SynSpan { id: 10 }, ctx: SynCtx { scopes: Nil } }), rep: Nil } })", "list_some = Ok(lists::Doc { span: SynSpan { id: 0 }, head: Some(lists::Head { span: SynSpan { id: 0 }, kw_head: SynToken { text: \"head\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }, name: SynToken { text: \"first\", span: SynSpan { id: 5 }, ctx: SynCtx { scopes: Nil } } }), item: Cons(lists::Item { span: SynSpan { id: 11 }, name: SynToken { text: \"one\", span: SynSpan { id: 11 }, ctx: SynCtx { scopes: Nil } }, opt: Some(lists::Item_Opt1 { span: SynSpan { id: 14 }, colon: SynToken { text: \":\", span: SynSpan { id: 14 }, ctx: SynCtx { scopes: Nil } }, name: SynToken { text: \"two\", span: SynSpan { id: 15 }, ctx: SynCtx { scopes: Nil } } }) }, Cons(lists::Item { span: SynSpan { id: 19 }, name: SynToken { text: \"three\", span: SynSpan { id: 19 }, ctx: SynCtx { scopes: Nil } }, opt: None }, Nil)), group: Bang(SynToken { text: \"!\", span: SynSpan { id: 25 }, ctx: SynCtx { scopes: Nil } }) })", "list_none = Ok(lists::Doc { span: SynSpan { id: 0 }, head: None, item: Nil, group: Tilde(SynToken { text: \"~\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }) })", "japanese = Ok(ident::Decl { span: SynSpan { id: 0 }, name: SynToken { text: \"日本語\", span: SynSpan { id: 0 }, ctx: SynCtx { scopes: Nil } }, equals: SynToken { text: \"=\", span: SynSpan { id: 9 }, ctx: SynCtx { scopes: Nil } }, value: SynToken { text: \"12\", span: SynSpan { id: 10 }, ctx: SynCtx { scopes: Nil } } })", "syntax_error = Err(SynDiag { message: \"macro-syntax-expected-found\", at: 2, expected: Cons(\"Num\", Cons(\"LParen\", Nil)), code: \"macro.syntax_error\", args: Cons(SynArg { name: \"syntax\", value: \"math\" }, Cons(SynArg { name: \"expected\", value: \"Num\" }, Cons(SynArg { name: \"expected\", value: \"LParen\" }, Cons(SynArg { name: \"found\", value: \"Equals\" }, Nil)))) })", "eof = Err(SynDiag { message: \"macro-syntax-expected-end\", at: 2, expected: Cons(\"Num\", Cons(\"LParen\", Nil)), code: \"macro.syntax_error\", args: Cons(SynArg { name: \"syntax\", value: \"math\" }, Cons(SynArg { name: \"expected\", value: \"Num\" }, Cons(SynArg { name: \"expected\", value: \"LParen\" }, Nil))) })", "lexical = Err(SynDiag { message: \"macro-syntax-not-a-token\", at: 10, expected: Nil, code: \"macro.syntax_error\", args: Cons(SynArg { name: \"syntax\", value: \"ident\" }, Nil) })", "literal = \"true\""]
+files."inputs/main.taut" = ````tauto
+import std::prelude::Macro
+
+syntax!(math, ```par
+%start Eqn
+%title "math"
+%%
+Eqn: Sum Equals Sum;
+Sum: Term { Plus Term };
+Term: Num | Paren;
+Paren: LParen Sum RParen;
+Num: /[0-9]+/;
+Equals: '=';
+Plus: '+';
+LParen: '(';
+RParen: ')';
+```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term, fn parse
+syntax!(lists, ```par
+%start Doc
+%title "lists"
+%%
+Doc: [ Head ] { Item } ( Bang | Tilde );
+Head: KwHead Name;
+Item: Name [ Colon Name ];
+KwHead: 'head';
+Name: /[a-z]+/;
+Colon: ':';
+Bang: '!';
+Tilde: '~';
+```) => struct Doc, enum Doc_Group1, struct Head, struct Item, struct Item_Opt1, fn parse
+syntax!(ident, ```par
+%start Decl
+%title "ident"
+%%
+Decl: Name Equals Value;
+Name: /[\p{L}_][\p{L}\p{N}_]*/;
+Equals: '=';
+Value: /[0-9]+/;
+```) => struct Decl, fn parse
+syntax!(records, ```par
+%start Expr
+%title "records"
+%%
+Expr: Name Colon Name | LParen Expr RParen | Bang;
+Name: /[\p{L}_][\p{L}\p{N}_]*/;
+Colon: ':';
+LParen: '(';
+RParen: ')';
+Bang: '!';
+```) => enum Expr, fn parse
+syntax!(alias, ```par
+%start Decl
+%title "ident"
+%%
+Decl: Name Equals Value;
+Name: /[\p{L}_][\p{L}\p{N}_]*/;
+Equals: '=';
+Value: /[0-9]+/;
+```) => struct Decl, fn parse
+syntax!(keywords, ```par
+%start Root
+%title "keyword fields"
+%%
+Root: '['^ Value ']'^;
+Value: 'true' | 'false';
+```) => struct Root, enum Value, fn parse
+
+fn keyword_text(root: keywords::Root): Text {
+  match root {
+    keywords::Root { span: root_span, value: node } => match node {
+      True { span: true_span, true_field: yes } => yes.text
+      False { span: false_span, false_field: no } => no.text
+    }
+  }
+}
+fn keyword_result(text: Text): Text {
+  match keywords::parse(text) {
+    Ok(root) => keyword_text(root)
+    Err(diag) => diag.code
+  }
+}
+perform show("true_field", keyword_result("[true]"))
+perform show("false_field", keyword_result("[false]"))
+perform show("keyword_error", keyword_result("[maybe]"))
+perform show("alias", alias::parse("別名=3"))
+perform show("alias_error", alias::parse("別名="))
+perform show("record", records::parse("((日本語:値))"))
+perform show("single", records::parse("!"))
+perform show("recursive", math::parse("((1+2)+3)=6"))
+perform show("list_some", lists::parse("head first one:two three !"))
+perform show("list_none", lists::parse("~"))
+perform show("japanese", ident::parse("日本語=12"))
+perform show("syntax_error", math::parse("1+=3"))
+perform show("eof", math::parse("1="))
+perform show("lexical", ident::parse("日本語=@"))
+
+perform show("literal", keyword_text(keywords`[true]`))
+````
+
+
+files."inputs/.tauto-syntax/b86f53836c1c73c63bc2cafa5aef421cbe7ea84ad052a16d711e2a5dadfcaec4.tables" = path`../crates/tauto/tests/syntax_fixtures/.tauto-syntax/b86f53836c1c73c63bc2cafa5aef421cbe7ea84ad052a16d711e2a5dadfcaec4.tables`
+files."inputs/.tauto-syntax/bf312ce6787529a699581c388659b45282560a771a1173f30b476be713b94dd0.tables" = path`../crates/tauto/tests/syntax_fixtures/.tauto-syntax/bf312ce6787529a699581c388659b45282560a771a1173f30b476be713b94dd0.tables`
+files."inputs/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
+files."inputs/.tauto-syntax/815e83a9c712310879ba006b2a96d5253d2f5fe23563c51b0436af78e16239a4.tables" = path`../crates/tauto/tests/syntax_fixtures/.tauto-syntax/815e83a9c712310879ba006b2a96d5253d2f5fe23563c51b0436af78e16239a4.tables`
+files."inputs/.tauto-syntax/d47d6b952cf70281395b77d5b02c41432a000a0d194d476decce1cad470cf951.tables" = path`../crates/tauto/tests/syntax_fixtures/.tauto-syntax/d47d6b952cf70281395b77d5b02c41432a000a0d194d476decce1cad470cf951.tables`
+
+@ cases.tote-entry-extension-taut
+files_tote = "a"
+backends = ["rust", "javascript"]
+shows = ["x = 7"]
+files."a/Tauto.eure" = 'package { name = "a" }'
+files."a/src/main.taut" = ```tauto
+perform show("x", 7)
+```
+
+@ cases.tote-entry-extension-taut-explicit
+files_tote = "a"
+backends = ["rust", "javascript"]
+shows = ["x = 7"]
+files."a/Tauto.eure" = 'package { name = "a" }'
+files."a/src/main.taut" = ```tauto
+perform show("x", 7)
+```
+
+@ cases.tote-entry-extension-tauto
+files_tote = "a"
+backends = ["rust", "javascript"]
+shows = ["x = 7"]
+files."a/Tauto.eure" = 'package { name = "a" }'
+files."a/src/main.tauto" = 'perform show("x", 7)'
+
+@ cases.tote-entry-extension-tauto-explicit
+files_tote = "a"
+backends = ["rust", "javascript"]
+shows = ["x = 7"]
+files."a/Tauto.eure" = 'package { name = "a" }'
+files."a/src/main.tauto" = 'perform show("x", 7)'
+
+@ cases.tote-mixed-source-extensions
+files_tote = "app"
+backends = ["rust", "javascript"]
+shows = ["value = 9"]
+files."a/Tauto.eure" = 'package { name = "a" }'
+files."a/src/proof.tauto" = 'theorem proof_identity(A: Prop, a: A): A { a }'
+files."a/src/value.taut" = ```tauto
+import "proof.tauto"
+pub fn value(): i64 { 9 }
+```
+files."a/src/main.tauto" = 'perform show("dependency", 0)'
+files."app/Tauto.eure" = 'package { name = "app" }
+dependencies { a { path = "../a" } }'
+files."app/src/main.taut" = ```tauto
+import "helper.tauto"
+perform show("value", helper())
+```
+files."app/src/helper.tauto" = 'import a::value
+pub fn helper(): i64 { value() }'
+
+@ cases.tote-variant-renamed-for-a-clash
+description = "A variant whose short name another declaration has (`ExVar` of the prelude's syntax trees) is renamed to its full name (`app.src.lang.Expr.ExVar`); extraction writes it under its type (`Expr.ExVar`), as its type declares it."
+files_tote = "app"
+backends = ["rust", "javascript"]
+shows = ["named = true", "number = false"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/lang.taut" = ```tauto
+pub inductive Expr: Type {
+  ExNum(n: Nat): Expr
+  ExVar(name: List(Nat)): Expr
+}
+
+pub fn named(e: Expr): Bool {
+  ⊢ Bool from match e {
+    ExVar(v) => true
+    ExNum(n) => false
+  }
+}
+
+pub fn var_of(v: List(Nat)): Expr {
+  ExVar(v)
+}
+
+pub fn num_of(n: Nat): Expr {
+  ExNum(n)
+}
+```
+files."app/src/main.taut" = ```tauto
+import "lang.taut"
+perform show("named", named(var_of(Nil)))
+perform show("number", named(num_of(1)))
+```
+
+@ cases.tote-path-dependency-module-path
+description = "A dependency's names are qualified by its path (`dep.src.text.bytes.join`); extraction writes each segment as a nested module."
+files_tote = "app"
+backends = ["rust", "javascript"]
+shows = ["joined = Cons(47, Cons(47, Nil))"]
+files."dep/Tauto.eure" = 'package { name = "dep" version = "0.1.0" }'
+files."dep/src/text/bytes.taut" = ```tauto
+pub fn join(c: Nat, ps: List(List(Nat))): List(Nat) {
+  match ps {
+    Nil => Nil,
+    Cons(p, rest) => Cons(c, join(c, rest)),
+  }
+}
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" version = "0.1.0" }
+dependencies { dep { path = "../dep" } }
+```
+files."app/src/main.taut" = ```tauto
+import "../../dep/src/text/bytes.taut"
+
+pub fn joined(ps: List(List(Nat))): List(Nat) {
+  join(47, ps)
+}
+
+perform show("joined", joined(Cons(Nil, Cons(Nil, Nil))))
+```

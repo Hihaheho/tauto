@@ -24,9 +24,25 @@ pub fn dump_program(program: &Program) -> String {
     d.out
 }
 
+/// A surface AST key for formatting: source positions and expression-only blocks
+/// are transparent in the surface reader. Other tokens are checked separately
+/// by the formatter, including syntax the surface reader does not elaborate.
+pub fn formatting_key(program: &Program) -> String {
+    let mut d = Dump {
+        omit_positions: true,
+        ..Dump::default()
+    };
+    d.line(0, &format!("Program [{}]", program.stmts.len()));
+    for stmt in &program.stmts {
+        d.stmt(1, stmt);
+    }
+    d.out
+}
+
 #[derive(Default)]
 struct Dump {
     out: String,
+    omit_positions: bool,
 }
 
 fn hex(text: &str) -> String {
@@ -36,17 +52,21 @@ fn hex(text: &str) -> String {
     text.bytes().map(|b| format!("{b:02x}")).collect()
 }
 
-fn names(items: &[String]) -> String {
+fn names<N: AsRef<str>>(items: &[N]) -> String {
     let mut s = format!("[{}]", items.len());
     for i in items {
         s.push(' ');
-        s.push_str(i);
+        s.push_str(i.as_ref());
     }
     s
 }
 
-fn at(span: Span) -> String {
-    format!("{} {}", span.start, span.end)
+fn at(span: Span, omit: bool) -> String {
+    if omit {
+        String::new()
+    } else {
+        format!("{} {}", span.start, span.end)
+    }
 }
 
 impl Dump {
@@ -58,14 +78,14 @@ impl Dump {
         self.line(depth, &format!("{field} {value}"));
     }
 
-    fn opt_name(&mut self, depth: usize, field: &str, value: &Option<String>) {
+    fn opt_name<N: AsRef<str>>(&mut self, depth: usize, field: &str, value: &Option<N>) {
         match value {
             None => self.line(depth, &format!("{field} None")),
-            Some(v) => self.line(depth, &format!("{field} Some {v}")),
+            Some(v) => self.line(depth, &format!("{field} Some {}", v.as_ref())),
         }
     }
 
-    fn names(&mut self, depth: usize, field: &str, items: &[String]) {
+    fn names<N: AsRef<str>>(&mut self, depth: usize, field: &str, items: &[N]) {
         self.line(depth, &format!("{field} {}", names(items)));
     }
 
@@ -104,10 +124,15 @@ impl Dump {
         }
     }
 
-    fn named_terms(&mut self, depth: usize, field: &str, items: &[(String, SurfaceTerm)]) {
+    fn named_terms<N: AsRef<str>>(
+        &mut self,
+        depth: usize,
+        field: &str,
+        items: &[(N, SurfaceTerm)],
+    ) {
         self.line(depth, &format!("{field} [{}]", items.len()));
         for (n, t) in items {
-            self.line(depth + 1, n);
+            self.line(depth + 1, n.as_ref());
             self.term(depth + 2, t);
         }
     }
@@ -126,7 +151,10 @@ impl Dump {
                 unreachable!("the spine holds applications")
             };
             let d = depth + 1;
-            self.line(depth, &format!("Term.App {}", at(app.span)));
+            self.line(
+                depth,
+                &format!("Term.App {}", at(app.span, self.omit_positions)),
+            );
             self.term_field(d, "function", function);
             self.line(d, &format!("arguments [{}]", arguments.len()));
             let (_, init) = arguments
@@ -142,8 +170,13 @@ impl Dump {
 
     fn term_node(&mut self, depth: usize, t: &SurfaceTerm) {
         let d = depth + 1;
-        let head = |v: &str| format!("Term.{v} {}", at(t.span));
+        let omit_positions = self.omit_positions;
+        let head = |v: &str| format!("Term.{v} {}", at(t.span, omit_positions));
         match &*t.kind {
+            TermKind::Declaration(reference) => {
+                self.line(depth, &head("Declaration"));
+                self.name(d, "display", reference.display());
+            }
             TermKind::Var(n) => {
                 self.line(depth, &head("Var"));
                 self.name(d, "name", n);
@@ -307,12 +340,15 @@ impl Dump {
             TermKind::Step(s) => {
                 self.line(depth, &head("Step"));
                 self.name(d, "tactic", &s.tactic);
-                self.name(d, "call", &at(s.call));
+                self.name(d, "call", &at(s.call, self.omit_positions));
                 self.term_field(d, "arg", &s.arg);
                 self.opt_term(d, "before", &s.before);
                 self.line(d, &format!("arms [{}]", s.arms.len()));
                 for a in &s.arms {
-                    self.line(d + 1, &format!("StepArm {}", at(a.span)));
+                    self.line(
+                        d + 1,
+                        &format!("StepArm {}", at(a.span, self.omit_positions)),
+                    );
                     self.named_terms(d + 2, "binders", &a.binders);
                     self.term_field(d + 2, "goal", &a.goal);
                     self.term_field(d + 2, "body", &a.body);
@@ -478,7 +514,7 @@ impl Dump {
         }
     }
 
-    fn typed(&mut self, depth: usize, field: &str, items: &[(String, SurfaceTerm)]) {
+    fn typed<N: AsRef<str>>(&mut self, depth: usize, field: &str, items: &[(N, SurfaceTerm)]) {
         self.named_terms(depth, field, items);
     }
 
@@ -516,7 +552,10 @@ impl Dump {
                 }
             }
             Stmt::Module { name, items, span } => {
-                self.line(depth, &format!("Stmt.Module {}", at(*span)));
+                self.line(
+                    depth,
+                    &format!("Stmt.Module {}", at(*span, self.omit_positions)),
+                );
                 self.name(d, "name", name);
                 self.stmts(d, "items", items);
             }
@@ -581,11 +620,17 @@ impl Dump {
                 self.stmt(d, stmt);
             }
             Stmt::Mutual { items, span } => {
-                self.line(depth, &format!("Stmt.Mutual {}", at(*span)));
+                self.line(
+                    depth,
+                    &format!("Stmt.Mutual {}", at(*span, self.omit_positions)),
+                );
                 self.stmts(d, "items", items);
             }
             Stmt::Import { path, span, .. } => {
-                self.line(depth, &format!("Stmt.Import {}", at(*span)));
+                self.line(
+                    depth,
+                    &format!("Stmt.Import {}", at(*span, self.omit_positions)),
+                );
                 self.name(d, "path", &hex(path));
             }
             Stmt::Inductive(i) => {
@@ -605,16 +650,47 @@ impl Dump {
                 self.data(d, x);
             }
             Stmt::Extern { fns, span, .. } => {
-                self.line(depth, &format!("Stmt.Extern {}", at(*span)));
+                self.line(
+                    depth,
+                    &format!("Stmt.Extern {}", at(*span, self.omit_positions)),
+                );
                 self.name(d, "language", &hex(""));
                 self.line(d, &format!("fns [{}]", fns.len()));
                 for f in fns {
                     self.fn_decl(d + 1, f);
                 }
             }
-            Stmt::Class(c) => self.line(depth, &format!("Stmt.Class {} {}", c.name, at(c.span))),
+            Stmt::Class(c) => {
+                self.line(
+                    depth,
+                    &format!("Stmt.Class {} {}", c.name, at(c.span, self.omit_positions)),
+                );
+                if c.parameters.len() > 1
+                    || c.parameters
+                        .iter()
+                        .any(|(_, t)| !matches!(&*t.kind, TermKind::Var(n) if n.as_str() == "Type"))
+                {
+                    self.named_terms(d, "parameters", &c.parameters);
+                }
+            }
             Stmt::Instance(i) => {
-                self.line(depth, &format!("Stmt.Instance {} {}", i.class, at(i.span)))
+                self.line(
+                    depth,
+                    &format!(
+                        "Stmt.Instance {} {}",
+                        i.class,
+                        at(i.span, self.omit_positions)
+                    ),
+                );
+                if !i.arguments.is_empty() {
+                    self.terms(d, "arguments", &i.arguments);
+                }
+                if i.generic_types
+                    .iter()
+                    .any(|t| !matches!(&*t.kind, TermKind::Var(n) if n.as_str() == "Type"))
+                {
+                    self.terms(d, "generic_types", &i.generic_types);
+                }
             }
             Stmt::While { condition, body } => {
                 self.line(depth, "Stmt.While");
@@ -630,7 +706,10 @@ impl Dump {
                 self.term(d, t);
             }
             Stmt::Other(n, span) => {
-                self.line(depth, &format!("Stmt.Other {}", at(*span)));
+                self.line(
+                    depth,
+                    &format!("Stmt.Other {}", at(*span, self.omit_positions)),
+                );
                 self.name(d, "kind", n);
             }
             Stmt::Macro {
@@ -638,7 +717,10 @@ impl Dump {
                 function,
                 span,
             } => {
-                self.line(depth, &format!("Stmt.Macro {}", at(*span)));
+                self.line(
+                    depth,
+                    &format!("Stmt.Macro {}", at(*span, self.omit_positions)),
+                );
                 self.name(d, "name", name);
                 self.name(d, "function", function);
             }
@@ -648,7 +730,10 @@ impl Dump {
                 span,
                 ..
             } => {
-                self.line(depth, &format!("Stmt.Syntax {}", at(*span)));
+                self.line(
+                    depth,
+                    &format!("Stmt.Syntax {}", at(*span, self.omit_positions)),
+                );
                 self.name(d, "name", name);
                 self.name(d, "grammar", &hex(&grammar.text));
             }
@@ -657,9 +742,18 @@ impl Dump {
 
     fn fn_decl(&mut self, depth: usize, f: &FnDecl) {
         let d = depth + 1;
-        self.line(depth, &format!("FnDecl {}", at(f.span)));
+        self.line(
+            depth,
+            &format!("FnDecl {}", at(f.span, self.omit_positions)),
+        );
         self.name(d, "name", &f.name);
         self.names(d, "generics", &f.generics);
+        if f.generic_types
+            .iter()
+            .any(|t| !matches!(&*t.kind, TermKind::Var(n) if n.as_str() == "Type"))
+        {
+            self.terms(d, "generic_types", &f.generic_types);
+        }
         self.line(d, &format!("bounds [{}]", f.bounds.len()));
         for b in &f.bounds {
             self.opt_name(d + 1, "bound", b);
@@ -682,11 +776,20 @@ impl Dump {
             Some(e) => self.line(d, &format!("effects Some {}", names(e))),
         }
         self.term_field(d, "body", &f.body);
+        for constraint in &f.where_ {
+            if !constraint.arguments.is_empty() {
+                self.name(d, "constraint", constraint.class.as_ref());
+                self.terms(d, "arguments", &constraint.arguments);
+            }
+        }
     }
 
     fn theorem(&mut self, depth: usize, t: &TheoremDecl) {
         let d = depth + 1;
-        self.line(depth, &format!("TheoremDecl {}", at(t.span)));
+        self.line(
+            depth,
+            &format!("TheoremDecl {}", at(t.span, self.omit_positions)),
+        );
         self.name(d, "name", &t.name);
         self.name(d, "implicit", &t.implicit.to_string());
         self.typed(d, "params", &t.params);
@@ -696,7 +799,10 @@ impl Dump {
 
     fn inductive(&mut self, depth: usize, i: &InductiveDecl) {
         let d = depth + 1;
-        self.line(depth, &format!("InductiveDecl {}", at(i.span)));
+        self.line(
+            depth,
+            &format!("InductiveDecl {}", at(i.span, self.omit_positions)),
+        );
         self.name(d, "name", &i.name);
         self.typed(d, "params", &i.params);
         self.term_field(d, "sort", &i.sort);
@@ -717,7 +823,10 @@ impl Dump {
 
     fn effect(&mut self, depth: usize, e: &EffectDecl) {
         let d = depth + 1;
-        self.line(depth, &format!("EffectDecl {}", at(e.span)));
+        self.line(
+            depth,
+            &format!("EffectDecl {}", at(e.span, self.omit_positions)),
+        );
         self.name(d, "name", &e.name);
         self.names(d, "generics", &e.generics);
         self.opt_terms(d, "params", &e.params);
@@ -727,7 +836,10 @@ impl Dump {
 
     fn data(&mut self, depth: usize, x: &DataDecl) {
         let d = depth + 1;
-        self.line(depth, &format!("DataDecl {}", at(x.span)));
+        self.line(
+            depth,
+            &format!("DataDecl {}", at(x.span, self.omit_positions)),
+        );
         self.opt_name(d, "kind", &x.kind);
         self.name(d, "name", &x.name);
         self.names(d, "generics", &x.generics);

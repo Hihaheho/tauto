@@ -10,26 +10,49 @@
 //! proof side gave it. A signed parameter gets no such rule: `n - 1` of a
 //! negative `n` does not end.
 
+use crate::surface::Name;
 use std::collections::HashMap;
 
 use crate::surface::{FnDecl, Handler, Pattern, Stmt, SurfaceTerm, TermKind};
 
-/// Whether every reference `f` makes to itself is a call whose argument at
-/// one fixed position is a strict part of the parameter at that position.
-pub(super) fn decreases(f: &FnDecl) -> bool {
-    (0..f.params.len()).any(|i| {
-        let mut names = HashMap::new();
-        for (k, p) in f.params.iter().enumerate() {
-            names.insert(p.clone(), if k == i { Size::Whole } else { Size::Other });
-        }
-        let mut scan = Scan {
-            name: &f.name,
-            at: i,
-            unsigned: f.param_types[i].as_ref().is_some_and(unsigned),
-            ok: true,
-        };
-        scan.term(&f.body, &mut names);
-        scan.ok
+/// Whether every reference the functions of `group` make to one another (a
+/// function to itself, when the group is one function) is a call whose
+/// argument at one fixed position is a strict part of the parameter at that
+/// position. A part of a value is smaller than it whatever its type, so the
+/// position shrinks along every cycle of mutually recursive functions.
+pub(super) fn decreases(group: &[&FnDecl]) -> bool {
+    if group.is_empty() {
+        return false;
+    }
+    let members: Vec<&Name> = group.iter().map(|f| &f.name).collect();
+    if group.iter().any(|f| f.param_types.len() != f.params.len()) {
+        return false;
+    }
+    // The members may take different numbers of parameters: the position
+    // that shrinks only has to be one that every member has.
+    let positions = group.iter().map(|f| f.params.len()).min().unwrap_or(0);
+    (0..positions).any(|i| {
+        group.iter().all(|f| {
+            f.param_types[i].is_some()
+                && group.iter().all(|g| {
+                    g.param_types[i].as_ref().is_some_and(unsigned)
+                        == f.param_types[i].as_ref().is_some_and(unsigned)
+                })
+                && {
+                    let mut names = HashMap::new();
+                    for (k, p) in f.params.iter().enumerate() {
+                        names.insert(p.clone(), if k == i { Size::Whole } else { Size::Other });
+                    }
+                    let mut scan = Scan {
+                        members: &members,
+                        at: i,
+                        unsigned: f.param_types[i].as_ref().is_some_and(unsigned),
+                        ok: true,
+                    };
+                    scan.term(&f.body, &mut names);
+                    scan.ok
+                }
+        })
     })
 }
 
@@ -52,10 +75,10 @@ enum Size {
     Other,
 }
 
-type Names = HashMap<String, Size>;
+type Names = HashMap<Name, Size>;
 
 struct Scan<'a> {
-    name: &'a str,
+    members: &'a [&'a Name],
     at: usize,
     unsigned: bool,
     ok: bool,
@@ -65,12 +88,14 @@ impl Scan<'_> {
     fn size(&self, t: &SurfaceTerm, names: &Names) -> Size {
         match &*t.kind {
             TermKind::Var(n) => names.get(n).copied().unwrap_or(Size::Other),
-            TermKind::Borrow { term, .. } => self.size(term, names),
+            TermKind::Borrow { term, .. } | TermKind::Ascribe { term, .. } => {
+                self.size(term, names)
+            }
             TermKind::App {
                 function,
                 arguments,
             } if self.unsigned
-                && matches!(&*function.kind, TermKind::Var(op) if op == "-" && !names.contains_key(op))
+                && matches!(&*function.kind, TermKind::Var(op) if tauto_surface::bindings::is_library(&op, "-") && !names.contains_key(op))
                 && arguments.len() == 2
                 && matches!(self.size(&arguments[0], names), Size::NonZero { .. })
                 && matches!(&*arguments[1].kind, TermKind::Nat(c) if c.parse::<u128>().is_ok_and(|c| c >= 1)) =>
@@ -83,7 +108,7 @@ impl Scan<'_> {
 
     /// The name `n` of the parameter or a part of it that `n == 0` (or
     /// `0 == n`) tests, so that it is not zero in the `else` branch.
-    fn zero_test(&self, t: &SurfaceTerm, names: &Names) -> Option<(String, Size)> {
+    fn zero_test(&self, t: &SurfaceTerm, names: &Names) -> Option<(Name, Size)> {
         let TermKind::App {
             function,
             arguments,
@@ -92,7 +117,7 @@ impl Scan<'_> {
             return None;
         };
         if !self.unsigned
-            || !matches!(&*function.kind, TermKind::Var(op) if op == "==" && !names.contains_key(op))
+            || !matches!(&*function.kind, TermKind::Var(op) if tauto_surface::bindings::is_library(&op, "==") && !names.contains_key(op))
         {
             return None;
         }
@@ -110,12 +135,12 @@ impl Scan<'_> {
         }
     }
 
-    fn shadow(names: &mut Names, n: &str) {
-        names.insert(n.to_string(), Size::Other);
+    fn shadow(names: &mut Names, n: &Name) {
+        names.insert(n.clone(), Size::Other);
     }
 
     fn is_self(&self, t: &SurfaceTerm, names: &Names) -> bool {
-        matches!(&*t.kind, TermKind::Var(n) if n == self.name && !names.contains_key(n))
+        matches!(&*t.kind, TermKind::Var(n) if self.members.contains(&n) && !names.contains_key(n))
     }
 
     fn term(&mut self, t: &SurfaceTerm, names: &mut Names) {
@@ -221,7 +246,9 @@ impl Scan<'_> {
                     self.term(o, &mut inner);
                 }
             }
+            // `(e: T)` runs `e`; the type is not run.
             TermKind::Field { base, .. }
+            | TermKind::Ascribe { term: base, .. }
             | TermKind::Tagged { term: base, .. }
             | TermKind::Borrow { term: base, .. } => self.term(base, names),
             TermKind::Perform { args, .. } | TermKind::Union(args) | TermKind::Tuple(args) => {
@@ -244,6 +271,8 @@ impl Scan<'_> {
             | TermKind::Text(_)
             | TermKind::Bool(_)
             | TermKind::Pi { .. }
+            | TermKind::Product(_)
+            | TermKind::Row(_)
             | TermKind::Exists { .. }
             | TermKind::FnKind { .. } => {}
             // Anything else is not read: the recursion is not known to end.
@@ -276,7 +305,7 @@ impl Scan<'_> {
                 self.term(body, names);
             }
             // A local function that takes the name hides it.
-            Stmt::Fn(f) if f.name == self.name => Self::shadow(names, &f.name),
+            Stmt::Fn(f) if self.members.contains(&&f.name) => Self::shadow(names, &f.name),
             Stmt::Fn(f) => {
                 let mut inner = names.clone();
                 for p in &f.params {

@@ -37,7 +37,7 @@ pub fn inference_block_end(
   last: Ty,
   stopped: Bool
 ): Mut2(Ty, Checker, Scope) {
-  match stopped: Mut2(Ty, Checker, Scope) {
+  ⊢ Mut2(Ty, Checker, Scope) from match stopped {
     true => mut2(TyNever, c, env)
     false => mut2(last, c, env)
   }
@@ -52,7 +52,7 @@ pub theorem inference_block_end_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, inference_block_end(j, c, env, last, stopped)) {
-  match stopped: CkScopeFrame(c, inference_block_end(j, c, env, last, stopped)) {
+  ⊢ CkScopeFrame(c, inference_block_end(j, c, env, last, stopped)) from match stopped {
     true => pattern_return_frame(c, env, TyNever, ordered)
     false => pattern_return_frame(c, env, last, ordered)
   }
@@ -66,7 +66,7 @@ pub fn inference_block(
   last: Ty,
   stmts: List(SurfaceStmt)
 ): Mut2(Ty, Checker, Scope) {
-  match stmts: Mut2(Ty, Checker, Scope) {
+  ⊢ Mut2(Ty, Checker, Scope) from match stmts {
     Nil => inference_block_end(j, c, env, last, stopped)
     Cons(s, rest) => pattern_bind(
       Ty,
@@ -89,7 +89,7 @@ pub theorem inference_block_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, inference_block(j, c, env, stopped, last, stmts)) {
-  match stmts: CkScopeFrame(c, inference_block(j, c, env, stopped, last, stmts)) {
+  ⊢ CkScopeFrame(c, inference_block(j, c, env, stopped, last, stmts)) from match stmts {
     Nil => inference_block_end_frame(j, c, env, last, stopped, ih, ordered)
     Cons(s, rest) => pattern_bind_frame(
       Ty,
@@ -148,7 +148,28 @@ pub theorem inference_unf_ck_block_in(
   env: Scope,
   stopped: Bool,
   last: Ty
-): ck_block_in(Succ(j), c, stmts, env, stopped, last) = inference_step_ck_block_in(j, c, stmts, env, stopped, last) { match stmts: ck_block_in(Succ(j), c, stmts, env, stopped, last) = inference_step_ck_block_in(j, c, stmts, env, stopped, last) {
+): ck_block_in(
+  Succ(j),
+  c,
+  stmts,
+  env,
+  stopped,
+  last
+) = inference_step_ck_block_in(
+  j,
+  c,
+  stmts,
+  env,
+  stopped,
+  last
+) { ⊢ ck_block_in(
+  Succ(j),
+  c,
+  stmts,
+  env,
+  stopped,
+  last
+) = inference_step_ck_block_in(j, c, stmts, env, stopped, last) from match stmts {
     Nil => Refl
     Cons(s, rest) => Refl
   } }
@@ -163,7 +184,7 @@ pub fn inference_app_clone(
   name: Text,
   clone: Bool
 ): Mut1(Ty, Checker) {
-  match clone: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match clone {
     true => ck_rewrap1(ck_clone_of_in(j, c, arguments, env, span_of(term)))
     false => ck_rewrap1(ck_app_call_in(j, c, term, function, arguments, env))
   }
@@ -181,10 +202,10 @@ pub theorem inference_app_clone_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_app_clone(j, c, term, function, arguments, env, name, clone)) {
-  match clone: CkRunFrame(
+  ⊢ CkRunFrame(
     c,
     inference_app_clone(j, c, term, function, arguments, env, name, clone)
-  ) {
+  ) from match clone {
     true => run_frame_rewrap(
       c,
       ck_clone_of_in(j, c, arguments, env, span_of(term)),
@@ -208,7 +229,7 @@ pub fn inference_app_operator(
   name: Text,
   operator: Bool
 ): Mut1(Ty, Checker) {
-  match operator: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match operator {
     true => frame_bind(
       List(Ty),
       Ty,
@@ -245,10 +266,10 @@ pub theorem inference_app_operator_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_app_operator(j, c, term, function, arguments, env, name, operator)) {
-  match operator: CkRunFrame(
+  ⊢ CkRunFrame(
     c,
     inference_app_operator(j, c, term, function, arguments, env, name, operator)
-  ) {
+  ) from match operator {
     true => run_frame_bind(
       List(Ty),
       Ty,
@@ -292,9 +313,18 @@ pub fn inference_app_tuple(
   name: Text,
   tuple: Bool
 ): Mut1(Ty, Checker) {
-  match tuple: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match tuple {
     true => mut1(TyUnit, c)
-    false => inference_app_operator(j, c, term, function, arguments, env, name, ck_is_operator(name))
+    false => inference_app_operator(
+      j,
+      c,
+      term,
+      function,
+      arguments,
+      env,
+      name,
+      ck_is_operator(name)
+    )
   }
 }
 
@@ -310,10 +340,10 @@ pub theorem inference_app_tuple_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_app_tuple(j, c, term, function, arguments, env, name, tuple)) {
-  match tuple: CkRunFrame(
+  ⊢ CkRunFrame(
     c,
     inference_app_tuple(j, c, term, function, arguments, env, name, tuple)
-  ) {
+  ) from match tuple {
     true => run_frame_return(c, TyUnit, ordered)
     false => inference_app_operator_frame(
       j,
@@ -339,7 +369,7 @@ pub fn inference_app_name(
   env: List(Local),
   r#direct: Option(Text)
 ): Mut1(Ty, Checker) {
-  match r#direct: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match r#direct {
     None => ck_rewrap1(ck_app_call_in(j, c, term, function, arguments, env))
     Some(name) => inference_app_tuple(
       j,
@@ -365,7 +395,7 @@ pub theorem inference_app_name_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_app_name(j, c, term, function, arguments, env, r#direct)) {
-  match r#direct: CkRunFrame(c, inference_app_name(j, c, term, function, arguments, env, r#direct)) {
+  ⊢ CkRunFrame(c, inference_app_name(j, c, term, function, arguments, env, r#direct)) from match r#direct {
     None => run_frame_rewrap(
       c,
       ck_app_call_in(j, c, term, function, arguments, env),
@@ -428,7 +458,14 @@ pub theorem inference_unf_ck_app_in(
   function: SurfaceTerm,
   arguments: List(SurfaceTerm),
   env: List(Local)
-): ck_app_in(Succ(j), c, term, function, arguments, env) = inference_step_ck_app_in(j, c, term, function, arguments, env) { Refl }
+): ck_app_in(
+  Succ(j),
+  c,
+  term,
+  function,
+  arguments,
+  env
+) = inference_step_ck_app_in(j, c, term, function, arguments, env) { Refl }
 
 pub fn inference_statement(
   j: Nat,
@@ -436,7 +473,7 @@ pub fn inference_statement(
   env: Scope,
   s: SurfaceStmt
 ): Mut2(Ty, Checker, Scope) {
-  match s: Mut2(Ty, Checker, Scope) {
+  ⊢ Mut2(Ty, Checker, Scope) from match s {
     StLet(name, ty, value, borrow, bm) => pattern_bind_one(
       Ty,
       Ty,
@@ -578,7 +615,7 @@ pub theorem inference_statement_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, inference_statement(j, c, env, s)) {
-  match s: CkScopeFrame(c, inference_statement(j, c, env, s)) {
+  ⊢ CkScopeFrame(c, inference_statement(j, c, env, s)) from match s {
     StLet(name, ty, value, borrow, bm) => pattern_bind_one_frame(
       Ty,
       Ty,
@@ -992,7 +1029,17 @@ pub theorem inference_unf_ck_stmt_in(
   c: Checker,
   s: SurfaceStmt,
   env: Scope
-): ck_stmt_in(Succ(j), c, s, env) = inference_step_ck_stmt_in(j, c, s, env) { match s: ck_stmt_in(Succ(j), c, s, env) = inference_step_ck_stmt_in(j, c, s, env) {
+): ck_stmt_in(
+  Succ(j),
+  c,
+  s,
+  env
+) = inference_step_ck_stmt_in(
+  j,
+  c,
+  s,
+  env
+) { ⊢ ck_stmt_in(Succ(j), c, s, env) = inference_step_ck_stmt_in(j, c, s, env) from match s {
     StLet(name, ty, value, borrow, bm) => Refl
     StVar(name, ty, value, vb) => Refl
     StAssign(name, name_place, value) => Refl

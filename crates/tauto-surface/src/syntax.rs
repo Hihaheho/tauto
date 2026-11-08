@@ -9,7 +9,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::sync::Arc;
 use tauto_message::{Message, msg};
 
@@ -19,7 +18,7 @@ use tauto_syntax::{
 };
 
 use crate::macros::Node;
-use crate::surface::qualify::{PRELUDE_MODULE, SEPARATOR};
+use crate::surface::qualify::SEPARATOR;
 use crate::surface::{
     DataConstructor, DataDecl, FnDecl, Program, Stmt, SurfaceTerm, SyntaxLit, TermKind,
 };
@@ -71,7 +70,7 @@ pub fn grammar_sha(grammar: &str) -> String {
 thread_local! {
     /// Tables already read, by the hash of their grammar: what a run's
     /// `syn_parse` reads its grammar's tables from.
-    static READ: RefCell<HashMap<String, Rc<Tables>>> = RefCell::new(HashMap::new());
+    static READ: RefCell<HashMap<String, std::sync::Arc<Tables>>> = RefCell::new(HashMap::new());
     /// How many times tables were looked for and not found.
     static MISSED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
@@ -82,24 +81,56 @@ pub fn tables_missed() -> u64 {
     MISSED.with(std::cell::Cell::get)
 }
 
-pub fn load_tables(grammar: &str) -> Result<Rc<Tables>, String> {
+/// The tables shipped with a source library, by the hash of their grammar, as
+/// text: every thread reads them, whichever one registered them.
+static SHIPPED: std::sync::Mutex<Vec<(String, &'static str)>> = std::sync::Mutex::new(Vec::new());
+
+/// Registers a table shipped with a source library. Its grammar fingerprint is
+/// read from the validated table, using the same decoder as on-disk tables.
+pub fn register_tables(text: &'static str) -> Result<(), String> {
+    let sha = Tables::read(text)
+        .map_err(|e| e.to_string())?
+        .grammar_sha256()
+        .to_string();
+    let mut shipped = SHIPPED.lock().unwrap_or_else(|e| e.into_inner());
+    if !shipped.iter().any(|(s, _)| *s == sha) {
+        shipped.push((sha, text));
+    }
+    Ok(())
+}
+
+fn shipped_tables(sha: &str) -> Option<Tables> {
+    let text = SHIPPED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|(s, _)| s == sha)
+        .map(|(_, t)| *t)?;
+    Tables::read(text).ok()
+}
+
+pub fn load_tables(grammar: &str) -> Result<std::sync::Arc<Tables>, String> {
     tables_of(&grammar_sha(grammar))
 }
 
-pub fn tables_of(sha: &str) -> Result<Rc<Tables>, String> {
+pub fn tables_of(sha: &str) -> Result<std::sync::Arc<Tables>, String> {
     tables_or_why(sha).map_err(|m| m.to_string())
 }
 
-fn tables_or_why(sha: &str) -> Result<Rc<Tables>, Message> {
+fn tables_or_why(sha: &str) -> Result<std::sync::Arc<Tables>, Message> {
     if let Some(t) = READ.with(|r| r.borrow().get(sha).cloned()) {
         return Ok(t);
     }
-    let tables = Rc::new(read_tables(sha).inspect_err(|_| MISSED.with(|m| m.set(m.get() + 1)))?);
+    let tables =
+        std::sync::Arc::new(read_tables(sha).inspect_err(|_| MISSED.with(|m| m.set(m.get() + 1)))?);
     READ.with(|r| r.borrow_mut().insert(sha.to_string(), tables.clone()));
     Ok(tables)
 }
 
 fn read_tables(sha: &str) -> Result<Tables, Message> {
+    if let Some(tables) = shipped_tables(sha) {
+        return Ok(tables);
+    }
     let Some(path) = find_tables(sha) else {
         return Err(msg!("surface-tables-missing", grammar = &sha[..12]));
     };
@@ -147,7 +178,9 @@ fn listed_names(name: &str, stmts: &[Stmt]) -> Vec<(String, String)> {
 
 #[derive(Clone)]
 pub struct Syntax {
-    pub tables: Rc<Tables>,
+    pub tables: std::sync::Arc<Tables>,
+    /// The start tree declaration in the syntax definition's binding session.
+    pub start_reference: Option<crate::identity::Name>,
     /// The file that declares the syntax: the names its literals' values are
     /// built with are read as that file reads them.
     pub file: Option<usize>,
@@ -169,12 +202,12 @@ impl Role {
     }
 }
 
-/// A function registered for a syntax (the function is not looked for yet).
+/// A function registered for a syntax; its source name is bound with the program.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Registration {
     pub syntax: String,
     pub role: Role,
-    pub function: String,
+    pub function: crate::surface::Name,
     pub span: Span,
 }
 
@@ -209,23 +242,47 @@ pub fn expand(mut program: Program) -> Program {
 #[derive(Clone)]
 pub struct LiteralUse {
     pub syntax: String,
-    pub tables: Rc<Tables>,
+    pub tables: std::sync::Arc<Tables>,
     pub lit: SyntaxLit,
 }
 
 #[derive(Default, Clone)]
 pub struct Syntaxes {
     pub map: HashMap<String, Syntax>,
-    pub errors: Vec<(String, Span)>,
+    pub errors: Vec<(Message, Span)>,
     pub fixes: Vec<(Span, crate::surface::Fix)>,
     pub uses: RefCell<Vec<LiteralUse>>,
     /// The file whose statements are being read, when the files are known: a syntax it
     /// declares keeps it ([`Syntax::file`]).
     pub file: Option<usize>,
     pub registrations: Vec<Registration>,
+    definitions: HashMap<usize, crate::resolve::Resolver>,
+    /// Executable declarations emitted by inductive syntax declarations.
+    pub generated_executable: std::collections::HashSet<crate::identity::Name>,
+    pending_executable: Vec<(usize, String)>,
 }
 
 impl Syntaxes {
+    pub fn bind_definitions(&mut self, file: usize, bindings: crate::resolve::Resolver) {
+        for (name, syntax) in &mut self.map {
+            if syntax.file == Some(file) {
+                syntax.start_reference = syntax
+                    .start_type(name)
+                    .and_then(|spelling| bindings.source_reference(&spelling));
+            }
+        }
+        for (_, spelling) in self
+            .pending_executable
+            .iter()
+            .filter(|(owner, _)| *owner == file)
+        {
+            if let Some(reference) = bindings.source_reference(spelling) {
+                self.generated_executable.insert(reference);
+            }
+        }
+        self.pending_executable.retain(|(owner, _)| *owner != file);
+        self.definitions.insert(file, bindings);
+    }
     /// The statements without the `syntax` declarations, followed (each at its
     /// place) by the types and the `.parse` function they make.
     pub fn declare_all(&mut self, stmts: Vec<Stmt>) -> Vec<Stmt> {
@@ -264,48 +321,66 @@ impl Syntaxes {
     ) {
         let first = out.len();
         if let Some((m, at)) = &grammar.error {
-            self.errors.push((m.clone(), *at));
+            self.errors.push((m.clone().into(), *at));
             return;
         }
         if grammar.name.as_deref() != Some("par") {
-            self.errors.push((
-                msg!("surface-grammar-not-par", name = name).to_string(),
-                span,
-            ));
+            self.errors
+                .push((msg!("surface-grammar-not-par", name = name), span));
             return;
         }
         if name == "plaintext" || self.map.contains_key(name) {
-            self.errors.push((
-                msg!("surface-syntax-declared-twice", name = name).to_string(),
-                span,
-            ));
+            self.errors
+                .push((msg!("surface-syntax-declared-twice", name = name), span));
             return;
         }
         let tables = match tables_or_why(&grammar_sha(&grammar.text)) {
             Ok(t) => t,
             Err(e) => {
-                self.errors.push((
-                    msg!("surface-syntax-error", name = name, error = e).to_string(),
-                    span,
-                ));
+                self.errors
+                    .push((msg!("surface-syntax-error", name = name, error = e), span));
                 return;
             }
         };
         out.extend(type_decls(name, &tables, span));
         out.extend(parse_fn(name, &tables, span));
         if inductive {
+            if let Some(file) = self.file {
+                self.pending_executable.extend(
+                    crate::bindings::declared_names(&out[first..])
+                        .into_iter()
+                        .map(|name| (file, name.to_string())),
+                );
+            }
+        }
+        let mut unmade = false;
+        if inductive {
             match inductive_decls(name, &tables, span) {
-                Ok(stmts) => out.extend(stmts),
-                Err(e) => self.errors.push((
-                    msg!("surface-syntax-error", name = name, error = e).to_string(),
-                    span,
-                )),
+                Ok(stmts) => {
+                    if let Some(file) = self.file {
+                        self.pending_executable.extend(stmts.iter().filter_map(
+                            |stmt| match stmt {
+                                Stmt::Fn(function) => Some((file, function.name.to_string())),
+                                _ => None,
+                            },
+                        ));
+                    }
+                    out.extend(stmts);
+                }
+                Err(e) => {
+                    self.errors
+                        .push((msg!("surface-syntax-error", name = name, error = e), span));
+                    unmade = true;
+                }
             }
         }
         let made = listed_names(name, &out[first..]);
-        let start = msg!("surface-syntax-generates-mismatch", name = name).to_string();
-        if let Some(why) = crate::generated::mismatch(&start, &generates.items, &made) {
-            self.errors.push((why, span));
+        let start = msg!("surface-syntax-generates-mismatch", name = name);
+        // What was not made for an error said above is not said again as missing from the list.
+        if let Some(why) =
+            crate::generated::mismatch(start, &generates.items, &made).filter(|_| !unmade)
+        {
+            self.errors.push((why.into(), span));
             self.fixes
                 .push((span, crate::generated::fix(generates, &made)));
         }
@@ -313,6 +388,7 @@ impl Syntaxes {
         self.map.insert(
             name.to_string(),
             Syntax {
+                start_reference: None,
                 tables,
                 file: self.file,
             },
@@ -327,7 +403,7 @@ impl Syntaxes {
                 "tokens" => Role::Tokens,
                 other => {
                     self.errors.push((
-                        msg!("surface-syntax-with-role", name = name, role = other).to_string(),
+                        msg!("surface-syntax-with-role", name = name, role = other),
                         u.span,
                     ));
                     continue;
@@ -339,8 +415,7 @@ impl Syntaxes {
                         "surface-syntax-registered-twice",
                         name = name,
                         role = role.word()
-                    )
-                    .to_string(),
+                    ),
                     u.span,
                 ));
                 continue;
@@ -363,32 +438,34 @@ impl Syntaxes {
         match self.literal(&lit, t.span) {
             Ok(new) => {
                 t.kind = Arc::new(new);
-                // Every name the value is built with (`SynToken`, `SynSpan`, the syntax's
-                // types) is written by the expansion, and read as the file of the syntax
-                // reads it: the file the literal stands in need not import their declarations.
-                let origin = lit
+                // The constructors of the syntax value retain their definition
+                // references. Embedded source subtrees keep their own environment.
+                let definition = lit
                     .name
                     .as_deref()
-                    .and_then(|n| self.map.get(n))
-                    .and_then(|s| s.file);
-                if origin.is_some() {
+                    .and_then(|name| self.map.get(name))
+                    .and_then(|syntax| syntax.file)
+                    .and_then(|file| self.definitions.get(&file));
+                if let Some(definition) = definition {
+                    let mut definition = definition.clone();
                     let at = t.span;
-                    crate::surface::walk::term(t, &mut |n| {
-                        if n.span == at
-                            && matches!(
-                                &*n.kind,
-                                TermKind::Var(_)
-                                    | TermKind::Record { .. }
-                                    | TermKind::Perform { .. }
-                            )
-                        {
-                            n.set_origin(origin);
+                    crate::surface::walk::term(t, &mut |node| {
+                        if node.span != at {
+                            return;
+                        }
+                        match Arc::make_mut(&mut node.kind) {
+                            TermKind::Var(name)
+                            | TermKind::Record { name, .. }
+                            | TermKind::Perform { effect: name, .. } => {
+                                definition.source_name(name)
+                            }
+                            _ => {}
                         }
                     });
                 }
             }
             // The literal stays, so the checkers go on without a second error.
-            Err((message, at)) => self.errors.push((message, at)),
+            Err((message, at)) => self.errors.push((message.into(), at)),
         }
     }
 
@@ -400,12 +477,12 @@ impl Syntaxes {
         lit: &SyntaxLit,
         span: Span,
         scopes: &[u64],
-    ) -> Result<Node, (String, Span)> {
+    ) -> Result<Node, (Message, Span)> {
         if let Some(e) = &lit.error {
             return Err(e.clone());
         }
         let Some(syntax) = self.map.get(name) else {
-            return Err((msg!("surface-not-a-syntax", name = name).to_string(), span));
+            return Err((msg!("surface-not-a-syntax", name = name), span));
         };
         let tables = &syntax.tables;
         self.uses.borrow_mut().push(LiteralUse {
@@ -415,23 +492,54 @@ impl Syntaxes {
         });
         let events = parse(tables, &lit.text, 0, &Limits::default())
             .map_err(|e| describe(tables, name, lit, &e))?;
-        let ast = build_ast(tables, &events)
-            .map_err(|e| (format!("macro.syntax_error: {}", e.0), span))?;
+        let ast = build_ast(tables, &events).map_err(|e| {
+            let m = msg!(tauto_syntax::SCHEMA, detail = e.0);
+            (coded(m), span)
+        })?;
         let builder = Builder {
             name,
             tables,
             lit,
             scopes,
         };
-        builder.node(&ast)
+        let mut node = builder.node(&ast)?;
+        if let Some(definition) = syntax.file.and_then(|file| self.definitions.get(&file)) {
+            fn bind(node: &mut Node, definition: &mut crate::resolve::Resolver) {
+                match node {
+                    Node::Ctor(constructor, fields) => {
+                        let schema = constructor.as_str().to_string();
+                        let mut reference = constructor.reference().clone();
+                        definition.source_name(&mut reference);
+                        *constructor =
+                            crate::macros::node::ConstructorRef::resolved(reference, schema);
+                        for (_, field) in fields {
+                            bind(field, definition);
+                        }
+                    }
+                    Node::Pair(pair) => {
+                        bind(&mut pair.0, definition);
+                        bind(&mut pair.1, definition);
+                    }
+                    Node::List(items) => {
+                        for item in items {
+                            bind(item, definition);
+                        }
+                    }
+                    Node::Option(Some(node)) => bind(node, definition),
+                    _ => {}
+                }
+            }
+            bind(&mut node, &mut definition.clone());
+        }
+        Ok(node)
     }
 
-    fn literal(&self, lit: &SyntaxLit, span: Span) -> Result<TermKind, (String, Span)> {
+    fn literal(&self, lit: &SyntaxLit, span: Span) -> Result<TermKind, (Message, Span)> {
         if let Some(e) = &lit.error {
             return Err(e.clone());
         }
         let Some(name) = lit.name.as_deref() else {
-            return Err((msg!("surface-literal-needs-name").to_string(), span));
+            return Err((msg!("surface-literal-needs-name"), span));
         };
         if name == "plaintext" {
             return Ok(TermKind::Text(lit.text.clone()));
@@ -441,66 +549,75 @@ impl Syntaxes {
 }
 
 /// `macro.syntax_error`, and where the text stopped making sense.
-fn describe(tables: &Tables, syntax: &str, lit: &SyntaxLit, e: &ParseError) -> (String, Span) {
+fn describe(tables: &Tables, syntax: &str, lit: &SyntaxLit, e: &ParseError) -> (Message, Span) {
     let span = |start: u32, end: u32| Span::new(lit.position(start), lit.position(end));
     let end = lit.text.len() as u32;
-    match e {
-        ParseError::Lex(l) => (
-            format!("macro.syntax_error: in {syntax}: this text is not a token of the syntax"),
-            span(l.at, (l.at + 1).min(end)),
-        ),
-        ParseError::Syntax(s) => {
-            let expected: Vec<&str> = s
-                .expected
-                .iter()
-                .map(|&t| tables.terminals()[t as usize].as_str())
-                .collect();
-            let (found, at) = match s.at {
-                Some(t) => (
-                    format!("found {}", tables.terminals()[t.terminal as usize]),
-                    span(t.start, t.end),
-                ),
-                None => ("found the end of the text".to_string(), span(end, end)),
-            };
-            let expected = if expected.is_empty() {
-                "something else".to_string()
-            } else {
-                expected.join(" or ")
-            };
-            (
-                format!("macro.syntax_error: in {syntax}: expected {expected}, {found}"),
-                at,
-            )
-        }
-        ParseError::Limit(m) => (
-            format!("macro.syntax_error: in {syntax}: {m}"),
-            span(0, end),
-        ),
+    let d = tauto_syntax::describe(syntax, tables, &lit.text, e);
+    let at = match e {
+        ParseError::Lex(l) => span(l.at, (l.at + 1).min(end)),
+        ParseError::Syntax(s) => match s.at {
+            Some(t) => span(t.start, t.end),
+            None => span(end, end),
+        },
+        ParseError::Limit(_) => span(0, end),
+    };
+    (coded(syntax_message(&d.message, &d.args)), at)
+}
+
+/// `macro.syntax_error: ` and the message.
+fn coded(m: Message) -> Message {
+    msg!("macro-coded", code = "macro.syntax_error", message = m)
+}
+
+/// The message of a syntax error by its id and arguments (a `SynDiag` of
+/// `macro.syntax_error`, or a [`tauto_syntax::Diagnostic`]), written in the
+/// language of the tool: the `expected` arguments are the terminals one of
+/// which would have been taken.
+pub fn syntax_message(id: &str, args: &[(String, String)]) -> Message {
+    let expected: Vec<&str> = args
+        .iter()
+        .filter(|(n, _)| n == "expected")
+        .map(|(_, v)| v.as_str())
+        .collect();
+    let alternatives = match expected.split_last() {
+        None => msg!("macro-syntax-something-else"),
+        Some((last, rest)) => rest
+            .iter()
+            .rev()
+            .fold(msg!("macro-syntax-terminal", name = *last), |or, first| {
+                msg!("macro-syntax-or", first = *first, rest = or)
+            }),
+    };
+    let mut m = Message::new(id.to_string()).arg("expected", alternatives);
+    for (n, v) in args.iter().filter(|(n, _)| n != "expected") {
+        m = m.arg(n.clone(), v.as_str());
     }
+    m
 }
 
 pub enum SynOutcome {
-    Parsed(Rc<Tables>, Ast),
-    Failed {
-        message: String,
-        at: u32,
-        expected: Vec<String>,
-    },
+    Parsed(std::sync::Arc<Tables>, Ast),
+    Failed(tauto_syntax::Diagnostic),
 }
 
 pub fn parse_text(name: &str, sha: &str, text: &str) -> SynOutcome {
-    let failed = |message: String, at: u32, expected: Vec<String>| SynOutcome::Failed {
-        message,
-        at,
-        expected,
-    };
     let tables = match tables_of(sha) {
         Ok(t) => t,
-        Err(m) => return failed(format!("macro.missing_tables: {m}"), 0, Vec::new()),
+        Err(m) => {
+            return SynOutcome::Failed(tauto_syntax::Diagnostic {
+                message: tauto_syntax::TABLES.into(),
+                at: 0,
+                expected: Vec::new(),
+                args: vec![
+                    ("syntax".into(), name.into()),
+                    ("detail".into(), m.to_string()),
+                ],
+            });
+        }
     };
     match tauto_syntax::parse_ast(name, &tables, text) {
         Ok(ast) => SynOutcome::Parsed(tables, ast),
-        Err(d) => failed(d.message, d.at, d.expected),
+        Err(d) => SynOutcome::Failed(d),
     }
 }
 
@@ -528,7 +645,7 @@ impl Builder<'_> {
         )
     }
 
-    fn token(&self, t: tauto_syntax::Token) -> Result<Node, (String, Span)> {
+    fn token(&self, t: tauto_syntax::Token) -> Result<Node, (Message, Span)> {
         if Some(t.terminal) == self.tables.embed_terminal() {
             return self.embed(t);
         }
@@ -555,21 +672,24 @@ impl Builder<'_> {
     }
 
     /// `${ e }`: the expression, as a `SynExpr` whose names carry the scopes.
-    fn embed(&self, t: tauto_syntax::Token) -> Result<Node, (String, Span)> {
+    fn embed(&self, t: tauto_syntax::Token) -> Result<Node, (Message, Span)> {
         let whole = Span::new(self.lit.position(t.start), self.lit.position(t.end));
         let text = self
             .lit
             .text
             .get(t.start as usize..t.end as usize)
             .unwrap_or("");
-        // `$n` is a name alone; `${ e }` is any expression.
-        let (inner, skip) = if text.starts_with("${") {
-            (&text[2..text.len() - 1], 2)
-        } else {
-            (&text[1..], 1)
-        };
-        let term = crate::surface::parse_expr_at(inner, self.lit.position(t.start + skip))
-            .map_err(|e| (format!("macro.syntax_error: in ${{…}}: {e}"), whole))?;
+        // `$n` is a name alone; `${ … }` is a block body: its `{ … }` reads
+        // as the block it is, so one expression is that expression and
+        // statements before it (`let`, …) scope over the rest.
+        let inner = &text[1..];
+        let term =
+            crate::surface::parse_expr_at(inner, self.lit.position(t.start + 1)).map_err(|e| {
+                (
+                    coded(msg!("macro-syntax-embedded", detail = e.to_string())),
+                    whole,
+                )
+            })?;
         crate::macros::syn::Lift {
             scopes: self.scopes,
             quote: false,
@@ -578,10 +698,15 @@ impl Builder<'_> {
             reflip: None,
         }
         .expr(&term)
-        .map_err(|e| (format!("macro.syntax_error: in ${{…}}: {e}"), whole))
+        .map_err(|e| {
+            (
+                coded(msg!("macro-syntax-embedded", detail = e.to_string())),
+                whole,
+            )
+        })
     }
 
-    pub fn node(&self, ast: &Ast) -> Result<Node, (String, Span)> {
+    pub fn node(&self, ast: &Ast) -> Result<Node, (Message, Span)> {
         Ok(match ast {
             Ast::Token(t) => self.token(*t)?,
             Ast::List(items) => Node::List(
@@ -602,7 +727,7 @@ impl Builder<'_> {
             } => {
                 let def = &self.tables.schema().types[*ty as usize];
                 let span_value = self.syn_span(span.0);
-                let named = |names: &[(String, FieldTy)]| -> Result<_, (String, Span)> {
+                let named = |names: &[(String, FieldTy)]| -> Result<_, (Message, Span)> {
                     let mut out = vec![(Some("span".to_string()), span_value.clone())];
                     for ((n, _), v) in names.iter().zip(fields) {
                         out.push((Some(n.clone()), self.node(v)?));
@@ -614,19 +739,28 @@ impl Builder<'_> {
                         name,
                         fields: names,
                         ..
-                    } => Node::Ctor(self.type_name(name), named(names)?),
+                    } => {
+                        let schema = self.type_name(name);
+                        Node::Ctor(
+                            crate::macros::node::ConstructorRef::resolved(
+                                format!("{schema}::Mk").into(),
+                                schema,
+                            ),
+                            named(names)?,
+                        )
+                    }
                     TypeDef::Enum { name, ctors } => {
                         let c = &ctors[*ctor as usize];
                         let qualified = format!("{}::{}", self.type_name(name), c.name);
                         match &c.payload {
                             Payload::Single(_) => Node::Ctor(
-                                qualified,
+                                qualified.into(),
                                 fields
                                     .iter()
                                     .map(|f| Ok((None, self.node(f)?)))
-                                    .collect::<Result<_, (String, Span)>>()?,
+                                    .collect::<Result<_, (Message, Span)>>()?,
                             ),
-                            Payload::Record(names) => Node::Ctor(qualified, named(names)?),
+                            Payload::Record(names) => Node::Ctor(qualified.into(), named(names)?),
                         }
                     }
                 }
@@ -645,17 +779,7 @@ fn parse_fn(syntax: &str, tables: &Tables, span: Span) -> Option<Stmt> {
     };
     let var = |n: &str| SurfaceTerm::var(n, span);
     let text = |t: &str| SurfaceTerm::new(TermKind::Text(t.to_string()), span);
-    // A terminal `Text` makes a constructor `Text`, which would stand for the
-    // type here: the language's `Text` is then written by its full name.
-    let declares_text = tables.schema().types.iter().any(|def| match def {
-        TypeDef::Enum { ctors, .. } => ctors.iter().any(|c| c.name == "Text"),
-        TypeDef::Struct { .. } => false,
-    });
-    let text_ty = if declares_text {
-        format!("{PRELUDE_MODULE}{SEPARATOR}Text")
-    } else {
-        "Text".to_string()
-    };
+    let library = |name| SurfaceTerm::var(&crate::bindings::library_name(name), span);
     let app = |f: SurfaceTerm, arguments: Vec<SurfaceTerm>| {
         SurfaceTerm::new(
             TermKind::App {
@@ -671,20 +795,24 @@ fn parse_fn(syntax: &str, tables: &Tables, span: Span) -> Option<Stmt> {
         opaque: false,
         decreasing_by: None,
         generates: None,
-        name: format!("{syntax}::parse"),
+        name: format!("{syntax}::parse").into(),
+        generic_types: Vec::new(),
         generics: Vec::new(),
         rows: Vec::new(),
         bounds: Vec::new(),
         bound_spans: Vec::new(),
-        params: vec!["t".to_string()],
+        params: vec![crate::identity::Name::Spelled("t".to_string())],
         borrows: vec![None],
-        param_types: vec![Some(var(&text_ty))],
-        result: Some(app(var("Result"), vec![var(&ty_name), var("SynDiag")])),
+        param_types: vec![Some(library("Text"))],
+        result: Some(app(
+            library("Result"),
+            vec![var(&ty_name), library("SynDiag")],
+        )),
         effects: None,
         where_: Vec::new(),
         span,
         body: app(
-            var("Syn::parse"),
+            library("Syn::parse"),
             vec![text(syntax), text(tables.grammar_sha256()), var("t")],
         ),
     }))
@@ -692,7 +820,10 @@ fn parse_fn(syntax: &str, tables: &Tables, span: Span) -> Option<Stmt> {
 
 fn type_decls(syntax: &str, tables: &Tables, span: Span) -> Vec<Stmt> {
     let ty = |t: &FieldTy| field_ty(syntax, t, span);
-    let span_field = (Some("span".to_string()), SurfaceTerm::var("SynSpan", span));
+    let span_field = (
+        Some("span".to_string()),
+        SurfaceTerm::var(&crate::bindings::library_name("SynSpan"), span),
+    );
     let record = |fields: &[(String, FieldTy)]| {
         let mut out = vec![span_field.clone()];
         out.extend(fields.iter().map(|(n, t)| (Some(n.clone()), ty(t))));
@@ -708,11 +839,11 @@ fn type_decls(syntax: &str, tables: &Tables, span: Span) -> Vec<Stmt> {
                 Stmt::Struct(DataDecl {
                     vis: crate::surface::Vis::Open,
                     kind: None,
-                    name: name.clone(),
+                    name: crate::identity::Name::Spelled(name.clone()),
                     generics: Vec::new(),
                     rows: Vec::new(),
                     constructors: vec![DataConstructor {
-                        name,
+                        name: crate::identity::Name::Spelled(name),
                         fields: record(fields),
                     }],
                     host: false,
@@ -722,13 +853,13 @@ fn type_decls(syntax: &str, tables: &Tables, span: Span) -> Vec<Stmt> {
             TypeDef::Enum { name, ctors } => Stmt::Enum(DataDecl {
                 vis: crate::surface::Vis::Open,
                 kind: None,
-                name: tauto_syntax::type_name(syntax, name),
+                name: crate::identity::Name::Spelled(tauto_syntax::type_name(syntax, name)),
                 generics: Vec::new(),
                 rows: Vec::new(),
                 constructors: ctors
                     .iter()
                     .map(|c| DataConstructor {
-                        name: c.name.clone(),
+                        name: crate::identity::Name::Spelled(c.name.clone()),
                         fields: match &c.payload {
                             Payload::Single(t) => vec![(None, ty(t))],
                             Payload::Record(fields) => record(fields),
@@ -794,15 +925,15 @@ fn field_ty(syntax: &str, t: &FieldTy, span: Span) -> SurfaceTerm {
     let app = |f: &str, inner: SurfaceTerm| {
         SurfaceTerm::new(
             TermKind::App {
-                function: Box::new(SurfaceTerm::var(f, span)),
+                function: Box::new(SurfaceTerm::var(&crate::bindings::library_name(f), span)),
                 arguments: vec![inner],
             },
             span,
         )
     };
     match t {
-        FieldTy::Token => SurfaceTerm::var("SynToken", span),
-        FieldTy::Expr => SurfaceTerm::var("SynExpr", span),
+        FieldTy::Token => SurfaceTerm::var(&crate::bindings::library_name("SynToken"), span),
+        FieldTy::Expr => SurfaceTerm::var(&crate::bindings::library_name("SynExpr"), span),
         FieldTy::Named(n) => SurfaceTerm::var(&format!("{syntax}::{n}"), span),
         FieldTy::List(inner) => app("List", field_ty(syntax, inner, span)),
         FieldTy::Opt(inner) => app("Option", field_ty(syntax, inner, span)),
@@ -817,9 +948,8 @@ fn inductive_name(syntax: &str, ty: &str) -> String {
 fn inductive_field_ty(syntax: &str, t: &FieldTy) -> Result<String, Message> {
     Ok(match t {
         FieldTy::Token => "Text".into(),
-        FieldTy::Expr => {
-            return Err(msg!("surface-expr-no-inductive"));
-        }
+        // An embedded expression is its tree as the proofs see it (`std/SynTree.taut`).
+        FieldTy::Expr => "SynExprI".into(),
         FieldTy::Named(n) => inductive_name(syntax, n),
         FieldTy::List(i) => format!("List({})", inductive_field_ty(syntax, i)?),
         FieldTy::Opt(i) => format!("Option({})", inductive_field_ty(syntax, i)?),
@@ -829,7 +959,7 @@ fn inductive_field_ty(syntax: &str, t: &FieldTy) -> Result<String, Message> {
 fn inductive_convert(syntax: &str, t: &FieldTy, value: &str) -> String {
     match t {
         FieldTy::Token => format!("{value}.text"),
-        FieldTy::Expr => value.to_string(),
+        FieldTy::Expr => format!("SynTree::expr({value})"),
         FieldTy::Named(n) => format!("{syntax}::{n}__to_i({value})"),
         FieldTy::List(i) => format!("{}_list__to_i({value})", converter_stem(syntax, i)),
         FieldTy::Opt(i) => format!("{}_opt__to_i({value})", converter_stem(syntax, i)),
@@ -901,6 +1031,15 @@ fn inductive_decls(syntax: &str, tables: &Tables, span: Span) -> Result<Vec<Stmt
                 ));
             }
             TypeDef::Enum { name, ctors } => {
+                // `<Type>::I` and `<Type>::to_i` are made under the enum: a constructor of
+                // that name would be a second meaning of the same name.
+                if let Some(c) = ctors.iter().find(|c| c.name == "I" || c.name == "to_i") {
+                    return Err(msg!(
+                        "surface-inductive-syntax-ctor-taken",
+                        ty = name.as_str(),
+                        ctor = c.name.as_str()
+                    ));
+                }
                 let ty = inductive_name(syntax, name);
                 types.push_str(&format!("  pub(open) inductive {ty}: Type {{\n"));
                 let mut arms = String::new();
@@ -1004,8 +1143,8 @@ fn under_module(s: &mut Stmt, syntax: &str) {
         }
     };
     match s {
-        Stmt::Fn(f) => rename(&mut f.name),
-        Stmt::Inductive(i) => rename(&mut i.name),
+        Stmt::Fn(f) => f.name.edit_spelling(rename),
+        Stmt::Inductive(i) => i.name.edit_spelling(rename),
         Stmt::Mutual { items, .. } => {
             for i in items {
                 under_module(i, syntax);
@@ -1017,16 +1156,15 @@ fn under_module(s: &mut Stmt, syntax: &str) {
         if let TermKind::Var(n) = &*t.kind
             && let Some(short) = n.strip_prefix(&flat)
         {
-            t.kind = Arc::new(TermKind::Var(format!(
-                "{syntax}::{}",
-                short.replace("__", "::")
-            )));
+            t.kind = Arc::new(TermKind::Var(
+                format!("{syntax}::{}", short.replace("__", "::")).into(),
+            ));
         }
         if let TermKind::Record { name, fields, base } = &*t.kind
             && let Some(short) = name.strip_prefix(&flat)
         {
             t.kind = Arc::new(TermKind::Record {
-                name: format!("{syntax}::{}", short.replace("__", "::")),
+                name: format!("{syntax}::{}", short.replace("__", "::")).into(),
                 fields: fields.clone(),
                 base: base.clone(),
             });

@@ -23,11 +23,16 @@
 //! cannot suspend natively; such a backend only prints that tree.
 
 use std::collections::BTreeSet;
+pub use tauto::bindings::{is_library, library_name};
+pub use tauto::identity::DeclRef;
+pub use tauto::surface::Name;
+pub use tauto::surface::qualify::short as display_name;
 pub(crate) use tauto_message::{Message, msg};
 
 pub use tauto::types::{Kind, OperationAdmission, Quant, Width};
 pub use tauto_parol::Span;
 
+mod accumulate;
 mod borrow;
 pub mod cps;
 mod last_use;
@@ -35,8 +40,8 @@ mod lower;
 mod tail;
 pub use lower::{
     CompileError, CompilePhase, LowerInput, Lowered, compile, compile_javascript,
-    compile_javascript_with_observer, compile_loaded_with_observer, compile_with,
-    compile_with_observer, lower,
+    compile_javascript_with_observer, compile_loaded_entries_with_observer,
+    compile_loaded_with_observer, compile_with, compile_with_observer, lower,
 };
 pub use tail::{mark as mark_tail_calls, passed_on, recurs};
 
@@ -56,14 +61,67 @@ pub enum Tier {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Unsupported {
-    pub what: String,
+    pub what: Message,
     pub span: Option<Span>,
 }
 
 impl std::fmt::Display for Unsupported {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let m = msg!("nir-unsupported", what = self.what.as_str());
+        let m = msg!("nir-unsupported", what = self.what.clone());
         write!(f, "{m}")
+    }
+}
+
+/// A shared type of `tauto_rt::stdlib` that the lowering knows by kind, not by
+/// its spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum StdType {
+    SynDeclaration,
+    Ref,
+    Weak,
+    Mutex,
+    /// The one holder of a lock.
+    MutexGuard,
+    Atomic,
+    Bytes,
+    /// A thread's result, taken once.
+    Pending,
+    Secret,
+    Signal,
+    CancelSource,
+    /// A host value no tauto type names (the boundary cannot carry it).
+    OpaqueHost,
+}
+
+impl StdType {
+    /// The `tauto_rt::stdlib` item this type is.
+    pub fn rust_name(self) -> &'static str {
+        match self {
+            StdType::SynDeclaration => "SynDeclaration",
+            StdType::Ref => "Ref",
+            StdType::Weak => "Weak",
+            StdType::Mutex => "Mutex",
+            StdType::MutexGuard => "MutexGuard",
+            StdType::Atomic => "Atomic",
+            StdType::Bytes => "Bytes",
+            StdType::Pending => "Pending",
+            StdType::Secret => "Secret",
+            StdType::Signal => "Signal",
+            StdType::CancelSource => "CancelSource",
+            StdType::OpaqueHost => "OpaqueHost",
+        }
+    }
+
+    /// Whether a value of this type is taken once: a `Pending` can hold a
+    /// thread's result, a guard is the one holder of a lock.
+    pub fn taken_once(self) -> bool {
+        matches!(self, StdType::Pending | StdType::MutexGuard)
+    }
+}
+
+impl std::fmt::Display for StdType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.rust_name())
     }
 }
 
@@ -83,7 +141,7 @@ pub enum Ty {
     Array(Box<Ty>),
     /// A shared type of `tauto_rt::stdlib` by name (`Ref`, `Mutex`,
     /// `Atomic`): `tauto_rt::stdlib::<name><args>`.
-    Std(String, Vec<Ty>),
+    Std(StdType, Vec<Ty>),
     /// `HashMap(K, V)`: `tauto_rt::stdlib::HashMap`, in insertion order as
     /// the evaluator's is.
     HashMap(Box<Ty>, Box<Ty>),
@@ -95,11 +153,9 @@ pub enum Ty {
     Pair(Box<Ty>, Box<Ty>),
     /// A struct or enum the generator writes (the program's and the
     /// library's: `List`, `Map`).
-    Data(String, Vec<Ty>),
+    Data(Name, Vec<Ty>),
+    /// A union's enum.
     Union(UnionId),
-    /// A product: a tuple of its members in the order written, each with
-    /// its type as `types.rs` writes it (tags are not in the Rust type).
-    Product(Vec<(String, Ty)>),
     Param(String),
     Fn(Box<FnTy>),
     Ref(Box<Ty>),
@@ -151,7 +207,6 @@ impl Ty {
             | Ty::Info(a)
             | Ty::BudgetAnswer(a) => a.has_infer(),
             Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => a.has_infer() || b.has_infer(),
-            Ty::Product(ms) => ms.iter().any(|(_, m)| m.has_infer()),
             Ty::Data(_, args) | Ty::Std(_, args) => args.iter().any(Ty::has_infer),
             Ty::Fn(f) => f.params.iter().any(Ty::has_infer) || f.ret.has_infer(),
             _ => false,
@@ -175,7 +230,6 @@ impl Ty {
                 a.params(out);
                 b.params(out);
             }
-            Ty::Product(ms) => ms.iter().for_each(|(_, m)| m.params(out)),
             Ty::Data(_, args) | Ty::Std(_, args) => args.iter().for_each(|a| a.params(out)),
             Ty::Fn(f) => {
                 f.params.iter().for_each(|a| a.params(out));
@@ -213,13 +267,13 @@ pub struct FieldDef {
 
 #[derive(Debug, Clone)]
 pub struct CtorDef {
-    pub name: String,
+    pub name: Name,
     pub fields: Vec<FieldDef>,
 }
 
 #[derive(Debug, Clone)]
 pub struct DataDef {
-    pub name: String,
+    pub name: Name,
     pub generics: Vec<String>,
     pub kind: Kind,
     pub is_struct: bool,
@@ -248,7 +302,7 @@ pub struct UnionDef {
 pub struct OpDef {
     /// The constant `OP_<name>` is `Op::new(id, name)`.
     pub id: u32,
-    pub name: String,
+    pub name: Name,
     pub quant: Quant,
     pub generics: Vec<String>,
     pub params: Vec<Ty>,
@@ -269,7 +323,8 @@ pub enum Bound {
 #[derive(Debug, Clone)]
 pub struct FnInst {
     pub id: InstId,
-    pub source: String,
+    /// The name in the tauto source.
+    pub source: Name,
     pub rust_name: String,
     pub tier: Tier,
     pub generics: Vec<(String, BTreeSet<Bound>)>,
@@ -463,6 +518,8 @@ pub enum Cmp {
 
 #[derive(Debug, Clone)]
 pub enum ExprKind {
+    /// An index in the package declaration capability table.
+    Declaration(usize),
     Unit,
     Int(i128),
     Float(f64),
@@ -521,20 +578,6 @@ pub enum ExprKind {
         variant: usize,
         value: Box<Expr>,
     },
-    /// A product: the members are evaluated in the order written, and the
-    /// tuple takes, for each of its members in order, `members[i]` or, with
-    /// `Some(j)`, member `j` of the product `members[i]`.
-    Product {
-        members: Vec<Expr>,
-        picks: Vec<(usize, Option<usize>)>,
-    },
-    /// Member `index` of a product, moved out of a temporary, or copied or
-    /// cloned out of a place.
-    Member {
-        value: Box<Expr>,
-        index: usize,
-        how: Use,
-    },
     /// A union to a union with more members, or to one member's type.
     Remap {
         from: UnionId,
@@ -553,8 +596,7 @@ pub enum ExprKind {
     Shown(Box<Expr>),
     Budget(Box<BudgetNode>),
     Unreachable(Box<Expr>),
-    /// A function that may be called any number of times, as one that is
-    /// called once.
+    /// A function value represented at its expected kind and effect tier.
     FnCast(Box<Expr>),
 }
 
@@ -574,7 +616,8 @@ pub struct BudgetNode {
 #[derive(Debug, Clone)]
 pub struct CtorRef {
     pub data: DataRef,
-    pub name: String,
+    /// The constructor's name.
+    pub name: Name,
     pub index: usize,
     /// The constructor's fields, which are stored boxed.
     pub indirect: Vec<Indirect>,
@@ -586,12 +629,11 @@ pub struct CtorRef {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DataRef {
-    Gen(String),
+    /// A generated type, by name.
+    Gen(Name),
     Option,
     Result,
     Pair,
-    /// A product, matched by `#(…)`: its members by position.
-    Product,
 }
 
 #[derive(Debug, Clone)]
@@ -617,7 +659,7 @@ pub enum Callee {
     Inst(InstId),
     Builtin(String),
     /// An `extern` of the program: its wrapper in `externs`, by name.
-    Extern(String),
+    Extern(Name),
     Local(Local),
     /// The continuation `k` of an arm of a suspending operation.
     Cont(Local),
@@ -780,7 +822,7 @@ pub enum Pass {
 
 #[derive(Debug, Clone)]
 pub struct ExternDef {
-    pub name: String,
+    pub name: Name,
     pub generics: Vec<String>,
     pub params: Vec<(String, Ty, Pass)>,
     pub ret: Ty,
@@ -790,6 +832,7 @@ pub struct ExternDef {
 /// The program: what the generator writes.
 #[derive(Debug, Clone, Default)]
 pub struct Package {
+    pub declarations: Vec<tauto::identity::DeclRef>,
     /// File boundaries and macro origins for compiled totes.
     pub sources: Option<tauto::program::SourceMap>,
     /// Runtime syntax parsers with validated, self-contained tables.
@@ -821,6 +864,9 @@ pub struct Package {
 /// A runtime parser whose syntax name and grammar identity are known at build time.
 #[derive(Debug, Clone)]
 pub struct SyntaxParser {
+    /// Schema type labels bound to the declarations validated during lowering.
+    pub data_bindings: std::collections::BTreeMap<String, Name>,
+    pub constructor_bindings: std::collections::BTreeMap<(String, String), Name>,
     pub name: String,
     pub sha: String,
     pub tables: String,
@@ -861,12 +907,10 @@ impl Expr {
             | ExprKind::Unreachable(a)
             | ExprKind::FnCast(a) => vec![&mut **a],
             ExprKind::Ctor { fields, .. } => fields.iter_mut().map(|(_, e)| e).collect(),
-            ExprKind::Product { members, .. } => members.iter_mut().collect(),
             ExprKind::Field { base, .. } => vec![&mut **base],
             ExprKind::Perform(p) => p.args.iter_mut().collect(),
             ExprKind::Inject { value, .. }
             | ExprKind::Remap { value, .. }
-            | ExprKind::Member { value, .. }
             | ExprKind::Deref { value, .. } => {
                 vec![&mut **value]
             }
@@ -934,7 +978,6 @@ impl Expr {
                 f(&b.body);
             }
             ExprKind::Ctor { fields, .. } => fields.iter().for_each(|(_, e)| f(e)),
-            ExprKind::Product { members, .. } => members.iter().for_each(|e| f(e)),
             ExprKind::Field { base, .. } => f(base),
             ExprKind::Match(m) => {
                 f(&m.scrut);
@@ -973,9 +1016,85 @@ impl Expr {
             }
             ExprKind::Inject { value, .. }
             | ExprKind::Remap { value, .. }
-            | ExprKind::Member { value, .. }
             | ExprKind::Deref { value, .. } => f(value),
             _ => {}
         }
     }
+}
+
+/// A hash of what code calling the package from outside depends on: each
+/// exported function's name and type, and each data type with its
+/// constructors and fields, in order. Two compilations of the same source
+/// have the same fingerprint; a change to any of these, a new one or a new
+/// order changes it.
+pub fn interface_fingerprint(pkg: &Package) -> u64 {
+    use std::fmt::Write;
+    let mut text = String::new();
+    for e in &pkg.exports {
+        let f = &pkg.fns[e.inst];
+        let params: Vec<&Ty> = f.params.iter().map(|p| &p.ty).collect();
+        let params: Vec<String> = params.into_iter().map(ty_text).collect();
+        let _ = writeln!(
+            text,
+            "fn {} {:?} {} {:?}",
+            e.name,
+            params,
+            ty_text(&f.ret),
+            e.row
+        );
+    }
+    for x in &pkg.externs {
+        let params: Vec<String> = x
+            .params
+            .iter()
+            .map(|(_, t, pass)| format!("{pass:?} {}", ty_text(t)))
+            .collect();
+        let _ = writeln!(text, "extern {} {:?} {}", x.name.as_str(), params, ty_text(&x.ret));
+    }
+    for d in &pkg.datas {
+        let _ = write!(
+            text,
+            "data {} {:?} {}",
+            d.name.as_str(),
+            d.generics,
+            d.is_struct
+        );
+        for c in &d.ctors {
+            let _ = write!(text, " | {}", c.name.as_str());
+            for field in &c.fields {
+                let _ = write!(text, " {:?}:{}", field.name, ty_text(&field.ty));
+            }
+        }
+        text.push('\n');
+    }
+    content_hash(text.as_bytes())
+}
+
+/// FNV-1a of `bytes`: the same on every build of the compiler, so a build
+/// and a run of what it built agree on it.
+pub fn content_hash(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bytes {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    h
+}
+
+/// A type as the fingerprint reads it: declarations by name, without the
+/// number a compilation gives them (`DeclRef(Name#12)` is `DeclRef(Name)`).
+fn ty_text(t: &Ty) -> String {
+    let text = format!("{t:?}");
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '#' && chars.peek().is_some_and(|d| d.is_ascii_digit()) {
+            while chars.peek().is_some_and(|d| d.is_ascii_digit()) {
+                chars.next();
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }

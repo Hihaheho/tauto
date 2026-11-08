@@ -1,0 +1,29 @@
+// `S { f: e, ..b }` runs as the literal with every field: the fields not
+// written are `b`'s, and a base that is not a name is evaluated once, after
+// the fields written and before the fields taken from it.
+
+@ cases.an-updated-struct-runs-with-the-other-fields
+source = ```tauto
+struct Bundle { name: Text, revision: i64, size: i64 }
+let b := Bundle { name: "clip", revision: 1, size: 40 }
+let c := Bundle { revision: 2, ..b }
+perform show("name", c.name)
+perform show("revision", c.revision)
+perform show("size", c.size)
+perform show("old", b.revision)
+```
+shows = ["name = \"clip\"", "revision = 2", "size = 40", "old = 1"]
+extract = true
+
+@ cases.a-base-that-is-not-a-name-runs-once
+source = ```tauto
+struct Bundle { name: Text, revision: i64, size: i64 }
+fn made(n: i64): Bundle {
+  perform show("made", n)
+  Bundle { name: "clip", revision: n, size: 40 }
+}
+let c := Bundle { name: "cut", ..made(3) }
+perform show("name", c.name)
+perform show("revision", c.revision)
+```
+shows = ["made = 3", "name = \"cut\"", "revision = 3"]

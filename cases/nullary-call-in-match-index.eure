@@ -1,0 +1,29 @@
+description = "A match on a proof whose index calls a function without parameters (`pol()`): the induction hypotheses and goals the match makes show the call as written, so the arms check."
+
+@ cases.nested_matches_on_membership_in_a_nullary_list
+source = ```tauto
+inductive InL(A: Type): (A, List(A)) -> Prop {
+  Ihere(x: A, t: List(A)): InL(A, x, Cons(x, t))
+  Ithere(x: A, y: A, t: List(A), m: InL(A, x, t)): InL(A, x, Cons(y, t))
+}
+fn pol(): List(Nat) {
+  [1, 2]
+}
+inductive G(n: Nat): Prop {
+  Gr: G(n)
+}
+theorem nil_no(x: Nat, m: InL(Nat, x, Nil)): False {
+  ⊢ False from match m {
+  }
+}
+theorem pg(r: Nat, m: InL(Nat, r, pol())): G(r) {
+  ⊢ G(r) from match m {
+    Ihere(x, t) => Gr
+    Ithere(x, y, t, m2) => ⊢ G(x) from match m2 {
+      Ihere(x2, t2) => Gr
+      Ithere(x2, y2, t2, m3) => False::elim(nil_no(x2, m3))
+    }
+  }
+}
+```
+checks."pg" = "checked"

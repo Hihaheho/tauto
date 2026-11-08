@@ -20,14 +20,14 @@ pub theorem star_trans<prog: List(
   a: Star(prog, s1, s2),
   b: Star(prog, s2, s3)
 ): Star(prog, s1, s3) {
-  match a: Star(prog, s1, s3) {
+  ⊢ Star(prog, s1, s3) from match a {
     StarRefl(s) => b
     StarStep(h, rest) => StarStep(h, star_trans(rest, b))
   }
 }
 
 pub fn opt_comp(o: Option(Expr)): Option(Bytecode) {
-  match o: Option(Bytecode) {
+  ⊢ Option(Bytecode) from match o {
     None => None
     Some(e) => Some(comp_body(e))
   }
@@ -38,20 +38,20 @@ pub theorem nth_compile<prog: List(
 ), f: Nat, body: Expr>(
   found: List::nth(prog, f) = Some(body)
 ): List::nth(compile(prog), f) = Some(comp_body(body)) {
-  match prog: (
+  (⊢ (
     List::nth(prog, f) = Some(body)
-  ) -> (List::nth(compile(prog), f) = Some(comp_body(body))) {
-    Nil => (e: List::nth(Nil, f) = Some(body)) => match f: (
+  ) -> (List::nth(compile(prog), f) = Some(comp_body(body))) from match prog {
+    Nil => (e: List::nth(Nil, f) = Some(body)) => (⊢ (
       List::nth(Nil, f) = Some(body)
-    ) -> (List::nth(compile(Nil), f) = Some(comp_body(body))) {
+    ) -> (List::nth(compile(Nil), f) = Some(comp_body(body))) from match f {
       Zero => (e0: List::nth(Nil, Zero) = Some(body)) => False::elim(Option::none_ne_some(body, e0))
       Succ(g) => (e1: List::nth(Nil, Succ(g)) = Some(body)) => False::elim(
         Option::none_ne_some(body, e1)
       )
-    }(e)
-    Cons(x, rest) => (e: List::nth(Cons(x, rest), f) = Some(body)) => match f: (
+    })(e)
+    Cons(x, rest) => (e: List::nth(Cons(x, rest), f) = Some(body)) => (⊢ (
       List::nth(Cons(x, rest), f) = Some(body)
-    ) -> (List::nth(compile(Cons(x, rest)), f) = Some(comp_body(body))) {
+    ) -> (List::nth(compile(Cons(x, rest)), f) = Some(comp_body(body))) from match f {
       Zero => (e0: List::nth(Cons(x, rest), Zero) = Some(body)) => Eq::congr(
         (o: Option(Expr)) => opt_comp(o),
         e0
@@ -62,8 +62,8 @@ pub theorem nth_compile<prog: List(
         body,
         e1
       )
-    }(e)
-  }(found)
+    })(e)
+  })(found)
 }
 
 // One instruction that goes to `s2`, then the rest.
@@ -89,11 +89,7 @@ pub theorem comp_correct<prog: List(
   st: List(Val),
   fr: List(Frame)
 ): Star(compile(prog), StateMk(comp(e, k), env, st, fr), StateMk(k, env, Cons(v, st), fr)) {
-  match h: Star(
-    compile(prog),
-    StateMk(comp(e, k), env, st, fr),
-    StateMk(k, env, Cons(v, st), fr)
-  ) {
+  ⊢ Star(compile(prog), StateMk(comp(e, k), env, st, fr), StateMk(k, env, Cons(v, st), fr)) from match h {
     EvVar(env1, i, v1, hv) => go(
       StateMk(k, env1, Cons(v1, st), fr),
       Eq::congr((o: Option(Val)) => step_load(o, k, env1, st, fr), hv),
@@ -216,7 +212,7 @@ pub theorem comp_correct<prog: List(
 
 // What `run` with one more fuel does after `s` stepped to `o`.
 pub fn run_from(prog: List(Bytecode), fuel: Nat, s: State, o: Option(State)): Option(State) {
-  match o: Option(State) {
+  ⊢ Option(State) from match o {
     None => Some(s)
     Some(x) => run(prog, fuel, x)
   }
@@ -231,9 +227,9 @@ pub(open) inductive RunsTo(prog: List(Bytecode), s1: State, s2: State): Prop {
 pub theorem star_run<prog: List(
   Bytecode
 ), s1: State, s2: State>(a: Star(prog, s1, s2), stop: step(prog, s2) = None): RunsTo(prog, s1, s2) {
-  match a: RunsTo(prog, s1, s2) {
+  ⊢ RunsTo(prog, s1, s2) from match a {
     StarRefl(s) => RunsTo::Mk(1, Eq::congr((o: Option(State)) => run_from(prog, Zero, s, o), stop))
-    StarStep(t1, t2, t3, h, rest) => match star_run(rest, stop): RunsTo(prog, t1, t3) {
+    StarStep(t1, t2, t3, h, rest) => ⊢ RunsTo(prog, t1, t3) from match star_run(rest, stop) {
       RunsTo::Mk(fuel, e) => RunsTo::Mk(
         Succ(fuel),
         Eq::trans(Eq::congr((o: Option(State)) => run_from(prog, fuel, t1, o), h), e)
@@ -255,15 +251,14 @@ pub theorem start_runs<prog: List(
   h: Eval(prog, Cons(arg, Nil), body, v)
 ): RunsTo(compile(prog), start(f, arg), StateMk(CRet, Nil, Cons(v, Nil), Nil)) {
   star_run(
-    compile(prog),
-    start(f, arg),
-    StateMk(CRet, Nil, Cons(v, Nil), Nil),
+    <prog: compile(prog), s1: start(f, arg), s2: StateMk(CRet, Nil, Cons(v, Nil), Nil)>,
     go(
-      compile(prog),
-      start(f, arg),
-      StateMk(CRet, Nil, Cons(v, Nil), Nil),
+      <prog: compile(prog), s1: start(f, arg), s3: StateMk(CRet, Nil, Cons(v, Nil), Nil)>,
       StateMk(comp_body(body), Cons(arg, Nil), Nil, Cons(FrameMk(CRet, Nil, Nil), Nil)),
-      Eq::congr((o: Option(Bytecode)) => step_call(o, arg, CRet, Nil, Nil, Nil), nth_compile(found)),
+      Eq::congr(
+        (o: Option(Bytecode)) => step_call(o, arg, CRet, Nil, Nil, Nil),
+        nth_compile(found)
+      ),
       star_trans(
         comp_correct(h, CRet, Nil, Cons(FrameMk(CRet, Nil, Nil), Nil)),
         go(
@@ -285,7 +280,7 @@ pub theorem compile_correct<prog: List(
   found: List::nth(prog, f) = Some(body),
   h: Eval(prog, Cons(arg, Nil), body, v)
 ): Computes(prog, f, arg, v) {
-  match start_runs(found, h): Computes(prog, f, arg, v) {
+  ⊢ Computes(prog, f, arg, v) from match start_runs(found, h) {
     RunsTo::Mk(fuel, e) => Computes::Mk(fuel, Eq::congr(answer, e))
   }
 }
@@ -302,15 +297,13 @@ pub theorem run_from_det(
   e1: run_from(prog, g1, s, o) = Some(a),
   e2: run_from(prog, g2, s, o) = Some(b)
 ): (a = b) {
-  match o: (
-    run_from(prog, g1, s, o) = Some(a)
-  ) -> (run_from(prog, g2, s, o) = Some(b)) -> (a = b) {
+  (⊢ (run_from(prog, g1, s, o) = Some(a)) -> (run_from(prog, g2, s, o) = Some(b)) -> (a = b) from match o {
     None => (h1: Some(s) = Some(a)) => (h2: Some(s) = Some(b)) => Eq::trans(
       Eq::sym(Option::some_inj(s, a, h1)),
       Option::some_inj(s, b, h2)
     )
     Some(x) => (h1: run(prog, g1, x) = Some(a)) => (h2: run(prog, g2, x) = Some(b)) => ih(x, h1, h2)
-  }(e1, e2)
+  })(e1, e2)
 }
 
 // Two runs from the same state that both stop, stop at the same state.
@@ -324,11 +317,11 @@ pub theorem run_det(
   e1: run(prog, f1, s) = Some(a),
   e2: run(prog, f2, s) = Some(b)
 ): (a = b) {
-  match f1: (run(prog, f1, s) = Some(a)) -> (a = b) {
+  (⊢ (run(prog, f1, s) = Some(a)) -> (a = b) from match f1 {
     Zero => (d1: run(prog, Zero, s) = Some(a)) => False::elim(Option::none_ne_some(a, d1))
-    Succ(g1) => (d1: run(prog, Succ(g1), s) = Some(a)) => match f2: (
+    Succ(g1) => (d1: run(prog, Succ(g1), s) = Some(a)) => (⊢ (
       run(prog, f2, s) = Some(b)
-    ) -> (a = b) {
+    ) -> (a = b) from match f2 {
       Zero => (d2: run(prog, Zero, s) = Some(b)) => False::elim(Option::none_ne_some(b, d2))
       Succ(g2) => (d2: run(prog, Succ(g2), s) = Some(b)) => run_from_det(
         prog,
@@ -338,14 +331,21 @@ pub theorem run_det(
         a,
         b,
         step(prog, s),
-        (x: State) => (h1: run(prog, g1, x) = Some(a)) => (
-          h2: run(prog, g2, x) = Some(b)
-        ) => run_det(prog, g1, g2, x, a, b, h1, h2),
+        (x: State) => (h1: run(prog, g1, x) = Some(a)) => (h2: run(prog, g2, x) = Some(b)) => run_det(
+          prog,
+          g1,
+          g2,
+          x,
+          a,
+          b,
+          h1,
+          h2
+        ),
         d1,
         d2
       )
-    }(e2)
-  }(e1)
+    })(e2)
+  })(e1)
 }
 
 pub theorem answer_det(
@@ -355,20 +355,18 @@ pub theorem answer_det(
   e: answer(o) = Some(w),
   det: ∀ x: State. (o = Some(x)) -> (x = StateMk(CRet, Nil, Cons(v, Nil), Nil))
 ): (w = v) {
-  match o: (
+  (⊢ (
     answer(o) = Some(w)
-  ) -> (∀ x: State. (o = Some(x)) -> (x = StateMk(CRet, Nil, Cons(v, Nil), Nil))) -> (w = v) {
-    None => (e0: None = Some(w)) => (
-      d0: ∀ x: State. (None = Some(x)) -> (x = StateMk(CRet, Nil, Cons(v, Nil), Nil))
-    ) => False::elim(Option::none_ne_some(w, e0))
-    Some(y) => (e1: answer(Some(y)) = Some(w)) => (
-      d1: ∀ x: State. (Some(y) = Some(x)) -> (x = StateMk(CRet, Nil, Cons(v, Nil), Nil))
-    ) => Option::some_inj(
+  ) -> (∀ x: State. (o = Some(x)) -> (x = StateMk(CRet, Nil, Cons(v, Nil), Nil))) -> (w = v) from match o {
+    None => (e0: None = Some(w)) => (d0: ∀ x: State. (None = Some(x)) -> (x = StateMk(CRet, Nil, Cons(v, Nil), Nil))) => False::elim(
+      Option::none_ne_some(w, e0)
+    )
+    Some(y) => (e1: answer(Some(y)) = Some(w)) => (d1: ∀ x: State. (Some(y) = Some(x)) -> (x = StateMk(CRet, Nil, Cons(v, Nil), Nil))) => Option::some_inj(
       w,
       v,
       Eq::trans(Eq::sym(e1), Eq::congr((x: State) => answer(Some(x)), d1(y, Refl)))
     )
-  }(e, det)
+  })(e, det)
 }
 
 // Whatever fuel the machine is given, an answer it gives is the value of the reference
@@ -382,7 +380,7 @@ pub theorem compile_answer<prog: List(
   w: Val,
   e: run_program(prog, fuel, f, arg) = Some(w)
 ): (w = v) {
-  match start_runs(found, h): (w = v) {
+  ⊢ (w = v) from match start_runs(found, h) {
     RunsTo::Mk(fuel0, e0) => answer_det(
       run(compile(prog), fuel, start(f, arg)),
       v,

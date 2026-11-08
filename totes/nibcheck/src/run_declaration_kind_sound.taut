@@ -29,7 +29,7 @@ pub theorem registration_finish_after_kind(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(registration_finish_after(program, m)))
 ): ProgramDataStateKinds(program, registration_finish_after(program, m)) {
-  match m: ProgramDataStateKinds(program, registration_finish_after(program, m)) {
+  ⊢ ProgramDataStateKinds(program, registration_finish_after(program, m)) from match m {
     mut1(v, next) => Eq::subst(
       (result: Mut1(Unit, Checker)) => ProgramDataStateKinds(program, result),
       Eq::sym(ck_rewrap1_id(ck_finish_datas(next, program))),
@@ -50,7 +50,7 @@ pub theorem registration_program_after_kind(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(registration_program_after(program, m)))
 ): ProgramDataStateKinds(program, registration_program_after(program, m)) {
-  match m: ProgramDataStateKinds(program, registration_program_after(program, m)) {
+  ⊢ ProgramDataStateKinds(program, registration_program_after(program, m)) from match m {
     mut1(v, next) => registration_finish_after_kind(program, ck_program_data(program, next), clean)
   }
 }
@@ -84,12 +84,16 @@ pub theorem run_after_data_result_kind(
   prepared: ∀ clean: DiagnosticClean(ck_st(m)). ProgramDataStateKinds(program, m),
   clean: DiagnosticClean(ck_st(run_after_data_result(prelude, program, own, m)))
 ): ProgramDataStateKinds(program, run_after_data_result(prelude, program, own, m)) {
-  match m: ProgramDataStateKinds(program, run_after_data_result(prelude, program, own, m)) {
+  ⊢ ProgramDataStateKinds(program, run_after_data_result(prelude, program, own, m)) from match m {
     mut1(v, next) => {
       let before: DiagnosticClean(
         next
       ) := And::right(run_after_datas_frame_checked(next, prelude, program, own, ordered))(clean)
-      let same: ck_datas_of(ck_st(run_after_datas(next, prelude, program, own))) = ck_datas_of(next) := And::right(run_after_datas_frame(next, prelude, program, own, ordered))
+      let same: ck_datas_of(
+        ck_st(run_after_datas(next, prelude, program, own))
+      ) = ck_datas_of(
+        next
+      ) := And::right(run_after_datas_frame(next, prelude, program, own, ordered))
       Eq::subst((d: Datas) => ProgramDataKinds(d, program), Eq::sym(same), prepared(before))
     }
   }
@@ -101,7 +105,7 @@ pub theorem run_after_builtins_kind(
   ordered: CkOrdered(ck_st(m)),
   clean: DiagnosticClean(ck_st(run_after_builtins(prelude, program, m)))
 ): ProgramDataStateKinds(program, run_after_builtins(prelude, program, m)) {
-  match m: ProgramDataStateKinds(program, run_after_builtins(prelude, program, m)) {
+  ⊢ ProgramDataStateKinds(program, run_after_builtins(prelude, program, m)) from match m {
     mut1(v, next) => run_after_data_result_kind(
       prelude,
       program,
@@ -171,7 +175,7 @@ pub theorem run_after_module_errors_kind(
   decls: CkDatasOrdered(ck_st(m)),
   clean: DiagnosticReportClean(run_after_module_errors(prelude, program, m))
 ): ProgramDataReportKinds(program, run_after_module_errors(prelude, program, m)) {
-  match m: ProgramDataReportKinds(program, run_after_module_errors(prelude, program, m)) {
+  ⊢ ProgramDataReportKinds(program, run_after_module_errors(prelude, program, m)) from match m {
     mut1(v, next) => run_finish_after_kind(
       program,
       ck_run(next, prelude, program),
@@ -215,7 +219,9 @@ pub theorem types_check_declaration_kinds(
   clean: diagnostic_report_errors(types_check(prelude, program, errors)) = Nil
 ): ProgramDataKinds(finish_report_datas(types_check(prelude, program, errors)), program) {
   ck_types_run_declaration_kinds(
-    checker_new(Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))),
+    checker_new(
+      Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))
+    ),
     prelude,
     program,
     errors,

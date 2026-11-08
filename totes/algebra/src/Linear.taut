@@ -29,8 +29,8 @@ pub(open) inductive AlgebraLinear(
     preserve_zero: AlgebraVectorEq(
       R,
       target,
-      map(algebra_vector_zero(R, addition, source)),
-      algebra_vector_zero(R, addition, target)
+      map(algebra_vector_zero(<R: R>, addition, source)),
+      algebra_vector_zero(<R: R>, addition, target)
     ),
     preserve_add: ∀ left: AlgebraVector(
       R,
@@ -41,8 +41,8 @@ pub(open) inductive AlgebraLinear(
     ). AlgebraVectorEq(
       R,
       target,
-      map(algebra_vector_add(R, addition, source, left, right)),
-      algebra_vector_add(R, addition, target, map(left), map(right))
+      map(algebra_vector_add(<R: R>, addition, source, left, right)),
+      algebra_vector_add(<R: R>, addition, target, map(left), map(right))
     ),
     preserve_scale: ∀ values: AlgebraVector(
       R,
@@ -50,8 +50,8 @@ pub(open) inductive AlgebraLinear(
     ). ∀ scalar: R. AlgebraVectorEq(
       R,
       target,
-      map(algebra_vector_scale(R, multiplication, source, values, scalar)),
-      algebra_vector_scale(R, multiplication, target, map(values), scalar)
+      map(algebra_vector_scale(<R: R>, multiplication, source, values, scalar)),
+      algebra_vector_scale(<R: R>, multiplication, target, map(values), scalar)
     )
   ): AlgebraLinear(R, addition, multiplication, source, target, map)
 }
@@ -81,7 +81,7 @@ pub theorem algebra_linear_respect<R: Type, addition: AlgebraMonoid(
   left,
   right
 ). AlgebraVectorEq(R, target, map(left), map(right)) {
-  match laws: ∀ left: AlgebraVector(
+  ⊢ ∀ left: AlgebraVector(
     R,
     source
   ). ∀ right: AlgebraVector(
@@ -92,7 +92,7 @@ pub theorem algebra_linear_respect<R: Type, addition: AlgebraMonoid(
     source,
     left,
     right
-  ). AlgebraVectorEq(R, target, map(left), map(right)) {
+  ). AlgebraVectorEq(R, target, map(left), map(right)) from match laws {
     Mk(respect, preserve_zero, preserve_add, preserve_scale) => respect
   }
 }
@@ -113,15 +113,15 @@ pub theorem algebra_linear_preserve_zero<R: Type, addition: AlgebraMonoid(
 ): AlgebraVectorEq(
   R,
   target,
-  map(algebra_vector_zero(R, addition, source)),
-  algebra_vector_zero(R, addition, target)
+  map(algebra_vector_zero(<R: R>, addition, source)),
+  algebra_vector_zero(<R: R>, addition, target)
 ) {
-  match laws: AlgebraVectorEq(
+  ⊢ AlgebraVectorEq(
     R,
     target,
-    map(algebra_vector_zero(R, addition, source)),
-    algebra_vector_zero(R, addition, target)
-  ) {
+    map(algebra_vector_zero(<R: R>, addition, source)),
+    algebra_vector_zero(<R: R>, addition, target)
+  ) from match laws {
     Mk(respect, preserve_zero, preserve_add, preserve_scale) => preserve_zero
   }
 }
@@ -148,10 +148,10 @@ pub theorem algebra_linear_preserve_add<R: Type, addition: AlgebraMonoid(
 ). AlgebraVectorEq(
   R,
   target,
-  map(algebra_vector_add(R, addition, source, left, right)),
-  algebra_vector_add(R, addition, target, map(left), map(right))
+  map(algebra_vector_add(<R: R>, addition, source, left, right)),
+  algebra_vector_add(<R: R>, addition, target, map(left), map(right))
 ) {
-  match laws: ∀ left: AlgebraVector(
+  ⊢ ∀ left: AlgebraVector(
     R,
     source
   ). ∀ right: AlgebraVector(
@@ -160,9 +160,9 @@ pub theorem algebra_linear_preserve_add<R: Type, addition: AlgebraMonoid(
   ). AlgebraVectorEq(
     R,
     target,
-    map(algebra_vector_add(R, addition, source, left, right)),
-    algebra_vector_add(R, addition, target, map(left), map(right))
-  ) {
+    map(algebra_vector_add(<R: R>, addition, source, left, right)),
+    algebra_vector_add(<R: R>, addition, target, map(left), map(right))
+  ) from match laws {
     Mk(respect, preserve_zero, preserve_add, preserve_scale) => preserve_add
   }
 }
@@ -186,18 +186,18 @@ pub theorem algebra_linear_preserve_scale<R: Type, addition: AlgebraMonoid(
 ). ∀ scalar: R. AlgebraVectorEq(
   R,
   target,
-  map(algebra_vector_scale(R, multiplication, source, values, scalar)),
-  algebra_vector_scale(R, multiplication, target, map(values), scalar)
+  map(algebra_vector_scale(<R: R>, multiplication, source, values, scalar)),
+  algebra_vector_scale(<R: R>, multiplication, target, map(values), scalar)
 ) {
-  match laws: ∀ values: AlgebraVector(
+  ⊢ ∀ values: AlgebraVector(
     R,
     source
   ). ∀ scalar: R. AlgebraVectorEq(
     R,
     target,
-    map(algebra_vector_scale(R, multiplication, source, values, scalar)),
-    algebra_vector_scale(R, multiplication, target, map(values), scalar)
-  ) {
+    map(algebra_vector_scale(<R: R>, multiplication, source, values, scalar)),
+    algebra_vector_scale(<R: R>, multiplication, target, map(values), scalar)
+  ) from match laws {
     Mk(respect, preserve_zero, preserve_add, preserve_scale) => preserve_scale
   }
 }
@@ -220,26 +220,12 @@ pub theorem algebra_linear_identity_laws<R: Type>(
   addition: AlgebraMonoid(0, R),
   multiplication: AlgebraMonoid(0, R),
   n: Nat
-): AlgebraLinear(R, addition, multiplication, n, n, input => algebra_linear_identity(R, n, input)) {
-  AlgebraLinear::Mk(
-    R,
-    addition,
-    multiplication,
-    n,
-    n,
-    input => algebra_linear_identity(R, n, input),
+): AlgebraLinear(R, addition, multiplication, n, n, input => algebra_linear_identity(<R: R>, n, input)) {
+  AlgebraLinear::Mk(<R: R, addition: addition, multiplication: multiplication, source: n, target: n, map: (input => algebra_linear_identity(<R: R>, n, input))>,
     left => right => equal => equal,
-    index => AlgebraRefl(0, R, algebra_unit(0, R, addition)),
-    left => right => index => AlgebraRefl(
-      0,
-      R,
-      algebra_op(0, R, addition)(left(index), right(index))
-    ),
-    values => scalar => index => AlgebraRefl(
-      0,
-      R,
-      algebra_op(0, R, multiplication)(values(index), scalar)
-    )
+    index => AlgebraRefl(<u: 0, A: R, a: algebra_unit(<u: 0, A: R>, addition)>),
+    left => right => index => AlgebraRefl(<u: 0, A: R, a: algebra_op(<u: 0, A: R>, addition)(left(index), right(index))>),
+    values => scalar => index => AlgebraRefl(<u: 0, A: R, a: algebra_op(<u: 0, A: R>, multiplication)(values(index), scalar)>)
   )
 }
 
@@ -268,121 +254,55 @@ pub theorem algebra_linear_compose_laws<R: Type, addition: AlgebraMonoid(
   multiplication,
   source,
   target,
-  input => algebra_linear_compose(R, source, middle, target, first, second, input)
+  input => algebra_linear_compose(<R: R>, source, middle, target, first, second, input)
 ) {
-  AlgebraLinear::Mk(
-    R,
-    addition,
-    multiplication,
-    source,
-    target,
-    input => algebra_linear_compose(R, source, middle, target, first, second, input),
-    left => right => equal => algebra_linear_respect(
-      R,
-      addition,
-      multiplication,
-      middle,
-      target,
-      second,
+  AlgebraLinear::Mk(<R: R, addition: addition, multiplication: multiplication, source: source, target: target, map: (input => algebra_linear_compose(<R: R>, source, middle, target, first, second, input))>,
+    left => right => equal => algebra_linear_respect(<R: R, addition: addition, multiplication: multiplication, source: middle, target: target, map: second>,
       second_laws
     )(
       first(left),
       first(right),
-      algebra_linear_respect(
-        R,
-        addition,
-        multiplication,
-        source,
-        middle,
-        first,
+      algebra_linear_respect(<R: R, addition: addition, multiplication: multiplication, source: source, target: middle, map: first>,
         first_laws
       )(left, right, equal)
     ),
     index => algebra_chain(
-      algebra_linear_respect(
-        R,
-        addition,
-        multiplication,
-        middle,
-        target,
-        second,
+      algebra_linear_respect(<R: R, addition: addition, multiplication: multiplication, source: middle, target: target, map: second>,
         second_laws
       )(
-        first(algebra_vector_zero(R, addition, source)),
-        algebra_vector_zero(R, addition, middle),
-        algebra_linear_preserve_zero(R, addition, multiplication, source, middle, first, first_laws)
+        first(algebra_vector_zero(<R: R>, addition, source)),
+        algebra_vector_zero(<R: R>, addition, middle),
+        algebra_linear_preserve_zero(<R: R, addition: addition, multiplication: multiplication, source: source, target: middle, map: first>, first_laws)
       )(index),
-      algebra_linear_preserve_zero(
-        R,
-        addition,
-        multiplication,
-        middle,
-        target,
-        second,
+      algebra_linear_preserve_zero(<R: R, addition: addition, multiplication: multiplication, source: middle, target: target, map: second>,
         second_laws
       )(index)
     ),
     left => right => index => algebra_chain(
-      algebra_linear_respect(
-        R,
-        addition,
-        multiplication,
-        middle,
-        target,
-        second,
+      algebra_linear_respect(<R: R, addition: addition, multiplication: multiplication, source: middle, target: target, map: second>,
         second_laws
       )(
-        first(algebra_vector_add(R, addition, source, left, right)),
-        algebra_vector_add(R, addition, middle, first(left), first(right)),
-        algebra_linear_preserve_add(
-          R,
-          addition,
-          multiplication,
-          source,
-          middle,
-          first,
+        first(algebra_vector_add(<R: R>, addition, source, left, right)),
+        algebra_vector_add(<R: R>, addition, middle, first(left), first(right)),
+        algebra_linear_preserve_add(<R: R, addition: addition, multiplication: multiplication, source: source, target: middle, map: first>,
           first_laws
         )(left, right)
       )(index),
-      algebra_linear_preserve_add(
-        R,
-        addition,
-        multiplication,
-        middle,
-        target,
-        second,
+      algebra_linear_preserve_add(<R: R, addition: addition, multiplication: multiplication, source: middle, target: target, map: second>,
         second_laws
       )(first(left), first(right))(index)
     ),
     values => scalar => index => algebra_chain(
-      algebra_linear_respect(
-        R,
-        addition,
-        multiplication,
-        middle,
-        target,
-        second,
+      algebra_linear_respect(<R: R, addition: addition, multiplication: multiplication, source: middle, target: target, map: second>,
         second_laws
       )(
-        first(algebra_vector_scale(R, multiplication, source, values, scalar)),
-        algebra_vector_scale(R, multiplication, middle, first(values), scalar),
-        algebra_linear_preserve_scale(
-          R,
-          addition,
-          multiplication,
-          source,
-          middle,
-          first,
+        first(algebra_vector_scale(<R: R>, multiplication, source, values, scalar)),
+        algebra_vector_scale(<R: R>, multiplication, middle, first(values), scalar),
+        algebra_linear_preserve_scale(<R: R, addition: addition, multiplication: multiplication, source: source, target: middle, map: first>,
           first_laws
         )(values, scalar)
       )(index),
-      algebra_linear_preserve_scale(
-        R,
-        addition,
-        multiplication,
-        middle,
-        target,
-        second,
+      algebra_linear_preserve_scale(<R: R, addition: addition, multiplication: multiplication, source: middle, target: target, map: second>,
         second_laws
       )(first(values), scalar)(index)
     )
@@ -406,19 +326,10 @@ pub theorem algebra_matrix_linear<R: Type, addition: AlgebraMonoid(
   multiplication,
   columns,
   rows,
-  input => algebra_matrix_apply(R, addition, multiplication, rows, columns, matrix, input)
+  input => algebra_matrix_apply(<R: R>, addition, multiplication, rows, columns, matrix, input)
 ) {
-  AlgebraLinear::Mk(
-    R,
-    addition,
-    multiplication,
-    columns,
-    rows,
-    input => algebra_matrix_apply(R, addition, multiplication, rows, columns, matrix, input),
-    left => right => equal => row => algebra_matrix_apply_congr(
-      R,
-      addition,
-      multiplication,
+  AlgebraLinear::Mk(<R: R, addition: addition, multiplication: multiplication, source: columns, target: rows, map: (input => algebra_matrix_apply(<R: R>, addition, multiplication, rows, columns, matrix, input))>,
+    left => right => equal => row => algebra_matrix_apply_congr(<R: R, addition: addition, multiplication: multiplication>,
       rows,
       columns,
       matrix,
@@ -460,18 +371,17 @@ pub theorem algebra_linear_identity_left<R: Type>(
 ): AlgebraEq(
   0,
   R,
-  algebra_linear_compose(
-    R,
+  algebra_linear_compose(<R: R>,
     source,
     source,
     target,
-    input => algebra_linear_identity(R, source, input),
+    input => algebra_linear_identity(<R: R>, source, input),
     map,
     values
   )(index),
   map(values)(index)
 ) {
-  AlgebraRefl(0, R, map(values)(index))
+  AlgebraRefl(<u: 0, A: R, a: map(values)(index)>)
 }
 
 pub theorem algebra_linear_identity_right<R: Type>(
@@ -483,18 +393,17 @@ pub theorem algebra_linear_identity_right<R: Type>(
 ): AlgebraEq(
   0,
   R,
-  algebra_linear_compose(
-    R,
+  algebra_linear_compose(<R: R>,
     source,
     target,
     target,
     map,
-    input => algebra_linear_identity(R, target, input),
+    input => algebra_linear_identity(<R: R>, target, input),
     values
   )(index),
   map(values)(index)
 ) {
-  AlgebraRefl(0, R, map(values)(index))
+  AlgebraRefl(<u: 0, A: R, a: map(values)(index)>)
 }
 
 pub theorem algebra_linear_compose_assoc<R: Type>(
@@ -510,26 +419,24 @@ pub theorem algebra_linear_compose_assoc<R: Type>(
 ): AlgebraEq(
   0,
   R,
-  algebra_linear_compose(
-    R,
+  algebra_linear_compose(<R: R>,
     a,
     c,
     d,
-    input => algebra_linear_compose(R, a, b, c, first, second, input),
+    input => algebra_linear_compose(<R: R>, a, b, c, first, second, input),
     third,
     values
   )(index),
-  algebra_linear_compose(
-    R,
+  algebra_linear_compose(<R: R>,
     a,
     b,
     d,
     first,
-    input => algebra_linear_compose(R, b, c, d, second, third, input),
+    input => algebra_linear_compose(<R: R>, b, c, d, second, third, input),
     values
   )(index)
 ) {
-  AlgebraRefl(0, R, third(second(first(values)))(index))
+  AlgebraRefl(<u: 0, A: R, a: third(second(first(values)))(index)>)
 }
 
 pub theorem algebra_linear_compose_congr<R: Type, addition: AlgebraMonoid(
@@ -567,17 +474,11 @@ pub theorem algebra_linear_compose_congr<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_linear_compose(R, source, middle, target, first, second, values)(index),
-  algebra_linear_compose(R, source, middle, target, first_other, second_other, values)(index)
+  algebra_linear_compose(<R: R>, source, middle, target, first, second, values)(index),
+  algebra_linear_compose(<R: R>, source, middle, target, first_other, second_other, values)(index)
 ) {
   algebra_chain(
-    algebra_linear_respect(
-      R,
-      addition,
-      multiplication,
-      middle,
-      target,
-      second,
+    algebra_linear_respect(<R: R, addition: addition, multiplication: multiplication, source: middle, target: target, map: second>,
       second_laws
     )(first(values), first_other(values), first_equal(values))(index),
     second_equal(first_other(values))(index)

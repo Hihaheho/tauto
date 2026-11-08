@@ -1,0 +1,38 @@
+// A name bound inside a function a syntax registers with `with` (a pattern
+// variable here) hides a global function of the same spelling.
+
+@ cases.a-pattern-variable-hides-a-global-function-in-a-registered-fmt-function
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+import std::prelude::Par
+
+fn tree(): Unit {
+  let cell := Ref::new(false)
+  Ref::set(cell, true)
+}
+
+pub fn pick_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+  match ts {
+    Nil => None
+    Cons(tree, rest) => Some(tree.text)
+  }
+}
+
+syntax!(pick, ```par
+{{par:fibn}}```, with(fmt: pick_fmt)) => struct N, fn parse
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+
+fn other(): pick::N {
+  pick`42`
+}
+````
+entry = "main.taut"
+format_literals = ````tauto
+import "lib.taut"
+
+fn other(): pick::N {
+  pick`42`
+}
+````

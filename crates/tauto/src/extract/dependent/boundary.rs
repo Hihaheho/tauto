@@ -2,31 +2,34 @@
 use super::*;
 
 impl Eraser<'_> {
-    pub(super) fn wrapper(&mut self, name: &str) -> Result<Option<String>, String> {
+    pub(super) fn wrapper(&mut self, name: &Name) -> Result<Option<String>, Message> {
         let (_, f) = self.functions[name].clone();
         let sig = &self.checked.signatures[name];
-        if !f.generics.is_empty()
-            || sig.params[..self.arity(name)]
-                .iter()
-                .any(|r| *r != Role::Value)
+        if sig.params[..self.arity(name)]
+            .iter()
+            .any(|r| *r != Role::Value)
         {
             return Ok(None);
         }
         let Some(types) = self.checked.boundary_types.get(name).cloned() else {
             return Ok(None);
         };
-        if types.len() != f.params.len() + 1 {
+        // A value in an implicit telescope is an ordinary argument at the
+        // executable boundary. Retain the complete checked source order.
+        // Non-closed domains have no BoundaryType and are not exported here.
+        let parameters: Vec<_> = f.generics.iter().chain(&f.params).collect();
+        if types.len() != parameters.len() + 1 {
             return Ok(None);
         }
         let mut params = Vec::new();
         let mut args = Vec::new();
-        for (n, t) in f.params.iter().zip(&types) {
+        for (n, t) in parameters.into_iter().zip(&types) {
             let Some(t) = t else { return Ok(None) };
             let Some((ty, pack, _)) = self.boundary(t)? else {
                 return Ok(None);
             };
-            params.push(format!("{}: {ty}", raw(n)));
-            args.push(pack.replace("$v", &raw(n)));
+            params.push(format!("{}: {ty}", self.symbol(n)));
+            args.push(pack.replace("$v", &self.symbol(n)));
         }
         let Some(Some(t)) = types.last() else {
             return Ok(None);
@@ -35,26 +38,52 @@ impl Eraser<'_> {
             return Ok(None);
         };
         let target = self.name(name);
-        let body = unpack.replace("$v", &format!("{target}({})", args.join(", ")));
-        let short = name.rsplit("::").next().unwrap();
-        self.exports.insert(name.into());
-        self.total.insert(name.into());
-        Ok(Some(in_modules_text(
-            name,
-            &format!(
-                "pub fn {}({}): {ty} {{ {body} }}",
-                raw(short),
-                params.join(", ")
-            ),
+        let value = format!("{target}({})", args.join(", "));
+        let row = f.effects.as_deref().unwrap_or_default();
+        let value = if !row.is_empty() {
+            let Some(run) = self.native_computation(row)? else {
+                return Ok(None);
+            };
+            format!("{run}({value})")
+        } else if self.computations {
+            format!("TautoErasedFinish#r0({value})")
+        } else {
+            value
+        };
+        let effects = if row.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " ! {{{}}}",
+                std::iter::once("Div")
+                    .chain(
+                        row.iter()
+                            .map(|name| self.symbol(name))
+                            .collect::<Vec<_>>()
+                            .iter()
+                            .map(String::as_str)
+                    )
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        let body = unpack.replace("$v", &value);
+        self.exports.insert(name.clone());
+        self.total.insert(name.clone());
+        Ok(Some(format!(
+            "pub fn {}({}): {ty}{effects} {{ {body} }}",
+            self.symbol(name),
+            params.join(", ")
         )))
     }
+
     /// Ordinary data keeps its existing Nib representation at the boundary.
     /// Type arguments carry their own bridges, including opaque refinements.
     pub(super) fn native_family(
         &mut self,
-        head: &str,
+        head: &Name,
         arguments: Vec<(String, String, String)>,
-    ) -> Result<Option<(String, String, String)>, String> {
+    ) -> Result<Option<(String, String, String)>, Message> {
         let Some(decl) = self.declarations.get(head).cloned() else {
             return Ok(None);
         };
@@ -62,10 +91,11 @@ impl Eraser<'_> {
             return Ok(None);
         }
         let ty = if arguments.is_empty() {
-            head.to_owned()
+            self.symbol(head)
         } else {
             format!(
-                "{head}({})",
+                "{}({})",
+                self.symbol(head),
                 arguments
                     .iter()
                     .map(|a| a.0.clone())
@@ -101,8 +131,10 @@ impl Eraser<'_> {
                     continue;
                 }
                 let Some((_, pack, unpack)) = self.native_field(field_ty, &env)? else {
-                    return Err(format!(
-                        "dependent extraction: no native representation for field {head}::{field}"
+                    return Err(msg!(
+                        "tauto-extract-dependent-no-native-field",
+                        head = head.to_string(),
+                        field = field.to_string()
                     ));
                 };
                 let value = self.fresh("Field");
@@ -115,7 +147,8 @@ impl Eraser<'_> {
             let native = |values: &[String]| {
                 if decl.constructors.len() == 1 && !fields.is_empty() {
                     format!(
-                        "{head} {{ {} }}",
+                        "{} {{ {} }}",
+                        self.symbol(head),
                         fields
                             .iter()
                             .zip(values)
@@ -124,9 +157,9 @@ impl Eraser<'_> {
                             .join(", ")
                     )
                 } else if values.is_empty() {
-                    ctor.name.clone()
+                    self.symbol(&ctor.name)
                 } else {
-                    format!("{}({})", ctor.name, values.join(", "))
+                    format!("{}({})", self.symbol(&ctor.name), values.join(", "))
                 }
             };
             let dynamic = |values: &[String]| {
@@ -141,7 +174,8 @@ impl Eraser<'_> {
         }
         unpack_arms.push("_ => extract_unreachable()".into());
         self.definitions.push(format!("fn {from}(value: {ty}): {VALUE} {{ match value {{\n{}\n}} }}\nfn {to}(value: {VALUE}): {ty} {{ match value {{\n{}\n}} }}", pack_arms.join("\n"), unpack_arms.join("\n")));
-        self.total.extend([from.clone(), to.clone()]);
+        self.total
+            .extend([Name::from(from.clone()), Name::from(to.clone())]);
         self.forbidden.extend([from.clone(), to.clone()]);
         self.active_bridges.remove(head);
         Ok(Some((ty, format!("{from}($v)"), format!("{to}($v)"))))
@@ -149,8 +183,8 @@ impl Eraser<'_> {
     pub(super) fn native_field(
         &mut self,
         ty: &SurfaceTerm,
-        env: &BTreeMap<String, (String, String, String)>,
-    ) -> Result<Option<(String, String, String)>, String> {
+        env: &BTreeMap<Name, (String, String, String)>,
+    ) -> Result<Option<(String, String, String)>, Message> {
         if let TermKind::Var(n) = &*ty.kind {
             if let Some(repr) = env.get(n) {
                 return Ok(Some(repr.clone()));
@@ -172,7 +206,7 @@ impl Eraser<'_> {
             arguments,
         } = &*ty.kind
         {
-            if self.std.of(head_name(function)) == Some("Quot") {
+            if head_name(function).and_then(|head| self.std.of(head)) == Some("Quot") {
                 return match arguments.first() {
                     Some(value) => self.native_field(value, env),
                     None => Ok(None),
@@ -185,18 +219,21 @@ impl Eraser<'_> {
                 };
                 reprs.push(repr);
             }
-            return self.native_family(head_name(function), reprs);
+            return match head_name(function) {
+                Some(head) => self.native_family(head, reprs),
+                None => Ok(None),
+            };
         }
         Ok(None)
     }
-    pub(super) fn integer_bridge(&mut self) -> Result<(String, String, String), String> {
+    pub(super) fn integer_bridge(&mut self) -> Result<(String, String, String), Message> {
         let info = self
             .checked
             .boundary_types
             .values()
             .flatten()
             .flatten()
-            .find(|info| self.std.of(head_name(&info.ty)) == Some("Int"))
+            .find(|info| head_name(&info.ty).and_then(|head| self.std.of(head)) == Some("Int"))
             .cloned()
             .ok_or("dependent extraction: missing checked Int boundary")?;
         self.boundary(&info)?
@@ -205,7 +242,7 @@ impl Eraser<'_> {
     pub(super) fn boundary(
         &mut self,
         info: &crate::check::BoundaryType,
-    ) -> Result<Option<(String, String, String)>, String> {
+    ) -> Result<Option<(String, String, String)>, Message> {
         let t = &info.ty;
         if matches!(&*t.kind, TermKind::Pi { .. }) {
             return Ok(Some(self.opaque_boundary(info.id)));
@@ -243,7 +280,9 @@ impl Eraser<'_> {
                 _ => {}
             }
         }
-        let head = head_name(t);
+        let Some(head) = head_name(t) else {
+            return Ok(None);
+        };
         if self.std.of(head) == Some("Quot") {
             return match info.arguments.first() {
                 Some(value) => self.boundary(value),
@@ -263,26 +302,31 @@ impl Eraser<'_> {
             let positive = fam
                 .ctors
                 .iter()
-                .find(|c| self.std.of(c) == Some("IntOfNat"))
+                .find(|c| self.std.of(c) == Some("Int::IntOfNat"))
                 .ok_or("dependent boundary: IntOfNat")?
                 .clone();
             let negative = fam
                 .ctors
                 .iter()
-                .find(|c| self.std.of(c) == Some("IntNegSucc"))
+                .find(|c| self.std.of(c) == Some("Int::IntNegSucc"))
                 .ok_or("dependent boundary: IntNegSucc")?
                 .clone();
             let p = self.ctor(&positive)?;
             let n = self.ctor(&negative)?;
             let from = format!("TautoErasedPack{}#r0", info.id);
             let to = format!("TautoErasedUnpack{}#r0", info.id);
-            if self.total.insert(from.clone()) {
+            if self.total.insert(from.clone().into()) {
+                let (head, positive, negative) = (
+                    self.symbol(head),
+                    self.symbol(&positive),
+                    self.symbol(&negative),
+                );
                 self.definitions.push(format!("fn {from}(value: {head}): {VALUE} {{ match value {{ {positive}(v) => {p}({NAT}(v))\n {negative}(v) => {n}({NAT}(v)) }} }}\nfn {to}(value: {VALUE}): {head} {{ match value {{ {p}(v) => {positive}(TautoErasedGetNat#r0(v))\n {n}(v) => {negative}(TautoErasedGetNat#r0(v))\n _ => extract_unreachable() }} }}\n"));
-                self.total.insert(to.clone());
+                self.total.insert(to.clone().into());
                 self.forbidden.extend([from.clone(), to.clone()]);
             }
             return Ok(Some((
-                head.to_string(),
+                self.symbol(head),
                 format!("{from}($v)"),
                 format!("{to}($v)"),
             )));
@@ -322,7 +366,7 @@ impl Eraser<'_> {
                 ("None", "Some", "", "Option")
             };
             let ty = format!("{source}({inner})");
-            if self.total.insert(from.clone()) {
+            if self.total.insert(from.clone().into()) {
                 let p = pack.replace("$v", "item");
                 let u = unpack.replace("$v", "item");
                 let packed_tail = if list {
@@ -336,7 +380,7 @@ impl Eraser<'_> {
                     String::new()
                 };
                 self.definitions.push(format!("fn {from}(value: {ty}): {VALUE} {{ match value {{ {empty_pat} => {empty_ctor}\n {full_pat}(item{tail}) => {full_ctor}({p}{packed_tail}) }} }}\nfn {to}(value: {VALUE}): {ty} {{ match value {{ {empty_ctor} => {empty_pat}\n {full_ctor}(item{tail}) => {full_pat}({u}{unpacked_tail})\n _ => extract_unreachable() }} }}\n"));
-                self.total.insert(to.clone());
+                self.total.insert(to.clone().into());
                 self.forbidden.extend([from.clone(), to.clone()]);
             }
             return Ok(Some((ty, format!("{from}($v)"), format!("{to}($v)"))));
@@ -367,5 +411,98 @@ impl Eraser<'_> {
             "($v).value".into(),
             format!("{n} {{ value: $v }}"),
         )
+    }
+}
+
+use super::computation::REQUEST;
+
+impl Eraser<'_> {
+    pub(super) fn native_effect(&mut self, name: &Name) -> Result<bool, Message> {
+        if self.native_effects.contains(name) {
+            return Ok(true);
+        }
+        let Some(types) = self.checked.effect_types.get(name).cloned() else {
+            return Ok(false);
+        };
+        let mut native = Vec::new();
+        for ty in types {
+            let Some(ty) = ty else {
+                return Ok(false);
+            };
+            let Some(repr) = self.boundary(&ty)? else {
+                return Ok(false);
+            };
+            native.push(repr.0);
+        }
+        let Some(result) = native.pop() else {
+            return Ok(false);
+        };
+        let params = native
+            .iter()
+            .enumerate()
+            .map(|(i, ty)| format!("arg{i}: {ty}"))
+            .collect::<Vec<_>>();
+        let resume = self
+            .checked
+            .effect_resumes
+            .get(name)
+            .and_then(|r| r.as_ref())
+            .map(|r| {
+                if r == "direct" {
+                    " direct".to_string()
+                } else {
+                    format!(" resume {r}")
+                }
+            })
+            .unwrap_or_default();
+        self.definitions.push(format!(
+            "effect {}({}): {result}{resume}",
+            self.symbol(name),
+            params.join(", ")
+        ));
+        self.native_effects.insert(name.clone());
+        Ok(true)
+    }
+
+    pub(super) fn native_computation(&mut self, row: &[Name]) -> Result<Option<String>, Message> {
+        for effect in row {
+            if !self.native_effect(effect)? {
+                return Ok(None);
+            }
+        }
+        let run = self.fresh("Run");
+        let mut dispatch = "extract_unreachable()".to_string();
+        for effect in row.iter().rev() {
+            let types = self.checked.effect_types[effect].clone();
+            let mut native = Vec::new();
+            for ty in types {
+                native.push(self.boundary(&ty.unwrap())?.unwrap());
+            }
+            let (_, pack, _) = native.pop().unwrap();
+            let names: Vec<_> = native.iter().map(|_| self.fresh("Parameter")).collect();
+            let args: Vec<_> = native
+                .iter()
+                .zip(&names)
+                .map(|((_, _, unpack), name)| unpack.replace("$v", name))
+                .collect();
+            let pattern = names.iter().rev().fold("Nil".to_string(), |tail, name| {
+                format!("Cons({name}, {tail})")
+            });
+            let answer = self.fresh("Answer");
+            let packed = pack.replace("$v", &answer);
+            let call = format!(
+                "{{ let {answer} := perform {}({})\n {run}(TautoErasedApply#r0(continuation, [{packed}])) }}",
+                self.symbol(effect),
+                args.join(", ")
+            );
+            let tag = self.effect_tag(effect);
+            dispatch = format!(
+                "if tag == {tag} {{ match args {{ {pattern} => {call}\n _ => extract_unreachable() }} }} else {{ {dispatch} }}"
+            );
+        }
+        self.definitions.push(format!("fn {run}(value: {VALUE}): {VALUE} ! {{{}}} {{ match value {{ {REQUEST}(tag, args, continuation) => {dispatch}\n _ => value }} }}", std::iter::once("Div").chain(row.iter().map(|name| self.symbol(name)).collect::<Vec<_>>().iter().map(String::as_str)).collect::<Vec<_>>().join(", ")));
+        self.total.insert(run.clone().into());
+        self.forbidden.insert(run.clone());
+        Ok(Some(run))
     }
 }

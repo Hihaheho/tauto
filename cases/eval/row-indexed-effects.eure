@@ -1,0 +1,141 @@
+// An effect indexed by a row (`effect cur<!e>()`) is read at each call the way a
+// type argument is: the types fix it where they can, else the row around the
+// call, else what the arguments' rows say (`docs/design/row-parameters.md`,
+// "Instantiating row variables").
+
+@ cases.a-row-index-is-read-from-the-types-the-row-around-and-the-arguments
+source = ```nib
+import std::prelude::Par { Ref }
+struct Tree(!e) { handlers: Ref(List(() -> Unit ! e)), add: (h: () -> Unit ! e) -> Unit }
+effect cur_ui<!e>(): Tree(e) direct
+effect ctx<A>(): A direct
+
+fn current<!e>(): Tree(e) ! {cur_ui(e)} { perform cur_ui() }
+fn on<!e>(h: () -> Unit ! e): Unit ! {cur_ui(e)} { let t := current(); (t.add)(h) }
+fn with_ui<A, !e, !f>(t: Tree(e), body: () -> A ! {cur_ui(e)} ∪ f): A ! f {
+  handle { body() } with {
+    cur_ui(), k => k(t)
+    return v => v
+  }
+}
+fn provide_ui<A: Shared, T, !e, !f>(value: A, body: () -> T ! {cur_ui(!{ctx(A)} ∪ e), ctx(A)} ∪ f): T ! {cur_ui(e)} ∪ f {
+  let parent := current()
+  let child := Tree { handlers: Ref::new(Nil), add: h => (parent.add)(() => run_with(value, h)) }
+  run_with(value, () => with_ui(child, body))
+}
+fn comp<!e>(): Unit ! {cur_ui(e)} ∪ e {
+  on(() => { #() })
+}
+fn comp2(): Unit ! {cur_ui(!{ctx(Text)}), ctx(Text)} {
+  on(() => { let s: Text := perform ctx(); #() })
+}
+fn run_with<A, T, !f>(value: A, body: () -> T ! {ctx(A)} ∪ f): T ! f {
+  handle { body() } with {
+    ctx<A>(), k => k(value)
+    return v => v
+  }
+}
+fn main(): Unit {
+  let hs: Ref(List(() -> Unit)) := Ref::new(Nil)
+  let root: Tree(!{}) := Tree { handlers: hs, add: h => Ref::set(hs, Cons(h, Ref::get(hs))) }
+  with_ui(root, () => provide_ui("hi", () => { comp(); comp2() }))
+}
+```
+types = "ok"
+rows = "ok"
+
+@ cases.a-call-in-a-body-takes-the-row-the-signature-writes
+source = ```nib
+effect cur<!e>(): Unit
+effect out(t: Text): Unit
+fn c<!e>(): Unit ! {cur(e)} { perform cur() }
+fn d(): Unit ! {cur(!{out})} { c() }
+```
+rows = "ok"
+
+@ cases.two-instances-around-a-call-are-ambiguous
+source = ```nib
+effect cur<!e>(): Unit
+effect out(t: Text): Unit
+effect log(t: Text): Unit
+fn c<!e>(): Unit ! {cur(e)} { perform cur() }
+fn d(): Unit ! {cur(!{out}), cur(!{log})} { c() }
+```
+types = "error: the row around this call has two instances of the effect it indexes by `e`"
+
+@ cases.an-index-no-type-or-row-fixes-is-reported
+source = ```nib
+effect cur<!e>(): Unit
+fn c<!e>(): Unit ! {cur(e)} { perform cur() }
+fn d(): Unit { c() }
+```
+types = "error: `c` indexes an effect by `e`, which is not known here"
+
+@ cases.a-lambda-argument-takes-the-row-its-parameters-type-writes
+source = ```nib
+effect cur<!e>(): Unit
+effect out(t: Text): Unit
+fn c<!e>(): Unit ! {cur(e)} { perform cur() }
+fn take(body: () -> Unit ! {cur(!{out})}): Unit { #() }
+fn go(): Unit { take(() => c()) }
+```
+types = "ok"
+rows = "ok"
+
+@ cases.a-lambda-argument-has-no-row-around-it-when-its-callee-writes-none
+source = ```nib
+effect cur<!e>(): Unit
+effect out(t: Text): Unit
+fn c<!e>(): Unit ! {cur(e)} { perform cur() }
+fn take(body: () -> Unit): Unit { #() }
+fn go(): Unit ! {cur(!{out})} { take(() => c()) }
+```
+types = "error: `c` indexes an effect by `e`, which is not known here"
+
+@ cases.a-lambda-field-of-a-record-takes-the-row-the-fields-type-writes
+source = ```nib
+effect ui<!e>(): Unit
+effect out(t: Text): Unit
+struct Boundary(!e) { failed: (why: Text) -> Unit ! {ui(e)} ∪ e }
+fn error_boundary<!e>(b: Boundary(e)): Unit ! {ui(e)} ∪ e { (b.failed)("x") }
+fn ui_label<!e>(key: Text): Unit ! {ui(e)} { perform ui() }
+fn go(): Unit ! {ui(!{})} {
+  error_boundary(Boundary { failed: (key: Text) => ui_label(key) })
+}
+```
+types = "ok"
+rows = "ok"
+
+@ cases.a-lambda-bound-by-an-annotated-let-takes-the-row-the-annotation-writes
+source = ```nib
+effect cur<!e>(): Unit
+effect out(t: Text): Unit
+fn c<!e>(): Unit ! {cur(e)} { perform cur() }
+fn go(): Unit {
+  let f: () -> Unit ! {cur(!{out})} := () => c()
+  #()
+}
+```
+types = "ok"
+
+@ cases.a-lambda-without-an-annotation-has-no-row-around-it
+source = ```nib
+effect cur<!e>(): Unit
+effect out(t: Text): Unit
+fn c<!e>(): Unit ! {cur(e)} { perform cur() }
+fn go(): Unit ! {cur(!{out})} {
+  let f := () => c()
+  #()
+}
+```
+types = "error: `c` indexes an effect by `e`, which is not known here"
+
+@ cases.a-returned-lambda-takes-the-row-the-result-type-writes
+source = ```nib
+effect cur<!e>(): Unit
+effect out(t: Text): Unit
+fn c<!e>(): Unit ! {cur(e)} { perform cur() }
+fn mk(): (() -> Unit ! {cur(!{out})}) { () => c() }
+```
+types = "ok"
+rows = "ok"

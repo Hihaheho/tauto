@@ -479,6 +479,31 @@ fn run_both_paths_checked(
     run_both_paths_variant(source, bindings, host, observed, false)
 }
 
+fn fixture_bindings(pkg: &tauto_nir::Package, bindings: &Bindings) -> Bindings {
+    let mut manifest = tauto::manifest::Manifest::default();
+    for (name, binding) in &bindings.types {
+        manifest.rust.types.insert(
+            name.to_string(),
+            tauto::manifest::Entry {
+                value: binding.rust.clone(),
+                file: "test host".into(),
+                line: 1,
+            },
+        );
+    }
+    for (name, binding) in &bindings.externs {
+        manifest.rust.externs.insert(
+            name.to_string(),
+            tauto::manifest::Entry {
+                value: binding.rust.clone(),
+                file: "test host".into(),
+                line: 1,
+            },
+        );
+    }
+    Bindings::resolve(pkg, Some(&manifest), None).unwrap()
+}
+
 fn run_both_paths_variant(
     source: &str,
     bindings: &Bindings,
@@ -489,6 +514,7 @@ fn run_both_paths_variant(
     static NATIVE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _native = NATIVE.lock().unwrap_or_else(|p| p.into_inner());
     let pkg = tauto_nir::compile(source).unwrap();
+    let bindings = fixture_bindings(&pkg, bindings);
     let mut ws = workspace(
         "nonresuming-budget",
         &pkg,
@@ -496,7 +522,7 @@ fn run_both_paths_variant(
             file: "main.taut",
             text: source,
         },
-        bindings,
+        &bindings,
         &Options::default(),
     );
     ws.files
@@ -513,7 +539,7 @@ fn run_both_paths_variant(
             .find(|(path, _)| path == "src/lib.rs")
             .unwrap()
             .1;
-        for function in pkg.fns.iter().filter(|f| f.source == "value") {
+        for function in pkg.fns.iter().filter(|f| f.source.as_str() == "value") {
             let signature = format!("fn {}", function.rust_name);
             assert_eq!(
                 lib.matches(&signature).count(),
@@ -743,6 +769,7 @@ while fuel < 9 { perform show("observed", observed(fuel))
         },
     );
     let pkg = tauto_nir::compile(source).unwrap();
+    let bindings = fixture_bindings(&pkg, &bindings);
     let sources = Sources {
         file: "main.taut",
         text: source,
@@ -1067,7 +1094,12 @@ perform show("result", result)
     assert!(emit_module(&pkg, &sources, &Bindings::default()).contains("run_nonresuming"));
     let mut bindings = Bindings::default();
     bindings.types.insert(
-        "Token".into(),
+        pkg.datas
+            .iter()
+            .find(|d| d.name.as_str() == "Token")
+            .unwrap()
+            .name
+            .clone(),
         tauto_rustgen::Binding {
             rust: "bridge::Token".into(),
             at: "test".into(),
@@ -1077,7 +1109,7 @@ perform show("result", result)
     assert!(!emit_module(&pkg, &sources, &bindings).contains("run_nonresuming"));
     pkg.datas
         .iter_mut()
-        .find(|d| d.name == "Token")
+        .find(|d| d.name.as_str() == "Token")
         .unwrap()
         .linear = true;
     assert!(!emit_module(&pkg, &sources, &Bindings::default()).contains("run_nonresuming"));
@@ -1386,7 +1418,7 @@ fn data_run(steps: i64): Held {
     let internal_name = package.fns[package
         .exports
         .iter()
-        .find(|e| e.name == "callback_run")
+        .find(|e| e.name.as_str() == "callback_run")
         .unwrap()
         .inst]
         .rust_name

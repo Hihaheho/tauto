@@ -28,11 +28,31 @@ pub(open) enum SynCst {
 pub(open) struct SynHighlight { start: u64, end: u64, kind: Text }
 
 // Why a text is not of a syntax, or what a macro objects to: the message, the
-// byte it stopped at, the terminals that would have been taken there, and the
-// code a tool shows (`macro.error` for a macro's own).
-pub(open) struct SynDiag { message: Text, at: u64, expected: List(Text), code: Text }
+// byte it stopped at, the terminals that would have been taken there, the
+// code a tool shows (`macro.error` for a macro's own), and the arguments of the
+// message. A macro's own message is its text, with no arguments. A syntax error
+// (`macro.syntax_error`) is a message of the tools: `message` is its id and
+// `args` its arguments, and a tool writes it in the language it is set to.
+pub(open) struct SynDiag {
+  message: Text,
+  at: u64,
+  expected: List(Text),
+  code: Text,
+  args: List(SynArg)
+}
 
-pub(open) struct SynIdent { name: Text, ctx: SynCtx, span: SynSpan }
+// An argument of a message: its name and value. A name may come more than once,
+// as `expected` does for each terminal that would have been taken.
+pub(open) struct SynArg { name: Text, value: Text }
+
+extern { type SynDeclaration }
+
+pub(open) struct SynIdent {
+  name: Text,
+  ctx: SynCtx,
+  span: SynSpan,
+  declaration: Option(SynDeclaration)
+}
 
 // A binder: a name or an atom of a `Judgement`, and the type when written.
 pub(open) enum SynBinder {
@@ -67,6 +87,7 @@ pub(open) enum SynExpr {
   ExRecord(SynIdent, List(SynExpr × Text), SynSpan)
   ExBorrow(Bool, SynExpr, SynSpan)
   ExUnion(List(SynExpr), SynSpan)
+  ExProduct(List(SynExpr), SynSpan)
   ExTagged(Text, SynExpr, SynSpan)
   ExExists(SynBinder, SynExpr, SynExpr, SynSpan)
   ExFnKind(Text, SynExpr, SynSpan)
@@ -74,6 +95,10 @@ pub(open) enum SynExpr {
   ExMacroCall(SynIdent, Text, SynSpan)
   // A call whose argument is an expression (an untyped or a typed macro).
   ExMacroExpr(SynIdent, SynExpr, SynSpan)
+  // A step `by t!(arg): G0 { Δ ⊢ G from p … }` (`docs/design/macro-steps.md`):
+  // the tactic, its argument, the goal before it (`None` where the step is the
+  // whole proof of an arm) and the arms.
+  ExStep(SynIdent, SynExpr, Option(SynExpr), List(SynStepArm), SynSpan)
   ExHole(Text, SynSpan)
   ExUnit(SynSpan)
 }
@@ -87,6 +112,9 @@ pub(open) enum SynPattern {
   PtCtor(SynIdent, List(SynPattern))
   PtRecord(SynIdent, List(SynPattern × Text))
 }
+
+// An arm of a step: `Δ ⊢ goal from body`.
+pub(open) struct SynStepArm { binders: List(SynBinder), goal: SynExpr, body: SynExpr }
 
 pub(open) struct SynArm {
   pattern: SynPattern,
@@ -114,6 +142,7 @@ pub(open) enum SynHandler {
 pub(open) struct SynFn {
   name: SynIdent
   generics: List(Text)
+  generic_types: List(SynExpr)
   bounds: List(Option(Text))
   params: List(SynIdent)
   borrows: List(Option(Bool))
@@ -194,7 +223,9 @@ pub(open) effect macro_warn(d: SynDiag): Unit resume 1
 
 module Syn {
   pub fn error(at: SynSpan, message: Text): Never ! {macro_error} {
-    perform macro_error(SynDiag { message: message, at: at.id, expected: Nil, code: "macro.error" })
+    perform macro_error(
+      SynDiag { message: message, at: at.id, expected: Nil, code: "macro.error", args: Nil }
+    )
   }
 
   // Where the macro is called: for an attribute macro, the attribute. An
@@ -204,14 +235,14 @@ module Syn {
   }
 
   pub fn ident(t: SynToken): SynIdent {
-    SynIdent { name: t.text, ctx: t.ctx, span: t.span }
+    SynIdent { declaration: None, name: t.text, ctx: t.ctx, span: t.span }
   }
 
   // A name that borrows the scopes of `model`: the way to capture a local of the
   // caller, such as the `it` of an anaphoric macro
   // (`docs/design/macro.md`「衛生（スコープ集合）」, 6).
   pub fn ident_like(model: SynIdent, name: Text): SynIdent {
-    SynIdent { name: name, ctx: model.ctx, span: model.span }
+    SynIdent { declaration: None, name: name, ctx: model.ctx, span: model.span }
   }
 
   // The name of a declaration a macro makes for the caller to use (the
@@ -220,14 +251,18 @@ module Syn {
   // `Syn::ident_like` is, written for a declaration's name; the lint
   // `macro-capture` does not take it for a capture.
   pub fn decl_name(model: SynIdent, name: Text): SynIdent {
-    SynIdent { name: name, ctx: model.ctx, span: model.span }
+    SynIdent { declaration: None, name: name, ctx: model.ctx, span: model.span }
   }
 
   // A name of the macro's own tote, as a `quote` writes it: it means the
   // declaration the macro's tote sees (`Cons`, a lemma of the library), and no
   // local of the caller takes it.
-  pub fn global(name: Text): SynIdent {
-    SynIdent { name: name, ctx: SynCtx { scopes: Nil }, span: Syn::call_span() }
+  extern {
+    fn global(name: Text): SynIdent
+    fn same_declaration(a: SynDeclaration, b: SynDeclaration): Bool
+    // The eliminator (`T::ind`) of the inductive type `d`, found by its
+    // declaration and not by its name: it is the same wherever `T` is declared.
+    fn eliminator(d: SynDeclaration): SynDeclaration
   }
 
   pub fn all_digits(t: Text, i: u64): Bool {
@@ -253,7 +288,7 @@ module Syn {
   pub fn lift_i64(n: i64, at: SynSpan): SynExpr {
     if n < 0 {
       ExApp(
-        ExVar(SynIdent { name: "-", ctx: SynCtx { scopes: Nil }, span: at }),
+        ExVar(SynIdent { declaration: None, name: "-", ctx: SynCtx { scopes: Nil }, span: at }),
         Cons(ExNat(Text::of_i64(0 - n), at), Nil),
         at
       )
@@ -324,22 +359,33 @@ module Syn {
   pub fn op_name(name: Text): Text {
     if name == "Nat::add" {
       "+"
-    } else {
-      if name == "Nat::mul" { "*" } else { name }
-    }
+    } else if name == "Nat::mul" { "*" } else { name }
   }
 
   // Whether two expressions are written the same, apart from where they are and
-  // the scopes their names carry: what a tactic compares goals by. A name is
-  // compared by its text (`Nat::add` and `Nat::mul` are `+` and `*`, which are the
-  // same functions) and an atom by its number; a form with binders, by its
+  // the scopes their names carry: what a tactic compares goals by. Resolved names
+  // are compared by declaration identity, unresolved names by their text, and
+  // atoms by their number; a form with binders, by its
   // binders' names and types and its body. Only names, atoms, numerals, texts,
   // booleans, applications, function types, functions `x => …`, `∃` and holes
   // are compared; two expressions of any other form are not the same.
+  pub fn same_ident(a: SynIdent, b: SynIdent): Bool {
+    match a.declaration {
+      Some(x) => match b.declaration {
+        Some(y) => Syn::same_declaration(x, y)
+        None => false
+      }
+      None => match b.declaration {
+        Some(_) => false
+        None => Syn::op_name(a.name) == Syn::op_name(b.name)
+      }
+    }
+  }
+
   pub fn same(a: SynExpr, b: SynExpr): Bool {
     match a {
       ExVar(x) => match b {
-        ExVar(y) => Syn::op_name(x.name) == Syn::op_name(y.name)
+        ExVar(y) => Syn::same_ident(x, y)
         ExAtom(_, _) => false
         ExNat(_, _) => false
         ExText(_, _) => false
@@ -358,12 +404,14 @@ module Syn {
         ExRecord(_, _, _) => false
         ExBorrow(_, _, _) => false
         ExUnion(_, _) => false
+        ExProduct(_, _) => false
         ExTagged(_, _, _) => false
         ExExists(_, _, _, _) => false
         ExFnKind(_, _, _) => false
         ExBorrowLam(_, _, _) => false
         ExMacroCall(_, _, _) => false
         ExMacroExpr(_, _, _) => false
+        ExStep(_, _, _, _, _) => false
         ExHole(_, _) => false
         ExUnit(_) => false
       }
@@ -387,12 +435,14 @@ module Syn {
         ExRecord(_, _, _) => false
         ExBorrow(_, _, _) => false
         ExUnion(_, _) => false
+        ExProduct(_, _) => false
         ExTagged(_, _, _) => false
         ExExists(_, _, _, _) => false
         ExFnKind(_, _, _) => false
         ExBorrowLam(_, _, _) => false
         ExMacroCall(_, _, _) => false
         ExMacroExpr(_, _, _) => false
+        ExStep(_, _, _, _, _) => false
         ExHole(_, _) => false
         ExUnit(_) => false
       }
@@ -416,12 +466,14 @@ module Syn {
         ExRecord(_, _, _) => false
         ExBorrow(_, _, _) => false
         ExUnion(_, _) => false
+        ExProduct(_, _) => false
         ExTagged(_, _, _) => false
         ExExists(_, _, _, _) => false
         ExFnKind(_, _, _) => false
         ExBorrowLam(_, _, _) => false
         ExMacroCall(_, _, _) => false
         ExMacroExpr(_, _, _) => false
+        ExStep(_, _, _, _, _) => false
         ExHole(_, _) => false
         ExUnit(_) => false
       }
@@ -445,12 +497,14 @@ module Syn {
         ExRecord(_, _, _) => false
         ExBorrow(_, _, _) => false
         ExUnion(_, _) => false
+        ExProduct(_, _) => false
         ExTagged(_, _, _) => false
         ExExists(_, _, _, _) => false
         ExFnKind(_, _, _) => false
         ExBorrowLam(_, _, _) => false
         ExMacroCall(_, _, _) => false
         ExMacroExpr(_, _, _) => false
+        ExStep(_, _, _, _, _) => false
         ExHole(_, _) => false
         ExUnit(_) => false
       }
@@ -474,12 +528,14 @@ module Syn {
         ExRecord(_, _, _) => false
         ExBorrow(_, _, _) => false
         ExUnion(_, _) => false
+        ExProduct(_, _) => false
         ExTagged(_, _, _) => false
         ExExists(_, _, _, _) => false
         ExFnKind(_, _, _) => false
         ExBorrowLam(_, _, _) => false
         ExMacroCall(_, _, _) => false
         ExMacroExpr(_, _, _) => false
+        ExStep(_, _, _, _, _) => false
         ExHole(_, _) => false
         ExUnit(_) => false
       }
@@ -503,12 +559,14 @@ module Syn {
         ExRecord(_, _, _) => false
         ExBorrow(_, _, _) => false
         ExUnion(_, _) => false
+        ExProduct(_, _) => false
         ExTagged(_, _, _) => false
         ExExists(_, _, _, _) => false
         ExFnKind(_, _, _) => false
         ExBorrowLam(_, _, _) => false
         ExMacroCall(_, _, _) => false
         ExMacroExpr(_, _, _) => false
+        ExStep(_, _, _, _, _) => false
         ExHole(_, _) => false
         ExUnit(_) => false
       }
@@ -532,12 +590,14 @@ module Syn {
         ExRecord(_, _, _) => false
         ExBorrow(_, _, _) => false
         ExUnion(_, _) => false
+        ExProduct(_, _) => false
         ExTagged(_, _, _) => false
         ExExists(_, _, _, _) => false
         ExFnKind(_, _, _) => false
         ExBorrowLam(_, _, _) => false
         ExMacroCall(_, _, _) => false
         ExMacroExpr(_, _, _) => false
+        ExStep(_, _, _, _, _) => false
         ExHole(_, _) => false
         ExUnit(_) => false
       }
@@ -561,12 +621,14 @@ module Syn {
         ExRecord(_, _, _) => false
         ExBorrow(_, _, _) => false
         ExUnion(_, _) => false
+        ExProduct(_, _) => false
         ExTagged(_, _, _) => false
         ExExists(_, _, _, _) => false
         ExFnKind(_, _, _) => false
         ExBorrowLam(_, _, _) => false
         ExMacroCall(_, _, _) => false
         ExMacroExpr(_, _, _) => false
+        ExStep(_, _, _, _, _) => false
         ExHole(_, _) => false
         ExUnit(_) => false
       }
@@ -594,11 +656,13 @@ module Syn {
         ExRecord(_, _, _) => false
         ExBorrow(_, _, _) => false
         ExUnion(_, _) => false
+        ExProduct(_, _) => false
         ExTagged(_, _, _) => false
         ExFnKind(_, _, _) => false
         ExBorrowLam(_, _, _) => false
         ExMacroCall(_, _, _) => false
         ExMacroExpr(_, _, _) => false
+        ExStep(_, _, _, _, _) => false
         ExHole(_, _) => false
         ExUnit(_) => false
       }
@@ -623,12 +687,14 @@ module Syn {
         ExRecord(_, _, _) => false
         ExBorrow(_, _, _) => false
         ExUnion(_, _) => false
+        ExProduct(_, _) => false
         ExTagged(_, _, _) => false
         ExExists(_, _, _, _) => false
         ExFnKind(_, _, _) => false
         ExBorrowLam(_, _, _) => false
         ExMacroCall(_, _, _) => false
         ExMacroExpr(_, _, _) => false
+        ExStep(_, _, _, _, _) => false
         ExUnit(_) => false
       }
       ExIf(_, _, _, _) => false
@@ -642,11 +708,13 @@ module Syn {
       ExRecord(_, _, _) => false
       ExBorrow(_, _, _) => false
       ExUnion(_, _) => false
+      ExProduct(_, _) => false
       ExTagged(_, _, _) => false
       ExFnKind(_, _, _) => false
       ExBorrowLam(_, _, _) => false
       ExMacroCall(_, _, _) => false
       ExMacroExpr(_, _, _) => false
+      ExStep(_, _, _, _, _) => false
       ExUnit(_) => match b {
         ExUnit(_) => true
         ExVar(_) => false
@@ -668,12 +736,14 @@ module Syn {
         ExRecord(_, _, _) => false
         ExBorrow(_, _, _) => false
         ExUnion(_, _) => false
+        ExProduct(_, _) => false
         ExTagged(_, _, _) => false
         ExExists(_, _, _, _) => false
         ExFnKind(_, _, _) => false
         ExBorrowLam(_, _, _) => false
         ExMacroCall(_, _, _) => false
         ExMacroExpr(_, _, _) => false
+        ExStep(_, _, _, _, _) => false
         ExHole(_, _) => false
       }
     }
@@ -700,7 +770,7 @@ module Syn {
       }
       Some(x) => match b {
         None => false
-        Some(y) => x.name == y.name
+        Some(y) => Syn::same_ident(x, y)
       }
     }
   }
@@ -745,7 +815,7 @@ module Syn {
         Cons(c, cr) => {
           let same := match b {
             BName(x, t) => match c {
-              BName(y, u) => x.name == y.name && Syn::same_ty(t, u)
+              BName(y, u) => Syn::same_ident(x, y) && Syn::same_ty(t, u)
               BAtom(_, _) => false
             }
             BAtom(n, t) => match c {
@@ -765,45 +835,17 @@ module Syn {
   pub fn abstract(a: SynExpr, b: SynExpr, l: SynExpr, r: SynExpr, z: SynExpr): Option(SynExpr) {
     if Syn::same(a, b) {
       Some(a)
+    } else if Syn::same(a, l) && Syn::same(b, r) {
+      Some(z)
     } else {
-      if Syn::same(a, l) && Syn::same(b, r) {
-        Some(z)
-      } else {
-        match a {
-          ExApp(f, xs, sp) => match b {
-            ExApp(g, ys, _) => match Syn::abstract(f, g, l, r, z) {
-              Some(f2) => match Syn::abstract_all(xs, ys, l, r, z) {
-                Some(zs) => Some(ExApp(f2, zs, sp))
-                None => None
-              }
+      match a {
+        ExApp(f, xs, sp) => match b {
+          ExApp(g, ys, _) => match Syn::abstract(f, g, l, r, z) {
+            Some(f2) => match Syn::abstract_all(xs, ys, l, r, z) {
+              Some(zs) => Some(ExApp(f2, zs, sp))
               None => None
             }
-            ExVar(_) => None
-            ExAtom(_, _) => None
-            ExNat(_, _) => None
-            ExText(_, _) => None
-            ExBool(_, _) => None
-            ExPi(_, _, _, _) => None
-            ExLam(_, _, _) => None
-            ExIf(_, _, _, _) => None
-            ExField(_, _, _) => None
-            ExBlock(_, _) => None
-            ExPerform(_, _, _) => None
-            ExHandle(_, _, _) => None
-            ExBudget(_, _, _) => None
-            ExBudgetMemory(_, _, _) => None
-            ExMatch(_, _, _, _, _) => None
-            ExRecord(_, _, _) => None
-            ExBorrow(_, _, _) => None
-            ExUnion(_, _) => None
-            ExTagged(_, _, _) => None
-            ExExists(_, _, _, _) => None
-            ExFnKind(_, _, _) => None
-            ExBorrowLam(_, _, _) => None
-            ExMacroCall(_, _, _) => None
-            ExMacroExpr(_, _, _) => None
-            ExHole(_, _) => None
-            ExUnit(_) => None
+            None => None
           }
           ExVar(_) => None
           ExAtom(_, _) => None
@@ -823,15 +865,45 @@ module Syn {
           ExRecord(_, _, _) => None
           ExBorrow(_, _, _) => None
           ExUnion(_, _) => None
+          ExProduct(_, _) => None
           ExTagged(_, _, _) => None
           ExExists(_, _, _, _) => None
           ExFnKind(_, _, _) => None
           ExBorrowLam(_, _, _) => None
           ExMacroCall(_, _, _) => None
           ExMacroExpr(_, _, _) => None
+          ExStep(_, _, _, _, _) => None
           ExHole(_, _) => None
           ExUnit(_) => None
         }
+        ExVar(_) => None
+        ExAtom(_, _) => None
+        ExNat(_, _) => None
+        ExText(_, _) => None
+        ExBool(_, _) => None
+        ExPi(_, _, _, _) => None
+        ExLam(_, _, _) => None
+        ExIf(_, _, _, _) => None
+        ExField(_, _, _) => None
+        ExBlock(_, _) => None
+        ExPerform(_, _, _) => None
+        ExHandle(_, _, _) => None
+        ExBudget(_, _, _) => None
+        ExBudgetMemory(_, _, _) => None
+        ExMatch(_, _, _, _, _) => None
+        ExRecord(_, _, _) => None
+        ExBorrow(_, _, _) => None
+        ExUnion(_, _) => None
+        ExProduct(_, _) => None
+        ExTagged(_, _, _) => None
+        ExExists(_, _, _, _) => None
+        ExFnKind(_, _, _) => None
+        ExBorrowLam(_, _, _) => None
+        ExMacroCall(_, _, _) => None
+        ExMacroExpr(_, _, _) => None
+        ExStep(_, _, _, _, _) => None
+        ExHole(_, _) => None
+        ExUnit(_) => None
       }
     }
   }
@@ -886,12 +958,14 @@ module Syn {
         ExRecord(_, _, _) => e
         ExBorrow(_, _, _) => e
         ExUnion(_, _) => e
+        ExProduct(_, _) => e
         ExTagged(_, _, _) => e
         ExExists(_, _, _, _) => e
         ExFnKind(_, _, _) => e
         ExBorrowLam(_, _, _) => e
         ExMacroCall(_, _, _) => e
         ExMacroExpr(_, _, _) => e
+        ExStep(_, _, _, _, _) => e
         ExHole(_, _) => e
         ExUnit(_) => e
       }
@@ -941,12 +1015,14 @@ module Syn {
           ExRecord(_, _, _) => Some(#(@after b, @before a))
           ExBorrow(_, _, _) => Some(#(@after b, @before a))
           ExUnion(_, _) => Some(#(@after b, @before a))
+          ExProduct(_, _) => Some(#(@after b, @before a))
           ExTagged(_, _, _) => Some(#(@after b, @before a))
           ExExists(_, _, _, _) => Some(#(@after b, @before a))
           ExFnKind(_, _, _) => Some(#(@after b, @before a))
           ExBorrowLam(_, _, _) => Some(#(@after b, @before a))
           ExMacroCall(_, _, _) => Some(#(@after b, @before a))
           ExMacroExpr(_, _, _) => Some(#(@after b, @before a))
+          ExStep(_, _, _, _, _) => Some(#(@after b, @before a))
           ExHole(_, _) => Some(#(@after b, @before a))
           ExUnit(_) => Some(#(@after b, @before a))
         }
@@ -968,12 +1044,14 @@ module Syn {
         ExRecord(_, _, _) => Some(#(@after b, @before a))
         ExBorrow(_, _, _) => Some(#(@after b, @before a))
         ExUnion(_, _) => Some(#(@after b, @before a))
+        ExProduct(_, _) => Some(#(@after b, @before a))
         ExTagged(_, _, _) => Some(#(@after b, @before a))
         ExExists(_, _, _, _) => Some(#(@after b, @before a))
         ExFnKind(_, _, _) => Some(#(@after b, @before a))
         ExBorrowLam(_, _, _) => Some(#(@after b, @before a))
         ExMacroCall(_, _, _) => Some(#(@after b, @before a))
         ExMacroExpr(_, _, _) => Some(#(@after b, @before a))
+        ExStep(_, _, _, _, _) => Some(#(@after b, @before a))
         ExHole(_, _) => Some(#(@after b, @before a))
         ExUnit(_) => Some(#(@after b, @before a))
       }
@@ -1040,12 +1118,14 @@ module Syn {
       ExRecord(_, _, _) => None
       ExBorrow(_, _, _) => None
       ExUnion(_, _) => None
+      ExProduct(_, _) => None
       ExTagged(_, _, _) => None
       ExExists(_, _, _, _) => None
       ExFnKind(_, _, _) => None
       ExBorrowLam(_, _, _) => None
       ExMacroCall(_, _, _) => None
       ExMacroExpr(_, _, _) => None
+      ExStep(_, _, _, _, _) => None
       ExHole(_, _) => None
       ExUnit(_) => None
     }
@@ -1072,12 +1152,14 @@ module Syn {
       ExRecord(_, _, _) => None
       ExBorrow(_, _, _) => None
       ExUnion(_, _) => None
+      ExProduct(_, _) => None
       ExTagged(_, _, _) => None
       ExExists(_, _, _, _) => None
       ExFnKind(_, _, _) => None
       ExBorrowLam(_, _, _) => None
       ExMacroCall(_, _, _) => None
       ExMacroExpr(_, _, _) => None
+      ExStep(_, _, _, _, _) => None
       ExHole(_, _) => None
       ExUnit(_) => None
     }
@@ -1104,12 +1186,14 @@ module Syn {
       ExRecord(_, _, _) => None
       ExBorrow(_, _, _) => None
       ExUnion(_, _) => None
+      ExProduct(_, _) => None
       ExTagged(_, _, _) => None
       ExExists(_, _, _, _) => None
       ExFnKind(_, _, _) => None
       ExBorrowLam(_, _, _) => None
       ExMacroCall(_, _, _) => None
       ExMacroExpr(_, _, _) => None
+      ExStep(_, _, _, _, _) => None
       ExHole(_, _) => None
       ExUnit(_) => None
     }
@@ -1136,12 +1220,14 @@ module Syn {
       ExRecord(_, _, _) => None
       ExBorrow(_, _, _) => None
       ExUnion(_, _) => None
+      ExProduct(_, _) => None
       ExTagged(_, _, _) => None
       ExExists(_, _, _, _) => None
       ExFnKind(_, _, _) => None
       ExBorrowLam(_, _, _) => None
       ExMacroCall(_, _, _) => None
       ExMacroExpr(_, _, _) => None
+      ExStep(_, _, _, _, _) => None
       ExHole(_, _) => None
       ExUnit(_) => None
     }
@@ -1188,12 +1274,14 @@ module Syn {
       ExRecord(_, _, _) => None
       ExBorrow(_, _, _) => None
       ExUnion(_, _) => None
+      ExProduct(_, _) => None
       ExTagged(_, _, _) => None
       ExExists(_, _, _, _) => None
       ExFnKind(_, _, _) => None
       ExBorrowLam(_, _, _) => None
       ExMacroCall(_, _, _) => None
       ExMacroExpr(_, _, _) => None
+      ExStep(_, _, _, _, _) => None
       ExHole(_, _) => None
       ExUnit(_) => None
     }
@@ -1227,7 +1315,9 @@ module Judgement {
   pub fn ty_of(c: Judgement, ty: SynExpr): Judgement {
     Judgement {
       term: ty
-      ty: ExVar(SynIdent { name: "Type", ctx: SynCtx { scopes: Nil }, span: c.span })
+      ty: ExVar(
+        SynIdent { declaration: None, name: "Type", ctx: SynCtx { scopes: Nil }, span: c.span }
+      )
       row: Nil
       ctx: c.ctx
       fragment: c.fragment
@@ -1240,7 +1330,9 @@ module Judgement {
   pub fn type_of(c: Judgement): Judgement {
     Judgement {
       term: c.ty
-      ty: ExVar(SynIdent { name: "Type", ctx: SynCtx { scopes: Nil }, span: c.span })
+      ty: ExVar(
+        SynIdent { declaration: None, name: "Type", ctx: SynCtx { scopes: Nil }, span: c.span }
+      )
       row: Nil
       ctx: c.ctx
       fragment: c.fragment
@@ -1282,12 +1374,14 @@ module Syn {
       ExRecord(_, _, s) => s.id
       ExBorrow(_, _, s) => s.id
       ExUnion(_, s) => s.id
+      ExProduct(_, s) => s.id
       ExTagged(_, _, s) => s.id
       ExExists(_, _, _, s) => s.id
       ExFnKind(_, _, s) => s.id
       ExBorrowLam(_, _, s) => s.id
       ExMacroCall(_, _, s) => s.id
       ExMacroExpr(_, _, s) => s.id
+      ExStep(_, _, _, _, s) => s.id
       ExHole(_, s) => s.id
       ExUnit(s) => s.id
     }
@@ -1302,7 +1396,7 @@ module Judgement {
       ty: lookup(
         c.tys,
         id,
-        ExVar(SynIdent { name: "_", ctx: SynCtx { scopes: Nil }, span: c.span })
+        ExVar(SynIdent { declaration: None, name: "_", ctx: SynCtx { scopes: Nil }, span: c.span })
       )
       row: c.row
       ctx: c.ctx
@@ -1328,7 +1422,7 @@ module Judgement {
   }
 
   pub fn unknown(c: Judgement): SynExpr {
-    ExVar(SynIdent { name: "_", ctx: SynCtx { scopes: Nil }, span: c.span })
+    ExVar(SynIdent { declaration: None, name: "_", ctx: SynCtx { scopes: Nil }, span: c.span })
   }
 
   pub fn snoc(xs: List(Binder), x: Binder): List(Binder) {
@@ -1362,12 +1456,14 @@ module Judgement {
       ExRecord(_, _, _) => unknown(c)
       ExBorrow(_, _, _) => unknown(c)
       ExUnion(_, _) => unknown(c)
+      ExProduct(_, _) => unknown(c)
       ExTagged(_, _, _) => unknown(c)
       ExExists(_, _, _, _) => unknown(c)
       ExFnKind(_, _, _) => unknown(c)
       ExBorrowLam(_, _, _) => unknown(c)
       ExMacroCall(_, _, _) => unknown(c)
       ExMacroExpr(_, _, _) => unknown(c)
+      ExStep(_, _, _, _, _) => unknown(c)
       ExHole(_, _) => unknown(c)
       ExUnit(_) => unknown(c)
     }
@@ -1400,12 +1496,14 @@ module Judgement {
       ExRecord(_, _, _) => unknown(c)
       ExBorrow(_, _, _) => unknown(c)
       ExUnion(_, _) => unknown(c)
+      ExProduct(_, _) => unknown(c)
       ExTagged(_, _, _) => unknown(c)
       ExExists(_, _, _, _) => unknown(c)
       ExFnKind(_, _, _) => unknown(c)
       ExBorrowLam(_, _, _) => unknown(c)
       ExMacroCall(_, _, _) => unknown(c)
       ExMacroExpr(_, _, _) => unknown(c)
+      ExStep(_, _, _, _, _) => unknown(c)
       ExHole(_, _) => unknown(c)
       ExUnit(_) => unknown(c)
     }
@@ -1473,12 +1571,14 @@ module Judgement {
       ExRecord(_, _, _) => VOther(c)
       ExBorrow(_, _, _) => VOther(c)
       ExUnion(_, _) => VOther(c)
+      ExProduct(_, _) => VOther(c)
       ExTagged(_, _, _) => VOther(c)
       ExExists(_, _, _, _) => VOther(c)
       ExFnKind(_, _, _) => VOther(c)
       ExBorrowLam(_, _, _) => VOther(c)
       ExMacroCall(_, _, _) => VOther(c)
       ExMacroExpr(_, _, _) => VOther(c)
+      ExStep(_, _, _, _, _) => VOther(c)
       ExHole(_, _) => VOther(c)
       ExUnit(_) => VOther(c)
     }
@@ -1520,10 +1620,10 @@ module Elab {
     fn resolve(id: SynIdent, ctx: Judgement): Option(Judgement) ! {elab}
     // The constructors of the type `name` is a constructor of, in order; `None` when
     // `name` is not a constructor. An attribute macro may ask it too.
-    fn siblings(name: Text): Option(List(Text)) ! {elab}
+    fn siblings(name: SynIdent): Option(List(SynIdent)) ! {elab}
     // The constructor's field count, including its own generics but excluding
     // the parameters of its family; None for a name that is not a constructor.
-    fn constructor_arity(name: Text): Option(u64) ! {elab}
+    fn constructor_arity(name: SynIdent): Option(u64) ! {elab}
   }
 }
 

@@ -79,14 +79,14 @@ pub fn term_at_of(t: SurfaceTerm): TermAt {
 }
 
 pub fn term_at_compare_path(a: List(Nat), b: List(Nat)): Ordering {
-  match a: Ordering {
-    Nil => match b: Ordering {
+  ⊢ Ordering from match a {
+    Nil => ⊢ Ordering from match b {
       Nil => Equal
       Cons(y, ys) => Less
     }
-    Cons(x, xs) => match b: Ordering {
+    Cons(x, xs) => ⊢ Ordering from match b {
       Nil => Greater
-      Cons(y, ys) => match Ordmap::compare_nat(x, y): Ordering {
+      Cons(y, ys) => ⊢ Ordering from match Ordmap::compare_nat(x, y) {
         Equal => term_at_compare_path(xs, ys)
         Less => Less
         Greater => Greater
@@ -96,15 +96,15 @@ pub fn term_at_compare_path(a: List(Nat), b: List(Nat)): Ordering {
 }
 
 pub fn term_at_compare_occurrence(a: Option(TermOccurrence), b: Option(TermOccurrence)): Ordering {
-  match a: Ordering {
-    None => match b: Ordering {
+  ⊢ Ordering from match a {
+    None => ⊢ Ordering from match b {
       None => Equal
       Some(y) => Less
     }
-    Some(x) => match b: Ordering {
+    Some(x) => ⊢ Ordering from match b {
       None => Greater
-      Some(y) => match x: Ordering {
-        TermOccurrenceMk(xp) => match y: Ordering {
+      Some(y) => ⊢ Ordering from match x {
+        TermOccurrenceMk(xp) => ⊢ Ordering from match y {
           TermOccurrenceMk(yp) => term_at_compare_path(xp, yp)
         }
       }
@@ -114,8 +114,8 @@ pub fn term_at_compare_occurrence(a: Option(TermOccurrence), b: Option(TermOccur
 
 // By span first, so that the report reads in source order.
 pub fn term_at_compare(a: TermAt, b: TermAt): Ordering {
-  match Ordmap::compare_nat(a.start, b.start): Ordering {
-    Equal => match Ordmap::compare_nat(a.end, b.end): Ordering {
+  ⊢ Ordering from match Ordmap::compare_nat(a.start, b.start) {
+    Equal => ⊢ Ordering from match Ordmap::compare_nat(a.end, b.end) {
       Equal => term_at_compare_occurrence(a.occurrence, b.occurrence)
       Less => Less
       Greater => Greater
@@ -165,13 +165,13 @@ pub fn local_key_compare(a: LocalKey, b: LocalKey): Ordering {
 }
 
 pub fn width_fits(w: Width, negative: Bool, magnitude: Nat): Bool {
-  match negative: Bool {
-    true => match w: Bool {
+  ⊢ Bool from match negative {
+    true => ⊢ Bool from match w {
       Width32 => magnitude <= 2147483648
       Width64 => true
       _ => false
     }
-    false => match w: Bool {
+    false => ⊢ Bool from match w {
       Width32 => magnitude <= 2147483647
       Width64 => true
       WidthU8 => magnitude <= 255
@@ -182,7 +182,7 @@ pub fn width_fits(w: Width, negative: Bool, magnitude: Nat): Bool {
 }
 
 pub fn literal_text(l: TyLiteral): Text {
-  match l.negative: Text {
+  ⊢ Text from match l.negative {
     true => cat2("-", Text::of_nat(l.magnitude))
     false => Text::of_nat(l.magnitude)
   }
@@ -215,7 +215,7 @@ pub(open) inductive TypeName: Type {
 // What a type written in a body reads each name as, the first of the names
 // standing.
 pub fn type_scope(xs: List(TypeName)): Ordmap(Text, Ty) {
-  match xs: Ordmap(Text, Ty) {
+  ⊢ Ordmap(Text, Ty) from match xs {
     Nil => Ordmap::empty()
     Cons(x, rest) => Ordmap::insert(
       type_scope(rest),
@@ -364,9 +364,9 @@ pub fn ck_is_int(&c: Checker, v: Nat): Bool {
 
 mutual {
   pub fn ty_resolve_list_in(k: Nat, subst: Ordmap(Nat, Ty), ts: List(Ty)): List(Ty) {
-    match k: List(Ty) {
+    ⊢ List(Ty) from match k {
       Zero => ts
-      Succ(j) => match ts: List(Ty) {
+      Succ(j) => ⊢ List(Ty) from match ts {
         Nil => Nil
         Cons(t, rest) => Cons(ty_resolve_in(j, subst, t), ty_resolve_list_in(j, subst, rest))
       }
@@ -374,10 +374,10 @@ mutual {
   }
 
   pub fn ty_resolve_in(k: Nat, subst: Ordmap(Nat, Ty), t: Ty): Ty {
-    match k: Ty {
+    ⊢ Ty from match k {
       Zero => t
-      Succ(j) => match t: Ty {
-        TyVar(i) => match Ordmap::get(subst, i, Ordmap::compare_nat): Ty {
+      Succ(j) => ⊢ Ty from match t {
+        TyVar(i) => ⊢ Ty from match Ordmap::get(subst, i, Ordmap::compare_nat) {
           Some(x) => ty_resolve_in(j, subst, x)
           None => TyVar(i)
         }
@@ -413,9 +413,9 @@ pub fn ck_kind(&c: Checker, t: Ty): Kind {
 
 mutual {
   pub fn ck_occurs_any_in(k: Nat, &c: Checker, v: Nat, ts: List(Ty)): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match ts: Bool {
+      Succ(j) => ⊢ Bool from match ts {
         Nil => false
         Cons(t, rest) => ck_occurs_in(j, &c, v, t) || ck_occurs_any_in(j, &c, v, rest)
       }
@@ -423,9 +423,9 @@ mutual {
   }
 
   pub fn ck_occurs_in(k: Nat, &c: Checker, v: Nat, t: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match ck_resolve(&c, t): Bool {
+      Succ(j) => ⊢ Bool from match ck_resolve(&c, t) {
         TyVar(i) => i == v
         TyFn(ps, r, fk) => ck_occurs_any_in(j, &c, v, ps) || ck_occurs_in(j, &c, v, r)
         TyUnion(ts) => ck_occurs_any_in(j, &c, v, ts)
@@ -448,9 +448,9 @@ pub fn ck_occurs(&c: Checker, v: Nat, t: Ty): Bool {
 
 mutual {
   pub fn ck_has_vars_any_in(k: Nat, &c: Checker, ts: List(Ty)): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match ts: Bool {
+      Succ(j) => ⊢ Bool from match ts {
         Nil => false
         Cons(t, rest) => ck_has_vars_in(j, &c, t) || ck_has_vars_any_in(j, &c, rest)
       }
@@ -458,9 +458,9 @@ mutual {
   }
 
   pub fn ck_has_vars_in(k: Nat, &c: Checker, t: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match ck_resolve(&c, t): Bool {
+      Succ(j) => ⊢ Bool from match ck_resolve(&c, t) {
         TyVar(i) => true
         TyFn(ps, r, fk) => ck_has_vars_any_in(j, &c, ps) || ck_has_vars_in(j, &c, r)
         TyUnion(ts) => ck_has_vars_any_in(j, &c, ts)
@@ -521,7 +521,7 @@ pub fn ck_is_bound(&c: Checker, v: Nat): Bool {
 }
 
 pub fn ck_bind_unbound(&mut c: Checker, v: Nat, t: Ty): Bool {
-  match t: Bool {
+  ⊢ Bool from match t {
     TyVar(w) => ck_bind_var(&mut c, v, w)
     TyInt(w) => ck_bind_value(&mut c, v, TyInt(w))
     _ => ck_bind_other(&mut c, v, t)
@@ -538,7 +538,7 @@ pub fn ck_bind(&mut c: Checker, v: Nat, t: Ty): Bool {
 }
 
 pub fn ty_is_var(t: Ty): Bool {
-  match t: Bool {
+  ⊢ Bool from match t {
     TyVar(v) => true
     _ => false
   }
@@ -546,7 +546,7 @@ pub fn ty_is_var(t: Ty): Bool {
 
 // The generics of a `TyPoly` as types no other is equal to.
 pub fn ck_rigid(gs: List(Pair(Text, Kind)), &mut c: Checker): Ordmap(Text, Ty) {
-  match gs: Ordmap(Text, Ty) {
+  ⊢ Ordmap(Text, Ty) from match gs {
     Nil => Ordmap::empty()
     Cons(g, rest) => {
       bump(&mut c.rigids)
@@ -557,11 +557,11 @@ pub fn ck_rigid(gs: List(Pair(Text, Kind)), &mut c: Checker): Ordmap(Text, Ty) {
 }
 
 pub fn ty_rigid_names(gs: List(Pair(Text, Kind)), rigid: Ordmap(Text, Ty)): Option(List(Text)) {
-  match gs: Option(List(Text)) {
+  ⊢ Option(List(Text)) from match gs {
     Nil => Some(Nil)
-    Cons(g, rest) => match Ordmap::get(rigid, g.fst, Ordmap::compare_text): Option(List(Text)) {
-      Some(t) => match t: Option(List(Text)) {
-        TyParam(n, k) => match ty_rigid_names(rest, rigid): Option(List(Text)) {
+    Cons(g, rest) => ⊢ Option(List(Text)) from match Ordmap::get(rigid, g.fst, Ordmap::compare_text) {
+      Some(t) => ⊢ Option(List(Text)) from match t {
+        TyParam(n, k) => ⊢ Option(List(Text)) from match ty_rigid_names(rest, rigid) {
           Some(ns) => Some(Cons(n, ns))
           None => None
         }
@@ -573,7 +573,7 @@ pub fn ty_rigid_names(gs: List(Pair(Text, Kind)), rigid: Ordmap(Text, Ty)): Opti
 }
 
 pub fn text_list_distinct(xs: List(Text)): Bool {
-  match xs: Bool {
+  ⊢ Bool from match xs {
     Nil => true
     Cons(x, rest) => not(list_has_text(rest, x)) && text_list_distinct(rest)
   }
@@ -584,9 +584,9 @@ pub fn text_list_distinct(xs: List(Text)): Bool {
 // one.
 mutual {
   pub fn ck_mentions_any_in(k: Nat, &c: Checker, ns: List(Text), ts: List(Ty)): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => true
-      Succ(j) => match ts: Bool {
+      Succ(j) => ⊢ Bool from match ts {
         Nil => false
         Cons(t, rest) => ck_mentions_in(j, &c, ns, t) || ck_mentions_any_in(j, &c, ns, rest)
       }
@@ -594,9 +594,9 @@ mutual {
   }
 
   pub fn ck_mentions_in(k: Nat, &c: Checker, ns: List(Text), t: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => true
-      Succ(j) => match ck_resolve(&c, t): Bool {
+      Succ(j) => ⊢ Bool from match ck_resolve(&c, t) {
         TyVar(i) => ck_is_bound(&c, i)
         TyParam(n, pk) => list_has_text(ns, n)
         TyFn(ps, r, fk) => ck_mentions_any_in(j, &c, ns, ps) || ck_mentions_in(j, &c, ns, r)
@@ -624,7 +624,7 @@ pub fn ck_rigid_kept(
   a: Ty,
   b: Ty
 ): Bool {
-  match ty_rigid_names(gs, rigid): Bool {
+  ⊢ Bool from match ty_rigid_names(gs, rigid) {
     None => false
     Some(ns) => text_list_distinct(
       ns
@@ -651,12 +651,12 @@ pub fn ck_keep(
 }
 
 pub fn ty_kinds_match(ga: List(Pair(Text, Kind)), gb: List(Pair(Text, Kind))): Bool {
-  match ga: Bool {
-    Nil => match gb: Bool {
+  ⊢ Bool from match ga {
+    Nil => ⊢ Bool from match gb {
       Nil => true
       Cons(b, brest) => false
     }
-    Cons(a, arest) => match gb: Bool {
+    Cons(a, arest) => ⊢ Bool from match gb {
       Nil => false
       Cons(b, brest) => kind_eq(a.snd, b.snd) && ty_kinds_match(arest, brest)
     }
@@ -665,7 +665,7 @@ pub fn ty_kinds_match(ga: List(Pair(Text, Kind)), gb: List(Pair(Text, Kind))): B
 
 // The generics of a `TyPoly` as fresh variables, at a use.
 pub fn ck_instance_of(gs: List(Pair(Text, Kind)), &mut c: Checker): Ordmap(Text, Ty) {
-  match gs: Ordmap(Text, Ty) {
+  ⊢ Ordmap(Text, Ty) from match gs {
     Nil => Ordmap::empty()
     Cons(g, rest) => {
       let v := ck_fresh(&mut c)
@@ -681,9 +681,9 @@ pub fn ty_poly_map(
   ga: List(Pair(Text, Kind)),
   rigid: Ordmap(Text, Ty)
 ): Ordmap(Text, Ty) {
-  match gb: Ordmap(Text, Ty) {
+  ⊢ Ordmap(Text, Ty) from match gb {
     Nil => Ordmap::empty()
-    Cons(b, brest) => match ga: Ordmap(Text, Ty) {
+    Cons(b, brest) => ⊢ Ordmap(Text, Ty) from match ga {
       Nil => Ordmap::empty()
       Cons(a, arest) => Ordmap::insert(
         ty_poly_map(brest, arest, rigid),
@@ -696,9 +696,9 @@ pub fn ty_poly_map(
 }
 
 pub fn ty_split_last(args: List(Ty)): Option(Pair(List(Ty), Ty)) {
-  match args: Option(Pair(List(Ty), Ty)) {
+  ⊢ Option(Pair(List(Ty), Ty)) from match args {
     Nil => None
-    Cons(a, rest) => match ty_split_last(rest): Option(Pair(List(Ty), Ty)) {
+    Cons(a, rest) => ⊢ Option(Pair(List(Ty), Ty)) from match ty_split_last(rest) {
       None => Some(Pair { fst: Nil, snd: a })
       Some(p) => Some(Pair { fst: Cons(a, p.fst), snd: p.snd })
     }
@@ -709,11 +709,11 @@ pub fn ty_split_last(args: List(Ty)): Option(Pair(List(Ty), Ty)) {
 // the same here: they differ only at run time.
 mutual {
   pub fn ck_unify_pairs_in(k: Nat, &mut c: Checker, xs: List(Ty), ys: List(Ty)): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match xs: Bool {
+      Succ(j) => ⊢ Bool from match xs {
         Nil => true
-        Cons(x, xrest) => match ys: Bool {
+        Cons(x, xrest) => ⊢ Bool from match ys {
           Nil => true
           Cons(y, yrest) => if ck_unify_in(j, &mut c, x, y) {
             ck_unify_pairs_in(j, &mut c, xrest, yrest)
@@ -726,12 +726,12 @@ mutual {
   }
 
   pub fn ck_unify_in(k: Nat, &mut c: Checker, a0: Ty, b0: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
       Succ(j) => {
         let a := ck_resolve(&c, a0)
         let b := ck_resolve(&c, b0)
-        match a: Bool {
+        ⊢ Bool from match a {
           TyVar(v) => ck_bind(&mut c, v, b)
           _ => ck_unify_rest_in(j, &mut c, a, b)
         }
@@ -740,13 +740,13 @@ mutual {
   }
 
   pub fn ck_unify_rest_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match b: Bool {
+      Succ(j) => ⊢ Bool from match b {
         TyVar(v) => ck_bind(&mut c, v, a)
         // `F(X) ~ H(U₁, …, Uₙ)`: `F := H(U₁, …, Uₙ₋₁)` and `X ~ Uₙ`. The
         // solution is the only one.
-        TyApp(hb, xb) => match a: Bool {
+        TyApp(hb, xb) => ⊢ Bool from match a {
           TyApp(ha, xa) => if ck_unify_in(
             j,
             &mut c,
@@ -756,7 +756,7 @@ mutual {
           TyNamed(na, xa) => ck_unify_app_in(j, &mut c, hb, xb, na, xa)
           _ => false
         }
-        TyPoly(gb, tb) => match a: Bool {
+        TyPoly(gb, tb) => ⊢ Bool from match a {
           TyPoly(ga, ta) => if ty_kinds_match(ga, gb) {
             let rigid := ck_rigid(ga, &mut c)
             if ck_unify_in(
@@ -774,17 +774,19 @@ mutual {
           }
           _ => false
         }
-        TyFn(pb, rb, kb) => match a: Bool {
+        TyFn(pb, rb, kb) => ⊢ Bool from match a {
           TyFn(pa, ra, ka) => if list_len(
             pa
           ) == list_len(pb) && (kind_eq(ka, kb) || (kind_dup(ka) && kind_dup(kb))) {
-            if ck_unify_pairs_in(j, &mut c, pa, pb) { ck_unify_in(j, &mut c, ra, rb) } else { false }
+            if ck_unify_pairs_in(j, &mut c, pa, pb) { ck_unify_in(j, &mut c, ra, rb) } else {
+              false
+            }
           } else {
             ty_eq(a, b)
           }
           _ => false
         }
-        TyNamed(nb, xb) => match a: Bool {
+        TyNamed(nb, xb) => ⊢ Bool from match a {
           TyNamed(na, xa) => if na == nb && list_len(xa) == list_len(xb) {
             ck_unify_pairs_in(j, &mut c, xa, xb)
           } else {
@@ -793,22 +795,22 @@ mutual {
           TyApp(ha, xa) => ck_unify_app_in(j, &mut c, ha, xa, nb, xb)
           _ => false
         }
-        TyInfo(y) => match a: Bool {
+        TyInfo(y) => ⊢ Bool from match a {
           TyInfo(x) => ck_unify_in(j, &mut c, x, y)
           _ => false
         }
-        TyBorrow(y, mb) => match a: Bool {
+        TyBorrow(y, mb) => ⊢ Bool from match a {
           TyBorrow(x, ma) => if ma == mb { ck_unify_in(j, &mut c, x, y) } else { ty_eq(a, b) }
           _ => false
         }
-        TyTagged(tb, y) => match a: Bool {
+        TyTagged(tb, y) => ⊢ Bool from match a {
           TyTagged(ta, x) => if text_list_eq(
             ta,
             tb
           ) { ck_unify_in(j, &mut c, x, y) } else { ty_eq(a, b) }
           _ => false
         }
-        TyUnion(xb) => match a: Bool {
+        TyUnion(xb) => ⊢ Bool from match a {
           TyUnion(xa) => if list_len(xa) == list_len(xb) {
             ck_unify_pairs_in(j, &mut c, xa, xb)
           } else {
@@ -816,7 +818,7 @@ mutual {
           }
           _ => false
         }
-        TyProduct(xb) => match a: Bool {
+        TyProduct(xb) => ⊢ Bool from match a {
           TyProduct(xa) => if list_len(xa) == list_len(xb) {
             ck_unify_pairs_in(j, &mut c, xa, xb)
           } else {
@@ -830,9 +832,9 @@ mutual {
   }
 
   pub fn ck_unify_app_in(k: Nat, &mut c: Checker, h: Ty, x: Ty, n: Text, args: List(Ty)): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match ty_split_last(args): Bool {
+      Succ(j) => ⊢ Bool from match ty_split_last(args) {
         None => false
         Some(p) => if ck_unify_in(j, &mut c, h, TyNamed(n, p.fst)) {
           ck_unify_in(j, &mut c, x, p.snd)
@@ -874,24 +876,28 @@ pub fn ck_attempt_unify(&mut c: Checker, a: Ty, b: Ty): Bool {
 // not told apart.
 
 pub fn ck_member_literal(&c: Checker, t: Ty): Bool {
-  match ck_resolve(&c, t): Bool {
+  ⊢ Bool from match ck_resolve(&c, t) {
     TyVar(v) => ck_is_int(&c, v)
     _ => false
   }
 }
 
 pub fn ck_member_integer(&c: Checker, t: Ty): Bool {
-  match ck_resolve(&c, t): Bool {
+  ⊢ Bool from match ck_resolve(&c, t) {
     TyInt(w) => true
     _ => ck_member_literal(&c, t)
   }
 }
 
 pub fn ck_member_same(&c: Checker, x: Ty, y: Ty): Bool {
-  ty_eq(ck_resolve(&c, x), ck_resolve(&c, y)) || (
-    ck_member_integer(&c, x) && ck_member_integer(&c, y) && (
-      ck_member_literal(&c, x) || ck_member_literal(&c, y)
-    )
+  ty_eq(
+    ck_resolve(&c, x),
+    ck_resolve(&c, y)
+  ) || (
+    ck_member_integer(
+      &c,
+      x
+    ) && ck_member_integer(&c, y) && (ck_member_literal(&c, x) || ck_member_literal(&c, y))
   )
 }
 
@@ -901,14 +907,14 @@ pub fn ck_member_open(&c: Checker, t: Ty): Bool {
 }
 
 pub fn ck_members_open(&c: Checker, ts: List(Ty)): Bool {
-  match ts: Bool {
+  ⊢ Bool from match ts {
     Nil => false
     Cons(t, rest) => ck_member_open(&c, t) || ck_members_open(&c, rest)
   }
 }
 
 pub fn ck_members_has(&c: Checker, ts: List(Ty), t: Ty): Bool {
-  match ts: Bool {
+  ⊢ Bool from match ts {
     Nil => false
     Cons(u, rest) => ck_member_same(&c, u, t) || ck_members_has(&c, rest, t)
   }
@@ -916,14 +922,14 @@ pub fn ck_members_has(&c: Checker, ts: List(Ty), t: Ty): Bool {
 
 // Two members of the side have the same type.
 pub fn ck_members_repeat(&c: Checker, ts: List(Ty)): Bool {
-  match ts: Bool {
+  ⊢ Bool from match ts {
     Nil => false
     Cons(t, rest) => ck_members_has(&c, rest, t) || ck_members_repeat(&c, rest)
   }
 }
 
 pub fn ck_find_cons(x: Ty, same: Bool, rest: Option(Ty)): Option(Ty) {
-  match same: Option(Ty) {
+  ⊢ Option(Ty) from match same {
     true => Some(x)
     false => rest
   }
@@ -931,7 +937,7 @@ pub fn ck_find_cons(x: Ty, same: Bool, rest: Option(Ty)): Option(Ty) {
 
 // The first member of `xs` that has the type of `y`.
 pub fn ck_members_find(&c: Checker, xs: List(Ty), y: Ty): Option(Ty) {
-  match xs: Option(Ty) {
+  ⊢ Option(Ty) from match xs {
     Nil => None
     Cons(x, rest) => ck_find_cons(x, ck_member_same(&c, x, y), ck_members_find(&c, rest, y))
   }
@@ -942,9 +948,9 @@ pub fn ck_pairs_cons(
   found: Option(Ty),
   rest: Option(List(Pair(Ty, Ty)))
 ): Option(List(Pair(Ty, Ty))) {
-  match found: Option(List(Pair(Ty, Ty))) {
+  ⊢ Option(List(Pair(Ty, Ty))) from match found {
     None => None
-    Some(x) => match rest: Option(List(Pair(Ty, Ty))) {
+    Some(x) => ⊢ Option(List(Pair(Ty, Ty))) from match rest {
       None => None
       Some(pairs) => Some(Cons(Pair { fst: x, snd: y }, pairs))
     }
@@ -953,21 +959,21 @@ pub fn ck_pairs_cons(
 
 // Each of `ys` with the member of `xs` that has its type.
 pub fn ck_members_pairs(&c: Checker, xs: List(Ty), ys: List(Ty)): Option(List(Pair(Ty, Ty))) {
-  match ys: Option(List(Pair(Ty, Ty))) {
+  ⊢ Option(List(Pair(Ty, Ty))) from match ys {
     Nil => Some(Nil)
     Cons(y, yrest) => ck_pairs_cons(y, ck_members_find(&c, xs, y), ck_members_pairs(&c, xs, yrest))
   }
 }
 
 pub fn ck_pairs_firsts(pairs: List(Pair(Ty, Ty))): List(Ty) {
-  match pairs: List(Ty) {
+  ⊢ List(Ty) from match pairs {
     Nil => Nil
     Cons(p, rest) => Cons(p.fst, ck_pairs_firsts(rest))
   }
 }
 
 pub fn ck_unify_found(&mut c: Checker, found: List(Pair(Ty, Ty))): Bool {
-  match found: Bool {
+  ⊢ Bool from match found {
     Nil => true
     Cons(p, rest) => if ck_unify(&mut c, p.fst, p.snd) {
       ck_unify_found(&mut c, rest)
@@ -980,7 +986,7 @@ pub fn ck_unify_found(&mut c: Checker, found: List(Pair(Ty, Ty))): Bool {
 // Each member of `xs` is taken once: when two of `ys` found the same member, `ck_members_repeat`
 // finds it twice among the members taken.
 pub fn ck_fit_found(&mut c: Checker, found: Option(List(Pair(Ty, Ty)))): Bool {
-  match found: Bool {
+  ⊢ Bool from match found {
     None => false
     Some(f) => if ck_members_repeat(&c, ck_pairs_firsts(f)) {
       false
@@ -1005,7 +1011,7 @@ pub fn ck_fit_by_types(&mut c: Checker, xs: List(Ty), ys: List(Ty)): Bool {
 
 // What a product is fitted to: the members of a product, or the type itself.
 pub fn ty_wanted_members(b: Ty): List(Ty) {
-  match b: List(Ty) {
+  ⊢ List(Ty) from match b {
     TyProduct(ys) => ys
     _ => Cons(b, Nil)
   }
@@ -1029,7 +1035,7 @@ pub fn ck_widen_to(&mut c: Checker, widen: Bool): Unit {
 
 mutual {
   pub fn ck_attempt_fits_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
       Succ(j) => {
         let subst := c.subst
@@ -1050,9 +1056,9 @@ mutual {
   }
 
   pub fn ck_fits_each_in(k: Nat, &mut c: Checker, xs: List(Ty), b: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match xs: Bool {
+      Succ(j) => ⊢ Bool from match xs {
         Nil => true
         Cons(x, rest) => if ck_fits_in(
           j,
@@ -1065,9 +1071,9 @@ mutual {
   }
 
   pub fn ck_fits_any_in(k: Nat, &mut c: Checker, a: Ty, ys: List(Ty)): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match ys: Bool {
+      Succ(j) => ⊢ Bool from match ys {
         Nil => false
         Cons(y, rest) => if ck_attempt_fits_in(
           j,
@@ -1081,11 +1087,11 @@ mutual {
 
   // Contravariant in the parameters.
   pub fn ck_fits_params_in(k: Nat, &mut c: Checker, pa: List(Ty), pb: List(Ty)): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match pa: Bool {
+      Succ(j) => ⊢ Bool from match pa {
         Nil => true
-        Cons(x, xrest) => match pb: Bool {
+        Cons(x, xrest) => ⊢ Bool from match pb {
           Nil => true
           Cons(y, yrest) => if ck_fits_in(
             j,
@@ -1099,7 +1105,7 @@ mutual {
   }
 
   pub fn ck_fits_in(k: Nat, &mut c: Checker, a0: Ty, b0: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
       Succ(j) => {
         let a := ck_resolve(&c, a0)
@@ -1118,9 +1124,9 @@ mutual {
   // What is wanted is general: `a` has to be as general. What is given is
   // general: some instance of it will do.
   pub fn ck_fits_poly_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match b: Bool {
+      Succ(j) => ⊢ Bool from match b {
         TyPoly(gs, t) => {
           let rigid := ck_rigid(gs, &mut c)
           if ck_fits_in(j, &mut c, a, ty_substitute(t, rigid)) {
@@ -1135,9 +1141,9 @@ mutual {
   }
 
   pub fn ck_fits_inst_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match a: Bool {
+      Succ(j) => ⊢ Bool from match a {
         TyPoly(gs, t) => {
           let fresh := ck_instance_of(gs, &mut c)
           ck_fits_in(j, &mut c, ty_substitute(t, fresh), b)
@@ -1148,9 +1154,9 @@ mutual {
   }
 
   pub fn ck_fits_borrow_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match a: Bool {
+      Succ(j) => ⊢ Bool from match a {
         TyBorrow(x, ma) => ck_fits_lend_in(j, &mut c, x, ma, b)
         _ => ck_fits_value_in(j, &mut c, a, b)
       }
@@ -1160,9 +1166,9 @@ mutual {
   // A `&mut` borrow may be lent as a `&` one; a borrow used as a value:
   // `lin.rs` says whether it may be.
   pub fn ck_fits_lend_in(k: Nat, &mut c: Checker, x: Ty, ma: Bool, b: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match b: Bool {
+      Succ(j) => ⊢ Bool from match b {
         TyBorrow(y, mb) => if ma == mb || not(mb) { ck_fits_in(j, &mut c, x, y) } else {
           ck_fits_in(j, &mut c, x, b)
         }
@@ -1172,9 +1178,9 @@ mutual {
   }
 
   pub fn ck_fits_value_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match b: Bool {
+      Succ(j) => ⊢ Bool from match b {
         // `&A ≡ A` when `A` is duplicable.
         TyBorrow(y, m) => if kind_dup(
           ck_kind(&c, a)
@@ -1185,9 +1191,9 @@ mutual {
   }
 
   pub fn ck_fits_shape_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match a: Bool {
+      Succ(j) => ⊢ Bool from match a {
         // Inside a union a product keeps its members. Nothing is fitted after this, so
         // `ck_fits_wide` puts the setting back.
         TyUnion(xs) => {
@@ -1200,9 +1206,9 @@ mutual {
   }
 
   pub fn ck_fits_into_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match b: Bool {
+      Succ(j) => ⊢ Bool from match b {
         TyUnion(ys) => {
           ck_widen_to(&mut c, false)
           if ck_attempt_unify(&mut c, a, b) { true } else { ck_fits_any_in(j, &mut c, a, ys) }
@@ -1214,9 +1220,9 @@ mutual {
 
   // Tags are forgotten, never added.
   pub fn ck_fits_tagged_in(k: Nat, &mut c: Checker, a: Ty, b: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match a: Bool {
+      Succ(j) => ⊢ Bool from match a {
         TyTagged(ta, x) => ck_fits_untag_in(j, &mut c, ta, x, b)
         TyProduct(xs) => ck_fits_product(&mut c, a, xs, b)
         TyFn(pa, ra, ka) => ck_fits_fn_in(j, &mut c, pa, ra, ka, b)
@@ -1226,9 +1232,9 @@ mutual {
   }
 
   pub fn ck_fits_untag_in(k: Nat, &mut c: Checker, ta: List(Text), x: Ty, b: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match b: Bool {
+      Succ(j) => ⊢ Bool from match b {
         TyTagged(tb, y) => if tags_subset(
           tb,
           ta
@@ -1239,20 +1245,15 @@ mutual {
   }
 
   pub fn ck_fits_fn_in(k: Nat, &mut c: Checker, pa: List(Ty), ra: Ty, ka: Kind, b: Ty): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match b: Bool {
+      Succ(j) => ⊢ Bool from match b {
         TyFn(pb, rb, kb) => if list_len(pa) == list_len(pb) && kind_fits(ka, kb) {
           // Inside a function's type a product keeps its members: nothing would take them
           // out where the function is called. Nothing is fitted after this, so
           // `ck_fits_wide` puts the setting back.
           ck_widen_to(&mut c, false)
-          if ck_fits_params_in(
-            j,
-            &mut c,
-            pa,
-            pb
-          ) { ck_fits_in(j, &mut c, ra, rb) } else { false }
+          if ck_fits_params_in(j, &mut c, pa, pb) { ck_fits_in(j, &mut c, ra, rb) } else { false }
         } else {
           ck_unify(&mut c, TyFn(pa, ra, ka), b)
         }
@@ -1277,9 +1278,9 @@ pub fn ty_shown_var(ints: Ordmap(Nat, Bool), v: Nat): Ty {
 // `t` for a message: an integer of unknown width reads as `i64`.
 mutual {
   pub fn ty_shown_list_in(k: Nat, &c: Checker, ts: List(Ty)): List(Ty) {
-    match k: List(Ty) {
+    ⊢ List(Ty) from match k {
       Zero => ts
-      Succ(j) => match ts: List(Ty) {
+      Succ(j) => ⊢ List(Ty) from match ts {
         Nil => Nil
         Cons(t, rest) => Cons(ty_shown_in(j, &c, t), ty_shown_list_in(j, &c, rest))
       }
@@ -1287,9 +1288,9 @@ mutual {
   }
 
   pub fn ty_shown_in(k: Nat, &c: Checker, t0: Ty): Ty {
-    match k: Ty {
+    ⊢ Ty from match k {
       Zero => t0
-      Succ(j) => match ck_resolve(&c, t0): Ty {
+      Succ(j) => ⊢ Ty from match ck_resolve(&c, t0) {
         TyVar(v) => ty_shown_var(c.ints, v)
         TyFn(ps, r, fk) => TyFn(ty_shown_list_in(j, &c, ps), ty_shown_in(j, &c, r), fk)
         TyUnion(ts) => ty_union(ty_shown_list_in(j, &c, ts))
@@ -1317,8 +1318,12 @@ pub fn ck_shown(&c: Checker, t: Ty): Ty {
   ty_shown_in(c.steps, &c, t)
 }
 
-pub fn expect_closure_kinds_fn(pa: List(Ty), ka: Kind, b: Ty): Option(@found Kind × @expected Kind) {
-  match ty_unborrowed(b): Option(@found Kind × @expected Kind) {
+pub fn expect_closure_kinds_fn(
+  pa: List(Ty),
+  ka: Kind,
+  b: Ty
+): Option(@found Kind × @expected Kind) {
+  ⊢ Option(@found Kind × @expected Kind) from match ty_unborrowed(b) {
     TyFn(pb, rb, kb) => if list_len(pa) == list_len(pb) && not(kind_fits(ka, kb)) {
       Some(#(@found ka, @expected kb))
     } else {
@@ -1331,15 +1336,15 @@ pub fn expect_closure_kinds_fn(pa: List(Ty), ka: Kind, b: Ty): Option(@found Kin
 // The functions' kinds when both types are functions of one arity and the
 // first does not fit the second.
 pub fn expect_closure_kinds(a: Ty, b: Ty): Option(@found Kind × @expected Kind) {
-  match ty_unborrowed(a): Option(@found Kind × @expected Kind) {
+  ⊢ Option(@found Kind × @expected Kind) from match ty_unborrowed(a) {
     TyFn(pa, ra, ka) => expect_closure_kinds_fn(pa, ka, b)
     _ => None
   }
 }
 
 pub fn expect_not_app(a: Ty, b: Ty): Option(Ty) {
-  match a: Option(Ty) {
-    TyApp(h, x) => match b: Option(Ty) {
+  ⊢ Option(Ty) from match a {
+    TyApp(h, x) => ⊢ Option(Ty) from match b {
       TyApp(h2, x2) => None
       TyVar(v) => None
       TyNamed(n, args) => None
@@ -1347,7 +1352,7 @@ pub fn expect_not_app(a: Ty, b: Ty): Option(Ty) {
     }
     TyVar(v) => None
     TyNamed(n, args) => None
-    _ => match b: Option(Ty) {
+    _ => ⊢ Option(Ty) from match b {
       TyApp(h, x) => Some(a)
       _ => None
     }
@@ -1365,14 +1370,14 @@ pub(open) inductive ProductNote: Type {
 
 mutual {
   pub fn ty_has_var_each(ts: List(Ty)): Bool {
-    match ts: Bool {
+    ⊢ Bool from match ts {
       Nil => false
       Cons(t, rest) => ty_has_var(t) || ty_has_var_each(rest)
     }
   }
 
   pub fn ty_has_var(t: Ty): Bool {
-    match t: Bool {
+    ⊢ Bool from match t {
       TyVar(i) => true
       TyNamed(name, args) => ty_has_var_each(args)
       TyFn(ps, r, k) => ty_has_var_each(ps) || ty_has_var(r)
@@ -1389,14 +1394,14 @@ mutual {
 }
 
 pub fn ty_members_open(ts: List(Ty)): Bool {
-  match ts: Bool {
+  ⊢ Bool from match ts {
     Nil => false
     Cons(t, rest) => ty_has_var(t) || ty_has_param(t) || ty_members_open(rest)
   }
 }
 
 pub fn list_has_ty(ts: List(Ty), t: Ty): Bool {
-  match ts: Bool {
+  ⊢ Bool from match ts {
     Nil => false
     Cons(u, rest) => ty_eq(u, t) || list_has_ty(rest, t)
   }
@@ -1404,7 +1409,7 @@ pub fn list_has_ty(ts: List(Ty), t: Ty): Bool {
 
 // The first member of `ts` that is the type of one before it (`seen`).
 pub fn ty_members_repeated(seen: List(Ty), ts: List(Ty)): Option(Ty) {
-  match ts: Option(Ty) {
+  ⊢ Option(Ty) from match ts {
     Nil => None
     Cons(t, rest) => if list_has_ty(seen, t) {
       Some(t)
@@ -1418,9 +1423,9 @@ pub fn ty_members_note(xs: List(Ty), ys: List(Ty)): ProductNote {
   if ty_members_open(xs) || ty_members_open(ys) {
     NoteOpen
   } else {
-    match ty_members_repeated(Nil, xs): ProductNote {
+    ⊢ ProductNote from match ty_members_repeated(Nil, xs) {
       Some(t) => NoteClash(t)
-      None => match ty_members_repeated(Nil, ys): ProductNote {
+      None => ⊢ ProductNote from match ty_members_repeated(Nil, ys) {
         Some(t) => NoteClash(t)
         None => NoteNone
       }
@@ -1431,7 +1436,7 @@ pub fn ty_members_note(xs: List(Ty), ys: List(Ty)): ProductNote {
 // The product `xs` where `b` is wanted. A variable, a union and a generic type are not fitted
 // by the types of the members.
 pub fn expect_product_note_to(xs: List(Ty), b: Ty): ProductNote {
-  match b: ProductNote {
+  ⊢ ProductNote from match b {
     TyVar(v) => NoteNone
     TyUnion(ts) => NoteNone
     TyPoly(gs, x) => NoteNone
@@ -1440,7 +1445,7 @@ pub fn expect_product_note_to(xs: List(Ty), b: Ty): ProductNote {
 }
 
 pub fn expect_product_note(a: Ty, b: Ty): ProductNote {
-  match ty_unborrowed(a): ProductNote {
+  ⊢ ProductNote from match ty_unborrowed(a) {
     TyProduct(xs) => expect_product_note_to(xs, ty_unborrowed(b))
     _ => NoteNone
   }
@@ -1470,7 +1475,7 @@ pub fn expect_product_clash_message(member: Ty, what: Text): Text {
 }
 
 pub fn ck_expect_message(a: Ty, b: Ty, what: Text): Text {
-  match expect_product_note(a, b): Text {
+  ⊢ Text from match expect_product_note(a, b) {
     NoteOpen => expect_product_open_message(a, b, what)
     NoteClash(member) => expect_product_clash_message(member, what)
     NoteNone => ck_expect_plain_message(a, b, what)
@@ -1478,7 +1483,7 @@ pub fn ck_expect_message(a: Ty, b: Ty, what: Text): Text {
 }
 
 pub fn ck_expect_plain_message(a: Ty, b: Ty, what: Text): Text {
-  match expect_closure_kinds(a, b): Text {
+  ⊢ Text from match expect_closure_kinds(a, b) {
     Some(#(@found found, @expected expected)) => cat5(
       what,
       ": an ",
@@ -1486,7 +1491,7 @@ pub fn ck_expect_plain_message(a: Ty, b: Ty, what: Text): Text {
       " closure where ",
       cat2(kind_name(expected), " is expected")
     )
-    None => match expect_not_app(ty_unborrowed(a), ty_unborrowed(b)): Text {
+    None => ⊢ Text from match expect_not_app(ty_unborrowed(a), ty_unborrowed(b)) {
       Some(other) => cat2(ty_show(other), " is not an application of a type constructor")
       None => if ty_is_borrow(b) && not(ty_is_borrow(a)) {
         cat5(what, ": ", ty_show(a), " does not fit ", cat2(ty_show(b), ": lend it with `&`"))
@@ -1514,7 +1519,7 @@ pub fn ck_expect(&mut c: Checker, a0: Ty, b0: Ty, span: TySpan, what: Text): Uni
 }
 
 pub fn ck_join_borrowed_second(&mut c: Checker, a: Ty, b: Ty): Option(Ty) {
-  match b: Option(Ty) {
+  ⊢ Option(Ty) from match b {
     TyBorrow(x, m) => if not(ty_is_borrow(a)) && kind_dup(ck_kind(&c, x)) {
       if ck_attempt_unify(&mut c, x, a) { Some(ck_resolve(&c, x)) } else { None }
     } else {
@@ -1525,7 +1530,7 @@ pub fn ck_join_borrowed_second(&mut c: Checker, a: Ty, b: Ty): Option(Ty) {
 }
 
 pub fn ck_join_borrowed(&mut c: Checker, a: Ty, b: Ty): Option(Ty) {
-  match a: Option(Ty) {
+  ⊢ Option(Ty) from match a {
     TyBorrow(x, m) => if not(ty_is_borrow(b)) && kind_dup(ck_kind(&c, x)) {
       if ck_attempt_unify(&mut c, x, b) { Some(ck_resolve(&c, x)) } else { None }
     } else {
@@ -1547,7 +1552,7 @@ pub fn ck_join(&mut c: Checker, a0: Ty, b0: Ty): Ty {
       b
     } else {
       // A borrow of a duplicable value is the value (`&A ≡ A`).
-      match ck_join_borrowed(&mut c, a, b): Ty {
+      ⊢ Ty from match ck_join_borrowed(&mut c, a, b) {
         Some(t) => t
         None => ty_union(Cons(a, Cons(b, Nil)))
       }

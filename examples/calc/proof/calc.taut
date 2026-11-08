@@ -11,7 +11,7 @@ mutual {
   pub theorem lower_expr_ok(
     e: arith::Expr::I
   ): eval_expr(calc_expr_lower(e)) = calc_expr_val(e) {
-    match e: eval_expr(calc_expr_lower(e)) = calc_expr_val(e) {
+    ⊢ eval_expr(calc_expr_lower(e)) = calc_expr_val(e) from match e {
       Mk(prod, rep) => Eq::trans(
         Eq::congr((x: Nat) => Nat::add(x, eval_expr(calc_sum_lower(rep))), lower_prod_ok(prod)),
         Eq::congr((x: Nat) => Nat::add(calc_prod_val(prod), x), lower_sum_ok(rep))
@@ -21,7 +21,7 @@ mutual {
   pub theorem lower_sum_ok(
     rep: List(arith::Expr_Rep1::I)
   ): eval_expr(calc_sum_lower(rep)) = calc_sum_val(rep) {
-    match rep: eval_expr(calc_sum_lower(rep)) = calc_sum_val(rep) {
+    ⊢ eval_expr(calc_sum_lower(rep)) = calc_sum_val(rep) from match rep {
       Nil => Refl
       Cons(r, more) => Eq::trans(
         Eq::congr((x: Nat) => Nat::add(x, eval_expr(calc_sum_lower(more))), lower_plus_ok(r)),
@@ -32,14 +32,14 @@ mutual {
   pub theorem lower_plus_ok(
     r: arith::Expr_Rep1::I
   ): eval_expr(calc_plus_lower(r)) = calc_plus_val(r) {
-    match r: eval_expr(calc_plus_lower(r)) = calc_plus_val(r) {
+    ⊢ eval_expr(calc_plus_lower(r)) = calc_plus_val(r) from match r {
       Mk(op, prod) => lower_prod_ok(prod)
     }
   }
   pub theorem lower_prod_ok(
     p: arith::Prod::I
   ): eval_expr(calc_prod_lower(p)) = calc_prod_val(p) {
-    match p: eval_expr(calc_prod_lower(p)) = calc_prod_val(p) {
+    ⊢ eval_expr(calc_prod_lower(p)) = calc_prod_val(p) from match p {
       Mk(atom, rep) => Eq::trans(
         Eq::congr((x: Nat) => Nat::mul(x, eval_expr(calc_factor_lower(rep))), lower_atom_ok(atom)),
         Eq::congr((x: Nat) => Nat::mul(calc_atom_val(atom), x), lower_factor_ok(rep))
@@ -49,7 +49,7 @@ mutual {
   pub theorem lower_factor_ok(
     rep: List(arith::Prod_Rep1::I)
   ): eval_expr(calc_factor_lower(rep)) = calc_factor_val(rep) {
-    match rep: eval_expr(calc_factor_lower(rep)) = calc_factor_val(rep) {
+    ⊢ eval_expr(calc_factor_lower(rep)) = calc_factor_val(rep) from match rep {
       Nil => Refl
       Cons(r, more) => Eq::trans(
         Eq::congr((x: Nat) => Nat::mul(x, eval_expr(calc_factor_lower(more))), lower_star_ok(r)),
@@ -60,14 +60,14 @@ mutual {
   pub theorem lower_star_ok(
     r: arith::Prod_Rep1::I
   ): eval_expr(calc_star_lower(r)) = calc_star_val(r) {
-    match r: eval_expr(calc_star_lower(r)) = calc_star_val(r) {
+    ⊢ eval_expr(calc_star_lower(r)) = calc_star_val(r) from match r {
       Mk(op, atom) => lower_atom_ok(atom)
     }
   }
   pub theorem lower_atom_ok(
     a: arith::Atom::I
   ): eval_expr(calc_atom_lower(a)) = calc_atom_val(a) {
-    match a: eval_expr(calc_atom_lower(a)) = calc_atom_val(a) {
+    ⊢ eval_expr(calc_atom_lower(a)) = calc_atom_val(a) from match a {
       Num_I(t) => Refl
       Paren_I(p) => lower_paren_ok(p)
     }
@@ -75,7 +75,7 @@ mutual {
   pub theorem lower_paren_ok(
     p: arith::Paren::I
   ): eval_expr(calc_paren_lower(p)) = calc_paren_val(p) {
-    match p: eval_expr(calc_paren_lower(p)) = calc_paren_val(p) {
+    ⊢ eval_expr(calc_paren_lower(p)) = calc_paren_val(p) from match p {
       Mk(l, e, r) => lower_expr_ok(e)
     }
   }

@@ -104,7 +104,7 @@ perform show("typed_duplicated", typed_pair.fst + typed_pair.snd)
             function.body.walk(&mut |expr| {
                 if let tauto_nir::ExprKind::Call(call) = &expr.kind
                     && let tauto_nir::Callee::Inst(inst) = call.callee
-                    && package.fns[inst].source == "forward"
+                    && package.fns[inst].source.as_str() == "forward"
                 {
                     assert!(!matches!(
                         call.args[0].kind,

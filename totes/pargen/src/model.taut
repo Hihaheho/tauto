@@ -17,6 +17,8 @@ pub(open) struct MProd { lhs: u64, attr: u64, rhs: List(MSym) }
 
 pub(open) struct MModel {
   title: Option(Text)
+  // What a terminal means (`%describe`), by the terminal's name in `terminal_names`.
+  describes: List(Pair(Text, Text))
   // LALR(1) (`%grammar_type 'lalr(1)'`), not LL(k).
   lalr: Bool
   // Names of all the terminals, the five built in first and `Error` last.
@@ -92,9 +94,7 @@ pub fn md_same_dyn(a: Option(PDyn), b: Option(PDyn)): Bool {
     }
     Some(x) => match b {
       None => false
-      Some(
-        y
-      ) => x.prefix == y.prefix && x.suffix == y.suffix && x.capture == y.capture && x.state == y.state && x.unit == y.unit && match x.range {
+      Some(y) => x.prefix == y.prefix && x.suffix == y.suffix && x.capture == y.capture && x.state == y.state && x.unit == y.unit && match x.range {
         None => match y.range {
           None => true
           Some(r) => false
@@ -357,7 +357,6 @@ pub fn md_name_of_chars(s: Text): Text {
   }
 }
 
-
 pub fn md_count_prods(prods: List(PProd), lhs: Text): u64 {
   match prods {
     Nil => 0
@@ -476,7 +475,17 @@ pub fn md_append_prod(prods: List(PProd), p: PProd): List(PProd) {
 // `TautoExpr` is the terminal a grammar uses without writing it: the token
 // `${` of an expression in the text, or
 // `$n` of a name alone. The scanner takes `${` on to its closing `}`.
-pub fn md_with_tauto_expr(prods: List(PProd)): List(PProd) {
+//
+// A terminal is read only in the scanners it is written for, so this one is
+// written for every scanner: `${` is taken whichever mode the text is in.
+pub fn md_scanner_numbers(scanners: List(PScanner), at: u64): List(u64) {
+  match scanners {
+    Nil => Nil
+    Cons(s, rest) => Cons(at, md_scanner_numbers(rest, at + 1))
+  }
+}
+
+pub fn md_with_tauto_expr(prods: List(PProd), scanners: List(PScanner)): List(PProd) {
   if md_uses(prods, "TautoExpr") && not(md_defines(prods, "TautoExpr")) {
     md_append_prod(
       prods,
@@ -487,9 +496,9 @@ pub fn md_with_tauto_expr(prods: List(PProd)): List(PProd) {
             factors: Cons(
               PTermF(
                 PTerm {
-                  text: "\\$(\\{|[A-Za-z_][A-Za-z0-9_]*)",
+                  text: "\\$(\\{|(r#)?[\\p{L}_][\\p{L}\\p{N}_]*(::[\\p{L}_][\\p{L}\\p{N}_]*)*)",
                   kind: 1,
-                  states: Cons(0, Nil),
+                  states: md_scanner_numbers(scanners, 0),
                   clipped: false,
                   la: None,
                   dynamic: None
@@ -638,11 +647,7 @@ pub fn md_skips_of(names: List(Text), prods: List(PProd), terms: List(PTerm)): L
   lg_sort(out)
 }
 
-pub fn md_skips(
-  scanners: List(PScanner),
-  prods: List(PProd),
-  terms: List(PTerm)
-): List(List(u64)) {
+pub fn md_skips(scanners: List(PScanner), prods: List(PProd), terms: List(PTerm)): List(List(u64)) {
   match scanners {
     Nil => Nil
     Cons(s, rest) => Cons(md_skips_of(s.skip, prods, terms), md_skips(rest, prods, terms))
@@ -812,8 +817,38 @@ pub fn md_count_lhs(prods: List(PProd), lhs: Text): u64 {
   }
 }
 
+// `%describe` names a terminal of the grammar, each at most once.
+pub fn md_describes(names: List(Text), xs: List(Pair(Text, Text))): List(Pair(Text, Text)) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      if not(md_has_name(names, x.fst)) {
+        par_die(Text::concat_all(Cons("%describe names no terminal: ", Cons(x.fst, Nil))))
+      } else if md_has_describe(rest, x.fst) {
+        par_die(Text::concat_all(Cons("%describe names ", Cons(x.fst, Cons(" twice", Nil)))))
+      } else {
+        Cons(x, md_describes(names, rest))
+      }
+    }
+  }
+}
+
+pub fn md_has_name(names: List(Text), name: Text): Bool {
+  match names {
+    Nil => false
+    Cons(x, rest) => x == name || md_has_name(rest, name)
+  }
+}
+
+pub fn md_has_describe(xs: List(Pair(Text, Text)), name: Text): Bool {
+  match xs {
+    Nil => false
+    Cons(x, rest) => x.fst == name || md_has_describe(rest, name)
+  }
+}
+
 pub fn md_build(g: PGrammar): MModel {
-  let written := md_with_tauto_expr(g.prods)
+  let written := md_with_tauto_expr(g.prods, g.scanners)
   let canonical := cn_transform(written, g.lalr)
   let start := md_lr_start(canonical, g.start, g.lalr)
   let final := if start == g.start {
@@ -826,10 +861,12 @@ pub fn md_build(g: PGrammar): MModel {
   }
   let terms := md_terms_of(final)
   let nts := md_nt_names(final, start)
+  let terminal_names := md_terminal_names(final, terms)
   MModel {
     title: g.title
+    describes: md_describes(terminal_names, g.describes)
     lalr: g.lalr
-    terminal_names: md_terminal_names(final, terms)
+    terminal_names: terminal_names
     terms: terms
     nts: nts
     nt_kinds: md_kinds(nts, final, written)

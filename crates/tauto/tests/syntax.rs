@@ -73,6 +73,7 @@ let e := math`1 = 1`
     assert!(
         errors[0]
             .message
+            .to_string()
             .contains("tables of this syntax are missing"),
         "{errors:?}"
     );

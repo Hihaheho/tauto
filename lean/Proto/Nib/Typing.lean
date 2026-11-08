@@ -46,8 +46,8 @@ converted.
 `loc`, `run`, `info` and `select` are run-time forms: programs do not write
 them, steps make them.
 
-Not modeled: the exit from a union (`A | B <: C`), and `Div` on a kept
-continuation.
+Products are given by their subtyping only (`FitsMember`, `FitsProduct`):
+the core has no product terms. Not modeled: `Div` on a kept continuation.
 -/
 
 namespace Proto.Nib
@@ -57,7 +57,7 @@ and `mod` by zero. -/
 inductive Op where
   | add | sub | mul | div | mod
 
-/-- `+ - * /` of `Decimal` and of `Float`. -/
+/-- `+ - * /` of `Decimal`, of `Float` and of `Float32`. -/
 inductive FOp where
   | add | sub | mul | div
 
@@ -70,6 +70,13 @@ def FOp.dec : FOp → Rat → Rat → Option Rat
 
 /-- `Float` arithmetic is IEEE 754's; `/` by zero is a run-time error. -/
 def FOp.flt : FOp → Float → Float → Option Float
+  | .add, a, b => some (a + b)
+  | .sub, a, b => some (a - b)
+  | .mul, a, b => some (a * b)
+  | .div, a, b => if b == 0 then none else some (a / b)
+
+/-- `Float32` arithmetic is IEEE 754's; `/` by zero is a run-time error. -/
+def FOp.flt32 : FOp → Float32 → Float32 → Option Float32
   | .add, a, b => some (a + b)
   | .sub, a, b => some (a - b)
   | .mul, a, b => some (a * b)
@@ -103,6 +110,8 @@ inductive Prim where
   | decArith (op : FOp)
   /-- `a + b`, `a - b`, `a * b`, `a / b` of `Float`s. -/
   | floatArith (op : FOp)
+  /-- `a + b`, `a - b`, `a * b`, `a / b` of `Float32`s. -/
+  | float32Arith (op : FOp)
   /-- `decimal(x)`: an integer as a `Decimal`. -/
   | decimal (w : Width)
   /-- Joining two `Text`s (a function of the standard library: there is no
@@ -136,6 +145,7 @@ def Prim.ty : Prim → Ty → List Eff → Ty
   | .unbounded, T, ρ => .fn [.info T ρ] T (divEff :: ρ)
   | .decArith _, _, _ => .fn [.decimal, .decimal] .decimal []
   | .floatArith _, _, _ => .fn [.float, .float] .float []
+  | .float32Arith _, _, _ => .fn [.float32, .float32] .float32 []
   | .decimal w, _, _ => .fn [.int w] .decimal []
   | .concat, _, _ => .fn [.text, .text] .text []
   | .reborrow, T, _ => .fn [.brw T] (.brw T) []
@@ -183,6 +193,8 @@ mutual
     | dec (q : Rat)
     /-- A `Float`. -/
     | flt (f : Float)
+    /-- A `Float32`. -/
+    | flt32 (f : Float32)
     /-- A built-in function of the standard library, at the type and row it is
     used with. -/
     | prim (p : Prim) (T : Ty) (ρ : List Eff)
@@ -311,6 +323,7 @@ inductive Value : Tm → Prop where
   | text {s} : Value (.text s)
   | dec {q} : Value (.dec q)
   | flt {f} : Value (.flt f)
+  | flt32 {f} : Value (.flt32 f)
   | prim {p T ρ} : Value (.prim p T ρ)
   | lam {ps b} : Value (.lam ps b)
   | loc {l} : Value (.loc l)
@@ -357,6 +370,7 @@ mutual
     | text {s} : Inhab sg .text (.text s)
     | dec {q} : Inhab sg .decimal (.dec q)
     | flt {f} : Inhab sg .float (.flt f)
+    | flt32 {f} : Inhab sg .float32 (.flt32 f)
     | lam {ps B ρ qs b} : Inhab sg (.fn ps B ρ) (.lam qs b)
     | prim {ps B ρ p T ρ'} : Inhab sg (.fn ps B ρ) (.prim p T ρ')
     | loc {A l} : Inhab sg (.cell A) (.loc l)
@@ -412,6 +426,52 @@ inductive Fits : Ty → Ty → Prop where
 theorem Fits.mem_union {a : Ty} {ts : List Ty} (h : a ∈ ts) : Fits a (.union ts) :=
   .union h
 
+/-! ## Products
+
+A product `A × B × C` is the set of its members, told apart by their types,
+and is given here by the list of them. It fits where fewer of its members are
+expected, at a written type (`(p: A)`, `(p: A × C)`, `(p: @a T)`): one member
+(`A × B <: A`), or a product of some of them (`A × B × C <: A × C`). Members
+are forgotten, never added. A member's tag is forgotten as a tag is
+anywhere (`@a T <: T`, `Fits.untag`). -/
+
+/-- The product with the members `xs` fits the type `T` of one member. -/
+def FitsMember (xs : List Ty) (T : Ty) : Prop := ∃ x ∈ xs, Fits x T
+
+/-- The product with the members `xs` fits the product with the members `ys`:
+each member of `ys` is fitted by one of `xs`. -/
+def FitsProduct (xs ys : List Ty) : Prop := ∀ y ∈ ys, ∃ x ∈ xs, Fits x y
+
+/-- `A × B <: A`. -/
+theorem FitsMember.forget {xs : List Ty} {x : Ty} (h : x ∈ xs) : FitsMember xs x :=
+  ⟨x, h, Fits.refl x⟩
+
+/-- `@a T × B <: T`. -/
+theorem FitsMember.untag {xs : List Ty} {a : Nat} {T : Ty} (h : Ty.tag a T ∈ xs) :
+    FitsMember xs T :=
+  ⟨Ty.tag a T, h, Fits.untag⟩
+
+theorem FitsProduct.refl (xs : List Ty) : FitsProduct xs xs :=
+  fun y h => ⟨y, h, Fits.refl y⟩
+
+/-- `A × B × C <: A × C`. -/
+theorem FitsProduct.sublist {xs ys : List Ty} (h : List.Sublist ys xs) : FitsProduct xs ys :=
+  fun y hy => ⟨y, h.subset hy, Fits.refl y⟩
+
+theorem FitsProduct.trans {xs ys zs : List Ty}
+    (h₁ : FitsProduct xs ys) (h₂ : FitsProduct ys zs) : FitsProduct xs zs := by
+  intro z hz
+  obtain ⟨y, hy, fyz⟩ := h₂ z hz
+  obtain ⟨x, hx, fxy⟩ := h₁ y hy
+  exact ⟨x, hx, Fits.trans fxy fyz⟩
+
+/-- Taking fewer members and then one of them takes one of the first. -/
+theorem FitsProduct.member {xs ys : List Ty} {T : Ty}
+    (h : FitsProduct xs ys) (hm : FitsMember ys T) : FitsMember xs T := by
+  obtain ⟨y, hy, fyT⟩ := hm
+  obtain ⟨x, hx, fxy⟩ := h y hy
+  exact ⟨x, hx, Fits.trans fxy fyT⟩
+
 /-- A type that holds the values of `X`: `X`, a union of it, or a tag on
 it. -/
 inductive Holds (X : Ty) : Ty → Prop where
@@ -431,6 +491,7 @@ inductive Owns (d : Nat) (args : List Ty) : Ty → Prop where
   | text : Owns d args .text
   | decimal : Owns d args .decimal
   | float : Owns d args .float
+  | float32 : Owns d args .float32
   | fn {ps B ρ} : Owns d args (.fn ps B ρ)
   | cell {A} : Owns d args (.cell A)
   | brw {A} : Owns d args (.brw A)
@@ -629,6 +690,7 @@ mutual
     | text {sg S Γ s} : HasType sg S Γ (.text s) .text []
     | dec {sg S Γ q} : HasType sg S Γ (.dec q) .decimal []
     | flt {sg S Γ f} : HasType sg S Γ (.flt f) .float []
+    | flt32 {sg S Γ f} : HasType sg S Γ (.flt32 f) .float32 []
     /-- Making a function performs nothing; the body's row is its latent row. -/
     | lam {sg S Γ ps body A ρ} :
         HasType sg S (ps ++ Γ) body A ρ →

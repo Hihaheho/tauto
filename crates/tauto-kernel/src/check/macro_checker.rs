@@ -1,6 +1,7 @@
 //! Connects typed macro requests to the existing named and core checkers.
 use super::*;
 use crate::macros::checker::{Context, Elaboration, PrefixedChecker, TypedChecker};
+use crate::surface::Name;
 
 #[derive(Debug, Clone, Copy)]
 pub struct KernelChecker;
@@ -8,6 +9,9 @@ pub struct KernelChecker;
 impl TypedChecker for KernelChecker {
     fn check_in(&self, prefix: &[Stmt], decl: &Stmt) -> Result<Vec<Entry>, String> {
         check_in(prefix, decl)
+    }
+    fn used_later(&self, decl: &Stmt, later: &[Stmt]) -> Vec<Stmt> {
+        used_later(decl, later)
     }
     fn goal_of(
         &self,
@@ -23,7 +27,7 @@ impl TypedChecker for KernelChecker {
     fn elaborator(
         &self,
         prefix: &[Stmt],
-        context: &[(String, SurfaceTerm)],
+        context: &[(Name, SurfaceTerm)],
     ) -> Result<Box<dyn Elaboration>, String> {
         Ok(Box::new(Elaborator::new(prefix, context)?))
     }
@@ -48,7 +52,7 @@ impl Elaboration for Elaborator {
     fn whnf(&mut self, term: &SurfaceTerm) -> Result<SurfaceTerm, String> {
         Elaborator::whnf(self, term)
     }
-    fn type_of(&self, name: &str) -> Option<SurfaceTerm> {
+    fn type_of(&self, name: &crate::surface::Name) -> Option<SurfaceTerm> {
         Elaborator::type_of(self, name)
     }
 }

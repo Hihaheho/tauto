@@ -13,7 +13,7 @@ pub theorem written_unique_terms_nil<env: Datas, generics: Ordmap(
 ), partial: Bool, other: List(
   Ty
 )>(meaning: WrittenTerms(env, generics, partial, Nil, other)): Nil = other {
-  match meaning: Nil = other { WrittenTermsNil(gs, mode) => Refl }
+  ⊢ Nil = other from match meaning { WrittenTermsNil(gs, mode) => Refl }
 }
 pub theorem written_unique_terms_cons<env: Datas, generics: Ordmap(
   Text,
@@ -29,7 +29,7 @@ pub theorem written_unique_terms_cons<env: Datas, generics: Ordmap(
   ihhead: WrittenTermUnique(generics, partial, false, first, t),
   ihtail: WrittenTermsUnique(generics, partial, rest, types)
 ): Cons(t, types) = other {
-  match meaning: Cons(t, types) = other {
+  ⊢ Cons(t, types) = other from match meaning {
     WrittenTermsCons(gs, mode, term, terms, value, values, head, tail) => Eq::trans(
       Eq::congr((x: Ty) => Cons(x, types), ihhead(env, value, head)),
       Eq::congr((xs: List(Ty)) => Cons(value, xs), ihtail(env, values, tail))
@@ -42,7 +42,7 @@ pub theorem written_unique_parameters_nil<env: Datas, generics: Ordmap(
 ), partial: Bool, other: List(
   Ty
 )>(meaning: WrittenParameters(env, generics, partial, Nil, other)): Nil = other {
-  match meaning: Nil = other { WrittenParametersNil(gs, mode) => Refl }
+  ⊢ Nil = other from match meaning { WrittenParametersNil(gs, mode) => Refl }
 }
 pub theorem written_unique_parameters_cons<env: Datas, generics: Ordmap(
   Text,
@@ -54,19 +54,13 @@ pub theorem written_unique_parameters_cons<env: Datas, generics: Ordmap(
 ), other: List(
   Ty
 )>(
-  meaning: WrittenParameters(
-    env,
-    generics,
-    partial,
-    Cons(SurfaceParamMk(name, body), rest),
-    other
-  ),
+  meaning: WrittenParameters(env, generics, partial, Cons(SurfaceParamMk(name, body), rest), other),
   t: Ty,
   types: List(Ty),
   ihhead: WrittenTermUnique(generics, partial, false, body, t),
   ihtail: WrittenParametersUnique(generics, partial, rest, types)
 ): Cons(t, types) = other {
-  match meaning: Cons(t, types) = other {
+  ⊢ Cons(t, types) = other from match meaning {
     WrittenParametersCons(gs, mode, label, term, terms, value, values, head, tail) => Eq::trans(
       Eq::congr((x: Ty) => Cons(x, types), ihhead(env, value, head)),
       Eq::congr((xs: List(Ty)) => Cons(value, xs), ihtail(env, values, tail))

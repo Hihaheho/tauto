@@ -1,0 +1,102 @@
+@ cases.proofs-of-one-proposition-are-one-inside-a-type
+source = ```tauto
+inductive Box(P: Prop, p: P): Type {
+  Mk: Box(P, p)
+}
+
+inductive Fam(g: (Nat) -> Type): Type1 {
+  Fm: Fam(g)
+}
+
+inductive Ex(P: (Nat) -> Prop): Prop {
+  Mk(n: Nat, h: P(n)): Ex(P)
+}
+
+
+theorem in_a_type<P: Prop>(p: P, q: P, b: Box(P, p)): Box(P, q) { b }
+
+theorem in_a_domain<P: Prop>(p: P, q: P, f: (Box(P, p)) -> Nat): (Box(P, q)) -> Nat { f }
+
+theorem under_a_function<P: Prop>(p: P, q: P, b: Fam(x => Box(P, p))): Fam(x => Box(P, q)) { b }
+
+theorem under_a_binder<P: Prop>(p: P, q: P, f: (n: Nat) -> Box(P, p)): (n: Nat) -> Box(P, q) { f }
+```
+checks_all = "checked"
+
+@ cases.proofs-of-different-propositions-are-not-identified
+source = ```tauto
+inductive Box(P: Prop, p: P): Type {
+  Mk: Box(P, p)
+}
+
+inductive Fam(g: (Nat) -> Type): Type1 {
+  Fm: Fam(g)
+}
+
+inductive Ex(P: (Nat) -> Prop): Prop {
+  Mk(n: Nat, h: P(n)): Ex(P)
+}
+
+
+theorem other_prop<P: Prop>(p: P, b: Box(P, p)): Box(True, Trivial) { b }
+
+theorem props_differ<P: Prop, Q: Prop>(p: P, q: Q, b: Box(P, p)): Box(Q, q) { b }
+
+theorem data_differs(b: Box(Nat, 0)): Box(Nat, 1) { b }
+```
+checks_all = "checked"
+checks.data_differs = "error: "
+checks.other_prop = "error: "
+checks.props_differ = "error: "
+
+@ cases.data-cannot-be-taken-out-of-a-proof
+source = ```tauto
+inductive Box(P: Prop, p: P): Type {
+  Mk: Box(P, p)
+}
+
+inductive Fam(g: (Nat) -> Type): Type1 {
+  Fm: Fam(g)
+}
+
+inductive Ex(P: (Nat) -> Prop): Prop {
+  Mk(n: Nat, h: P(n)): Ex(P)
+}
+
+
+theorem or_data<P: Prop, Q: Prop>(o: Or(P, Q)): Nat {
+  Or::rec(P, Q, t => Nat, p => 0, q => 1, o)
+}
+
+theorem ex_data(e: Ex(n => True)): Nat {
+  Ex::rec(n => True, t => Nat, n => h => n, e)
+}
+```
+checks_all = "checked"
+checks.ex_data = "error: "
+checks.or_data = "error: "
+
+@ cases.a-function-is-what-it-does-to-a-variable
+source = ```tauto
+inductive Box(P: Prop, p: P): Type {
+  Mk: Box(P, p)
+}
+
+inductive Fam(g: (Nat) -> Type): Type1 {
+  Fm: Fam(g)
+}
+
+inductive Ex(P: (Nat) -> Prop): Prop {
+  Mk(n: Nat, h: P(n)): Ex(P)
+}
+
+
+theorem eta<A: Type, B: Type>(f: (A) -> B): f = (x => f(x)) { Refl }
+
+theorem not_every_pair(f: (Nat) -> Nat, g: (Nat) -> Nat): f = g { Refl }
+
+theorem not_the_constant_function(f: (Nat) -> Nat): f = (x => 0) { Refl }
+```
+checks_all = "checked"
+checks.not_every_pair = "error: "
+checks.not_the_constant_function = "error: "

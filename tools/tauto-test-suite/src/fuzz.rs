@@ -15,6 +15,14 @@
 //! The generator draws from its own small PRNG, so a seed names the same
 //! program on every machine and the fuzzer needs no dependency.
 
+pub mod interactions;
+
+/// Compare a normally completed trace against an optional independent oracle.
+/// File replays and generated interactions use the same verdict rule.
+pub fn matches_expected(shows: &[String], succeeded: bool, expected: Option<&[String]>) -> bool {
+    expected.is_none_or(|want| succeeded && shows == want)
+}
+
 /// SplitMix64: small, fast, and the same sequence everywhere.
 pub struct Rng(u64);
 
@@ -423,5 +431,40 @@ impl Gen {
             }
             _ => self.leaf(Ty::Bool),
         }
+    }
+}
+
+#[cfg(test)]
+mod oracle_tests {
+    use super::matches_expected;
+
+    #[test]
+    fn replay_oracle_rejects_shared_wrong_answers() {
+        let expected = vec!["result = 3".to_string()];
+        let shared_wrong = vec!["result = 4".to_string()];
+        for _backend in ["eval", "rust", "javascript"] {
+            assert!(!matches_expected(&shared_wrong, true, Some(&expected)));
+        }
+        assert!(matches_expected(&expected, true, Some(&expected)));
+        assert!(!matches_expected(&expected, false, Some(&expected)));
+    }
+
+    #[test]
+    fn replay_oracle_preserves_event_order_and_multiplicity() {
+        let expected = vec!["request = 1".to_string(), "state = 2".to_string()];
+        let reversed = expected.iter().rev().cloned().collect::<Vec<_>>();
+        assert!(!matches_expected(&reversed, true, Some(&expected)));
+        assert!(!matches_expected(&expected[..1], true, Some(&expected)));
+        let mut repeated = expected.clone();
+        repeated.push(expected[1].clone());
+        assert!(!matches_expected(&repeated, true, Some(&expected)));
+    }
+
+    #[test]
+    fn absent_oracle_leaves_backend_comparison_to_the_runner() {
+        assert!(matches_expected(&[], true, None));
+        assert!(matches_expected(&[], false, None));
+        assert!(matches_expected(&[], true, Some(&[])));
+        assert!(!matches_expected(&[], false, Some(&[])));
     }
 }

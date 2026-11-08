@@ -35,7 +35,11 @@ pub fn rs_split(sep: Text, name: Text): RsSplit {
   match text_find(name, sep, 0) {
     Some(i) => RsSplit {
       plain: Text::slice_or_empty(name, 0, i),
-      marks: Text::slice_or_empty(name, i + Nat::of_u64(std::prelude::Text::len(sep)), Nat::of_u64(std::prelude::Text::len(name)))
+      marks: Text::slice_or_empty(
+        name,
+        i + Nat::of_u64(std::prelude::Text::len(sep)),
+        Nat::of_u64(std::prelude::Text::len(name))
+      )
     }
     None => RsSplit { plain: name, marks: "" }
   }
@@ -143,18 +147,16 @@ pub fn rs_capture(&mut st: RsState, plain: Text): Unit {
 pub fn rs_reference_one(&mut st: RsState, plain: Text, marks: Text): Text {
   match rs_env_find(&st.env, plain, marks) {
     Some(u) => u
-    None => {
-      if std::prelude::Text::len(marks) > 0 {
-        match rs_global_find(&st.globals, plain, marks) {
-          Some(u) => u
-          None => {
-            rs_capture(&mut st, plain)
-            plain
-          }
+    None => if std::prelude::Text::len(marks) > 0 {
+      match rs_global_find(&st.globals, plain, marks) {
+        Some(u) => u
+        None => {
+          rs_capture(&mut st, plain)
+          plain
         }
-      } else {
-        plain
       }
+    } else {
+      plain
     }
   }
 }
@@ -164,7 +166,11 @@ pub fn rs_reference(&mut st: RsState, name: Text): Text {
   match text_find(s.plain, ".", 0) {
     Some(i) => {
       let head := rs_reference_one(&mut st, Text::slice_or_empty(s.plain, 0, i), s.marks)
-      rs_cat3(head, ".", Text::slice_or_empty(s.plain, i + 1, Nat::of_u64(std::prelude::Text::len(s.plain))))
+      rs_cat3(
+        head,
+        ".",
+        Text::slice_or_empty(s.plain, i + 1, Nat::of_u64(std::prelude::Text::len(s.plain)))
+      )
     }
     None => rs_reference_one(&mut st, s.plain, s.marks)
   }
@@ -241,7 +247,8 @@ pub fn rs_collect_one(&mut st: RsState, s: SurfaceStmt): SurfaceStmt {
         wheres: f.wheres,
         start: f.start,
         end: f.end,
-        body: f.body
+        body: f.body,
+        generic_types: f.generic_types
       })
     }
     StTheorem(d) => StTheorem(rs_declare_theorem(&mut st, d))
@@ -409,13 +416,14 @@ pub fn rs_params(
 pub fn rs_fn(&mut st: RsState, f: SurfaceFn): SurfaceFn {
   let name := rs_reference(&mut st, f.name)
   let mark := rs_mark(&st)
+  let gs := rs_named(&mut st, surface_generic_named(f.generics, f.generic_types))
   let ps := rs_params(&mut st, f.params, f.param_types)
   let result := rs_opt(&mut st, f.result)
   let body := rs_term(&mut st, f.body)
   rs_pop(&mut st, mark)
   SurfaceFn {
     name: name,
-    generics: f.generics,
+    generics: surface_named_names(gs),
     bounds: f.bounds,
     params: ps.fst,
     borrows: f.borrows,
@@ -425,7 +433,8 @@ pub fn rs_fn(&mut st: RsState, f: SurfaceFn): SurfaceFn {
     wheres: f.wheres,
     start: f.start,
     end: f.end,
-    body: body
+    body: body,
+    generic_types: surface_named_types(gs)
   }
 }
 

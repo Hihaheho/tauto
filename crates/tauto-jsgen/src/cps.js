@@ -98,7 +98,7 @@ function enterFunction(body, params, captures, caller, args, k, borrowed=false, 
     }:null;
     return more(() => body({...caller,env,ret,scope,restart},ret));
 }
-function closureValue(body,params,captureIds,borrowed=false,refs=[],exportBorrows=true,ownedParams=[],captureMoves=[],once=false) {
+function closureValue(body,params,captureIds,borrowed=false,refs=[],exportBorrows=true,ownedParams=[],captureMoves=[],once=false,ownedRefs=[]) {
     return (c,k) => {
         if(!borrowed)charge(1);
         const captures = {};
@@ -116,7 +116,7 @@ function closureValue(body,params,captureIds,borrowed=false,refs=[],exportBorrow
                 if(borrowed||slot.shared)captures[id]=slot;
                 else{
                     const moved=captureMoves.includes(id);
-                    captures[id]={...slot,value:moved?slot.value:copyValue(slot.value)};
+                    captures[id]={...slot,value:ownedRefs.includes(id)?temporaryRef(dereference(slot.value,true),true):moved?slot.value:copyValue(slot.value)};
                     if(moved)slot.value=undefined;
                 }
             }
@@ -131,6 +131,7 @@ function closureValue(body,params,captureIds,borrowed=false,refs=[],exportBorrow
         let owners=1;
         fn.retain=()=>{owners++;};
         fn.release=()=>{if(--owners===0)releaseCaptures();};
+        if(!borrowed&&!once)retainedLeaves.add(fn);
         return more(() => k(c,fn));
     };
 }
@@ -144,8 +145,8 @@ function matchPattern(p,v,bindings,taken=null,from=null,index=0) {
             if(taken&&!p[2]&&!v?.ref){bindings[p[1]]={value:v,shared:false,immutable:p[3]===true};taken.push([from,index,bindings[p[1]]]);return true;}
             bindings[p[1]]={value:p[2]?(v?.ref?copyValue(v):reference(()=>v,x=>{v=x;})):copyValue(unref(v)),shared:false,immutable:!p[2]&&p[3]===true};return true;
         case 'literal': return equal(p[1],unref(v));
-        case 'product': { const obj=unref(v);const inner=v?.ref?null:taken;return p[1].every((q,i)=>matchPattern(q,v?.ref?fieldRef(v,i):obj.fields[i],bindings,inner,obj,i)); }
-        case 'ctor': { const obj=unref(v);requireDataOwner(obj);const inner=v?.ref?null:taken;return obj?.tag===p[1]&&obj.owner===p[3]&&p[2].every((q,i)=>matchPattern(q,v?.ref?fieldRef(v,i):obj.fields[i],bindings,inner,obj,i)); }
+        case 'product': { const obj=unref(v);const inner=v?.ref||retainedGraphs.has(obj)?null:taken;return p[1].every((q,i)=>matchPattern(q,v?.ref?fieldRef(v,i):obj.fields[i],bindings,inner,obj,i)); }
+        case 'ctor': { const obj=unref(v);requireDataOwner(obj);const inner=v?.ref||retainedGraphs.has(obj)?null:taken;return obj?.tag===p[1]&&obj.owner===p[3]&&p[2].every((q,i)=>matchPattern(q,v?.ref?fieldRef(v,i):obj.fields[i],bindings,inner,obj,i)); }
     }
 }
 // `take` is set only when the scrutinee is a fresh owned value and no arm has
@@ -204,7 +205,7 @@ function route(c,op,quant,vs,k,inside=null,skip=null) {
         if(!frame) {
             if(op==='show'){const text=vs[0]+' = '+shown(vs[1]);forgetStableData();try{c.host.show(text);}finally{forgetStableData();}return more(()=>k(c,null));}
             // The host answers `wait`: the task goes on once its signal is raised.
-            if(op==='wait'&&vs[0]?.kind==='Signal'){const s=vs[0];if(s.raised)return more(()=>k(c,null));return new Promise(resolve=>s.waiters.push(()=>resolve(more(()=>k(c,null)))));}
+            if(op==='wait'&&vs[0]?.kind==='Signal'){const s=vs[0];if(s.raised)return more(()=>k(c,null));return new Promise(resolve=>waitSignal(s,()=>resolve(more(()=>k(c,null)))));}
             throw new Error('nothing handles '+op);
         }
         if(frame.callback && quant!=='direct' && frame.id!==skip?.id)return frame.suspend(c,op,quant,vs,k);
@@ -303,7 +304,7 @@ function hostHandle(host,type,object){
     const dispose=()=>{if(busy>0){closing=true;return;}live=false;refs=0;held=0;host.handles.delete(handle);
         if(object!==null&&(typeof object==='object'||typeof object==='function'))host.objects.delete(object);
         for(const callback of kept.splice(0).reverse())callback.close();const release=host.externs['@release:'+type]??host.options.release?.[type];if(typeof release==='function')release(object);};
-    hostHandles.add(handle);host.handles.add(handle);
+    hostHandles.add(handle);host.handles.add(handle);retainedLeaves.add(handle);
     if(object!==null&&(typeof object==='object'||typeof object==='function'))host.objects.set(object,handle);
     return handle;
 }
@@ -385,7 +386,7 @@ function external(name,args) {
         const alive=()=>{if(!active)throw new Error('javascript extern borrow outlived its call');};
         const signature=typeof name==='string'&&typeof hostSignatures!=='undefined'?hostSignatures[name]:undefined;
         const consumed=[];
-        const hostArgs=vs.map((v,i)=>{const type=signature?.params[i];if(type){if(v?.ref)return hostObject(c.host,type,v.get());const object=hostObject(c.host,type,v);consumed.push(v);return object;}const value=unref(v);if(typeof value==='function'&&signature?.owner!=null)return keptCallback(c.host,vs[signature.owner]?.ref?vs[signature.owner].get():vs[signature.owner],value);if(typeof value==='function'){if(value.tautoNative)return value;const adapted=callback(value);adapted.nib=value;adapted.release=()=>{if(!v?.ref)dropValue(value);};return adapted;}if(fn.tautoNative)return v;if(!v?.ref)return thaw(v);{const target=v.get(),own=thaw(target);if(own!==target)v.set(own);}return reference(()=>{alive();return v.get();},x=>{alive();v.set(x);});});
+        const hostArgs=vs.map((v,i)=>{const type=signature?.params[i];if(type){if(v?.ref)return hostObject(c.host,type,v.get());const object=hostObject(c.host,type,v);consumed.push(v);return object;}const value=unref(v);if(typeof value==='function'&&signature?.owner!=null)return keptCallback(c.host,vs[signature.owner]?.ref?vs[signature.owner].get():vs[signature.owner],value);if(typeof value==='function'){if(value.tautoNative)return value;const adapted=callback(value);adapted.nib=value;adapted.release=()=>{if(!v?.ref)dropValue(value);};return adapted;}if(fn.tautoNative)return v;if(!v?.ref)return thaw(v);thawReference(v);return reference(()=>{alive();return v.get();},x=>{alive();v.set(x);});});
         let value;
         try{value=fn.tautoNative?fn.invoke(hostArgs,callback,!c.direct,c.wasm??null):fn(...hostArgs);}catch(e){forgetStableData();cancel();throw e;}
         // The host has the object now; the moved Tauto references end.
@@ -515,7 +516,7 @@ function undo(log){
 // Data a direct form builds, its fields in the declaration's order. The
 // arrays are the form's own, never a host's, so the value is certified as
 // `construct` certifies ordinary arrays.
-function dcons(tag,names,fields,isStruct,owner){charge(1+fields.length);return generatedAggregate({owner,tag,names,fields,struct:isStruct},fields);}
+function dcons(tag,names,fields,isStruct,owner,retainable=false){charge(1+fields.length);return generatedAggregate({owner,tag,names,fields,struct:isStruct},fields,retainable&&ordinaryArrayMethods(fields)&&ordinaryArrayMethods(names));}
 const dsome=v=>dcons('Some',[null],[v],false,'Option'),dnone=()=>dcons('None',[],[],false,'Option');
 function vecNew(){const v=vec([]);F.add(v.items);return v;}
 function vecGet(v,i){const a=v.items;i=Number(i);return i>=0&&i<a.length?dsome(a[i]):dnone();}

@@ -48,7 +48,7 @@ pub(crate) struct Ctx {
 pub struct Shape {
     /// Why the program did not load (a file that does not read, an import that
     /// is missing); then there is nothing else.
-    pub error: Option<String>,
+    pub error: Option<program::LoadError>,
     pub files: Vec<FileShape>,
     pub stmts: Vec<StmtShape>,
     /// What went wrong reading the macros and syntaxes.
@@ -87,16 +87,27 @@ impl Query for LoadShape {
                 }
             }
         };
-        let loaded = program::load_with_source(&ctx.entry, &source);
+        let previous = session::with(ctx.ws, &ctx.entry, |session| session.loaded.clone());
+        let loaded = match previous {
+            Some(previous) => program::load_revision(&ctx.entry, &source, &previous),
+            None => program::load_with_source(&ctx.entry, &source),
+        };
         if let Some(e) = failure.into_inner() {
             return Err(e);
         }
         let _ = epoch;
-        let loaded = match loaded {
+        // What the kernel is given of the program, as `tauto check` gives it.
+        let loaded = loaded.and_then(|l| {
+            check::KernelStatements::of(&l)
+                .map(|k| (l, k))
+                .map_err(program::LoadError::from)
+        });
+        let (loaded, kernel) = match loaded {
             Ok(l) => l,
             Err(error) => {
                 session::with(ctx.ws, &ctx.entry, |s| {
                     s.loaded = None;
+                    s.kernel = None;
                     s.index.clear();
                 });
                 return Ok(Arc::new(Shape {
@@ -121,7 +132,12 @@ impl Query for LoadShape {
         let reported = loaded.program.errors.is_empty();
         let mut stmts = Vec::new();
         let mut index = Vec::new();
-        for (fi, per) in loaded.per_file.iter().enumerate() {
+        // The statements as `tauto check` gives them to the kernel, in the
+        // order it checks them in: a proof may use a lemma written further
+        // on in its file. Those of `per_file` are the program as it runs,
+        // its classes expanded into dictionaries and what runs as written
+        // still in it.
+        for (fi, per) in kernel.files.iter().enumerate() {
             for (si, stmt) in per.iter().enumerate() {
                 let anchor = check::anchor_of(&loaded, fi, stmt);
                 // The fingerprint leaves out places, so that a statement
@@ -152,6 +168,7 @@ impl Query for LoadShape {
             s.stats.loads += 1;
             s.checkpoints.retain(|&n, _| n <= index.len());
             s.loaded = Some(Rc::new(loaded));
+            s.kernel = Some(Rc::new(kernel));
             s.index = index;
         });
         Ok(Arc::new(shape))
@@ -199,6 +216,60 @@ pub struct Decl {
     /// A message tells a place in text (a macro expansion's), which a move of
     /// the statement makes wrong: it is checked again when it moves.
     pub positional: bool,
+    /// For each place of an expansion a message of a positional statement tells: the span,
+    /// the position it was written at and the expansion that made it.
+    pub origins: Vec<(u32, u32, u32)>,
+    /// The verdicts of a positional statement as the kernel gave them, before they were
+    /// placed in the file ([`Decl::moved_entries`]).
+    pub given: Vec<tauto::check::Entry>,
+}
+
+impl Decl {
+    /// The verdicts of this positional statement, checked where it was, now that it is `by`
+    /// bytes further on in file `fi` of `loaded`: when each expansion its messages tell a
+    /// place of was made again (at the same span, by the same expansion, written where it
+    /// was or as far further on), its verdicts read as they did, placed again.
+    pub fn moved_entries(
+        &self,
+        loaded: &program::Loaded,
+        fi: usize,
+        by: i64,
+    ) -> Option<Vec<tauto::check::Entry>> {
+        let same = self.origins.iter().all(|&(at, written, expansion)| {
+            loaded.spans.origin(at).is_some_and(|(w, e)| {
+                e == expansion && (w == written || w as i64 == written as i64 + by)
+            })
+        });
+        if !same {
+            return None;
+        }
+        let mut entries = self.given.clone();
+        for e in &mut entries {
+            move_written(&mut e.verdict, by);
+        }
+        check::localize_kept(loaded, fi, &mut entries);
+        Some(entries)
+    }
+}
+
+/// The places of a verdict that were written in a file, moved by `by`; those of expansions stay.
+fn move_written(v: &mut tauto::check::Verdict, by: i64) {
+    use tauto::check::Verdict;
+    let at = |s: tauto_parol::Span| tauto::surface::shift::place(s, by);
+    match v {
+        Verdict::Failed(d) => {
+            d.span = d.span.map(at);
+            for a in &mut d.also {
+                a.span = a.span.map(at);
+            }
+        }
+        Verdict::Incomplete { holes, .. } => {
+            for h in holes {
+                h.span = at(h.span);
+            }
+        }
+        _ => {}
+    }
 }
 
 pub(crate) const GENESIS_STATE: &str = "prelude";
@@ -294,6 +365,7 @@ fn bring_up(
     i: usize,
     start: Start,
     loaded: &program::Loaded,
+    kernel: &check::KernelStatements,
 ) -> Result<(check::Checker, usize, String), String> {
     let (mut checker, mut applied, mut state) = match start {
         Start::Tip => {
@@ -314,7 +386,7 @@ fn bring_up(
     // The statements between the kernel and `i`, only to bring it up.
     while applied < i {
         let (rf, rs) = s.index[applied];
-        let declared = checker.declare(&loaded.per_file[rf][rs]);
+        let declared = checker.declare_from(kernel, rf, rs);
         state = check::chain_state(&state, &declared.digest);
         applied += 1;
         s.stats.replayed += 1;
@@ -349,7 +421,11 @@ impl Query for Library {
                 .loaded
                 .clone()
                 .ok_or_else(|| tauto_message::msg!("analyzer-not-loaded").to_string())?;
-            let (checker, _, state) = bring_up(&ctx, s, n, start, &loaded)?;
+            let kernel = s
+                .kernel
+                .clone()
+                .ok_or_else(|| tauto_message::msg!("analyzer-not-loaded").to_string())?;
+            let (checker, _, state) = bring_up(&ctx, s, n, start, &loaded, &kernel)?;
             let library = checker.library();
             s.tip = Some((n, state, checker));
             Ok::<_, String>(library)
@@ -379,6 +455,10 @@ fn check_one(
         .loaded
         .clone()
         .ok_or_else(|| tauto_message::msg!("analyzer-not-loaded").to_string())?;
+    let kernel = s
+        .kernel
+        .clone()
+        .ok_or_else(|| tauto_message::msg!("analyzer-not-loaded").to_string())?;
     let &(fi, si) = s
         .index
         .get(i)
@@ -389,25 +469,41 @@ fn check_one(
         s.stats.memo_hits += 1;
         return Ok(d.clone());
     }
-    let (mut checker, _, state) = bring_up(ctx, s, i, start, &loaded)?;
-    let stmt = &loaded.per_file[fi][si];
-    let declared = checker.declare(stmt);
+    let (mut checker, _, state) = bring_up(ctx, s, i, start, &loaded, &kernel)?;
+    let stmt = &kernel.files[fi][si];
+    let declared = checker.declare_from(&kernel, fi, si);
     s.stats.checked += 1;
     let state = check::chain_state(&state, &declared.digest);
     let mut entries = declared.entries;
+    check::kept_entries(&loaded, &mut entries);
+    let given = entries.clone();
+    let origins: Vec<(u32, u32, u32)> = entries
+        .iter()
+        .filter_map(|entry| match &entry.verdict {
+            tauto::check::Verdict::Failed(d) => d.span,
+            _ => None,
+        })
+        .filter_map(|span| {
+            let (written, expansion) = loaded.spans.origin(span.start)?;
+            Some((span.start, written, expansion))
+        })
+        .collect();
     let positional = check::localize_entries(&loaded, fi, &mut entries);
-    let entries = entries
+    let mut entries: Vec<FileEntry> = entries
         .into_iter()
         .map(|entry| FileEntry {
             file: file.clone(),
             entry,
         })
         .collect();
+    kernel.explain(&mut entries);
     let decl = Arc::new(Decl {
         entries,
         anchor: check::anchor_of(&loaded, fi, stmt),
         state: state.clone(),
         positional,
+        given: if positional { given } else { Vec::new() },
+        origins,
     });
     if (i + 1).is_multiple_of(ctx.interval) {
         s.checkpoints

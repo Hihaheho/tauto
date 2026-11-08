@@ -12,7 +12,7 @@ import "ty.taut"
 
 // A leaf is any type but a union or `Never`.
 pub fn ty_plain(t: Ty): Bool {
-  match t: Bool {
+  ⊢ Bool from match t {
     TyUnion(ts) => false
     TyNever => false
     _ => true
@@ -31,7 +31,7 @@ pub(open) inductive Leaves(t: Ty): (List(Ty)) -> Prop {
 // The members of a type read as a union: a union's own list, none for
 // `Never`, the type itself otherwise.
 pub fn ty_members(u: Ty): List(Ty) {
-  match u: List(Ty) {
+  ⊢ List(Ty) from match u {
     TyUnion(ys) => ys
     TyNever => Nil
     _ => Cons(u, Nil)
@@ -45,7 +45,7 @@ pub theorem mem_cons_inv<A: Type, e: A>(
   t: List(A),
   m: Mem(A, e, Cons(h, t))
 ): Or(e = h, Mem(A, e, t)) {
-  match m: Or(e = h, Mem(A, e, t)) {
+  ⊢ Or(e = h, Mem(A, e, t)) from match m {
     MemHere(t2) => OrInl(Refl)
     MemThere(b, t2, m2) => OrInr(m2)
   }
@@ -56,7 +56,7 @@ pub theorem mem_of_eq<A: Type>(e: A, h: A, t: List(A), q: e = h): Mem(A, e, Cons
 }
 
 pub fn ins_k(t: Ty, m: Ty, rest: List(Ty), o: Ordering): List(Ty) {
-  match o: List(Ty) {
+  ⊢ List(Ty) from match o {
     Less => Cons(t, Cons(m, rest))
     Equal => Cons(m, rest)
     Greater => Cons(m, members_insert(rest, t))
@@ -80,7 +80,7 @@ pub theorem insk_mem(
   ih: (Mem(Ty, e, members_insert(rest, t))) -> Or(e = t, Mem(Ty, e, rest)),
   m: Mem(Ty, e, ins_k(t, h, rest, o))
 ): Or(e = t, Mem(Ty, e, Cons(h, rest))) {
-  match o: Or(e = t, Mem(Ty, e, Cons(h, rest))) {
+  ⊢ Or(e = t, Mem(Ty, e, Cons(h, rest))) from match o {
     Less => mem_cons_inv(t, Cons(h, rest), m)
     Equal => OrInr(m)
     Greater => Or::elim(
@@ -98,7 +98,7 @@ pub theorem insert_mem(
   t: Ty,
   m: Mem(Ty, e, members_insert(ms, t))
 ): Or(e = t, Mem(Ty, e, ms)) {
-  match ms: Or(e = t, Mem(Ty, e, ms)) {
+  ⊢ Or(e = t, Mem(Ty, e, ms)) from match ms {
     Nil => Or::elim(
       mem_cons_inv(t, Nil(Ty), m),
       q => OrInl(q),
@@ -124,7 +124,7 @@ pub theorem insk_has(
   eo: ty_compare(t, h) = o,
   ih: Mem(Ty, t, members_insert(rest, t))
 ): Mem(Ty, t, ins_k(t, h, rest, o)) {
-  match o: Mem(Ty, t, ins_k(t, h, rest, o)) {
+  ⊢ Mem(Ty, t, ins_k(t, h, rest, o)) from match o {
     Less => MemHere(Ty, t, Cons(h, rest))
     Equal => mem_of_eq(t, h, rest, ty_compare_eq(t, h, eo))
     Greater => MemThere(Ty, t, h, members_insert(rest, t), ih)
@@ -133,7 +133,7 @@ pub theorem insk_has(
 
 // `t` is a member after inserting it.
 pub theorem insert_has(t: Ty, ms: List(Ty)): Mem(Ty, t, members_insert(ms, t)) {
-  match ms: Mem(Ty, t, members_insert(ms, t)) {
+  ⊢ Mem(Ty, t, members_insert(ms, t)) from match ms {
     Nil => MemHere(Ty, t, Nil(Ty))
     Cons(h, rest) => Eq::subst(
       (z: List(Ty)) => Mem(Ty, t, z),
@@ -152,7 +152,7 @@ pub theorem insk_keep(
   ih: (Mem(Ty, e, rest)) -> Mem(Ty, e, members_insert(rest, t)),
   m: Mem(Ty, e, Cons(h, rest))
 ): Mem(Ty, e, ins_k(t, h, rest, o)) {
-  match o: Mem(Ty, e, ins_k(t, h, rest, o)) {
+  ⊢ Mem(Ty, e, ins_k(t, h, rest, o)) from match o {
     Less => MemThere(Ty, e, t, Cons(h, rest), m)
     Equal => m
     Greater => Or::elim(
@@ -169,7 +169,7 @@ pub theorem insert_keep(
   t: Ty,
   m: Mem(Ty, e, ms)
 ): Mem(Ty, e, members_insert(ms, t)) {
-  match ms: Mem(Ty, e, members_insert(ms, t)) {
+  ⊢ Mem(Ty, e, members_insert(ms, t)) from match ms {
     Nil => Mem::nil(Mem(Ty, e, members_insert(Nil(Ty), t)), m)
     Cons(h, rest) => Eq::subst(
       (z: List(Ty)) => Mem(Ty, e, z),
@@ -197,7 +197,7 @@ mutual {
     ms: List(Ty),
     m: Mem(Ty, e, members_add(ts, ms))
   ): Or(Leaves(e, ts), Mem(Ty, e, ms)) {
-    match ts: Or(Leaves(e, ts), Mem(Ty, e, ms)) {
+    ⊢ Or(Leaves(e, ts), Mem(Ty, e, ms)) from match ts {
       Nil => OrInr(m)
       Cons(x, rest) => Or::elim(
         add_mem(e, rest, members_add_one(x, x, ms), m),
@@ -216,7 +216,7 @@ mutual {
     ms: List(Ty),
     k: Mem(Ty, e, members_add_one(x, w, ms))
   ): Or(Leaves(e, Cons(x, rest)), Mem(Ty, e, ms)) {
-    match x: Or(Leaves(e, Cons(x, rest)), Mem(Ty, e, ms)) {
+    ⊢ Or(Leaves(e, Cons(x, rest)), Mem(Ty, e, ms)) from match x {
       TyUnion(inner) => Or::elim(
         add_mem(e, inner, ms, k),
         l => OrInl(LvIn(e, inner, rest, l)),
@@ -245,7 +245,7 @@ mutual {
     ms: List(Ty),
     m: Mem(Ty, e, ms)
   ): Mem(Ty, e, members_add(ts, ms)) {
-    match ts: Mem(Ty, e, members_add(ts, ms)) {
+    ⊢ Mem(Ty, e, members_add(ts, ms)) from match ts {
       Nil => m
       Cons(x, rest) => add_keep(e, rest, members_add_one(x, x, ms), one_keep(e, x, x, ms, m))
     }
@@ -258,7 +258,7 @@ mutual {
     ms: List(Ty),
     m: Mem(Ty, e, ms)
   ): Mem(Ty, e, members_add_one(x, w, ms)) {
-    match x: Mem(Ty, e, members_add_one(x, w, ms)) {
+    ⊢ Mem(Ty, e, members_add_one(x, w, ms)) from match x {
       TyUnion(inner) => add_keep(e, inner, ms, m)
       TyNever => m
       _ => insert_keep(e, ms, w, m)
@@ -272,7 +272,7 @@ pub theorem one_has(
   ms: List(Ty),
   p: Plain(x)
 ): Mem(Ty, w, members_add_one(x, w, ms)) {
-  match x: Mem(Ty, w, members_add_one(x, w, ms)) {
+  ⊢ Mem(Ty, w, members_add_one(x, w, ms)) from match x {
     TyUnion(inner) => False::elim(false_ne_true(p))
     TyNever => False::elim(false_ne_true(p))
     _ => insert_has(w, ms)
@@ -283,7 +283,7 @@ pub theorem one_has(
 pub theorem add_has<e: Ty, ts: List(
   Ty
 )>(l: Leaves(e, ts), ms: List(Ty)): Mem(Ty, e, members_add(ts, ms)) {
-  match l: Mem(Ty, e, members_add(ts, ms)) {
+  ⊢ Mem(Ty, e, members_add(ts, ms)) from match l {
     LvHere(rest, p) => add_keep(e, rest, members_add_one(e, e, ms), one_has(e, e, ms, p))
     LvIn(ys, rest, l2) => add_keep(e, rest, members_add(ys, ms), add_has(l2, ms))
     LvThere(y, rest, l2) => add_has(l2, members_add_one(y, y, ms))
@@ -291,7 +291,7 @@ pub theorem add_has<e: Ty, ts: List(
 }
 
 pub theorem leaves_plain(e: Ty, ts: List(Ty), l: Leaves(e, ts)): Plain(e) {
-  match l: Plain(e) {
+  ⊢ Plain(e) from match l {
     LvHere(rest, p) => p
     LvIn(ys, rest, l2) => leaves_plain(e, ys, l2)
     LvThere(y, rest, l2) => leaves_plain(e, rest, l2)
@@ -307,7 +307,7 @@ pub theorem added_plain(ts: List(Ty)): AllPlain(members_add(ts, Nil(Ty))) {
 }
 
 pub theorem plain_members(x: Ty, p: Plain(x)): ty_members(x) = Cons(x, Nil(Ty)) {
-  match x: ty_members(x) = Cons(x, Nil(Ty)) {
+  ⊢ ty_members(x) = Cons(x, Nil(Ty)) from match x {
     TyUnion(ys) => False::elim(false_ne_true(p))
     TyNever => False::elim(false_ne_true(p))
     _ => Refl
@@ -315,22 +315,17 @@ pub theorem plain_members(x: Ty, p: Plain(x)): ty_members(x) = Cons(x, Nil(Ty)) 
 }
 
 // Wrapping leaves as one type and reading them back gives the same list.
-pub theorem members_of(
-  ms: List(Ty),
-  ap: AllPlain(ms)
-): (ty_members(ty_union_of(ms)) = ms) {
-  match ms: (ty_members(ty_union_of(ms)) = ms) {
+pub theorem members_of(ms: List(Ty), ap: AllPlain(ms)): (ty_members(ty_union_of(ms)) = ms) {
+  ⊢ (ty_members(ty_union_of(ms)) = ms) from match ms {
     Nil => Refl
-    Cons(only, rest) => match rest: ty_members(ty_union_of(Cons(only, rest))) = Cons(only, rest) {
+    Cons(only, rest) => ⊢ ty_members(ty_union_of(Cons(only, rest))) = Cons(only, rest) from match rest {
       Nil => plain_members(only, ap(only, MemHere(Ty, only, Nil(Ty))))
       Cons(second, more) => Refl
     }
   }
 }
 
-pub theorem union_members(
-  ts: List(Ty)
-): ty_members(ty_union(ts)) = members_add(ts, Nil(Ty)) {
+pub theorem union_members(ts: List(Ty)): ty_members(ty_union(ts)) = members_add(ts, Nil(Ty)) {
   members_of(members_add(ts, Nil(Ty)), added_plain(ts))
 }
 
@@ -353,7 +348,7 @@ pub theorem union_has(e: Ty, ts: List(Ty), l: Leaves(e, ts)): Mem(Ty, e, ty_memb
 }
 
 pub fn tins_k(tag: Text, t: Text, rest: List(Text), o: Ordering): List(Text) {
-  match o: List(Text) {
+  ⊢ List(Text) from match o {
     Less => Cons(tag, Cons(t, rest))
     Equal => Cons(t, rest)
     Greater => Cons(t, tags_insert(rest, tag))
@@ -377,7 +372,7 @@ pub theorem tinsk_mem(
   ih: (Mem(Text, e, tags_insert(rest, g))) -> Or(e = g, Mem(Text, e, rest)),
   m: Mem(Text, e, tins_k(g, h, rest, o))
 ): Or(e = g, Mem(Text, e, Cons(h, rest))) {
-  match o: Or(e = g, Mem(Text, e, Cons(h, rest))) {
+  ⊢ Or(e = g, Mem(Text, e, Cons(h, rest))) from match o {
     Less => mem_cons_inv(g, Cons(h, rest), m)
     Equal => OrInr(m)
     Greater => Or::elim(
@@ -394,7 +389,7 @@ pub theorem tags_insert_mem(
   g: Text,
   m: Mem(Text, e, tags_insert(ts, g))
 ): Or(e = g, Mem(Text, e, ts)) {
-  match ts: Or(e = g, Mem(Text, e, ts)) {
+  ⊢ Or(e = g, Mem(Text, e, ts)) from match ts {
     Nil => Or::elim(
       mem_cons_inv(g, Nil(Text), m),
       q => OrInl(q),
@@ -420,7 +415,7 @@ pub theorem tinsk_has(
   eo: Ordmap::compare_text(g, h) = o,
   ih: Mem(Text, g, tags_insert(rest, g))
 ): Mem(Text, g, tins_k(g, h, rest, o)) {
-  match o: Mem(Text, g, tins_k(g, h, rest, o)) {
+  ⊢ Mem(Text, g, tins_k(g, h, rest, o)) from match o {
     Less => MemHere(Text, g, Cons(h, rest))
     Equal => mem_of_eq(g, h, rest, Ordmap::compare_text_eq(g, h, eo))
     Greater => MemThere(Text, g, h, tags_insert(rest, g), ih)
@@ -428,7 +423,7 @@ pub theorem tinsk_has(
 }
 
 pub theorem tags_insert_has(g: Text, ts: List(Text)): Mem(Text, g, tags_insert(ts, g)) {
-  match ts: Mem(Text, g, tags_insert(ts, g)) {
+  ⊢ Mem(Text, g, tags_insert(ts, g)) from match ts {
     Nil => MemHere(Text, g, Nil(Text))
     Cons(h, rest) => Eq::subst(
       (z: List(Text)) => Mem(Text, g, z),
@@ -447,7 +442,7 @@ pub theorem tinsk_keep(
   ih: (Mem(Text, e, rest)) -> Mem(Text, e, tags_insert(rest, g)),
   m: Mem(Text, e, Cons(h, rest))
 ): Mem(Text, e, tins_k(g, h, rest, o)) {
-  match o: Mem(Text, e, tins_k(g, h, rest, o)) {
+  ⊢ Mem(Text, e, tins_k(g, h, rest, o)) from match o {
     Less => MemThere(Text, e, g, Cons(h, rest), m)
     Equal => m
     Greater => Or::elim(
@@ -464,7 +459,7 @@ pub theorem tags_insert_keep(
   g: Text,
   m: Mem(Text, e, ts)
 ): Mem(Text, e, tags_insert(ts, g)) {
-  match ts: Mem(Text, e, tags_insert(ts, g)) {
+  ⊢ Mem(Text, e, tags_insert(ts, g)) from match ts {
     Nil => Mem::nil(Mem(Text, e, tags_insert(Nil(Text), g)), m)
     Cons(h, rest) => Eq::subst(
       (z: List(Text)) => Mem(Text, e, z),
@@ -481,7 +476,7 @@ pub theorem tags_into_mem(
   a: List(Text),
   m: Mem(Text, e, tags_union_into(b, a))
 ): Or(Mem(Text, e, b), Mem(Text, e, a)) {
-  match b: Or(Mem(Text, e, b), Mem(Text, e, a)) {
+  ⊢ Or(Mem(Text, e, b), Mem(Text, e, a)) from match b {
     Nil => OrInr(m)
     Cons(t, rest) => Or::elim(
       tags_into_mem(e, rest, tags_insert(a, t), m),
@@ -501,7 +496,7 @@ pub theorem tags_into_keep(
   a: List(Text),
   m: Mem(Text, e, a)
 ): Mem(Text, e, tags_union_into(b, a)) {
-  match b: Mem(Text, e, tags_union_into(b, a)) {
+  ⊢ Mem(Text, e, tags_union_into(b, a)) from match b {
     Nil => m
     Cons(t, rest) => tags_into_keep(e, rest, tags_insert(a, t), tags_insert_keep(e, a, t, m))
   }
@@ -510,7 +505,7 @@ pub theorem tags_into_keep(
 pub theorem tags_into_has<e: Text, b: List(
   Text
 )>(m: Mem(Text, e, b), a: List(Text)): Mem(Text, e, tags_union_into(b, a)) {
-  match m: Mem(Text, e, tags_union_into(b, a)) {
+  ⊢ Mem(Text, e, tags_union_into(b, a)) from match m {
     MemHere(rest) => tags_into_keep(e, rest, tags_insert(a, e), tags_insert_has(e, a))
     MemThere(t, rest, m2) => tags_into_has(m2, tags_insert(a, t))
   }
@@ -545,14 +540,14 @@ pub theorem tags_union_right(
 }
 
 pub fn ty_tags(t: Ty): List(Text) {
-  match t: List(Text) {
+  ⊢ List(Text) from match t {
     TyTagged(tags, x) => tags
     _ => Nil
   }
 }
 
 pub fn ty_untagged(t: Ty): Ty {
-  match t: Ty {
+  ⊢ Ty from match t {
     TyTagged(tags, x) => x
     _ => t
   }
@@ -564,7 +559,7 @@ pub theorem tagged_shape(
   tags: List(Text),
   t: Ty
 ): ty_tagged(tags, t) = ty_tagged_with(tags_union(tags, ty_tags(t)), ty_untagged(t)) {
-  match t: ty_tagged(tags, t) = ty_tagged_with(tags_union(tags, ty_tags(t)), ty_untagged(t)) {
+  ⊢ ty_tagged(tags, t) = ty_tagged_with(tags_union(tags, ty_tags(t)), ty_untagged(t)) from match t {
     TyTagged(inner, x) => Refl
     _ => Refl
   }

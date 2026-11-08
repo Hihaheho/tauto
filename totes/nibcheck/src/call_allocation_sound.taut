@@ -28,13 +28,16 @@ pub theorem allocation_result_ty_bind(
   m: Mut1(Ty, Checker),
   first: AllocationResult(c, m),
   ordered: CkOrdered(ck_st(m)),
-  tail: ∀ value: Ty. ∀ next: Checker. ∀ advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true. ∀ current: CheckerAllocation(
+  tail: ∀ value: Ty. ∀ next: Checker. ∀ advanced: Nat::le(
+    ck_next_of(c),
+    ck_next_of(next)
+  ) = true. ∀ current: CheckerAllocation(
     next
   ). ∀ order: CkOrdered(
     next
   ). ∀ bounded: TypeAllocated(ck_next_of(next), value). AllocationResult(next, k(value, next))
 ): AllocationResult(c, frame_bind(Ty, Ty, k, m)) {
-  match m: AllocationResult(c, frame_bind(Ty, Ty, k, m)) {
+  ⊢ AllocationResult(c, frame_bind(Ty, Ty, k, m)) from match m {
     mut1(value, next) => allocation_result_start(
       c,
       next,
@@ -62,7 +65,7 @@ pub theorem application_fn_arity_allocation(
   expected: TypeListAllocated(ck_next_of(c), ps),
   bad: Bool
 ): AllocationAdvance(c, application_fn_arity(c, term, arguments, args, ps, bad)) {
-  match bad: AllocationAdvance(c, application_fn_arity(c, term, arguments, args, ps, bad)) {
+  ⊢ AllocationAdvance(c, application_fn_arity(c, term, arguments, args, ps, bad)) from match bad {
     true => allocation_advance_rewrap(
       c,
       ck_error(
@@ -97,13 +100,20 @@ pub theorem application_fn_known_allocation(
   result_bound: TypeAllocated(ck_next_of(c), r),
   known: Option(List(Ty))
 ): AllocationResult(c, application_fn_known(c, term, arguments, args, ps, r, known)) {
-  match known: AllocationResult(c, application_fn_known(c, term, arguments, args, ps, r, known)) {
+  ⊢ AllocationResult(c, application_fn_known(c, term, arguments, args, ps, r, known)) from match known {
     Some(kp) => allocation_result_return(c, r, state, result_bound)
     None => allocation_result_bind(
       Unit,
       c,
       (ignored: Unit, next: Checker) => mut1(r, next),
-      application_fn_arity(c, term, arguments, args, ps, not(Nat::eq(list_len(ps), list_len(args)))),
+      application_fn_arity(
+        c,
+        term,
+        arguments,
+        args,
+        ps,
+        not(Nat::eq(list_len(ps), list_len(args)))
+      ),
       application_fn_arity_allocation(
         c,
         term,
@@ -240,10 +250,10 @@ pub theorem application_fn_allocation(
   fr: Ty,
   bounded: TypeAllocated(ck_next_of(c), fr)
 ): AllocationResult(c, application_fn(c, term, function, arguments, f, known, args, original, fr)) {
-  match fr: AllocationResult(
+  ⊢ AllocationResult(
     c,
     application_fn(c, term, function, arguments, f, known, args, original, fr)
-  ) {
+  ) from match fr {
     TyInt(w) => allocation_error_fresh(
       c,
       cat2(ty_show(original), " is not a function"),

@@ -27,9 +27,16 @@ pub fn family(d: &DataDecl, is_struct: bool) -> InductiveDecl {
     let span = d.span;
     let ty = |n: &str| SurfaceTerm::var(n, span);
     let result = if d.generics.is_empty() {
-        ty(&d.name)
+        SurfaceTerm::var(&d.name, span)
     } else {
-        SurfaceTerm::app(&d.name, d.generics.iter().map(|g| ty(g)).collect(), span)
+        SurfaceTerm::app(
+            &d.name,
+            d.generics
+                .iter()
+                .map(|g| SurfaceTerm::var(g, span))
+                .collect(),
+            span,
+        )
     };
     InductiveDecl {
         vis: Default::default(),
@@ -41,7 +48,10 @@ pub fn family(d: &DataDecl, is_struct: bool) -> InductiveDecl {
             .iter()
             .map(|c| Constructor {
                 name: if is_struct {
-                    struct_constructor(&d.name)
+                    match &d.name {
+                        crate::identity::Name::Global(owner) => owner.constructor(0, "Mk").into(),
+                        _ => crate::identity::Name::Spelled(struct_constructor(&d.name)),
+                    }
                 } else {
                     c.name.clone()
                 },
@@ -50,7 +60,7 @@ pub fn family(d: &DataDecl, is_struct: bool) -> InductiveDecl {
                     .fields
                     .iter()
                     .enumerate()
-                    .map(|(i, (n, t))| (n.clone().unwrap_or(format!("_{i}")), t.clone()))
+                    .map(|(i, (n, t))| (n.clone().unwrap_or(format!("_{i}")).into(), t.clone()))
                     .collect(),
                 result: result.clone(),
             })
@@ -83,7 +93,7 @@ pub fn proof_type(name: &str) -> Option<&'static str> {
 /// cannot be given to the kernel; empty when it can. What is left (a field
 /// whose type the kernel does not have, a nested use of the type itself) the
 /// kernel reports when it checks the family.
-pub fn problems(d: &DataDecl, is_struct: bool) -> Vec<(String, Span)> {
+pub fn problems(d: &DataDecl, is_struct: bool) -> Vec<(tauto_message::Message, Span)> {
     let keyword = if is_struct { "struct" } else { "enum" };
     let what = format!("`inductive {keyword} {}`", d.name);
     let mut out = Vec::new();
@@ -118,5 +128,7 @@ pub fn problems(d: &DataDecl, is_struct: bool) -> Vec<(String, Span)> {
             }
         }
     }
-    out
+    out.into_iter()
+        .map(|(t, s): (String, Span)| (t.into(), s))
+        .collect()
 }

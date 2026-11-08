@@ -10,7 +10,7 @@ import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub fn local_find_choice(head: Local, rest: List(Local), name: Text, same: Bool): Option(Local) {
-  match same: Option(Local) {
+  ⊢ Option(Local) from match same {
     true => Some(head)
     false => env_find(rest, name)
   }
@@ -19,7 +19,10 @@ pub theorem local_find_unf(
   head: Local,
   rest: List(Local),
   name: Text
-): env_find(Cons(head, rest), name) = local_find_choice(head, rest, name, Text::eq(expr_local_name(head), name)) { Refl }
+): env_find(
+  Cons(head, rest),
+  name
+) = local_find_choice(head, rest, name, Text::eq(expr_local_name(head), name)) { Refl }
 
 pub theorem local_text_different(
   a: Text,
@@ -42,9 +45,12 @@ pub theorem local_find_choice_sound(
   same: Bool,
   comparison: Text::eq(expr_local_name(head), name) = same,
   found: local_find_choice(head, rest, name, same) = Some(local),
-  ih: ∀ result: Local. ∀ lookup: env_find(rest, name) = Some(result). LocalBinding(rest, name, result)
+  ih: ∀ result: Local. ∀ lookup: env_find(
+    rest,
+    name
+  ) = Some(result). LocalBinding(rest, name, result)
 ): LocalBinding(Cons(head, rest), name, local) {
-  match same: LocalBinding(Cons(head, rest), name, local) {
+  ⊢ LocalBinding(Cons(head, rest), name, local) from match same {
     true => Eq::subst(
       (value: Local) => LocalBinding(Cons(head, rest), name, value),
       ck_some_inj(head, local, found),
@@ -67,7 +73,7 @@ pub theorem env_find_sound(
   local: Local,
   found: env_find(env, name) = Some(local)
 ): LocalBinding(env, name, local) {
-  match env: LocalBinding(env, name, local) {
+  ⊢ LocalBinding(env, name, local) from match env {
     Nil => False::elim(ck_none_ne_some(local, found))
     Cons(head, rest) => local_find_choice_sound(
       head,
@@ -130,7 +136,7 @@ pub theorem local_text_unequal_at(
   comparison: Text::eq(a, b) = same,
   different: (a = b) -> False
 ): same = false {
-  match same: same = false {
+  ⊢ same = false from match same {
     true => False::elim(different(text_eq_sound(a, b, comparison)))
     false => Refl
   }
@@ -164,7 +170,7 @@ pub theorem env_find_complete<env: List(
 ), name: Text, local: Local>(
   binding: LocalBinding(env, name, local)
 ): env_find(env, name) = Some(local) {
-  match binding: env_find(env, name) = Some(local) {
+  ⊢ env_find(env, name) = Some(local) from match binding {
     LocalBindingHere(head, rest) => Eq::trans(
       local_find_unf(head, rest, expr_local_name(head)),
       Eq::congr(

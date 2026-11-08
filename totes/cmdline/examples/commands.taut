@@ -1,0 +1,56 @@
+import std::Text
+import "../src/cmdline.taut"
+import "../src/cli.taut"
+
+// Subcommands: each is a `cli!` declaration of its own, and `command(A|B)`
+// reads the first positional argument that names one of them, then hands it
+// the arguments after its name.
+
+cli!(`Add "add" "Add a file" { force -f: switch "Overwrite" path: arg text "The file" }`) =>
+  inductive Add, fn Add::spec, fn Add::checks, fn Add::of, fn Add::parse, fn Add::help, fn Add::message, theorem Add::renderable, theorem Add::round_trip, fn Add::force, theorem Add::force::reads, fn Add::path, theorem Add::path::reads
+
+cli!(`Remove "rm" "Remove a file" { path: arg text "The file" }`) =>
+  inductive Remove, fn Remove::spec, fn Remove::checks, fn Remove::of, fn Remove::parse, fn Remove::help, fn Remove::message, theorem Remove::renderable, theorem Remove::round_trip, fn Remove::path, theorem Remove::path::reads
+
+cli!(`Tool "tool" "Manage files" version "0.1.0" { verbose -v: count "Say more" cmd: command(Add|Remove) "" }`) =>
+  inductive Tool::cmd_value, fn Tool::cmd_value::run, inductive Tool, fn Tool::spec, fn Tool::checks, fn Tool::of, fn Tool::parse, fn Tool::help, fn Tool::message, theorem Tool::renderable, theorem Tool::round_trip, fn Tool::verbose, theorem Tool::verbose::reads, fn Tool::cmd, theorem Tool::cmd::reads
+
+theorem parse_add(): Tool::parse(Cons("-v", Cons("add", Cons("-f", Cons("a.txt", Nil))))) = Ok(Tool::Mk(1, Tool::cmd_value::Add(Add::Mk(true, "a.txt")))) {
+  Refl
+}
+
+theorem parse_rm(): Tool::parse(Cons("rm", Cons("b.txt", Nil))) = Ok(Tool::Mk(0, Tool::cmd_value::Remove(Remove::Mk("b.txt")))) {
+  Refl
+}
+
+// After the subcommand's name, the words are the subcommand's: `-v` there is
+// not the parent's.
+theorem parse_child_error(): Tool::parse(Cons("rm", Cons("-v", Cons("b.txt", Nil)))) = Failed(InSub(1, Unknown("-v"))) {
+  Refl
+}
+
+theorem parse_no_command(): Tool::parse(Cons("-v", Nil)) = Failed(MissingCommand) {
+  Refl
+}
+
+theorem parse_not_a_command(): Tool::parse(Cons("mv", Nil)) = Failed(MissingCommand) {
+  Refl
+}
+
+theorem help_text(): Tool::help() = "Manage files\n\nUsage: tool [OPTIONS] <COMMAND>\n\nCommands:\n  add            Add a file\n  rm             Remove a file\n\nOptions:\n  -v, --verbose  Say more\n  -h, --help     Print help\n  -V, --version  Print version\n" {
+  Refl
+}
+
+// A subcommand's error and help are shown as the subcommand's, named after
+// the parent.
+theorem child_message(): Tool::message(InSub(1, Unknown("-v"))) = "error: unexpected argument '-v' found\n\nUsage: tool rm [OPTIONS] <PATH>\n\nFor more information, try '--help'.\n" {
+  Refl
+}
+
+theorem child_help(): Tool::message(InSub(0, AskedHelp)) = "Add a file\n\nUsage: tool add [OPTIONS] <PATH>\n\nArguments:\n  <PATH>         The file\n\nOptions:\n  -f, --force    Overwrite\n  -h, --help     Print help\n  -V, --version  Print version\n" {
+  Refl
+}
+
+theorem no_command_message(): Tool::message(MissingCommand) = "error: 'tool' requires a subcommand but one was not provided\n\nUsage: tool [OPTIONS] <COMMAND>\n\nFor more information, try '--help'.\n" {
+  Refl
+}

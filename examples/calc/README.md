@@ -22,7 +22,7 @@ tauto check examples/calc/proof/calc.taut
 ```
 (2 + 3) * (4 + 5) => 45
 1 + 2 * 3 => 7
-2 + * 3 => error: macro.syntax_error: in calc: expected Num or LParen, found Star
+2 + * 3 => error: expected Num or LParen, found Star
 ```
 
 `calc_expr_val` says what a tree means, written on the tree (a sum of products). `proof/calc.taut` proves, with no axioms:

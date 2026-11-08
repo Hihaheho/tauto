@@ -1,0 +1,47 @@
+// A row variable that a parameter carries only inside a callback's own
+// parameter, `run: (() -> i64 ! e) -> …`, is one the argument assumes and
+// no argument supplies. The callee hands `run` thunks of row `e` for every
+// `e`, so a call instantiates it with the empty row, and every backend
+// specializes it to the synchronous tier.
+@ cases.assumed-row-variable-runs
+source = ```tauto
+import std::prelude::Os
+
+effect ask(): i64
+
+fn twice<!e, !h>(run: (() -> i64 ! e) -> i64 ! h, x: i64): i64 ! h {
+  run(() => x) + run(() => x + 1)
+}
+
+fn asked(): i64 ! {ask} {
+  twice((k) => k() + perform ask(), 3)
+}
+
+print(Text::of_i64(handle { asked() } with {
+  ask(), k => k(10)
+  return v => v
+}))
+```
+stdout = "27"
+rust_shows = []
+javascript_shows = []
+
+// Thunks of row `e` are made for every `e`: one that performs anything is
+// not one of them.
+@ cases.assumed-row-variable-thunk-must-not-perform
+source = ```tauto
+effect ask(): i64
+fn sneaky<!e, !h>(run: (() -> i64 ! e) -> i64 ! h): i64 ! h { run(() => perform ask()) }
+print(Text::of_i64(sneaky((k) => k())))
+```
+rows = "error: a function value may perform ask but its type permits {|e}"
+
+// What the callback performs is still its caller's.
+@ cases.assumed-row-variable-keeps-the-callback-row
+source = ```tauto
+effect ask(): i64
+fn twice<!e, !h>(run: (() -> i64 ! e) -> i64 ! h): i64 ! h { run(() => 1) }
+fn quiet(): i64 ! {} { twice((k) => k() + perform ask()) }
+print(Text::of_i64(quiet()))
+```
+rows = "error: `quiet` may perform ask but its row is {}"

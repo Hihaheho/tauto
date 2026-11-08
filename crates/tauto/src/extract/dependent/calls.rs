@@ -1,99 +1,77 @@
 //! Source-slot calling convention and direct-call specialization.
 use super::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct Prefix {
-    count: usize,
-    needs_value: bool,
-}
-
-type Callees = BTreeMap<String, std::collections::BTreeSet<Prefix>>;
-
+type Callees = BTreeMap<Name, Vec<Vec<SurfaceTerm>>>;
 #[derive(Default)]
 pub(super) struct Applications {
-    sites: HashMap<(u32, u32, usize), Callees>,
+    sites: HashMap<(crate::surface::TermId, usize), Callees>,
 }
-
 impl Applications {
     pub(super) fn new(checked: &Checked) -> Self {
-        let parameters: HashMap<_, _> = checked
-            .families
-            .values()
-            .flat_map(|family| {
-                family
-                    .ctors
-                    .iter()
-                    .map(move |name| (name.as_str(), family.params))
-            })
-            .collect();
         let mut out = Self::default();
         for site in &checked.application_sites {
-            let skip = parameters.get(site.callee.as_str()).copied().unwrap_or(0);
-            let needs_value = site.omitted > 0
-                && checked.signatures.get(&site.callee).is_none_or(|sig| {
-                    sig.result == Role::Value
-                        && sig
-                            .params
-                            .get(skip.min(site.omitted)..site.omitted)
-                            .is_none_or(|roles| roles.contains(&Role::Value))
-                });
-            out.sites
-                .entry((site.span.start, site.span.end, site.written))
+            // Effect elaboration explicitly supplies the operation/answer
+            // pair, although the source call does not write either slot.
+            let row_slots = checked
+                .row_parameter_slots
+                .get(&site.callee)
+                .map_or(0, |slots| slots.len());
+            let written = site.written.saturating_sub(row_slots);
+            let choices = out
+                .sites
+                .entry((site.occurrence, written))
                 .or_default()
                 .entry(site.callee.clone())
-                .or_default()
-                .insert(Prefix {
-                    count: site.omitted,
-                    needs_value,
-                });
+                .or_default();
+            if !choices.iter().any(|args| Self::same(args, &site.arguments)) {
+                choices.push(site.arguments.clone());
+            }
         }
         out
     }
-
-    fn omitted(
+    fn same(a: &[SurfaceTerm], b: &[SurfaceTerm]) -> bool {
+        a.len() == b.len()
+            && a.iter()
+                .zip(b)
+                .all(|(a, b)| crate::surface::same_term_structure(a, b))
+    }
+    fn inserted(
         &self,
-        span: Span,
+        occurrence: crate::surface::TermId,
         written: usize,
-        callee: Option<&str>,
-    ) -> Result<Option<usize>, String> {
-        let Some(site) = self.sites.get(&(span.start, span.end, written)) else {
+        callee: Option<&Name>,
+    ) -> Result<Option<Vec<SurfaceTerm>>, Message> {
+        let Some(site) = self.sites.get(&(occurrence, written)) else {
             return Ok(None);
         };
-        let exact = callee.and_then(|name| site.get(name));
-        let candidates: std::collections::BTreeSet<_> = match exact {
-            Some(counts) => counts.clone(),
-            None => site
-                .values()
-                .flat_map(|counts| counts.iter().copied())
-                .collect(),
+        let candidates: Vec<_> = match callee {
+            Some(name) => site.get(name).into_iter().flatten().collect(),
+            None => site.values().flatten().collect(),
         };
-        if candidates.iter().any(|prefix| prefix.needs_value) {
+        let Some(first) = candidates.first() else {
+            return Ok(None);
+        };
+        if !candidates.iter().all(|args| Self::same(first, args)) {
             return Err(
-                "dependent extraction: supply runtime implicit arguments explicitly".into(),
+                "dependent extraction: inconsistent implicit application references".into(),
             );
         }
-        if candidates.len() > 1 {
-            return Err(format!(
-                "dependent extraction: inconsistent implicit application metadata for {callee:?} at {span:?}: {candidates:?}"
-            ));
-        }
-        Ok(candidates.into_iter().next().map(|prefix| prefix.count))
+        Ok(Some((*first).clone()))
     }
 }
 
 impl Eraser<'_> {
-    pub(super) fn arity(&self, name: &str) -> usize {
+    pub(super) fn arity(&self, name: &Name) -> usize {
         self.checked
             .arities
             .get(name)
             .copied()
             .unwrap_or(self.checked.signatures[name].params.len())
     }
-    pub(super) fn roles(&self, name: &str) -> Result<Vec<Role>, String> {
+    pub(super) fn roles(&self, name: &Name) -> Result<Vec<Role>, Message> {
         let sig = self
             .checked
-            .signatures
-            .get(name)
+            .source_call_signature(name)
             .ok_or_else(|| format!("dependent extraction: no signature for {name}"))?;
         let mut rs = sig.params.clone();
         if let Some(fam) = self
@@ -104,19 +82,26 @@ impl Eraser<'_> {
         {
             rs[..fam.params].fill(Role::Proof);
         }
-        rs.truncate(self.arity(name));
+        rs.truncate(
+            self.arity(name)
+                - self
+                    .checked
+                    .row_parameter_slots
+                    .get(name)
+                    .map_or(0, |slots| slots.len()),
+        );
         Ok(rs)
     }
-    pub(super) fn omitted(
+    pub(super) fn inserted(
         &self,
-        span: Span,
+        occurrence: crate::surface::TermId,
         written: usize,
-        callee: Option<&str>,
-    ) -> Result<Option<usize>, String> {
-        self.applications.omitted(span, written, callee)
+        callee: Option<&Name>,
+    ) -> Result<Option<Vec<SurfaceTerm>>, Message> {
+        self.applications.inserted(occurrence, written, callee)
     }
 
-    pub(super) fn lift(&mut self, name: &str) -> Result<String, String> {
+    pub(super) fn lift(&mut self, name: &Name) -> Result<String, Message> {
         let roles = self.roles(name)?;
         let slots: Vec<_> = roles.iter().map(|_| self.fresh("Arg")).collect();
         let values = slots
@@ -131,24 +116,23 @@ impl Eraser<'_> {
 
     pub(super) fn global(
         &mut self,
-        name: &str,
+        name: &Name,
         args: &[SurfaceTerm],
         locals: &Scope,
-        span: Span,
+        source: &SurfaceTerm,
         applied: bool,
-    ) -> Result<String, String> {
-        if name == "the" {
+    ) -> Result<String, Message> {
+        if tauto_surface::bindings::is_library(name, "the") {
             return self.expr(args.last().ok_or("empty ascription")?, locals);
         }
         if self.checked.families.contains_key(name)
-            || name == "Type"
-            || name == "Prop"
-            || name == "="
+            || name.sort_symbol().is_some()
+            || tauto_surface::bindings::is_library(name, "=")
             || self.std.of(name) == Some("Quot")
         {
             return Ok(ERASED.into());
         }
-        let builtin = self.std.of(name).unwrap_or(name);
+        let builtin = self.std.of(name).unwrap_or("");
         if matches!(builtin, "+" | "-" | "*" | "==" | "<" | "<=" | ">" | ">=") {
             let values = args
                 .iter()
@@ -176,63 +160,78 @@ impl Eraser<'_> {
         }
         let sig = self
             .checked
-            .signatures
-            .get(name)
+            .source_call_signature(name)
             .ok_or_else(|| format!("dependent extraction: unknown global {name}"))?;
         if sig.result != Role::Value {
             return Ok(ERASED.into());
         }
-        let arity = self.arity(name);
+        let row_slots = self.checked.row_parameter_slots.get(name).cloned();
+        let arity = self.arity(name) - row_slots.as_ref().map_or(0, |slots| slots.len());
         let constructor = self
             .checked
             .families
             .values()
             .any(|family| family.ctors.iter().any(|ctor| ctor == name));
-        if !applied && arity > 0 && (!constructor || sig.params[..arity].contains(&Role::Value)) {
+        let inserted = if sig.implicit == 0 {
+            Some(Vec::new())
+        } else {
+            self.inserted(source.id(), args.len(), Some(name))?
+        };
+        if !applied
+            && inserted.as_ref().is_none_or(Vec::is_empty)
+            && arity > 0
+            && (!constructor || sig.params[..arity].contains(&Role::Value))
+        {
             return self.lift(name);
         }
-        let inserted = if sig.implicit == 0 {
-            Some(0)
-        } else {
-            self.omitted(span, args.len(), Some(name))?
-        };
-        let omitted = match inserted {
-            Some(count) => count,
-            None if args.len() == arity => 0,
-            None if args.len() + sig.implicit == arity => sig.implicit,
+        let roles = self.roles(name)?;
+        let prefix = match inserted {
+            Some(prefix) => prefix,
+            None if args.len() == arity => Vec::new(),
+            None if args.len() + sig.implicit == arity
+                && roles[..sig.implicit]
+                    .iter()
+                    .all(|role| *role != Role::Value) =>
+            {
+                vec![
+                    SurfaceTerm::var(&crate::bindings::library_name("Type"), source.span);
+                    sig.implicit
+                ]
+            }
             None => {
-                return Err(format!(
-                    "dependent extraction: missing implicit application metadata for {name}"
+                return Err(msg!(
+                    "tauto-extract-dependent-missing-implicit-metadata",
+                    name = name.to_string()
                 ));
             }
         };
-        let roles = self.roles(name)?;
-        if roles
-            .get(..omitted)
-            .is_none_or(|prefix| prefix.contains(&Role::Value))
-        {
-            return Err(
-                "dependent extraction: supply runtime implicit arguments explicitly".into(),
-            );
-        }
-        if args.len() + omitted == arity {
-            let values = args
+        let supplied: Vec<_> = prefix.iter().chain(args).collect();
+        if supplied.len() == arity {
+            let values = supplied
                 .iter()
-                .zip(&roles[omitted..])
+                .zip(&roles)
                 .filter(|(_, role)| **role == Role::Value)
                 .map(|(arg, _)| self.expr(arg, locals))
                 .collect::<Result<Vec<_>, _>>()?;
             self.call(name, &values)
         } else {
             let f = self.lift(name)?;
-            let mut values = vec![ERASED.to_string(); omitted];
-            for arg in args {
-                values.push(self.expr(arg, locals)?);
-            }
+            let values = supplied
+                .iter()
+                .enumerate()
+                .map(|(index, arg)| {
+                    if roles.get(index).is_some_and(|r| *r != Role::Value) {
+                        Ok(ERASED.to_string())
+                    } else {
+                        self.expr(arg, locals)
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             Ok(format!("TautoErasedApply#r0({f}, [{}])", values.join(", ")))
         }
     }
-    pub(super) fn call(&mut self, name: &str, values: &[String]) -> Result<String, String> {
+
+    pub(super) fn call(&mut self, name: &Name, values: &[String]) -> Result<String, Message> {
         let builtin = self.std.of(name);
         match (builtin, values) {
             (Some("Quot::mk"), [value]) => return Ok(value.clone()),
@@ -277,5 +276,137 @@ impl Eraser<'_> {
             "{FUN}({}, ({args}: List({VALUE})) => match {args} {{ {pattern} => {body}\n _ => extract_unreachable() }})",
             xs.len()
         )
+    }
+}
+
+impl Eraser<'_> {
+    /// A named body keeps nested continuations shallow for downstream analyses.
+    /// Only free lexical values are captured; erased locals carry no environment.
+    pub(super) fn closure_in(
+        &mut self,
+        parameters: &[Name],
+        body: &str,
+        scope: &Scope,
+    ) -> Result<String, Message> {
+        if !self.computations {
+            return Ok(self.closure(
+                &parameters
+                    .iter()
+                    .map(|name| self.symbol(name))
+                    .collect::<Vec<_>>(),
+                body,
+            ));
+        }
+        fn pattern(p: &Pattern, bound: &mut HashSet<Name>) {
+            match p {
+                Pattern::Bind(n) => {
+                    bound.insert(n.clone());
+                }
+                Pattern::Ctor { args, .. } => {
+                    for p in args {
+                        pattern(p, bound);
+                    }
+                }
+                _ => {}
+            }
+        }
+        fn free(
+            t: &SurfaceTerm,
+            bound: &HashSet<Name>,
+            out: &mut std::collections::BTreeSet<Name>,
+        ) {
+            match &*t.kind {
+                TermKind::Var(n) => {
+                    if !bound.contains(n) {
+                        out.insert(n.clone());
+                    }
+                }
+                TermKind::Lam { params, body, .. } => {
+                    let mut bound = bound.clone();
+                    bound.extend(params.iter().cloned());
+                    free(body, &bound, out);
+                }
+                TermKind::Block(stmts) => {
+                    let mut bound = bound.clone();
+                    for s in stmts {
+                        match s {
+                            Stmt::Let { name, value, .. } | Stmt::Var { name, value, .. } => {
+                                free(value, &bound, out);
+                                bound.insert(name.clone());
+                            }
+                            Stmt::Expr(t) => free(t, &bound, out),
+                            _ => {}
+                        }
+                    }
+                }
+                TermKind::Match {
+                    scrutinee, arms, ..
+                } => {
+                    free(scrutinee, bound, out);
+                    for arm in arms {
+                        let mut inner = bound.clone();
+                        pattern(&arm.pattern, &mut inner);
+                        if let Some(guard) = &arm.guard {
+                            free(guard, &inner, out);
+                        }
+                        free(&arm.body, &inner, out);
+                    }
+                }
+                _ => crate::surface::walk::children(&mut t.clone(), &mut |child| {
+                    free(child, bound, out)
+                }),
+            }
+        }
+        let (readable, renamed) = legal_names(body);
+        let mut parsed = crate::surface::parse_expr_at(&readable, 0)?;
+        self.references.term(&mut parsed);
+        let original: HashMap<_, _> = renamed.into_iter().map(|(from, to)| (to, from)).collect();
+        crate::surface::references::term(&mut parsed, &mut |name| {
+            if let Name::Spelled(token) = name {
+                if let Some(label) = original.get(token) {
+                    *token = label.clone();
+                }
+            }
+        });
+        let mut names = std::collections::BTreeSet::new();
+        let bound = parameters.iter().cloned().collect();
+        free(&parsed, &bound, &mut names);
+        let mut captured: Vec<_> = names
+            .into_iter()
+            .filter_map(|name| match scope.bindings.get(&name) {
+                Some(Binding::Value) => Some((name, VALUE.to_string())),
+                Some(Binding::Mutable { ty, .. }) => Some((name, format!("Ref({ty})"))),
+                _ => None,
+            })
+            .collect();
+        captured.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()).then(a.cmp(b)));
+        let function = self.fresh("Continuation");
+        let args: Vec<_> = captured
+            .iter()
+            .map(|(name, _)| self.symbol(name))
+            .chain(parameters.iter().map(|name| self.symbol(name)))
+            .collect();
+        let params: Vec<_> = captured
+            .iter()
+            .map(|(name, ty)| format!("{}: {ty}", self.symbol(name)))
+            .chain(
+                parameters
+                    .iter()
+                    .map(|name| format!("{}: {VALUE}", self.symbol(name))),
+            )
+            .collect();
+        self.definitions.push(format!(
+            "fn {function}({}): {VALUE} {{ {body} }}",
+            params.join(", ")
+        ));
+        self.total.insert(function.clone().into());
+        self.forbidden.insert(function.clone());
+        Ok(self.closure(
+            &parameters
+                .iter()
+                .map(|name| self.symbol(name))
+                .collect::<Vec<_>>(),
+            &format!("{function}({})", args.join(", ")),
+        ))
     }
 }

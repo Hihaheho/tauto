@@ -15,7 +15,7 @@ pub theorem registration_if_context(
   take: Bool,
   h: CkContextFrame(c, m)
 ): CkContextFrame(c, registration_if(c, m, take)) {
-  match take: CkContextFrame(c, registration_if(c, m, take)) {
+  ⊢ CkContextFrame(c, registration_if(c, m, take)) from match take {
     true => context_rewrap(c, m, h)
     false => ordinary => Refl
   }
@@ -24,7 +24,7 @@ pub theorem ck_program_data_one_context(
   c: Checker,
   s: SurfaceStmt
 ): CkContextFrame(c, ck_program_data_one(c, s)) {
-  match s: CkContextFrame(c, ck_program_data_one(c, s)) {
+  ⊢ CkContextFrame(c, ck_program_data_one(c, s)) from match s {
     StLet(name, ty, value, borrow, mutable) => ordinary => Refl
     StVar(name, ty, value, borrow) => ordinary => Refl
     StModule(name, stmts, start, end) => ordinary => Refl
@@ -50,12 +50,20 @@ pub theorem ck_program_data_one_context(
     StStruct(d) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkContextFrame(c, m),
       Eq::sym(registration_program_StStruct_unf(d, c)),
-      context_rewrap(c, ck_declare_data(c, d, true, false), ck_declare_data_context(c, d, true, false))
+      context_rewrap(
+        c,
+        ck_declare_data(c, d, true, false),
+        ck_declare_data_context(c, d, true, false)
+      )
     )
     StEnum(d) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkContextFrame(c, m),
       Eq::sym(registration_program_StEnum_unf(d, c)),
-      context_rewrap(c, ck_declare_data(c, d, false, false), ck_declare_data_context(c, d, false, false))
+      context_rewrap(
+        c,
+        ck_declare_data(c, d, false, false),
+        ck_declare_data_context(c, d, false, false)
+      )
     )
   }
 }
@@ -63,7 +71,7 @@ pub theorem ck_program_data_context(
   stmts: List(SurfaceStmt),
   c: Checker
 ): CkContextFrame(c, ck_program_data(stmts, c)) {
-  match stmts: CkContextFrame(c, ck_program_data(stmts, c)) {
+  ⊢ CkContextFrame(c, ck_program_data(stmts, c)) from match stmts {
     Nil => ordinary => Refl
     Cons(s, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkContextFrame(c, m),
@@ -89,7 +97,7 @@ pub theorem ck_prelude_data_one_context(
   s: SurfaceStmt,
   own: Ordmap(Text, Bool)
 ): CkContextFrame(c, ck_prelude_data_one(c, s, own)) {
-  match s: CkContextFrame(c, ck_prelude_data_one(c, s, own)) {
+  ⊢ CkContextFrame(c, ck_prelude_data_one(c, s, own)) from match s {
     StLet(name, ty, value, borrow, mutable) => ordinary => Refl
     StVar(name, ty, value, borrow) => ordinary => Refl
     StModule(name, stmts, start, end) => ordinary => Refl
@@ -148,7 +156,7 @@ pub theorem ck_prelude_data_context(
   c: Checker,
   own: Ordmap(Text, Bool)
 ): CkContextFrame(c, ck_prelude_data(stmts, c, own)) {
-  match stmts: CkContextFrame(c, ck_prelude_data(stmts, c, own)) {
+  ⊢ CkContextFrame(c, ck_prelude_data(stmts, c, own)) from match stmts {
     Nil => ordinary => Refl
     Cons(s, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkContextFrame(c, m),

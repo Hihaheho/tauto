@@ -14,6 +14,11 @@ pub struct Diagnostic {
     pub detail: Option<Box<Mismatch>>,
     /// An edit of the source that answers this, when there is one.
     pub fix: Option<Fix>,
+    /// The other uses in the same declaration of names that are not
+    /// defined, in the order of the source. Whether a name is defined does
+    /// not depend on any type, so these are found without checking on past
+    /// this failure.
+    pub also: Vec<Diagnostic>,
 }
 
 pub use crate::surface::Fix;
@@ -30,7 +35,7 @@ pub struct Mismatch {
     /// The call whose argument this is, and which argument (from 0, the
     /// generics not counted): the expected type of the call fixed what that
     /// argument had to be.
-    pub argument: Option<(String, usize)>,
+    pub argument: Option<(crate::surface::Name, usize)>,
 }
 
 impl Diagnostic {
@@ -40,6 +45,7 @@ impl Diagnostic {
             span,
             detail: None,
             fix: None,
+            also: Vec::new(),
         }
     }
 }
@@ -57,10 +63,10 @@ impl fmt::Display for Diagnostic {
 pub enum Verdict {
     /// Checked; the user axioms it depends on.
     Checked {
-        axioms: Vec<String>,
+        axioms: Vec<crate::surface::Name>,
     },
     /// Not a kernel declaration (an executable function, a statement).
-    Skipped(String),
+    Skipped(Message),
     Failed(Diagnostic),
     /// Everything written checks, but a hole `?h` stands for a term not
     /// written yet, or the declaration uses one that is incomplete. Nothing
@@ -68,7 +74,7 @@ pub enum Verdict {
     /// accepted.
     Incomplete {
         holes: Vec<HoleGoal>,
-        uses: Vec<String>,
+        uses: Vec<crate::surface::Name>,
     },
 }
 
@@ -79,18 +85,18 @@ pub struct HoleGoal {
     pub name: String,
     pub span: Span,
     pub goal: SurfaceTerm,
-    pub context: Vec<(String, SurfaceTerm)>,
+    pub context: Vec<(crate::surface::Name, SurfaceTerm)>,
     /// The statement of the declaration the hole is in, once the declaration
     /// is known (it is not while the hole is first recorded).
     pub statement: Option<SurfaceTerm>,
     /// The names of that declaration's parameters, which tell a parameter
     /// in `context` from a variable a `let` or a pattern bound.
-    pub params: Vec<String>,
+    pub params: Vec<crate::surface::Name>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
-    pub name: String,
+    pub name: crate::surface::Name,
     pub verdict: Verdict,
 }
 

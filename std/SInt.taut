@@ -22,20 +22,20 @@ pub(open) inductive I32: Type {
 module I32 {
   // Mapped: the integer a `i32` is.
   pub fn val(x: I32): Int {
-    match x: Int {
+    ⊢ Int from match x {
       Mk(v, h) => v
     }
   }
 
   pub theorem ok(x: I32): fits(val(x)) = true {
-    match x: fits(val(x)) = true {
+    ⊢ fits(val(x)) = true from match x {
       Mk(v, h) => h
     }
   }
 
   // Mapped: `v` as a `i32` when `o`, the decision of whether it fits, says so.
   pub fn of_decided(v: Int, o: Bool, h: fits(v) = o): Option(I32) {
-    match o: Option(I32) {
+    ⊢ Option(I32) from match o {
       false => None
       true => Some(I32::Mk(v, h))
     }
@@ -88,7 +88,7 @@ module I32 {
 
   // The value in `o`, or `overflow`.
   pub fn or_overflow(o: Option(I32)): I32 ! {overflow} {
-    match o: I32 {
+    ⊢ I32 from match o {
       Some(x) => x
       None => Never::elim(perform overflow())
     }
@@ -113,7 +113,7 @@ module I32 {
 
   // `tdiv`, or `None` when `b` is 0 or it does not fit.
   pub fn checked_tdiv(a: I32, b: I32): Option(I32) {
-    match Int::eq(val(b), 0) eqn h: Option(I32) {
+    ⊢ Option(I32) from match Int::eq(val(b), 0) eqn h {
       false => tdiv_nz(a, b, Int::ne_zero(val(b), h))
       true => None
     }
@@ -121,7 +121,7 @@ module I32 {
 
   // `a / b` rounded toward zero, `DivZero` when `b` is 0, or `overflow` when it does not fit.
   pub fn tdiv(a: I32, b: I32): I32 ! {DivZero, overflow} {
-    match Int::eq(val(b), 0): I32 {
+    ⊢ I32 from match Int::eq(val(b), 0) {
       false => or_overflow(checked_tdiv(a, b))
       true => Never::elim(perform DivZero())
     }
@@ -134,7 +134,7 @@ module I32 {
 
   // `tmod`, or `None` when `b` is 0 or it does not fit.
   pub fn checked_tmod(a: I32, b: I32): Option(I32) {
-    match Int::eq(val(b), 0) eqn h: Option(I32) {
+    ⊢ Option(I32) from match Int::eq(val(b), 0) eqn h {
       false => tmod_nz(a, b, Int::ne_zero(val(b), h))
       true => None
     }
@@ -142,7 +142,7 @@ module I32 {
 
   // The remainder of `tdiv`, with the sign of `a`, `DivZero` when `b` is 0, or `overflow` when it does not fit.
   pub fn tmod(a: I32, b: I32): I32 ! {DivZero, overflow} {
-    match Int::eq(val(b), 0): I32 {
+    ⊢ I32 from match Int::eq(val(b), 0) {
       false => or_overflow(checked_tmod(a, b))
       true => Never::elim(perform DivZero())
     }
@@ -155,7 +155,7 @@ module I32 {
 
   // `fdiv`, or `None` when `b` is 0 or it does not fit.
   pub fn checked_fdiv(a: I32, b: I32): Option(I32) {
-    match Int::eq(val(b), 0) eqn h: Option(I32) {
+    ⊢ Option(I32) from match Int::eq(val(b), 0) eqn h {
       false => fdiv_nz(a, b, Int::ne_zero(val(b), h))
       true => None
     }
@@ -163,7 +163,7 @@ module I32 {
 
   // `a / b` rounded down, `DivZero` when `b` is 0, or `overflow` when it does not fit.
   pub fn fdiv(a: I32, b: I32): I32 ! {DivZero, overflow} {
-    match Int::eq(val(b), 0): I32 {
+    ⊢ I32 from match Int::eq(val(b), 0) {
       false => or_overflow(checked_fdiv(a, b))
       true => Never::elim(perform DivZero())
     }
@@ -176,7 +176,7 @@ module I32 {
 
   // `fmod`, or `None` when `b` is 0 or it does not fit.
   pub fn checked_fmod(a: I32, b: I32): Option(I32) {
-    match Int::eq(val(b), 0) eqn h: Option(I32) {
+    ⊢ Option(I32) from match Int::eq(val(b), 0) eqn h {
       false => fmod_nz(a, b, Int::ne_zero(val(b), h))
       true => None
     }
@@ -184,7 +184,7 @@ module I32 {
 
   // The remainder of `fdiv`, with the sign of `b`, `DivZero` when `b` is 0, or `overflow` when it does not fit.
   pub fn fmod(a: I32, b: I32): I32 ! {DivZero, overflow} {
-    match Int::eq(val(b), 0): I32 {
+    ⊢ I32 from match Int::eq(val(b), 0) {
       false => or_overflow(checked_fmod(a, b))
       true => Never::elim(perform DivZero())
     }
@@ -197,8 +197,8 @@ module I32 {
     }
   }
 
-  pub theorem catch_is(o: Option(I32)): catch(o) = o {
-    match o: catch(o) = o {
+  pub theorem catch_is(o: Option(I32)): I32::catch(o) = o {
+    ⊢ I32::catch(o) = o from match o {
       Some(x) => Refl
       None => Refl
     }
@@ -243,20 +243,20 @@ pub(open) inductive I64: Type {
 module I64 {
   // Mapped: the integer a `i64` is.
   pub fn val(x: I64): Int {
-    match x: Int {
+    ⊢ Int from match x {
       Mk(v, h) => v
     }
   }
 
   pub theorem ok(x: I64): fits(val(x)) = true {
-    match x: fits(val(x)) = true {
+    ⊢ fits(val(x)) = true from match x {
       Mk(v, h) => h
     }
   }
 
   // Mapped: `v` as a `i64` when `o`, the decision of whether it fits, says so.
   pub fn of_decided(v: Int, o: Bool, h: fits(v) = o): Option(I64) {
-    match o: Option(I64) {
+    ⊢ Option(I64) from match o {
       false => None
       true => Some(I64::Mk(v, h))
     }
@@ -309,7 +309,7 @@ module I64 {
 
   // The value in `o`, or `overflow`.
   pub fn or_overflow(o: Option(I64)): I64 ! {overflow} {
-    match o: I64 {
+    ⊢ I64 from match o {
       Some(x) => x
       None => Never::elim(perform overflow())
     }
@@ -334,7 +334,7 @@ module I64 {
 
   // `tdiv`, or `None` when `b` is 0 or it does not fit.
   pub fn checked_tdiv(a: I64, b: I64): Option(I64) {
-    match Int::eq(val(b), 0) eqn h: Option(I64) {
+    ⊢ Option(I64) from match Int::eq(val(b), 0) eqn h {
       false => tdiv_nz(a, b, Int::ne_zero(val(b), h))
       true => None
     }
@@ -342,7 +342,7 @@ module I64 {
 
   // `a / b` rounded toward zero, `DivZero` when `b` is 0, or `overflow` when it does not fit.
   pub fn tdiv(a: I64, b: I64): I64 ! {DivZero, overflow} {
-    match Int::eq(val(b), 0): I64 {
+    ⊢ I64 from match Int::eq(val(b), 0) {
       false => or_overflow(checked_tdiv(a, b))
       true => Never::elim(perform DivZero())
     }
@@ -355,7 +355,7 @@ module I64 {
 
   // `tmod`, or `None` when `b` is 0 or it does not fit.
   pub fn checked_tmod(a: I64, b: I64): Option(I64) {
-    match Int::eq(val(b), 0) eqn h: Option(I64) {
+    ⊢ Option(I64) from match Int::eq(val(b), 0) eqn h {
       false => tmod_nz(a, b, Int::ne_zero(val(b), h))
       true => None
     }
@@ -363,7 +363,7 @@ module I64 {
 
   // The remainder of `tdiv`, with the sign of `a`, `DivZero` when `b` is 0, or `overflow` when it does not fit.
   pub fn tmod(a: I64, b: I64): I64 ! {DivZero, overflow} {
-    match Int::eq(val(b), 0): I64 {
+    ⊢ I64 from match Int::eq(val(b), 0) {
       false => or_overflow(checked_tmod(a, b))
       true => Never::elim(perform DivZero())
     }
@@ -376,7 +376,7 @@ module I64 {
 
   // `fdiv`, or `None` when `b` is 0 or it does not fit.
   pub fn checked_fdiv(a: I64, b: I64): Option(I64) {
-    match Int::eq(val(b), 0) eqn h: Option(I64) {
+    ⊢ Option(I64) from match Int::eq(val(b), 0) eqn h {
       false => fdiv_nz(a, b, Int::ne_zero(val(b), h))
       true => None
     }
@@ -384,7 +384,7 @@ module I64 {
 
   // `a / b` rounded down, `DivZero` when `b` is 0, or `overflow` when it does not fit.
   pub fn fdiv(a: I64, b: I64): I64 ! {DivZero, overflow} {
-    match Int::eq(val(b), 0): I64 {
+    ⊢ I64 from match Int::eq(val(b), 0) {
       false => or_overflow(checked_fdiv(a, b))
       true => Never::elim(perform DivZero())
     }
@@ -397,7 +397,7 @@ module I64 {
 
   // `fmod`, or `None` when `b` is 0 or it does not fit.
   pub fn checked_fmod(a: I64, b: I64): Option(I64) {
-    match Int::eq(val(b), 0) eqn h: Option(I64) {
+    ⊢ Option(I64) from match Int::eq(val(b), 0) eqn h {
       false => fmod_nz(a, b, Int::ne_zero(val(b), h))
       true => None
     }
@@ -405,7 +405,7 @@ module I64 {
 
   // The remainder of `fdiv`, with the sign of `b`, `DivZero` when `b` is 0, or `overflow` when it does not fit.
   pub fn fmod(a: I64, b: I64): I64 ! {DivZero, overflow} {
-    match Int::eq(val(b), 0): I64 {
+    ⊢ I64 from match Int::eq(val(b), 0) {
       false => or_overflow(checked_fmod(a, b))
       true => Never::elim(perform DivZero())
     }
@@ -418,8 +418,8 @@ module I64 {
     }
   }
 
-  pub theorem catch_is(o: Option(I64)): catch(o) = o {
-    match o: catch(o) = o {
+  pub theorem catch_is(o: Option(I64)): I64::catch(o) = o {
+    ⊢ I64::catch(o) = o from match o {
       Some(x) => Refl
       None => Refl
     }

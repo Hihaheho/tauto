@@ -15,7 +15,7 @@ import "types_infer.taut"
 
 pub fn allocation_field_ty(field: DataField): Ty { field.ty }
 pub fn FieldsAllocated(limit: Nat, fields: List(DataField)): Prop {
-  match fields: Prop { Nil => True
+  ⊢ Prop from match fields { Nil => True
     Cons(head, tail) => And(
       TypeAllocated(limit, allocation_field_ty(head)),
       FieldsAllocated(limit, tail)
@@ -23,7 +23,7 @@ pub fn FieldsAllocated(limit: Nat, fields: List(DataField)): Prop {
 }
 pub fn allocation_ctor_fields(ctor: DataCtor): List(DataField) { ctor.fields }
 pub fn CtorsAllocated(limit: Nat, ctors: List(DataCtor)): Prop {
-  match ctors: Prop { Nil => True
+  ⊢ Prop from match ctors { Nil => True
     Cons(head, tail) => And(
       FieldsAllocated(limit, allocation_ctor_fields(head)),
       CtorsAllocated(limit, tail)
@@ -32,7 +32,7 @@ pub fn CtorsAllocated(limit: Nat, ctors: List(DataCtor)): Prop {
 pub fn allocation_data_ctors(data: Data): List(DataCtor) { data.constructors }
 pub fn allocation_data_generics(data: Data): List(Text) { data.generics }
 pub fn OptionDataAllocated(limit: Nat, found: Option(Data)): Prop {
-  match found: Prop { None => True
+  ⊢ Prop from match found { None => True
     Some(data) => CtorsAllocated(limit, allocation_data_ctors(data)) }
 }
 pub def DatasAllocated(
@@ -46,7 +46,7 @@ pub theorem fields_allocated_weaken(
   advanced: Nat::le(before, after) = true,
   h: FieldsAllocated(before, fields)
 ): FieldsAllocated(after, fields) {
-  match fields: FieldsAllocated(after, fields) { Nil => Trivial
+  ⊢ FieldsAllocated(after, fields) from match fields { Nil => Trivial
     Cons(head, tail) => AndIntro(
       type_allocated_weaken(allocation_field_ty(head), before, after, advanced, And::left(h)),
       fields_allocated_weaken(tail, before, after, advanced, And::right(h))
@@ -59,7 +59,7 @@ pub theorem ctors_allocated_weaken(
   advanced: Nat::le(before, after) = true,
   h: CtorsAllocated(before, ctors)
 ): CtorsAllocated(after, ctors) {
-  match ctors: CtorsAllocated(after, ctors) { Nil => Trivial
+  ⊢ CtorsAllocated(after, ctors) from match ctors { Nil => Trivial
     Cons(head, tail) => AndIntro(
       fields_allocated_weaken(allocation_ctor_fields(head), before, after, advanced, And::left(h)),
       ctors_allocated_weaken(tail, before, after, advanced, And::right(h))
@@ -72,7 +72,7 @@ pub theorem option_data_allocated_weaken(
   advanced: Nat::le(before, after) = true,
   h: OptionDataAllocated(before, found)
 ): OptionDataAllocated(after, found) {
-  match found: OptionDataAllocated(after, found) { None => Trivial
+  ⊢ OptionDataAllocated(after, found) from match found { None => Trivial
     Some(data) => ctors_allocated_weaken(allocation_data_ctors(data), before, after, advanced, h) }
 }
 pub theorem datas_allocated_weaken(
@@ -93,12 +93,12 @@ pub theorem data_instance_from_allocated(
   values: GenericMapAllocated(limit, map),
   bounded: TypeListAllocated(limit, args)
 ): RigidMapAllocation(limit, data_instance_from(gs, args, map)) {
-  match gs: RigidMapAllocation(limit, data_instance_from(gs, args, map)) {
+  ⊢ RigidMapAllocation(limit, data_instance_from(gs, args, map)) from match gs {
     Nil => AndIntro(ordered, values)
-    Cons(name, rest) => match args: RigidMapAllocation(
+    Cons(name, rest) => ⊢ RigidMapAllocation(
       limit,
       data_instance_from(Cons(name, rest), args, map)
-    ) {
+    ) from match args {
       Nil => AndIntro(ordered, values)
       Cons(value, more) => data_instance_from_allocated(
         rest,
@@ -143,7 +143,7 @@ pub theorem substituted_fields_allocated(
   values: GenericMapAllocated(limit, map),
   bounded: FieldsAllocated(limit, fields)
 ): FieldsAllocated(limit, substituted_fields(fields, map)) {
-  match fields: FieldsAllocated(limit, substituted_fields(fields, map)) {
+  ⊢ FieldsAllocated(limit, substituted_fields(fields, map)) from match fields {
     Nil => Trivial
     Cons(head, tail) => AndIntro(
       allocated_substitute(
@@ -159,7 +159,7 @@ pub theorem substituted_fields_allocated(
   }
 }
 pub fn OptionCtorAllocated(limit: Nat, found: Option(DataCtor)): Prop {
-  match found: Prop { None => True
+  ⊢ Prop from match found { None => True
     Some(ctor) => FieldsAllocated(limit, allocation_ctor_fields(ctor)) }
 }
 pub theorem nth_ctor_allocated(
@@ -168,12 +168,11 @@ pub theorem nth_ctor_allocated(
   limit: Nat,
   bounded: CtorsAllocated(limit, ctors)
 ): OptionCtorAllocated(limit, nth_item(ctors, index)) {
-  match ctors: OptionCtorAllocated(limit, nth_item(ctors, index)) {
+  ⊢ OptionCtorAllocated(limit, nth_item(ctors, index)) from match ctors {
     Nil => Trivial
-    Cons(head, tail) => match index: OptionCtorAllocated(
-      limit,
-      nth_item(Cons(head, tail), index)
-    ) { Zero => And::left(bounded)
+    Cons(head, tail) => ⊢ OptionCtorAllocated(limit, nth_item(Cons(head, tail), index)) from match index { Zero => And::left(
+      bounded
+    )
       Succ(previous) => nth_ctor_allocated(tail, previous, limit, And::right(bounded)) }
   }
 }
@@ -182,11 +181,11 @@ pub fn allocation_fields_ctor(
   args: List(Ty),
   found: Option(DataCtor)
 ): List(DataField) {
-  match found: List(DataField) { None => Nil
+  ⊢ List(DataField) from match found { None => Nil
     Some(ctor) => substituted_fields(ctor.fields, data_instance(data, args)) }
 }
 pub fn allocation_fields_decl(index: Nat, args: List(Ty), found: Option(Data)): List(DataField) {
-  match found: List(DataField) { None => Nil
+  ⊢ List(DataField) from match found { None => Nil
     Some(data) => allocation_fields_ctor(data, args, nth_item(data.constructors, index)) }
 }
 pub theorem allocation_fields_ctor_ok(
@@ -197,7 +196,7 @@ pub theorem allocation_fields_ctor_ok(
   found: Option(DataCtor),
   fields: OptionCtorAllocated(limit, found)
 ): FieldsAllocated(limit, allocation_fields_ctor(data, args, found)) {
-  match found: FieldsAllocated(limit, allocation_fields_ctor(data, args, found)) {
+  ⊢ FieldsAllocated(limit, allocation_fields_ctor(data, args, found)) from match found {
     None => Trivial
     Some(ctor) => substituted_fields_allocated(
       allocation_ctor_fields(ctor),
@@ -217,7 +216,7 @@ pub theorem allocation_fields_decl_ok(
   found: Option(Data),
   declaration: OptionDataAllocated(limit, found)
 ): FieldsAllocated(limit, allocation_fields_decl(index, args, found)) {
-  match found: FieldsAllocated(limit, allocation_fields_decl(index, args, found)) {
+  ⊢ FieldsAllocated(limit, allocation_fields_decl(index, args, found)) from match found {
     None => Trivial
     Some(data) => allocation_fields_ctor_ok(
       data,
@@ -252,7 +251,7 @@ pub theorem field_tys_allocated(
   limit: Nat,
   bounded: FieldsAllocated(limit, fields)
 ): TypeListAllocated(limit, field_tys(fields)) {
-  match fields: TypeListAllocated(limit, field_tys(fields)) { Nil => Trivial
+  ⊢ TypeListAllocated(limit, field_tys(fields)) from match fields { Nil => Trivial
     Cons(head, tail) => AndIntro(
       And::left(bounded),
       field_tys_allocated(tail, limit, And::right(bounded))

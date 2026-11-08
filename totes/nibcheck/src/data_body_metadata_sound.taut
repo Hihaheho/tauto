@@ -9,7 +9,7 @@ import "../../surface/src/surface.taut"
 pub theorem body_metadata_ignores(
   o: Option(Data)
 ): body_ctors_option(data_metadata_option(o)) = body_ctors_option(o) {
-  match o: body_ctors_option(data_metadata_option(o)) = body_ctors_option(o) {
+  ⊢ body_ctors_option(data_metadata_option(o)) = body_ctors_option(o) from match o {
     None => Refl
     Some(data) => Refl
   }
@@ -19,7 +19,9 @@ pub theorem body_lookup_metadata(
   b: Ordmap(Text, Data),
   name: Text,
   same: data_metadata_lookup(a, name) = data_metadata_lookup(b, name)
-): body_ctors_option(Ordmap::get(a, name, Ordmap::compare_text)) = body_ctors_option(Ordmap::get(b, name, Ordmap::compare_text)) {
+): body_ctors_option(
+  Ordmap::get(a, name, Ordmap::compare_text)
+) = body_ctors_option(Ordmap::get(b, name, Ordmap::compare_text)) {
   Eq::trans(
     Eq::sym(body_metadata_ignores(Ordmap::get(a, name, Ordmap::compare_text))),
     Eq::trans(
@@ -33,7 +35,7 @@ pub theorem body_registered_lookup<env: Datas, source: SurfaceData>(
   next: Datas,
   same: body_lookup(next, body_source_name(source)) = body_lookup(env, body_source_name(source))
 ): DataBodyRegistered(next, source) {
-  match registered: DataBodyRegistered(next, source) {
+  ⊢ DataBodyRegistered(next, source) from match registered {
     Mk(constructors, found, known) => DataBodyRegistered::Mk(
       constructors,
       Eq::trans(same, found),

@@ -1,0 +1,22 @@
+@ cases.the-examples-for-coming-from-lean-are-accepted-0
+source = path`../../examples/lean-migration/Simp.taut`
+checks."examples/lean-migration/Simp.taut::add_zero_right" = "ok"
+checks."examples/lean-migration/Simp.taut::zero_add" = "ok"
+checks."examples/lean-migration/Simp.taut::add_comm_steps" = "ok"
+checks."examples/lean-migration/Simp.taut::add_left_comm" = "ok"
+checks."examples/lean-migration/Simp.taut::swap_hyp" = "ok"
+checks."examples/lean-migration/Simp.taut::length_map_append" = "ok"
+
+@ cases.a-written-goal-that-is-not-the-goal-of-the-step-is-an-error-0
+imports = [path`../../std/Nat.taut`, path`../../std/Tactic.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+theorem wrong_arm(a: Nat, b: Nat, c: Nat, h: a + b = c): b + a = c {
+  by rewrite!(Nat::add_comm(b, a)): b + a = c {
+    ⊢ b + a = c from h
+  }
+}
+```
+
+diagnostics = [{ name => "wrong_arm", message => "type mismatch: expected `b + a = c`, found `a + b = c`" }]

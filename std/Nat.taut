@@ -1,58 +1,61 @@
 import "Base.taut" { Nat }
 import std::prelude::Std { Pair }
+import "Calc.taut" { calc }
 
 module Nat {
   // The laws of the arithmetic of `Base.taut` (`Nat::add`, `Nat::mul`, `Nat::le`, …),
   // which recurses on its second argument.
 
   pub theorem add_zero_left(n: Nat): add(Zero, n) = n {
-    match n: add(Zero, n) = n {
+    ⊢ add(Zero, n) = n from match n {
       Zero => Refl
       Succ(k) => Eq::congr(Succ, add_zero_left(k))
     }
   }
 
   pub theorem add_succ_left(a: Nat, b: Nat): add(Succ(a), b) = Succ(add(a, b)) {
-    match b: add(Succ(a), b) = Succ(add(a, b)) {
+    ⊢ add(Succ(a), b) = Succ(add(a, b)) from match b {
       Zero => Refl
       Succ(k) => Eq::congr(Succ, add_succ_left(a, k))
     }
   }
 
   pub theorem add_comm(a: Nat, b: Nat): add(a, b) = add(b, a) {
-    match b: add(a, b) = add(b, a) {
+    ⊢ add(a, b) = add(b, a) from match b {
       Zero => Eq::sym(add_zero_left(a))
-      Succ(k) => calc Succ(add(a, k)) {
-        = Succ(add(k, a)) from Eq::congr(Succ, add_comm(a, k))
-        = add(Succ(k), a) from Eq::sym(add_succ_left(k, a))
-      }
+      Succ(k) => calc!(```
+        $Succ(add(a, k))
+        = $Succ(add(k, a)) from $Eq::congr(Succ, add_comm(a, k))
+        = $add(Succ(k), a) from $Eq::sym(add_succ_left(k, a))
+        ```)
     }
   }
 
   pub theorem add_assoc(a: Nat, b: Nat, c: Nat): add(add(a, b), c) = add(a, add(b, c)) {
-    match c: add(add(a, b), c) = add(a, add(b, c)) {
+    ⊢ add(add(a, b), c) = add(a, add(b, c)) from match c {
       Zero => Refl
       Succ(k) => Eq::congr(Succ, add_assoc(a, b, k))
     }
   }
 
   pub theorem add_swap(a: Nat, b: Nat, c: Nat): add(add(a, b), c) = add(add(a, c), b) {
-    calc add(add(a, b), c) {
-      = add(a, add(b, c)) from add_assoc(a, b, c)
-      = add(a, add(c, b)) from Eq::congr(⟦add(a, □)⟧, add_comm(b, c))
-      = add(add(a, c), b) from Eq::sym(add_assoc(a, c, b))
-    }
+    calc!(```
+      $add(add(a, b), c)
+      = $add(a, add(b, c)) from $add_assoc(a, b, c)
+      = $add(a, add(c, b)) from $Eq::congr(⟦add(a, □)⟧, add_comm(b, c))
+      = $add(add(a, c), b) from $Eq::sym(add_assoc(a, c, b))
+      ```)
   }
 
   pub theorem mul_zero_left(n: Nat): mul(Zero, n) = Zero {
-    match n: mul(Zero, n) = Zero {
+    ⊢ mul(Zero, n) = Zero from match n {
       Zero => Refl
       Succ(k) => mul_zero_left(k)
     }
   }
 
   pub theorem mul_succ_left(a: Nat, b: Nat): mul(Succ(a), b) = add(mul(a, b), b) {
-    match b: mul(Succ(a), b) = add(mul(a, b), b) {
+    ⊢ mul(Succ(a), b) = add(mul(a, b), b) from match b {
       Zero => Refl
       Succ(k) => Eq::trans(
         Eq::congr(⟦add(□, Succ(a))⟧, mul_succ_left(a, k)),
@@ -74,12 +77,13 @@ module Nat {
   }
 
   pub theorem mul_comm(a: Nat, b: Nat): mul(a, b) = mul(b, a) {
-    match b: mul(a, b) = mul(b, a) {
+    ⊢ mul(a, b) = mul(b, a) from match b {
       Zero => Eq::sym(mul_zero_left(a))
-      Succ(k) => calc add(mul(a, k), a) {
-        = add(mul(k, a), a) from Eq::congr(⟦add(□, a)⟧, mul_comm(a, k))
-        = mul(Succ(k), a) from Eq::sym(mul_succ_left(k, a))
-      }
+      Succ(k) => calc!(```
+        $add(mul(a, k), a)
+        = $add(mul(k, a), a) from $Eq::congr(⟦add(□, a)⟧, mul_comm(a, k))
+        = $mul(Succ(k), a) from $Eq::sym(mul_succ_left(k, a))
+        ```)
     }
   }
 
@@ -88,28 +92,30 @@ module Nat {
     b: Nat,
     c: Nat
   ): mul(a, add(b, c)) = add(mul(a, b), mul(a, c)) {
-    match c: mul(a, add(b, c)) = add(mul(a, b), mul(a, c)) {
+    ⊢ mul(a, add(b, c)) = add(mul(a, b), mul(a, c)) from match c {
       Zero => Refl
-      Succ(k) => calc add(mul(a, add(b, k)), a) {
-        = add(add(mul(a, b), mul(a, k)), a) from Eq::congr(⟦add(□, a)⟧, mul_add_distrib(a, b, k))
-        = add(mul(a, b), add(mul(a, k), a)) from add_assoc(mul(a, b), mul(a, k), a)
-      }
+      Succ(k) => calc!(```
+        $add(mul(a, add(b, k)), a)
+        = $add(add(mul(a, b), mul(a, k)), a) from $Eq::congr(⟦add(□, a)⟧, mul_add_distrib(a, b, k))
+        = $add(mul(a, b), add(mul(a, k), a)) from $add_assoc(mul(a, b), mul(a, k), a)
+        ```)
     }
   }
 
   pub theorem mul_one_left(n: Nat): mul(Succ(Zero), n) = n {
-    match n: mul(Succ(Zero), n) = n {
+    ⊢ mul(Succ(Zero), n) = n from match n {
       Zero => Refl
       Succ(k) => Eq::congr(⟦add(□, Succ(Zero))⟧, mul_one_left(k))
     }
   }
 
   pub theorem add_swap_left(a: Nat, b: Nat, c: Nat): add(a, add(b, c)) = add(b, add(a, c)) {
-    calc add(a, add(b, c)) {
-      = add(add(a, b), c) from Eq::sym(add_assoc(a, b, c))
-      = add(add(b, a), c) from Eq::congr(⟦add(□, c)⟧, add_comm(a, b))
-      = add(b, add(a, c)) from add_assoc(b, a, c)
-    }
+    calc!(```
+      $add(a, add(b, c))
+      = $add(add(a, b), c) from $Eq::sym(add_assoc(a, b, c))
+      = $add(add(b, a), c) from $Eq::congr(⟦add(□, c)⟧, add_comm(a, b))
+      = $add(b, add(a, c)) from $add_assoc(b, a, c)
+      ```)
   }
 
   pub theorem add_shuffle(
@@ -118,29 +124,32 @@ module Nat {
     r: Nat,
     s: Nat
   ): add(add(p, q), add(r, s)) = add(add(p, r), add(q, s)) {
-    calc add(add(p, q), add(r, s)) {
-      = add(p, add(q, add(r, s))) from add_assoc(p, q, add(r, s))
-      = add(p, add(r, add(q, s))) from Eq::congr(⟦add(p, □)⟧, add_swap_left(q, r, s))
-      = add(add(p, r), add(q, s)) from Eq::sym(add_assoc(p, r, add(q, s)))
-    }
+    calc!(```
+      $add(add(p, q), add(r, s))
+      = $add(p, add(q, add(r, s))) from $add_assoc(p, q, add(r, s))
+      = $add(p, add(r, add(q, s))) from $Eq::congr(⟦add(p, □)⟧, add_swap_left(q, r, s))
+      = $add(add(p, r), add(q, s)) from $Eq::sym(add_assoc(p, r, add(q, s)))
+      ```)
   }
 
   pub theorem mul_assoc(a: Nat, b: Nat, c: Nat): mul(mul(a, b), c) = mul(a, mul(b, c)) {
-    match c: mul(mul(a, b), c) = mul(a, mul(b, c)) {
+    ⊢ mul(mul(a, b), c) = mul(a, mul(b, c)) from match c {
       Zero => Refl
-      Succ(k) => calc add(mul(mul(a, b), k), mul(a, b)) {
-        = add(mul(a, mul(b, k)), mul(a, b)) from Eq::congr(⟦add(□, mul(a, b))⟧, mul_assoc(a, b, k))
-        = mul(a, add(mul(b, k), b)) from Eq::sym(mul_add_distrib(a, mul(b, k), b))
-      }
+      Succ(k) => calc!(```
+        $add(mul(mul(a, b), k), mul(a, b))
+        = $add(mul(a, mul(b, k)), mul(a, b)) from $Eq::congr(⟦add(□, mul(a, b))⟧, mul_assoc(a, b, k))
+        = $mul(a, add(mul(b, k), b)) from $Eq::sym(mul_add_distrib(a, mul(b, k), b))
+        ```)
     }
   }
 
   pub theorem mul_swap(a: Nat, b: Nat, c: Nat): mul(a, mul(b, c)) = mul(b, mul(a, c)) {
-    calc mul(a, mul(b, c)) {
-      = mul(mul(a, b), c) from Eq::sym(mul_assoc(a, b, c))
-      = mul(mul(b, a), c) from Eq::congr(⟦mul(□, c)⟧, mul_comm(a, b))
-      = mul(b, mul(a, c)) from mul_assoc(b, a, c)
-    }
+    calc!(```
+      $mul(a, mul(b, c))
+      = $mul(mul(a, b), c) from $Eq::sym(mul_assoc(a, b, c))
+      = $mul(mul(b, a), c) from $Eq::congr(⟦mul(□, c)⟧, mul_comm(a, b))
+      = $mul(b, mul(a, c)) from $mul_assoc(b, a, c)
+      ```)
   }
 
   pub theorem mul_add_distrib_right(
@@ -148,15 +157,16 @@ module Nat {
     b: Nat,
     c: Nat
   ): mul(add(a, b), c) = add(mul(a, c), mul(b, c)) {
-    match c: mul(add(a, b), c) = add(mul(a, c), mul(b, c)) {
+    ⊢ mul(add(a, b), c) = add(mul(a, c), mul(b, c)) from match c {
       Zero => Refl
-      Succ(k) => calc add(mul(add(a, b), k), add(a, b)) {
-        = add(
+      Succ(k) => calc!(```
+        $add(mul(add(a, b), k), add(a, b))
+        = $add(
           add(mul(a, k), mul(b, k)),
           add(a, b)
-        ) from Eq::congr(⟦add(□, add(a, b))⟧, mul_add_distrib_right(a, b, k))
-        = add(add(mul(a, k), a), add(mul(b, k), b)) from add_shuffle(mul(a, k), mul(b, k), a, b)
-      }
+        ) from $Eq::congr(⟦add(□, add(a, b))⟧, mul_add_distrib_right(a, b, k))
+        = $add(add(mul(a, k), a), add(mul(b, k), b)) from $add_shuffle(mul(a, k), mul(b, k), a, b)
+        ```)
     }
   }
 
@@ -165,7 +175,7 @@ module Nat {
   }
 
   pub fn le_refl(a: Nat): a <= a = true {
-    match a: a <= a = true {
+    ⊢ a <= a = true from match a {
       Zero => Refl
       Succ(k) => le_refl(k)
     }
@@ -176,7 +186,7 @@ module Nat {
   }
 
   pub theorem le_succ(a: Nat): a <= Succ(a) = true {
-    match a: a <= Succ(a) = true {
+    ⊢ a <= Succ(a) = true from match a {
       Zero => Refl
       Succ(k) => le_succ(k)
     }
@@ -189,7 +199,7 @@ module Nat {
     h1: a <= b = true,
     h2: b <= c = true
   ): a <= c = true {
-    match a: a <= c = true {
+    ⊢ a <= c = true from match a {
       Zero => Refl
       Succ(a2) => match b {
         Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(lt_zero_false(a2)), h1)))
@@ -206,12 +216,12 @@ module Nat {
   }
 
   pub theorem le_antisym(a: Nat, b: Nat, h1: a <= b = true, h2: b <= a = true): a = b {
-    match a: a = b {
-      Zero => match b: Zero = b {
+    ⊢ a = b from match a {
+      Zero => ⊢ Zero = b from match b {
         Zero => Refl
         Succ(b2) => False::elim(false_ne_true(Eq::trans(Eq::sym(lt_zero_false(b2)), h2)))
       }
-      Succ(a2) => match b: Succ(a2) = b {
+      Succ(a2) => ⊢ Succ(a2) = b from match b {
         Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(lt_zero_false(a2)), h1)))
         Succ(b2) => Eq::congr(Succ, le_antisym(a2, b2, h1, h2))
       }
@@ -219,7 +229,7 @@ module Nat {
   }
 
   pub theorem sub_zero_left(n: Nat): Zero - n = Zero {
-    match n: Zero - n = Zero {
+    ⊢ Zero - n = Zero from match n {
       Zero => Refl
       Succ(k) => Eq::congr(Nat::pred, sub_zero_left(k))
     }
@@ -231,12 +241,12 @@ module Nat {
     h1: r < Succ(b) = true,
     h2: Nat::eq(r, b) = false
   ): r < b = true {
-    match r: r < b = true {
-      Zero => match b: Zero < b = true {
+    ⊢ r < b = true from match r {
+      Zero => ⊢ Zero < b = true from match b {
         Zero => False::elim(true_ne_false(h2))
         Succ(b2) => Refl
       }
-      Succ(r2) => match b: Succ(r2) < b = true {
+      Succ(r2) => ⊢ Succ(r2) < b = true from match b {
         Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(lt_zero_false(r2)), h1)))
         Succ(b2) => lt_succ_ne(r2, b2, h1, h2)
       }
@@ -249,22 +259,22 @@ module Nat {
     h1: r < b = true,
     h2: Nat::eq(Succ(r), b) = false
   ): Succ(r) < b = true {
-    match b: Succ(r) < b = true {
+    ⊢ Succ(r) < b = true from match b {
       Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(lt_zero_false(r)), h1)))
       Succ(b2) => lt_succ_ne(r, b2, h1, h2)
     }
   }
 
   pub theorem lt_zero_of(r: Nat, b: Nat, h: r < b = true): Zero < b = true {
-    match b: Zero < b = true {
+    ⊢ Zero < b = true from match b {
       Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(lt_zero_false(r)), h)))
       Succ(b2) => Refl
     }
   }
 
-  pub fn divmod_rem(p: Pair(Nat, Nat)): Nat {
-    match p: Nat {
-      Pair { fst: q, snd: r } => r
+  pub fn divmod_rem(p: Nat × Nat): Nat {
+    ⊢ Nat from match p {
+      #(q, r) => r
     }
   }
 
@@ -275,12 +285,11 @@ module Nat {
     r: Nat,
     h: r < b = true
   ): divmod_rem(Nat::divmod(a, b, q, r)) < b = true {
-    match a: divmod_rem(Nat::divmod(a, b, q, r)) < b = true {
+    ⊢ divmod_rem(Nat::divmod(a, b, q, r)) < b = true from match a {
       Zero => h
-      Succ(a2) => match Nat::eq(
-        Succ(r),
-        b
-      ) eqn e: divmod_rem(Nat::divmod(Succ(a2), b, q, r)) < b = true {
+      Succ(a2) => ⊢ divmod_rem(
+        Nat::divmod(Succ(a2), b, q, r)
+      ) < b = true from match Nat::eq(Succ(r), b) eqn e {
         false => ⊢ divmod_rem(
           Nat::divmod(a2, b, q, Succ(r))
         ) < b = true from divmod_rem_lt(a2, b, q, Succ(r), lt_step(r, b, h, e))

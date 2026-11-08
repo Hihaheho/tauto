@@ -1,0 +1,158 @@
+@ cases.a-program-calls-a-single-constructor-by-name
+description = "A type with one constructor is extracted as a struct; programs still call the constructor, and match on it, by its proof-language name."
+extract = true
+backends = ["rust", "javascript"]
+source = ```tauto
+inductive Usage: Type { Mk(input: Nat, output: Nat): Usage }
+inductive Box(A: Type): Type { Mk(value: A): Box(A) }
+fn total(u: Usage): Nat { match u { Mk(a, b) => a + b } }
+let u := Usage::Mk(3, 1)
+perform show("input", u.input)
+perform show("total", total(u))
+perform show("box", Box::Mk(7).value)
+perform show("first", match u { Mk(a, b) => a })
+perform show("inner", match Box::Mk(Usage::Mk(5, 2)) { Mk(Mk(x, _)) => x })
+```
+shows = ["input = 3", "total = 4", "box = 7", "first = 3", "inner = 5"]
+
+@ cases.a-program-matches-mapped-constructors
+unimplemented = "a match on literals cannot end with a named rest arm"
+description = "Code that is not extracted matches the constructors that extraction maps onto Nib literals (`true`, `false`, `Zero`) as those literals, on every backend; a pattern left as a name would bind anything and always take the first arm."
+extract = true
+backends = ["rust", "javascript"]
+source = ```tauto
+fn g(y: Bool): Text {
+  ⊢ Text from match y {
+    true => "Y"
+    false => "N"
+  }
+}
+fn b(y: Bool): Bool {
+  ⊢ Bool from match y {
+    false => false
+    true => true
+  }
+}
+fn say(y: Bool): Unit {
+  ⊢ Unit from match y {
+    true => perform show("say", "yes")
+    false => perform show("say", "no")
+  }
+}
+fn z(n: Nat): Text {
+  ⊢ Text from match n {
+    Zero => "Z"
+    _ => "S"
+  }
+}
+perform show("g", g(false))
+perform show("g", g(true))
+perform show("eq", g(Nat::eq(1, 2)))
+perform show("b", b(false))
+perform show("b", b(true))
+say(false)
+say(true)
+perform show("z", z(0))
+perform show("z", z(1))
+```
+shows = ["g = \"N\"", "g = \"Y\"", "eq = \"N\"", "b = false", "b = true", "say = \"no\"", "say = \"yes\"", "z = \"Z\"", "z = \"S\""]
+
+@ cases.a-program-matches-succ
+description = "Code that is not extracted matches `Succ` on `Nat`, nested or not, as the chain of tests extraction writes for it, on every backend."
+extract = true
+backends = ["rust", "javascript"]
+source = ```tauto
+fn tz(n: Nat): Text {
+  ⊢ Text from match n {
+    Zero => "Z"
+    Succ(Zero) => "one"
+    Succ(Succ(k)) => Text::of_nat(k)
+  }
+}
+fn tw(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Succ(k) => k
+    _ => 99
+  }
+}
+perform show("z", tz(0))
+perform show("z", tz(1))
+perform show("z", tz(5))
+perform show("w", tw(0))
+perform show("w", tw(4))
+```
+shows = ["z = \"Z\"", "z = \"one\"", "z = \"3\"", "w = 99", "w = 3"]
+
+@ cases.a-function-with-effects-uses-mapped-constructors
+description = "Code with effects, which is not extracted, writes the constructors and the families that extraction maps onto Nib as the proof language does."
+extract = true
+backends = ["rust", "javascript"]
+source = ```tauto
+effect tick(): Unit
+fn g(n: Nat): Nat { Succ(n) }
+fn f(n: Nat): Nat ! {tick} { perform tick(); Succ(g(n)) }
+let r := handle { f(Zero) } with { tick(), k => k(Star) }
+perform show("r", r)
+```
+shows = ["r = 2"]
+
+@ cases.a-function-named-as-the-library-runs-its-own-definition
+description = "A function of the program's own that has the name of one of the standard library's runs as it is defined, as the proofs read it, and is not taken for the builtin the library's function is mapped onto."
+extract = true
+backends = ["rust", "javascript"]
+source = ```tauto
+fn Nat::add(a: Nat, b: Nat): Nat { a * b }
+theorem six(): Nat::add(2, 3) = 6 { Refl }
+inductive Stack: Type { Mk(n: Nat): Stack }
+fn depth(s: Stack): Nat { ⊢ Nat from match s { Mk(n) => n } }
+fn three(): Nat { depth(Stack::Mk(3)) }
+perform show("Nat::add", Nat::add(2, 3))
+perform show("depth", three())
+```
+shows = ["Nat::add = 6", "depth = 3"]
+
+@ cases.the-kernels-functions-run-from-the-top-level
+description = "The kernel's functions are extracted from their checked definitions. Calls that take proofs are written in checked functions; the top level calls their executable representations."
+extract = true
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::Base
+theorem lt(): (Nat::lt(1, 2) = true) { Refl }
+fn smaller(a: i64): Bool { a < 0 || Nat::lt(1, 2) }
+fn quotient(): Nat { Nat::div_nz(7, 2, Nat::ne_zero(2, Refl)) }
+fn remainder(): Nat { Nat::rem_nz(7, 4, Nat::ne_zero(4, Refl)) }
+perform show("lt", Nat::lt(1, 2))
+perform show("sub", Nat::sub(2, 5))
+perform show("div", quotient())
+perform show("mod", remainder())
+perform show("eq", Nat::eq(Nat::pred(4), 3))
+perform show("smaller", smaller(1))
+```
+shows = ["lt = true", "sub = 0", "div = 3", "mod = 3", "eq = true", "smaller = true"]
+
+@ cases.a-def-runs-from-the-top-level
+description = "A `def` that executable code calls is written out as a function, from its checked definition; the theorem about it and the run agree."
+extract = true
+backends = ["rust", "javascript"]
+source = ```tauto
+fn twice(n: Nat): Nat { Succ(Succ(n)) }
+def four(): Nat := twice(2)
+def pick<A>(a: A, b: A): A := b
+theorem four_is(): four() = 4 { Refl }
+fn six(): Nat { twice(four()) }
+perform show("four", four())
+perform show("pick", pick(1, 2))
+perform show("six", six())
+```
+shows = ["four = 4", "pick = 2", "six = 6"]
+
+@ cases.a-library-function-under-its-full-name-is-mapped
+description = "A function of `std/` whose full name is written out (an import makes `std.Text.slice`) is still mapped onto Nib's builtin."
+extract = true
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::Text
+perform show("s", Text::slice("hello", 1, 3))
+perform show("c", Text::of_code_point(65))
+```
+shows = ["s = Some(\"el\")", "c = Some(\"A\")"]

@@ -5,11 +5,7 @@ import std::prelude::Std { List, Result }
 
 // A register-only model, not a CPU emulator or native assembler.
 module Asm {
-  pub(open) inductive Reg: Type {
-    X0: Reg
-    X1: Reg
-    X2: Reg
-  }
+  pub(open) inductive Reg: Type { X0: Reg, X1: Reg, X2: Reg }
   pub(open) inductive struct State {
     x0: U64
     x1: U64
@@ -21,14 +17,14 @@ module Asm {
     Sub(dst: Reg, lhs: Reg, rhs: Reg): Instr
   }
   pub fn read(s: State, r: Reg): U64 {
-    match r: U64 {
+    ⊢ U64 from match r {
       X0 => s.x0
       X1 => s.x1
       X2 => s.x2
     }
   }
   pub fn write(s: State, r: Reg, value: U64): State {
-    match r: State {
+    ⊢ State from match r {
       X0 => State { x0: value, x1: s.x1, x2: s.x2 }
       X1 => State { x0: s.x0, x1: value, x2: s.x2 }
       X2 => State { x0: s.x0, x1: s.x1, x2: value }
@@ -36,40 +32,39 @@ module Asm {
   }
   // All reads use the input state, including when a source aliases the destination.
   pub fn step(instruction: Instr, s: State): State {
-    match instruction: State {
+    ⊢ State from match instruction {
       Mov(dst, src) => write(s, dst, read(s, src))
       Add(dst, lhs, rhs) => write(s, dst, U64::wrapping_add(read(s, lhs), read(s, rhs)))
       Sub(dst, lhs, rhs) => write(s, dst, U64::wrapping_sub(read(s, lhs), read(s, rhs)))
     }
   }
   pub fn run(program: List(Instr), s: State): State {
-    match program: State {
+    ⊢ State from match program {
       Nil => s
-      Cons(instruction, rest) => run(rest, step(instruction, s))
+      Cons(instruction, rest) => Asm::run(rest, step(instruction, s))
     }
   }
   // Clients supply a proof term; this specification alone certifies nothing.
   pub def Hoare(program: List(Instr), pre: (State) -> Prop, post: (State) -> Prop): Prop :=
-  ∀ s: State. pre(s) -> post(run(program, s))
+  ∀ s: State. pre(s) -> post(Asm::run(program, s))
   pub theorem read_write(s: State, r: Reg, value: U64): read(write(s, r, value), r) = value {
-    match r: read(write(s, r, value), r) = value {
-      X0 => Refl
-      X1 => Refl
-      X2 => Refl
-    }
+    ⊢ read(write(s, r, value), r) = value from match r { X0 => Refl, X1 => Refl, X2 => Refl }
   }
-  pub theorem run_nil(s: State): run(Nil, s) = s { Refl }
+  pub theorem run_nil(s: State): Asm::run(Nil, s) = s { Refl }
   pub theorem run_cons(
     instruction: Instr,
     rest: List(Instr),
     s: State
-  ): run(Cons(instruction, rest), s) = run(rest, step(instruction, s)) { Refl }
+  ): Asm::run(Cons(instruction, rest), s) = Asm::run(rest, step(instruction, s)) { Refl }
   pub theorem run_append(
     first: List(Instr),
     second: List(Instr),
     s: State
-  ): run(List::append(first, second), s) = run(second, run(first, s)) {
-    match first: run(List::append(first, second), s) = run(second, run(first, s)) {
+  ): Asm::run(List::append(first, second), s) = Asm::run(second, Asm::run(first, s)) {
+    ⊢ Asm::run(
+      List::append(first, second),
+      s
+    ) = Asm::run(second, Asm::run(first, s)) from match first {
       Nil => Refl
       Cons(instruction, rest) => run_append(rest, second, step(instruction, s))
     }

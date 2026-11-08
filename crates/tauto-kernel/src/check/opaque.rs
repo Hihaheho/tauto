@@ -15,9 +15,11 @@
 //! as written.
 
 use super::{Diagnostic, Entry, Kernel, T, Verdict};
+use crate::surface::Name;
 use crate::surface::{FnDecl, Stmt, TermKind, TheoremDecl, walk};
 use std::sync::Arc;
 use tauto_message::{Message, msg};
+use tauto_surface::identity::Generation;
 
 fn app(f: T, args: Vec<T>) -> T {
     let span = f.span;
@@ -42,8 +44,9 @@ impl Kernel {
             match stmt {
                 Stmt::Fn(f) if f.opaque => match self.opaque_expand(f) {
                     Ok(made) => {
-                        self.seal_after
-                            .insert(format!("{}::eq", f.name), f.name.clone());
+                        let equation = self.resolver.generated(&f.name, Generation::OpaqueEquation);
+                        let function = self.resolver.global(&f.name);
+                        self.seal_after.insert(equation, function);
                         out.extend(made);
                     }
                     Err(d) => entries.push(Entry {
@@ -60,11 +63,12 @@ impl Kernel {
     fn opaque_expand(&mut self, f: &FnDecl) -> Result<Vec<Stmt>, Diagnostic> {
         let sp = f.span;
         let fail = |m: Message| Err(Diagnostic::new(m, Some(sp)));
-        let eq_name = format!("{}::eq", f.name);
-        let made = [("theorem".to_string(), eq_name.clone())];
+        let eq_name = self.resolver.generated(&f.name, Generation::OpaqueEquation);
+        let made = [("theorem".to_string(), eq_name.to_string())];
         if let Some(listed) = &f.generates {
-            let start = msg!("kernel-opaque-list-mismatch", name = &f.name).to_string();
-            if let Some(why) = crate::generated::mismatch(&start, &listed.items, &made) {
+            let start =
+                msg!("kernel-opaque-list-mismatch", name = (&f.name).to_string());
+            if let Some(why) = crate::generated::mismatch(start, &listed.items, &made) {
                 let mut d = Diagnostic::new(why, Some(sp));
                 d.fix = Some(crate::generated::fix(listed, &made));
                 return Err(d);
@@ -85,7 +89,7 @@ impl Kernel {
         if f.param_types.iter().any(Option::is_none) {
             return fail(msg!("kernel-opaque-typed"));
         }
-        let body_name = format!("{}@body", f.name);
+        let body_name = self.resolver.generated(&f.name, Generation::OpaqueBody);
         let mut body = f.body.clone();
         walk::term(&mut body, &mut |t| {
             if matches!(&*t.kind, TermKind::Var(n) if *n == f.name) {
@@ -111,19 +115,18 @@ impl Kernel {
             ..f.clone()
         };
         let statement = app(
-            T::var("Eq", sp),
+            T::var(&tauto_surface::bindings::library_name("Eq"), sp),
             vec![
                 result.clone(),
                 app(T::var(&f.name, sp), args),
                 unfolded.clone(),
             ],
         );
-        let proof = app(T::var("Refl", sp), vec![result.clone(), unfolded]);
-        let mut params: Vec<(String, T)> = f
-            .generics
-            .iter()
-            .map(|g| (g.clone(), T::var("Type", sp)))
-            .collect();
+        let proof = app(
+            T::var(&tauto_surface::bindings::library_name("Refl"), sp),
+            vec![result.clone(), unfolded],
+        );
+        let mut params: Vec<(Name, T)> = f.generic_parameters();
         params.extend(
             f.params
                 .iter()
@@ -145,7 +148,7 @@ impl Kernel {
     }
 
     /// Stops `f` from unfolding, in the core and in the named checker.
-    pub(super) fn seal(&mut self, f: &str) {
+    pub(super) fn seal(&mut self, f: &Name) {
         let _ = self.core.seal(f);
         if let Some(g) = self.globals.get_mut(f) {
             g.value = None;

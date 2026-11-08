@@ -212,7 +212,7 @@ pub fn inference_function_type(
   env: List(Local),
   ty: Ty
 ): Mut1(Unit, Checker) {
-  match ty: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match ty {
     TyInt(pat_w) => mut1(Star, c)
     TyBool => mut1(Star, c)
     TyText => mut1(Star, c)
@@ -269,7 +269,7 @@ pub theorem inference_function_type_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_function_type(j, c, f, scheme, env, ty)) {
-  match ty: CkRunFrame(c, inference_function_type(j, c, f, scheme, env, ty)) {
+  ⊢ CkRunFrame(c, inference_function_type(j, c, f, scheme, env, ty)) from match ty {
     TyInt(pat_w) => run_frame_return(c, Star, ordered)
     TyBool => run_frame_return(c, Star, ordered)
     TyText => run_frame_return(c, Star, ordered)
@@ -388,7 +388,13 @@ pub theorem inference_unf_ck_check_fn_in(
   f: SurfaceFn,
   scheme: Scheme,
   env: List(Local)
-): ck_check_fn_in(Succ(j), c, f, scheme, env) = inference_step_ck_check_fn_in(j, c, f, scheme, env) { Refl }
+): ck_check_fn_in(
+  Succ(j),
+  c,
+  f,
+  scheme,
+  env
+) = inference_step_ck_check_fn_in(j, c, f, scheme, env) { Refl }
 
 pub fn inference_lambda_body(
   j: Nat,
@@ -636,7 +642,7 @@ pub fn inference_lambda_kind(
   hint: Option(Ty),
   sk: SurfaceKind
 ): Mut1(Ty, Checker) {
-  match sk: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match sk {
     SkVar(pat_name) => ck_rewrap1(ck_fresh(c))
     SkNat(pat_digits) => ck_rewrap1(ck_fresh(c))
     SkText(pat_value) => ck_rewrap1(ck_fresh(c))
@@ -703,7 +709,7 @@ pub theorem inference_lambda_kind_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_lambda_kind(j, c, lam, borrows, env, hint, sk)) {
-  match sk: CkRunFrame(c, inference_lambda_kind(j, c, lam, borrows, env, hint, sk)) {
+  ⊢ CkRunFrame(c, inference_lambda_kind(j, c, lam, borrows, env, hint, sk)) from match sk {
     SkVar(pat_name) => run_frame_read(
       c,
       ck_rewrap1(ck_fresh(c)),
@@ -937,14 +943,7 @@ pub theorem inference_lambda_kind_frame(
       frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
       ordered
     )
-    SkStep(
-      pat_tactic,
-      pat_arg,
-      pat_call_start,
-      pat_call_end,
-      pat_before,
-      pat_arms
-    ) => run_frame_read(
+    SkStep(pat_tactic, pat_arg, pat_call_start, pat_call_end, pat_before, pat_arms) => run_frame_read(
       c,
       ck_rewrap1(ck_fresh(c)),
       frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
@@ -1043,4 +1042,10 @@ pub theorem inference_unf_ck_lambda_in(
   lam: SurfaceTerm,
   borrows: List(Option(Bool)),
   env: List(Local)
-): ck_lambda_in(Succ(j), c, lam, borrows, env) = inference_step_ck_lambda_in(j, c, lam, borrows, env) { Refl }
+): ck_lambda_in(
+  Succ(j),
+  c,
+  lam,
+  borrows,
+  env
+) = inference_step_ck_lambda_in(j, c, lam, borrows, env) { Refl }

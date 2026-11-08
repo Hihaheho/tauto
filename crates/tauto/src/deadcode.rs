@@ -22,7 +22,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use tauto_message::msg;
+use tauto_message::{Message, msg};
 use tauto_parol::Span;
 
 use crate::surface::qualify::SEPARATOR;
@@ -30,10 +30,10 @@ use crate::surface::{FnDecl, Handler, Pattern, Stmt, SurfaceTerm, TermKind, walk
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Warning {
-    /// `unused_binding`, `unused_function`, `unused_import` or
-    /// `unreachable_code`.
+    /// `unused_binding`, `unused_function`, `unused_import`,
+    /// `unused_import_name`, `unreachable_code` or `unreachable_arm`.
     pub code: &'static str,
-    pub message: String,
+    pub message: tauto_message::Message,
     pub span: Span,
 }
 
@@ -50,7 +50,7 @@ impl std::fmt::Display for Warning {
 /// The warnings of the file at `path`, whose text is `source`. `runs_alone`:
 /// the file is a program nothing imports, so its top-level functions are
 /// its own. An import that cannot be read is left to the checker.
-pub fn analyze(path: &Path, source: &str, runs_alone: bool) -> Result<Vec<Warning>, String> {
+pub fn analyze(path: &Path, source: &str, runs_alone: bool) -> Result<Vec<Warning>, Message> {
     let program = crate::surface::parse_program_as_written(source)?;
     let mut out = Vec::new();
     let mut scopes = Scopes::default();
@@ -66,7 +66,7 @@ pub fn analyze(path: &Path, source: &str, runs_alone: bool) -> Result<Vec<Warnin
             {
                 out.push(Warning {
                     code: "unused_function",
-                    message: msg!("tauto-dead-function", name = &f.name).to_string(),
+                    message: msg!("tauto-dead-function", name = f.name.to_string()),
                     span: f.span,
                 });
             }
@@ -99,7 +99,7 @@ pub fn analyze(path: &Path, source: &str, runs_alone: bool) -> Result<Vec<Warnin
         {
             out.push(Warning {
                 code: "unused_import",
-                message: msg!("tauto-dead-import", path = rel.as_str()).to_string(),
+                message: msg!("tauto-dead-import", path = rel.as_str()),
                 span: *span,
             });
         }
@@ -136,30 +136,30 @@ fn imported_names(path: &Path, seen: &mut HashSet<std::path::PathBuf>) -> Option
 /// used by name.
 fn declared(s: &Stmt, out: &mut Vec<String>) -> Option<()> {
     match s {
-        Stmt::Fn(f) => out.push(f.name.clone()),
-        Stmt::Theorem(t) | Stmt::Def(t) => out.push(t.name.clone()),
+        Stmt::Fn(f) => out.push(f.name.to_string()),
+        Stmt::Theorem(t) | Stmt::Def(t) => out.push(t.name.to_string()),
         Stmt::Inductive(d) => {
-            out.push(d.name.clone());
-            out.extend(d.constructors.iter().map(|c| c.name.clone()));
+            out.push(d.name.to_string());
+            out.extend(d.constructors.iter().map(|c| c.name.to_string()));
         }
         Stmt::Struct(d) | Stmt::Enum(d) => {
-            out.push(d.name.clone());
-            out.extend(d.constructors.iter().map(|c| c.name.clone()));
+            out.push(d.name.to_string());
+            out.extend(d.constructors.iter().map(|c| c.name.to_string()));
         }
-        Stmt::Effect(e) => out.push(e.name.clone()),
+        Stmt::Effect(e) => out.push(e.name.to_string()),
         Stmt::Extern { fns, instances, .. } => {
             if !instances.is_empty() {
                 return None;
             }
-            out.extend(fns.iter().map(|f| f.name.clone()));
+            out.extend(fns.iter().map(|f| f.name.to_string()));
         }
-        Stmt::Module { name, .. } => out.push(name.clone()),
+        Stmt::Module { name, .. } => out.push(name.to_string()),
         Stmt::Mutual { items, .. } => {
             for i in items {
                 declared(i, out)?;
             }
         }
-        Stmt::Let { name, .. } | Stmt::Var { name, .. } => out.push(name.clone()),
+        Stmt::Let { name, .. } | Stmt::Var { name, .. } => out.push(name.to_string()),
         Stmt::Class(_)
         | Stmt::Instance(_)
         | Stmt::Attributed { .. }
@@ -235,11 +235,11 @@ impl Scopes {
                 let (code, message) = match b.what {
                     "function" => (
                         "unused_function",
-                        msg!("tauto-dead-function", name = &b.name).to_string(),
+                        msg!("tauto-dead-function", name = &b.name),
                     ),
                     what => (
                         "unused_binding",
-                        msg!("tauto-dead-binding", what = what, name = &b.name).to_string(),
+                        msg!("tauto-dead-binding", what = what, name = &b.name),
                     ),
                 };
                 out.push(Warning {
@@ -301,7 +301,7 @@ fn function(f: &FnDecl, report_params: bool, scopes: &mut Scopes, out: &mut Vec<
 
 fn pattern_names(p: &Pattern, out: &mut Vec<String>) {
     match p {
-        Pattern::Bind(n) => out.push(n.clone()),
+        Pattern::Bind(n) => out.push(n.to_string()),
         Pattern::Ctor { args, .. } => args.iter().for_each(|a| pattern_names(a, out)),
         Pattern::Record { fields, .. } => fields.iter().for_each(|(_, a)| pattern_names(a, out)),
         Pattern::Tuple(items) => items.iter().for_each(|a| pattern_names(a, out)),
@@ -451,7 +451,7 @@ fn block(stmts: &[Stmt], scopes: &mut Scopes, out: &mut Vec<Warning>) {
         {
             out.push(Warning {
                 code: "unreachable_code",
-                message: msg!("tauto-dead-after-return").to_string(),
+                message: msg!("tauto-dead-after-return"),
                 span,
             });
         }

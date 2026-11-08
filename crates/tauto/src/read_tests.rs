@@ -10,6 +10,35 @@ fn without_macros(source: &str, base: u32) -> Program {
     program
 }
 
+fn source_projection(mut program: Program) -> Program {
+    crate::resolve::Resolver::new(crate::bindings::library_definition_bindings())
+        .statements(&mut program.stmts);
+    for statement in &mut program.stmts {
+        crate::surface::references::statement(statement, &mut |name| {
+            let constructor = |reference: &crate::identity::DeclRef| {
+                matches!(
+                    reference.generation(),
+                    Some(crate::identity::Generation::Constructor(_))
+                )
+            };
+            let is_constructor = match &*name {
+                crate::surface::Name::Global(reference) => constructor(reference),
+                crate::surface::Name::Selection(selection) => {
+                    selection.candidates().iter().all(constructor)
+                }
+                _ => false,
+            };
+            let text = if is_constructor {
+                name.rsplit("::").next().unwrap().to_string()
+            } else {
+                name.to_string()
+            };
+            *name = crate::surface::Name::from(text);
+        });
+    }
+    program
+}
+
 #[test]
 fn preludes_have_identical_statements_without_macro_expansion() {
     for (name, source) in [
@@ -23,21 +52,24 @@ fn preludes_have_identical_statements_without_macro_expansion() {
     ] {
         if matches!(name, "kernel" | "shared") {
             assert_eq!(
-                parse_prelude(source).unwrap(),
-                without_macros(source, 0),
+                source_projection(parse_prelude(source).unwrap()),
+                source_projection(without_macros(source, 0)),
                 "{name} without classes",
             );
         }
         for base in [0, crate::surface::PRELUDE_BASE] {
             assert_eq!(
-                parse_prelude_at(source, base).unwrap(),
-                without_macros(source, base),
+                source_projection(parse_prelude_at(source, base).unwrap()),
+                source_projection(without_macros(source, base)),
                 "{name} at {base}",
             );
         }
         assert_eq!(
-            parse_prelude(source).unwrap(),
-            crate::types::expand_classes(without_macros(source, 0), 1 << 30),
+            source_projection(parse_prelude(source).unwrap()),
+            source_projection(crate::types::expand_classes(
+                without_macros(source, 0),
+                1 << 30
+            )),
             "{name} with classes",
         );
     }

@@ -35,16 +35,21 @@ pub(open) inductive WrittenAppChoice(
   WrittenChoiceBad: WrittenAppChoice(generics, name, count, WrittenBad)
 }
 pub fn written_choice_tail(name: Text, tuple: Bool, found: Option(Ty)): WrittenApp {
-  match found: WrittenApp {
+  ⊢ WrittenApp from match found {
     Some(bound) => WrittenGeneric(name)
-    None => match tuple: WrittenApp {
+    None => ⊢ WrittenApp from match tuple {
       true => WrittenBad
       false => WrittenNamed(name)
     }
   }
 }
-pub fn written_choice_info_test(name: Text, tuple: Bool, found: Option(Ty), info: Bool): WrittenApp {
-  match info: WrittenApp {
+pub fn written_choice_info_test(
+  name: Text,
+  tuple: Bool,
+  found: Option(Ty),
+  info: Bool
+): WrittenApp {
+  ⊢ WrittenApp from match info {
     true => WrittenInfo
     false => written_choice_tail(name, tuple, found)
   }
@@ -56,7 +61,7 @@ pub fn written_choice_unit_test(
   info: Bool,
   unit: Bool
 ): WrittenApp {
-  match unit: WrittenApp {
+  ⊢ WrittenApp from match unit {
     true => WrittenUnit
     false => written_choice_info_test(name, tuple, found, info)
   }
@@ -67,10 +72,7 @@ pub theorem written_choice_not_tuple(
   same: name = "Tuple"
 ): False {
   false_ne_true(
-    Eq::trans(
-      Eq::sym(Eq::subst((n: Text) => Text::eq(n, "Tuple") = false, same, different)),
-      Refl
-    )
+    Eq::trans(Eq::sym(Eq::subst((n: Text) => Text::eq(n, "Tuple") = false, same, different)), Refl)
   )
 }
 pub theorem written_choice_not_info(
@@ -107,14 +109,14 @@ pub theorem written_choice_tail_sound(
   lookup: Ordmap::get(generics, name, Ordmap::compare_text) = found,
   not_info: (name = "Info") -> (count = 1) -> False
 ): WrittenAppChoice(generics, name, count, written_choice_tail(name, tuple, found)) {
-  match found: WrittenAppChoice(generics, name, count, written_choice_tail(name, tuple, found)) {
+  ⊢ WrittenAppChoice(generics, name, count, written_choice_tail(name, tuple, found)) from match found {
     Some(bound) => WrittenChoiceGeneric(bound, lookup, not_info)
-    None => match tuple: WrittenAppChoice(
+    None => ⊢ WrittenAppChoice(
       generics,
       name,
       count,
       written_choice_tail(name, tuple, None)
-    ) {
+    ) from match tuple {
       true => WrittenChoiceBad
       false => WrittenChoiceNamed(
         lookup,
@@ -135,15 +137,23 @@ pub theorem written_choice_info_sound(
   lookup: Ordmap::get(generics, name, Ordmap::compare_text) = found,
   info_test: Bool::and(Text::eq(name, "Info"), Nat::eq(count, 1)) = info
 ): WrittenAppChoice(generics, name, count, written_choice_info_test(name, tuple, found, info)) {
-  match info: WrittenAppChoice(
+  ⊢ WrittenAppChoice(
     generics,
     name,
     count,
     written_choice_info_test(name, tuple, found, info)
-  ) {
+  ) from match info {
     true => WrittenChoiceInfo(
-      text_eq_true(name, "Info", ck_bool_and_left(Text::eq(name, "Info"), Nat::eq(count, 1), info_test)),
-      Nat::eq_sound(count, 1, ck_bool_and_right(Text::eq(name, "Info"), Nat::eq(count, 1), info_test))
+      text_eq_true(
+        name,
+        "Info",
+        ck_bool_and_left(Text::eq(name, "Info"), Nat::eq(count, 1), info_test)
+      ),
+      Nat::eq_sound(
+        count,
+        1,
+        ck_bool_and_right(Text::eq(name, "Info"), Nat::eq(count, 1), info_test)
+      )
     )
     false => written_choice_tail_sound(
       generics,
@@ -175,19 +185,23 @@ pub theorem written_choice_unit_sound(
   count,
   written_choice_unit_test(name, tuple, found, info, unit)
 ) {
-  match unit: WrittenAppChoice(
+  ⊢ WrittenAppChoice(
     generics,
     name,
     count,
     written_choice_unit_test(name, tuple, found, info, unit)
-  ) {
+  ) from match unit {
     true => WrittenChoiceUnit(
       text_eq_true(
         name,
         "Tuple",
         ck_bool_and_left(Text::eq(name, "Tuple"), Nat::eq(count, 0), unit_test)
       ),
-      Nat::eq_sound(count, 0, ck_bool_and_right(Text::eq(name, "Tuple"), Nat::eq(count, 0), unit_test))
+      Nat::eq_sound(
+        count,
+        0,
+        ck_bool_and_right(Text::eq(name, "Tuple"), Nat::eq(count, 0), unit_test)
+      )
     )
     false => written_choice_info_sound(
       generics,
@@ -204,16 +218,21 @@ pub theorem written_choice_unit_sound(
 }
 
 pub fn written_choice_contains(name: Text, tuple: Bool, contains: Bool): WrittenApp {
-  match contains: WrittenApp {
+  ⊢ WrittenApp from match contains {
     true => WrittenGeneric(name)
-    false => match tuple: WrittenApp {
+    false => ⊢ WrittenApp from match tuple {
       true => WrittenBad
       false => WrittenNamed(name)
     }
   }
 }
-pub fn written_choice_original_info(name: Text, tuple: Bool, contains: Bool, info: Bool): WrittenApp {
-  match info: WrittenApp {
+pub fn written_choice_original_info(
+  name: Text,
+  tuple: Bool,
+  contains: Bool,
+  info: Bool
+): WrittenApp {
+  ⊢ WrittenApp from match info {
     true => WrittenInfo
     false => written_choice_contains(name, tuple, contains)
   }
@@ -225,7 +244,7 @@ pub fn written_choice_original_unit(
   info: Bool,
   unit: Bool
 ): WrittenApp {
-  match unit: WrittenApp {
+  ⊢ WrittenApp from match unit {
     true => WrittenUnit
     false => written_choice_original_info(name, tuple, contains, info)
   }
@@ -234,8 +253,16 @@ pub theorem written_choice_lookup_equal(
   name: Text,
   tuple: Bool,
   found: Option(Ty)
-): written_choice_contains(name, tuple, written_name_contains(found)) = written_choice_tail(name, tuple, found) {
-  match found: written_choice_contains(name, tuple, written_name_contains(found)) = written_choice_tail(name, tuple, found) {
+): written_choice_contains(
+  name,
+  tuple,
+  written_name_contains(found)
+) = written_choice_tail(name, tuple, found) {
+  ⊢ written_choice_contains(
+    name,
+    tuple,
+    written_name_contains(found)
+  ) = written_choice_tail(name, tuple, found) from match found {
     None => Refl
     Some(bound) => Refl
   }
@@ -245,8 +272,18 @@ pub theorem written_choice_info_equal(
   tuple: Bool,
   found: Option(Ty),
   info: Bool
-): written_choice_original_info(name, tuple, written_name_contains(found), info) = written_choice_info_test(name, tuple, found, info) {
-  match info: written_choice_original_info(name, tuple, written_name_contains(found), info) = written_choice_info_test(name, tuple, found, info) {
+): written_choice_original_info(
+  name,
+  tuple,
+  written_name_contains(found),
+  info
+) = written_choice_info_test(name, tuple, found, info) {
+  ⊢ written_choice_original_info(
+    name,
+    tuple,
+    written_name_contains(found),
+    info
+  ) = written_choice_info_test(name, tuple, found, info) from match info {
     true => Refl
     false => written_choice_lookup_equal(name, tuple, found)
   }
@@ -257,8 +294,20 @@ pub theorem written_choice_unit_equal(
   found: Option(Ty),
   info: Bool,
   unit: Bool
-): written_choice_original_unit(name, tuple, written_name_contains(found), info, unit) = written_choice_unit_test(name, tuple, found, info, unit) {
-  match unit: written_choice_original_unit(name, tuple, written_name_contains(found), info, unit) = written_choice_unit_test(name, tuple, found, info, unit) {
+): written_choice_original_unit(
+  name,
+  tuple,
+  written_name_contains(found),
+  info,
+  unit
+) = written_choice_unit_test(name, tuple, found, info, unit) {
+  ⊢ written_choice_original_unit(
+    name,
+    tuple,
+    written_name_contains(found),
+    info,
+    unit
+  ) = written_choice_unit_test(name, tuple, found, info, unit) from match unit {
     true => Refl
     false => written_choice_info_equal(name, tuple, found, info)
   }
@@ -270,13 +319,17 @@ pub theorem written_app_name_unfold(
   count: Nat,
   start: Nat,
   end: Nat
-): written_app(SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence), count, generics) = written_choice_original_unit(
-    name,
-    Text::eq(name, "Tuple"),
-    written_name_contains(Ordmap::get(generics, name, Ordmap::compare_text)),
-    Bool::and(Text::eq(name, "Info"), Nat::eq(count, 1)),
-    Bool::and(Text::eq(name, "Tuple"), Nat::eq(count, 0))
-  ) { Refl }
+): written_app(
+  SurfaceTermIndexedMk(SkVar(name), start, end, ast_occurrence),
+  count,
+  generics
+) = written_choice_original_unit(
+  name,
+  Text::eq(name, "Tuple"),
+  written_name_contains(Ordmap::get(generics, name, Ordmap::compare_text)),
+  Bool::and(Text::eq(name, "Info"), Nat::eq(count, 1)),
+  Bool::and(Text::eq(name, "Tuple"), Nat::eq(count, 0))
+) { Refl }
 pub theorem written_app_name_sound(
   ast_occurrence: Option(TermOccurrence),
   generics: Ordmap(Text, Ty),

@@ -4,7 +4,7 @@ use quote::quote;
 use tauto_nir::*;
 
 use crate::Gen;
-use crate::expr::{Fx, PatOut, lid};
+use crate::expr::{Fx, PatOut, collect_binds, lid};
 use crate::tok::{Rs, comma};
 
 impl Gen<'_> {
@@ -56,6 +56,12 @@ impl Gen<'_> {
             let pattern = self.pat(&pat, true, &mut out);
             let guard = PatOut::guard_clause(&out.guards);
             let prologue = out.prologue();
+            // Here the names are owned values, not cells held as they are.
+            let mut names = Vec::new();
+            collect_binds(&arm.pat, &mut names);
+            for l in &names {
+                self.lazy.remove(&l.id);
+            }
             let body = self.expr(&arm.body, fx);
             // Only pattern inspection borrows. The arm receives owned values,
             // including values returned or captured by a closure in its body.

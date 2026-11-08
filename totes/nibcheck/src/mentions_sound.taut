@@ -21,7 +21,7 @@ pub theorem mention_leaf_nested(
   rest: List(Ty),
   witness: MentionLeaf(s, n, xs)
 ): MentionLeaf(s, n, Cons(TyUnion(xs), rest)) {
-  match witness: MentionLeaf(s, n, Cons(TyUnion(xs), rest)) {
+  ⊢ MentionLeaf(s, n, Cons(TyUnion(xs), rest)) from match witness {
     Mk(t, leaf, occurs) => MentionLeaf::Mk(t, LvIn(xs, rest, leaf), occurs)
   }
 }
@@ -32,7 +32,7 @@ pub theorem mention_leaf_later(
   rest: List(Ty),
   witness: MentionLeaf(s, n, rest)
 ): MentionLeaf(s, n, Cons(x, rest)) {
-  match witness: MentionLeaf(s, n, Cons(x, rest)) {
+  ⊢ MentionLeaf(s, n, Cons(x, rest)) from match witness {
     Mk(t, leaf, occurs) => MentionLeaf::Mk(t, LvThere(x, rest, leaf), occurs)
   }
 }
@@ -44,7 +44,7 @@ mutual {
     h: TyMentions(s, n, t),
     rest: List(Ty)
   ): MentionLeaf(s, n, Cons(t, rest)) {
-    match h: MentionLeaf(s, n, Cons(t, rest)) {
+    ⊢ MentionLeaf(s, n, Cons(t, rest)) from match h {
       MenParam(k) => MentionLeaf::Mk(TyParam(n, k), LvHere(rest, Refl), h)
       MenVar(inner, i, eq, inside) => MentionLeaf::Mk(TyVar(i), LvHere(rest, Refl), h)
       MenFnParam(ps, r, k, inside) => MentionLeaf::Mk(TyFn(ps, r, k), LvHere(rest, Refl), h)
@@ -57,7 +57,11 @@ mutual {
         mentions_list_leaf(s, n, ts, inside)
       )
       MenProduct(ts, inside) => MentionLeaf::Mk(TyProduct(ts), LvHere(rest, Refl), h)
-      MenTagged(inner, tags, inside) => MentionLeaf::Mk(TyTagged(tags, inner), LvHere(rest, Refl), h)
+      MenTagged(inner, tags, inside) => MentionLeaf::Mk(
+        TyTagged(tags, inner),
+        LvHere(rest, Refl),
+        h
+      )
       MenNamed(ts, name, inside) => MentionLeaf::Mk(TyNamed(name, ts), LvHere(rest, Refl), h)
       MenInfo(inner, inside) => MentionLeaf::Mk(TyInfo(inner), LvHere(rest, Refl), h)
       MenBorrow(inner, mutable, inside) => MentionLeaf::Mk(
@@ -76,7 +80,7 @@ mutual {
     ts: List(Ty),
     h: TyMentionsList(s, n, ts)
   ): MentionLeaf(s, n, ts) {
-    match h: MentionLeaf(s, n, ts) {
+    ⊢ MentionLeaf(s, n, ts) from match h {
       MenHead(x, rest, inside) => mentions_leaf(s, n, x, inside, rest)
       MenTail(rest, x, inside) => mention_leaf_later(
         s,
@@ -97,7 +101,7 @@ pub theorem mentions_list_of_member(
   m: Mem(Ty, e, ts),
   h: TyMentions(s, n, e)
 ): TyMentionsList(s, n, ts) {
-  match m: TyMentionsList(s, n, ts) {
+  ⊢ TyMentionsList(s, n, ts) from match m {
     MemHere(rest) => MenHead(rest, h)
     MemThere(x, rest, inside) => MenTail(x, mentions_list_of_member(s, n, e, rest, inside, h))
   }
@@ -123,7 +127,7 @@ pub theorem mentions_members(
   e: Ty,
   m: Mem(Ty, e, ty_members(u)),
   h: TyMentions(s, n, e)
-): TyMentions(s, n, u) { match u: TyMentions(s, n, u) {
+): TyMentions(s, n, u) { ⊢ TyMentions(s, n, u) from match u {
     TyInt(part_w) => mentions_singleton(s, n, u, e, m, h)
     TyBool => mentions_singleton(s, n, u, e, m, h)
     TyText => mentions_singleton(s, n, u, e, m, h)
@@ -149,15 +153,8 @@ pub theorem mentions_union_leaf(
   ts: List(Ty),
   witness: MentionLeaf(s, n, ts)
 ): TyMentions(s, n, ty_union(ts)) {
-  match witness: TyMentions(s, n, ty_union(ts)) {
-    Mk(t, leaf, occurs) => mentions_members(
-      s,
-      n,
-      ty_union(ts),
-      t,
-      union_has(t, ts, leaf),
-      occurs
-    )
+  ⊢ TyMentions(s, n, ty_union(ts)) from match witness {
+    Mk(t, leaf, occurs) => mentions_members(s, n, ty_union(ts), t, union_has(t, ts, leaf), occurs)
   }
 }
 pub theorem mentions_union(
@@ -181,7 +178,7 @@ pub theorem pmention_leaf_nested(
   rest: List(Ty),
   witness: PMentionLeaf(s, n, xs)
 ): PMentionLeaf(s, n, Cons(TyProduct(xs), rest)) {
-  match witness: PMentionLeaf(s, n, Cons(TyProduct(xs), rest)) {
+  ⊢ PMentionLeaf(s, n, Cons(TyProduct(xs), rest)) from match witness {
     PmentionLeaf(t, leaf, occurs) => PmentionLeaf(t, PlvIn(xs, rest, leaf), occurs)
   }
 }
@@ -192,7 +189,7 @@ pub theorem pmention_leaf_later(
   rest: List(Ty),
   witness: PMentionLeaf(s, n, rest)
 ): PMentionLeaf(s, n, Cons(x, rest)) {
-  match witness: PMentionLeaf(s, n, Cons(x, rest)) {
+  ⊢ PMentionLeaf(s, n, Cons(x, rest)) from match witness {
     PmentionLeaf(t, leaf, occurs) => PmentionLeaf(t, PlvThere(x, rest, leaf), occurs)
   }
 }
@@ -204,7 +201,7 @@ mutual {
     h: TyMentions(s, n, t),
     rest: List(Ty)
   ): PMentionLeaf(s, n, Cons(t, rest)) {
-    match h: PMentionLeaf(s, n, Cons(t, rest)) {
+    ⊢ PMentionLeaf(s, n, Cons(t, rest)) from match h {
       MenParam(k) => PmentionLeaf(TyParam(n, k), PlvHere(rest, Refl), h)
       MenVar(inner, i, eq, inside) => PmentionLeaf(TyVar(i), PlvHere(rest, Refl), h)
       MenFnParam(ps, r, k, inside) => PmentionLeaf(TyFn(ps, r, k), PlvHere(rest, Refl), h)
@@ -236,7 +233,7 @@ mutual {
     ts: List(Ty),
     h: TyMentionsList(s, n, ts)
   ): PMentionLeaf(s, n, ts) {
-    match h: PMentionLeaf(s, n, ts) {
+    ⊢ PMentionLeaf(s, n, ts) from match h {
       MenHead(x, rest, inside) => pmentions_leaf(s, n, x, inside, rest)
       MenTail(rest, x, inside) => pmention_leaf_later(
         s,
@@ -256,7 +253,7 @@ pub theorem pmentions_members(
   e: Ty,
   m: Mem(Ty, e, ty_pmembers(u)),
   h: TyMentions(s, n, e)
-): TyMentions(s, n, u) { match u: TyMentions(s, n, u) {
+): TyMentions(s, n, u) { ⊢ TyMentions(s, n, u) from match u {
     TyInt(part_w) => mentions_singleton(s, n, u, e, m, h)
     TyBool => mentions_singleton(s, n, u, e, m, h)
     TyText => mentions_singleton(s, n, u, e, m, h)
@@ -282,7 +279,7 @@ pub theorem mentions_product_leaf(
   ts: List(Ty),
   witness: PMentionLeaf(s, n, ts)
 ): TyMentions(s, n, ty_product(ts)) {
-  match witness: TyMentions(s, n, ty_product(ts)) {
+  ⊢ TyMentions(s, n, ty_product(ts)) from match witness {
     PmentionLeaf(t, leaf, occurs) => pmentions_members(
       s,
       n,
@@ -309,7 +306,7 @@ pub theorem mentions_tagged_inner(
   x: Ty,
   h: TyMentions(s, n, TyTagged(tags, x))
 ): TyMentions(s, n, x) {
-  match h: TyMentions(s, n, x) { MenTagged(inner, labels, inside) => inside }
+  ⊢ TyMentions(s, n, x) from match h { MenTagged(inner, labels, inside) => inside }
 }
 pub theorem mentions_tagged_with(
   s: Ordmap(Nat, Ty),
@@ -318,7 +315,7 @@ pub theorem mentions_tagged_with(
   x: Ty,
   h: TyMentions(s, n, x)
 ): TyMentions(s, n, ty_tagged_with(tags, x)) {
-  match tags: TyMentions(s, n, ty_tagged_with(tags, x)) { Nil => h
+  ⊢ TyMentions(s, n, ty_tagged_with(tags, x)) from match tags { Nil => h
     Cons(tag, rest) => MenTagged(Cons(tag, rest), h) }
 }
 pub theorem mentions_list_append_left(
@@ -328,7 +325,7 @@ pub theorem mentions_list_append_left(
   h: TyMentionsList(s, n, xs),
   ys: List(Ty)
 ): TyMentionsList(s, n, List::append(xs, ys)) {
-  match h: TyMentionsList(s, n, List::append(xs, ys)) {
+  ⊢ TyMentionsList(s, n, List::append(xs, ys)) from match h {
     MenHead(x, rest, inside) => MenHead(List::append(rest, ys), inside)
     MenTail(rest, x, inside) => MenTail(x, mentions_list_append_left(s, n, rest, inside, ys))
   }
@@ -340,7 +337,7 @@ pub theorem mentions_list_append_right(
   ys: List(Ty),
   h: TyMentionsList(s, n, ys)
 ): TyMentionsList(s, n, List::append(xs, ys)) {
-  match xs: TyMentionsList(s, n, List::append(xs, ys)) {
+  ⊢ TyMentionsList(s, n, List::append(xs, ys)) from match xs {
     Nil => h
     Cons(x, rest) => MenTail(x, mentions_list_append_right(s, n, rest, ys, h))
   }
@@ -352,7 +349,7 @@ pub theorem mentions_named_args(
   args: List(Ty),
   h: TyMentions(s, n, TyNamed(name, args))
 ): TyMentionsList(s, n, args) {
-  match h: TyMentionsList(s, n, args) { MenNamed(parts, label, inside) => inside }
+  ⊢ TyMentionsList(s, n, args) from match h { MenNamed(parts, label, inside) => inside }
 }
 pub theorem mentions_tagged(
   s: Ordmap(Nat, Ty),
@@ -360,7 +357,7 @@ pub theorem mentions_tagged(
   t: Ty,
   tags: List(Text),
   h: TyMentions(s, n, t)
-): TyMentions(s, n, ty_tagged(tags, t)) { match t: TyMentions(s, n, ty_tagged(tags, t)) {
+): TyMentions(s, n, ty_tagged(tags, t)) { ⊢ TyMentions(s, n, ty_tagged(tags, t)) from match t {
     TyInt(part_w) => mentions_tagged_with(s, n, tags, t, h)
     TyBool => mentions_tagged_with(s, n, tags, t, h)
     TyText => mentions_tagged_with(s, n, tags, t, h)
@@ -392,7 +389,7 @@ pub theorem mentions_apply_head(
   t: Ty,
   x: Ty,
   h: TyMentions(s, n, t)
-): TyMentions(s, n, ty_apply(t, x)) { match t: TyMentions(s, n, ty_apply(t, x)) {
+): TyMentions(s, n, ty_apply(t, x)) { ⊢ TyMentions(s, n, ty_apply(t, x)) from match t {
     TyInt(part_w) => MenAppHead(x, h)
     TyBool => MenAppHead(x, h)
     TyText => MenAppHead(x, h)
@@ -427,7 +424,7 @@ pub theorem mentions_apply_arg(
   t: Ty,
   x: Ty,
   h: TyMentions(s, n, x)
-): TyMentions(s, n, ty_apply(t, x)) { match t: TyMentions(s, n, ty_apply(t, x)) {
+): TyMentions(s, n, ty_apply(t, x)) { ⊢ TyMentions(s, n, ty_apply(t, x)) from match t {
     TyInt(part_w) => MenAppArg(t, h)
     TyBool => MenAppArg(t, h)
     TyText => MenAppArg(t, h)
@@ -472,7 +469,7 @@ pub theorem mentions_resolve_list_step(
   ts: List(Ty),
   h: TyMentionsList(s, n, ts)
 ): TyMentionsList(s, n, ty_resolve_list_in(Succ(j), s, ts)) {
-  match h: TyMentionsList(s, n, ty_resolve_list_in(Succ(j), s, ts)) {
+  ⊢ TyMentionsList(s, n, ty_resolve_list_in(Succ(j), s, ts)) from match h {
     MenHead(x, rest, inside) => MenHead(ty_resolve_list_in(j, s, rest), ht(x, inside))
     MenTail(rest, x, inside) => MenTail(ty_resolve_in(j, s, x), hl(rest, inside))
   }
@@ -486,7 +483,7 @@ pub theorem mentions_resolve_step(
   t: Ty,
   h: TyMentions(s, n, t)
 ): TyMentions(s, n, ty_resolve_in(Succ(j), s, t)) {
-  match h: TyMentions(s, n, ty_resolve_in(Succ(j), s, t)) {
+  ⊢ TyMentions(s, n, ty_resolve_in(Succ(j), s, t)) from match h {
     MenParam(k) => MenParam(k)
     MenVar(inner, i, eq, inside) => Eq::subst(
       (o: Option(Ty)) => TyMentions(s, n, ty_resolve_var(j, s, i, o)),
@@ -529,7 +526,7 @@ pub theorem mentions_resolve_all(
   s: Ordmap(Nat, Ty),
   n: Text
 ): And(ResolveMentionsAt(k, s, n), ResolveMentionsListAt(k, s, n)) {
-  match k: And(ResolveMentionsAt(k, s, n), ResolveMentionsListAt(k, s, n)) {
+  ⊢ And(ResolveMentionsAt(k, s, n), ResolveMentionsListAt(k, s, n)) from match k {
     Zero => AndIntro(t => h => h, ts => h => h)
     Succ(j) => {
       let ih: And(

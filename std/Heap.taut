@@ -31,7 +31,7 @@ module Heap {
   }
 
   pub fn rank<A>(h: Heap(A)): Nat {
-    match h: Nat {
+    ⊢ Nat from match h {
       HeapLeaf => 0
       HeapNode(k, x, l, r) => k
     }
@@ -39,7 +39,7 @@ module Heap {
 
   // A node over `a` and `b`, the one of the larger rank on the left.
   pub fn make<A>(x: A, a: Heap(A), b: Heap(A)): Heap(A) {
-    match rank(b) <= rank(a): Heap(A) {
+    ⊢ Heap(A) from match rank(b) <= rank(a) {
       true => HeapNode(Succ(rank(b)), x, a, b)
       false => HeapNode(Succ(rank(a)), x, b, a)
     }
@@ -55,9 +55,9 @@ module Heap {
     rest: (Heap(A)) -> Heap(A),
     h: Heap(A)
   ): Heap(A) {
-    match h: Heap(A) {
+    ⊢ Heap(A) from match h {
       HeapLeaf => make(x, l, rest(HeapLeaf))
-      HeapNode(k, y, hl, hr) => match cmp(x, y): Heap(A) {
+      HeapNode(k, y, hl, hr) => ⊢ Heap(A) from match cmp(x, y) {
         Less => make(x, l, rest(h))
         Equal => make(x, l, rest(h))
         Greater => make(y, hl, merge_into(cmp, x, l, rest, hr))
@@ -66,7 +66,7 @@ module Heap {
   }
 
   pub fn merge<A>(cmp: (A, A) -> Ordering, a: Heap(A), b: Heap(A)): Heap(A) {
-    match a: Heap(A) {
+    ⊢ Heap(A) from match a {
       HeapLeaf => b
       HeapNode(k, x, l, r) => merge_into(cmp, x, l, (z: Heap(A)) => merge(cmp, r, z), b)
     }
@@ -78,7 +78,7 @@ module Heap {
 
   // The least element, or none when the heap is empty.
   pub fn peek<A>(h: Heap(A)): Option(A) {
-    match h: Option(A) {
+    ⊢ Option(A) from match h {
       HeapLeaf => None
       HeapNode(k, x, l, r) => Some(x)
     }
@@ -86,21 +86,21 @@ module Heap {
 
   // The least element and the heap without it, or none when it is empty.
   pub fn pop<A>(cmp: (A, A) -> Ordering, h: Heap(A)): Option(A × Heap(A)) {
-    match h: Option(A × Heap(A)) {
+    ⊢ Option(A × Heap(A)) from match h {
       HeapLeaf => None
       HeapNode(k, x, l, r) => Some(#(x, merge(cmp, l, r)))
     }
   }
 
   pub fn len<A>(h: Heap(A)): Nat {
-    match h: Nat {
+    ⊢ Nat from match h {
       HeapLeaf => 0
-      HeapNode(k, x, l, r) => Succ(Nat::add(len(l), len(r)))
+      HeapNode(k, x, l, r) => Succ(Nat::add(Heap::len(l), Heap::len(r)))
     }
   }
 
   pub fn is_empty<A>(h: Heap(A)): Bool {
-    match h: Bool {
+    ⊢ Bool from match h {
       HeapLeaf => true
       HeapNode(k, x, l, r) => false
     }
@@ -108,14 +108,14 @@ module Heap {
 
   // The elements, the root first and then those of the children.
   pub fn to_list<A>(h: Heap(A)): List(A) {
-    match h: List(A) {
+    ⊢ List(A) from match h {
       HeapLeaf => Nil
       HeapNode(k, x, l, r) => Cons(x, List::append(to_list(l), to_list(r)))
     }
   }
 
   pub fn of_list<A>(cmp: (A, A) -> Ordering, l: List(A)): Heap(A) {
-    match l: Heap(A) {
+    ⊢ Heap(A) from match l {
       Nil => HeapLeaf
       Cons(x, rest) => push(cmp, of_list(cmp, rest), x)
     }
@@ -123,9 +123,9 @@ module Heap {
 
   // At most `n` elements popped one after another.
   pub fn drain<A>(cmp: (A, A) -> Ordering, n: Nat, h: Heap(A)): List(A) {
-    match n: List(A) {
+    ⊢ List(A) from match n {
       Zero => Nil
-      Succ(m) => match pop(cmp, h): List(A) {
+      Succ(m) => ⊢ List(A) from match pop(cmp, h) {
         None => Nil
         Some(#(x, rest)) => Cons(x, drain(cmp, m, rest))
       }
@@ -134,19 +134,25 @@ module Heap {
 
   // The elements, least first.
   pub fn into_sorted<A>(cmp: (A, A) -> Ordering, h: Heap(A)): List(A) {
-    drain(cmp, len(h), h)
+    drain(cmp, Heap::len(h), h)
   }
 
   pub theorem make_len<A: Type>(
     x: A,
     a: Heap(A),
     b: Heap(A)
-  ): len(make(x, a, b)) = Succ(Nat::add(len(a), len(b))) {
-    match rank(b) <= rank(a): len(make(x, a, b)) = Succ(Nat::add(len(a), len(b))) {
-      true => ⊢ len(HeapNode(Succ(rank(b)), x, a, b)) = Succ(Nat::add(len(a), len(b))) from Refl
-      false => ⊢ len(
+  ): Heap::len(make(x, a, b)) = Succ(Nat::add(Heap::len(a), Heap::len(b))) {
+    ⊢ Heap::len(
+      make(x, a, b)
+    ) = Succ(Nat::add(Heap::len(a), Heap::len(b))) from match rank(b) <= rank(a) {
+      true => ⊢ Heap::len(
+        HeapNode(Succ(rank(b)), x, a, b)
+      ) = Succ(Nat::add(Heap::len(a), Heap::len(b))) from Refl
+      false => ⊢ Heap::len(
         HeapNode(Succ(rank(a)), x, b, a)
-      ) = Succ(Nat::add(len(a), len(b))) from Eq::congr(⟦Succ(□)⟧, Nat::add_comm(len(b), len(a)))
+      ) = Succ(
+        Nat::add(Heap::len(a), Heap::len(b))
+      ) from Eq::congr(⟦Succ(□)⟧, Nat::add_comm(Heap::len(b), Heap::len(a)))
     }
   }
 
@@ -181,12 +187,15 @@ module Heap {
     l: Heap(A),
     rest: (Heap(A)) -> Heap(A),
     n: Nat,
-    hr: ∀ z: Heap(A). len(rest(z)) = Nat::add(n, len(z)),
+    hr: ∀ z: Heap(A). Heap::len(rest(z)) = Nat::add(n, Heap::len(z)),
     h: Heap(A)
-  ): len(make(x, l, rest(h))) = Succ(Nat::add(Nat::add(len(l), n), len(h))) {
+  ): Heap::len(make(x, l, rest(h))) = Succ(Nat::add(Nat::add(Heap::len(l), n), Heap::len(h))) {
     Eq::trans(
       make_len(x, l, rest(h)),
-      Eq::trans(Eq::congr(⟦Succ(Nat::add(len(l), □))⟧, hr(h)), len_arith_left(len(l), n, len(h)))
+      Eq::trans(
+        Eq::congr(⟦Succ(Nat::add(Heap::len(l), □))⟧, hr(h)),
+        len_arith_left(Heap::len(l), n, Heap::len(h))
+      )
     )
   }
 
@@ -198,20 +207,27 @@ module Heap {
     l: Heap(A),
     rest: (Heap(A)) -> Heap(A),
     n: Nat,
-    hr: ∀ z: Heap(A). len(rest(z)) = Nat::add(n, len(z)),
+    hr: ∀ z: Heap(A). Heap::len(rest(z)) = Nat::add(n, Heap::len(z)),
     h: Heap(A)
-  ): len(merge_into(cmp, x, l, rest, h)) = Succ(Nat::add(Nat::add(len(l), n), len(h))) {
-    match h: len(merge_into(cmp, x, l, rest, h)) = Succ(Nat::add(Nat::add(len(l), n), len(h))) {
+  ): Heap::len(
+    merge_into(cmp, x, l, rest, h)
+  ) = Succ(Nat::add(Nat::add(Heap::len(l), n), Heap::len(h))) {
+    ⊢ Heap::len(
+      merge_into(cmp, x, l, rest, h)
+    ) = Succ(Nat::add(Nat::add(Heap::len(l), n), Heap::len(h))) from match h {
       HeapLeaf => Eq::trans(
         make_len(x, l, rest(HeapLeaf)),
-        Eq::trans(Eq::congr(⟦Succ(Nat::add(len(l), □))⟧, hr(HeapLeaf)), len_arith_leaf(len(l), n))
+        Eq::trans(
+          Eq::congr(⟦Succ(Nat::add(Heap::len(l), □))⟧, hr(HeapLeaf)),
+          len_arith_leaf(Heap::len(l), n)
+        )
       )
       HeapNode(k, y, hl, hh) => Ordering::cases(
-        (o: Ordering) => len(match o: Heap(A) {
+        (o: Ordering) => Heap::len(⊢ Heap(A) from match o {
             Less => make(x, l, rest(HeapNode(k, y, hl, hh)))
             Equal => make(x, l, rest(HeapNode(k, y, hl, hh)))
             Greater => make(y, hl, merge_into(cmp, x, l, rest, hh))
-          }) = Succ(Nat::add(Nat::add(len(l), n), Succ(Nat::add(len(hl), len(hh))))),
+          }) = Succ(Nat::add(Nat::add(Heap::len(l), n), Succ(Nat::add(Heap::len(hl), Heap::len(hh))))),
         cmp(x, y),
         (e: cmp(x, y) = Less) => merge_into_len_take(x, l, rest, n, hr, HeapNode(k, y, hl, hh)),
         (e: cmp(x, y) = Equal) => merge_into_len_take(x, l, rest, n, hr, HeapNode(k, y, hl, hh)),
@@ -221,10 +237,10 @@ module Heap {
           make_len(y, hl, merge_into(cmp, x, l, rest, hh)),
           Eq::trans(
             Eq::congr(
-              ⟦Succ(Nat::add(len(hl), □))⟧,
+              ⟦Succ(Nat::add(Heap::len(hl), □))⟧,
               merge_into_len(cmp, x, l, rest, n, hr, hh)
             ),
-            len_arith_right(Nat::add(len(l), n), len(hl), len(hh))
+            len_arith_right(Nat::add(Heap::len(l), n), Heap::len(hl), Heap::len(hh))
           )
         )
       )
@@ -235,20 +251,20 @@ module Heap {
     cmp: (A, A) -> Ordering,
     a: Heap(A),
     b: Heap(A)
-  ): len(merge(cmp, a, b)) = Nat::add(len(a), len(b)) {
-    match a: len(merge(cmp, a, b)) = Nat::add(len(a), len(b)) {
-      HeapLeaf => Eq::sym(Nat::add_zero_left(len(b)))
+  ): Heap::len(merge(cmp, a, b)) = Nat::add(Heap::len(a), Heap::len(b)) {
+    ⊢ Heap::len(merge(cmp, a, b)) = Nat::add(Heap::len(a), Heap::len(b)) from match a {
+      HeapLeaf => Eq::sym(Nat::add_zero_left(Heap::len(b)))
       HeapNode(k, x, l, r) => Eq::trans(
         merge_into_len(
           cmp,
           x,
           l,
           (z: Heap(A)) => merge(cmp, r, z),
-          len(r),
+          Heap::len(r),
           (z: Heap(A)) => merge_len(cmp, r, z),
           b
         ),
-        Eq::sym(Nat::add_succ_left(Nat::add(len(l), len(r)), len(b)))
+        Eq::sym(Nat::add_succ_left(Nat::add(Heap::len(l), Heap::len(r)), Heap::len(b)))
       )
     }
   }
@@ -257,16 +273,19 @@ module Heap {
     cmp: (A, A) -> Ordering,
     h: Heap(A),
     x: A
-  ): len(push(cmp, h, x)) = Succ(len(h)) {
+  ): Heap::len(push(cmp, h, x)) = Succ(Heap::len(h)) {
     Eq::trans(
       merge_len(cmp, HeapNode(1, x, HeapLeaf, HeapLeaf), h),
-      Eq::trans(Nat::add_succ_left(0, len(h)), Eq::congr(⟦Succ(□)⟧, Nat::add_zero_left(len(h))))
+      Eq::trans(
+        Nat::add_succ_left(0, Heap::len(h)),
+        Eq::congr(⟦Succ(□)⟧, Nat::add_zero_left(Heap::len(h)))
+      )
     )
   }
 
   // `x` is not before the bound `o`; every element is above no bound.
   pub fn above<A>(cmp: (A, A) -> Ordering, o: Option(A), x: A): Prop {
-    match o: Prop {
+    ⊢ Prop from match o {
       None => True
       Some(a) => SortLe(A, cmp, a, x)
     }
@@ -274,7 +293,7 @@ module Heap {
 
   // Every element of `h` is above `o`, and above the element of each node over it.
   pub fn ok<A>(cmp: (A, A) -> Ordering, o: Option(A), h: Heap(A)): Prop {
-    match h: Prop {
+    ⊢ Prop from match h {
       HeapLeaf => True
       HeapNode(k, x, l, r) => above(cmp, o, x) ∧ ok(cmp, Some(x), l) ∧ ok(cmp, Some(x), r)
     }
@@ -287,7 +306,7 @@ module Heap {
 
   // What a pop answers is a least element: the heap left is above it.
   pub fn popped_ok<A>(cmp: (A, A) -> Ordering, o: Option(A × Heap(A))): Prop {
-    match o: Prop {
+    ⊢ Prop from match o {
       None => True
       Some(#(x, rest)) => ok(cmp, Some(x), rest)
     }
@@ -302,7 +321,7 @@ module Heap {
     h1: above(cmp, o, a),
     h2: SortLe(A, cmp, a, b)
   ): above(cmp, o, b) {
-    match o: above(cmp, o, b) {
+    ⊢ above(cmp, o, b) from match o {
       None => Trivial
       Some(c) => sort_le_trans(cmp, w, c, a, b, h1, h2)
     }
@@ -317,7 +336,7 @@ module Heap {
     ha: above(cmp, o, a),
     hok: ok(cmp, Some(a), h)
   ): ok(cmp, o, h) {
-    match h: ok(cmp, o, h) {
+    ⊢ ok(cmp, o, h) from match h {
       HeapLeaf => Trivial
       HeapNode(k, x, l, r) => AndIntro(
         above_trans(cmp, w, o, a, x, ha, And::left(hok)),
@@ -336,7 +355,7 @@ module Heap {
     ha: ok(cmp, Some(x), a),
     hb: ok(cmp, Some(x), b)
   ): ok(cmp, o, make(x, a, b)) {
-    match rank(b) <= rank(a): ok(cmp, o, make(x, a, b)) {
+    ⊢ ok(cmp, o, make(x, a, b)) from match rank(b) <= rank(a) {
       true => ⊢ ok(cmp, o, HeapNode(Succ(rank(b)), x, a, b)) from AndIntro(hx, AndIntro(ha, hb))
       false => ⊢ ok(cmp, o, HeapNode(Succ(rank(a)), x, b, a)) from AndIntro(hx, AndIntro(hb, ha))
     }
@@ -369,10 +388,10 @@ module Heap {
     hx: above(cmp, o, x),
     hh: ok(cmp, o, h)
   ): ok(cmp, o, merge_into(cmp, x, l, rest, h)) {
-    match h: ok(cmp, o, merge_into(cmp, x, l, rest, h)) {
+    ⊢ ok(cmp, o, merge_into(cmp, x, l, rest, h)) from match h {
       HeapLeaf => make_ok(cmp, o, x, l, rest(HeapLeaf), hx, hl, hr(HeapLeaf, Trivial))
       HeapNode(k, y, yl, yr) => Ordering::cases(
-        (c: Ordering) => ok(cmp, o, match c: Heap(A) {
+        (c: Ordering) => ok(cmp, o, ⊢ Heap(A) from match c {
           Less => make(x, l, rest(HeapNode(k, y, yl, yr)))
           Equal => make(x, l, rest(HeapNode(k, y, yl, yr)))
           Greater => make(y, yl, merge_into(cmp, x, l, rest, yr))
@@ -454,7 +473,7 @@ module Heap {
     b: Heap(A),
     hb: ok(cmp, o, b)
   ): ok(cmp, o, merge(cmp, a, b)) {
-    match a: ok(cmp, o, merge(cmp, a, b)) {
+    ⊢ ok(cmp, o, merge(cmp, a, b)) from match a {
       HeapLeaf => hb
       HeapNode(k, x, l, r) => merge_into_ok(
         cmp,
@@ -520,7 +539,7 @@ module Heap {
     h: Heap(A),
     ok: ordered(cmp, h)
   ): popped_ok(cmp, pop(cmp, h)) {
-    match h: popped_ok(cmp, pop(cmp, h)) {
+    ⊢ popped_ok(cmp, pop(cmp, h)) from match h {
       HeapLeaf => Trivial
       HeapNode(k, x, l, r) => merge_ok(
         cmp,
@@ -552,7 +571,7 @@ module Heap {
     hl: sort_all_le(cmp, a, l),
     hm: sort_all_le(cmp, a, m)
   ): sort_all_le(cmp, a, List::append(l, m)) {
-    match l: sort_all_le(cmp, a, List::append(l, m)) {
+    ⊢ sort_all_le(cmp, a, List::append(l, m)) from match l {
       Nil => hm
       Cons(y, t) => AndIntro(And::left(hl), all_le_append(cmp, a, t, m, And::right(hl), hm))
     }
@@ -565,7 +584,7 @@ module Heap {
     a: A,
     ok: ok(cmp, Some(a), h)
   ): sort_all_le(cmp, a, to_list(h)) {
-    match h: sort_all_le(cmp, a, to_list(h)) {
+    ⊢ sort_all_le(cmp, a, to_list(h)) from match h {
       HeapLeaf => Trivial
       HeapNode(k, x, l, r) => AndIntro(
         And::left(ok),

@@ -34,10 +34,10 @@ import "UInt.taut" { Nat }
 pub def BitLen(
   n: Nat,
   L: Nat
-): Prop := And(NatLe(Nat::pow2(L), n), NatLe(Succ(n), Nat::pow2(Succ(L))))
+): Prop := ((NatLe(Nat::pow2(L), n)) ∧ (NatLe(Succ(n), Nat::pow2(Succ(L)))))
 
 pub theorem bitlen_zero(j: Nat): Float::bitlen(j, 0) = 0 {
-  match j: Float::bitlen(j, 0) = 0 {
+  ⊢ Float::bitlen(j, 0) = 0 from match j {
     Zero => Refl
     Succ(k) => Refl
   }
@@ -52,8 +52,8 @@ pub theorem bitlen_step(
   hr: NatLe(Succ(r), 2),
   h: NatLe(Succ(Succ(n0)), Nat::pow2(Succ(j)))
 ): BitLen(Succ(n0), Float::bitlen(j, H)) {
-  match j: BitLen(Succ(n0), Float::bitlen(j, H)) {
-    Zero => match H: BitLen(Succ(n0), Float::bitlen(Zero, H)) {
+  ⊢ BitLen(Succ(n0), Float::bitlen(j, H)) from match j {
+    Zero => ⊢ BitLen(Succ(n0), Float::bitlen(Zero, H)) from match H {
       Zero => bitlen_base(Zero, n0, r, dm, hr)
       Succ(h0) => False::elim(
         false_ne_true(
@@ -65,7 +65,7 @@ pub theorem bitlen_step(
         )
       )
     }
-    Succ(j2) => match H: BitLen(Succ(n0), Float::bitlen(Succ(j2), H)) {
+    Succ(j2) => ⊢ BitLen(Succ(n0), Float::bitlen(Succ(j2), H)) from match H {
       Zero => bitlen_base(Succ(j2), n0, r, dm, hr)
       Succ(h0) => bitlen_step_up(
         j2,
@@ -182,10 +182,10 @@ pub theorem bitlen_step_up(
   h: NatLe(Succ(Succ(n0)), Nat::pow2(Succ(Succ(j2)))),
   ih: BitLen(Succ(h0), Float::bitlen(j2, Nat::div_nz(Succ(h0), 2, Nat::ne_zero(2, Refl))))
 ): BitLen(Succ(n0), Succ(Float::bitlen(j2, Nat::div_nz(Succ(h0), 2, Nat::ne_zero(2, Refl))))) {
-  match ih: BitLen(
+  ⊢ BitLen(
     Succ(n0),
     Succ(Float::bitlen(j2, Nat::div_nz(Succ(h0), 2, Nat::ne_zero(2, Refl))))
-  ) {
+  ) from match ih {
     AndIntro(lo, hi) => AndIntro(
       bitlen_lo(
         Nat::pow2(Float::bitlen(j2, Nat::div_nz(Succ(h0), 2, Nat::ne_zero(2, Refl)))),
@@ -295,14 +295,15 @@ pub theorem int_succ_r_shape(
   ) = IntOfNat(Succ(2 * Succ(h0) + r)) {}
 }
 
-pub theorem int_two_h_shape(
-  h0: Nat
-): Int::add(2, IntOfNat(2 * Succ(h0))) = IntOfNat(2 * Succ(Succ(h0))) {
+pub theorem int_two_h_shape(h0: Nat): Int::add(
+  2,
+  IntOfNat(2 * Succ(h0))
+) = IntOfNat(2 * Succ(Succ(h0))) {
   by int_norm!(): Int::add(IntOfNat(2), IntOfNat(2 * Succ(h0))) = IntOfNat(2 * Succ(Succ(h0))) {}
 }
 
 pub theorem nat_lt_pow2(n: Nat): NatLe(Succ(n), Nat::pow2(n)) {
-  match n: NatLe(Succ(n), Nat::pow2(n)) {
+  ⊢ NatLe(Succ(n), Nat::pow2(n)) from match n {
     Zero => Int::le_refl(IntOfNat(1))
     Succ(k) => Int::le_trans(
       IntOfNat(Succ(Succ(k))),
@@ -322,9 +323,10 @@ pub theorem nat_lt_pow2(n: Nat): NatLe(Succ(n), Nat::pow2(n)) {
   }
 }
 
-pub theorem nat_pow2_double_ge(
-  k: Nat
-): IntLe(Int::add(IntOfNat(Nat::pow2(k)), 1), IntOfNat(2 * Nat::pow2(k))) {
+pub theorem nat_pow2_double_ge(k: Nat): IntLe(
+  Int::add(IntOfNat(Nat::pow2(k)), 1),
+  IntOfNat(2 * Nat::pow2(k))
+) {
   int_le_by(
     Int::add(IntOfNat(Nat::pow2(k)), 1),
     IntOfNat(2 * Nat::pow2(k)),
@@ -337,18 +339,19 @@ pub theorem nat_pow2_double_ge(
   )
 }
 
-pub theorem int_pow2_shape(
-  a: Nat
-): IntOfNat(2 * Succ(a)) = Int::add(Int::add(IntOfNat(Succ(a)), 1), IntOfNat(a)) {
+pub theorem int_pow2_shape(a: Nat): IntOfNat(
+  2 * Succ(a)
+) = Int::add(Int::add(IntOfNat(Succ(a)), 1), IntOfNat(a)) {
   by int_norm!(): IntOfNat(
     2 * Succ(a)
   ) = Int::add(Int::add(IntOfNat(Succ(a)), IntOfNat(1)), IntOfNat(a)) {}
 }
 
 // `rat_len(n0 + 1) = L + 1` with `2^L <= n0 + 1 < 2^(L + 1)`.
-pub theorem rat_len_spec(
-  n0: Nat
-): BitLen(Succ(n0), Float::bitlen(n0, Nat::div_nz(Succ(n0), 2, Nat::ne_zero(2, Refl)))) {
+pub theorem rat_len_spec(n0: Nat): BitLen(
+  Succ(n0),
+  Float::bitlen(n0, Nat::div_nz(Succ(n0), 2, Nat::ne_zero(2, Refl)))
+) {
   bitlen_spec(n0, n0, nat_lt_pow2(Succ(n0)))
 }
 
@@ -357,7 +360,7 @@ pub def StickyOk(
   S: Nat,
   n: Nat,
   q: Nat
-): Prop := And(NatLe(S * q, 2 * n + q), NatLe(2 * n, S * q + q))
+): Prop := ((NatLe(S * q, 2 * n + q)) ∧ (NatLe(2 * n, S * q + q)))
 
 pub theorem sticky_ok(n: Nat, q0: Nat): StickyOk(Float::sticky(n, Succ(q0)), n, Succ(q0)) {
   Eq::subst(
@@ -382,7 +385,7 @@ pub theorem sticky_ok_at(
   R: Nat,
   hR: NatLe(Succ(R), Succ(q0))
 ): StickyOk(2 * D + Float::rem_bit(R), Succ(q0) * D + R, Succ(q0)) {
-  match R: StickyOk(2 * D + Float::rem_bit(R), Succ(q0) * D + R, Succ(q0)) {
+  ⊢ StickyOk(2 * D + Float::rem_bit(R), Succ(q0) * D + R, Succ(q0)) from match R {
     Zero => AndIntro(
       int_le_by(
         IntOfNat((2 * D + 0) * Succ(q0)),
@@ -499,7 +502,7 @@ pub def RoundOk(
   c: Nat,
   m: Nat,
   P: Nat
-): Prop := And(NatLe(2 * (c * P), 2 * m + P), NatLe(2 * m, 2 * (c * P) + P))
+): Prop := ((NatLe(2 * (c * P), 2 * m + P)) ∧ (NatLe(2 * m, 2 * (c * P) + P)))
 
 pub theorem nat_div_double(H: Nat): Nat::div_nz(2 * H, 2, Nat::ne_zero(2, Refl)) = H {
   Nat::div_of(H, 0, 1, Refl)
@@ -538,7 +541,7 @@ pub theorem round_at_ok_by(
   eb: R == H && Nat::rem_nz(Q, 2, Nat::ne_zero(2, Refl)) == 1 = b,
   hR: NatLe(Succ(R), 2 * H)
 ): RoundOk(Q + Float::round_up(a, b), 2 * H * Q + R, 2 * H) {
-  match a: RoundOk(Q + Float::round_up(a, b), 2 * H * Q + R, 2 * H) {
+  ⊢ RoundOk(Q + Float::round_up(a, b), 2 * H * Q + R, 2 * H) from match a {
     true => round_ok_up(
       Q,
       R,
@@ -546,12 +549,12 @@ pub theorem round_at_ok_by(
       int_le_of_lt(IntOfNat(H), IntOfNat(R), nat_le_of_yn(Succ(H), R, ea)),
       int_le_of_lt(IntOfNat(R), IntOfNat(2 * H), hR)
     )
-    false => match b: RoundOk(Q + Float::round_up(false, b), 2 * H * Q + R, 2 * H) {
-      true => match Bool::and_split(
-        R == H,
-        Nat::rem_nz(Q, 2, Nat::ne_zero(2, Refl)) == 1,
-        eb
-      ): RoundOk(Q + 1, 2 * H * Q + R, 2 * H) {
+    false => ⊢ RoundOk(Q + Float::round_up(false, b), 2 * H * Q + R, 2 * H) from match b {
+      true => ⊢ RoundOk(
+        Q + 1,
+        2 * H * Q + R,
+        2 * H
+      ) from match Bool::and_split(R == H, Nat::rem_nz(Q, 2, Nat::ne_zero(2, Refl)) == 1, eb) {
         AndIntro(er, eo) => Eq::subst(
           (z: Nat) => RoundOk(Q + 1, 2 * H * Q + z, 2 * H),
           Eq::sym(Nat::eq_sound(R, H, er)),
@@ -571,37 +574,40 @@ pub theorem round_shift_ok(
   t: Nat,
   k: Nat,
   hk: Succ(k) < 125 = true
-): And(
-  Float::round_shift(
-    s,
-    m,
-    t,
-    Succ(k)
-  ) = Float::encode(
-    s,
-    Nat::div_nz(
+): (
+  (
+    Float::round_shift(
+      s,
       m,
-      Nat::pow2(Succ(k)),
-      Nat::pow2_ne_zero(Succ(k))
-    ) + round_digit(
-      Nat::div_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))),
-      Nat::rem_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))),
-      Nat::pow2(k)
-    ),
-    t
-  ),
-  RoundOk(
-    Nat::div_nz(
+      t,
+      Succ(k)
+    ) = Float::encode(
+      s,
+      Nat::div_nz(
+        m,
+        Nat::pow2(Succ(k)),
+        Nat::pow2_ne_zero(Succ(k))
+      ) + round_digit(
+        Nat::div_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))),
+        Nat::rem_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))),
+        Nat::pow2(k)
+      ),
+      t
+    )
+  ) ∧ (
+    RoundOk(
+      Nat::div_nz(
+        m,
+        Nat::pow2(Succ(k)),
+        Nat::pow2_ne_zero(Succ(k))
+      ) + round_digit(
+        Nat::div_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))),
+        Nat::rem_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))),
+        Nat::pow2(k)
+      ),
       m,
-      Nat::pow2(Succ(k)),
-      Nat::pow2_ne_zero(Succ(k))
-    ) + round_digit(
-      Nat::div_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))),
-      Nat::rem_nz(m, Nat::pow2(Succ(k)), Nat::pow2_ne_zero(Succ(k))),
-      Nat::pow2(k)
-    ),
-    m,
-    Nat::pow2(Succ(k))
+      Nat::pow2(Succ(k))
+    )
   )
 ) {
   AndIntro(
@@ -719,7 +725,7 @@ pub theorem round_shift_eq(
 
 // `float_round_shift` with its test given: the same term once unfolded.
 pub fn float_round_shift_by(o: Bool, s: Nat, m: Nat, t: Nat, k: Nat): Nat {
-  match o: Nat {
+  ⊢ Nat from match o {
     false => Float::zero_raw(s)
     true => Float::round_at(
       s,
@@ -961,9 +967,10 @@ pub def ErrOk(
   a: Nat,
   y: Nat,
   b: Nat
-): Prop := And(
-  NatLe(4503599627370496 * a, 4503599627370496 * y + (y + 4503599627370496 * b)),
-  NatLe(4503599627370496 * y, 4503599627370496 * a + (y + 4503599627370496 * b))
+): Prop := (
+  (
+    NatLe(4503599627370496 * a, 4503599627370496 * y + (y + 4503599627370496 * b))
+  ) ∧ (NatLe(4503599627370496 * y, 4503599627370496 * a + (y + 4503599627370496 * b)))
 )
 
 // With `s = S w` the sticky digits within `w` of `y`, and `a = c K w` within

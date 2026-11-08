@@ -59,14 +59,10 @@ pub theorem body_functions_unf(
   c: Checker
 ): ck_check_fns(Cons(p, rest), c) = body_functions_cons(p, rest, c) { Refl }
 
-pub theorem ck_check_fns_frame(
-  fs: List(Pair(SurfaceFn, Scheme)),
-  c: Checker,
-  ordered: CkOrdered(c)
-): CkRunFrame(
-  c,
-  ck_check_fns(fs, c)
-) { match fs: CkRunFrame(c, ck_check_fns(fs, c)) { Nil => AndIntro(ordered, Refl)
+pub theorem ck_check_fns_frame(fs: List(Pair(SurfaceFn, Scheme)), c: Checker, ordered: CkOrdered(c)): CkRunFrame(c, ck_check_fns(fs, c)) { ⊢ CkRunFrame(c, ck_check_fns(fs, c)) from match fs { Nil => AndIntro(
+  ordered,
+  Refl
+)
     Cons(p, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
       Eq::sym(body_functions_unf(p, rest, c)),
@@ -77,14 +73,8 @@ pub theorem ck_top_let_frame(
   c: Checker,
   s: SurfaceStmt,
   env: Scope
-): CkReadFrame(c, ck_top_let(c, s, env)) { match s: CkReadFrame(c, ck_top_let(c, s, env)) {
-    StLet(name, ty, value, borrow, bm) => match env: CkReadFrame(
-      c,
-      ck_top_let(c, StLet(name, ty, value, borrow, bm), env)
-    ) { ScopeMk(items) => match items: CkReadFrame(
-      c,
-      ck_top_let(c, StLet(name, ty, value, borrow, bm), ScopeMk(items))
-    ) { Nil => Refl
+): CkReadFrame(c, ck_top_let(c, s, env)) { ⊢ CkReadFrame(c, ck_top_let(c, s, env)) from match s {
+    StLet(name, ty, value, borrow, bm) => ⊢ CkReadFrame(c, ck_top_let(c, StLet(name, ty, value, borrow, bm), env)) from match env { ScopeMk(items) => ⊢ CkReadFrame(c, ck_top_let(c, StLet(name, ty, value, borrow, bm), ScopeMk(items))) from match items { Nil => Refl
         Cons(l, older) => Refl } }
     StVar(name, ty, value, vb) => Refl
     StAssign(name, name_place, value) => Refl
@@ -117,7 +107,7 @@ pub fn body_top_one(
   env: Scope,
   check: Bool
 ): Mut2(Unit, Checker, Scope) {
-  match check: Mut2(Unit, Checker, Scope) {
+  ⊢ Mut2(Unit, Checker, Scope) from match check {
     true => pattern_bind(
       Ty,
       Unit,
@@ -135,7 +125,7 @@ pub theorem body_top_one_frame(
   check: Bool,
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, body_top_one(s, c, env, check)) {
-  match check: CkScopeFrame(c, body_top_one(s, c, env, check)) {
+  ⊢ CkScopeFrame(c, body_top_one(s, c, env, check)) from match check {
     true => pattern_bind_frame(
       Ty,
       Unit,
@@ -198,15 +188,10 @@ pub theorem body_top_unf(
   env: Scope
 ): ck_top_level(Cons(s, rest), c, env) = body_top_cons(s, rest, c, env) { Refl }
 
-pub theorem ck_top_level_frame(
-  ss: List(SurfaceStmt),
-  c: Checker,
-  env: Scope,
-  ordered: CkOrdered(c)
-): CkScopeFrame(
-  c,
-  ck_top_level(ss, c, env)
-) { match ss: CkScopeFrame(c, ck_top_level(ss, c, env)) { Nil => AndIntro(ordered, Refl)
+pub theorem ck_top_level_frame(ss: List(SurfaceStmt), c: Checker, env: Scope, ordered: CkOrdered(c)): CkScopeFrame(c, ck_top_level(ss, c, env)) { ⊢ CkScopeFrame(c, ck_top_level(ss, c, env)) from match ss { Nil => AndIntro(
+  ordered,
+  Refl
+)
     Cons(s, rest) => Eq::subst(
       (z: Mut2(Unit, Checker, Scope)) => CkScopeFrame(c, z),
       Eq::sym(body_top_unf(s, rest, c, env)),

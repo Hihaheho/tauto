@@ -9,18 +9,12 @@ pub(open) inductive AlgebraFin: (Nat) -> Type {
 
 pub def AlgebraVector(R: Type, n: Nat): Type := (AlgebraFin(n)) -> R
 
-pub fn algebra_sum<R: Type>(
-  addition: AlgebraMonoid(0, R),
-  n: Nat,
-  values: AlgebraVector(R, n)
-): R {
-  match n: R {
-    Zero => algebra_unit(0, R, addition)
-    Succ(k) => algebra_op(
-      0,
-      R,
+pub fn algebra_sum<R: Type>(addition: AlgebraMonoid(0, R), n: Nat, values: AlgebraVector(R, n)): R {
+  ⊢ R from match n {
+    Zero => algebra_unit(<u: 0, A: R>, addition)
+    Succ(k) => algebra_op(<u: 0, A: R>,
       addition
-    )(values(AlgebraFirst(k)), algebra_sum(R, addition, k, index => values(AlgebraNext(k, index))))
+    )(values(AlgebraFirst(k)), algebra_sum(<R: R>, addition, k, index => values(AlgebraNext(k, index))))
   }
 }
 
@@ -37,14 +31,9 @@ pub theorem algebra_binary_congr<R: Type, a: R, b: R, c: R, d: R>(
   first: AlgebraEq(0, R, a, b),
   second: AlgebraEq(0, R, c, d)
 ): AlgebraEq(0, R, op(a, c), op(b, d)) {
-  algebra_trans(
-    0,
-    R,
-    op(a, c),
-    op(b, c),
-    op(b, d),
-    algebra_congr(0, 0, R, R, a, b, (x: R) => op(x, c), first),
-    algebra_congr(0, 0, R, R, c, d, (y: R) => op(b, y), second)
+  algebra_trans(<u: 0, A: R, a: op(a, c), b: op(b, c), c: op(b, d)>,
+    algebra_congr(<u: 0, v: 0, A: R, B: R, a: a, b: b>, (x: R) => op(x, c), first),
+    algebra_congr(<u: 0, v: 0, A: R, B: R, a: c, b: d>, (y: R) => op(b, y), second)
   )
 }
 
@@ -54,14 +43,13 @@ pub theorem algebra_sum_congr<R: Type>(
   left: AlgebraVector(R, n),
   right: AlgebraVector(R, n),
   equal: AlgebraVectorEq(R, n, left, right)
-): AlgebraEq(0, R, algebra_sum(R, addition, n, left), algebra_sum(R, addition, n, right)) {
-  match n: AlgebraEq(0, R, algebra_sum(R, addition, n, left), algebra_sum(R, addition, n, right)) {
-    Zero => AlgebraRefl(0, R, algebra_unit(0, R, addition))
+): AlgebraEq(0, R, algebra_sum(<R: R>, addition, n, left), algebra_sum(<R: R>, addition, n, right)) {
+  ⊢ AlgebraEq(0, R, algebra_sum(<R: R>, addition, n, left), algebra_sum(<R: R>, addition, n, right)) from match n {
+    Zero => AlgebraRefl(<u: 0, A: R, a: algebra_unit(<u: 0, A: R>, addition)>)
     Succ(k) => algebra_binary_congr(
-      algebra_op(0, R, addition),
+      algebra_op(<u: 0, A: R>, addition),
       equal(AlgebraFirst(k)),
-      algebra_sum_congr(
-        R,
+      algebra_sum_congr(<R: R>,
         addition,
         k,
         index => left(AlgebraNext(k, index)),
@@ -78,24 +66,22 @@ pub theorem algebra_sum_zero<R: Type>(
 ): AlgebraEq(
   0,
   R,
-  algebra_sum(R, addition, n, index => algebra_unit(0, R, addition)),
-  algebra_unit(0, R, addition)
+  algebra_sum(<R: R>, addition, n, index => algebra_unit(<u: 0, A: R>, addition)),
+  algebra_unit(<u: 0, A: R>, addition)
 ) {
-  match n: AlgebraEq(
+  ⊢ AlgebraEq(
     0,
     R,
-    algebra_sum(R, addition, n, index => algebra_unit(0, R, addition)),
-    algebra_unit(0, R, addition)
-  ) {
-    Zero => AlgebraRefl(0, R, algebra_unit(0, R, addition))
+    algebra_sum(<R: R>, addition, n, index => algebra_unit(<u: 0, A: R>, addition)),
+    algebra_unit(<u: 0, A: R>, addition)
+  ) from match n {
+    Zero => AlgebraRefl(<u: 0, A: R, a: algebra_unit(<u: 0, A: R>, addition)>)
     Succ(k) => algebra_chain(
-      algebra_left_unit(
-        0,
-        R,
+      algebra_left_unit(<u: 0, A: R>,
         addition,
-        algebra_sum(R, addition, k, index => algebra_unit(0, R, addition))
+        algebra_sum(<R: R>, addition, k, index => algebra_unit(<u: 0, A: R>, addition))
       ),
-      algebra_sum_zero(R, addition, k)
+      algebra_sum_zero(<R: R>, addition, k)
     )
   }
 }
@@ -115,27 +101,27 @@ pub theorem algebra_add_interchange<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_op(0, R, addition)(algebra_op(0, R, addition)(a, b), algebra_op(0, R, addition)(c, d)),
-  algebra_op(0, R, addition)(algebra_op(0, R, addition)(a, c), algebra_op(0, R, addition)(b, d))
+  algebra_op(<u: 0, A: R>, addition)(algebra_op(<u: 0, A: R>, addition)(a, b), algebra_op(<u: 0, A: R>, addition)(c, d)),
+  algebra_op(<u: 0, A: R>, addition)(algebra_op(<u: 0, A: R>, addition)(a, c), algebra_op(<u: 0, A: R>, addition)(b, d))
 ) {
   algebra_chain(
-    algebra_assoc(0, R, addition, a, b, algebra_op(0, R, addition)(c, d)),
+    algebra_assoc(<u: 0, A: R>, addition, a, b, algebra_op(<u: 0, A: R>, addition)(c, d)),
     algebra_chain(
       algebra_apply(
-        (v: R) => algebra_op(0, R, addition)(a, v),
-        algebra_flip(algebra_assoc(0, R, addition, b, c, d))
+        (v: R) => algebra_op(<u: 0, A: R>, addition)(a, v),
+        algebra_flip(algebra_assoc(<u: 0, A: R>, addition, b, c, d))
       ),
       algebra_chain(
         algebra_apply(
-          (v: R) => algebra_op(0, R, addition)(a, algebra_op(0, R, addition)(v, d)),
+          (v: R) => algebra_op(<u: 0, A: R>, addition)(a, algebra_op(<u: 0, A: R>, addition)(v, d)),
           algebra_add_comm(laws, b, c)
         ),
         algebra_chain(
           algebra_apply(
-            (v: R) => algebra_op(0, R, addition)(a, v),
-            algebra_assoc(0, R, addition, c, b, d)
+            (v: R) => algebra_op(<u: 0, A: R>, addition)(a, v),
+            algebra_assoc(<u: 0, A: R>, addition, c, b, d)
           ),
-          algebra_flip(algebra_assoc(0, R, addition, a, c, algebra_op(0, R, addition)(b, d)))
+          algebra_flip(algebra_assoc(<u: 0, A: R>, addition, a, c, algebra_op(<u: 0, A: R>, addition)(b, d)))
         )
       )
     )
@@ -156,27 +142,23 @@ pub theorem algebra_sum_add<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_sum(R, addition, n, index => algebra_op(0, R, addition)(left(index), right(index))),
-  algebra_op(0, R, addition)(algebra_sum(R, addition, n, left), algebra_sum(R, addition, n, right))
+  algebra_sum(<R: R>, addition, n, index => algebra_op(<u: 0, A: R>, addition)(left(index), right(index))),
+  algebra_op(<u: 0, A: R>, addition)(algebra_sum(<R: R>, addition, n, left), algebra_sum(<R: R>, addition, n, right))
 ) {
-  match n: AlgebraEq(
+  ⊢ AlgebraEq(
     0,
     R,
-    algebra_sum(R, addition, n, index => algebra_op(0, R, addition)(left(index), right(index))),
-    algebra_op(
-      0,
-      R,
+    algebra_sum(<R: R>, addition, n, index => algebra_op(<u: 0, A: R>, addition)(left(index), right(index))),
+    algebra_op(<u: 0, A: R>,
       addition
-    )(algebra_sum(R, addition, n, left), algebra_sum(R, addition, n, right))
-  ) {
-    Zero => algebra_flip(algebra_left_unit(0, R, addition, algebra_unit(0, R, addition)))
+    )(algebra_sum(<R: R>, addition, n, left), algebra_sum(<R: R>, addition, n, right))
+  ) from match n {
+    Zero => algebra_flip(algebra_left_unit(<u: 0, A: R>, addition, algebra_unit(<u: 0, A: R>, addition)))
     Succ(k) => algebra_chain(
       algebra_apply(
-        (v: R) => algebra_op(
-          0,
-          R,
+        (v: R) => algebra_op(<u: 0, A: R>,
           addition
-        )(algebra_op(0, R, addition)(left(AlgebraFirst(k)), right(AlgebraFirst(k))), v),
+        )(algebra_op(<u: 0, A: R>, addition)(left(AlgebraFirst(k)), right(AlgebraFirst(k))), v),
         algebra_sum_add(
           laws,
           k,
@@ -188,8 +170,8 @@ pub theorem algebra_sum_add<R: Type, addition: AlgebraMonoid(
         laws,
         left(AlgebraFirst(k)),
         right(AlgebraFirst(k)),
-        algebra_sum(R, addition, k, index => left(AlgebraNext(k, index))),
-        algebra_sum(R, addition, k, index => right(AlgebraNext(k, index)))
+        algebra_sum(<R: R>, addition, k, index => left(AlgebraNext(k, index))),
+        algebra_sum(<R: R>, addition, k, index => right(AlgebraNext(k, index)))
       )
     )
   }
@@ -209,23 +191,21 @@ pub theorem algebra_sum_mul_left<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_sum(R, addition, n, index => algebra_op(0, R, multiplication)(scalar, values(index))),
-  algebra_op(0, R, multiplication)(scalar, algebra_sum(R, addition, n, values))
+  algebra_sum(<R: R>, addition, n, index => algebra_op(<u: 0, A: R>, multiplication)(scalar, values(index))),
+  algebra_op(<u: 0, A: R>, multiplication)(scalar, algebra_sum(<R: R>, addition, n, values))
 ) {
-  match n: AlgebraEq(
+  ⊢ AlgebraEq(
     0,
     R,
-    algebra_sum(R, addition, n, index => algebra_op(0, R, multiplication)(scalar, values(index))),
-    algebra_op(0, R, multiplication)(scalar, algebra_sum(R, addition, n, values))
-  ) {
+    algebra_sum(<R: R>, addition, n, index => algebra_op(<u: 0, A: R>, multiplication)(scalar, values(index))),
+    algebra_op(<u: 0, A: R>, multiplication)(scalar, algebra_sum(<R: R>, addition, n, values))
+  ) from match n {
     Zero => algebra_flip(algebra_mul_zero(laws, scalar))
     Succ(k) => algebra_chain(
       algebra_apply(
-        (v: R) => algebra_op(
-          0,
-          R,
+        (v: R) => algebra_op(<u: 0, A: R>,
           addition
-        )(algebra_op(0, R, multiplication)(scalar, values(AlgebraFirst(k))), v),
+        )(algebra_op(<u: 0, A: R>, multiplication)(scalar, values(AlgebraFirst(k))), v),
         algebra_sum_mul_left(laws, k, index => values(AlgebraNext(k, index)), scalar)
       ),
       algebra_flip(
@@ -233,7 +213,7 @@ pub theorem algebra_sum_mul_left<R: Type, addition: AlgebraMonoid(
           laws,
           scalar,
           values(AlgebraFirst(k)),
-          algebra_sum(R, addition, k, index => values(AlgebraNext(k, index)))
+          algebra_sum(<R: R>, addition, k, index => values(AlgebraNext(k, index)))
         )
       )
     )
@@ -254,30 +234,28 @@ pub theorem algebra_sum_mul_right<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_sum(R, addition, n, index => algebra_op(0, R, multiplication)(values(index), scalar)),
-  algebra_op(0, R, multiplication)(algebra_sum(R, addition, n, values), scalar)
+  algebra_sum(<R: R>, addition, n, index => algebra_op(<u: 0, A: R>, multiplication)(values(index), scalar)),
+  algebra_op(<u: 0, A: R>, multiplication)(algebra_sum(<R: R>, addition, n, values), scalar)
 ) {
-  match n: AlgebraEq(
+  ⊢ AlgebraEq(
     0,
     R,
-    algebra_sum(R, addition, n, index => algebra_op(0, R, multiplication)(values(index), scalar)),
-    algebra_op(0, R, multiplication)(algebra_sum(R, addition, n, values), scalar)
-  ) {
+    algebra_sum(<R: R>, addition, n, index => algebra_op(<u: 0, A: R>, multiplication)(values(index), scalar)),
+    algebra_op(<u: 0, A: R>, multiplication)(algebra_sum(<R: R>, addition, n, values), scalar)
+  ) from match n {
     Zero => algebra_flip(algebra_zero_mul(laws, scalar))
     Succ(k) => algebra_chain(
       algebra_apply(
-        (v: R) => algebra_op(
-          0,
-          R,
+        (v: R) => algebra_op(<u: 0, A: R>,
           addition
-        )(algebra_op(0, R, multiplication)(values(AlgebraFirst(k)), scalar), v),
+        )(algebra_op(<u: 0, A: R>, multiplication)(values(AlgebraFirst(k)), scalar), v),
         algebra_sum_mul_right(laws, k, index => values(AlgebraNext(k, index)), scalar)
       ),
       algebra_flip(
         algebra_distribute_right(
           laws,
           values(AlgebraFirst(k)),
-          algebra_sum(R, addition, k, index => values(AlgebraNext(k, index))),
+          algebra_sum(<R: R>, addition, k, index => values(AlgebraNext(k, index))),
           scalar
         )
       )
@@ -299,43 +277,37 @@ pub theorem algebra_sum_swap<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_sum(
-    R,
+  algebra_sum(<R: R>,
     addition,
     rows,
-    row => algebra_sum(R, addition, columns, column => values(row, column))
+    row => algebra_sum(<R: R>, addition, columns, column => values(row, column))
   ),
-  algebra_sum(
-    R,
+  algebra_sum(<R: R>,
     addition,
     columns,
-    column => algebra_sum(R, addition, rows, row => values(row, column))
+    column => algebra_sum(<R: R>, addition, rows, row => values(row, column))
   )
 ) {
-  match rows: AlgebraEq(
+  ⊢ AlgebraEq(
     0,
     R,
-    algebra_sum(
-      R,
+    algebra_sum(<R: R>,
       addition,
       rows,
-      row => algebra_sum(R, addition, columns, column => values(row, column))
+      row => algebra_sum(<R: R>, addition, columns, column => values(row, column))
     ),
-    algebra_sum(
-      R,
+    algebra_sum(<R: R>,
       addition,
       columns,
-      column => algebra_sum(R, addition, rows, row => values(row, column))
+      column => algebra_sum(<R: R>, addition, rows, row => values(row, column))
     )
-  ) {
-    Zero => algebra_flip(algebra_sum_zero(R, addition, columns))
+  ) from match rows {
+    Zero => algebra_flip(algebra_sum_zero(<R: R>, addition, columns))
     Succ(k) => algebra_chain(
       algebra_apply(
-        (v: R) => algebra_op(
-          0,
-          R,
+        (v: R) => algebra_op(<u: 0, A: R>,
           addition
-        )(algebra_sum(R, addition, columns, column => values(AlgebraFirst(k), column)), v),
+        )(algebra_sum(<R: R>, addition, columns, column => values(AlgebraFirst(k), column)), v),
         algebra_sum_swap(laws, k, columns, row => column => values(AlgebraNext(k, row), column))
       ),
       algebra_flip(
@@ -343,7 +315,7 @@ pub theorem algebra_sum_swap<R: Type, addition: AlgebraMonoid(
           laws,
           columns,
           column => values(AlgebraFirst(k), column),
-          column => algebra_sum(R, addition, k, row => values(AlgebraNext(k, row), column))
+          column => algebra_sum(<R: R>, addition, k, row => values(AlgebraNext(k, row), column))
         )
       )
     )
@@ -351,7 +323,7 @@ pub theorem algebra_sum_swap<R: Type, addition: AlgebraMonoid(
 }
 
 pub fn algebra_fin_value(n: Nat, index: AlgebraFin(n)): Nat {
-  match index: Nat {
+  ⊢ Nat from match index {
     AlgebraFirst(k) => Zero
     AlgebraNext(k, prior) => Succ(algebra_fin_value(k, prior))
   }
@@ -361,7 +333,7 @@ pub theorem algebra_vector_eq_refl<R: Type>(
   n: Nat,
   values: AlgebraVector(R, n)
 ): AlgebraVectorEq(R, n, values, values) {
-  index => AlgebraRefl(0, R, values(index))
+  index => AlgebraRefl(<u: 0, A: R, a: values(index)>)
 }
 
 pub theorem algebra_vector_eq_sym<R: Type, n: Nat, left: AlgebraVector(

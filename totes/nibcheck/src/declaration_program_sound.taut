@@ -18,7 +18,7 @@ pub theorem declaration_parameters_eq(
   gs: List(Text),
   map: Ordmap(Text, Ty)
 ): ck_param_generics(gs, KindCopy, map) = declaration_parameters(gs, map) {
-  match gs: ck_param_generics(gs, KindCopy, map) = declaration_parameters(gs, map) {
+  ⊢ ck_param_generics(gs, KindCopy, map) = declaration_parameters(gs, map) from match gs {
     Nil => Refl
     Cons(g, rest) => declaration_parameters_eq(
       rest,
@@ -64,10 +64,7 @@ pub theorem declaration_stmt_data(
   c: Checker,
   s: SurfaceData,
   clean: DiagnosticClean(ck_st(ck_rewrap1(ck_finish_decl(c, s))))
-): And(
-  DataDeclarationKinds(ck_datas_of(c), s),
-  ck_rewrap1(ck_finish_decl(c, s)) = mut1(Star, c)
-) {
+): And(DataDeclarationKinds(ck_datas_of(c), s), ck_rewrap1(ck_finish_decl(c, s)) = mut1(Star, c)) {
   let inner: DiagnosticClean(
     ck_st(ck_finish_decl(c, s))
   ) := Eq::subst(
@@ -85,10 +82,7 @@ pub theorem ck_finish_stmt_accepts(
   s: SurfaceStmt,
   clean: DiagnosticClean(ck_st(ck_finish_stmt(c, s)))
 ): And(DeclarationStatement(c, s), ck_finish_stmt(c, s) = mut1(Star, c)) {
-  match s: And(
-    DeclarationStatement(c, s),
-    ck_finish_stmt(c, s) = mut1(Star, c)
-  ) {
+  ⊢ And(DeclarationStatement(c, s), ck_finish_stmt(c, s) = mut1(Star, c)) from match s {
     StLet(n, ty, v, b, m) => AndIntro(Trivial, Refl)
     StVar(n, ty, v, b) => AndIntro(Trivial, Refl)
     StModule(n, ss, start, end) => AndIntro(Trivial, Refl)
@@ -119,13 +113,16 @@ pub theorem declaration_stmts_unf(
   s: SurfaceStmt,
   ss: List(SurfaceStmt),
   c: Checker
-): ck_finish_stmts(Cons(s, ss), c) = diagnostic_after(next => ck_finish_stmts(ss, next), ck_finish_stmt(c, s)) { Refl }
+): ck_finish_stmts(
+  Cons(s, ss),
+  c
+) = diagnostic_after(next => ck_finish_stmts(ss, next), ck_finish_stmt(c, s)) { Refl }
 pub theorem ck_finish_stmts_accepts(
   ss: List(SurfaceStmt),
   c: Checker,
   clean: DiagnosticClean(ck_st(ck_finish_stmts(ss, c)))
 ): DiagnosticItemsResult(DeclarationStatement, ss, c, ck_finish_stmts(ss, c)) {
-  match ss: DiagnosticItemsResult(DeclarationStatement, ss, c, ck_finish_stmts(ss, c)) {
+  ⊢ DiagnosticItemsResult(DeclarationStatement, ss, c, ck_finish_stmts(ss, c)) from match ss {
     Nil => AndIntro(DiagnosticItemsNil, Refl)
     Cons(s, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => DiagnosticItemsResult(DeclarationStatement, Cons(s, rest), c, m),
@@ -153,7 +150,7 @@ pub theorem declaration_items_program(
   ss: List(SurfaceStmt),
   checked: DiagnosticItems(SurfaceStmt, DeclarationStatement, c, ss)
 ): ProgramDataKinds(ck_datas_of(c), ss) {
-  match checked: ProgramDataKinds(ck_datas_of(c), ss) {
+  ⊢ ProgramDataKinds(ck_datas_of(c), ss) from match checked {
     DiagnosticItemsNil => ProgramDataKindsNil
     DiagnosticItemsCons(s, rest, head, tail) => ProgramDataKindsCons(
       head,
@@ -172,7 +169,9 @@ pub theorem ck_finish_stmts_kind_sound(
     c,
     ck_finish_stmts(ss, c)
   ) := ck_finish_stmts_accepts(ss, c, clean)
-  let same: ck_st(ck_finish_stmts(ss, c)) = c := Eq::congr((m: Mut1(Unit, Checker)) => ck_st(m), And::right(checked))
+  let same: ck_st(
+    ck_finish_stmts(ss, c)
+  ) = c := Eq::congr((m: Mut1(Unit, Checker)) => ck_st(m), And::right(checked))
   Eq::subst(
     (state: Checker) => ProgramDataKinds(ck_datas_of(state), ss),
     Eq::sym(same),
@@ -185,10 +184,12 @@ pub theorem declaration_finish_datas_kind(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(summary_finish_datas_k(program, m)))
 ): ProgramDataKinds(ck_datas_of(ck_st(summary_finish_datas_k(program, m))), program) {
-  match m: ProgramDataKinds(ck_datas_of(ck_st(summary_finish_datas_k(program, m))), program) {
+  ⊢ ProgramDataKinds(ck_datas_of(ck_st(summary_finish_datas_k(program, m))), program) from match m {
     mut1(v, next) => {
       let prepared: Checker := summary_replace(next, datas_summarize(ck_datas_of(next)))
-      let unwrapped: ck_rewrap1(ck_finish_stmts(program, prepared)) = ck_finish_stmts(program, prepared) := ck_rewrap1_id(ck_finish_stmts(program, prepared))
+      let unwrapped: ck_rewrap1(
+        ck_finish_stmts(program, prepared)
+      ) = ck_finish_stmts(program, prepared) := ck_rewrap1_id(ck_finish_stmts(program, prepared))
       Eq::subst(
         (result: Mut1(Unit, Checker)) => ProgramDataKinds(ck_datas_of(ck_st(result)), program),
         Eq::sym(unwrapped),

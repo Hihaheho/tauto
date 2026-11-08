@@ -14,7 +14,7 @@ pub theorem data_keys_head(
   n: Text,
   keys: Ordmap::keys(Cons(e, rest), n, Less, Ordmap::compare_text)
 ): Ordmap::compare_text(n, summary_key(e)) = Less {
-  match e: Ordmap::compare_text(n, summary_key(e)) = Less {
+  ⊢ Ordmap::compare_text(n, summary_key(e)) = Less from match e {
     Pair { fst: name, snd: value } => And::left(keys)
   }
 }
@@ -24,7 +24,7 @@ pub theorem data_keys_tail(
   n: Text,
   keys: Ordmap::keys(Cons(e, rest), n, Less, Ordmap::compare_text)
 ): Ordmap::keys(rest, n, Less, Ordmap::compare_text) {
-  match e: Ordmap::keys(rest, n, Less, Ordmap::compare_text) {
+  ⊢ Ordmap::keys(rest, n, Less, Ordmap::compare_text) from match e {
     Pair { fst: name, snd: value } => And::right(keys)
   }
 }
@@ -39,7 +39,7 @@ pub theorem data_keys_member<e: Pair(
   n: Text,
   keys: Ordmap::keys(es, n, Less, Ordmap::compare_text)
 ): Ordmap::compare_text(n, summary_key(e)) = Less {
-  match member: Ordmap::compare_text(n, summary_key(e)) = Less {
+  ⊢ Ordmap::compare_text(n, summary_key(e)) = Less from match member {
     MemHere(rest) => data_keys_head(e, rest, n, keys)
     MemThere(first, rest, tail) => data_keys_member(tail, n, data_keys_tail(first, rest, n, keys))
   }
@@ -48,8 +48,16 @@ pub theorem data_keys_member<e: Pair(
 pub theorem data_list_head_lookup(
   e: Pair(Text, Data),
   rest: List(Pair(Text, Data))
-): Ordmap::list_get(Cons(e, rest), summary_key(e), Ordmap::compare_text) = Some(data_entry_value(e)) {
-  match e: Ordmap::list_get(Cons(e, rest), summary_key(e), Ordmap::compare_text) = Some(data_entry_value(e)) {
+): Ordmap::list_get(
+  Cons(e, rest),
+  summary_key(e),
+  Ordmap::compare_text
+) = Some(data_entry_value(e)) {
+  ⊢ Ordmap::list_get(
+    Cons(e, rest),
+    summary_key(e),
+    Ordmap::compare_text
+  ) = Some(data_entry_value(e)) from match e {
     Pair { fst: name, snd: value } => Ordmap::list_get_equal(
       name,
       value,
@@ -65,7 +73,7 @@ pub theorem data_sorted_tail(
   rest: List(Pair(Text, Data)),
   ordered: Ordmap::sorted(Cons(e, rest), Ordmap::compare_text)
 ): Ordmap::sorted(rest, Ordmap::compare_text) {
-  match e: Ordmap::sorted(rest, Ordmap::compare_text) {
+  ⊢ Ordmap::sorted(rest, Ordmap::compare_text) from match e {
     Pair { fst: name, snd: value } => And::right(ordered)
   }
 }
@@ -75,8 +83,16 @@ pub theorem data_list_skip_member(
   e: Pair(Text, Data),
   member: Mem(Pair(Text, Data), e, rest),
   ordered: Ordmap::sorted(Cons(first, rest), Ordmap::compare_text)
-): Ordmap::list_get(Cons(first, rest), summary_key(e), Ordmap::compare_text) = Ordmap::list_get(rest, summary_key(e), Ordmap::compare_text) {
-  match first: Ordmap::list_get(Cons(first, rest), summary_key(e), Ordmap::compare_text) = Ordmap::list_get(rest, summary_key(e), Ordmap::compare_text) {
+): Ordmap::list_get(
+  Cons(first, rest),
+  summary_key(e),
+  Ordmap::compare_text
+) = Ordmap::list_get(rest, summary_key(e), Ordmap::compare_text) {
+  ⊢ Ordmap::list_get(
+    Cons(first, rest),
+    summary_key(e),
+    Ordmap::compare_text
+  ) = Ordmap::list_get(rest, summary_key(e), Ordmap::compare_text) from match first {
     Pair { fst: name, snd: value } => Ordmap::list_get_skip(
       Greater,
       q => greater_ne_equal(q),
@@ -105,7 +121,11 @@ pub theorem data_list_member_lookup<e: Pair(
   member: Mem(Pair(Text, Data), e, es),
   ordered: Ordmap::sorted(es, Ordmap::compare_text)
 ): Ordmap::list_get(es, summary_key(e), Ordmap::compare_text) = Some(data_entry_value(e)) {
-  match member: Ordmap::list_get(es, summary_key(e), Ordmap::compare_text) = Some(data_entry_value(e)) {
+  ⊢ Ordmap::list_get(
+    es,
+    summary_key(e),
+    Ordmap::compare_text
+  ) = Some(data_entry_value(e)) from match member {
     MemHere(rest) => data_list_head_lookup(e, rest)
     MemThere(first, rest, tail) => Eq::trans(
       data_list_skip_member(first, rest, e, tail, ordered),

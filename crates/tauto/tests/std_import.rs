@@ -18,6 +18,17 @@ fn file(name: &str, text: &str) -> PathBuf {
     path
 }
 
+/// The message `id` inside `m`, however many messages wrap it.
+fn within<'a>(m: &'a tauto_message::Message, id: &str) -> Option<&'a tauto_message::Message> {
+    if m.id == id {
+        return Some(m);
+    }
+    m.args.iter().find_map(|(_, v)| match v {
+        tauto_message::Value::Message(inner) => within(inner, id),
+        _ => None,
+    })
+}
+
 #[test]
 fn a_file_outside_the_checkout_imports_std_by_name() {
     tauto_messages::install();
@@ -114,17 +125,16 @@ fn an_unknown_name_is_an_error() {
 "#,
     );
     let e = check_report(&missing, None).err().unwrap();
-    assert!(e.contains("the standard library has no module Nope"), "{e}");
+    let found = within(&e, "tauto-import-no-std-module").unwrap_or_else(|| panic!("{e}"));
+    assert_eq!(found.get("module"), Some(&"Nope".into()));
     let other = file(
         "other",
         r#"import foo::Bar
 "#,
     );
     let e = check_report(&other, None).err().unwrap();
-    assert!(
-        e.contains("foo is not a dependency of this file's tote"),
-        "{e}"
-    );
+    let found = within(&e, "tauto-import-not-dependency").unwrap_or_else(|| panic!("{e}"));
+    assert_eq!(found.get("dependency"), Some(&"foo".into()));
 }
 
 #[test]
@@ -137,15 +147,18 @@ fn every_std_file_comes_with_tauto() {
         .filter(|p| p.extension().is_some_and(|e| e == "taut"))
         .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
         .collect();
-    // The files of the prelude, imported as `std::prelude::NAME`.
-    on_disk.extend(
-        std::fs::read_dir(std.join("prelude"))
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .filter(|p| p.extension().is_some_and(|e| e == "taut"))
-            .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
-            .map(|name| format!("prelude/{name}")),
-    );
+    // The files of the prelude and of `proof`, imported as `std::prelude::NAME`
+    // and `std::proof::NAME`.
+    for dir in ["prelude", "proof"] {
+        on_disk.extend(
+            std::fs::read_dir(std.join(dir))
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .filter(|p| p.extension().is_some_and(|e| e == "taut"))
+                .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
+                .map(|name| format!("{dir}/{name}")),
+        );
+    }
     on_disk.sort();
     let mut embedded: Vec<String> = tauto::stdlib::FILES
         .iter()
@@ -289,15 +302,100 @@ fn a_file_imports_a_module_of_its_totes_dependency_by_name() {
     assert_eq!(report.status(), Status::Ok);
 }
 
+/// `app` depends on the tote `greet-lib`, whose module is `src/Greet.taut`.
+fn app_with_hyphenated_lib(name: &str, main: &str) -> PathBuf {
+    let base = dir(name);
+    let app = base.join("app");
+    let lib = base.join("greet-lib");
+    std::fs::create_dir_all(app.join("src")).unwrap();
+    std::fs::create_dir_all(lib.join("src")).unwrap();
+    std::fs::write(
+        app.join("Tauto.eure"),
+        "package {\n  name = \"app\"\n  version = \"0.1.0\"\n}\ndependencies {\n  greet-lib { path = \"../greet-lib\" }\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        lib.join("Tauto.eure"),
+        "package {\n  name = \"greet-lib\"\n  version = \"0.1.0\"\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        lib.join("src/Greet.taut"),
+        "import std::Text\npub fn greeting(): Text { \"hi\" }\n",
+    )
+    .unwrap();
+    let path = app.join("src/main.taut");
+    std::fs::write(&path, main).unwrap();
+    path
+}
+
+#[test]
+fn a_hyphenated_tote_is_imported_with_underscores() {
+    tauto_messages::install();
+    let path = app_with_hyphenated_lib(
+        "hyphen-dep",
+        "import std::Text\nimport greet_lib::Greet\nfn hello(): Text { greeting() }\n",
+    );
+    let report = check_report(&path, None).unwrap();
+    assert_eq!(report.status(), Status::Ok);
+}
+
+#[test]
+fn a_hyphenated_tote_is_not_imported_with_hyphens() {
+    tauto_messages::install();
+    let path = app_with_hyphenated_lib("hyphen-dep-hyphens", "import greet-lib::Greet\n");
+    assert!(check_report(&path, None).is_err());
+}
+
 #[test]
 fn a_missing_module_of_a_dependency_is_an_error() {
     tauto_messages::install();
     let path = app_with_lib("named-dep-missing", "import lib::Nope\n");
     let e = check_report(&path, None).err().unwrap();
-    assert!(e.contains("lib has no module Nope"), "{e}");
+    let found = within(&e, "tauto-import-no-module").unwrap_or_else(|| panic!("{e}"));
+    assert_eq!(found.get("dependency"), Some(&"lib".into()));
+    assert_eq!(found.get("module"), Some(&"Nope".into()));
     let path = app_with_lib("named-dep-other", "import other::Greet\n");
     let e = check_report(&path, None).err().unwrap();
-    assert!(e.contains("other is not a dependency"), "{e}");
+    let found = within(&e, "tauto-import-not-dependency").unwrap_or_else(|| panic!("{e}"));
+    assert_eq!(found.get("dependency"), Some(&"other".into()));
+}
+
+#[test]
+fn a_module_outside_a_dependencys_sources_says_how_to_read_it() {
+    tauto_messages::install();
+    let path = app_with_lib("named-dep-outside", "import lib::proof::Laws\n");
+    let lib = path
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("checkout");
+    std::fs::create_dir_all(lib.join("proof")).unwrap();
+    std::fs::write(
+        lib.join("proof/Laws.taut"),
+        "pub theorem t(): Zero = Zero { Refl }\n",
+    )
+    .unwrap();
+    let e = check_report(&path, None).err().unwrap();
+    let found = within(&e, "tauto-import-outside-sources").unwrap_or_else(|| panic!("{e}"));
+    assert_eq!(found.get("dependency"), Some(&"lib".into()));
+    assert_eq!(found.get("source"), Some(&"proof".into()));
+    // With the source added, the same import reads the file.
+    std::fs::write(
+        lib.join("Tauto.eure"),
+        "package {\n  name = \"lib\"\n  version = \"0.1.0\"\n  additional-sources = [\"proof\"]\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &path,
+        "import lib::proof::Laws { t }\ntheorem u(): Zero = Zero { t() }\n",
+    )
+    .unwrap();
+    let report = check_report(&path, None).unwrap();
+    assert_eq!(report.status(), Status::Ok);
 }
 
 #[test]

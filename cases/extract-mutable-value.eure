@@ -1,0 +1,17 @@
+@ cases.a-mutable-borrow-returned-as-a-value-is-copied
+extract = true
+source = ```tauto
+fn advance(&mut state: Nat): Nat { state := state + 1; state }
+fn combine(first: Nat, second: Nat): Nat { first * 10 + second }
+fn result(): Nat {
+  var state := 2;
+  let combined := combine(state, advance(&mut state));
+  combined + state * 100
+}
+theorem ordered(): result() = 323 { Refl }
+perform show("ordered", result())
+```
+checks_all = "ok"
+shows = ["ordered = 323"]
+rust_shows = ["ordered = 323"]
+javascript_shows = ["ordered = 323"]

@@ -1,0 +1,451 @@
+
+@ cases.annotated_identity
+source = ```tauto
+fn answer(): i64 {
+  let identity: (i64) -> i64 ! {} := value => value
+  identity(42)
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.omitted_row_is_known_empty
+source = ```tauto
+fn apply(f: (i64) -> i64, value: i64): i64 { f(value) }
+fn answer(): i64 { apply(value => value + 2, 40) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.direct_function_value
+source = ```tauto
+fn plus_two(value: i64): i64 { value + 2 }
+fn apply(f: (i64) -> i64 ! {}, value: i64): i64 { f(value) }
+fn answer(): i64 { let selected := plus_two; apply(selected, 40) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.immutable_text_capture
+source = ```tauto
+fn prefix(prefix_text: Text): (Text) -> Text ! {} {
+  suffix => Text::concat(prefix_text, suffix)
+}
+fn answer(): Text {
+  let japanese := "日本"
+  let append := prefix(japanese)
+  Text::concat(append("語"), japanese)
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "日本語日本\n"
+
+@ cases.capture_is_reusable
+source = ```tauto
+fn answer(): i64 {
+  let base := 20
+  let add: (i64) -> i64 ! {} := value => base + value
+  add(1) + add(1)
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.nested_closures
+source = ```tauto
+fn make(base: i64): (i64) -> (i64) -> i64 ! {} {
+  first => second => base + first + second
+}
+fn answer(): i64 { make(10)(20)(12) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.conditional_closures
+source = ```tauto
+fn choose(left: Bool): (i64) -> i64 ! {} {
+  if left { value => value + 1 } else { value => value + 2 }
+}
+fn answer(): i64 { choose(false)(40) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.capture_callable
+source = ```tauto
+fn compose(first: (i64) -> i64 ! {}, second: (i64) -> i64 ! {}): (i64) -> i64 ! {} {
+  value => first(second(value))
+}
+fn answer(): i64 { compose(value => value + 1, value => value + 2)(39) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.generic_call_infers_callable
+source = ```tauto
+fn identity<A>(value: A): A { value }
+fn answer(): i64 {
+  let original: (i64) -> i64 := value => value + 2
+  let selected := identity(original)
+  selected(40)
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.generic_container
+source = ```tauto
+fn answer(): i64 {
+  let add: (i64) -> i64 := value => value + 2
+  let wrapped := Some(add)
+  ⊢ i64 from match wrapped { None => 0
+    Some(call) => call(40) }
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.shadowed_callable_name
+source = ```tauto
+fn choose(value: i64): i64 { choose(value) }
+fn apply(choose: (i64) -> i64): i64 { choose(40) }
+fn answer(): i64 {
+  let run: ((i64) -> i64) -> i64 := apply
+  run(value => value + 2)
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.match_capture_shadowing
+source = ```tauto
+fn answer(): i64 {
+  let number := 100
+  let selected := Some(40)
+  ⊢ i64 from match selected {
+    None => 0
+    Some(number) => {
+      let add: (i64) -> i64 := value => number + value
+      add(2)
+    }
+  }
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.zero_arguments
+source = ```tauto
+fn answer(): i64 { let value: () -> i64 := () => 42; value() }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.nat_result_context
+source = ```tauto
+fn answer(): Nat { let value: () -> Nat := () => 42; value() }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.direct_recursion_remains_supported
+source = ```tauto
+fn count(n: Nat): Nat { ⊢ Nat from match n { Zero => 0
+ Succ(previous) => 1 + count(previous) } }
+fn answer(): Nat { count(42) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.untyped_lambda
+source = ```tauto
+fn answer(): i64 { let call := value => value; call(42) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "closure requires an explicit callable type"
+
+@ cases.effectful_callable_type
+source = ```tauto
+fn apply(call: (i64) -> i64 ! {ask}): i64 { call(42) }
+fn answer(): i64 { 42 }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "effectful callable types are unsupported"
+
+@ cases.open_effect_row
+source = ```tauto
+fn apply<!e>(call: (i64) -> i64 ! e): i64 { call(42) }
+fn answer(): i64 { 42 }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "effectful callable types are unsupported"
+
+@ cases.effectful_closure_body
+source = ```tauto
+fn answer(): i64 { let call: () -> i64 := () => perform ask(); call() }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "callable body may diverge or perform effects"
+
+@ cases.recursive_function_value
+source = ```tauto
+fn spin(value: i64): i64 { spin(value) }
+fn answer(): i64 { let call: (i64) -> i64 := spin; call(42) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "callable body may diverge or perform effects"
+
+@ cases.transitive_recursive_closure
+source = ```tauto
+fn spin(value: i64): i64 { spin(value) }
+fn forward(value: i64): i64 { spin(value) }
+fn answer(): i64 { let call: (i64) -> i64 := value => forward(value); call(42) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "callable body may diverge or perform effects"
+
+@ cases.mutual_recursive_function_value
+source = ```tauto
+mutual { fn first(value: i64): i64 { second(value) }
+fn second(value: i64): i64 { first(value) } }
+fn answer(): i64 { let call: (i64) -> i64 := first; call(42) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "callable body may diverge or perform effects"
+
+@ cases.recursion_through_alias
+source = ```tauto
+fn spin(value: i64): i64 { let again := spin; again(value) }
+fn answer(): i64 { let call: (i64) -> i64 := spin; call(42) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "callable body may diverge or perform effects"
+
+@ cases.borrowed_callable
+source = ```tauto
+fn apply(&call: (i64) -> i64): i64 { call(42) }
+fn answer(): i64 { 42 }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "borrows and effects are unsupported"
+
+@ cases.borrowed_lambda
+source = ```tauto
+fn answer(): i64 { let call: (i64) -> i64 := (&value) => value; call(42) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "borrowed closures are unsupported"
+
+@ cases.affine_callable
+source = ```tauto
+fn apply(call: affine (i64) -> i64): i64 { call(42) }
+fn answer(): i64 { 42 }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "unsupported type form"
+
+@ cases.generic_function_value
+source = ```tauto
+fn identity<A>(value: A): A { value }
+fn answer(): i64 { let call: (i64) -> i64 := identity; call(42) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "polymorphic or non-function values are unsupported"
+
+@ cases.generic_capture
+source = ```tauto
+fn keep<A>(value: A): () -> A { () => value }
+fn answer(): i64 { keep(42)() }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "generic or unresolved closure captures are unsupported"
+
+@ cases.wrong_result
+source = ```tauto
+fn answer(): i64 { let call: (i64) -> Bool := value => value; if call(42) { 42 } else { 0 } }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "closure result type mismatch"
+
+@ cases.wrong_arity
+source = ```tauto
+fn answer(): i64 { let call: (i64) -> i64 := (first, second) => first; call(42) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "closure parameter count differs"
+
+@ cases.duplicate_lambda_parameter
+source = ```tauto
+fn answer(): i64 { let call: (i64, i64) -> i64 := (value, value) => value; call(40, 2) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "duplicate or shadowed closure parameter"
+
+@ cases.shadowed_lambda_parameter
+source = ```tauto
+fn answer(): i64 { let value := 40; let call: (i64) -> i64 := value => value; call(42) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "duplicate or shadowed closure parameter"
+
+// Mutable statements reject before closure capture planning.
+@ cases.mutable_capture
+source = ```tauto
+fn answer(): i64 { var value := 40; let call: (i64) -> i64 := number => value + number; call(2) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "unsupported block statement: StVar"
+
+@ cases.negative_callable_datatype
+source = ```tauto
+inductive Loop: Type { Spin(call: (Loop) -> i64): Loop }
+fn answer(): i64 { 42 }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "callable datatype fields are unsupported"
+
+@ cases.nested_callable_datatype
+source = ```tauto
+inductive Loop: Type { Spin(call: Option((Loop) -> i64)): Loop }
+fn answer(): i64 { 42 }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "callable datatype fields are unsupported"
+
+@ cases.unknown_callable_parameter
+source = ```tauto
+fn apply(call): i64 { call(42) }
+fn answer(): i64 { 42 }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "parameter type required"
+
+@ cases.unresolved_lambda_generic_argument
+source = ```tauto
+fn apply<A>(call: (A) -> A, value: A): A { call(value) }
+fn answer(): i64 { apply(value => value, 42) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "closure requires an explicit callable type"
+
+@ cases.nat_subtraction_does_not_gain_context
+source = ```tauto
+fn answer(): Nat { let call: () -> Nat := () => 1 - 2; call() }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "closure result type mismatch"
+
+@ cases.generic_factory_integer
+source = ```tauto
+fn factory<A>(): (A) -> A { value => value }
+fn answer(): i64 { factory()(42) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.generic_factory_bool
+source = ```tauto
+fn factory<A>(): (A) -> A { value => value }
+fn answer(): Bool { factory()(true) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "true\n"
+
+@ cases.generic_factory_result_mismatch
+source = ```tauto
+fn factory<A>(): (A) -> A { value => value }
+fn answer(): i64 { factory()(true) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "function result type mismatch"
+
+@ cases.result_erased_large_callable_argument
+source = ```tauto
+fn factory<A>(): (A) -> Bool { value => true }
+fn answer(): Bool { factory()(5000000000) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "true\n"
+
+@ cases.result_erased_unresolved_callable_argument
+source = ```tauto
+fn factory<A>(): (A) -> Bool { value => true }
+fn answer(): Bool { factory()(None) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "cannot infer a result-erased callable parameter"
+
+@ cases.generic_scope_cannot_hide_transitive_recursion
+source = ```tauto
+fn spin(value: i64): i64 { spin(value) }
+fn forward(value: i64): i64 { spin(value) }
+fn make<spin>(): (spin) -> i64 { value => forward(42) }
+fn answer(): i64 { make()(true) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = "callable body may diverge or perform effects"
+
+@ cases.generic_record_callable_projection
+source = ```tauto
+inductive Holder(A: Type): Type { Mk(value: A): Holder(A) }
+fn answer(): i64 {
+  let add: (i64) -> i64 := number => number + 2
+  let stored := Holder { value: add }
+  stored.value(40)
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.multiple_arguments
+source = ```tauto
+fn answer(): i64 { let add: (i64, i64) -> i64 := (left, right) => left + right; add(40, 2) }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"

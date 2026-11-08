@@ -28,7 +28,7 @@ pub fn frame_bind<A, B>(
   k: (A, Checker) -> Mut1(B, Checker),
   m: Mut1(A, Checker)
 ): Mut1(B, Checker) {
-  match m: Mut1(B, Checker) {
+  ⊢ Mut1(B, Checker) from match m {
     mut1(v, next) => k(v, next)
   }
 }
@@ -40,7 +40,7 @@ pub theorem frame_bind_ok<A: Type, B: Type>(
   hm: CkReadFrame(c, m),
   hk: ∀ v: A. ∀ next: Checker. CkReadFrame(next, k(v, next))
 ): CkReadFrame(c, frame_bind(k, m)) {
-  match m: CkReadFrame(c, frame_bind(k, m)) {
+  ⊢ CkReadFrame(c, frame_bind(k, m)) from match m {
     mut1(v, next) => Eq::trans(hk(v, next), hm)
   }
 }
@@ -94,7 +94,7 @@ pub fn frame_arity_small(
   data: Data,
   small: Bool
 ): Mut1(Unit, Checker) {
-  match small: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match small {
     true => ck_rewrap1(
       ck_error(c, cat4(n, " takes ", Text::of_nat(list_len(dgen(data))), " arguments"), span)
     )
@@ -109,7 +109,7 @@ pub fn frame_arity_decl(
   span: TySpan,
   o: Option(Data)
 ): Mut1(Unit, Checker) {
-  match o: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match o {
     None => mut1(Star, c)
     Some(data) => frame_arity_small(c, n, span, data, not(Nat::eq(given, list_len(dgen(data)))))
   }
@@ -122,7 +122,7 @@ pub fn frame_arity_k(
   span: TySpan,
   constructor: Bool
 ): Mut1(Unit, Checker) {
-  match constructor: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match constructor {
     true => frame_arity_decl(c, n, given, span, datas_decl(ck_datas_of(c), n))
     false => mut1(Star, c)
   }
@@ -134,7 +134,12 @@ pub theorem frame_arity_unf(
   n: Text,
   given: Nat,
   span: TySpan
-): ck_arity(c, n, given, span) = frame_arity_k(c, n, given, span, not(frame_constructor_position(c))) { Refl }
+): ck_arity(
+  c,
+  n,
+  given,
+  span
+) = frame_arity_k(c, n, given, span, not(frame_constructor_position(c))) { Refl }
 
 pub theorem frame_arity_small_ok(
   c: Checker,
@@ -143,7 +148,7 @@ pub theorem frame_arity_small_ok(
   data: Data,
   small: Bool
 ): CkReadFrame(c, frame_arity_small(c, n, span, data, small)) {
-  match small: CkReadFrame(c, frame_arity_small(c, n, span, data, small)) {
+  ⊢ CkReadFrame(c, frame_arity_small(c, n, span, data, small)) from match small {
     true => Refl
     false => Refl
   }
@@ -156,7 +161,7 @@ pub theorem frame_arity_decl_ok(
   span: TySpan,
   o: Option(Data)
 ): CkReadFrame(c, frame_arity_decl(c, n, given, span, o)) {
-  match o: CkReadFrame(c, frame_arity_decl(c, n, given, span, o)) {
+  ⊢ CkReadFrame(c, frame_arity_decl(c, n, given, span, o)) from match o {
     None => Refl
     Some(data) => frame_arity_small_ok(c, n, span, data, not(Nat::eq(given, list_len(dgen(data)))))
   }
@@ -169,7 +174,7 @@ pub theorem frame_arity_k_ok(
   span: TySpan,
   constructor: Bool
 ): CkReadFrame(c, frame_arity_k(c, n, given, span, constructor)) {
-  match constructor: CkReadFrame(c, frame_arity_k(c, n, given, span, constructor)) {
+  ⊢ CkReadFrame(c, frame_arity_k(c, n, given, span, constructor)) from match constructor {
     true => frame_arity_decl_ok(c, n, given, span, datas_decl(ck_datas_of(c), n))
     false => Refl
   }
@@ -189,7 +194,7 @@ pub theorem ck_arity_frame(
 }
 
 pub fn frame_return<A, B>(v: B, m: Mut1(A, Checker)): Mut1(B, Checker) {
-  match m: Mut1(B, Checker) {
+  ⊢ Mut1(B, Checker) from match m {
     mut1(ignored, next) => mut1(v, next)
   }
 }
@@ -200,7 +205,7 @@ pub theorem frame_return_ok<A: Type, B: Type>(
   m: Mut1(A, Checker),
   h: CkReadFrame(c, m)
 ): CkReadFrame(c, frame_return(v, m)) {
-  match m: CkReadFrame(c, frame_return(v, m)) {
+  ⊢ CkReadFrame(c, frame_return(v, m)) from match m {
     mut1(ignored, next) => h
   }
 }
@@ -212,7 +217,7 @@ pub fn frame_written_var_named(
   t: Ty,
   found: Bool
 ): Mut1(Ty, Checker) {
-  match found: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match found {
     true => mut1(t, c)
     false => frame_return(t, ck_arity(c, n, 0, span))
   }
@@ -226,7 +231,7 @@ pub fn frame_written_var_k(
   original: Ty,
   t: Ty
 ): Mut1(Ty, Checker) {
-  match t: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match t {
     TyNamed(name, args) => frame_written_var_named(
       c,
       n,
@@ -259,14 +264,19 @@ pub theorem frame_written_var_unf(
   n: Text,
   generics: Ordmap(Text, Ty),
   span: TySpan
-): ck_written_var(c, n, generics, span) = frame_written_var_k(
-    c,
-    n,
-    generics,
-    span,
-    ck_written_name(n, generics),
-    ck_written_name(n, generics)
-  ) { Refl }
+): ck_written_var(
+  c,
+  n,
+  generics,
+  span
+) = frame_written_var_k(
+  c,
+  n,
+  generics,
+  span,
+  ck_written_name(n, generics),
+  ck_written_name(n, generics)
+) { Refl }
 
 pub theorem frame_written_var_named_ok(
   c: Checker,
@@ -275,7 +285,7 @@ pub theorem frame_written_var_named_ok(
   t: Ty,
   found: Bool
 ): CkReadFrame(c, frame_written_var_named(c, n, span, t, found)) {
-  match found: CkReadFrame(c, frame_written_var_named(c, n, span, t, found)) {
+  ⊢ CkReadFrame(c, frame_written_var_named(c, n, span, t, found)) from match found {
     true => Refl
     false => frame_return_ok(c, t, ck_arity(c, n, 0, span), ck_arity_frame(c, n, 0, span))
   }
@@ -289,7 +299,7 @@ pub theorem frame_written_var_k_ok(
   original: Ty,
   t: Ty
 ): CkReadFrame(c, frame_written_var_k(c, n, generics, span, original, t)) {
-  match t: CkReadFrame(c, frame_written_var_k(c, n, generics, span, original, t)) {
+  ⊢ CkReadFrame(c, frame_written_var_k(c, n, generics, span, original, t)) from match t {
     TyNamed(name, args) => frame_written_var_named_ok(
       c,
       n,
@@ -343,7 +353,7 @@ pub theorem ck_written_fn_kind_frame(
   fk: Text,
   span: TySpan
 ): CkReadFrame(c, ck_written_fn_kind(w, c, fk, span)) {
-  match w: CkReadFrame(c, ck_written_fn_kind(w, c, fk, span)) {
+  ⊢ CkReadFrame(c, ck_written_fn_kind(w, c, fk, span)) from match w {
     TyFn(ps, r, k) => Refl
     TyInt(width) => Refl
     TyBool => Refl
@@ -458,7 +468,7 @@ pub theorem frame_changed<A: Type>(
 }
 
 pub fn frame_error_if(c: Checker, message: Text, span: TySpan, b: Bool): Mut1(Unit, Checker) {
-  match b: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match b {
     true => ck_rewrap1(ck_error(c, message, span))
     false => mut1(Star, c)
   }
@@ -470,14 +480,14 @@ pub theorem frame_error_if_ok(
   span: TySpan,
   b: Bool
 ): CkReadFrame(c, frame_error_if(c, message, span, b)) {
-  match b: CkReadFrame(c, frame_error_if(c, message, span, b)) {
+  ⊢ CkReadFrame(c, frame_error_if(c, message, span, b)) from match b {
     true => Refl
     false => Refl
   }
 }
 
 pub fn frame_app_nested(c: Checker, span: TySpan, after: List(Ty), inner: Ty): Mut1(Ty, Checker) {
-  match inner: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match inner {
     TyNamed(n, before) => frame_return(
       TyNamed(n, List::append(before, after)),
       ck_arity(c, n, list_len(List::append(before, after)), span)
@@ -508,7 +518,7 @@ pub theorem frame_app_nested_ok(
   after: List(Ty),
   inner: Ty
 ): CkReadFrame(c, frame_app_nested(c, span, after, inner)) {
-  match inner: CkReadFrame(c, frame_app_nested(c, span, after, inner)) {
+  ⊢ CkReadFrame(c, frame_app_nested(c, span, after, inner)) from match inner {
     TyNamed(n, before) => frame_return_ok(
       c,
       TyNamed(n, List::append(before, after)),
@@ -536,13 +546,13 @@ pub theorem frame_app_nested_ok(
 }
 
 pub fn frame_app_info(c: Checker, args: List(Ty)): Mut1(Ty, Checker) {
-  match args: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match args {
     Nil => mut1(TyUnit, c)
     Cons(a, rest) => mut1(TyInfo(a), c)
   }
 }
 pub theorem frame_app_info_ok(c: Checker, args: List(Ty)): CkReadFrame(c, frame_app_info(c, args)) {
-  match args: CkReadFrame(c, frame_app_info(c, args)) {
+  ⊢ CkReadFrame(c, frame_app_info(c, args)) from match args {
     Nil => Refl
     Cons(a, rest) => Refl
   }
@@ -554,7 +564,7 @@ pub fn frame_app_generic(
   span: TySpan,
   args: List(Ty)
 ): Mut1(Ty, Checker) {
-  match args: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match args {
     Nil => ck_rewrap1(ck_written_ctor_arity(c, n, span))
     Cons(x, more) => mut1(ty_apply(ck_written_name(n, generics), x), c)
   }
@@ -566,7 +576,7 @@ pub theorem frame_app_generic_ok(
   span: TySpan,
   args: List(Ty)
 ): CkReadFrame(c, frame_app_generic(c, n, generics, span, args)) {
-  match args: CkReadFrame(c, frame_app_generic(c, n, generics, span, args)) {
+  ⊢ CkReadFrame(c, frame_app_generic(c, n, generics, span, args)) from match args {
     Nil => Refl
     Cons(x, more) => Refl
   }
@@ -580,7 +590,7 @@ pub fn frame_app_generic_count(
   n: Text,
   one: Bool
 ): Mut1(Ty, Checker) {
-  match one: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match one {
     true => frame_bind(
       List(Ty),
       Ty,
@@ -599,7 +609,7 @@ pub theorem frame_app_generic_count_ok(
   one: Bool,
   iheach: ∀ next: Checker. CkReadFrame(next, ck_written_each(arguments, next, generics))
 ): CkReadFrame(c, frame_app_generic_count(c, arguments, generics, span, n, one)) {
-  match one: CkReadFrame(c, frame_app_generic_count(c, arguments, generics, span, n, one)) {
+  ⊢ CkReadFrame(c, frame_app_generic_count(c, arguments, generics, span, n, one)) from match one {
     true => frame_bind_ok(
       List(Ty),
       Ty,
@@ -625,7 +635,7 @@ pub fn frame_app_kind(
   under_borrow: Bool,
   app: WrittenApp
 ): Mut1(Ty, Checker) {
-  match app: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match app {
     WrittenUnit => mut1(TyUnit, c)
     WrittenInfo => frame_bind(
       List(Ty),
@@ -673,7 +683,7 @@ pub theorem frame_app_kind_ok(
   app: WrittenApp,
   iheach: ∀ next: Checker. CkReadFrame(next, ck_written_each(arguments, next, generics))
 ): CkReadFrame(c, frame_app_kind(c, arguments, generics, span, under_borrow, app)) {
-  match app: CkReadFrame(c, frame_app_kind(c, arguments, generics, span, under_borrow, app)) {
+  ⊢ CkReadFrame(c, frame_app_kind(c, arguments, generics, span, under_borrow, app)) from match app {
     WrittenUnit => Refl
     WrittenInfo => frame_bind_ok(
       List(Ty),
@@ -749,7 +759,7 @@ pub fn frame_written_app(
   under_borrow: Bool,
   nested: Bool
 ): Mut1(Ty, Checker) {
-  match nested: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match nested {
     true => frame_bind(
       Ty,
       Ty,
@@ -787,10 +797,10 @@ pub theorem frame_written_app_ok(
   ihterm: ∀ next: Checker. CkReadFrame(next, ck_written_in(function, next, generics)),
   iheach: ∀ next: Checker. CkReadFrame(next, ck_written_each(arguments, next, generics))
 ): CkReadFrame(c, frame_written_app(c, arguments, generics, span, function, under_borrow, nested)) {
-  match nested: CkReadFrame(
+  ⊢ CkReadFrame(
     c,
     frame_written_app(c, arguments, generics, span, function, under_borrow, nested)
-  ) {
+  ) from match nested {
     true => frame_changed(
       c,
       frame_set_constructor_position(c, true),
@@ -932,7 +942,11 @@ pub theorem frame_written_each_unf(
   rest: List(SurfaceTerm),
   c: Checker,
   generics: Ordmap(Text, Ty)
-): ck_written_each(Cons(t, rest), c, generics) = frame_written_each_cons(t, rest, c, generics) { Refl }
+): ck_written_each(
+  Cons(t, rest),
+  c,
+  generics
+) = frame_written_each_cons(t, rest, c, generics) { Refl }
 
 pub fn frame_written_params_cons(
   p: SurfaceParam,
@@ -941,7 +955,7 @@ pub fn frame_written_params_cons(
   generics: Ordmap(Text, Ty),
   skip: Nat
 ): Mut1(List(Ty), Checker) {
-  match skip: Mut1(List(Ty), Checker) {
+  ⊢ Mut1(List(Ty), Checker) from match skip {
     Zero => frame_bind(
       Ty,
       List(Ty),
@@ -969,7 +983,7 @@ pub theorem frame_written_params_cons_ok(
     ck_written_params(rest, next, generics, count)
   )
 ): CkReadFrame(c, frame_written_params_cons(p, rest, c, generics, skip)) {
-  match skip: CkReadFrame(c, frame_written_params_cons(p, rest, c, generics, skip)) {
+  ⊢ CkReadFrame(c, frame_written_params_cons(p, rest, c, generics, skip)) from match skip {
     Zero => frame_bind_ok(
       Ty,
       List(Ty),
@@ -1002,7 +1016,12 @@ pub theorem frame_written_params_unf(
   c: Checker,
   generics: Ordmap(Text, Ty),
   skip: Nat
-): ck_written_params(Cons(p, rest), c, generics, skip) = frame_written_params_cons(p, rest, c, generics, skip) { Refl }
+): ck_written_params(
+  Cons(p, rest),
+  c,
+  generics,
+  skip
+) = frame_written_params_cons(p, rest, c, generics, skip) { Refl }
 
 pub fn frame_written_pi(
   params: List(SurfaceParam),
@@ -1270,7 +1289,7 @@ pub fn frame_written_kind_k(
   under_borrow: Bool,
   sk: SurfaceKind
 ): Mut1(Ty, Checker) {
-  match sk: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match sk {
     SkVar(n) => ck_rewrap1(ck_written_var(c, n, generics, span))
     SkApp(function, arguments) => frame_written_app(
       c,
@@ -1320,7 +1339,13 @@ pub theorem frame_unf_SkVar(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkVar(n), c, generics, span, under_borrow) = ck_rewrap1(ck_written_var(c, n, generics, span)) { Refl }
+): ck_written_kind(
+  SkVar(n),
+  c,
+  generics,
+  span,
+  under_borrow
+) = ck_rewrap1(ck_written_var(c, n, generics, span)) { Refl }
 
 pub theorem frame_unf_SkApp(
   function: SurfaceTerm,
@@ -1329,7 +1354,21 @@ pub theorem frame_unf_SkApp(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkApp(function, arguments), c, generics, span, under_borrow) = frame_written_app(c, arguments, generics, span, function, under_borrow, written_nested(function)) { Refl }
+): ck_written_kind(
+  SkApp(function, arguments),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_app(
+  c,
+  arguments,
+  generics,
+  span,
+  function,
+  under_borrow,
+  written_nested(function)
+) { Refl }
 
 pub theorem frame_unf_SkPi(
   params: List(SurfaceParam),
@@ -1339,7 +1378,13 @@ pub theorem frame_unf_SkPi(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkPi(params, result, effects), c, generics, span, under_borrow) = frame_written_pi(params, result, c, generics) { Refl }
+): ck_written_kind(
+  SkPi(params, result, effects),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_pi(params, result, c, generics) { Refl }
 
 pub theorem frame_unf_SkFnKind(
   fk: Text,
@@ -1348,7 +1393,13 @@ pub theorem frame_unf_SkFnKind(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkFnKind(fk, ty), c, generics, span, under_borrow) = frame_written_fnkind(fk, ty, c, generics, span) { Refl }
+): ck_written_kind(
+  SkFnKind(fk, ty),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_fnkind(fk, ty, c, generics, span) { Refl }
 
 pub theorem frame_unf_SkBorrow(
   mutable: Bool,
@@ -1357,7 +1408,13 @@ pub theorem frame_unf_SkBorrow(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkBorrow(mutable, x), c, generics, span, under_borrow) = frame_written_borrow(mutable, x, c, generics) { Refl }
+): ck_written_kind(
+  SkBorrow(mutable, x),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_borrow(mutable, x, c, generics) { Refl }
 
 pub theorem frame_unf_SkUnion(
   ts: List(SurfaceTerm),
@@ -1365,7 +1422,13 @@ pub theorem frame_unf_SkUnion(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkUnion(ts), c, generics, span, under_borrow) = frame_written_union(ts, c, generics) { Refl }
+): ck_written_kind(
+  SkUnion(ts),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_union(ts, c, generics) { Refl }
 
 pub theorem frame_unf_SkProduct(
   ts: List(SurfaceTerm),
@@ -1386,7 +1449,13 @@ pub theorem frame_unf_SkTagged(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkTagged(tag, x), c, generics, span, under_borrow) = frame_written_tagged(tag, x, c, generics) { Refl }
+): ck_written_kind(
+  SkTagged(tag, x),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_tagged(tag, x, c, generics) { Refl }
 
 pub theorem frame_unf_SkNat(
   digits: Text,
@@ -1394,7 +1463,13 @@ pub theorem frame_unf_SkNat(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkNat(digits), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkNat(digits),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkText(
   value: Text,
@@ -1402,7 +1477,13 @@ pub theorem frame_unf_SkText(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkText(value), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkText(value),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkBool(
   value: Bool,
@@ -1410,7 +1491,13 @@ pub theorem frame_unf_SkBool(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkBool(value), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkBool(value),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkExists(
   binder: Text,
@@ -1420,7 +1507,13 @@ pub theorem frame_unf_SkExists(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkExists(binder, domain, body), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkExists(binder, domain, body),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkLam(
   params: List(Text),
@@ -1429,7 +1522,13 @@ pub theorem frame_unf_SkLam(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkLam(params, body), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkLam(params, body),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkIf(
   cond: SurfaceTerm,
@@ -1439,7 +1538,13 @@ pub theorem frame_unf_SkIf(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkIf(cond, then, otherwise), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkIf(cond, then, otherwise),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkField(
   value: SurfaceTerm,
@@ -1448,7 +1553,13 @@ pub theorem frame_unf_SkField(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkField(value, name), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkField(value, name),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkBlock(
   stmts: List(SurfaceStmt),
@@ -1456,7 +1567,13 @@ pub theorem frame_unf_SkBlock(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkBlock(stmts), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkBlock(stmts),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkPerform(
   op: Text,
@@ -1465,7 +1582,13 @@ pub theorem frame_unf_SkPerform(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkPerform(op, args), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkPerform(op, args),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkHandle(
   body: SurfaceTerm,
@@ -1474,7 +1597,13 @@ pub theorem frame_unf_SkHandle(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkHandle(body, handlers), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkHandle(body, handlers),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkBudget(
   amount_memory: Bool,
@@ -1484,7 +1613,13 @@ pub theorem frame_unf_SkBudget(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkBudget(amount_memory, amount, body), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkBudget(amount_memory, amount, body),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkMatch(
   scrutinee: SurfaceTerm,
@@ -1495,7 +1630,13 @@ pub theorem frame_unf_SkMatch(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkMatch(scrutinee, motive, arms, binder), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkMatch(scrutinee, motive, arms, binder),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkHole(
   name: Text,
@@ -1503,7 +1644,13 @@ pub theorem frame_unf_SkHole(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkHole(name), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkHole(name),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkRecord(
   name: Text,
@@ -1512,7 +1659,13 @@ pub theorem frame_unf_SkRecord(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkRecord(name, fields), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkRecord(name, fields),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkBorrowLam(
   borrows: List(Option(Bool)),
@@ -1521,7 +1674,13 @@ pub theorem frame_unf_SkBorrowLam(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkBorrowLam(borrows, lam), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkBorrowLam(borrows, lam),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkOther(
   what: Text,
@@ -1529,7 +1688,13 @@ pub theorem frame_unf_SkOther(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkOther(what), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkOther(what),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkFloat(
   what: Text,
@@ -1537,7 +1702,13 @@ pub theorem frame_unf_SkFloat(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkFloat(what), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkFloat(what),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkRow(
   what_effects: List(Text),
@@ -1545,7 +1716,13 @@ pub theorem frame_unf_SkRow(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkRow(what_effects), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkRow(what_effects),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkProject(
   what: SurfaceTerm,
@@ -1554,7 +1731,13 @@ pub theorem frame_unf_SkProject(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkProject(what, what_ty), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkProject(what, what_ty),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkMacroCall(
   name: Text,
@@ -1563,7 +1746,13 @@ pub theorem frame_unf_SkMacroCall(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkMacroCall(name, arg), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkMacroCall(name, arg),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkQuote(
   stmts_form: Bool,
@@ -1572,7 +1761,13 @@ pub theorem frame_unf_SkQuote(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkQuote(stmts_form, stmts), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkQuote(stmts_form, stmts),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkSplice(
   value: SurfaceTerm,
@@ -1580,7 +1775,13 @@ pub theorem frame_unf_SkSplice(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkSplice(value), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkSplice(value),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkSyntaxLit(
   name: Option(Text),
@@ -1589,7 +1790,13 @@ pub theorem frame_unf_SkSyntaxLit(
   generics: Ordmap(Text, Ty),
   span: TySpan,
   under_borrow: Bool
-): ck_written_kind(SkSyntaxLit(name, body), c, generics, span, under_borrow) = frame_written_invalid(c, span) { Refl }
+): ck_written_kind(
+  SkSyntaxLit(name, body),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_unf_SkStep(
   tactic: Text,
@@ -1603,12 +1810,12 @@ pub theorem frame_unf_SkStep(
   span: TySpan,
   under_borrow: Bool
 ): ck_written_kind(
-    SkStep(tactic, arg, call_start, call_end, before, arms),
-    c,
-    generics,
-    span,
-    under_borrow
-  ) = frame_written_invalid(c, span) { Refl }
+  SkStep(tactic, arg, call_start, call_end, before, arms),
+  c,
+  generics,
+  span,
+  under_borrow
+) = frame_written_invalid(c, span) { Refl }
 
 pub theorem frame_written_in_unf(
   ast_occurrence: Option(TermOccurrence),
@@ -1617,21 +1824,29 @@ pub theorem frame_written_in_unf(
   end: Nat,
   c: Checker,
   generics: Ordmap(Text, Ty)
-): ck_written_in(SurfaceTermIndexedMk(sk, start, end, ast_occurrence), c, generics) = ck_rewrap1(
-    ck_written_kind(
-      sk,
-      frame_set_under_borrow(c, false),
-      generics,
-      TySpan { start: start, end: end },
-      frame_under_borrow(c)
-    )
-  ) { Refl }
+): ck_written_in(
+  SurfaceTermIndexedMk(sk, start, end, ast_occurrence),
+  c,
+  generics
+) = ck_rewrap1(
+  ck_written_kind(
+    sk,
+    frame_set_under_borrow(c, false),
+    generics,
+    TySpan { start: start, end: end },
+    frame_under_borrow(c)
+  )
+) { Refl }
 pub theorem frame_written_param_unf(
   name: Option(Text),
   ty: SurfaceTerm,
   c: Checker,
   generics: Ordmap(Text, Ty)
-): ck_written_param(SurfaceParamMk(name, ty), c, generics) = ck_rewrap1(ck_written_in(ty, c, generics)) { Refl }
+): ck_written_param(
+  SurfaceParamMk(name, ty),
+  c,
+  generics
+) = ck_rewrap1(ck_written_in(ty, c, generics)) { Refl }
 
 mutual {
   pub theorem ck_written_in_frame(
@@ -1639,7 +1854,7 @@ mutual {
     c: Checker,
     generics: Ordmap(Text, Ty)
   ): CkReadFrame(c, ck_written_in(t, c, generics)) {
-    match t: CkReadFrame(c, ck_written_in(t, c, generics)) {
+    ⊢ CkReadFrame(c, ck_written_in(t, c, generics)) from match t {
       SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
         Eq::sym(frame_written_in_unf(ast_occurrence, sk, start, end, c, generics)),
@@ -1682,7 +1897,7 @@ mutual {
     span: TySpan,
     under_borrow: Bool
   ): CkReadFrame(c, ck_written_kind(sk, c, generics, span, under_borrow)) {
-    match sk: CkReadFrame(c, ck_written_kind(sk, c, generics, span, under_borrow)) {
+    ⊢ CkReadFrame(c, ck_written_kind(sk, c, generics, span, under_borrow)) from match sk {
       SkVar(n) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
         Eq::sym(frame_unf_SkVar(n, c, generics, span, under_borrow)),
@@ -1819,7 +2034,9 @@ mutual {
       )
       SkMatch(scrutinee, motive, arms, binder) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
-        Eq::sym(frame_unf_SkMatch(scrutinee, motive, arms, binder, c, generics, span, under_borrow)),
+        Eq::sym(
+          frame_unf_SkMatch(scrutinee, motive, arms, binder, c, generics, span, under_borrow)
+        ),
         Refl(Pair(Datas, Ordmap(Nat, Ty)), frame_read_view(c))
       )
       SkHole(name) => Eq::subst(
@@ -1902,7 +2119,7 @@ mutual {
     c: Checker,
     generics: Ordmap(Text, Ty)
   ): CkReadFrame(c, ck_written_each(ts, c, generics)) {
-    match ts: CkReadFrame(c, ck_written_each(ts, c, generics)) {
+    ⊢ CkReadFrame(c, ck_written_each(ts, c, generics)) from match ts {
       Nil => Refl
       Cons(t, rest) => Eq::subst(
         (z: Mut1(List(Ty), Checker)) => CkReadFrame(c, z),
@@ -1924,7 +2141,7 @@ mutual {
     generics: Ordmap(Text, Ty),
     skip: Nat
   ): CkReadFrame(c, ck_written_params(ps, c, generics, skip)) {
-    match ps: CkReadFrame(c, ck_written_params(ps, c, generics, skip)) {
+    ⊢ CkReadFrame(c, ck_written_params(ps, c, generics, skip)) from match ps {
       Nil => Refl
       Cons(p, rest) => Eq::subst(
         (z: Mut1(List(Ty), Checker)) => CkReadFrame(c, z),
@@ -1946,7 +2163,7 @@ mutual {
     c: Checker,
     generics: Ordmap(Text, Ty)
   ): CkReadFrame(c, ck_written_param(p, c, generics)) {
-    match p: CkReadFrame(c, ck_written_param(p, c, generics)) {
+    ⊢ CkReadFrame(c, ck_written_param(p, c, generics)) from match p {
       SurfaceParamMk(name, ty) => Eq::subst(
         (z: Mut1(Ty, Checker)) => CkReadFrame(c, z),
         Eq::sym(frame_written_param_unf(name, ty, c, generics)),

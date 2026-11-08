@@ -114,6 +114,7 @@ mutual
     | .text => .copy
     | .decimal => .copy
     | .float => .copy
+    | .float32 => .copy
     | .never => .copy
     | .fn _ _ _ => .shared
     | .union ts => Tys.kind os ts
@@ -186,6 +187,7 @@ mutual
     | .text => False
     | .decimal => False
     | .float => False
+    | .float32 => False
     | .never => False
     | .fn _ _ _ => False
     | .cell _ => False
@@ -245,6 +247,7 @@ mutual
     | .text => by simp [Ty.inst, Ty.Mv]
     | .decimal => by simp [Ty.inst, Ty.Mv]
     | .float => by simp [Ty.inst, Ty.Mv]
+    | .float32 => by simp [Ty.inst, Ty.Mv]
     | .never => by simp [Ty.inst, Ty.Mv]
     | .fn _ _ _ => by simp [Ty.inst, Ty.Mv]
     | .cell _ => by simp [Ty.inst, Ty.Mv]
@@ -284,6 +287,7 @@ mutual
     | .text => by simp only [Ty.inst]; exact Kind.le_refl _
     | .decimal => by simp only [Ty.inst]; exact Kind.le_refl _
     | .float => by simp only [Ty.inst]; exact Kind.le_refl _
+    | .float32 => by simp only [Ty.inst]; exact Kind.le_refl _
     | .never => by simp only [Ty.inst]; exact Kind.le_refl _
     | .fn _ _ _ => by simp only [Ty.inst, Ty.kind]; exact Kind.le_refl _
     | .union ts => by simp only [Ty.inst, Ty.kind]; exact Tys.kind_inst os hθ ts

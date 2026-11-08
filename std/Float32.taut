@@ -58,14 +58,14 @@ module Float32 {
   // A finite `Float32` is `m * 2^(e - 4000)` with `m < 2^24`, the same scale
   // as `Float`'s (`Float::m_of`, `Float::e_of`); a subnormal has `e = 3851`.
   pub fn m_of(n: Nat): Nat {
-    match expo_of(n) == 0: Nat {
+    ⊢ Nat from match expo_of(n) == 0 {
       true => frac_of(n)
       false => frac_of(n) + 8388608
     }
   }
 
   pub fn e_of(n: Nat): Nat {
-    match expo_of(n) == 0: Nat {
+    ⊢ Nat from match expo_of(n) == 0 {
       true => 3851
       false => expo_of(n) + 3850
     }
@@ -85,8 +85,8 @@ module Float32 {
 
   // Mapped: the bits of `x` as a number, `0x7FC00000` for every NaN.
   pub fn raw(x: Float32): Nat {
-    match x: Nat {
-      Mk(b) => match nan_of(U32::val(b)): Nat {
+    ⊢ Nat from match x {
+      Mk(b) => ⊢ Nat from match nan_of(U32::val(b)) {
         true => nan_raw()
         false => U32::val(b)
       }
@@ -96,7 +96,7 @@ module Float32 {
   // The bits of `m * 2^(t - 4000)` with sign `s`, for `m <= 2^24` and
   // `t >= 3851`, or an infinity when it is too large.
   pub fn encode(s: Nat, m: Nat, t: Nat): Nat {
-    match (t - 3851) * 8388608 + m < 2139095040: Nat {
+    ⊢ Nat from match (t - 3851) * 8388608 + m < 2139095040 {
       true => zero_raw(s) + ((t - 3851) * 8388608 + m)
       false => inf_raw(s)
     }
@@ -106,7 +106,7 @@ module Float32 {
   // to the nearest, ties to even. With `m < 2^120`, 125 digits or more round
   // to zero.
   pub fn round_shift(s: Nat, m: Nat, t: Nat, k: Nat): Nat {
-    match k < 125: Nat {
+    ⊢ Nat from match k < 125 {
       false => zero_raw(s)
       true => round_at(
         s,
@@ -119,13 +119,13 @@ module Float32 {
   }
 
   pub fn round_at(s: Nat, q: Nat, r: Nat, p: Nat, t: Nat): Nat {
-    match Nat::div_nz(p, 2, Nat::ne_zero(2, Refl)) < r: Nat {
+    ⊢ Nat from match Nat::div_nz(p, 2, Nat::ne_zero(2, Refl)) < r {
       true => encode(s, Succ(q), t)
-      false => match r == Nat::div_nz(
+      false => ⊢ Nat from match r == Nat::div_nz(
         p,
         2,
         Nat::ne_zero(2, Refl)
-      ) && Nat::rem_nz(q, 2, Nat::ne_zero(2, Refl)) == 1: Nat {
+      ) && Nat::rem_nz(q, 2, Nat::ne_zero(2, Refl)) == 1 {
         true => encode(s, Succ(q), t)
         false => encode(s, q, t)
       }
@@ -135,23 +135,23 @@ module Float32 {
   // The nearest `Float32` to `m * 2^(e - 4000)` with sign `s`, for `m < 2^120`.
   // As `Float::pack`, a last digit of 1 can stand for the part below.
   pub fn pack(s: Nat, m: Nat, e: Nat): Nat {
-    match m == 0: Nat {
+    ⊢ Nat from match m == 0 {
       true => zero_raw(s)
       false => pack_at(s, m, e, Nat::max(e + Float::len(m) - 24, 3851))
     }
   }
 
   pub fn pack_at(s: Nat, m: Nat, e: Nat, t: Nat): Nat {
-    match t <= e: Nat {
+    ⊢ Nat from match t <= e {
       true => encode(s, m * Nat::pow2(e - t), t)
       false => round_shift(s, m, t, t - e)
     }
   }
 
   pub fn of_float_raw(a: Nat): Nat {
-    match Float::nan_of(a): Nat {
+    ⊢ Nat from match Float::nan_of(a) {
       true => nan_raw()
-      false => match Float::inf_of(a): Nat {
+      false => ⊢ Nat from match Float::inf_of(a) {
         true => inf_raw(Float::sign_of(a))
         false => pack(Float::sign_of(a), Float::m_of(a), Float::e_of(a))
       }
@@ -166,9 +166,9 @@ module Float32 {
 
 module Float {
   pub fn of_float32_raw(a: Nat): Nat {
-    match Float32::nan_of(a): Nat {
+    ⊢ Nat from match Float32::nan_of(a) {
       true => nan_raw()
-      false => match Float32::inf_of(a): Nat {
+      false => ⊢ Nat from match Float32::inf_of(a) {
         true => inf_raw(Float32::sign_of(a))
         false => pack(Float32::sign_of(a), Float32::m_of(a), Float32::e_of(a))
       }
@@ -232,7 +232,7 @@ module Float32 {
   }
 
   pub fn checked_div(a: Float32, b: Float32): Option(Float32) {
-    match Float::checked_div(Float::of_float32(a), Float::of_float32(b)): Option(Float32) {
+    ⊢ Option(Float32) from match Float::checked_div(Float::of_float32(a), Float::of_float32(b)) {
       None => None
       Some(q) => Some(of_float(q))
     }

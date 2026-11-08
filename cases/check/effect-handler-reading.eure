@@ -1,0 +1,80 @@
+description = "Handlers read in proofs: a handler that takes the computation it handles as a function, and one whose value a `let` takes while it writes a `var`."
+
+@ cases.handler-of-a-function-argument-with-a-var
+extract = true
+imports = [path`../../std/Base.taut`]
+source = ```tauto
+effect tick(): Nat
+fn run_with<T>(start: Nat, body: () -> T ! {tick}): Pair(T, Nat) {
+  var n: Nat := start
+  let v := handle { body() } with {
+    tick(), k => {
+      n := Nat::add(n, 1)
+      k(n)
+    }
+  }
+  Pair { fst: v, snd: n }
+}
+fn twice(f: () -> Nat ! {tick}): Nat ! {tick} { Nat::add(f(), f()) }
+fn session(): Nat ! {tick} { Nat::add(perform tick(), perform tick()) }
+fn session_twice(): Nat ! {tick} { twice(session) }
+fn from_ten(): Pair(Nat, Nat) { run_with(10, session) }
+fn from_zero(): Pair(Nat, Nat) { run_with(0, session_twice) }
+theorem from_ten_value(): from_ten() = (Pair { fst: 23, snd: 12 }) { Refl }
+theorem from_zero_value(): from_zero() = (Pair { fst: 10, snd: 4 }) { Refl }
+perform show("from_ten", from_ten())
+perform show("from_zero", from_zero())
+```
+checks.run_with = "checked"
+checks.twice = "checked"
+checks.from_ten_value = "checked"
+checks.from_zero_value = "checked"
+shows = ["from_ten = Pair { fst: 23, snd: 12 }", "from_zero = Pair { fst: 10, snd: 4 }"]
+
+@ cases.let-takes-a-handler-that-writes-a-var
+imports = [path`../../std/Base.taut`]
+source = ```tauto
+effect tick(): Nat
+fn count(): Nat ! {tick} { perform tick() }
+fn counted(): Pair(Nat, Nat) {
+  var n: Nat := 0
+  let v := handle { count() } with {
+    tick(), k => {
+      n := Nat::add(n, 1)
+      k(n)
+    }
+  }
+  Pair { fst: v, snd: n }
+}
+theorem counted_value(): counted() = (Pair { fst: 1, snd: 1 }) { Refl }
+```
+checks.counted = "checked"
+checks.counted_value = "checked"
+
+// A function with effects whose row is open is read with its row variable
+// as a parameter, its `var`s and handlers as in any other row.
+@ cases.open-row-handler-with-a-var-is-read
+imports = [path`../../std/Base.taut`]
+source = ```tauto
+effect tick(): Nat
+fn counted<T, !e>(&body: () -> T ! {tick} ∪ e): Pair(T, Nat) ! {tick} ∪ e {
+  var n: Nat := 0
+  let v := handle { body() } with {
+    tick(), k => {
+      n := Nat::add(n, 1)
+      k(perform tick())
+    }
+  }
+  Pair { fst: v, snd: n }
+}
+fn two(): Nat ! {tick} { Nat::add(perform tick(), perform tick()) }
+fn counted_two(): Pair(Nat, Nat) ! {tick} { counted(two) }
+fn fives(): Pair(Nat, Nat) {
+  handle { counted_two() } with {
+    tick(), k => k(5)
+  }
+}
+theorem fives_value(): fives() = (Pair { fst: 10, snd: 2 }) { Refl }
+```
+checks.counted = "checked"
+checks.fives_value = "checked"

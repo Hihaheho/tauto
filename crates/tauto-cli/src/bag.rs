@@ -58,6 +58,12 @@ impl From<String> for Problem {
     }
 }
 
+impl From<tauto_message::Message> for Problem {
+    fn from(e: tauto_message::Message) -> Problem {
+        Problem::Failed(e.to_string())
+    }
+}
+
 fn usage(error: &str) -> ExitCode {
     eprintln!("{error}\n{}", i18n::t!("bag-help"));
     ExitCode::from(2)

@@ -24,7 +24,7 @@ mutual {
       CBuiltin(name, args) => False
       CBranch(cond, then, otherwise) => False
       CSeq(items) => EPrimitiveArgs(items)
-      CDefine(id, is_shared, init) => False
+      CDefine(id, is_shared, drop, init) => False
       CAssign(id, path, through, value) => False
       CWhile(cond, body, ticked) => False
       CReturn(value) => False
@@ -45,6 +45,48 @@ mutual {
   }
 }
 
+pub theorem e_primitive_clears(
+  items: List(Cps),
+  k: MCode,
+  cs: CSt,
+  shape: EPrimitiveArgs(items)
+): c_clears(items, k, cs) = (Pair { fst: k, snd: cs }) {
+  match items {
+    Nil => Refl
+    Cons(item, rest) => match item {
+      CPure(v) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CMap(value, op) => e_primitive_clears(rest, k, cs, And::right(shape))
+      MkCPrim(op, args) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CRead(id, deref) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CCall(callee, args, ticked) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CTail(inst, args) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CBuiltin(name, args) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CBranch(cond, then, otherwise) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CSeq(nested) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CDefine(id, is_shared, drop, init) => False::elim(And::left(shape))
+      CAssign(id, path, through, value) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CWhile(cond, body, ticked) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CReturn(value) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CMatch(scrut, pats, guards, bodies) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CClosure(body, params, captures, borrowed, refs) => e_primitive_clears(
+        rest,
+        k,
+        cs,
+        And::right(shape)
+      )
+      CPerform(op, quant, args) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CHandle(body, ops, pats, ks, bodies, rpats, rguards, rbodies) => e_primitive_clears(
+        rest,
+        k,
+        cs,
+        And::right(shape)
+      )
+      CBorrow(id, path, through) => e_primitive_clears(rest, k, cs, And::right(shape))
+      CBudget(memory, steps, body) => e_primitive_clears(rest, k, cs, And::right(shape))
+    }
+  }
+}
+
 mutual {
   pub fn e_expression_steps(e: Cps): Nat {
     match e {
@@ -57,7 +99,7 @@ mutual {
       CBuiltin(name, args) => 0
       CBranch(cond, then, otherwise) => 0
       CSeq(items) => e_sequence_steps(items)
-      CDefine(id, is_shared, init) => 0
+      CDefine(id, is_shared, drop, init) => 0
       CAssign(id, path, through, value) => 0
       CWhile(cond, body, ticked) => 0
       CReturn(value) => 0
@@ -82,7 +124,7 @@ mutual {
       Nil => 1
       Cons(e, rest) => {
         let later: Nat := e_sequence_steps(rest)
-        match rest: Nat {
+        ⊢ Nat from match rest {
           Nil => e_expression_steps(e)
           Cons(next, more) => Nat::add(later, Succ(e_expression_steps(e)))
         }
@@ -122,7 +164,7 @@ mutual {
     final
   ) {
     match fuel {
-      Zero => match done: ECodeResult(
+      Zero => ⊢ ECodeResult(
         p,
         e_expression_steps(e),
         c_expr(Zero, e, k, cs),
@@ -134,8 +176,8 @@ mutual {
         cx,
         Cons(value, stack),
         final
-      ) {}
-      Succ(f) => match e: ECodeResult(
+      ) from match done {}
+      Succ(f) => ⊢ ECodeResult(
         p,
         e_expression_steps(e),
         c_expr(Succ(f), e, k, cs),
@@ -147,8 +189,8 @@ mutual {
         cx,
         Cons(value, stack),
         final
-      ) {
-        CPure(v) => match done: ECodeResult(
+      ) from match e {
+        CPure(v) => ⊢ ECodeResult(
           p,
           1,
           c_expr(Succ(f), CPure(v), k, cs),
@@ -160,7 +202,7 @@ mutual {
           cx,
           Cons(value, stack),
           final
-        ) {
+        ) from match done {
           Refl => ⊢ ECodeResult(
             p,
             1,
@@ -191,7 +233,7 @@ mutual {
             final,
             done
           )
-          match stages: ECodeResult(
+          ⊢ ECodeResult(
             p,
             Succ(e_expression_steps(inner)),
             c_expr(f, inner, McOp(c_unary(op), k), cs),
@@ -203,7 +245,7 @@ mutual {
             cx,
             Cons(value, stack),
             final
-          ) {
+          ) from match stages {
             Ebv(v, heap, first, second) => {
               let ih: ECodeResult(
                 p,
@@ -269,7 +311,7 @@ mutual {
             final,
             done
           )
-          match stages: ECodeResult(
+          ⊢ ECodeResult(
             p,
             Succ(e_arguments_steps(args)),
             c_all(f, args, McOp(c_prim_op(op, List::length(args)), k), cs),
@@ -281,7 +323,7 @@ mutual {
             cx,
             Cons(value, stack),
             final
-          ) {
+          ) from match stages {
             Ebv(values, heap, first, second) => {
               let ih: ECodeResult(
                 p,
@@ -340,7 +382,7 @@ mutual {
         CTail(inst, args) => False::elim(shape)
         CBuiltin(name, args) => False::elim(shape)
         CBranch(cond, then, otherwise) => False::elim(shape)
-        CSeq(items) => match items: ECodeResult(
+        CSeq(items) => ⊢ ECodeResult(
           p,
           e_sequence_steps(items),
           c_expr(Succ(f), CSeq(items), k, cs),
@@ -352,8 +394,8 @@ mutual {
           cx,
           Cons(value, stack),
           final
-        ) {
-          Nil => match f: ECodeResult(
+        ) from match items {
+          Nil => ⊢ ECodeResult(
             p,
             1,
             Cr(McPush(MvUnit, k), cs),
@@ -365,8 +407,8 @@ mutual {
             cx,
             Cons(value, stack),
             final
-          ) {
-            Zero => match done: ECodeResult(
+          ) from match f {
+            Zero => ⊢ ECodeResult(
               p,
               1,
               Cr(McPush(MvUnit, k), cs),
@@ -378,8 +420,8 @@ mutual {
               cx,
               Cons(value, stack),
               final
-            ) {}
-            Succ(g) => match done: ECodeResult(
+            ) from match done {}
+            Succ(g) => ⊢ ECodeResult(
               p,
               1,
               Cr(McPush(MvUnit, k), cs),
@@ -391,7 +433,7 @@ mutual {
               cx,
               Cons(value, stack),
               final
-            ) {
+            ) from match done {
               Refl => ⊢ ECodeResult(
                 p,
                 1,
@@ -408,25 +450,41 @@ mutual {
               AndIntro(Refl, e_runs_one(Refl))
             }
           }
-          Cons(first, rest) => e_primitive_sequence_correct(
-            f,
-            first,
-            rest,
-            shape,
-            p,
-            env,
-            cx,
-            value,
-            final,
-            k,
-            cs,
-            slots,
-            stack,
-            frames,
-            done
+          Cons(first, rest) => Eq::subst(
+            (cleared: Pair(MCode, CSt)) => ECodeResult(
+              p,
+              e_sequence_steps(Cons(first, rest)),
+              match cleared { Pair { fst: k2, snd: cs2 } => c_seq_from(f, first, rest, k2, cs2) },
+              cs,
+              k,
+              slots,
+              stack,
+              frames,
+              cx,
+              Cons(value, stack),
+              final
+            ),
+            Eq::sym(e_primitive_clears(Cons(first, rest), k, cs, shape)),
+            e_primitive_sequence_correct(
+              f,
+              first,
+              rest,
+              shape,
+              p,
+              env,
+              cx,
+              value,
+              final,
+              k,
+              cs,
+              slots,
+              stack,
+              frames,
+              done
+            )
           )
         }
-        CDefine(id, is_shared, init) => False::elim(shape)
+        CDefine(id, is_shared, drop, init) => False::elim(shape)
         CAssign(id, path, through, assigned) => False::elim(shape)
         CWhile(cond, body, ticked) => False::elim(shape)
         CReturn(returned) => False::elim(shape)
@@ -469,7 +527,7 @@ mutual {
     final
   ) {
     match fuel {
-      Zero => match done: ECodeResult(
+      Zero => ⊢ ECodeResult(
         p,
         e_arguments_steps(es),
         c_all(Zero, es, k, cs),
@@ -481,8 +539,8 @@ mutual {
         cx,
         e_argument_stack(values, stack),
         final
-      ) {}
-      Succ(f) => match es: ECodeResult(
+      ) from match done {}
+      Succ(f) => ⊢ ECodeResult(
         p,
         e_arguments_steps(es),
         c_all(Succ(f), es, k, cs),
@@ -494,8 +552,8 @@ mutual {
         cx,
         e_argument_stack(values, stack),
         final
-      ) {
-        Nil => match done: ECodeResult(
+      ) from match es {
+        Nil => ⊢ ECodeResult(
           p,
           0,
           Cr(k, cs),
@@ -507,7 +565,7 @@ mutual {
           cx,
           e_argument_stack(values, stack),
           final
-        ) {
+        ) from match done {
           Refl => ⊢ ECodeResult(p, 0, Cr(k, cs), cs, k, slots, stack, frames, cx, stack, cx) from
           AndIntro(Refl, ErunRefl(Mstate(k, slots, stack, frames, cx)))
         }
@@ -532,7 +590,7 @@ mutual {
             final,
             done
           )
-          match stages: ECodeResult(
+          ⊢ ECodeResult(
             p,
             e_arguments_steps(Cons(e, rest)),
             c_all(Succ(f), Cons(e, rest), k, cs),
@@ -544,7 +602,7 @@ mutual {
             cx,
             e_argument_stack(values, stack),
             final
-          ) {
+          ) from match stages {
             Ebv(v, heap, first, next) => {
               let remainder: EBindValue(
                 List(MVal),
@@ -560,7 +618,7 @@ mutual {
                 final,
                 next
               )
-              match remainder: ECodeResult(
+              ⊢ ECodeResult(
                 p,
                 e_arguments_steps(Cons(e, rest)),
                 c_all(Succ(f), Cons(e, rest), k, cs),
@@ -572,8 +630,8 @@ mutual {
                 cx,
                 e_argument_stack(values, stack),
                 final
-              ) {
-                Ebv(tail, heap2, later, assembled) => match assembled: ECodeResult(
+              ) from match remainder {
+                Ebv(tail, heap2, later, assembled) => ⊢ ECodeResult(
                   p,
                   e_arguments_steps(Cons(e, rest)),
                   c_all(Succ(f), Cons(e, rest), k, cs),
@@ -585,7 +643,7 @@ mutual {
                   cx,
                   e_argument_stack(values, stack),
                   final
-                ) {
+                ) from match assembled {
                   Refl => ⊢ ECodeResult(
                     p,
                     e_arguments_steps(Cons(e, rest)),
@@ -686,7 +744,7 @@ mutual {
     final
   ) {
     match fuel {
-      Zero => match done: ECodeResult(
+      Zero => ⊢ ECodeResult(
         p,
         e_sequence_steps(Cons(first, rest)),
         c_seq_from(Zero, first, rest, k, cs),
@@ -698,8 +756,8 @@ mutual {
         cx,
         Cons(value, stack),
         final
-      ) {}
-      Succ(f) => match rest: ECodeResult(
+      ) from match done {}
+      Succ(f) => ⊢ ECodeResult(
         p,
         e_sequence_steps(Cons(first, rest)),
         c_seq_from(Succ(f), first, rest, k, cs),
@@ -711,7 +769,7 @@ mutual {
         cx,
         Cons(value, stack),
         final
-      ) {
+      ) from match rest {
         Nil => e_primitive_expr_correct(
           f,
           first,
@@ -743,7 +801,7 @@ mutual {
             final,
             done
           )
-          match stages: ECodeResult(
+          ⊢ ECodeResult(
             p,
             e_sequence_steps(Cons(first, Cons(next, more))),
             c_seq_from(Succ(f), first, Cons(next, more), k, cs),
@@ -755,7 +813,7 @@ mutual {
             cx,
             Cons(value, stack),
             final
-          ) {
+          ) from match stages {
             Ebv(discarded, heap, initial, later) => e_sequence_cons_result(
               f,
               first,

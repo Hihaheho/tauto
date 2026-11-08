@@ -1,0 +1,144 @@
+description = "A kernel match's last arm that names the matched value, and `let` in the functions of a mutual block, and the generics of mutual functions."
+
+@ cases.a_variable_arm_is_each_constructor_left
+source = ```tauto
+fn f(l: List(Nat)): List(Nat) {
+  match l {
+    Nil => Nil
+    whole => Cons(Zero, whole)
+  }
+}
+theorem t(): Eq(List(Nat), f(Cons(Succ(Zero), Nil)), Cons(Zero, Cons(Succ(Zero), Nil))) {
+  Refl
+}
+```
+checks."f" = "checked"
+checks."t" = "checked"
+
+@ cases.a_variable_arm_in_a_proof_is_the_constructor
+source = ```tauto
+theorem t(n: Nat): Or(Eq(Nat, n, Zero), Eq(Nat, n, n)) {
+  ⊢ Or(Eq(Nat, n, Zero), Eq(Nat, n, n)) from match n {
+    Zero => OrInl(Refl)
+    m => OrInr(Refl)
+  }
+}
+```
+checks."t" = "checked"
+
+@ cases.a_variable_arm_is_the_last
+source = ```tauto
+fn f(n: Nat): Nat {
+  match n {
+    m => m
+    Zero => Zero
+  }
+}
+```
+checks."f" = "error: must be the last"
+
+@ cases.a_variable_arm_matches_some_constructor
+source = ```tauto
+fn f(n: Nat): Nat {
+  match n {
+    Zero => Zero
+    Succ(k) => k
+    m => m
+  }
+}
+```
+checks."f" = "error: matches no constructor"
+
+@ cases.a_let_in_a_mutual_function_unfolds
+source = ```tauto
+mutual {
+  fn ev(fuel: Nat, n: Nat): Nat {
+    match fuel {
+      Zero => n
+      Succ(j) => {
+        let m: Nat := Succ(n)
+        od(j, m)
+      }
+    }
+  }
+  fn od(fuel: Nat, n: Nat): Nat {
+    match fuel {
+      Zero => n
+      Succ(j) => ev(j, n)
+    }
+  }
+}
+theorem t(): Eq(Nat, ev(Succ(Succ(Zero)), Zero), Succ(Zero)) {
+  Refl
+}
+```
+checks."ev" = "checked"
+checks."od" = "checked"
+checks."t" = "checked"
+
+@ cases.generics_of_mutual_functions_are_implicit_outside
+source = ```tauto
+mutual {
+  fn f<A>(l: List(A)): Nat {
+    ⊢ Nat from match l {
+      Nil => Zero
+      Cons(x, xs) => g(xs)
+    }
+  }
+  fn g<A>(l: List(A)): Nat {
+    ⊢ Nat from match l {
+      Nil => Zero
+      Cons(x, xs) => Succ(f(xs))
+    }
+  }
+}
+fn h<A>(l: List(A)): Nat {
+  f(l)
+}
+theorem t(): Eq(Nat, h(Cons(Zero, Cons(Zero, Nil))), Succ(Zero)) {
+  Refl
+}
+```
+checks."f" = "checked"
+checks."g" = "checked"
+checks."h" = "checked"
+checks."t" = "checked"
+
+@ cases.generics_of_mutual_functions_are_implicit_when_run
+source = ```tauto
+mutual {
+  fn f<A>(l: List(A)): Nat {
+    ⊢ Nat from match l {
+      Nil => Zero
+      Cons(x, xs) => Succ(g(xs))
+    }
+  }
+  fn g<A>(l: List(A)): Nat {
+    ⊢ Nat from match l {
+      Nil => Zero
+      Cons(x, xs) => Succ(f(xs))
+    }
+  }
+}
+perform show("length", f(Cons(1, Cons(2, Cons(3, Nil)))))
+```
+checks."f" = "checked"
+checks."g" = "checked"
+
+@ cases.a_mutual_function_whose_body_is_an_if_is_written_out
+source = ```tauto
+mutual {
+  fn f(xs: List(Nat)): Nat {
+    match xs {
+      Nil => Zero
+      Cons(x, rest) => g(rest)
+    }
+  }
+  fn g(xs: List(Nat)): Nat {
+    if true { f(xs) } else { Zero }
+  }
+}
+theorem t(): Eq(Nat, f(Cons(Zero, Nil)), Zero) { Refl }
+```
+checks."f" = "checked"
+checks."t" = "checked"

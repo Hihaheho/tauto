@@ -18,7 +18,7 @@ pub theorem cf_effects_normal(
   cl: SurfaceClass,
   es: List(Text)
 ): CkNormalFrame(c, cf_effects(c, m, cl, es)) {
-  match es: CkNormalFrame(c, cf_effects(c, m, cl, es)) {
+  ⊢ CkNormalFrame(c, cf_effects(c, m, cl, es)) from match es {
     Nil => normal => normal
     Cons(e, more) => normal_rewrap(
       c,
@@ -54,7 +54,7 @@ pub theorem cf_effects_opt_normal(
   cl: SurfaceClass,
   o: Option(List(Text))
 ): CkNormalFrame(c, cf_effects_opt(c, m, cl, o)) {
-  match o: CkNormalFrame(c, cf_effects_opt(c, m, cl, o)) {
+  ⊢ CkNormalFrame(c, cf_effects_opt(c, m, cl, o)) from match o {
     None => normal => normal
     Some(es) => cf_effects_normal(c, m, cl, es)
   }
@@ -83,7 +83,7 @@ pub theorem ck_law_methods_normal(
   c: Checker,
   cl: SurfaceClass
 ): CkNormalFrame(c, ck_law_methods(ms, c, cl)) {
-  match ms: CkNormalFrame(c, ck_law_methods(ms, c, cl)) {
+  ⊢ CkNormalFrame(c, ck_law_methods(ms, c, cl)) from match ms {
     Nil => normal => normal
     Cons(m, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkNormalFrame(c, z),
@@ -102,7 +102,7 @@ pub theorem cf_laws_dup_normal(
   dup: Bool,
   ih: ∀ ns: List(Text). ∀ next: Checker. CkNormalFrame(next, ck_class_laws_each(rest, ns, next, cl))
 ): CkNormalFrame(c, cf_laws_dup(l, rest, seen, c, cl, dup)) {
-  match dup: CkNormalFrame(c, cf_laws_dup(l, rest, seen, c, cl, dup)) {
+  ⊢ CkNormalFrame(c, cf_laws_dup(l, rest, seen, c, cl, dup)) from match dup {
     true => normal_bind(
       Unit,
       Unit,
@@ -134,7 +134,7 @@ pub theorem ck_class_laws_each_normal(
   c: Checker,
   cl: SurfaceClass
 ): CkNormalFrame(c, ck_class_laws_each(ls, seen, c, cl)) {
-  match ls: CkNormalFrame(c, ck_class_laws_each(ls, seen, c, cl)) {
+  ⊢ CkNormalFrame(c, ck_class_laws_each(ls, seen, c, cl)) from match ls {
     Nil => normal => normal
     Cons(l, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkNormalFrame(c, z),
@@ -157,7 +157,7 @@ pub theorem cf_laws_any_normal(
   cl: SurfaceClass,
   ls: List(SurfaceLaw)
 ): CkNormalFrame(c, cf_laws_any(c, cl, ls)) {
-  match ls: CkNormalFrame(c, cf_laws_any(c, cl, ls)) {
+  ⊢ CkNormalFrame(c, cf_laws_any(c, cl, ls)) from match ls {
     Nil => normal => normal
     Cons(l, rest) => normal_rewrap(
       c,
@@ -200,7 +200,7 @@ pub theorem cf_method_where_normal(
   cl: SurfaceClass,
   ws: List(SurfaceConstraint)
 ): CkNormalFrame(c, cf_method_where(c, m, cl, ws)) {
-  match ws: CkNormalFrame(c, cf_method_where(c, m, cl, ws)) {
+  ⊢ CkNormalFrame(c, cf_method_where(c, m, cl, ws)) from match ws {
     Nil => normal => normal
     Cons(w, more) => normal_rewrap(
       c,
@@ -324,7 +324,7 @@ pub theorem ck_class_methods_normal(
   c: Checker,
   cl: SurfaceClass
 ): CkNormalFrame(c, ck_class_methods(ms, seen, c, cl)) {
-  match ms: CkNormalFrame(c, ck_class_methods(ms, seen, c, cl)) {
+  ⊢ CkNormalFrame(c, ck_class_methods(ms, seen, c, cl)) from match ms {
     Nil => normal => normal
     Cons(m, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkNormalFrame(c, z),
@@ -347,7 +347,7 @@ pub theorem cf_bound_ctor_normal(
   b: Text,
   o: Option(Pair(Kind, Kind))
 ): CkNormalFrame(c, cf_bound_ctor(c, cl, b, o)) {
-  match o: CkNormalFrame(c, cf_bound_ctor(c, cl, b, o)) {
+  ⊢ CkNormalFrame(c, cf_bound_ctor(c, cl, b, o)) from match o {
     None => normal_bind(
       Unit,
       Option(Pair(Kind, Option(Kind))),
@@ -367,7 +367,7 @@ pub theorem cf_bound_kind_normal(
   b: Text,
   o: Option(Kind)
 ): CkNormalFrame(c, cf_bound_kind(c, cl, b, o)) {
-  match o: CkNormalFrame(c, cf_bound_kind(c, cl, b, o)) {
+  ⊢ CkNormalFrame(c, cf_bound_kind(c, cl, b, o)) from match o {
     None => cf_bound_ctor_normal(c, cl, b, kind_parse_ctor(b))
     Some(k) => normal => normal
   }
@@ -378,7 +378,7 @@ pub theorem cf_bound_normal(
   cl: SurfaceClass,
   o: Option(Text)
 ): CkNormalFrame(c, cf_bound(c, cl, o)) {
-  match o: CkNormalFrame(c, cf_bound(c, cl, o)) {
+  ⊢ CkNormalFrame(c, cf_bound(c, cl, o)) from match o {
     None => normal => normal
     Some(b) => cf_bound_kind_normal(c, cl, b, kind_parse(b))
   }
@@ -405,7 +405,7 @@ pub theorem cf_class_bound_result_normal(
   cl: SurfaceClass,
   o: Option(Pair(Kind, Option(Kind)))
 ): CkNormalFrame(c, cf_class_bound_result(c, cl, o)) {
-  match o: CkNormalFrame(c, cf_class_bound_result(c, cl, o)) {
+  ⊢ CkNormalFrame(c, cf_class_bound_result(c, cl, o)) from match o {
     None => normal => normal
     Some(bound) => normal_bind(
       Unit,
@@ -438,7 +438,7 @@ pub theorem cf_class_arity_normal(
   own_types: List(Text),
   bad: Bool
 ): CkNormalFrame(c, cf_class_arity(c, cl, own_types, bad)) {
-  match bad: CkNormalFrame(c, cf_class_arity(c, cl, own_types, bad)) {
+  ⊢ CkNormalFrame(c, cf_class_arity(c, cl, own_types, bad)) from match bad {
     true => normal_return(
       c,
       false,
@@ -481,7 +481,7 @@ pub theorem cf_class_type_normal(
   own_types: List(Text),
   bad: Bool
 ): CkNormalFrame(c, cf_class_type(c, cl, own_types, bad)) {
-  match bad: CkNormalFrame(c, cf_class_type(c, cl, own_types, bad)) {
+  ⊢ CkNormalFrame(c, cf_class_type(c, cl, own_types, bad)) from match bad {
     true => normal_return(
       c,
       false,
@@ -498,7 +498,7 @@ pub theorem cf_class_duplicate_normal(
   own_types: List(Text),
   bad: Bool
 ): CkNormalFrame(c, cf_class_duplicate(c, cl, own_types, bad)) {
-  match bad: CkNormalFrame(c, cf_class_duplicate(c, cl, own_types, bad)) {
+  ⊢ CkNormalFrame(c, cf_class_duplicate(c, cl, own_types, bad)) from match bad {
     true => normal_return(
       c,
       false,
@@ -515,7 +515,7 @@ pub theorem cf_class_builtin_normal(
   own_types: List(Text),
   bad: Bool
 ): CkNormalFrame(c, cf_class_builtin(c, cl, own_types, bad)) {
-  match bad: CkNormalFrame(c, cf_class_builtin(c, cl, own_types, bad)) {
+  ⊢ CkNormalFrame(c, cf_class_builtin(c, cl, own_types, bad)) from match bad {
     true => normal_return(
       c,
       false,
@@ -593,7 +593,7 @@ pub theorem ck_declare_methods_each_normal(
   cl: SurfaceClass,
   info: ClassInfo
 ): CkNormalFrame(c, ck_declare_methods_each(ms, c, cl, info)) {
-  match ms: CkNormalFrame(c, ck_declare_methods_each(ms, c, cl, info)) {
+  ⊢ CkNormalFrame(c, ck_declare_methods_each(ms, c, cl, info)) from match ms {
     Nil => normal => normal
     Cons(m, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkNormalFrame(c, z),
@@ -615,7 +615,7 @@ pub theorem cf_declare_methods_get_normal(
   cl: SurfaceClass,
   o: Option(ClassInfo)
 ): CkNormalFrame(c, cf_declare_methods_get(c, cl, o)) {
-  match o: CkNormalFrame(c, cf_declare_methods_get(c, cl, o)) {
+  ⊢ CkNormalFrame(c, cf_declare_methods_get(c, cl, o)) from match o {
     None => normal => normal
     Some(info) => normal_rewrap(
       c,
@@ -646,7 +646,7 @@ pub theorem ck_declare_methods_normal(
   cls: List(SurfaceClass),
   c: Checker
 ): CkNormalFrame(c, ck_declare_methods(cls, c)) {
-  match cls: CkNormalFrame(c, ck_declare_methods(cls, c)) {
+  ⊢ CkNormalFrame(c, ck_declare_methods(cls, c)) from match cls {
     Nil => normal => normal
     Cons(cl, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkNormalFrame(c, z),
@@ -662,7 +662,7 @@ pub theorem cf_cons_if_mut_normal<A: Type>(
   xs: List(A),
   take: Bool
 ): CkNormalFrame(c, cf_cons_if_mut(c, x, xs, take)) {
-  match take: CkNormalFrame(c, cf_cons_if_mut(c, x, xs, take)) {
+  ⊢ CkNormalFrame(c, cf_cons_if_mut(c, x, xs, take)) from match take {
     true => normal => normal
     false => normal => normal
   }
@@ -706,7 +706,7 @@ pub theorem cf_class_list_step_normal(
   own_types: List(Text),
   ih: ∀ next: Checker. CkNormalFrame(next, ck_declare_class_list(rest, next, own_types))
 ): CkNormalFrame(c, ck_declare_class_list(Cons(s, rest), c, own_types)) {
-  match s: CkNormalFrame(c, ck_declare_class_list(Cons(s, rest), c, own_types)) {
+  ⊢ CkNormalFrame(c, ck_declare_class_list(Cons(s, rest), c, own_types)) from match s {
     StLet(name, ty, value, borrow, mutable) => Eq::subst(
       (z: Mut1(List(SurfaceClass), Checker)) => CkNormalFrame(c, z),
       Eq::sym(cf_class_list_StLet_unf(name, ty, value, borrow, mutable, rest, c, own_types)),
@@ -845,7 +845,7 @@ pub theorem ck_declare_class_list_normal(
   c: Checker,
   own_types: List(Text)
 ): CkNormalFrame(c, ck_declare_class_list(ss, c, own_types)) {
-  match ss: CkNormalFrame(c, ck_declare_class_list(ss, c, own_types)) {
+  ⊢ CkNormalFrame(c, ck_declare_class_list(ss, c, own_types)) from match ss {
     Nil => normal => normal
     Cons(s, rest) => cf_class_list_step_normal(
       s,

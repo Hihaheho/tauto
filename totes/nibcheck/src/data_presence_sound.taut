@@ -10,10 +10,7 @@ import std::prelude::Ord
 
 // Presence is independent of the summary stored for a declaration.
 pub(open) inductive DataPresent(m: Ordmap(Text, Data), n: Text): Prop {
-  Mk(
-    value: Data,
-    found: Ordmap::get(m, n, Ordmap::compare_text) = Some(value)
-  ): DataPresent(m, n)
+  Mk(value: Data, found: Ordmap::get(m, n, Ordmap::compare_text) = Some(value)): DataPresent(m, n)
 }
 pub def DataDomainExtends(
   a: Ordmap(Text, Data),
@@ -31,7 +28,7 @@ pub theorem data_presence_insert_other(
   ordered: Ordmap::ordered(m, Ordmap::compare_text),
   h: DataPresent(m, n)
 ): DataPresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
-  match h: DataPresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
+  ⊢ DataPresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) from match h {
     Mk(value, found) => DataPresent::Mk(
       value,
       Eq::trans(
@@ -63,7 +60,7 @@ pub theorem data_presence_insert_k(
   ordered: Ordmap::ordered(m, Ordmap::compare_text),
   h: DataPresent(m, n)
 ): DataPresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
-  match o: DataPresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
+  ⊢ DataPresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) from match o {
     Equal => Eq::subst(
       (z: Text) => DataPresent(Ordmap::insert(m, k, v, Ordmap::compare_text), z),
       Eq::sym(Ordmap::compare_text_eq(n, k, eo)),
@@ -102,10 +99,10 @@ pub theorem data_presence_map(
   Ordmap::ordered(datas_map_decls(es, f, m), Ordmap::compare_text),
   DataDomainExtends(m, datas_map_decls(es, f, m))
 ) {
-  match es: And(
+  ⊢ And(
     Ordmap::ordered(datas_map_decls(es, f, m), Ordmap::compare_text),
     DataDomainExtends(m, datas_map_decls(es, f, m))
-  ) {
+  ) from match es {
     Nil => AndIntro(ordered, n => h => h)
     Cons(e, rest) => {
       let next: Ordmap(Text, Data) := Ordmap::insert(m, e.fst, f(e.snd), Ordmap::compare_text)
@@ -170,7 +167,7 @@ pub theorem data_presence_round_test(
   ready: SummaryReady(d),
   found: datas_decl(d, n) = Some(data)
 ): DataRoundPresence(d, summary_round_test(rest, d, grew, n, data, b)) {
-  match b: DataRoundPresence(d, summary_round_test(rest, d, grew, n, data, b)) {
+  ⊢ DataRoundPresence(d, summary_round_test(rest, d, grew, n, data, b)) from match b {
     true => ih(d, grew, ready)
     false => key => h => ih(
       summary_update(d, n, data),
@@ -192,7 +189,7 @@ pub theorem data_presence_round_decl(
     next
   ). DataRoundPresence(next, datas_round(rest, next, flag))
 ): DataRoundPresence(d, summary_round_decl(rest, d, grew, n, o)) {
-  match o: DataRoundPresence(d, summary_round_decl(rest, d, grew, n, o)) {
+  ⊢ DataRoundPresence(d, summary_round_decl(rest, d, grew, n, o)) from match o {
     None => ih(d, grew, ready)
     Some(data) => data_presence_round_test(
       rest,
@@ -215,7 +212,7 @@ pub theorem data_presence_round(
   grew: Bool,
   ready: SummaryReady(d)
 ): DataRoundPresence(d, datas_round(es, d, grew)) {
-  match es: DataRoundPresence(d, datas_round(es, d, grew)) {
+  ⊢ DataRoundPresence(d, datas_round(es, d, grew)) from match es {
     Nil => n => h => h
     Cons(e, rest) => Eq::subst(
       (r: Pair(Datas, Bool)) => DataRoundPresence(d, r),
@@ -245,7 +242,7 @@ pub theorem data_presence_choice(
   b: Bool,
   next: DataSummaryPresence(d, datas_rounds(j, d))
 ): DataSummaryPresence(d, summary_rounds_choice(j, d, b)) {
-  match b: DataSummaryPresence(d, summary_rounds_choice(j, d, b)) {
+  ⊢ DataSummaryPresence(d, summary_rounds_choice(j, d, b)) from match b {
     true => next
     false => n => h => h
   }
@@ -256,7 +253,7 @@ pub theorem data_presence_rounds(
   d: Datas,
   ready: SummaryReady(d)
 ): DataSummaryPresence(d, datas_rounds(k, d)) {
-  match k: DataSummaryPresence(d, datas_rounds(k, d)) {
+  ⊢ DataSummaryPresence(d, datas_rounds(k, d)) from match k {
     Zero => And::right(
       data_presence_map(
         Ordmap::entries(summary_decls(d)),
@@ -283,7 +280,10 @@ pub theorem data_presence_rounds(
       Eq::subst(
         (z: Datas) => DataSummaryPresence(d, z),
         Eq::sym(summary_rounds_unf(j, d)),
-        n => h => next(n, data_presence_round(Ordmap::entries(summary_decls(d)), d, false, ready)(n, h))
+        n => h => next(
+          n,
+          data_presence_round(Ordmap::entries(summary_decls(d)), d, false, ready)(n, h)
+        )
       )
     }
   }

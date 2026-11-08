@@ -1,0 +1,81 @@
+description = "Generated class dictionaries infer field universes without relaxing user-written inductive universe checks."
+
+@ cases.type-returning-class-method
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class HasChild(Env: Type) { fn child_type(&env: Env): Type }
+instance HasChild(Nat) { fn child_type(&env: Nat): Type { Nat } }
+fn child(): Type { HasChild::child_type(0) }
+fn value(): child() { 7 }
+```
+checks_all = "ok"
+
+@ cases.higher-universe-class-method
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Higher(Env: Type) { fn child_type(env: Env): Type1 }
+instance Higher(Nat) { fn child_type(env: Nat): Type1 { Type } }
+fn child(): Type1 { Higher::child_type(0) }
+fn value(): child() { Nat }
+```
+checks_all = "ok"
+
+@ cases.dictionary-projection-computes-type
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class HasChild(Env: Type) { fn child_type(env: Env): Type }
+instance HasChild(Nat) { fn child_type(env: Nat): Type { Nat } }
+fn child_of<Env>(env: Env): Type where HasChild(Env) { HasChild::child_type(env) }
+fn child(): Type { child_of(0) }
+fn value(): child() { 7 }
+```
+checks_all = "ok"
+
+@ cases.type-returning-method-with-law
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class HasChild(Env: Type) {
+  fn child_type(env: Env): Type
+  theorem reflexive(env: Env, value: HasChild::child_type(env)): value = value
+}
+instance HasChild(Nat) {
+  fn child_type(env: Nat): Type { Nat }
+  theorem reflexive(env: Nat, value: HasChild::child_type(env)): value = value { Refl }
+}
+theorem checked_generic_law<Env>(env: Env, value: HasChild::child_type(env)): value = value where HasChild(Env) { HasChild::reflexive(env, value) }
+theorem checked_law(): Eq(Nat, 7, 7) { HasChild::reflexive(0, 7) }
+```
+checks_all = "ok"
+
+@ cases.explicit-low-universe-is-still-rejected
+source = ```tauto
+inductive TooSmall: Type {
+  Mk(value: Type): TooSmall
+}
+```
+checks."main.taut::TooSmall" = "error: argument `value` of `TooSmall::Mk` lives in a bigger universe than `TooSmall`"
+
+@ cases.dictionary-field-type-is-not-weakened
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class HasChild(Env: Type) { fn child_type(env: Env): Type }
+instance HasChild(Nat) { fn child_type(env: Nat): Type { Type } }
+```
+checks."input/main.taut::HasChild" = "ok"
+checks."input/main.taut::HasChild::child_type@Nat" = "error: type mismatch: expected `Type`, found `Type1`"
+
+@ cases.higher-universe-class-parameter
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Identity(A: Type1) { fn identity(value: A): A }
+instance Identity(Type) { fn identity(value: Type): Type { value } }
+fn child(): Type { Identity::identity(Nat) }
+fn value(): child() { 7 }
+```
+checks_all = "ok"

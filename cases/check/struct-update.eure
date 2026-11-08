@@ -1,0 +1,44 @@
+// `S { f: e, ..b }`: a struct's value whose fields not written are `b`'s.
+// Reading the program writes each of them out as `b.g`, after the fields
+// written; a base that is not a name is bound once before them. The kernel
+// gets the literal with every field, so a proof sees the field written and
+// the fields taken from `b` by `Refl`.
+
+@ cases.an-updated-struct-keeps-the-other-fields
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive struct Bundle {
+  name: Nat,
+  revision: Nat,
+  size: Nat
+}
+
+fn bump(b: Bundle, v: Nat): Bundle { Bundle { revision: v, ..b } }
+
+fn fresh(n: Nat): Bundle { Bundle { name: n, revision: Zero, size: Zero } }
+
+fn renamed(n: Nat): Bundle { Bundle { name: n, ..fresh(Succ(n)) } }
+
+theorem bump_sets_revision(b: Bundle, v: Nat): bump(b, v).revision = v { Refl }
+theorem bump_keeps_name(b: Bundle, v: Nat): bump(b, v).name = b.name { Refl }
+theorem bump_keeps_size(b: Bundle, v: Nat): bump(b, v).size = b.size { Refl }
+theorem renamed_keeps_revision(n: Nat): renamed(n).revision = Zero { Refl }
+```
+checks_all = "ok"
+
+@ cases.a-base-of-a-type-without-fields-by-name-is-refused
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+enum Shape { Circle(Nat), Square(Nat) }
+fn grow(s: Shape): Shape { Shape { size: 1, ..s } }
+```
+macro_error = "`Shape` is not a struct: `..` takes the other fields of a struct"
+
+@ cases.a-base-that-gives-no-field-is-refused
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+struct Pt { x: Nat, y: Nat }
+fn move_to(p: Pt): Pt { Pt { x: 1, y: 2, ..p } }
+```
+macro_error = "every field of `Pt` is written: `..` takes none of them"

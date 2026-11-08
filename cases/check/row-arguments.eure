@@ -1,0 +1,55 @@
+// A data type's row parameter takes an effect row, `Grant(!{pos} ∪ e)`. To the
+// types it is no argument at all; the row check reads it as a function's row.
+
+@ cases.a-row-argument-must-take-every-effect-out
+source = ```nib
+effect pos(): i64 resume <=1
+effect vel(): i64 resume <=1
+struct Grant(!e) { run: () -> i64 ! e }
+fn start<!e>(f: () -> i64 ! e): Grant(e) { Grant { run: f } }
+fn give_pos<!e>(g: Grant(!{pos} ∪ e)): Grant(e) {
+  let r := g.run
+  Grant {
+    run: () => handle { r() } with {
+      pos(), k => k(10)
+      return v => v
+    }
+  }
+}
+fn done(g: Grant(!{})): i64 {
+  let r := g.run
+  r()
+}
+fn step(): i64 ! {pos, vel} { perform pos() + perform vel() }
+// `done` takes `Grant(!{})`, so `give_pos` is given `Grant(!{pos})`: the step
+// that also performs `vel` is rejected where it is given.
+let v := done(give_pos(start(step)))
+```
+types = "ok"
+rows = "error: a function value may perform vel but its type permits {pos}"
+
+@ cases.a-row-argument-is-checked-against-the-row-written
+source = ```nib
+effect pos(): i64 resume <=1
+struct Grant(!e) { run: () -> i64 ! e }
+fn keep(g: Grant(!{})): Grant(!{}) { g }
+fn step(): i64 ! {pos} { perform pos() }
+let g: Grant(!{pos}) := Grant { run: step }
+let h := keep(g)
+```
+types = "ok"
+rows = "error: a function value may perform pos but its type permits {}"
+
+@ cases.a-row-is-given-only-to-a-row-parameter
+source = ```nib
+struct Box(A: Type) { value: A }
+fn f(b: Box(!{})): i64 { 1 }
+```
+types = "error: an effect row is given only to a row parameter, and this one of Box is not"
+
+@ cases.a-row-parameter-takes-a-row
+source = ```nib
+struct Grant(!e) { run: () -> i64 ! e }
+fn f(g: Grant(List(i64))): i64 { 1 }
+```
+types = "error: Grant takes an effect row here, as in `Grant(!{a | e})`"

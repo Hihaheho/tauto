@@ -6,18 +6,18 @@ import "ty.taut"
 import "types_decl.taut"
 
 pub fn signature_bound_value(bound: Option(Option(Text))): Option(Kind) {
-  match bound: Option(Kind) {
+  ⊢ Option(Kind) from match bound {
     None => Some(KindAffine)
-    Some(annotation) => match annotation: Option(Kind) {
+    Some(annotation) => ⊢ Option(Kind) from match annotation {
       None => Some(KindAffine)
       Some(spelling) => kind_parse(spelling)
     }
   }
 }
 pub fn signature_bound_ctor(bound: Option(Option(Text))): Option(Pair(Kind, Kind)) {
-  match bound: Option(Pair(Kind, Kind)) {
+  ⊢ Option(Pair(Kind, Kind)) from match bound {
     None => None
-    Some(annotation) => match annotation: Option(Pair(Kind, Kind)) {
+    Some(annotation) => ⊢ Option(Pair(Kind, Kind)) from match annotation {
       None => None
       Some(spelling) => kind_parse_ctor(spelling)
     }
@@ -26,17 +26,17 @@ pub fn signature_bound_ctor(bound: Option(Option(Text))): Option(Pair(Kind, Kind
 pub theorem signature_bound_sound(
   bound: Option(Option(Text))
 ): SignatureGenericBound(bound, signature_bound_ctor(bound), signature_bound_value(bound)) {
-  match bound: SignatureGenericBound(
+  ⊢ SignatureGenericBound(
     bound,
     signature_bound_ctor(bound),
     signature_bound_value(bound)
-  ) {
+  ) from match bound {
     None => SignatureBoundMissing
-    Some(annotation) => match annotation: SignatureGenericBound(
+    Some(annotation) => ⊢ SignatureGenericBound(
       Some(annotation),
       signature_bound_ctor(Some(annotation)),
       signature_bound_value(Some(annotation))
-    ) {
+    ) from match annotation {
       None => SignatureBoundDefault
       Some(spelling) => SignatureBoundWritten(spelling)
     }
@@ -50,7 +50,7 @@ pub fn signature_generic_value_step(
   acc: SigGenerics,
   kind: Option(Kind)
 ): SigGenerics {
-  match kind: SigGenerics {
+  ⊢ SigGenerics from match kind {
     None => sig_generics(rest, bounds, Nat::add(index, 1), acc)
     Some(k) => sig_generics(rest, bounds, Nat::add(index, 1), signature_bind_value(name, k, acc))
   }
@@ -63,7 +63,7 @@ pub fn signature_generic_step(
   acc: SigGenerics,
   ctor: Option(Pair(Kind, Kind))
 ): SigGenerics {
-  match ctor: SigGenerics {
+  ⊢ SigGenerics from match ctor {
     None => signature_generic_value_step(name, rest, bounds, index, acc, ck_bound_of(bounds, index))
     Some(kinds) => sig_generics(
       rest,
@@ -100,13 +100,13 @@ pub theorem signature_generic_value_step_sound(
   acc,
   signature_generic_value_step(name, rest, bounds, index, acc, kind)
 ) {
-  match kind: SignatureGenerics(
+  ⊢ SignatureGenerics(
     Cons(name, rest),
     bounds,
     index,
     acc,
     signature_generic_value_step(name, rest, bounds, index, acc, kind)
-  ) {
+  ) from match kind {
     None => SignatureGenericsRow(
       name,
       rest,
@@ -146,13 +146,13 @@ pub theorem signature_generic_ctor_step_sound(
   acc,
   signature_generic_step(name, rest, bounds, index, acc, Some(kinds))
 ) {
-  match kinds: SignatureGenerics(
+  ⊢ SignatureGenerics(
     Cons(name, rest),
     bounds,
     index,
     acc,
     signature_generic_step(name, rest, bounds, index, acc, Some(kinds))
-  ) {
+  ) from match kinds {
     Pair { fst: argument, snd: result } => SignatureGenericsConstructor(
       name,
       rest,
@@ -189,13 +189,13 @@ pub theorem signature_generic_step_sound(
   acc,
   signature_generic_step(name, rest, bounds, index, acc, ctor)
 ) {
-  match ctor: SignatureGenerics(
+  ⊢ SignatureGenerics(
     Cons(name, rest),
     bounds,
     index,
     acc,
     signature_generic_step(name, rest, bounds, index, acc, ctor)
-  ) {
+  ) from match ctor {
     None => signature_generic_value_step_sound(
       name,
       rest,
@@ -224,13 +224,13 @@ pub theorem sig_generics_sound(
   index: Nat,
   acc: SigGenerics
 ): SignatureGenerics(names, bounds, index, acc, sig_generics(names, bounds, index, acc)) {
-  match names: SignatureGenerics(
+  ⊢ SignatureGenerics(
     names,
     bounds,
     index,
     acc,
     sig_generics(names, bounds, index, acc)
-  ) {
+  ) from match names {
     Nil => SignatureGenericsNil(bounds, index, acc)
     Cons(name, rest) => signature_generic_step_sound(
       name,

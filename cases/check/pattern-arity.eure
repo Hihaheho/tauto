@@ -1,0 +1,49 @@
+@ cases.a-pattern-with-too-few-fields-beside-a-default-is-an-error-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive N: Type {
+  Z: N
+  S(n: N): N
+}
+
+inductive P: Type {
+  Mk(a: N, b: N): P
+  Other: P
+}
+
+// `Mk` has two fields; with `_` beside it the match is compiled as a tree.
+fn short(p: P): N {
+  ⊢ N from match p {
+    Mk(x) => x
+    _ => Z
+  }
+}
+
+// The same inside a nested pattern.
+fn nested(p: P): N {
+  ⊢ N from match p {
+    Mk(S(x)) => x
+    _ => Z
+  }
+}
+
+// Too many fields is an error too.
+fn long(p: P): N {
+  ⊢ N from match p {
+    Mk(x, y, w) => x
+    _ => Z
+  }
+}
+
+fn exact(p: P): N {
+  ⊢ N from match p {
+    Mk(S(x), y) => x
+    _ => Z
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::short" = "error: `P::Mk` has 2 fields, the pattern has 1"
+checks."input/main.taut::nested" = "error: `P::Mk` has 2 fields, the pattern has 1"
+checks."input/main.taut::long" = "error: `P::Mk` has 2 fields, the pattern has 3"

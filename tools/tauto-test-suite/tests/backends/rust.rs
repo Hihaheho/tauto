@@ -1,7 +1,6 @@
 //! The Rust backend: generate a crate, build it with Cargo, run it, and
-//! compare. A case the generator cannot write is uncovered, never passed.
-//! Explicit backend routes fail unless a declared compilation-failure
-//! contract matches.
+//! compare. A case the generator cannot write fails unless the case declares
+//! the failure.
 
 use std::path::{Path, PathBuf};
 
@@ -50,11 +49,7 @@ fn compilation_failure(case: &RustCase, stage: &str, message: &str) -> Result_ {
             {
                 return checked(case);
             }
-            if stage == "unsupported" && !case.explicit_backend("rust") {
-                Result_::Todo(format!("uncovered compiler capability: {message}"))
-            } else {
-                Result_::Failed(format!("{stage}: {message}"))
-            }
+            Result_::Failed(format!("{stage}: {message}"))
         }
     }
 }
@@ -73,10 +68,10 @@ fn run_case(case: &RustCase, work: &Path, target: &Path) -> Result_ {
         Ok(source) => source,
         Err(message) => return compilation_failure(case, "front", &message),
     };
-    let package = match case.compile("rust") {
+    let (package, files_dir, _files) = match case.compile_with_files("rust") {
         Ok(p) => p,
         Err(CompileError::Unsupported(u)) => {
-            return compilation_failure(case, "unsupported", &u.what);
+            return compilation_failure(case, "unsupported", &u.what.to_string());
         }
         Err(CompileError::Build(m)) => return compilation_failure(case, "build", &m),
         Err(CompileError::Front(m)) => return compilation_failure(case, "front", &m),
@@ -88,7 +83,7 @@ fn run_case(case: &RustCase, work: &Path, target: &Path) -> Result_ {
         .transpose()
     {
         Ok(m) => m,
-        Err(m) => return compilation_failure(case, "build", &m),
+        Err(m) => return compilation_failure(case, "build", &m.to_string()),
     };
     // The case host's probe, as every runner gives it.
     let mut manifest = manifest;
@@ -96,7 +91,7 @@ fn run_case(case: &RustCase, work: &Path, target: &Path) -> Result_ {
         let m = manifest.get_or_insert_with(Default::default);
         for (map, name, rust) in [
             (&mut m.rust.types, "Probe", "tauto_rt::probe::Probe"),
-            (&mut m.rust.externs, "Probe.new", "tauto_rt::probe::probe"),
+            (&mut m.rust.externs, "Probe::new", "tauto_rt::probe::probe"),
         ] {
             map.entry(name.into())
                 .or_insert_with(|| tauto::manifest::Entry {
@@ -168,10 +163,20 @@ fn run_case(case: &RustCase, work: &Path, target: &Path) -> Result_ {
     let out_path = work.join("stdout");
     let err_path = work.join("stderr");
     std::fs::write(&show_path, "").unwrap();
-    let mut child = match std::process::Command::new(&bin)
-        .args(&case.permissions)
+    // `{dir}` is the directory that holds the case's files.
+    let placed = |s: &String| match &files_dir {
+        Some(d) => s.replace("{dir}", d),
+        None => s.clone(),
+    };
+    let mut command = std::process::Command::new(&bin);
+    // A case's `budget` is the session's step limit, as `TAUTO_STEP_LIMIT` says it.
+    if let Some(n) = case.budget {
+        command.env("TAUTO_STEP_LIMIT", n.to_string());
+    }
+    let mut child = match command
+        .args(case.permissions.iter().map(placed))
         .arg("--")
-        .args(&case.args)
+        .args(case.args.iter().map(placed))
         .env("TAUTO_CASE_SHOWS", &show_path)
         .env("TAUTO_REPORT_BUDGET_STEPS", "1")
         .env("TAUTO_REPORT_PROBE_DROPS", "1")

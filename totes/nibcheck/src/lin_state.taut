@@ -171,7 +171,7 @@ pub fn binding_dummy(): Binding {
 }
 
 pub fn class_of_kind(k: Kind): LinClass {
-  match k: LinClass {
+  ⊢ LinClass from match k {
     KindCopy => ClassDup
     KindShared => ClassDup
     KindAffine => ClassAffine
@@ -180,7 +180,7 @@ pub fn class_of_kind(k: Kind): LinClass {
 }
 
 pub fn class_word(c: LinClass): Text {
-  match c: Text {
+  ⊢ Text from match c {
     ClassDup => "shared"
     ClassAffine => "affine"
     ClassLinear => "linear"
@@ -188,42 +188,42 @@ pub fn class_word(c: LinClass): Text {
 }
 
 pub fn class_is_dup(c: LinClass): Bool {
-  match c: Bool {
+  ⊢ Bool from match c {
     ClassDup => true
     _ => false
   }
 }
 
 pub fn class_is_linear(c: LinClass): Bool {
-  match c: Bool {
+  ⊢ Bool from match c {
     ClassLinear => true
     _ => false
   }
 }
 
 pub fn mode_is_owned(m: LinMode): Bool {
-  match m: Bool {
+  ⊢ Bool from match m {
     ModeOwned => true
     _ => false
   }
 }
 
 pub fn mode_is_borrow(m: LinMode): Bool {
-  match m: Bool {
+  ⊢ Bool from match m {
     ModeBorrow(x) => true
     _ => false
   }
 }
 
 pub fn mode_is_shared_borrow(m: LinMode): Bool {
-  match m: Bool {
+  ⊢ Bool from match m {
     ModeBorrow(x) => not(x)
     _ => false
   }
 }
 
 pub fn mode_borrows(m: LinMode): Bool {
-  match m: Bool {
+  ⊢ Bool from match m {
     ModeBorrow(x) => true
     ModeBorrowClosure(names, x) => true
     _ => false
@@ -231,21 +231,21 @@ pub fn mode_borrows(m: LinMode): Bool {
 }
 
 pub fn state_is_owned(s: LinState): Bool {
-  match s: Bool {
+  ⊢ Bool from match s {
     BsOwned => true
     _ => false
   }
 }
 
 pub fn state_is_moved(s: LinState): Bool {
-  match s: Bool {
+  ⊢ Bool from match s {
     BsMoved => true
     _ => false
   }
 }
 
 pub fn state_eq(a: LinState, b: LinState): Bool {
-  match a: Bool {
+  ⊢ Bool from match a {
     BsOwned => state_is_owned(b)
     BsMoved => state_is_moved(b)
     BsMaybe => not(state_is_owned(b)) && not(state_is_moved(b))
@@ -253,21 +253,21 @@ pub fn state_eq(a: LinState, b: LinState): Bool {
 }
 
 pub fn pos_is_let(p: LinPos): Bool {
-  match p: Bool {
+  ⊢ Bool from match p {
     PosLet => true
     _ => false
   }
 }
 
 pub fn pos_is_result(p: LinPos): Bool {
-  match p: Bool {
+  ⊢ Bool from match p {
     PosResult => true
     _ => false
   }
 }
 
 pub fn pos_is_drop(p: LinPos): Bool {
-  match p: Bool {
+  ⊢ Bool from match p {
     PosDrop => true
     _ => false
   }
@@ -352,17 +352,17 @@ pub fn binding_with_shared_view(b: Binding, v: Bool): Binding {
 }
 
 pub fn binding_owns(b: Binding): Bool {
-  not(class_is_dup(b.r#class)) && match b.mode: Bool {
+  not(class_is_dup(b.r#class)) && (⊢ Bool from match b.mode {
     ModeOwned => true
     ModeVar => true
     ModeVarInClosure => true
     ModeBorrow(m) => false
     ModeBorrowClosure(names, m) => false
-  }
+  })
 }
 
 pub fn lin_get(c: Lin, i: Nat): Binding {
-  match Ordmap::get(c.bindings, i, Ordmap::compare_nat): Binding {
+  ⊢ Binding from match Ordmap::get(c.bindings, i, Ordmap::compare_nat) {
     Some(b) => b
     None => binding_dummy()
   }
@@ -377,14 +377,14 @@ pub fn lin_set_state(&mut c: Lin, i: Nat, s: LinState): Unit {
 }
 
 pub fn lin_frame(c: Lin): Frame {
-  match c.frames: Frame {
+  ⊢ Frame from match c.frames {
     Cons(f, rest) => f
     Nil => frame_default()
   }
 }
 
 pub fn lin_set_frame(&mut c: Lin, f: Frame): Unit {
-  match c.frames: Unit {
+  ⊢ Unit from match c.frames {
     Cons(old, rest) => set_to(&mut c.frames, Cons(f, rest))
     Nil => #()
   }
@@ -399,7 +399,7 @@ pub fn lin_pop_frame(&mut c: Lin): Unit {
 }
 
 pub fn lin_has_error(es: List(LinError), message: Text, span: TySpan): Bool {
-  match es: Bool {
+  ⊢ Bool from match es {
     Nil => false
     Cons(e, rest) => (
       e.message == message && e.start == span.start && e.end == span.end
@@ -419,7 +419,7 @@ pub fn lin_error(&mut c: Lin, message: Text, span: TySpan): Unit {
 // The newest binding below index `n` named `name`; a held value (`held`)
 // is not a name and is skipped.
 pub fn lin_find_below(n: Nat, c: Lin, name: Text): Option(Nat) {
-  match n: Option(Nat) {
+  ⊢ Option(Nat) from match n {
     Zero => None
     Succ(i) => if lin_get(c, i).name == name && not(lin_get(c, i).held) {
       Some(i)
@@ -452,21 +452,21 @@ pub fn lin_class_of_borrow(r#class: LinClass, m: Bool): Pair(LinClass, Option(Bo
 }
 
 pub fn lin_class_of_value(c: Lin, t: Ty): Pair(LinClass, Option(Bool)) {
-  match datas_view_borrow(c.types.datas, t): Pair(LinClass, Option(Bool)) {
+  ⊢ Pair(LinClass, Option(Bool)) from match datas_view_borrow(c.types.datas, t) {
     Some(m) => Pair { fst: ClassAffine, snd: Some(m) }
     None => Pair { fst: lin_kind(c, t), snd: None }
   }
 }
 
 pub fn lin_class_of_ty(c: Lin, t: Ty): Pair(LinClass, Option(Bool)) {
-  match t: Pair(LinClass, Option(Bool)) {
+  ⊢ Pair(LinClass, Option(Bool)) from match t {
     TyBorrow(inner, m) => lin_class_of_borrow(lin_kind(c, inner), m)
     _ => lin_class_of_value(c, t)
   }
 }
 
 pub fn lin_class_of(c: Lin, ty: Option(Ty)): Pair(LinClass, Option(Bool)) {
-  match ty: Pair(LinClass, Option(Bool)) {
+  ⊢ Pair(LinClass, Option(Bool)) from match ty {
     None => Pair { fst: ClassDup, snd: None }
     Some(t) => lin_class_of_ty(c, t)
   }
@@ -494,21 +494,21 @@ pub fn lin_push_binding(&mut c: Lin, name: Text, r#class: LinClass, mode: LinMod
 }
 
 pub fn view_is_shared(v: Option(Bool)): Bool {
-  match v: Bool {
+  ⊢ Bool from match v {
     Some(m) => not(m)
     None => false
   }
 }
 
 pub fn lin_ty_shared_view(c: Lin, t: Ty): Bool {
-  match t: Bool {
+  ⊢ Bool from match t {
     TyBorrow(x, m) => false
     _ => view_is_shared(datas_view_borrow(c.types.datas, t))
   }
 }
 
 pub fn lin_shared_view(c: Lin, ty: Option(Ty)): Bool {
-  match ty: Bool {
+  ⊢ Bool from match ty {
     Some(t) => lin_ty_shared_view(c, t)
     None => false
   }
@@ -518,7 +518,7 @@ pub fn lin_mode_of(is_var: Bool, borrow: Option(Bool)): LinMode {
   if is_var {
     ModeVar
   } else {
-    match borrow: LinMode {
+    ⊢ LinMode from match borrow {
       Some(m) => ModeBorrow(m)
       None => ModeOwned
     }
@@ -541,7 +541,7 @@ pub fn lin_push_unit(&mut c: Lin, name: Text, site: Nat, is_var: Bool): Unit {
 
 // The bindings from `mark` on are gone (the indexes below `n`).
 pub fn lin_remove_below(n: Nat, m: Ordmap(Nat, Binding), mark: Nat): Ordmap(Nat, Binding) {
-  match n: Ordmap(Nat, Binding) {
+  ⊢ Ordmap(Nat, Binding) from match n {
     Zero => m
     Succ(i) => if i < mark { m } else {
       lin_remove_below(i, Ordmap::remove(m, i, Ordmap::compare_nat), mark)
@@ -565,7 +565,7 @@ pub fn lin_report_one(&mut c: Lin, i: Nat, span: TySpan): Unit {
 
 // The linear bindings from `mark` on (below `n`) that are still owned.
 pub fn lin_report_unused_below(n: Nat, &mut c: Lin, mark: Nat, span: TySpan): Unit {
-  match n: Unit {
+  ⊢ Unit from match n {
     Zero => #()
     Succ(i) => if mark <= i {
       lin_report_one(&mut c, i, span)
@@ -575,7 +575,7 @@ pub fn lin_report_unused_below(n: Nat, &mut c: Lin, mark: Nat, span: TySpan): Un
 }
 
 pub fn frozen_keep(fs: List(Pair(Nat, Bool)), mark: Nat): List(Pair(Nat, Bool)) {
-  match fs: List(Pair(Nat, Bool)) {
+  ⊢ List(Pair(Nat, Bool)) from match fs {
     Nil => Nil
     Cons(f, rest) => if f.fst < mark { Cons(f, frozen_keep(rest, mark)) } else {
       frozen_keep(rest, mark)
@@ -585,14 +585,14 @@ pub fn frozen_keep(fs: List(Pair(Nat, Bool)), mark: Nat): List(Pair(Nat, Bool)) 
 
 pub fn lin_unfreeze_one(&mut c: Lin, i: Nat, mark: Nat): Unit {
   let b := lin_get(c, i)
-  match b.frozen: Unit {
+  ⊢ Unit from match b.frozen {
     Nil => #()
     Cons(f, rest) => lin_put(&mut c, i, binding_with_frozen(b, frozen_keep(b.frozen, mark)))
   }
 }
 
 pub fn lin_unfreeze_below(n: Nat, &mut c: Lin, mark: Nat): Unit {
-  match n: Unit {
+  ⊢ Unit from match n {
     Zero => #()
     Succ(i) => {
       lin_unfreeze_one(&mut c, i, mark)
@@ -615,7 +615,7 @@ pub fn lin_capture_what(b: Binding): Option(Text) {
   if class_is_dup(b.r#class) {
     None
   } else {
-    match b.mode: Option(Text) {
+    ⊢ Option(Text) from match b.mode {
       ModeBorrow(m) => if m { Some("&mut") } else { None }
       ModeOwned => Some(class_word(b.r#class))
       ModeVar => Some(cat2(class_word(b.r#class), " var"))
@@ -626,7 +626,7 @@ pub fn lin_capture_what(b: Binding): Option(Text) {
 }
 
 pub fn lin_arm_captures(&mut c: Lin, b: Binding, span: TySpan): Bool {
-  match lin_capture_what(b): Bool {
+  ⊢ Bool from match lin_capture_what(b) {
     None => false
     Some(w) => {
       lin_error(&mut c, cat4("arm captures ", w, " ", b.name), span)
@@ -638,7 +638,7 @@ pub fn lin_arm_captures(&mut c: Lin, b: Binding, span: TySpan): Bool {
 // Whether binding `i` may be touched from here: in a handler arm, a binding
 // from outside the handle must be duplicable or a `&` borrow.
 pub fn lin_captured_by_arm(&mut c: Lin, i: Nat, span: TySpan): Bool {
-  match c.arm_floor: Bool {
+  ⊢ Bool from match c.arm_floor {
     None => false
     Some(floor) => if floor <= i { false } else { lin_arm_captures(&mut c, lin_get(c, i), span) }
   }
@@ -649,10 +649,10 @@ pub fn lin_frozen_find(
   fs: List(Pair(Nat, Bool)),
   mutable: Bool
 ): Option(Text) {
-  match fs: Option(Text) {
+  ⊢ Option(Text) from match fs {
     Nil => None
     Cons(f, rest) => if mutable || f.snd {
-      match Ordmap::get(bindings, f.fst, Ordmap::compare_nat): Option(Text) {
+      ⊢ Option(Text) from match Ordmap::get(bindings, f.fst, Ordmap::compare_nat) {
         Some(b) => Some(b.name)
         None => Some("")
       }
@@ -682,7 +682,7 @@ pub fn lin_direct_move(&mut c: Lin, b: Binding, eff: Text, span: TySpan): Bool {
 // In the arm of a direct operation: a binding from outside the handle is not
 // moved, for the arm runs many times.
 pub fn lin_direct_arm_moves(&mut c: Lin, i: Nat, span: TySpan): Bool {
-  match c.arm_direct: Bool {
+  ⊢ Bool from match c.arm_direct {
     None => false
     Some(a) => if a.fst <= i { false } else { lin_direct_move(&mut c, lin_get(c, i), a.snd, span) }
   }
@@ -699,7 +699,7 @@ pub fn lin_frozen_text(name: Text, r#by: Text): Text {
 }
 
 pub fn lin_take_owned(&mut c: Lin, i: Nat, b: Binding, span: TySpan): Unit {
-  match lin_frozen_by(c, i, true): Unit {
+  ⊢ Unit from match lin_frozen_by(c, i, true) {
     Some(r#by) => lin_error(&mut c, lin_frozen_text(b.name, r#by), span)
     None => if not(state_is_owned(b.state)) {
       lin_error(&mut c, cat2(b.name, " is used after move"), span)
@@ -713,7 +713,7 @@ pub fn lin_take_owned(&mut c: Lin, i: Nat, b: Binding, span: TySpan): Unit {
 
 pub fn lin_take_binding(&mut c: Lin, i: Nat, b: Binding, span: TySpan): Unit {
   if not(class_is_dup(b.r#class)) {
-    match b.mode: Unit {
+    ⊢ Unit from match b.mode {
       ModeBorrow(m) => if not(m) && b.shared_view {
         #()
       } else {

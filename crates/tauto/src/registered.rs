@@ -3,12 +3,12 @@
 //! and what an editor colours it as. They run in the program they are written in, with the
 //! limits of a macro, answer no host effect, and read the text as tokens or as the lossless tree.
 
-use std::rc::Rc;
+use crate::surface::{Name, Stmt};
 use tauto_message::{Message, msg};
 
 use tauto_syntax::{Cst, Event, Limits, ParseError, Tables, build_cst, parse};
 
-use crate::eval::{Host, call_function};
+use crate::eval::{Host, call_bound_function};
 use crate::macros::{Node, Options};
 use crate::rows::{RowReport, check_program_rows};
 use crate::surface::Program;
@@ -65,7 +65,7 @@ pub struct Highlight {
 /// A registered function that has been found and whose type has been read.
 #[derive(Debug, Clone)]
 struct Bound {
-    function: String,
+    function: Name,
     reads: Reads,
 }
 
@@ -75,10 +75,34 @@ pub struct Library<'p> {
     report: TypeReport,
     registrations: Vec<(Registration, Bound)>,
     /// The registrations that could not be bound, and why.
-    unbound: Vec<(Registration, String)>,
+    unbound: Vec<(Registration, Message)>,
 }
 
-pub fn validate(program: &Program, registrations: &[Registration]) -> Vec<(String, Span)> {
+/// The checked executable representation of registered functions that use proof-language types.
+pub(crate) fn executable(
+    program: &Program,
+    registrations: &[Registration],
+    standard: &std::collections::HashSet<Name>,
+) -> Option<Program> {
+    if registrations.is_empty() || standard.is_empty() || !program.errors.is_empty() {
+        return None;
+    }
+    let report = check_program(program).with_prelude_for(program);
+    let rows = check_program_rows(program);
+    if registrations
+        .iter()
+        .all(|r| bind(program, &report, &rows, r).is_ok())
+    {
+        return None;
+    }
+    let stmts = crate::extract::executable_prefix(&program.stmts, standard).ok()?;
+    Some(Program {
+        stmts,
+        errors: Vec::new(),
+    })
+}
+
+pub fn validate(program: &Program, registrations: &[Registration]) -> Vec<(Message, Span)> {
     if registrations.is_empty() {
         return Vec::new();
     }
@@ -90,12 +114,12 @@ pub fn validate(program: &Program, registrations: &[Registration]) -> Vec<(Strin
     if !report.errors.is_empty() {
         return Vec::new();
     }
-    let report = report.with_prelude();
+    let report = report.with_prelude_for(&program);
     let rows = check_program_rows(program);
     let mut errors = Vec::new();
     for r in registrations {
-        if let Err(message) = bind(&report, &rows, r) {
-            errors.push((message, r.span));
+        if let Err(message) = bind(program, &report, &rows, r) {
+            errors.push((message.into(), r.span));
         }
     }
     errors
@@ -109,18 +133,41 @@ fn wanted(role: Role) -> &'static str {
     }
 }
 
-fn bind(report: &TypeReport, rows: &RowReport, r: &Registration) -> Result<Bound, String> {
+fn registered_reference<'a>(
+    names: impl Iterator<Item = &'a Name>,
+    function: &Name,
+) -> Option<&'a Name> {
+    let mut candidates =
+        names.filter(|name| **name == *function || function.spelling() == Some(name.as_str()));
+    candidates.next().filter(|_| candidates.next().is_none())
+}
+
+fn bind(
+    program: &Program,
+    report: &TypeReport,
+    rows: &RowReport,
+    r: &Registration,
+) -> Result<Bound, Message> {
     let head = |problem: Message| {
         msg!(
             "tauto-reg",
             syntax = &r.syntax,
-            function = &r.function,
+            function = r.function.as_str(),
             role = r.role.word(),
             problem = problem
         )
-        .to_string()
     };
-    let Some(scheme) = report.schemes.get(&r.function) else {
+    let reference = registered_reference(
+        program
+            .stmts
+            .iter()
+            .filter_map(|statement| match statement {
+                Stmt::Fn(function) => Some(&function.name),
+                _ => None,
+            }),
+        &r.function,
+    );
+    let Some((reference, scheme)) = reference.and_then(|n| report.schemes.get_key_value(n)) else {
         return Err(head(msg!("tauto-reg-not-defined")));
     };
     let Ty::Fn(params, result, _) = &scheme.ty else {
@@ -142,25 +189,27 @@ fn bind(report: &TypeReport, rows: &RowReport, r: &Registration) -> Result<Bound
     }
     let reads = match params[0].unborrowed() {
         Ty::Named(n, args)
-            if n == "List" && matches!(args.as_slice(), [Ty::Named(m, _)] if m == "SynTok") =>
+            if crate::bindings::is_library(n, "List")
+                && matches!(args.as_slice(), [Ty::Named(m, _)] if crate::bindings::is_library(m, "SynTok")) =>
         {
             Reads::Tokens
         }
-        Ty::Named(n, _) if n == "SynCst" => Reads::Tree,
+        Ty::Named(n, _) if crate::bindings::is_library(n, "SynCst") => Reads::Tree,
         other => return Err(wrong(msg!("tauto-reg-reads", ty = other.to_string()))),
     };
-    if r.role == Role::Fmt && params[1].unborrowed().to_string() != "u64" {
+    if r.role == Role::Fmt && !matches!(params[1].unborrowed(), Ty::Int(crate::types::Width::U64)) {
         return Err(wrong(msg!("tauto-reg-width", ty = params[1].to_string())));
     }
     let made = match (r.role, &**result) {
         (Role::Fmt, Ty::Named(n, args))
-            if n == "Option" && matches!(args.as_slice(), [Ty::Text]) =>
+            if crate::bindings::is_library(n, "Option")
+                && matches!(args.as_slice(), [Ty::Text]) =>
         {
             true
         }
         (Role::Tokens, Ty::Named(n, args))
-            if n == "List"
-                && matches!(args.as_slice(), [Ty::Named(m, _)] if m == "SynHighlight") =>
+            if crate::bindings::is_library(n, "List")
+                && matches!(args.as_slice(), [Ty::Named(m, _)] if crate::bindings::is_library(m, "SynHighlight")) =>
         {
             true
         }
@@ -169,7 +218,7 @@ fn bind(report: &TypeReport, rows: &RowReport, r: &Registration) -> Result<Bound
     if !made {
         return Err(wrong(msg!("tauto-reg-makes", ty = result.to_string())));
     }
-    if let Some((_, row)) = rows.functions.iter().find(|(n, _)| *n == r.function) {
+    if let Some((_, row)) = rows.functions.iter().find(|(n, _)| n == reference) {
         for e in row {
             if e.starts_with('?') {
                 return Err(head(msg!("tauto-reg-unknown-effect", effect = e.as_str())));
@@ -177,13 +226,16 @@ fn bind(report: &TypeReport, rows: &RowReport, r: &Registration) -> Result<Bound
             if crate::host::HOST_EFFECTS.contains(&e.as_str()) {
                 return Err(head(msg!("tauto-reg-host-effect", effect = e.as_str())));
             }
-            if !matches!(e.as_str(), "Div" | "macro_error") {
+            if !["Div", "macro_error"]
+                .iter()
+                .any(|name| crate::bindings::is_library(e, name))
+            {
                 return Err(head(msg!("tauto-reg-effect", effect = e.as_str())));
             }
         }
     }
     Ok(Bound {
-        function: r.function.clone(),
+        function: reference.clone(),
         reads,
     })
 }
@@ -191,7 +243,7 @@ fn bind(report: &TypeReport, rows: &RowReport, r: &Registration) -> Result<Bound
 impl<'p> Library<'p> {
     /// The program checked, with the registrations that are right. `Err` when the program does
     /// not check; a registration that is wrong is left out (`validate` says why).
-    pub fn open(program: &'p Program, registrations: &[Registration]) -> Result<Self, String> {
+    pub fn open(program: &'p Program, registrations: &[Registration]) -> Result<Self, Message> {
         Self::open_with(std::borrow::Cow::Borrowed(program), registrations, true)
     }
 
@@ -200,7 +252,7 @@ impl<'p> Library<'p> {
     pub fn open_lenient(
         program: &'p Program,
         registrations: &[Registration],
-    ) -> Result<Self, String> {
+    ) -> Result<Self, Message> {
         Self::open_with(std::borrow::Cow::Borrowed(program), registrations, false)
     }
 
@@ -208,7 +260,7 @@ impl<'p> Library<'p> {
     pub fn open_lenient_owned(
         program: Program,
         registrations: &[Registration],
-    ) -> Result<Library<'static>, String> {
+    ) -> Result<Library<'static>, Message> {
         Library::open_with(std::borrow::Cow::Owned(program), registrations, false)
     }
 
@@ -216,7 +268,7 @@ impl<'p> Library<'p> {
         program: std::borrow::Cow<'p, Program>,
         registrations: &[Registration],
         strict: bool,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, Message> {
         if registrations.is_empty() {
             return Ok(Library {
                 program,
@@ -225,16 +277,19 @@ impl<'p> Library<'p> {
                 unbound: Vec::new(),
             });
         }
+        let mut program = program;
+        tauto_surface::resolve::Resolver::new(crate::bindings::library_bindings())
+            .statements(&mut program.to_mut().stmts);
         let report = check_program(&program);
         if strict && let Some(e) = report.errors.first() {
-            return Err(e.to_string());
+            return Err(Message::text(e.to_string()));
         }
-        let report = report.with_prelude();
+        let report = report.with_prelude_for(&program);
         let rows = check_program_rows(&program);
         let mut bound = Vec::new();
         let mut unbound = Vec::new();
         for r in registrations {
-            match bind(&report, &rows, r) {
+            match bind(&program, &report, &rows, r) {
                 Ok(b) => bound.push((r.clone(), b)),
                 Err(why) => unbound.push((r.clone(), why)),
             }
@@ -248,11 +303,11 @@ impl<'p> Library<'p> {
     }
 
     /// Why the function registered for `role` of `syntax` cannot be used, when it cannot.
-    pub fn unbound(&self, syntax: &str, role: Role) -> Option<&str> {
+    pub fn unbound(&self, syntax: &str, role: Role) -> Option<&Message> {
         self.unbound
             .iter()
             .find(|(r, _)| r.syntax == syntax && r.role == role)
-            .map(|(_, why)| why.as_str())
+            .map(|(_, why)| why)
     }
 
     pub fn has(&self, syntax: &str, role: Role) -> bool {
@@ -266,10 +321,10 @@ impl<'p> Library<'p> {
             .map(|(_, b)| b)
     }
 
-    fn call(&self, bound: &Bound, args: &[Node]) -> Result<Node, String> {
+    fn call(&self, bound: &Bound, args: &[Node]) -> Result<Node, Message> {
         let limits = Options::default();
         let mut host = Host::new(limits.call_steps, limits.allocations);
-        match call_function(
+        match call_bound_function(
             &self.program,
             &self.report,
             &bound.function,
@@ -279,10 +334,9 @@ impl<'p> Library<'p> {
             Ok((node, _)) => Ok(node),
             Err(e) => Err(msg!(
                 "tauto-reg-call-error",
-                function = &bound.function,
+                function = bound.function.to_string(),
                 error = e.to_string()
-            )
-            .to_string()),
+            )),
         }
     }
 
@@ -293,22 +347,25 @@ impl<'p> Library<'p> {
     pub fn format(
         &self,
         syntax: &str,
-        tables: &Rc<Tables>,
+        tables: &std::sync::Arc<Tables>,
         text: &str,
         width: u64,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<String>, Message> {
         let Some(bound) = self.find(syntax, Role::Fmt) else {
             return Ok(None);
         };
-        let once = |input: &str| -> Result<Option<String>, String> {
+        let once = |input: &str| -> Result<Option<String>, Message> {
             let arg = input_node(bound.reads, tables, input)?;
             let made = self.call(bound, &[arg, Node::Int(width as i64)])?;
             match made.as_option() {
                 Some(None) => Ok(None),
                 Some(Some(t)) => t.as_text().map(|t| Some(t.to_string())).ok_or_else(|| {
-                    msg!("tauto-reg-not-text", function = &bound.function).to_string()
+                    msg!("tauto-reg-not-text", function = bound.function.to_string())
                 }),
-                None => Err(msg!("tauto-reg-not-option", function = &bound.function).to_string()),
+                None => Err(msg!(
+                    "tauto-reg-not-option",
+                    function = bound.function.to_string()
+                )),
             }
         };
         let Some(laid) = once(text)? else {
@@ -319,9 +376,10 @@ impl<'p> Library<'p> {
         }
         same_but_white_space(tables, text, &laid)?;
         match once(&laid)? {
-            Some(again) if again != laid => {
-                Err(msg!("tauto-reg-not-idempotent", function = &bound.function).to_string())
-            }
+            Some(again) if again != laid => Err(msg!(
+                "tauto-reg-not-idempotent",
+                function = bound.function.to_string()
+            )),
             _ => Ok(Some(laid)),
         }
     }
@@ -331,17 +389,17 @@ impl<'p> Library<'p> {
     pub fn highlight(
         &self,
         syntax: &str,
-        tables: &Rc<Tables>,
+        tables: &std::sync::Arc<Tables>,
         text: &str,
-    ) -> Result<Option<Vec<Highlight>>, String> {
+    ) -> Result<Option<Vec<Highlight>>, Message> {
         let Some(bound) = self.find(syntax, Role::Tokens) else {
             return Ok(None);
         };
         let arg = input_node(bound.reads, tables, text)?;
         let made = self.call(bound, &[arg])?;
-        let items = made
-            .as_list()
-            .ok_or_else(|| msg!("tauto-reg-not-list", function = &bound.function).to_string())?;
+        let items = made.as_list().ok_or_else(|| {
+            msg!("tauto-reg-not-list", function = bound.function.to_string()).to_string()
+        })?;
         let mut out = Vec::new();
         for item in items {
             let int = |name: &str| {
@@ -354,21 +412,25 @@ impl<'p> Library<'p> {
                 int("end"),
                 item.named("kind").and_then(Node::as_text),
             ) else {
-                return Err(msg!("tauto-reg-malformed", function = &bound.function).to_string());
+                return Err(msg!(
+                    "tauto-reg-malformed",
+                    function = bound.function.to_string()
+                ));
             };
             let Some(kind) = HIGHLIGHT_KINDS.iter().find(|k| **k == kind) else {
-                return Err(
-                    msg!("tauto-reg-colour", function = &bound.function, kind = kind).to_string(),
-                );
+                return Err(msg!(
+                    "tauto-reg-colour",
+                    function = bound.function.to_string(),
+                    kind = kind
+                ));
             };
             if start > end || end as usize > text.len() {
                 return Err(msg!(
                     "tauto-reg-range",
-                    function = &bound.function,
+                    function = bound.function.to_string(),
                     start = start,
                     end = end
-                )
-                .to_string());
+                ));
             }
             out.push(Highlight {
                 start,
@@ -380,10 +442,10 @@ impl<'p> Library<'p> {
     }
 }
 
-fn input_node(reads: Reads, tables: &Tables, text: &str) -> Result<Node, String> {
+fn input_node(reads: Reads, tables: &Tables, text: &str) -> Result<Node, Message> {
     let token = |t: &tauto_syntax::Token| {
         Node::Ctor(
-            "SynTok".to_string(),
+            "SynTok".into(),
             vec![
                 (None, Node::text(&tables.terminals()[t.terminal as usize])),
                 (None, Node::text(&text[t.start as usize..t.end as usize])),
@@ -396,25 +458,24 @@ fn input_node(reads: Reads, tables: &Tables, text: &str) -> Result<Node, String>
     match reads {
         Reads::Tokens => {
             let tokens = tauto_syntax::tokens(tables, text, 0)
-                .map_err(|e| msg!("tauto-reg-not-token", byte = e.at).to_string())?;
+                .map_err(|e| msg!("tauto-reg-not-token", byte = e.at))?;
             Ok(Node::List(tokens.iter().map(token).collect()))
         }
         Reads::Tree => {
             let events = match parse(tables, text, 0, &Limits::default()) {
                 Ok(e) => e,
                 Err(ParseError::Lex(l)) => {
-                    return Err(msg!("tauto-reg-not-token", byte = l.at).to_string());
+                    return Err(msg!("tauto-reg-not-token", byte = l.at));
                 }
                 Err(ParseError::Syntax(s)) => {
                     return Err(msg!(
                         "tauto-reg-not-syntax",
                         byte = s.at.map_or(text.len() as u32, |t| t.start)
-                    )
-                    .to_string());
+                    ));
                 }
-                Err(ParseError::Limit(m)) => return Err(m.to_string()),
+                Err(ParseError::Limit(m)) => return Err(Message::text(m.to_string())),
             };
-            let cst = build_cst(tables, &events).map_err(|e| e.0.to_string())?;
+            let cst = build_cst(tables, &events).map_err(|e| Message::text(e.0.to_string()))?;
             tree(tables, &cst, &token, 0)
         }
     }
@@ -425,9 +486,9 @@ fn tree(
     cst: &Cst,
     token: &dyn Fn(&tauto_syntax::Token) -> Node,
     depth: usize,
-) -> Result<Node, String> {
+) -> Result<Node, Message> {
     if depth > DEPTH {
-        return Err(msg!("tauto-reg-too-deep").to_string());
+        return Err(msg!("tauto-reg-too-deep"));
     }
     Ok(match cst {
         Cst::Token(t) => Node::ctor("SynCst::CstTok", vec![token(t)]),
@@ -455,9 +516,9 @@ fn tree(
 }
 
 /// The tokens of a text that are not white space, with their terminals.
-fn solid(tables: &Tables, text: &str) -> Result<Vec<(u32, String)>, String> {
+fn solid(tables: &Tables, text: &str) -> Result<Vec<(u32, String)>, Message> {
     let tokens = tauto_syntax::tokens(tables, text, 0)
-        .map_err(|e| msg!("tauto-reg-laid-not-token", byte = e.at).to_string())?;
+        .map_err(|e| msg!("tauto-reg-laid-not-token", byte = e.at))?;
     Ok(tokens
         .iter()
         .map(|t| {
@@ -471,13 +532,33 @@ fn solid(tables: &Tables, text: &str) -> Result<Vec<(u32, String)>, String> {
 }
 
 /// Checks that `laid` is the text of the syntax `text` is, with only white space moved.
-fn same_but_white_space(tables: &Tables, text: &str, laid: &str) -> Result<(), String> {
+fn same_but_white_space(tables: &Tables, text: &str, laid: &str) -> Result<(), Message> {
     let events = parse(tables, laid, 0, &Limits::default());
     if !matches!(events, Ok(ref e) if e.iter().any(|ev| matches!(ev, Event::Open { .. }))) {
-        return Err(msg!("tauto-reg-laid-not-syntax").to_string());
+        return Err(msg!("tauto-reg-laid-not-syntax"));
     }
     if solid(tables, text)? != solid(tables, laid)? {
-        return Err(msg!("tauto-reg-laid-changes").to_string());
+        return Err(msg!("tauto-reg-laid-changes"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn bound_registration_does_not_select_a_same_spelled_function() {
+        let registered: Name = crate::identity::DeclRef::fresh("format").into();
+        let other: Name = crate::identity::DeclRef::fresh("format").into();
+        assert!(registered_reference([&other].into_iter(), &registered).is_none());
+        assert_eq!(
+            registered_reference([&other, &registered].into_iter(), &registered),
+            Some(&registered)
+        );
+        assert!(
+            registered_reference([&other, &registered].into_iter(), &Name::from("format"))
+                .is_none()
+        );
+    }
 }

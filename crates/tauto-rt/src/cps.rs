@@ -450,8 +450,46 @@ pub fn call_o<'a, A, R: 'static>(
     args: A,
     k: Kont<'a, R>,
 ) -> Step<'a> {
-    let mut held = f.0.borrow_mut();
-    let mut fut = held.call(ev, args);
+    let outcome = {
+        let mut held = f.0.borrow_mut();
+        poll_o(ev, m, at, held.call(ev, args))
+    };
+    outcome.finish(k)
+}
+
+/// Polls an owned callback future under the budgets of the M tier.
+pub fn call_o_future<'a, R: 'static>(
+    ev: &Ev<'_>,
+    m: &M<'a>,
+    at: Loc,
+    future: crate::o::Fut<'_, R>,
+    k: Kont<'a, R>,
+) -> Step<'a> {
+    poll_o(ev, m, at, future).finish(k)
+}
+
+enum OOutcome<'a, R> {
+    Value(M<'a>, R),
+    Step(Step<'a>),
+    Target(Kont<'a, Payload>, M<'a>, Payload),
+}
+
+impl<'a, R> OOutcome<'a, R> {
+    fn finish(self, k: Kont<'a, R>) -> Step<'a> {
+        match self {
+            Self::Value(m, value) => k(&m, value),
+            Self::Step(step) => step,
+            Self::Target(target, outer, value) => target(&outer, value),
+        }
+    }
+}
+
+fn poll_o<'a, R>(
+    ev: &Ev<'_>,
+    m: &M<'a>,
+    at: Loc,
+    mut fut: crate::o::Fut<'_, R>,
+) -> OOutcome<'a, R> {
     let mut m = m.clone();
     loop {
         let polled = {
@@ -474,8 +512,7 @@ pub fn call_o<'a, A, R: 'static>(
         let id = match polled {
             std::task::Poll::Ready(v) => {
                 drop(fut);
-                drop(held);
-                return k(&m, v);
+                return OOutcome::Value(m, v);
             }
             std::task::Poll::Pending => match crate::o::peek() {
                 crate::o::Peek::Budget(_) => crate::o::take_budget(),
@@ -513,7 +550,7 @@ pub fn call_o<'a, A, R: 'static>(
             match step {
                 Step::Done => break,
                 Step::More(g) => step = g(),
-                Step::Fail(a) => return Step::Fail(a),
+                Step::Fail(a) => return OOutcome::Step(Step::Fail(a)),
                 Step::Escape { op, args, at, k, m } => {
                     if !ev.answers(op.id) {
                         error(messages::nothing_handles(op.name), at)
@@ -527,7 +564,7 @@ pub fn call_o<'a, A, R: 'static>(
         }
         let Some((m2, a)) = answered.borrow_mut().take() else {
             // The arm ended the computation without answering.
-            return Step::Done;
+            return OOutcome::Step(Step::Done);
         };
         match a {
             Answer::More(n) => {
@@ -537,11 +574,10 @@ pub fn call_o<'a, A, R: 'static>(
             Answer::Value(v) => {
                 // The budget ends: the stopped call is dropped.
                 drop(fut);
-                drop(held);
                 let mut cur = &m2;
                 while let Some(fr) = &cur.0 {
                     if fr.budget.as_ref().map(|x| x.id) == Some(id) {
-                        return (fr.target)(&fr.outer, v);
+                        return OOutcome::Target(fr.target.clone(), fr.outer.clone(), v);
                     }
                     cur = &fr.outer;
                 }

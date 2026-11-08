@@ -1,0 +1,1025 @@
+description = "Dependent erasure across nested patterns and higher-order boundaries."
+@ cases.nested-natural-patterns
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Token: (Nat) -> Type { Mk(n: Nat): Token(n) }
+fn nested(n: Nat, t: Token(0)): Nat {
+  ⊢ Nat from match n {
+    Zero => 10
+    Succ(Zero) => 20
+    Succ(Succ(k)) => k + 30
+  }
+}
+fn run(n: Nat): Nat { nested(n, Mk(0)) }
+perform show("zero", run(0))
+perform show("one", run(1))
+perform show("two", run(2))
+perform show("seven", run(7))
+```
+shows = ["zero = 10", "one = 20", "two = 30", "seven = 35"]
+backends = ["rust", "javascript"]
+rust_shows = ["zero = 10", "one = 20", "two = 30", "seven = 35"]
+javascript_shows = ["zero = 10", "one = 20", "two = 30", "seven = 35"]
+extracted_nib."TautoErasedFn*" = ```nib
+fn TautoErasedFn1_1(n: TautoErasedValue_1, t: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject2_1 := n
+  match TautoErasedSubject2_1 {
+    TautoErasedValue_1::TautoErasedNat_1(0) => TautoErasedValue_1::TautoErasedNat_1(10)
+    TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat3_1) if TautoErasedNat3_1 == 1 => TautoErasedValue_1::TautoErasedNat_1(20)
+    TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat4_1) if TautoErasedNat4_1 >= 2 => {
+      let k := TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat4_1 - 2)
+      TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(k) + TautoErasedGetNat_1(TautoErasedValue_1::TautoErasedNat_1(30)))
+    }
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn5_1(n: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedFn1_1(n, TautoErasedValue_1::TautoErasedCtor6_1(TautoErasedValue_1::TautoErasedNat_1(0))) }
+```
+
+@ cases.returned-closure
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Token: (Nat) -> Type { Mk(n: Nat): Token(n) }
+fn make(n: Nat, t: Token(0)): (x: Nat) -> Nat { x => x + n }
+fn generic<A>(a: A, t: Token(0)): (x: Nat) -> A { x => a }
+fn zero(): (x: Nat) -> Nat { make(2, Mk(0)) }
+fn run(n: Nat): Nat {
+  let f := make(n, Mk(0))
+  let g := generic(n, Mk(0))
+  let h := zero()
+  f(7) + g(99) + h(3)
+}
+perform show("captured", run(5))
+```
+shows = ["captured = 22"]
+backends = ["rust", "javascript"]
+rust_shows = ["captured = 22"]
+javascript_shows = ["captured = 22"]
+extracted_nib."TautoErasedFn*" = ```nib
+fn TautoErasedFn1_1(a: TautoErasedValue_1, t: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs2_1: List(TautoErasedValue_1)) => match TautoErasedArgs2_1 {
+  List::Cons(x, Nil) => a
+  _ => extract_unreachable()
+}) }
+fn TautoErasedFn3_1(n: TautoErasedValue_1, t: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs4_1: List(TautoErasedValue_1)) => match TautoErasedArgs4_1 {
+  List::Cons(x, Nil) => TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(x) + TautoErasedGetNat_1(n))
+  _ => extract_unreachable()
+}) }
+fn TautoErasedFn5_1(n: TautoErasedValue_1): TautoErasedValue_1 {
+  let f: TautoErasedValue_1 := TautoErasedFn3_1(n, TautoErasedValue_1::TautoErasedCtor6_1(TautoErasedValue_1::TautoErasedNat_1(0)))
+  let g: TautoErasedValue_1 := TautoErasedFn1_1(n, TautoErasedValue_1::TautoErasedCtor6_1(TautoErasedValue_1::TautoErasedNat_1(0)))
+  let h: TautoErasedValue_1 := TautoErasedFn7_1()
+  TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedApply_1(f, List::Cons(TautoErasedValue_1::TautoErasedNat_1(7), List::Nil))) + TautoErasedGetNat_1(TautoErasedApply_1(g, List::Cons(TautoErasedValue_1::TautoErasedNat_1(99), List::Nil))))) + TautoErasedGetNat_1(TautoErasedApply_1(h, List::Cons(TautoErasedValue_1::TautoErasedNat_1(3), List::Nil))))
+}
+fn TautoErasedFn7_1(): TautoErasedValue_1 { TautoErasedFn3_1(TautoErasedValue_1::TautoErasedNat_1(2), TautoErasedValue_1::TautoErasedCtor6_1(TautoErasedValue_1::TautoErasedNat_1(0))) }
+```
+
+@ cases.nested-natural-fields
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Token: (Nat) -> Type { Mk(n: Nat): Token(n) }
+inductive Wrap(A: Type): Type { Box(value: A): Wrap(A) }
+fn inspect(w: Wrap(Nat), t: Token(0)): Nat {
+  ⊢ Nat from match w {
+    Box(Zero) => 0
+    Box(Succ(Zero)) => 1
+    Box(Succ(Succ(Zero))) => 2
+    Box(Succ(Succ(Succ(rest)))) => rest + 10
+  }
+}
+fn wildcard(n: Nat, t: Token(0)): Nat {
+  ⊢ Nat from match n { Zero => 0
+    Succ(Zero) => 1
+    Succ(Succ(_)) => 2 }
+}
+fn run(n: Nat): Nat { inspect(Box(n), Mk(0)) + wildcard(n, Mk(0)) }
+perform show("zero", run(0))
+perform show("one", run(1))
+perform show("two", run(2))
+perform show("three", run(3))
+perform show("ten", run(10))
+```
+shows = ["zero = 0", "one = 2", "two = 4", "three = 12", "ten = 19"]
+backends = ["rust", "javascript"]
+rust_shows = ["zero = 0", "one = 2", "two = 4", "three = 12", "ten = 19"]
+javascript_shows = ["zero = 0", "one = 2", "two = 4", "three = 12", "ten = 19"]
+extracted_nib."TautoErasedFn*" = ```nib
+fn TautoErasedFn15_1(n: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedFn1_1(TautoErasedValue_1::TautoErasedCtor3_1(n), TautoErasedValue_1::TautoErasedCtor16_1(TautoErasedValue_1::TautoErasedNat_1(0)))) + TautoErasedGetNat_1(TautoErasedFn17_1(n, TautoErasedValue_1::TautoErasedCtor16_1(TautoErasedValue_1::TautoErasedNat_1(0))))) }
+fn TautoErasedFn17_1(n: TautoErasedValue_1, t: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject18_1 := n
+  match TautoErasedSubject18_1 {
+    TautoErasedValue_1::TautoErasedNat_1(0) => TautoErasedValue_1::TautoErasedNat_1(0)
+    TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat19_1) if TautoErasedNat19_1 == 1 => TautoErasedValue_1::TautoErasedNat_1(1)
+    TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat20_1) if TautoErasedNat20_1 >= 2 => TautoErasedValue_1::TautoErasedNat_1(2)
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn1_1(w: TautoErasedValue_1, t: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject2_1 := w
+  {
+    let TautoErasedNextArm13_1 := TautoErasedValue_1::TautoErasedFunction_1(0, (TautoErasedArgs14_1: List(TautoErasedValue_1)) => match TautoErasedArgs14_1 {
+      Nil => {
+        let TautoErasedNextArm11_1 := TautoErasedValue_1::TautoErasedFunction_1(0, (TautoErasedArgs12_1: List(TautoErasedValue_1)) => match TautoErasedArgs12_1 {
+          Nil => {
+            let TautoErasedNextArm9_1 := TautoErasedValue_1::TautoErasedFunction_1(0, (TautoErasedArgs10_1: List(TautoErasedValue_1)) => match TautoErasedArgs10_1 {
+              Nil => {
+                let TautoErasedNextArm7_1 := TautoErasedValue_1::TautoErasedFunction_1(0, (TautoErasedArgs8_1: List(TautoErasedValue_1)) => match TautoErasedArgs8_1 {
+                  Nil => extract_unreachable()
+                  _ => extract_unreachable()
+                })
+                match TautoErasedSubject2_1 {
+                  TautoErasedValue_1::TautoErasedCtor3_1(TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat6_1)) => if TautoErasedNat6_1 >= 3 {
+                    let rest := TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat6_1 - 3)
+                    TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(rest) + TautoErasedGetNat_1(TautoErasedValue_1::TautoErasedNat_1(10)))
+                  } else { TautoErasedApply_1(TautoErasedNextArm7_1, Nil) }
+                  _ => TautoErasedApply_1(TautoErasedNextArm7_1, Nil)
+                }
+              }
+              _ => extract_unreachable()
+            })
+            match TautoErasedSubject2_1 {
+              TautoErasedValue_1::TautoErasedCtor3_1(TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat5_1)) => if TautoErasedNat5_1 == 2 { TautoErasedValue_1::TautoErasedNat_1(2) } else { TautoErasedApply_1(TautoErasedNextArm9_1, Nil) }
+              _ => TautoErasedApply_1(TautoErasedNextArm9_1, Nil)
+            }
+          }
+          _ => extract_unreachable()
+        })
+        match TautoErasedSubject2_1 {
+          TautoErasedValue_1::TautoErasedCtor3_1(TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat4_1)) => if TautoErasedNat4_1 == 1 { TautoErasedValue_1::TautoErasedNat_1(1) } else { TautoErasedApply_1(TautoErasedNextArm11_1, Nil) }
+          _ => TautoErasedApply_1(TautoErasedNextArm11_1, Nil)
+        }
+      }
+      _ => extract_unreachable()
+    })
+    match TautoErasedSubject2_1 {
+      TautoErasedValue_1::TautoErasedCtor3_1(TautoErasedValue_1::TautoErasedNat_1(0)) => TautoErasedValue_1::TautoErasedNat_1(0)
+      _ => TautoErasedApply_1(TautoErasedNextArm13_1, List::Nil)
+    }
+  }
+}
+```
+
+@ cases.returned-generic-application
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Token: (Nat) -> Type { Mk(n: Nat): Token(n) }
+fn generic<A>(a: A, t: Token(0)): (x: Nat) -> A { x => a }
+fn run(): Nat {
+  let factory := generic
+  let partial := generic(Nat)
+  let chosen := partial(7, Mk(0))
+  generic(5, Mk(0), 99) + factory(6, Mk(0), 88) + chosen(77)
+}
+perform show("result", run())
+```
+shows = ["result = 18"]
+backends = ["rust", "javascript"]
+rust_shows = ["result = 18"]
+javascript_shows = ["result = 18"]
+extracted_nib."TautoErasedFn*" = ```nib
+fn TautoErasedFn1_1(a: TautoErasedValue_1, t: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs2_1: List(TautoErasedValue_1)) => match TautoErasedArgs2_1 {
+  List::Cons(x, Nil) => a
+  _ => extract_unreachable()
+}) }
+fn TautoErasedFn3_1(): TautoErasedValue_1 {
+  let factory: TautoErasedValue_1 := TautoErasedValue_1::TautoErasedFunction_1(3, (TautoErasedArgs7_1: List(TautoErasedValue_1)) => match TautoErasedArgs7_1 {
+    List::Cons(TautoErasedArg4_1, List::Cons(TautoErasedArg5_1, List::Cons(TautoErasedArg6_1, Nil))) => TautoErasedFn1_1(TautoErasedArg5_1, TautoErasedArg6_1)
+    _ => extract_unreachable()
+  })
+  let partial: TautoErasedValue_1 := TautoErasedApply_1(TautoErasedValue_1::TautoErasedFunction_1(3, (TautoErasedArgs11_1: List(TautoErasedValue_1)) => match TautoErasedArgs11_1 {
+    List::Cons(TautoErasedArg8_1, List::Cons(TautoErasedArg9_1, List::Cons(TautoErasedArg10_1, Nil))) => TautoErasedFn1_1(TautoErasedArg9_1, TautoErasedArg10_1)
+    _ => extract_unreachable()
+  }), List::Cons(TautoErasedValue_1::TautoErasedUnit_1, List::Nil))
+  let chosen: TautoErasedValue_1 := TautoErasedApply_1(partial, List::Cons(TautoErasedValue_1::TautoErasedNat_1(7), List::Cons(TautoErasedValue_1::TautoErasedCtor12_1(TautoErasedValue_1::TautoErasedNat_1(0)), List::Nil)))
+  TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedApply_1(TautoErasedValue_1::TautoErasedFunction_1(3, (TautoErasedArgs16_1: List(TautoErasedValue_1)) => match TautoErasedArgs16_1 {
+    List::Cons(TautoErasedArg13_1, List::Cons(TautoErasedArg14_1, List::Cons(TautoErasedArg15_1, Nil))) => TautoErasedFn1_1(TautoErasedArg14_1, TautoErasedArg15_1)
+    _ => extract_unreachable()
+  }), List::Cons(TautoErasedValue_1::TautoErasedUnit_1, List::Cons(TautoErasedValue_1::TautoErasedNat_1(5), List::Cons(TautoErasedValue_1::TautoErasedCtor12_1(TautoErasedValue_1::TautoErasedNat_1(0)), List::Cons(TautoErasedValue_1::TautoErasedNat_1(99), List::Nil)))))) + TautoErasedGetNat_1(TautoErasedApply_1(factory, List::Cons(TautoErasedValue_1::TautoErasedUnit_1, List::Cons(TautoErasedValue_1::TautoErasedNat_1(6), List::Cons(TautoErasedValue_1::TautoErasedCtor12_1(TautoErasedValue_1::TautoErasedNat_1(0)), List::Cons(TautoErasedValue_1::TautoErasedNat_1(88), List::Nil)))))))) + TautoErasedGetNat_1(TautoErasedApply_1(chosen, List::Cons(TautoErasedValue_1::TautoErasedNat_1(77), List::Nil))))
+}
+```
+
+@ cases.higher-order-proof-argument
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Token: (Nat) -> Type { Mk(n: Nat): Token(n) }
+fn use_proof(f: (h: Eq(Nat, Zero, Zero)) -> Nat, t: Token(0)): Nat { f(Refl) }
+fn run(): Nat { use_proof((h: Eq(Nat, Zero, Zero)) => 9, Mk(0)) }
+perform show("result", run())
+```
+shows = ["result = 9"]
+backends = ["rust", "javascript"]
+rust_shows = ["result = 9"]
+javascript_shows = ["result = 9"]
+extracted_nib."TautoErasedFn*" = ```nib
+fn TautoErasedFn1_1(): TautoErasedValue_1 { TautoErasedFn4_1(TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs2_1: List(TautoErasedValue_1)) => match TautoErasedArgs2_1 {
+  List::Cons(h, Nil) => TautoErasedValue_1::TautoErasedNat_1(9)
+  _ => extract_unreachable()
+}), TautoErasedValue_1::TautoErasedCtor3_1(TautoErasedValue_1::TautoErasedNat_1(0))) }
+fn TautoErasedFn4_1(f: TautoErasedValue_1, t: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedApply_1(f, List::Cons(TautoErasedValue_1::TautoErasedUnit_1, List::Nil)) }
+```
+
+@ cases.polymorphic-proof-value
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Token: (Nat) -> Type { Mk(n: Nat): Token(n) }
+fn ignore<A>(x: A, t: Token(0)): Nat { 9 }
+fn run(): Nat { ignore(Eq(Nat, Zero, Zero), Refl, Mk(0)) }
+perform show("result", run())
+```
+shows = ["result = 9"]
+backends = ["rust", "javascript"]
+rust_shows = ["result = 9"]
+javascript_shows = ["result = 9"]
+extracted_nib."TautoErasedFn*" = ```nib
+fn TautoErasedFn1_1(x: TautoErasedValue_1, t: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedNat_1(9) }
+fn TautoErasedFn2_1(): TautoErasedValue_1 { TautoErasedFn1_1(TautoErasedValue_1::TautoErasedUnit_1, TautoErasedValue_1::TautoErasedCtor3_1(TautoErasedValue_1::TautoErasedNat_1(0))) }
+```
+
+@ cases.higher-order-type-and-proof-slots
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Token: (Nat) -> Type { Mk(n: Nat): Token(n) }
+fn use_type(f: (A: Type, value: A) -> A, t: Token(0)): Nat { f(Nat, 7) }
+fn use_mixed(f: (A: Type, value: A, h: value = value) -> Nat, t: Token(0)): Nat {
+  f(Eq(Nat, Zero, Zero), Refl, Refl)
+}
+fn returned(t: Token(0)): (h: Eq(Nat, Zero, Zero)) -> Nat { h => 13 }
+fn add(x: Nat, y: Nat, t: Token(0)): Nat { x + y }
+fn run(): Nat {
+  let proof_fn := returned(Mk(0))
+  let callback := add
+  let partial := callback(3)
+  use_type((B, item) => item, Mk(0)) + use_mixed((C, val, hv) => 11, Mk(0)) + proof_fn(Refl) + partial(4, Mk(0))
+}
+perform show("slots", run())
+```
+shows = ["slots = 38"]
+backends = ["rust", "javascript"]
+rust_shows = ["slots = 38"]
+javascript_shows = ["slots = 38"]
+extracted_nib."TautoErasedFn*" = ```nib
+fn TautoErasedFn11_1(f: TautoErasedValue_1, t: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedApply_1(f, List::Cons(TautoErasedValue_1::TautoErasedUnit_1, List::Cons(TautoErasedValue_1::TautoErasedNat_1(7), List::Nil))) }
+fn TautoErasedFn13_1(f: TautoErasedValue_1, t: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedApply_1(f, List::Cons(TautoErasedValue_1::TautoErasedUnit_1, List::Cons(TautoErasedValue_1::TautoErasedUnit_1, List::Cons(TautoErasedValue_1::TautoErasedUnit_1, List::Nil)))) }
+fn TautoErasedFn1_1(x: TautoErasedValue_1, y: TautoErasedValue_1, t: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(x) + TautoErasedGetNat_1(y)) }
+fn TautoErasedFn2_1(t: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs3_1: List(TautoErasedValue_1)) => match TautoErasedArgs3_1 {
+  List::Cons(h, Nil) => TautoErasedValue_1::TautoErasedNat_1(13)
+  _ => extract_unreachable()
+}) }
+fn TautoErasedFn4_1(): TautoErasedValue_1 {
+  let proof_fn: TautoErasedValue_1 := TautoErasedFn2_1(TautoErasedValue_1::TautoErasedCtor5_1(TautoErasedValue_1::TautoErasedNat_1(0)))
+  let callback: TautoErasedValue_1 := TautoErasedValue_1::TautoErasedFunction_1(3, (TautoErasedArgs9_1: List(TautoErasedValue_1)) => match TautoErasedArgs9_1 {
+    List::Cons(TautoErasedArg6_1, List::Cons(TautoErasedArg7_1, List::Cons(TautoErasedArg8_1, Nil))) => TautoErasedFn1_1(TautoErasedArg6_1, TautoErasedArg7_1, TautoErasedArg8_1)
+    _ => extract_unreachable()
+  })
+  let partial: TautoErasedValue_1 := TautoErasedApply_1(callback, List::Cons(TautoErasedValue_1::TautoErasedNat_1(3), List::Nil))
+  TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedFn11_1(TautoErasedValue_1::TautoErasedFunction_1(2, (TautoErasedArgs10_1: List(TautoErasedValue_1)) => match TautoErasedArgs10_1 {
+    List::Cons(B, List::Cons(item, Nil)) => item
+    _ => extract_unreachable()
+  }), TautoErasedValue_1::TautoErasedCtor5_1(TautoErasedValue_1::TautoErasedNat_1(0)))) + TautoErasedGetNat_1(TautoErasedFn13_1(TautoErasedValue_1::TautoErasedFunction_1(3, (TautoErasedArgs12_1: List(TautoErasedValue_1)) => match TautoErasedArgs12_1 {
+    List::Cons(C, List::Cons(val, List::Cons(hv, Nil))) => TautoErasedValue_1::TautoErasedNat_1(11)
+    _ => extract_unreachable()
+  }), TautoErasedValue_1::TautoErasedCtor5_1(TautoErasedValue_1::TautoErasedNat_1(0)))))) + TautoErasedGetNat_1(TautoErasedApply_1(proof_fn, List::Cons(TautoErasedValue_1::TautoErasedUnit_1, List::Nil))))) + TautoErasedGetNat_1(TautoErasedApply_1(partial, List::Cons(TautoErasedValue_1::TautoErasedNat_1(4), List::Cons(TautoErasedValue_1::TautoErasedCtor5_1(TautoErasedValue_1::TautoErasedNat_1(0)), List::Nil)))))
+}
+```
+
+@ cases.opaque-function-roundtrip
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Vec(A: Type): (Nat) -> Type {
+  Nil: Vec(A, Zero)
+  Cons(n: Nat, x: A, xs: Vec(A, n)): Vec(A, Succ(n))
+}
+fn repeat(n: Nat, x: Nat): Vec(Nat, n) {
+  ⊢ Vec(Nat, n) from match n { Zero => Nil
+    Succ(k) => Cons(k, x, repeat(k, x)) }
+}
+fn make(): (n: Nat) -> Vec(Nat, n) { n => repeat(n, 17) }
+fn pass(f: (n: Nat) -> Vec(Nat, n)): (m: Nat) -> Vec(Nat, m) { f }
+fn first(f: (n: Nat) -> Vec(Nat, n)): Nat {
+  ⊢ Nat from match f(1) { Cons(k, x, xs) => x }
+}
+fn proof_fn(): (h: Eq(Nat, Zero, Zero)) -> Nat { h => 23 }
+fn use_proof(f: (h: Eq(Nat, Zero, Zero)) -> Nat): Nat { f(Refl) }
+perform show("vector", first(pass(make())))
+perform show("proof", use_proof(proof_fn()))
+```
+shows = ["vector = 17", "proof = 23"]
+backends = ["rust", "javascript"]
+rust_shows = ["vector = 17", "proof = 23"]
+javascript_shows = ["vector = 17", "proof = 23"]
+extracted_nib.make = ```nib
+pub fn make(): TautoErasedOpaque14_1 { TautoErasedOpaque14_1::Mk { value: TautoErasedFn4_1() } }
+```
+extracted_nib.pass = ```nib
+pub fn pass(f: TautoErasedOpaque14_1): TautoErasedOpaque14_1 { TautoErasedOpaque14_1::Mk { value: TautoErasedFn10_1(f.value) } }
+```
+extracted_nib.first = ```nib
+pub fn first(f: TautoErasedOpaque14_1): nat { TautoErasedGetNat_1(TautoErasedFn1_1(f.value)) }
+```
+extracted_nib.proof_fn = ```nib
+pub fn proof_fn(): TautoErasedOpaque15_1 { TautoErasedOpaque15_1::Mk { value: TautoErasedFn11_1() } }
+```
+extracted_nib.use_proof = ```nib
+pub fn use_proof(f: TautoErasedOpaque15_1): nat { TautoErasedGetNat_1(TautoErasedFn13_1(f.value)) }
+```
+
+@ cases.opaque-function-contract-mismatch
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Vec(A: Type): (Nat) -> Type {
+  Nil: Vec(A, Zero)
+  Cons(n: Nat, x: A, xs: Vec(A, n)): Vec(A, Succ(n))
+}
+fn empty_fn(): (n: Nat) -> Vec(Nat, 0) { n => Nil }
+fn first(f: (n: Nat) -> Vec(Nat, n)): Nat {
+  ⊢ Nat from match f(1) { Cons(k, x, xs) => x }
+}
+perform show("bad", first(empty_fn()))
+```
+types = "error: does not fit"
+
+@ cases.opaque-function-cannot-be-forged
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+fn use_proof(f: (h: Eq(Nat, Zero, Zero)) -> Nat): Nat { f(Refl) }
+fn forged(): nat { 9 }
+perform show("bad", use_proof(forged))
+```
+types = "error: does not fit"
+
+@ cases.erased-fields-and-local-types
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+import std::Refined
+fn use(f: (n: Nat, h: n = n) -> Nat, p: Refined(Nat, x => x = x)): Nat {
+  ⊢ Nat from match p { Mk(v, h) => f(v, h) }
+}
+fn choose(f: (A: Type, value: A) -> A, t: Refined(Nat, x => x = x)): Nat {
+  let F: (k: Nat) -> Type := k => Nat
+  f(F(0), t.val)
+}
+inductive Evidence: Type { Proof(n: Nat, h: Eq(Nat, Zero, Zero)): Evidence }
+fn fixed(f: (h: Eq(Nat, Zero, Zero)) -> Nat, p: Evidence): Nat { f(p.h) }
+fn run(): Nat {
+  use((m, hm) => m, Refined::Mk(8, Refl)) + choose((B, item) => item, Refined::Mk(9, Refl)) + fixed(h => 5, Proof(3, Refl))
+}
+perform show("fields", run())
+```
+shows = ["fields = 22"]
+backends = ["rust", "javascript"]
+rust_shows = ["fields = 22"]
+javascript_shows = ["fields = 22"]
+extracted_nib."TautoErasedFn*" = ```nib
+fn TautoErasedFn1_1(f: TautoErasedValue_1, t: TautoErasedValue_1): TautoErasedValue_1 {
+  let F: TautoErasedValue_1 := TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs2_1: List(TautoErasedValue_1)) => match TautoErasedArgs2_1 {
+    List::Cons(k, Nil) => TautoErasedValue_1::TautoErasedUnit_1
+    _ => extract_unreachable()
+  })
+  TautoErasedApply_1(f, List::Cons(TautoErasedApply_1(F, List::Cons(TautoErasedValue_1::TautoErasedNat_1(0), List::Nil)), List::Cons(match t {
+    TautoErasedValue_1::TautoErasedCtor3_1(selected) => selected
+    TautoErasedUnit_1 => TautoErasedUnit_1
+    _ => extract_unreachable()
+  }, List::Nil)))
+}
+fn TautoErasedFn4_1(f: TautoErasedValue_1, p: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedApply_1(f, List::Cons(match p {
+  TautoErasedValue_1::TautoErasedCtor5_1(_) => TautoErasedValue_1::TautoErasedUnit_1
+  TautoErasedUnit_1 => TautoErasedUnit_1
+  _ => extract_unreachable()
+}, List::Nil)) }
+fn TautoErasedFn6_1(): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedFn8_1(TautoErasedValue_1::TautoErasedFunction_1(2, (TautoErasedArgs7_1: List(TautoErasedValue_1)) => match TautoErasedArgs7_1 {
+  List::Cons(m, List::Cons(hm, Nil)) => m
+  _ => extract_unreachable()
+}), TautoErasedValue_1::TautoErasedCtor3_1(TautoErasedValue_1::TautoErasedNat_1(8)))) + TautoErasedGetNat_1(TautoErasedFn1_1(TautoErasedValue_1::TautoErasedFunction_1(2, (TautoErasedArgs10_1: List(TautoErasedValue_1)) => match TautoErasedArgs10_1 {
+  List::Cons(B, List::Cons(item, Nil)) => item
+  _ => extract_unreachable()
+}), TautoErasedValue_1::TautoErasedCtor3_1(TautoErasedValue_1::TautoErasedNat_1(9)))))) + TautoErasedGetNat_1(TautoErasedFn4_1(TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs11_1: List(TautoErasedValue_1)) => match TautoErasedArgs11_1 {
+  List::Cons(h, Nil) => TautoErasedValue_1::TautoErasedNat_1(5)
+  _ => extract_unreachable()
+}), TautoErasedValue_1::TautoErasedCtor5_1(TautoErasedValue_1::TautoErasedNat_1(3))))) }
+fn TautoErasedFn8_1(f: TautoErasedValue_1, p: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject9_1 := p
+  match TautoErasedSubject9_1 {
+    TautoErasedValue_1::TautoErasedCtor3_1(v) => TautoErasedApply_1(f, List::Cons(v, List::Cons(TautoErasedValue_1::TautoErasedUnit_1, List::Nil)))
+    _ => extract_unreachable()
+  }
+}
+```
+
+@ cases.partial-dependent-match-result
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Token: (Nat) -> Type { Mk(n: Nat): Token(n) }
+fn choose(b: Bool, t: Token(0)): Nat {
+  let f := ⊢ (h: Eq(Nat, Zero, Zero), x: Nat) -> Nat from match b {
+    false => (h, x) => x
+    true => (h, x) => x + 1
+  }
+  let partial := f(Refl)
+  partial(8)
+}
+fn run(b: Bool): Nat { choose(b, Mk(0)) }
+perform show("false", run(false))
+perform show("true", run(true))
+```
+shows = ["false = 8", "true = 9"]
+backends = ["rust", "javascript"]
+rust_shows = ["false = 8", "true = 9"]
+javascript_shows = ["false = 8", "true = 9"]
+extracted_nib."TautoErasedFn*" = ```nib
+fn TautoErasedFn1_1(b: TautoErasedValue_1, t: TautoErasedValue_1): TautoErasedValue_1 {
+  let f: TautoErasedValue_1 := {
+    let TautoErasedSubject2_1 := b
+    match TautoErasedSubject2_1 {
+      TautoErasedValue_1::TautoErasedBool_1(false) => TautoErasedValue_1::TautoErasedFunction_1(2, (TautoErasedArgs3_1: List(TautoErasedValue_1)) => match TautoErasedArgs3_1 {
+        List::Cons(h, List::Cons(x, Nil)) => x
+        _ => extract_unreachable()
+      })
+      TautoErasedValue_1::TautoErasedBool_1(true) => TautoErasedValue_1::TautoErasedFunction_1(2, (TautoErasedArgs4_1: List(TautoErasedValue_1)) => match TautoErasedArgs4_1 {
+        List::Cons(h, List::Cons(x, Nil)) => TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(x) + TautoErasedGetNat_1(TautoErasedValue_1::TautoErasedNat_1(1)))
+        _ => extract_unreachable()
+      })
+      _ => extract_unreachable()
+    }
+  }
+  let partial: TautoErasedValue_1 := TautoErasedApply_1(f, List::Cons(TautoErasedValue_1::TautoErasedUnit_1, List::Nil))
+  TautoErasedApply_1(partial, List::Cons(TautoErasedValue_1::TautoErasedNat_1(8), List::Nil))
+}
+fn TautoErasedFn5_1(b: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedFn1_1(b, TautoErasedValue_1::TautoErasedCtor6_1(TautoErasedValue_1::TautoErasedNat_1(0))) }
+```
+
+@ cases.explicit-runtime-generic-constructor
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Box: (Nat) -> Type { Mk<n: Nat>(value: Nat): Box(n) }
+fn make(n: Nat): Box(n) { Mk(n, 7) }
+fn read(n: Nat, b: Box(n)): Nat { ⊢ Nat from match b { Mk(k, x) => k + x } }
+fn run(n: Nat): Nat { read(n, make(n)) }
+perform show("value", run(5))
+```
+shows = ["value = 12"]
+backends = ["rust", "javascript"]
+rust_shows = ["value = 12"]
+javascript_shows = ["value = 12"]
+extracted_nib."TautoErasedFn*" = ```nib
+fn TautoErasedFn1_1(n: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedCtor2_1(n, TautoErasedValue_1::TautoErasedNat_1(7)) }
+fn TautoErasedFn3_1(n: TautoErasedValue_1, b: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject4_1 := b
+  match TautoErasedSubject4_1 {
+    TautoErasedValue_1::TautoErasedCtor2_1(k, x) => TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(k) + TautoErasedGetNat_1(x))
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn5_1(n: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedFn3_1(n, TautoErasedFn1_1(n)) }
+```
+
+@ cases.runtime-implicit-argument-is-materialized
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Box: (Nat) -> Type { Mk<n: Nat>(value: Nat): Box(n) }
+fn make(n: Nat): Box(n) { Mk(7) }
+fn read(n: Nat, b: Box(n)): Nat { ⊢ Nat from match b { Mk(k, x) => k + x } }
+fn run(n: Nat): Nat { read(n, make(n)) }
+perform show("value", run(5))
+```
+shows = ["value = 12"]
+backends = ["rust", "javascript"]
+rust_shows = ["value = 12"]
+javascript_shows = ["value = 12"]
+extracted_nib."TautoErasedFn*" = ```nib
+fn TautoErasedFn1_1(n: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedCtor2_1(n, TautoErasedValue_1::TautoErasedNat_1(7)) }
+fn TautoErasedFn3_1(n: TautoErasedValue_1, b: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject4_1 := b
+  match TautoErasedSubject4_1 {
+    TautoErasedValue_1::TautoErasedCtor2_1(k, x) => TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(k) + TautoErasedGetNat_1(x))
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn5_1(n: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedFn3_1(n, TautoErasedFn1_1(n)) }
+```
+
+@ cases.quotient-through-dependent-code
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Base
+import std::Quot
+inductive Token: (Nat) -> Type { Mk(n: Nat): Token(n) }
+def Parity(a: Nat, b: Nat): Prop := Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)) = Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))
+fn token(): Token(0) { Mk(0) }
+fn class_of(n: Nat): Quot(Nat, Parity) { Quot::mk(Nat, Parity, n) }
+fn parity_of(q: Quot(Nat, Parity), t: Token(0)): Nat {
+  Quot::lift(Nat, Parity, Nat, n => Nat::rem_nz(n, 2, Nat::ne_zero(2, Refl)), a => b => p => p, q)
+}
+fn same_parity(p: Quot(Nat, Parity), q: Quot(Nat, Parity), t: Token(0)): Bool {
+  Quot::lift2(
+    Parity,
+    Parity,
+    (a, b) => Nat::eq(Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)), Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))),
+    a1 => a2 => b => h => Eq::congr(Nat, Bool, Nat::rem_nz(a1, 2, Nat::ne_zero(2, Refl)), Nat::rem_nz(a2, 2, Nat::ne_zero(2, Refl)), x => Nat::eq(x, Nat::rem_nz(b, 2, Nat::ne_zero(2, Refl))), h),
+    a => b1 => b2 => h => Eq::congr(Nat, Bool, Nat::rem_nz(b1, 2, Nat::ne_zero(2, Refl)), Nat::rem_nz(b2, 2, Nat::ne_zero(2, Refl)), y => Nat::eq(Nat::rem_nz(a, 2, Nat::ne_zero(2, Refl)), y), h),
+    p,
+    q
+  )
+}
+perform show("odd", parity_of(class_of(7), token()))
+perform show("same", same_parity(class_of(3), class_of(9), token()))
+perform show("different", same_parity(class_of(4), class_of(9), token()))
+```
+shows = ["odd = 1", "same = true", "different = false"]
+backends = ["rust", "javascript"]
+rust_shows = ["odd = 1", "same = true", "different = false"]
+javascript_shows = ["odd = 1", "same = true", "different = false"]
+extracted_nib.parity_of = ```nib
+pub fn parity_of(q: nat, t: TautoErasedOpaque12_1): nat { TautoErasedGetNat_1(TautoErasedFn1_1(TautoErasedValue_1::TautoErasedNat_1(q), t.value)) }
+```
+extracted_nib.same_parity = ```nib
+pub fn same_parity(p: nat, q: nat, t: TautoErasedOpaque12_1): Bool { TautoErasedGetBool_1(TautoErasedFn4_1(TautoErasedValue_1::TautoErasedNat_1(p), TautoErasedValue_1::TautoErasedNat_1(q), t.value)) }
+```
+
+@ cases.nonuniform-recursive-opaque-boundary
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Nest: (Type) -> Type1 {
+  Leaf(A: Type, value: A): Nest(A)
+  More(A: Type, rest: Nest(List(A))): Nest(A)
+}
+fn make(): Nest(Nat) { More(Nat, Leaf(List(Nat), Cons(7, Nil))) }
+fn inspect(A: Type, tree: Nest(A)): Nat {
+  ⊢ Nat from match tree { Leaf(B, value) => 0
+    More(B, rest) => Succ(inspect(List(B), rest)) }
+}
+fn read(tree: Nest(Nat)): Nat { inspect(Nat, tree) }
+perform show("depth", read(make()))
+```
+shows = ["depth = 1"]
+backends = ["rust", "javascript"]
+rust_shows = ["depth = 1"]
+javascript_shows = ["depth = 1"]
+extracted_nib.make = ```nib
+pub fn make(): TautoErasedOpaque9_1 { TautoErasedOpaque9_1::Mk { value: TautoErasedFn5_1() } }
+```
+extracted_nib.read = ```nib
+pub fn read(tree: TautoErasedOpaque9_1): nat { TautoErasedGetNat_1(TautoErasedFn8_1(tree.value)) }
+```
+
+@ cases.dependent-effect-handler
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Box: (Nat) -> Type { Mk(n: Nat): Box(n) }
+effect ask(n: Nat): Nat
+fn request(n: Nat, box: Box(n)): Nat ! {ask} { perform ask(n) }
+fn run(n: Nat): Nat {
+  handle { request(n, Mk(n)) } with { ask(x), k => k(x + 1)
+    return result => result + 2 }
+}
+theorem run_correct(): run(7) = 10 { Refl }
+perform show("value", run(7))
+```
+shows = ["value = 10"]
+backends = ["rust", "javascript"]
+rust_shows = ["value = 10"]
+javascript_shows = ["value = 10"]
+extracted_nib.run = ```nib
+pub fn run(n: nat): nat { TautoErasedGetNat_1(TautoErasedFinish_1(TautoErasedFn7_1(TautoErasedValue_1::TautoErasedNat_1(n)))) }
+```
+
+extracted_nib."TautoErasedBind*" = ```nib
+fn TautoErasedBind_1(value: TautoErasedValue_1, next: TautoErasedValue_1): TautoErasedValue_1 { match value {
+  TautoErasedValue_1::TautoErasedRequest_1(tag, args, continuation) => TautoErasedValue_1::TautoErasedRequest_1(tag, args, TautoErasedValue_1::TautoErasedFunction_1(1, (xs: List(TautoErasedValue_1)) => TautoErasedBind_1(TautoErasedApply_1(continuation, xs), next)))
+  _ => TautoErasedApply_1(next, List::Cons(value, List::Nil))
+} }
+```
+extracted_nib."TautoErasedHandle*" = ```nib
+fn TautoErasedHandle_1(value: TautoErasedValue_1, handlers: List(TautoErasedValue_1), returned: TautoErasedValue_1): TautoErasedValue_1 { match value {
+  TautoErasedValue_1::TautoErasedRequest_1(tag, args, continuation) => {
+    let k := TautoErasedValue_1::TautoErasedFunction_1(1, (xs: List(TautoErasedValue_1)) => TautoErasedHandle_1(TautoErasedApply_1(continuation, xs), handlers, returned))
+    TautoErasedDispatch_1(tag, args, k, handlers)
+  }
+  _ => TautoErasedApply_1(returned, List::Cons(value, List::Nil))
+} }
+```
+extracted_nib."TautoErasedDispatch*" = ```nib
+fn TautoErasedDispatch_1(tag: nat, args: List(TautoErasedValue_1), continuation: TautoErasedValue_1, handlers: List(TautoErasedValue_1)): TautoErasedValue_1 { match handlers {
+  Nil => TautoErasedValue_1::TautoErasedRequest_1(tag, args, continuation)
+  List::Cons(head, tail) => match head {
+    TautoErasedValue_1::TautoErasedHandler_1(key, body) => if tag == key { TautoErasedApply_1(body, TautoErasedConcat_1(args, List::Cons(continuation, List::Nil))) } else { TautoErasedDispatch_1(tag, args, continuation, tail) }
+    _ => extract_unreachable()
+  }
+} }
+```
+extracted_nib."TautoErasedContinuation*" = ```nib
+fn TautoErasedContinuation11_1(TautoErasedOperand8_1: TautoErasedValue_1, TautoErasedOperand9_1: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedFn1_1(TautoErasedOperand8_1, TautoErasedOperand9_1) }
+fn TautoErasedContinuation13_1(n: TautoErasedValue_1, TautoErasedOperand8_1: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedBind_1(TautoErasedValue_1::TautoErasedCtor10_1(n), TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs12_1: List(TautoErasedValue_1)) => match TautoErasedArgs12_1 {
+  List::Cons(TautoErasedOperand9_1, Nil) => TautoErasedContinuation11_1(TautoErasedOperand8_1, TautoErasedOperand9_1)
+  _ => extract_unreachable()
+})) }
+fn TautoErasedContinuation21_1(TautoErasedOperand19_1: TautoErasedValue_1, TautoErasedOperand20_1: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedOperand19_1) + TautoErasedGetNat_1(TautoErasedOperand20_1)) }
+fn TautoErasedContinuation23_1(TautoErasedOperand19_1: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedBind_1(TautoErasedValue_1::TautoErasedNat_1(1), TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs22_1: List(TautoErasedValue_1)) => match TautoErasedArgs22_1 {
+  List::Cons(TautoErasedOperand20_1, Nil) => TautoErasedContinuation21_1(TautoErasedOperand19_1, TautoErasedOperand20_1)
+  _ => extract_unreachable()
+})) }
+fn TautoErasedContinuation25_1(TautoErasedOperand17_1: TautoErasedValue_1, TautoErasedOperand18_1: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedApply_1(TautoErasedOperand17_1, List::Cons(TautoErasedOperand18_1, List::Nil)) }
+fn TautoErasedContinuation27_1(x: TautoErasedValue_1, TautoErasedOperand17_1: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedBind_1(TautoErasedBind_1(x, TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs24_1: List(TautoErasedValue_1)) => match TautoErasedArgs24_1 {
+  List::Cons(TautoErasedOperand19_1, Nil) => TautoErasedContinuation23_1(TautoErasedOperand19_1)
+  _ => extract_unreachable()
+})), TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs26_1: List(TautoErasedValue_1)) => match TautoErasedArgs26_1 {
+  List::Cons(TautoErasedOperand18_1, Nil) => TautoErasedContinuation25_1(TautoErasedOperand17_1, TautoErasedOperand18_1)
+  _ => extract_unreachable()
+})) }
+fn TautoErasedContinuation29_1(x: TautoErasedValue_1, k: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedBind_1(k, TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs28_1: List(TautoErasedValue_1)) => match TautoErasedArgs28_1 {
+  List::Cons(TautoErasedOperand17_1, Nil) => TautoErasedContinuation27_1(x, TautoErasedOperand17_1)
+  _ => extract_unreachable()
+})) }
+fn TautoErasedContinuation33_1(TautoErasedOperand31_1: TautoErasedValue_1, TautoErasedOperand32_1: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedOperand31_1) + TautoErasedGetNat_1(TautoErasedOperand32_1)) }
+fn TautoErasedContinuation35_1(TautoErasedOperand31_1: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedBind_1(TautoErasedValue_1::TautoErasedNat_1(2), TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs34_1: List(TautoErasedValue_1)) => match TautoErasedArgs34_1 {
+  List::Cons(TautoErasedOperand32_1, Nil) => TautoErasedContinuation33_1(TautoErasedOperand31_1, TautoErasedOperand32_1)
+  _ => extract_unreachable()
+})) }
+fn TautoErasedContinuation37_1(result: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedBind_1(result, TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs36_1: List(TautoErasedValue_1)) => match TautoErasedArgs36_1 {
+  List::Cons(TautoErasedOperand31_1, Nil) => TautoErasedContinuation35_1(TautoErasedOperand31_1)
+  _ => extract_unreachable()
+})) }
+fn TautoErasedContinuation5_1(TautoErasedOperand2_1: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedRequest_1(0, List::Cons(TautoErasedOperand2_1, List::Nil), TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs4_1: List(TautoErasedValue_1)) => match TautoErasedArgs4_1 {
+  List::Cons(TautoErasedAnswer3_1, Nil) => TautoErasedAnswer3_1
+  _ => extract_unreachable()
+})) }
+```
+
+@ cases.dependent-effect-native-boundary
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Box: (Nat) -> Type { Mk(n: Nat): Box(n) }
+effect fetch(): Box(1)
+fn request(): Box(1) ! {fetch} { perform fetch() }
+fn make(): Box(1) { Mk(1) }
+fn read(box: Box(1)): Nat { ⊢ Nat from match box { Mk(n) => n } }
+perform show("value", handle { read(request()) } with { fetch(), k => k(make()) })
+```
+shows = ["value = 1"]
+backends = ["rust", "javascript"]
+rust_shows = ["value = 1"]
+javascript_shows = ["value = 1"]
+extracted_nib.request = ```nib
+pub fn request(): TautoErasedOpaque8_1 ! {Div, fetch} { TautoErasedOpaque8_1::Mk { value: TautoErasedRun9_1(TautoErasedFn5_1()) } }
+```
+
+extracted_nib."TautoErasedRun*" = ```nib
+fn TautoErasedRun9_1(value: TautoErasedValue_1): TautoErasedValue_1 ! {Div, fetch} { match value {
+  TautoErasedValue_1::TautoErasedRequest_1(tag, args, continuation) => if tag == 0 { match args {
+    Nil => {
+      let TautoErasedAnswer10_1 := perform fetch()
+      TautoErasedRun9_1(TautoErasedApply_1(continuation, List::Cons(TautoErasedAnswer10_1.value, Nil)))
+    }
+    _ => extract_unreachable()
+  } } else { extract_unreachable() }
+  _ => value
+} }
+```
+
+@ cases.dependent-effects-forwarding-and-sequencing
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Box: (Nat) -> Type { Mk(n: Nat): Box(n) }
+effect first(n: Nat): Nat
+effect second(n: Nat): Nat
+fn request(n: Nat, box: Box(n)): Nat ! {first, second} {
+  let x := perform first(n)
+  let y := perform second(x)
+  x + y
+}
+fn run(): Nat {
+  handle {
+    handle { request(2, Mk(2)) } with { first(x), k => k(x + 3) }
+  } with { second(y), k => k(y * 2) }
+}
+theorem run_correct(): run() = 15 { Refl }
+perform show("value", run())
+```
+shows = ["value = 15"]
+backends = ["rust", "javascript"]
+rust_shows = ["value = 15"]
+javascript_shows = ["value = 15"]
+extracted_nib.run = ```nib
+pub fn run(): nat { TautoErasedGetNat_1(TautoErasedFinish_1(TautoErasedFn22_1())) }
+```
+
+@ cases.runtime-implicit-computed-index
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Box: (Nat) -> Type { Mk<n: Nat>(value: Nat): Box(n) }
+fn make(n: Nat): Box(Succ(n)) { Mk(7) }
+fn read(n: Nat, box: Box(n)): Nat { ⊢ Nat from match box { Mk(k, x) => k + x } }
+fn run(n: Nat): Nat { read(Succ(n), make(n)) }
+perform show("value", run(5))
+```
+shows = ["value = 13"]
+backends = ["rust", "javascript"]
+rust_shows = ["value = 13"]
+javascript_shows = ["value = 13"]
+extracted_nib."TautoErasedFn*" = ```nib
+fn TautoErasedFn1_1(n: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedCtor2_1(TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(n) + 1), TautoErasedValue_1::TautoErasedNat_1(7)) }
+fn TautoErasedFn3_1(n: TautoErasedValue_1, box: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject4_1 := box
+  match TautoErasedSubject4_1 {
+    TautoErasedValue_1::TautoErasedCtor2_1(k, x) => TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(k) + TautoErasedGetNat_1(x))
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn5_1(n: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedFn3_1(TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(n) + 1), TautoErasedFn1_1(n)) }
+```
+
+@ cases.dependent-effect-state-and-multiple-resumptions
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Base
+inductive Box: (Nat) -> Type { Mk(n: Nat): Box(n) }
+effect choose(): Bool resume ω
+fn request(box: Box(0)): Nat ! {choose} { if perform choose() { 1 } else { 2 } }
+fn run(): Nat {
+  var visits: Nat := 0
+  let result := handle { request(Mk(0)) } with {
+    choose(), k => {
+      let left := k(true)
+      let right := k(false)
+      left + right
+    }
+    return value => {
+      visits := visits + 1
+      value
+    }
+  }
+  result + visits
+}
+theorem run_correct(): run() = 5 { Refl }
+perform show("value", run())
+```
+shows = ["value = 5"]
+backends = ["rust", "javascript"]
+rust_shows = ["value = 5"]
+javascript_shows = ["value = 5"]
+extracted_nib.run = ```nib
+pub fn run(): nat { TautoErasedGetNat_1(TautoErasedFinish_1(TautoErasedFn7_1())) }
+```
+
+@ cases.dependent-effect-row-polymorphism
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Box: (Nat) -> Type { Mk(n: Nat): Box(n) }
+effect ask(n: Nat): Nat
+fn apply<!e>(n: Nat, box: Box(n), action: (Nat) -> Nat ! e): Nat ! e { action(n) }
+fn request(n: Nat): Nat ! {ask} { perform ask(n) }
+fn run(): Nat {
+  handle { apply(4, Mk(4), request) } with { ask(n), k => k(n + 3) }
+}
+theorem run_correct(): run() = 7 { Refl }
+perform show("value", run())
+```
+shows = ["value = 7"]
+backends = ["rust", "javascript"]
+rust_shows = ["value = 7"]
+javascript_shows = ["value = 7"]
+extracted_nib.run = ```nib
+pub fn run(): nat { TautoErasedGetNat_1(TautoErasedFinish_1(TautoErasedFn8_1())) }
+```
+
+@ cases.dependent-effect-returned-function-application
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Box: (Nat) -> Type { Mk(n: Nat): Box(n) }
+effect ask(): Nat
+fn make(box: Box(0)): ((Nat) -> Nat) ! {ask} {
+  let n := perform ask()
+  x => n + x
+}
+fn run(): Nat {
+  handle { make(Mk(0), 5) } with { ask(), k => k(6)
+    return answer => answer
+  }
+}
+theorem run_correct(): run() = 11 { Refl }
+perform show("value", run())
+```
+shows = ["value = 11"]
+backends = ["rust", "javascript"]
+rust_shows = ["value = 11"]
+javascript_shows = ["value = 11"]
+extracted_nib.run = ```nib
+pub fn run(): nat { TautoErasedGetNat_1(TautoErasedFinish_1(TautoErasedFn14_1())) }
+```
+
+@ cases.runtime-implicit-bare-constructor-and-generic-function
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Box: (Nat) -> Type { Mk<n: Nat>: Box(n) }
+fn make(n: Nat): Box(n) { Mk }
+fn identity<A>(value: A): A { value }
+fn apply(f: (Nat) -> Nat, n: Nat, box: Box(n)): Nat { f(n) }
+fn run(n: Nat): Nat { apply(identity, n, make(n)) }
+perform show("value", run(9))
+```
+shows = ["value = 9"]
+backends = ["rust", "javascript"]
+rust_shows = ["value = 9"]
+javascript_shows = ["value = 9"]
+extracted_nib."TautoErasedFn*" = ```nib
+fn TautoErasedFn1_1(f: TautoErasedValue_1, n: TautoErasedValue_1, box: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedApply_1(f, List::Cons(n, List::Nil)) }
+fn TautoErasedFn2_1(n: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedCtor3_1(n) }
+fn TautoErasedFn4_1(n: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedFn1_1(TautoErasedApply_1(TautoErasedValue_1::TautoErasedFunction_1(2, (TautoErasedArgs8_1: List(TautoErasedValue_1)) => match TautoErasedArgs8_1 {
+  List::Cons(TautoErasedArg5_1, List::Cons(TautoErasedArg6_1, Nil)) => TautoErasedFn7_1(TautoErasedArg6_1)
+  _ => extract_unreachable()
+}), List::Cons(TautoErasedValue_1::TautoErasedUnit_1, List::Nil)), n, TautoErasedFn2_1(n)) }
+fn TautoErasedFn7_1(value: TautoErasedValue_1): TautoErasedValue_1 { value }
+```
+
+@ cases.dependent-effect-proof-result-is-sequenced
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Base
+inductive Box: (Nat) -> Type { Mk(n: Nat): Box(n) }
+effect claim(): Zero = Zero
+fn request(box: Box(0)): Nat ! {claim} {
+  let proof: Zero = Zero := perform claim()
+  7
+}
+fn run(): Nat {
+  var calls: Nat := 0
+  let value := handle { request(Mk(0)) } with {
+    claim(), k => {
+      calls := calls + 1
+      k(Refl)
+    }
+  }
+  calls + value
+}
+theorem run_correct(): run() = 8 { Refl }
+perform show("value", run())
+```
+shows = ["value = 8"]
+backends = ["rust", "javascript"]
+rust_shows = ["value = 8"]
+javascript_shows = ["value = 8"]
+extracted_nib.run = ```nib
+pub fn run(): nat { TautoErasedGetNat_1(TautoErasedFinish_1(TautoErasedFn7_1())) }
+```
+
+@ cases.fixed-width-indexed-reading
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+// チャンネル番号を型に持つ測定値。I64 の範囲の証明は抽出時に消去される。
+import std::Nat
+import std::Int
+import std::SInt
+
+inductive Reading: (Nat) -> Type {
+  Capture(channel: Nat, value: I64): Reading(channel)
+}
+
+fn channel_three(reading: Reading(3)): I64 {
+  ⊢ I64 from match reading {
+    Capture(channel, value) => value
+  }
+}
+
+fn temperature(): I64 {
+  let sample := Capture(3, I64::Mk(IntOfNat(21), Refl))
+  channel_three(sample)
+}
+
+theorem temperature_correct(): I64::val(temperature()) = IntOfNat(21) {
+  Refl
+}
+
+perform show("temperature", temperature())
+```
+shows = ["temperature = 21"]
+backends = ["rust", "javascript"]
+rust_shows = ["temperature = 21"]
+javascript_shows = ["temperature = 21"]
+
+@ cases.runtime-integer-explains-unchecked-dependent-call
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Box: (Nat) -> Type { Mk(n: Nat): Box(n) }
+fn read(n: Nat, value: Box(n)): Nat { n }
+fn demo(): i64 { read(0, Mk(0)) }
+```
+load_error = "`demo` is not checked by the kernel: it uses `i64`, which runs as written: `i64` is a runtime integer type; for checked code, import `std::SInt` and use `I64`, constructed with a proof that the value is in range; it extracts to `i64`"
+
+@ cases.transitive-runtime-integer-explains-unchecked-dependent-call
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Box: (Nat) -> Type { Mk(n: Nat): Box(n) }
+fn read(n: Nat, value: Box(n)): Nat { n }
+fn native(): i64 { 10 }
+fn demo(): Nat {
+  let number := native()
+  read(0, Mk(0))
+}
+```
+load_error = "`demo` is not checked by the kernel: it uses `native`, which runs as written: it uses `i64`, which runs as written: `i64` is a runtime integer type"

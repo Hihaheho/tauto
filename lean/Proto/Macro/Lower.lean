@@ -15,6 +15,7 @@ namespace Proto.Macro
 /-- A syntax value: what a macro function builds (the `Syn*` data of
 `std/prelude/Macro.taut`). -/
 inductive Val where
+  | global (reference : DeclRef)
   | ident (i : Ident)
   | atom (n : Nat)
   | lam (b : Ident) (body : Val)
@@ -22,6 +23,7 @@ inductive Val where
   | call (m : Nat) (text : String)
 
 def lower : Val → Tm
+  | .global reference => .global reference
   | .ident i => .var i
   | .atom n => .atom n
   | .lam b body => .lam b (lower body)
@@ -29,6 +31,7 @@ def lower : Val → Tm
   | .call m t => .call m t
 
 def lift : Tm → Val
+  | .global reference => .global reference
   | .var i => .ident i
   | .atom n => .atom n
   | .lam b body => .lam b (lift body)
@@ -37,6 +40,7 @@ def lift : Tm → Val
 
 /-- The binders of a value, outside in. -/
 def Val.binders : Val → List Ident
+  | .global _ => []
   | .ident _ => []
   | .atom _ => []
   | .lam b body => b :: body.binders
@@ -45,6 +49,7 @@ def Val.binders : Val → List Ident
 
 /-- The binders of a term, outside in. -/
 def Tm.binders : Tm → List Ident
+  | .global _ => []
   | .var _ => []
   | .atom _ => []
   | .lam b body => b :: body.binders
@@ -55,6 +60,7 @@ def Tm.binders : Tm → List Ident
 the same term once the scopes are left out. -/
 theorem lower_binders (v : Val) : (lower v).binders = v.binders := by
   induction v with
+  | global reference => rfl
   | ident i => rfl
   | atom n => rfl
   | lam b body ih => simp [lower, Tm.binders, Val.binders, ih]
@@ -65,6 +71,7 @@ theorem lower_binders (v : Val) : (lower v).binders = v.binders := by
 the same thing. -/
 theorem lower_lift (t : Tm) : lower (lift t) = t := by
   induction t with
+  | global reference => rfl
   | var i => rfl
   | atom n => rfl
   | lam b body ih => simp [lift, lower, ih]
@@ -73,11 +80,16 @@ theorem lower_lift (t : Tm) : lower (lift t) = t := by
 
 theorem lift_lower (v : Val) : lift (lower v) = v := by
   induction v with
+  | global reference => rfl
   | ident i => rfl
   | atom n => rfl
   | lam b body ih => simp [lift, lower, ih]
   | app f a ihf iha => simp [lift, lower, ihf, iha]
   | call m t => rfl
 
+
+/-- Lowering uses the payload directly, without a spelling or scope lookup. -/
+theorem lower_global (reference : DeclRef) :
+    lower (.global reference) = .global reference := rfl
 
 end Proto.Macro

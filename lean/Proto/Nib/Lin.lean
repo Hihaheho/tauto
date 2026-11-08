@@ -67,6 +67,7 @@ mutual
     | .text _ => 0
     | .dec _ => 0
     | .flt _ => 0
+    | .flt32 _ => 0
     | .prim _ _ _ => 0
     | .lam ps b => b.occ (a.up ps.length)
     | .app f args => f.occ a + Tms.occ a args
@@ -115,6 +116,7 @@ mutual
     | .text _ => 0
     | .dec _ => 0
     | .flt _ => 0
+    | .flt32 _ => 0
     | .prim _ _ _ => 0
     | .lam ps b => b.occLo (a.up ps.length)
     | .app f args => f.occLo a + Tms.occLo a args
@@ -280,6 +282,7 @@ mutual
     | text {S Γ C s} : Lin os sg S Γ C (.text s)
     | dec {S Γ C q} : Lin os sg S Γ C (.dec q)
     | flt {S Γ C f} : Lin os sg S Γ C (.flt f)
+    | flt32 {S Γ C f} : Lin os sg S Γ C (.flt32 f)
     | prim {S Γ C p T ρ} : (os.strict = true → p ≠ .budget ∧ p ≠ .more ∧ p ≠ .unbounded) →
         Lin os sg S Γ C (.prim p T ρ)
     /-- A function value captures nothing owned. -/
@@ -458,6 +461,7 @@ mutual
     | .text _, _ => by simp [Tm.ren, Tm.occ]
     | .dec _, _ => by simp [Tm.ren, Tm.occ]
     | .flt _, _ => by simp [Tm.ren, Tm.occ]
+    | .flt32 _, _ => by simp [Tm.ren, Tm.occ]
     | .prim _ _ _, _ => by simp [Tm.ren, Tm.occ]
     | .lam ps b, ξ => by simp only [Tm.ren, Tm.occ, Item.up_loc]; exact Tm.occ_ren_loc l b _
     | .app f args, ξ => by simp only [Tm.ren, Tm.occ]; rw [Tm.occ_ren_loc l f, Tms.occ_ren_loc l args]
@@ -519,6 +523,7 @@ mutual
     | .text _, _, _, _ => by simp [Tm.ren, Tm.occ]
     | .dec _, _, _, _ => by simp [Tm.ren, Tm.occ]
     | .flt _, _, _, _ => by simp [Tm.ren, Tm.occ]
+    | .flt32 _, _, _, _ => by simp [Tm.ren, Tm.occ]
     | .prim _ _ _, _, _, _ => by simp [Tm.ren, Tm.occ]
     | .lam ps b, ξ, hξ, i => by
         simp only [Tm.ren, Tm.occ, Item.up_var]
@@ -588,6 +593,7 @@ mutual
     | .text _, _ => by simp [Tm.ren, Tm.occLo]
     | .dec _, _ => by simp [Tm.ren, Tm.occLo]
     | .flt _, _ => by simp [Tm.ren, Tm.occLo]
+    | .flt32 _, _ => by simp [Tm.ren, Tm.occLo]
     | .prim _ _ _, _ => by simp [Tm.ren, Tm.occLo]
     | .lam ps b, ξ => by simp only [Tm.ren, Tm.occLo, Item.up_loc]; exact Tm.occLo_ren_loc l b _
     | .app f args, ξ => by simp only [Tm.ren, Tm.occLo]; rw [Tm.occLo_ren_loc l f, Tms.occLo_ren_loc l args]
@@ -649,6 +655,7 @@ mutual
     | .text _, _, _, _ => by simp [Tm.ren, Tm.occLo]
     | .dec _, _, _, _ => by simp [Tm.ren, Tm.occLo]
     | .flt _, _, _, _ => by simp [Tm.ren, Tm.occLo]
+    | .flt32 _, _, _, _ => by simp [Tm.ren, Tm.occLo]
     | .prim _ _ _, _, _, _ => by simp [Tm.ren, Tm.occLo]
     | .lam ps b, ξ, hξ, i => by
         simp only [Tm.ren, Tm.occLo, Item.up_var]
@@ -725,6 +732,7 @@ mutual
     | .text _, _, _, _ => by simp [Tm.ren, Tm.occ]
     | .dec _, _, _, _ => by simp [Tm.ren, Tm.occ]
     | .flt _, _, _, _ => by simp [Tm.ren, Tm.occ]
+    | .flt32 _, _, _, _ => by simp [Tm.ren, Tm.occ]
     | .prim _ _ _, _, _, _ => by simp [Tm.ren, Tm.occ]
     | .lam ps b, ξ, j, h => by
         simp only [Tm.ren, Tm.occ, Item.up_var]
@@ -849,6 +857,7 @@ mutual
     | .text _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .dec _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .flt _, _, _, _ => by simp [Tm.subst, Tm.occ]
+    | .flt32 _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .prim _ _ _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .lam ps b, σ, j, h => by
         simp only [Tm.subst, Tm.occ, Item.up_var]
@@ -941,6 +950,7 @@ mutual
     | .text _, _, _, _ => by simp [Tm.subst, Tm.occLo]
     | .dec _, _, _, _ => by simp [Tm.subst, Tm.occLo]
     | .flt _, _, _, _ => by simp [Tm.subst, Tm.occLo]
+    | .flt32 _, _, _, _ => by simp [Tm.subst, Tm.occLo]
     | .prim _ _ _, _, _, _ => by simp [Tm.subst, Tm.occLo]
     | .lam ps b, σ, j, h => by
         simp only [Tm.subst, Tm.occLo, Item.up_var]
@@ -1041,6 +1051,7 @@ mutual
     | .text _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .dec _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .flt _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
+    | .flt32 _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .prim _ _ _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .ref _ _ _, _, _, _, _ => by simp [Tm.subst, Tm.occ]
     | .var k, σ, a, hl, hv => by
@@ -1136,7 +1147,7 @@ mutual
     intro l hl
     match h with
     | .var _ _ => simp [Tm.occ]
-    | .int | .bool | .unit | .text | .dec | .flt | .prim _ => simp [Tm.occ]
+    | .int | .bool | .unit | .text | .dec | .flt | .flt32 | .prim _ => simp [Tm.occ]
     | .lam hb _ _ => simp only [Tm.occ, Item.up_loc]; exact hb.noHigh l hl
     | .app hf ha _ _ => simp only [Tm.occ]; rw [hf.noHigh l hl, ha.noHigh l hl]
     | .block hb _ ha _ _ =>
@@ -1298,6 +1309,7 @@ mutual
     | .text => exact .text
     | .dec => exact .dec
     | .flt => exact .flt
+    | .flt32 => exact .flt32
     | .prim hp => exact .prim hp
     | .lam hb hu hn =>
         exact .lam (hb.ext x) hu (hn.ext x (fun l hl => by simp only [Tm.occ, Item.up_loc]; exact hb.noHigh l hl))
@@ -1576,6 +1588,7 @@ mutual
     | .text => rw [Tm.ren]; exact .text
     | .dec => rw [Tm.ren]; exact .dec
     | .flt => rw [Tm.ren]; exact .flt
+    | .flt32 => rw [Tm.ren]; exact .flt32
     | .prim hp => rw [Tm.ren]; exact .prim hp
     | .lam (ps := ps) hb hu hn =>
         have r' := r.upN ps (Flags.byType ps) (Flags.byType_length ps)
@@ -1694,6 +1707,7 @@ mutual
     | .text _, _ => by simp [Tm.occLo, Tm.occ]
     | .dec _, _ => by simp [Tm.occLo, Tm.occ]
     | .flt _, _ => by simp [Tm.occLo, Tm.occ]
+    | .flt32 _, _ => by simp [Tm.occLo, Tm.occ]
     | .prim _ _ _, _ => by simp [Tm.occLo, Tm.occ]
     | .ref _ _ _, _ => by simp [Tm.occLo, Tm.occ]
     | .var _, _ => by simp [Tm.occLo, Tm.occ]
@@ -2018,6 +2032,7 @@ mutual
     | .text => rw [Tm.subst]; exact .text
     | .dec => rw [Tm.subst]; exact .dec
     | .flt => rw [Tm.subst]; exact .flt
+    | .flt32 => rw [Tm.subst]; exact .flt32
     | .prim hp => rw [Tm.subst]; exact .prim hp
     | .lam (ps := ps) hb hu hn =>
         have r' := r.upN ps (Flags.byType ps) (Flags.byType_length ps)
@@ -2155,6 +2170,7 @@ mutual
     | .text _, _ => by simp [Tm.inst, Tm.occ]
     | .dec _, _ => by simp [Tm.inst, Tm.occ]
     | .flt _, _ => by simp [Tm.inst, Tm.occ]
+    | .flt32 _, _ => by simp [Tm.inst, Tm.occ]
     | .prim _ _ _, _ => by simp [Tm.inst, Tm.occ]
     | .ref _ _ _, _ => by simp [Tm.inst, Tm.occ]
     | .var _, _ => by simp [Tm.inst, Tm.occ]
@@ -2220,6 +2236,7 @@ mutual
     | .text _, _ => by simp [Tm.inst, Tm.occLo]
     | .dec _, _ => by simp [Tm.inst, Tm.occLo]
     | .flt _, _ => by simp [Tm.inst, Tm.occLo]
+    | .flt32 _, _ => by simp [Tm.inst, Tm.occLo]
     | .prim _ _ _, _ => by simp [Tm.inst, Tm.occLo]
     | .ref _ _ _, _ => by simp [Tm.inst, Tm.occLo]
     | .var _, _ => by simp [Tm.inst, Tm.occLo]
@@ -2519,6 +2536,7 @@ mutual
     | .text => rw [Tm.inst]; exact .text
     | .dec => rw [Tm.inst]; exact .dec
     | .flt => rw [Tm.inst]; exact .flt
+    | .flt32 => rw [Tm.inst]; exact .flt32
     | .prim hp => rw [Tm.inst]; exact .prim hp
     | .lam (ps := ps) hb hu hn =>
         have hb' := hb.inst hs hθ hq

@@ -17,10 +17,12 @@
 //! read as empty. A source-matched value report may resolve a constructor
 //! owner; its callable contracts still come from the source declaration.
 
+use crate::surface::Name;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tauto_message::{Message, msg};
 
 use tauto_parol::Span;
 
@@ -29,12 +31,12 @@ use crate::surface::{
     BudgetLimit, DataDecl, EffectDecl, FnDecl, Handler, Pattern, Program, Stmt, SurfaceTerm,
     TermId, TermKind,
 };
-use crate::types::{Quant, TypeReport, prelude};
+use crate::types::{Quant, TypeReport};
 
 mod structural;
 mod values;
 
-pub type Row = BTreeSet<String>;
+pub type Row = BTreeSet<Name>;
 
 /// An executable declaration occurrence, independent of its source spelling
 /// and of identities retained by cloned body terms.
@@ -48,9 +50,10 @@ fn fresh_identity() -> u64 {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowVariable {
-    pub name: String,
+    source: Option<(usize, crate::surface::TermId, usize)>,
+    pub name: Name,
     pub owner: RowOwner,
-    pub bound: Option<String>,
+    pub bound: Option<crate::surface::GenericBound>,
     /// Declared a row variable, `<!e>`. A name written in a row (`e`) that is not declared is
     /// reported; it is not read as a row variable because of how it is used.
     pub declared: bool,
@@ -58,7 +61,7 @@ pub struct RowVariable {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeclarationRows {
-    pub name: String,
+    pub name: Name,
     pub body: TermId,
     pub owner: RowOwner,
     /// The contract callers see: the written row, otherwise the inferred row.
@@ -80,19 +83,24 @@ impl fmt::Display for RowDiagnostic {
 
 #[derive(Debug, Default, Clone)]
 pub struct RowReport {
-    pub functions: Vec<(String, Row)>,
+    /// Every function's inferred row.
+    pub functions: Vec<(Name, Row)>,
     pub errors: Vec<RowDiagnostic>,
     /// What each call and `perform` performs itself (a call: its callee's
     /// row, instantiated; not what its arguments perform), by the term's
     /// occurrence identity. `lin.rs` checks control-flow linearity against it.
     pub calls: HashMap<TermId, Row>,
-    pub quants: HashMap<String, Quant>,
+    /// Each operation's resume quantity.
+    pub quants: HashMap<Name, Quant>,
     pub declarations: Vec<DeclarationRows>,
     /// The standard effects (`std/prelude/Os.taut`) that reach the top level
     /// unanswered: what the host answers, and so the permissions a run needs.
     pub host_effects: BTreeSet<String>,
+    /// Whether `wait` is among them: the top level is then a future the host
+    /// runs.
+    pub host_waits: bool,
     pub call_owners: HashMap<TermId, Option<RowOwner>>,
-    pub row_variables: HashMap<String, RowVariable>,
+    pub row_variables: HashMap<Name, RowVariable>,
     // Addresses are lookup keys for the borrowed immutable AST only. They
     // never order declarations or appear in diagnostics or generated code.
     owner_sources: HashMap<RowOwner, usize>,
@@ -104,71 +112,67 @@ pub struct RowReport {
 impl RowReport {
     pub fn declaration_row(
         &self,
-        name: &str,
+        name: &Name,
         body: TermId,
-    ) -> Result<Option<&DeclarationRows>, String> {
+    ) -> Result<Option<&DeclarationRows>, Message> {
         let mut matches = self
             .declarations
             .iter()
-            .filter(|d| d.name == name && d.body == body);
+            .filter(|d| d.name == *name && d.body == body);
         let first = matches.next();
         if matches.next().is_some()
             || first.is_some_and(|d| self.ambiguous_owners.contains(&d.owner))
         {
-            return Err(format!("ambiguous effect-row declaration `{name}`"));
+            return Err(msg!("rows-ambiguous-declaration", name = name.to_string()));
         }
         Ok(first)
     }
 
-    /// Convert only variables owned by this declaration to its source names.
+    /// Validate that row variables belong to this declaration, preserving their identities.
     /// A captured row cannot become a same-named quantified row in a backend.
-    pub fn normalize_row(&self, row: &Row, owner: Option<RowOwner>) -> Result<Row, String> {
+    pub fn normalize_row(&self, row: &Row, owner: Option<RowOwner>) -> Result<Row, Message> {
         row.iter()
             .map(|effect| {
                 if let Some(what) = effect.strip_prefix('?') {
-                    return Err(display_text(&unfollowed(what), &self.row_variables));
+                    return Err(Message::text(display_text(
+                        &unfollowed(what),
+                        &self.row_variables,
+                    )));
                 }
-                let Some(key) = effect.strip_prefix('|') else {
+                let Some(key) = effect.row_variable() else {
                     return Ok(effect.clone());
                 };
-                match self.row_variables.get(key) {
-                    Some(var) if Some(var.owner) == owner => Ok(format!("|{}", var.name)),
-                    Some(var) => Err(format!(
-                        "the captured row variable `{}` needs its lexical owner",
-                        var.name
+                match self.row_variables.get(&key) {
+                    Some(var) if Some(var.owner) == owner => Ok(effect.clone()),
+                    Some(var) => Err(msg!(
+                        "rows-captured-variable-needs-owner",
+                        var = var.name.as_str()
                     )),
-                    None if key.starts_with("@row:") => {
-                        Err("an effect row has no binder identity".into())
-                    }
-                    None => Err(format!("the row variable `{key}` has no lexical owner")),
+                    None if key.starts_with("@row:") => Err(msg!("rows-no-binder-identity")),
+                    None => Err(msg!("rows-variable-no-owner", var = key.to_string())),
                 }
             })
             .collect()
     }
 
     /// The calls' rows, normalized; what fails says where the call is.
-    pub fn normalized_calls(&self) -> Result<HashMap<TermId, Row>, (String, Option<Span>)> {
+    pub fn normalized_calls(&self) -> Result<HashMap<TermId, Row>, (Message, Option<Span>)> {
         if let Some(id) = self
             .ambiguous_calls
             .iter()
             .min_by_key(|id| (id.span().start, id.span().end))
         {
-            return Err((
-                "ambiguous lexical occurrence of an effect-row call".into(),
-                Some(id.span()),
-            ));
+            return Err((msg!("rows-ambiguous-call"), Some(id.span())));
         }
         let mut calls: Vec<_> = self.calls.iter().collect();
         calls.sort_by_key(|(id, row)| (id.span().start, id.span().end, self.display_row(row)));
         calls
             .into_iter()
             .map(|(id, row)| {
-                let owner = self.call_owners.get(id).ok_or_else(|| {
-                    (
-                        "a call has no lexical effect-row owner".to_string(),
-                        Some(id.span()),
-                    )
-                })?;
+                let owner = self
+                    .call_owners
+                    .get(id)
+                    .ok_or_else(|| (msg!("rows-call-no-owner"), Some(id.span())))?;
                 let row = self
                     .normalize_row(row, *owner)
                     .map_err(|e| (e, Some(id.span())))?;
@@ -177,7 +181,77 @@ impl RowReport {
             .collect()
     }
 
-    pub fn merge_prelude(&mut self, other: RowReport) {
+    fn same_row(&self, a: &Row, other: &Self, b: &Row) -> bool {
+        a.len() == b.len()
+            && a.iter().all(|left| {
+                b.iter().any(|right| {
+                    if left == right {
+                        return true;
+                    }
+                    let Some(l) = left
+                        .row_variable()
+                        .and_then(|key| self.row_variables.get(&key))
+                    else {
+                        return false;
+                    };
+                    let Some(r) = right
+                        .row_variable()
+                        .and_then(|key| other.row_variables.get(&key))
+                    else {
+                        return false;
+                    };
+                    // Independently checked raw syntax receives fresh local identities.
+                    // Only the same borrowed binder occurrence establishes correspondence.
+                    l.source.is_some()
+                        && l.source == r.source
+                        && l.bound == r.bound
+                        && l.declared == r.declared
+                })
+            })
+    }
+
+    pub fn merge_prelude(&mut self, mut other: RowReport) {
+        // Checking the same borrowed declaration twice allocates two report
+        // owners, but its resolved generic binders retain their identities.
+        // Align the owners before merging either calls or binder metadata.
+        let owners: HashMap<_, _> = other
+            .declarations
+            .iter()
+            .filter_map(|declaration| {
+                let source = other.owner_sources.get(&declaration.owner)?;
+                let existing = self.declarations.iter().find(|existing| {
+                    self.owner_sources.get(&existing.owner) == Some(source)
+                        && existing.name == declaration.name
+                        && existing.body == declaration.body
+                })?;
+                Some((declaration.owner, existing.owner))
+            })
+            .collect();
+        for declaration in &mut other.declarations {
+            if let Some(owner) = owners.get(&declaration.owner) {
+                declaration.owner = *owner;
+            }
+        }
+        for owner in other.call_owners.values_mut().flatten() {
+            if let Some(existing) = owners.get(owner) {
+                *owner = *existing;
+            }
+        }
+        for variable in other.row_variables.values_mut() {
+            if let Some(owner) = owners.get(&variable.owner) {
+                variable.owner = *owner;
+            }
+        }
+        other.owner_sources = other
+            .owner_sources
+            .into_iter()
+            .map(|(owner, source)| (owners.get(&owner).copied().unwrap_or(owner), source))
+            .collect();
+        other.ambiguous_owners = other
+            .ambiguous_owners
+            .into_iter()
+            .map(|owner| owners.get(&owner).copied().unwrap_or(owner))
+            .collect();
         for declaration in &other.declarations {
             let source = other.owner_sources.get(&declaration.owner);
             let identical = self.declarations.iter().any(|d| {
@@ -193,7 +267,7 @@ impl RowReport {
                                 .normalize_row(&declaration.row, Some(declaration.owner))
                                 .ok(),
                         )
-                        .is_some_and(|(a, b)| a == b)
+                        .is_some_and(|(a, b)| self.same_row(&a, &other, &b))
                     && self
                         .normalize_row(&d.inferred, Some(d.owner))
                         .ok()
@@ -202,7 +276,7 @@ impl RowReport {
                                 .normalize_row(&declaration.inferred, Some(declaration.owner))
                                 .ok(),
                         )
-                        .is_some_and(|(a, b)| a == b)
+                        .is_some_and(|(a, b)| self.same_row(&a, &other, &b))
             });
             if !identical {
                 self.declarations.push(declaration.clone());
@@ -221,7 +295,7 @@ impl RowReport {
                             self.normalize_row(existing, *a)
                                 .ok()
                                 .zip(other.normalize_row(row, *b).ok())
-                                .is_some_and(|(a, b)| a == b)
+                                .is_some_and(|(a, b)| self.same_row(&a, &other, &b))
                         });
                 if !agrees {
                     self.ambiguous_calls.insert(*id);
@@ -260,16 +334,16 @@ impl RowReport {
     /// any for a row variable (`<=1` and below when `bounded` says it is
     /// bounded so), none for an effect that cannot be followed (that is
     /// reported already).
-    pub fn quants_of(&self, effect: &str, bounded: &dyn Fn(&str) -> bool) -> Vec<Quant> {
-        if let Some(var) = effect.strip_prefix('|') {
-            if let Some(var) = self.row_variables.get(var) {
+    pub fn quants_of(&self, effect: &Name, bounded: &dyn Fn(&Name) -> bool) -> Vec<Quant> {
+        if let Some(var) = effect.row_variable() {
+            if let Some(var) = self.row_variables.get(&var) {
                 return match var.bound.as_deref() {
                     Some("direct") => vec![Quant::Direct],
                     Some("<=1") => vec![Quant::Zero, Quant::AtMostOne, Quant::One],
                     _ => vec![Quant::Zero, Quant::AtMostOne, Quant::One, Quant::Many],
                 };
             }
-            return if bounded(var) {
+            return if bounded(&var) {
                 vec![Quant::Zero, Quant::AtMostOne, Quant::One]
             } else {
                 vec![Quant::Zero, Quant::AtMostOne, Quant::One, Quant::Many]
@@ -313,7 +387,7 @@ pub fn check_program_rows_javascript_with_types(
 /// the file facade revalidates extraction evidence before using this entry point.
 pub fn check_program_rows_trusted(
     program: &Program,
-    total: &HashSet<String>,
+    total: &HashSet<Name>,
     javascript: bool,
 ) -> RowReport {
     let mut analysis = Analysis::new(program);
@@ -326,7 +400,7 @@ pub fn check_program_rows_trusted(
 /// with an optional source-matched value report for nominal constructor owners.
 pub fn check_program_rows_trusted_with_types(
     program: &Program,
-    total: &HashSet<String>,
+    total: &HashSet<Name>,
     javascript: bool,
     types: &TypeReport,
 ) -> RowReport {
@@ -340,12 +414,7 @@ pub fn check_program_rows_trusted_with_types(
 /// each function in the order of the report, each error in order, each call
 /// sorted by its span and each quantity sorted by the effect's name.
 pub fn dump_rows(report: &RowReport) -> String {
-    let row = |r: &Row| {
-        format!(
-            "{{{}}}",
-            show(report.display_row(r).iter().map(|s| s.as_str()))
-        )
-    };
+    let row = |r: &Row| format!("{{{}}}", show(report.display_row(r).iter()));
     let mut out = String::new();
     for (name, r) in &report.functions {
         out.push_str(&format!("function {name} {}\n", row(r)));
@@ -373,8 +442,8 @@ pub fn dump_rows(report: &RowReport) -> String {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Latent {
     Known(Callable),
-    Named(String, Vec<Latent>),
-    Record(String, Vec<(String, Latent)>),
+    Named(Name, Vec<Latent>),
+    Record(Name, Vec<(String, Latent)>),
     Plain,
     Effects(Row),
     Borrow(Box<Latent>, bool),
@@ -393,7 +462,7 @@ struct Callable {
     params: Vec<Latent>,
     mutable_params: Vec<bool>,
     result: Box<Latent>,
-    generics: Vec<(String, Option<String>)>,
+    generics: Vec<(Name, Option<crate::surface::GenericBound>)>,
     host: bool,
     row_written: bool,
 }
@@ -421,26 +490,35 @@ impl Latent {
     }
 }
 
-type Locals = Vec<(String, Latent)>;
+type Locals = Vec<(Name, Latent)>;
 
 struct Analysis<'a> {
     program: &'a Program,
-    nominal_owners: Option<Cow<'a, HashMap<TermId, String>>>,
+    resolved: bool,
+    nominal_owners: Option<Cow<'a, HashMap<TermId, Name>>>,
     nominal_owners_checked: bool,
-    fns: HashMap<&'a str, &'a FnDecl>,
-    externs: HashSet<&'a str>,
-    datas: HashMap<&'a str, &'a DataDecl>,
-    operations: HashMap<&'a str, &'a EffectDecl>,
+    /// The checked type of each term, read once when a record's rows index an effect.
+    term_types: Option<HashMap<TermId, crate::types::Ty>>,
+    fns: HashMap<&'a Name, &'a FnDecl>,
+    externs: HashSet<&'a Name>,
+    datas: HashMap<&'a Name, &'a DataDecl>,
+    structs: HashSet<&'a Name>,
+    /// The constructors of `datas`, keyed by the names that select them.
+    constructors: values::Constructors<'a>,
+    /// The fields of each value `members` has unfolded. They depend only on
+    /// the value and the declarations, which do not change during analysis.
+    members: std::cell::RefCell<HashMap<Latent, Option<std::rc::Rc<[((Name, usize), Latent)]>>>>,
+    operations: HashMap<&'a Name, &'a EffectDecl>,
     expected_result: Option<Latent>,
-    memo: HashMap<&'a str, Row>,
-    in_progress: HashSet<&'a str>,
-    recursive_refs: HashSet<&'a str>,
+    memo: HashMap<&'a Name, Row>,
+    in_progress: HashSet<&'a Name>,
+    recursive_refs: HashSet<&'a Name>,
     /// Recursive functions that call only themselves, on a strict part of
     /// a parameter: they end without a proof.
-    structural: HashSet<&'a str>,
+    structural: HashSet<&'a Name>,
     /// Exact declarations certified by the extraction facade.
-    total: HashSet<String>,
-    quants: HashMap<String, Quant>,
+    total: HashSet<Name>,
+    quants: HashMap<Name, Quant>,
     calls: HashMap<TermId, Row>,
     /// Errors found while following calls, once each.
     found: Vec<RowDiagnostic>,
@@ -448,27 +526,30 @@ struct Analysis<'a> {
     /// the class expansion made is reported there: its own span is in no
     /// source.
     written: Option<Span>,
-    direct_vars: Vec<String>,
+    /// The row variables of the function being followed that are bounded
+    /// `direct`.
+    direct_vars: Vec<Name>,
     /// The row variables of the calls whose arguments are being read, which
     /// a row the context gives may name before they are solved.
-    inferring: Vec<String>,
+    inferring: Vec<Name>,
     /// The `extern` functions the program declares: their rows are empty.
-    user_externs: HashSet<&'a str>,
+    user_externs: HashSet<&'a Name>,
     javascript: bool,
     owners: HashMap<usize, RowOwner>,
     owner_sources: HashMap<RowOwner, usize>,
     owner_order: Vec<RowOwner>,
     declarations: HashMap<RowOwner, DeclarationRows>,
-    scopes: HashMap<RowOwner, Vec<(String, String)>>,
-    generic_keys: HashMap<RowOwner, Vec<(String, Option<String>)>>,
-    scope: Vec<(String, String)>,
+    scopes: HashMap<RowOwner, Vec<(Name, Name)>>,
+    generic_keys: HashMap<RowOwner, Vec<(Name, Option<crate::surface::GenericBound>)>>,
+    scope: Vec<(Name, Name)>,
     owner: Option<RowOwner>,
-    row_variables: HashMap<String, RowVariable>,
+    row_variables: HashMap<Name, RowVariable>,
+    task_effects: BTreeSet<String>,
     call_owners: HashMap<TermId, Option<RowOwner>>,
     ambiguous_owners: HashSet<RowOwner>,
     ambiguous_calls: HashSet<TermId>,
     call_sources: HashMap<TermId, usize>,
-    constructions: HashMap<TermId, (Option<RowOwner>, String)>,
+    constructions: HashMap<TermId, (Option<RowOwner>, Name)>,
     /// Constructor applications whose arguments are themselves only
     /// constructors and literals: constant data, such as a long list.
     constant_data: HashMap<TermId, bool>,
@@ -476,6 +557,12 @@ struct Analysis<'a> {
     /// datum is visited again from each enclosing constructor, so without
     /// this a list of n items costs n² before the program runs.
     constant_values: HashMap<TermId, Vec<(Option<RowOwner>, Option<Latent>, Latent)>>,
+    /// The value of each `λ`, by its locals and the type expected of it,
+    /// while the same functions are being inferred. Reading a `λ` reads its
+    /// body for its row and again for its value, and an argument `λ` is read
+    /// again by the call that takes it: without this, `λ`s nested n deep cost
+    /// 2ⁿ (a view of nested `λ`s took minutes).
+    lambda_values: HashMap<(TermId, Option<RowOwner>, Option<Latent>, Locals), Latent>,
     /// The row last found for each term, and for each statement of a block.
     term_rows: HashMap<TermId, Row>,
     block_rows: HashMap<TermId, Vec<Row>>,
@@ -483,16 +570,20 @@ struct Analysis<'a> {
     continuations: HashMap<(TermId, usize), Row>,
 }
 
-fn effect_of_op(op: &str) -> String {
-    if op == "exceeded" {
-        "Exceeded".into()
+fn effect_of_op(op: &Name) -> Name {
+    if tauto_surface::bindings::is_library(&op, "exceeded") {
+        if op.is_resolved() {
+            tauto_surface::bindings::library_name("Exceeded")
+        } else {
+            Name::from("Exceeded")
+        }
     } else {
-        op.to_string()
+        op.clone()
     }
 }
 
-fn unchecked(what: &str) -> String {
-    format!("?{what}")
+fn unchecked(what: &str) -> Name {
+    format!("?{what}").into()
 }
 
 /// What an unchecked row says. A name that is not the program's own is said
@@ -522,18 +613,16 @@ const KERNEL_NAMES: &[&str] = &[
     "Nat::rem_nz",
 ];
 
-fn display_row(row: &Row, variables: &HashMap<String, RowVariable>) -> Row {
-    row.iter()
-        .map(|effect| display_text(effect, variables))
-        .collect()
+fn display_row(row: &Row, _variables: &HashMap<Name, RowVariable>) -> Row {
+    row.clone()
 }
 
-fn display_text(text: &str, variables: &HashMap<String, RowVariable>) -> String {
+fn display_text(text: &str, variables: &HashMap<Name, RowVariable>) -> String {
     let mut text = text.to_string();
     let mut variables: Vec<_> = variables.iter().collect();
     variables.sort_by_key(|(key, _)| std::cmp::Reverse(key.len()));
     for (key, var) in variables {
-        text = text.replace(key, &var.name);
+        text = text.replace(key.as_str(), var.name.as_str());
     }
     shown_indices(&text)
 }
@@ -541,7 +630,7 @@ fn display_text(text: &str, variables: &HashMap<String, RowVariable>) -> String 
 /// Whether a row of `f` (its own or a parameter's) still writes an effect
 /// with type arguments: one the index expansion did not rename.
 fn indexed_template(f: &FnDecl) -> bool {
-    let unexpanded = |row: &[String]| row.iter().any(|e| e.contains('(') && !e.contains('@'));
+    let unexpanded = |row: &[Name]| row.iter().any(|e| e.contains('(') && !e.contains('@'));
     if f.effects.as_deref().is_some_and(unexpanded) {
         return true;
     }
@@ -601,19 +690,38 @@ pub fn shown_indices(text: &str) -> String {
 }
 
 impl<'a> Analysis<'a> {
+    fn intrinsic(&self, name: &str) -> Name {
+        if self.resolved {
+            tauto_surface::bindings::library_name(name)
+        } else {
+            Name::from(name)
+        }
+    }
+
     fn new(program: &'a Program) -> Self {
         let mut fns = HashMap::new();
         let mut datas = HashMap::new();
+        let mut structs = HashSet::new();
         let mut externs = HashSet::new();
         let mut operations = HashMap::new();
-        let mut quants = HashMap::from([
-            ("show".to_string(), Quant::Direct),
-            ("Exceeded".to_string(), Quant::AtMostOne),
-            ("Div".to_string(), Quant::Zero),
-        ]);
         // The prelude's functions and effects, unless the program declares
         // the name; their rows are written and trusted.
-        let lib: &'static Program = prelude();
+        let lib: &'static Program = crate::types::prelude_for(program);
+        let resolved = tauto_surface::bindings::declared_names(&lib.stmts)
+            .iter()
+            .any(|n| n.is_resolved());
+        let intrinsic = |name: &str| {
+            if resolved {
+                tauto_surface::bindings::library_name(name)
+            } else {
+                Name::from(name)
+            }
+        };
+        let mut quants = HashMap::from([
+            (intrinsic("show"), Quant::Direct),
+            (intrinsic("Exceeded"), Quant::AtMostOne),
+            (intrinsic("Div"), Quant::Zero),
+        ]);
         let mut owners = HashMap::new();
         let mut owner_sources = HashMap::new();
         let mut owner_order = Vec::new();
@@ -668,7 +776,7 @@ impl<'a> Analysis<'a> {
                     {
                         ambiguous_calls.insert(t.id());
                         found.push(RowDiagnostic {
-                            message: "ambiguous lexical occurrence of an effect-row call".into(),
+                            message: msg!("rows-ambiguous-call").to_string(),
                             span: t.span,
                         });
                     }
@@ -679,22 +787,27 @@ impl<'a> Analysis<'a> {
             for s in stmts {
                 match s {
                     Stmt::Fn(f) => {
-                        fns.insert(f.name.as_str(), f);
-                        externs.remove(f.name.as_str());
+                        fns.insert(&f.name, f);
+                        externs.remove(&f.name);
                     }
                     Stmt::Extern {
                         fns: declarations, ..
                     } => {
                         for f in declarations {
-                            fns.insert(f.name.as_str(), f);
-                            externs.insert(f.name.as_str());
+                            fns.insert(&f.name, f);
+                            externs.insert(&f.name);
                         }
                     }
                     Stmt::Struct(d) | Stmt::Enum(d) => {
-                        datas.insert(d.name.as_str(), d);
+                        datas.insert(&d.name, d);
+                        if matches!(s, Stmt::Struct(_)) {
+                            structs.insert(&d.name);
+                        } else {
+                            structs.remove(&d.name);
+                        }
                     }
                     Stmt::Effect(e) => {
-                        operations.insert(e.name.as_str(), e);
+                        operations.insert(&e.name, e);
                         let q = e.resume.as_deref().and_then(Quant::parse);
                         quants.insert(e.name.clone(), q.unwrap_or(Quant::AtMostOne));
                     }
@@ -705,13 +818,13 @@ impl<'a> Analysis<'a> {
         // Named references include functions carried through fields and
         // returned closures. A cycle is conservatively divergent even when
         // the reference is not a syntactically direct call.
-        let graph: HashMap<&str, HashSet<&str>> = fns
+        let graph: HashMap<&Name, HashSet<&Name>> = fns
             .iter()
             .map(|(&name, f)| {
                 let refs = crate::lin::free_vars(&f.body)
                     .into_iter()
                     .filter(|n| !f.params.contains(n))
-                    .filter_map(|n| fns.get_key_value(n.as_str()).map(|(&key, _)| key))
+                    .filter_map(|n| fns.get_key_value(&n).map(|(&key, _)| key))
                     .collect();
                 (name, refs)
             })
@@ -734,8 +847,8 @@ impl<'a> Analysis<'a> {
                 }
                 false
             })
-            .collect::<HashSet<&str>>();
-        let reaches = |from: &str, to: &str| {
+            .collect::<HashSet<&Name>>();
+        let reaches = |from: &Name, to: &Name| {
             let mut seen = HashSet::new();
             let mut pending = vec![from];
             while let Some(next) = pending.pop() {
@@ -754,20 +867,33 @@ impl<'a> Analysis<'a> {
             .iter()
             .copied()
             .filter(|&name| {
-                graph[name].iter().all(|&g| g == name || !reaches(g, name))
-                    && structural::decreases(fns[name])
+                // The functions that call one another with `name`: itself
+                // alone, or a group of mutually recursive ones.
+                let group: Vec<&FnDecl> = fns
+                    .keys()
+                    .copied()
+                    .filter(|&m| m == name || (reaches(name, m) && reaches(m, name)))
+                    .map(|m| fns[m])
+                    .collect();
+                structural::decreases(&group)
             })
             .collect();
         Analysis {
             program,
+            resolved,
             nominal_owners: None,
             nominal_owners_checked: false,
+            term_types: None,
             javascript: false,
             fns,
             externs,
+            constructors: values::Constructors::new(&datas, &structs),
+            members: Default::default(),
             datas,
+            structs,
             operations,
             expected_result: None,
+            task_effects: BTreeSet::new(),
             memo: HashMap::new(),
             in_progress: HashSet::new(),
             recursive_refs,
@@ -783,7 +909,7 @@ impl<'a> Analysis<'a> {
                 .stmts
                 .iter()
                 .filter_map(|s| match s {
-                    Stmt::Extern { fns, .. } => Some(fns.iter().map(|f| f.name.as_str())),
+                    Stmt::Extern { fns, .. } => Some(fns.iter().map(|f| &f.name)),
                     _ => None,
                 })
                 .flatten()
@@ -804,6 +930,7 @@ impl<'a> Analysis<'a> {
             constructions: HashMap::new(),
             constant_data: HashMap::new(),
             constant_values: HashMap::new(),
+            lambda_values: HashMap::new(),
             term_rows: HashMap::new(),
             block_rows: HashMap::new(),
             continuations: HashMap::new(),
@@ -812,17 +939,15 @@ impl<'a> Analysis<'a> {
 
     /// Why `name` is not a value the program has: it is not a local, a
     /// function or a constructor. `None` when it is one of those.
-    fn unresolved(&self, name: &str, locals: &Locals) -> Option<String> {
+    fn unresolved(&self, name: &Name, locals: &Locals) -> Option<String> {
         if locals.iter().any(|(local, _)| local == name)
             || self.fns.contains_key(name)
-            || self
-                .datas
-                .values()
-                .any(|d| d.constructors.iter().any(|c| c.name == name))
+            || self.structs.contains(name)
+            || self.constructors.names_any(name)
         {
             return None;
         }
-        Some(if KERNEL_NAMES.contains(&name) {
+        Some(if KERNEL_NAMES.contains(&name.as_str()) {
             format!(
                 "`{name}` is the kernel's own; a program uses it inside a function of the proof language"
             )
@@ -841,7 +966,7 @@ impl<'a> Analysis<'a> {
         self
     }
 
-    fn nominal_owner(&mut self, term: &SurfaceTerm) -> Option<String> {
+    fn nominal_owner(&mut self, term: &SurfaceTerm) -> Option<Name> {
         if !self.nominal_owners_checked {
             // Independent row checking does not require a type report. Only
             // unresolved constructor ownership asks for one, once per analysis.
@@ -856,7 +981,7 @@ impl<'a> Analysis<'a> {
 
     fn run(mut self, program: &'a Program) -> RowReport {
         let mut report = RowReport::default();
-        let mut names: Vec<&str> = self
+        let mut names: Vec<&Name> = self
             .fns
             .keys()
             .copied()
@@ -864,7 +989,7 @@ impl<'a> Analysis<'a> {
                 program
                     .stmts
                     .iter()
-                    .any(|s| matches!(s, Stmt::Fn(f) if f.name == *n))
+                    .any(|s| matches!(s, Stmt::Fn(f) if f.name == **n))
             })
             .collect();
         names.sort_by_key(|n| self.fns[n].span.start);
@@ -903,7 +1028,7 @@ impl<'a> Analysis<'a> {
                     f.span,
                 );
             }
-            for effect in &inferred {
+            for effect in diagnostic_order(&inferred) {
                 if let Some(what) = effect.strip_prefix('?') {
                     self.diagnostic(unfollowed_in(what, name), f.span);
                 } else if let Some(allowed) = &allowed
@@ -911,17 +1036,17 @@ impl<'a> Analysis<'a> {
                 {
                     self.diagnostic(
                         format!(
-                            "`{name}` may perform {effect} but its row is {{{}}}",
-                            show(allowed.iter().map(|s| s.as_str())),
+                            "`{name}` may perform {} but its row is {{{}}}",
+                            effect.display_in_row(),
+                            show(allowed.iter()),
                         ),
                         f.span,
                     );
                 }
             }
-            report.functions.push((
-                name.to_string(),
-                display_row(&inferred, &self.row_variables),
-            ));
+            report
+                .functions
+                .push((name.clone(), display_row(&inferred, &self.row_variables)));
         }
         let mut top_locals = Vec::new();
         for stmt in &program.stmts {
@@ -950,13 +1075,23 @@ impl<'a> Analysis<'a> {
             };
             // The host answers `show`, `test`, `spawn` and the standard effects.
             for effect in row.iter() {
-                if crate::host::HOST_EFFECTS.contains(&effect.as_str()) {
-                    report.host_effects.insert(effect.clone());
+                if crate::host::HOST_EFFECTS
+                    .iter()
+                    .any(|name| tauto_surface::bindings::is_library(effect, name))
+                {
+                    report.host_effects.insert(effect.to_string());
+                    if tauto_surface::bindings::is_library(effect, "wait") {
+                        report.host_waits = true;
+                    }
                 }
             }
             for effect in row.iter().filter(|e| {
-                !matches!(e.as_str(), "Div" | "show" | "test" | "spawn")
-                    && !crate::host::HOST_EFFECTS.contains(&e.as_str())
+                !["Div", "show", "test", "spawn"]
+                    .iter()
+                    .any(|name| tauto_surface::bindings::is_library(e, name))
+                    && !crate::host::HOST_EFFECTS
+                        .iter()
+                        .any(|name| tauto_surface::bindings::is_library(e, name))
             }) {
                 let message = match effect.strip_prefix('?') {
                     Some(what) => unfollowed(what),
@@ -980,13 +1115,7 @@ impl<'a> Analysis<'a> {
             .errors
             .iter()
             .any(|e| e.message.to_string().contains("writes type arguments"));
-        if unexpanded
-            || report.errors.iter().any(|e| {
-                e.message
-                    .to_string()
-                    .starts_with("cannot follow the effects")
-            })
-        {
+        if !report.errors.is_empty() {
             let found = if unexpanded {
                 crate::types::check_program(program).errors
             } else {
@@ -1041,7 +1170,7 @@ impl<'a> Analysis<'a> {
         self.owners[&(std::ptr::from_ref(f) as usize)]
     }
 
-    fn prepare_scope(&mut self, f: &FnDecl, parent: &[(String, String)]) -> Vec<(String, String)> {
+    fn prepare_scope(&mut self, f: &FnDecl, parent: &[(Name, Name)]) -> Vec<(Name, Name)> {
         let owner = self.owner_of(f);
         if let Some(scope) = self.scopes.get(&owner) {
             return scope.clone();
@@ -1059,19 +1188,14 @@ impl<'a> Analysis<'a> {
         for ty in f.param_types.iter().flatten().chain(f.result.iter()) {
             values::free_row_variables(&value_type(ty), &mut free);
         }
-        free.extend(
-            f.effects
-                .iter()
-                .flatten()
-                .filter_map(|e| e.strip_prefix('|').map(str::to_string)),
-        );
+        free.extend(f.effects.iter().flatten().filter_map(Name::row_variable));
         for var in free {
             let declared_here = generics.iter().any(|(name, _, row)| *name == var && *row);
             let declared_outside = parent
                 .iter()
                 .rev()
                 .find(|(name, _)| *name == var)
-                .is_some_and(|(_, key)| self.row_variables.get(key).is_some_and(|v| v.declared));
+                .is_some_and(|(_, key)| self.row_variables.get(&key).is_some_and(|v| v.declared));
             if !declared_here && !declared_outside {
                 self.diagnostic(
                     format!("the row variable `{var}` is not declared; write `<!{var}>`"),
@@ -1085,11 +1209,20 @@ impl<'a> Analysis<'a> {
             }
         }
         let mut keys = Vec::new();
-        for (name, bound, declared) in generics {
-            let key = format!("@row:{}", fresh_identity());
+        for (index, (name, bound, declared)) in generics.into_iter().enumerate() {
+            let key = if name.is_resolved() {
+                name.clone()
+            } else {
+                Name::Local(tauto_surface::identity::LocalRef::fresh(name.to_string()))
+            };
             self.row_variables.insert(
                 key.clone(),
                 RowVariable {
+                    source: (!name.is_resolved()).then_some((
+                        std::ptr::from_ref(f) as usize,
+                        f.body.id(),
+                        index,
+                    )),
                     name: name.clone(),
                     owner,
                     bound: bound.clone(),
@@ -1104,26 +1237,29 @@ impl<'a> Analysis<'a> {
         scope
     }
 
-    fn scope_row(&self, row: &[String], scope: &[(String, String)]) -> Row {
+    fn scope_row(&self, row: &[Name], scope: &[(Name, Name)]) -> Row {
         row.iter()
             .map(|effect| {
+                if tauto_surface::bindings::is_library(&effect, "Div") {
+                    return self.intrinsic("Div");
+                }
                 effect
-                    .strip_prefix('|')
-                    .and_then(|name| scope.iter().rev().find(|(n, _)| n == name))
-                    .map(|(_, key)| format!("|{key}"))
+                    .row_variable()
+                    .and_then(|name| scope.iter().rev().find(|(n, _)| *n == name))
+                    .map(|(_, key)| key.in_row())
                     .unwrap_or_else(|| effect.clone())
             })
             .collect()
     }
 
-    fn scoped_type_in(&self, ty: Option<&SurfaceTerm>, scope: &[(String, String)]) -> Latent {
+    fn scoped_type_in(&self, ty: Option<&SurfaceTerm>, scope: &[(Name, Name)]) -> Latent {
         let types = scope
             .iter()
             .map(|(n, key)| (n.clone(), Latent::Named(key.clone(), Vec::new())))
             .collect();
         let rows = scope
             .iter()
-            .map(|(n, key)| (n.clone(), Row::from([format!("|{key}")])))
+            .map(|(n, key)| (n.clone(), Row::from([key.in_row()])))
             .collect();
         values::substitute(&latent_of_type(ty), &types, &rows)
     }
@@ -1135,10 +1271,10 @@ impl<'a> Analysis<'a> {
     fn signature(&self, f: &FnDecl, row: Row) -> Callable {
         let owner = self.owner_of(f);
         let scope = &self.scopes[&owner];
-        let host = self.user_externs.contains(f.name.as_str())
+        let host = self.user_externs.contains(&f.name)
             && self
                 .fns
-                .get(f.name.as_str())
+                .get(&f.name)
                 .is_some_and(|global| std::ptr::eq(*global, f));
         let result = self.scoped_type_in(f.result.as_ref(), scope);
         Callable {
@@ -1217,7 +1353,7 @@ impl<'a> Analysis<'a> {
     }
 
     /// The row callers see: the written one, else the inferred one.
-    fn fn_row(&mut self, name: &'a str) -> Row {
+    fn fn_row(&mut self, name: &'a Name) -> Row {
         let f = self.fns[name];
         let scope = self.prepare_scope(f, &[]);
         match &f.effects {
@@ -1236,17 +1372,19 @@ impl<'a> Analysis<'a> {
     }
 
     /// What the body performs, whatever the written row says.
-    fn inferred_row(&mut self, name: &'a str) -> Row {
+    fn inferred_row(&mut self, name: &'a Name) -> Row {
         let f = self.fns[name];
         let scope = self.prepare_scope(f, &[]);
         if let Some(row) = self.memo.get(name) {
             return row.clone();
         }
+        // What a `λ` is worth depends on the functions being inferred.
+        self.lambda_values.clear();
         if !self.in_progress.insert(name) {
             return if self.total.contains(name) || self.structural.contains(name) {
                 Row::new()
             } else {
-                Row::from(["Div".to_string()])
+                Row::from([self.intrinsic("Div")])
             };
         }
         let mut locals: Locals = f
@@ -1276,11 +1414,12 @@ impl<'a> Analysis<'a> {
         self.scope = outer_scope;
         self.owner = outer_owner;
         self.in_progress.remove(name);
+        self.lambda_values.clear();
         if !self.total.contains(name)
             && !self.structural.contains(name)
             && self.recursive_refs.contains(name)
         {
-            row.insert("Div".into());
+            row.insert(self.intrinsic("Div"));
         }
         self.memo.insert(name, row.clone());
         self.record_declaration(f, row.clone());
@@ -1334,7 +1473,7 @@ impl<'a> Analysis<'a> {
                 }
                 // A task's body that performs what only a handler around
                 // the `spawn` answers: say where its handler goes.
-                if effect == "spawn" {
+                if tauto_surface::bindings::is_library(&effect, "spawn") {
                     for d in &mut self.found[before..] {
                         if d.message
                             .to_string()
@@ -1364,11 +1503,17 @@ impl<'a> Analysis<'a> {
                     for e in c.row.iter() {
                         // A task's waits hold up that task only: the host
                         // answers them where it runs the task.
-                        if e == "wait" && effect == "spawn" {
+                        if tauto_surface::bindings::is_library(&e, "wait")
+                            && tauto_surface::bindings::is_library(&effect, "spawn")
+                        {
                             continue;
                         }
-                        if crate::host::HOST_EFFECTS.contains(&e.as_str()) {
+                        if crate::host::HOST_EFFECTS
+                            .iter()
+                            .any(|name| tauto_surface::bindings::is_library(e, name))
+                        {
                             row.insert(e.clone());
+                            self.task_effects.insert(e.to_string());
                         } else if self.set_bound(e).is_some() {
                             // `<h: Host>`: some of the host's effects, which
                             // the function's row names, so that a call
@@ -1400,7 +1545,7 @@ impl<'a> Analysis<'a> {
                 // parameters would be read off the first argument alone.
                 if let TermKind::Var(name) = &*function.kind
                     && !locals.iter().any(|(n, _)| n == name)
-                    && !self.fns.contains_key(name.as_str())
+                    && !self.fns.contains_key(&name)
                     && let Some(signature) = self.constructor_signature_at(t, name, expected)
                 {
                     self.value_of(t, locals, expected);
@@ -1432,12 +1577,12 @@ impl<'a> Analysis<'a> {
                             if matches!(locals.iter().rev().find(|(m, _)| m == n), Some((_, Latent::Info)))) =>
                     {
                         if name == "unbounded" {
-                            row.insert("Div".into());
+                            row.insert(self.intrinsic("Div"));
                         }
                     }
                     TermKind::Var(n)
                         if !locals.iter().any(|(m, _)| m == n)
-                            && !self.fns.contains_key(n.as_str())
+                            && !self.fns.contains_key(&n)
                             && (pure_builtin(n, arguments.len())
                                 || (!self.ambiguous_calls.contains(&t.id())
                                     && self
@@ -1472,14 +1617,14 @@ impl<'a> Analysis<'a> {
                 // Only steps stop a body that does not: a memory budget
                 // leaves `Div` in the row.
                 if *limit == BudgetLimit::Steps {
-                    inner.remove("Div");
+                    inner.remove(&self.intrinsic("Div"));
                 }
                 row.extend(inner);
-                row.insert("Exceeded".into());
+                row.insert(self.intrinsic("Exceeded"));
             }
             TermKind::Handle { body, handlers } => {
                 let raw = self.term_row(body, locals);
-                let handled: BTreeSet<String> = handlers
+                let handled: BTreeSet<Name> = handlers
                     .iter()
                     .filter_map(|h| match h {
                         Handler::Operation {
@@ -1634,9 +1779,9 @@ impl<'a> Analysis<'a> {
     #[allow(clippy::too_many_arguments)]
     fn arm_row(
         &mut self,
-        effect: &str,
+        effect: &Name,
         patterns: &[Pattern],
-        cont: &Option<String>,
+        cont: &Option<Name>,
         guard: &Option<SurfaceTerm>,
         body: &SurfaceTerm,
         resumed: Row,
@@ -1644,21 +1789,34 @@ impl<'a> Analysis<'a> {
         locals: &mut Locals,
     ) -> Row {
         let mark = locals.len();
-        for p in patterns {
+        let operation = self.operation_signature(effect);
+        for (i, p) in patterns.iter().enumerate() {
             match p {
-                Pattern::Bind(n) if effect == "exceeded" => locals.push((n.clone(), Latent::Info)),
+                Pattern::Bind(n) if tauto_surface::bindings::is_library(&effect, "exceeded") => {
+                    locals.push((n.clone(), Latent::Info))
+                }
                 // A spawned body may diverge, but performs no operation on
                 // its caller's handler stack: what it asks of the host is in
                 // the row of its `spawn`.
-                Pattern::Bind(n) if effect == "spawn" => locals.push((
+                Pattern::Bind(n) if tauto_surface::bindings::is_library(&effect, "spawn") => locals
+                    .push((
+                        n.clone(),
+                        Latent::Known(Callable::simple(Row::from([self.intrinsic("Div")]))),
+                    )),
+                // An argument is what the operation's parameter type says
+                // it is: a function it takes performs the row of that type.
+                Pattern::Bind(n) => locals.push((
                     n.clone(),
-                    Latent::Known(Callable::simple(Row::from(["Div".into()]))),
+                    operation
+                        .as_ref()
+                        .and_then(|o| o.params.get(i).cloned())
+                        .unwrap_or(Latent::Unknown),
                 )),
                 p => bind_pattern(p, locals),
             }
         }
         let mut continuation = Callable::simple(resumed);
-        if let Some(operation) = self.operation_signature(effect) {
+        if let Some(operation) = operation {
             continuation.params.push(*operation.result);
         }
         continuation.result = Box::new(value.clone());
@@ -1691,16 +1849,16 @@ impl<'a> Analysis<'a> {
     fn resumed_row(
         &self,
         body: &SurfaceTerm,
-        op: &str,
+        op: &Name,
         handlers: &[Handler],
-        handled: &BTreeSet<String>,
+        handled: &BTreeSet<Name>,
         own: &[Row],
         returned: &Row,
     ) -> Row {
         let mut rest = self.after(body, op).unwrap_or_default();
         let mut reached = BTreeSet::new();
         loop {
-            let next: Vec<String> = handlers
+            let next: Vec<Name> = handlers
                 .iter()
                 .filter_map(|h| match h {
                     Handler::Operation { effect, .. } => Some(effect_of_op(effect)),
@@ -1732,10 +1890,10 @@ impl<'a> Analysis<'a> {
 
     /// What `t` performs after it performs `op`, until `t` ends, read from
     /// the rows already found; `None` when `t` cannot perform `op`.
-    fn after(&self, t: &SurfaceTerm, op: &str) -> Option<Row> {
+    fn after(&self, t: &SurfaceTerm, op: &Name) -> Option<Row> {
         let whole = |t: &SurfaceTerm| self.term_rows.get(&t.id()).cloned().unwrap_or_default();
         match &*t.kind {
-            TermKind::Perform { effect, .. } if effect_of_op(effect) == op => Some(Row::new()),
+            TermKind::Perform { effect, .. } if effect_of_op(effect) == *op => Some(Row::new()),
             TermKind::Block(stmts) => {
                 let rows = self.block_rows.get(&t.id())?;
                 let mut found: Option<Row> = None;
@@ -1790,9 +1948,11 @@ impl<'a> Analysis<'a> {
             };
             if let Some(effect) = row.row.iter().find(|e| {
                 if self.javascript {
-                    self.quants.get(*e) == Some(&Quant::Many) || e.starts_with('|')
+                    self.quants.get(*e) == Some(&Quant::Many) || e.row_variable().is_some()
                 } else {
-                    !self.is_direct(e) && !e.starts_with('|') && *e != "Div"
+                    !self.is_direct(e)
+                        && !e.row_variable().is_some()
+                        && !tauto_surface::bindings::is_library(e, "Div")
                 }
             }) {
                 let message = if self.javascript {
@@ -1819,33 +1979,33 @@ impl<'a> Analysis<'a> {
     /// `direct`, or one that cannot be followed, which is reported already).
     /// The effects a row variable bounded by a set (`<h: Host>`) stands for
     /// some of.
-    pub(super) fn set_bound(&self, effect: &str) -> Option<Vec<String>> {
-        let var = effect.strip_prefix('|')?;
-        let bound = self.row_variables.get(var)?.bound.as_deref()?;
-        crate::surface::effect_sets::set_of_bound(bound).map(|(_, set)| set)
+    pub(super) fn set_bound(&self, effect: &Name) -> Option<Vec<Name>> {
+        let var = effect.row_variable()?;
+        let bound = self.row_variables.get(&var)?.bound.as_ref()?;
+        bound.effect_set().map(|(_, set)| set.to_vec())
     }
 
     /// Whether a row that permits `allowed` permits `effect`: it names the
     /// effect, or the effect is a row variable bounded by a set it names.
-    pub(super) fn permits(&self, allowed: &Row, effect: &str) -> bool {
+    pub(super) fn permits(&self, allowed: &Row, effect: &Name) -> bool {
         allowed.contains(effect)
             || self
                 .set_bound(effect)
                 .is_some_and(|set| set.iter().all(|e| allowed.contains(e)))
     }
 
-    fn is_direct(&self, effect: &str) -> bool {
-        if let Some(var) = effect.strip_prefix('|') {
-            if let Some(var) = self.row_variables.get(var) {
+    fn is_direct(&self, effect: &Name) -> bool {
+        if let Some(var) = effect.row_variable() {
+            if let Some(var) = self.row_variables.get(&var) {
                 return var.bound.as_deref() == Some("direct");
             }
-            return self.direct_vars.iter().any(|v| v == var);
+            return self.direct_vars.iter().any(|v| v == &var);
         }
         effect.starts_with('?') || self.quants.get(effect) == Some(&Quant::Direct)
     }
 
     /// The arm of a direct operation performs direct operations only.
-    fn direct_arm(&mut self, op: &str, arm: &Row, span: Span) {
+    fn direct_arm(&mut self, op: &Name, arm: &Row, span: Span) {
         for effect in arm {
             if self.is_direct(effect) {
                 continue;
@@ -1919,7 +2079,7 @@ impl<'a> Analysis<'a> {
             Stmt::While { condition, body } => {
                 row.extend(self.term_row(condition, locals));
                 row.extend(self.term_row(body, locals));
-                row.insert("Div".into());
+                row.insert(self.intrinsic("Div"));
             }
             _ => {}
         }
@@ -1940,7 +2100,7 @@ impl<'a> Analysis<'a> {
             // Local source declarations cannot inherit a top-level extraction
             // certificate just because they reuse its name.
             let mut recursive = written.clone().unwrap_or_else(|| inferred.clone());
-            recursive.insert("Div".into());
+            recursive.insert(self.intrinsic("Div"));
             let signature = self.signature(f, recursive);
             let mut inner = captures.clone();
             inner.push((f.name.clone(), Latent::Known(signature.clone())));
@@ -1955,7 +2115,7 @@ impl<'a> Analysis<'a> {
             }
             inferred = next;
         }
-        for effect in &inferred {
+        for effect in diagnostic_order(&inferred) {
             if let Some(what) = effect.strip_prefix('?') {
                 self.diagnostic(unfollowed_in(what, &f.name), f.span);
             } else if let Some(allowed) = &written
@@ -1963,9 +2123,10 @@ impl<'a> Analysis<'a> {
             {
                 self.diagnostic(
                     format!(
-                        "`{}` may perform {effect} but its row is {{{}}}",
+                        "`{}` may perform {} but its row is {{{}}}",
                         f.name,
-                        show(allowed.iter().map(String::as_str))
+                        effect.display_in_row(),
+                        show(allowed.iter())
                     ),
                     f.span,
                 );
@@ -2002,7 +2163,7 @@ fn bind_pattern(p: &Pattern, locals: &mut Locals) {
 
 fn dotted(t: &SurfaceTerm) -> Option<String> {
     match &*t.kind {
-        TermKind::Var(n) => Some(n.clone()),
+        TermKind::Var(n) => Some(n.to_string()),
         TermKind::Field { base, name } => Some(format!("{}.{name}", dotted(base)?)),
         _ => None,
     }
@@ -2012,8 +2173,17 @@ fn generated(span: Span) -> bool {
     (crate::surface::GENERATED_BASE..crate::surface::PRELUDE_BASE).contains(&span.start)
 }
 
-fn show<'s>(items: impl Iterator<Item = &'s str>) -> String {
-    items.collect::<Vec<_>>().join(", ")
+// Presentation order must not depend on when declaration IDs were allocated.
+fn diagnostic_order(row: &Row) -> Vec<&Name> {
+    let mut effects: Vec<_> = row.iter().collect();
+    effects.sort_by_key(|effect| effect.display_in_row());
+    effects
+}
+
+fn show<'s>(items: impl Iterator<Item = &'s Name>) -> String {
+    let mut names = items.map(Name::display_in_row).collect::<Vec<_>>();
+    names.sort();
+    names.join(", ")
 }
 
 fn pure_builtin(name: &str, arity: usize) -> bool {

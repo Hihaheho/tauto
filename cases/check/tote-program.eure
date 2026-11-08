@@ -1,0 +1,156 @@
+@ cases.a-type-error-of-the-program-is-reported-before-what-follows-from-it
+description = "The program does not check as Nib: its type error is reported, and the uses of the class method the types did not resolve are not."
+files_tote = "app"
+tote_errors = ["the result of `bad`: Text does not fit i64"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+import std::prelude::Ord
+
+fn same<K>(a: K, b: K): Bool where Ord(K) {
+  match Ord::compare(a, b) {
+    Equal => true
+    Less => false
+    Greater => false
+  }
+}
+
+fn bad(n: i64): i64 ! {Div} {
+  "not a number"
+}
+
+perform test("same", () => expect(same(1, 1), "same"))
+perform test("bad", () => expect(bad(1) == 1, "bad"))
+```
+
+@ cases.a-declaration-of-a-name-of-an-imported-prelude-file-is-the-files-own-in-the-program
+description = "A file imports std::prelude::Par and declares Polled itself: the program runs with the file's Polled named apart from the prelude's."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+import std::prelude::Par
+
+pub(open) enum Polled {
+  PollA
+}
+
+fn get(n: Nat): Nat { n }
+
+perform test("get", () => expect(Nat::eq(get(1), 1), "one"))
+```
+
+@ cases.a-use-of-a-name-the-file-and-an-imported-prelude-file-declare-is-ambiguous
+description = "Where the file writes Polled, its own declaration and the one of std::prelude::Par are both seen."
+files_tote = "app"
+tote_errors = ["`Polled` is ambiguous: it is declared as `app::src::main::Polled` and `std::prelude::Polled`"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ```tauto
+import std::prelude::Par
+
+pub(open) enum Polled {
+  PollA
+}
+
+fn get(n: Nat): Nat { n }
+
+fn poll_a(): Polled { PollA }
+
+perform test("get", () => expect(Nat::eq(get(1), 1), "one"))
+```
+
+@ cases.a-library-alone-is-checked-as-a-program-reads-it
+description = "A tote without a program is checked as Nib all the same: `nat` and `u64` are two types, and a function the kernel does not check, written with `u64`, gets the type error a program depending on the library gets."
+files_tote = "lib"
+tote_errors = ["the result of `size`: expected u64, found nat, a different type; for a number the proofs see too, write `U64` of `std::UInt`"]
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/lib.taut" = ```tauto
+import std::Text { Text }
+
+pub fn size(t: Text): u64 {
+  Text::len(t)
+}
+```
+
+@ cases.a-macro-of-another-file-matches-a-value-of-an-inductive-syntax
+description = "A macro function matches the constructors of the Nib enum an inductive_syntax! makes, and a later file uses the macro: the whole project checks, as the file alone does."
+files_tote = "app"
+tote_errors = []
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/defs.taut" = ````tauto
+import std::prelude::Macro { SynExpr }
+import std::Text { Text }
+inductive_syntax!(ab, ```par
+%start Word
+%%
+Word: { Letter };
+Letter: A | B;
+A: 'a';
+B: 'b';
+```) =>
+  enum Letter, struct Word, fn parse, inductive Letter::I, inductive Word::I,
+  fn Letter::to_i, fn Word::to_i, fn Letter_list::to_i
+
+fn count(ls: List(ab::Letter)): SynExpr {
+  match ls {
+    [] => quote { 0 }
+    [l, ..rest] => {
+      let r := count(rest)
+      match l {
+        ab::Letter::A(_) => quote { 1 + $r }
+        ab::Letter::B(_) => quote { $r }
+      }
+    }
+  }
+}
+
+pub macro fn count_a(w: ab::Word): SynExpr { count(w.letter) }
+````
+files."app/src/use.taut" = ```tauto
+import "defs.taut" { count_a }
+theorem t(): count_a!(`aba`) = 2 { Refl }
+```
+files."app/.tauto-syntax/a46f41972cba9ee3fc3b4750b73baabbc9620ed0401bbe6bd0e9b88fe1f8cd05.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/a46f41972cba9ee3fc3b4750b73baabbc9620ed0401bbe6bd0e9b88fe1f8cd05.tables`
+
+@ cases.an-inductive-syntax-refuses-a-constructor-named-as-what-it-makes
+description = "A rule named I makes the constructor Letter::I, the name of the proof side's type inductive_syntax! makes: the declaration says so, and nothing else."
+files_tote = "app"
+tote_errors = ["`Letter::I` is a constructor of `Letter`, and `inductive_syntax!` makes `Letter::I` and `Letter::to_i`"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/main.taut" = ````tauto
+import std::Text { Text }
+inductive_syntax!(miu, ```par
+%start Word
+%%
+Word: { Letter };
+Letter: M | I | U;
+M: 'M';
+I: 'I';
+U: 'U';
+```) =>
+  enum Letter, struct Word, fn parse, inductive Letter::I, inductive Word::I,
+  fn Letter::to_i, fn Word::to_i, fn Letter_list::to_i
+````
+files."app/.tauto-syntax/d726ffd82a48fed67319e2ce6bd4eb782fb86c1acb8afcf6c2be77edd47ec09e.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/d726ffd82a48fed67319e2ce6bd4eb782fb86c1acb8afcf6c2be77edd47ec09e.tables`
+
+@ cases.a-macro-expansion-error-of-the-program-is-reported
+description = "An argument of the wrong type in a macro's `$` expression stops the program from loading: `tauto check` of the tote says so, as `tauto check src/main.taut` and `tauto run` do."
+files_tote = "app"
+tote_errors = ["`embedded#1`: Text does not fit nat"]
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/wrap_macro.taut" = ```tauto
+import std::prelude::Macro
+
+pub macro fn wrap(e: SynExpr): SynExpr ! {macro_error, Div} {
+  quote {
+    {
+      let embedded: Nat := $e
+      embedded
+    }
+  }
+}
+```
+files."app/src/main.taut" = ```tauto
+import "wrap_macro.taut"
+
+let bad := wrap!("x")
+```

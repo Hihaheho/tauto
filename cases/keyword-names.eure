@@ -1,0 +1,30 @@
+// A constructor, field, type, function or local may take a name Rust keeps
+// as a keyword (`box`, `yield`, `dyn`, `async`, `Self`), or such a name with
+// a trailing `_`: the generated code still builds and runs.
+@ cases.keyword-names
+extract = true
+source = ```tauto
+inductive Shape: Type { Box(dyn: Nat): Shape, Box_(w: Nat): Shape, Yield: Shape }
+inductive Self: Type { Mk(n: Nat): Self }
+inductive Self_: Type { Mk(s: Self): Self_ }
+
+fn async(s: Shape): Nat {
+  ⊢ Nat from match s {
+    Box(w) => w
+    Box_(w) => Succ(w)
+    Yield => Zero
+  }
+}
+
+fn unwrap(s: Self_): Nat {
+  ⊢ Nat from match s { Mk(i) => ⊢ Nat from match i { Mk(n) => n } }
+}
+
+perform show("box", async(Box(Succ(Zero))))
+perform show("box_", async(Box_(Succ(Zero))))
+perform show("yield", async(Yield))
+perform show("self", unwrap(Self_::Mk(Self::Mk(Succ(Zero)))))
+```
+shows = ['box = 1', 'box_ = 2', 'yield = 0', 'self = 1']
+rust_shows = ['box = 1', 'box_ = 2', 'yield = 0', 'self = 1']
+javascript_shows = ['box = 1', 'box_ = 2', 'yield = 0', 'self = 1']

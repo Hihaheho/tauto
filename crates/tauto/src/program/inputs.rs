@@ -5,6 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
+use tauto_message::Message;
+
 use super::{Order, Source, canonical_path};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,7 +33,7 @@ impl Inputs {
 }
 
 /// The files of the program of `entry`, in the order they are read.
-pub(super) fn order(entry: &Path, source: &Source<'_>) -> Result<Vec<(PathBuf, String)>, String> {
+pub(super) fn order(entry: &Path, source: &Source<'_>) -> Result<Vec<(PathBuf, String)>, Message> {
     let mut order = Order {
         done: Default::default(),
         stack: Vec::new(),
@@ -52,7 +54,7 @@ pub(super) fn of(files: &[(PathBuf, String)], included: &[PathBuf]) -> Inputs {
 }
 
 /// The inputs as they are now of the program of `entry`, read before with the inputs `before`.
-pub fn current(entry: &Path, source: &Source<'_>, before: &Inputs) -> Result<Inputs, String> {
+pub fn current(entry: &Path, source: &Source<'_>, before: &Inputs) -> Result<Inputs, Message> {
     let files = order(entry, source)?;
     Ok(Inputs {
         manifests: manifests(&files),

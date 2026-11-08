@@ -1,0 +1,1648 @@
+description = "Kernel declaration, conversion, dependent elimination and soundness contracts."
+
+@ cases.universe_successor_overflow_is_rejected_1
+source = ```tauto
+theorem overflow(): Type { Type4294967295 }
+```
+checks."overflow" = "error: universe level overflow"
+
+@ cases.universe_successor_overflow_is_rejected_2
+source = ```tauto
+theorem high(): Type4294967294 { Type4294967293 }
+```
+checks."high" = "checked"
+
+@ cases.mismatch_points_at_the_differing_part
+source = ```tauto
+theorem t(): 2 + 2 = 5 { Refl(Nat, 4) }
+```
+checks."t" = "error: type mismatch"
+diagnostics = [{ name => "t", message => "differing part" }]
+
+@ cases.arithmetic_is_computed_1
+source = ```tauto
+theorem t(): 2 + 2 = 4 { Refl(Nat, 4) }
+```
+checks."t" = "checked"
+
+@ cases.arithmetic_is_computed_2
+source = ```tauto
+theorem t(): 2 + 2 = 5 { Refl(Nat, 4) }
+```
+checks."t" = "error: mismatch"
+
+@ cases.a_proof_of_the_wrong_statement_is_rejected
+source = ```tauto
+theorem t(A: Prop, B: Prop, p: A ∧ B): A { And::right(A, B, p) }
+```
+checks."t" = "error: mismatch"
+
+@ cases.functions_are_checked_against_pi_1
+source = ```tauto
+theorem id(A: Prop, a: A): A { a }
+theorem k(A: Prop, B: Prop): (A) -> (B) -> A { x => y => x }
+```
+checks."k" = "checked"
+
+@ cases.functions_are_checked_against_pi_2
+source = ```tauto
+theorem k(A: Prop, B: Prop): (A) -> (B) -> A { x => y => y }
+```
+checks."k" = "error: mismatch"
+
+@ cases.unbound_names_and_over_application_1
+source = ```tauto
+theorem t(): True { nope }
+```
+checks."t" = "error: not defined"
+
+@ cases.unbound_names_and_over_application_2
+source = ```tauto
+theorem t(): True { Trivial(1) }
+```
+checks."t" = "error: too many"
+
+@ cases.axioms_are_tracked_through_theorems
+source = ```tauto
+axiom em(P: Prop): P ∨ ¬P
+theorem a(P: Prop): P ∨ ¬P { em(P) }
+theorem b(P: Prop): P ∨ ¬P { a(P) }
+theorem c(): True { Trivial }
+```
+checks."b" = "axioms: em"
+checks."c" = "ok"
+
+@ cases.sorts_are_cumulative_and_stratified_1
+source = ```tauto
+theorem t(A: Prop): Type { A }
+```
+checks."t" = "checked"
+
+@ cases.sorts_are_cumulative_and_stratified_2
+source = ```tauto
+theorem t(): Type { Type }
+```
+checks."t" = "error: mismatch"
+
+@ cases.the_prelude_struct_is_a_family_written_as_a_record
+source = ```tauto
+fn first(p: Pair(Nat, Nat)): Nat {
+  ⊢ Nat from match p {
+    Pair { fst: a, snd: b } => a
+  }
+}
+theorem t(): first(Pair { fst: 1, snd: 2 }) = 1 { Refl }
+```
+checks."first" = "checked"
+checks."t" = "checked"
+
+@ cases.the_prelude_result_is_a_family
+source = ```tauto
+fn safe_pred(n: Nat): Result(Nat, Bool) {
+  ⊢ Result(Nat, Bool) from match n {
+    Zero => Err(false)
+    Succ(m) => Ok(m)
+  }
+}
+fn map_ok<T, U, E>(f: (T) -> U, r: Result(T, E)): Result(U, E) {
+  ⊢ Result(U, E) from match r {
+    Ok(v) => Ok(f(v))
+    Err(e) => Err(e)
+  }
+}
+theorem t(n: Nat): safe_pred(Succ(n)) = Ok(n) { Refl }
+theorem u<T, E>(r: Result(T, E)): map_ok((x) => x, r) = r {
+  ⊢ map_ok((x) => x, r) = r from match r {
+    Ok(v) => Refl
+    Err(e) => Refl
+  }
+}
+```
+checks."safe_pred" = "checked"
+checks."map_ok" = "checked"
+checks."t" = "checked"
+checks."u" = "checked"
+
+@ cases.the_prelude_ord_has_its_laws_for_the_prelude_data
+source = ```tauto
+theorem t<A>(xs: List(A), ys: List(A), e: Ord::compare(xs, ys) = Equal): xs = ys where Ord(A) {
+  ord_equal_eq(xs, ys, e)
+}
+```
+checks."t" = "checked"
+
+// The product `A × B` has its instance of `Ord`, written once in the prelude (the kernel reads it
+// for `Pair` and for the product): a product of products takes it member by member.
+@ cases.the_prelude_ord_has_its_laws_for_products
+source = ```tauto
+theorem t<A, B>(p: A × B, q: A × B, e: Ord::compare(p, q) = Equal): p = q where Ord(A), Ord(B) {
+  ord_equal_eq(p, q, e)
+}
+theorem u<A, B, C>(p: A × B × C, q: A × B × C, e: Ord::compare(p, q) = Equal): p = q where Ord(A), Ord(B), Ord(C) {
+  ord_equal_eq(p, q, e)
+}
+fn v<A, B>(p: A × B, q: A × B): Ordering where Ord(A), Ord(B) { Ord::compare(p, q) }
+fn w<A, B>(p: Pair(A, B), q: Pair(A, B)): Ordering where Ord(A), Ord(B) { Ord::compare(p, q) }
+```
+checks."t" = "checked"
+checks."u" = "checked"
+checks."v" = "checked"
+checks."w" = "checked"
+
+// A generic's type is written as a product without parentheses: `<p: A × B>`.
+@ cases.a_generic_binder_has_a_product_type
+source = ```tauto
+theorem t<A, B, p: A × B, q: A × B>(e: Ord::compare(p, q) = Equal): p = q where Ord(A), Ord(B) {
+  ord_equal_eq(p, q, e)
+}
+theorem u<A, B, C, p: A × B × C>(): p = p {
+  ⊢ p = p from match p {
+    #(x, y, z) => Refl
+  }
+}
+```
+checks."t" = "checked"
+checks."u" = "checked"
+
+@ cases.inductive_families_and_positivity_1
+source = ```tauto
+inductive Seq(A: Type): Type {
+  Nil: Seq(A)
+  Cons(h: A, t: Seq(A)): Seq(A)
+}
+theorem t(): Seq(Nat) { Cons(Nat, 1, Nil(Nat)) }
+```
+checks."Seq" = "checked"
+checks."t" = "checked"
+
+@ cases.inductive_families_and_positivity_2
+source = ```tauto
+inductive Bad: Type {
+  Mk(f: (Bad) -> Nat): Bad
+}
+```
+checks."Bad" = "error: negative"
+
+@ cases.inductive_families_and_positivity_3
+source = ```tauto
+inductive Odd: Type {
+  Mk: Nat
+}
+```
+checks."Odd" = "error: must return"
+
+@ cases.addition_by_structural_recursion_computes_1
+source = ```tauto
+fn add(n: Nat, m: Nat): Nat {
+  Nat::rec(k => Nat, m, k => ih => Succ(ih), n)
+}
+theorem t(): add(2, 3) = 5 { Refl(Nat, 5) }
+```
+checks."add" = "checked"
+checks."t" = "checked"
+
+@ cases.addition_by_structural_recursion_computes_2
+source = ```tauto
+fn add(n: Nat, m: Nat): Nat {
+  Nat::rec(k => Nat, m, k => ih => Succ(ih), n)
+}
+theorem t(): add(2, 3) = 6 { Refl(Nat, 6) }
+```
+checks."t" = "error: mismatch"
+
+@ cases.add_zero_by_induction_1
+source = ```tauto
+fn add(n: Nat, m: Nat): Nat {
+  Nat::rec(k => Nat, m, k => ih => Succ(ih), n)
+}
+theorem add_zero(n: Nat): add(n, Zero) = n {
+  Nat::ind(
+    k => add(k, Zero) = k,
+    Refl(Nat, Zero),
+    k => ih => Eq::subst(Nat, add(k, Zero), k, y => Succ(add(k, Zero)) = Succ(y), ih, Refl(Nat, Succ(add(k, Zero)))),
+    n)
+}
+```
+checks."add_zero" = "checked"
+
+@ cases.add_zero_by_induction_2
+source = ```tauto
+fn add(n: Nat, m: Nat): Nat {
+  Nat::rec(k => Nat, m, k => ih => Succ(ih), n)
+}
+theorem add_zero(n: Nat): add(n, Zero) = n {
+  Nat::ind(
+    k => add(k, Zero) = k,
+    Refl(Nat, Zero),
+    k => ih => Eq::subst(Nat, add(k, Zero), k, y => Succ(add(k, Zero)) = Succ(y), Refl(Nat, Zero), Refl(Nat, Succ(add(k, Zero)))),
+    n)
+}
+```
+checks."add_zero" = "error: mismatch"
+
+@ cases.eliminators_are_generated_not_assumed_1
+source = ```tauto
+theorem t(): True { True::ind(x => True, Trivial, Trivial) }
+```
+checks."t" = "checked"
+
+@ cases.eliminators_are_generated_not_assumed_2
+source = ```tauto
+theorem t(): True { True::ind(x => True, 3, Trivial) }
+```
+checks."t" = "error: mismatch"
+
+@ cases.eliminators_are_generated_not_assumed_3
+source = ```tauto
+theorem t(A: Prop, B: Prop): Type { Or::rec(A, B) }
+```
+checks."t" = "error: not defined"
+
+@ cases.eq_substitution_and_symmetry_1
+source = ```tauto
+theorem sym(A: Type, a: A, b: A, e: a = b): b = a {
+  Eq::subst(A, a, b, y => y = a, e, Refl(A, a))
+}
+```
+checks."sym" = "checked"
+
+@ cases.eq_substitution_and_symmetry_2
+source = ```tauto
+theorem bad(A: Type, a: A, b: A, e: a = b): a = a { Eq::subst(A, a, b, y => y = a, Refl(A, a), Refl(A, a)) }
+```
+checks."bad" = "error: mismatch"
+
+@ cases.the_head_of_a_nonempty_vector_1
+source = ```tauto
+inductive Vec(A: Type): (Nat) -> Type {
+  Vnil: Vec(A, Zero)
+  Vcons(n: Nat, h: A, t: Vec(A, n)): Vec(A, Succ(n))
+}
+fn head(A: Type, n: Nat, v: Vec(A, Succ(n))): A {
+  Vec::rec(A, m => w => Nat::rec(q => Type, Unit, k => ih => A, m), Star, k => h => t => ih => h, Succ(n), v)
+}
+theorem t(): head(Nat, 0, Vcons(Nat, 0, 7, Vnil(Nat))) = 7 { Refl(Nat, 7) }
+```
+checks."head" = "checked"
+checks."t" = "checked"
+
+@ cases.the_head_of_a_nonempty_vector_2
+source = ```tauto
+inductive Vec(A: Type): (Nat) -> Type {
+  Vnil: Vec(A, Zero)
+  Vcons(n: Nat, h: A, t: Vec(A, n)): Vec(A, Succ(n))
+}
+fn head(A: Type, n: Nat, v: Vec(A, Succ(n))): A {
+  Vec::rec(A, m => w => Nat::rec(q => Type, Unit, k => ih => A, m), Star, k => h => t => ih => 0, Succ(n), v)
+}
+theorem t(): head(Nat, 0, Vcons(Nat, 0, 7, Vnil(Nat))) = 7 { Refl(Nat, 7) }
+```
+checks."head" = "error: mismatch"
+
+@ cases.the_head_of_a_nonempty_vector_3
+source = ```tauto
+inductive Vec(A: Type): (Nat) -> Type {
+  Vnil: Vec(A, Zero)
+  Vcons(n: Nat, h: A, t: Vec(A, n)): Vec(A, Succ(n))
+}
+fn head(A: Type, n: Nat, v: Vec(A, Succ(n))): A {
+  Vec::rec(A, m => w => Nat::rec(q => Type, Unit, k => ih => A, m), Star, k => h => t => ih => h, Succ(n), v)
+}
+theorem t(): head(Nat, 0, Vcons(Nat, 0, 7, Vnil(Nat))) = 7 { Refl(Nat, 7) }
+theorem u(): head(Nat, 0, Vnil(Nat)) = 7 { Refl(Nat, 7) }
+```
+checks."u" = "error: mismatch"
+
+@ cases.structural_recursion_by_match
+source = ```tauto
+fn plus(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
+  }
+}
+theorem t(): plus(2, 3) = 5 { Refl(Nat, 5) }
+```
+checks."plus" = "checked"
+checks."t" = "checked"
+
+@ cases.structural_recursion_on_a_type_in_a_module
+source = ```tauto
+module M {
+  inductive T: Type {
+    Leaf: T
+    Node(t: T): T
+  }
+  fn depth(t: T): Nat {
+    ⊢ Nat from match t {
+      Leaf => 0
+      Node(u) => Succ(depth(u))
+    }
+  }
+  theorem t(): depth(Node(Node(Leaf))) = 2 { Refl(Nat, 2) }
+}
+```
+checks."M::depth" = "checked"
+checks."M::t" = "checked"
+
+@ cases.a_recursive_call_takes_more_arguments_like_any_call
+source = ```tauto
+fn drop(n: Nat): (Nat) -> Nat {
+  ⊢ (Nat) -> Nat from match n {
+    Zero => m => m
+    Succ(k) => m => drop(k, m)
+  }
+}
+theorem t(): drop(2, 3) = 3 { Refl(Nat, 3) }
+```
+checks."drop" = "checked"
+checks."t" = "checked"
+
+@ cases.a_recursion_inside_a_match_applied_to_an_argument_is_structural
+source = ```tauto
+fn half(n: Nat, h: n = n): Nat {
+  (⊢ (n = n) -> Nat from match n {
+    Zero => e => Zero
+    Succ(k) => e => half(k, Refl(Nat, k))
+  })(h)
+}
+```
+checks."half" = "checked"
+
+@ cases.a_call_with_implicit_arguments_takes_more_arguments
+source = ```tauto
+fn konst<A>(a: A): (A) -> A { b => a }
+theorem t(): konst(2, 3) = 2 { Refl(Nat, 2) }
+```
+checks."konst" = "checked"
+checks."t" = "checked"
+
+@ cases.a_call_writing_its_implicit_arguments_out_takes_more_arguments
+source = ```tauto
+fn konst<A>(a: A): (A) -> A { b => a }
+theorem t(): konst(Nat, 2, 3) = 2 { Refl(Nat, 2) }
+theorem u(): konst(Nat, 2)(3) = 2 { Refl(Nat, 2) }
+```
+checks."konst" = "checked"
+checks."t" = "checked"
+checks."u" = "checked"
+
+@ cases.a_recursion_without_a_structural_decrease_is_rejected_1
+source = ```tauto
+fn again(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(k) => again(n)
+  }
+}
+```
+checks."again" = "error: not structural"
+
+@ cases.a_recursion_without_a_structural_decrease_is_rejected_2
+source = ```tauto
+fn spin(n: Nat): Nat { spin(n) }
+```
+checks."spin" = "error: calls itself"
+
+@ cases.a_recursion_without_a_structural_decrease_is_rejected_3
+source = ```tauto
+fn pred(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Succ(k) => k
+  }
+}
+```
+checks."pred" = "error: missing case"
+
+@ cases.a_function_typed_field_called_on_its_arguments_is_structural
+source = ```tauto
+inductive Tree: Type {
+  Leaf: Tree
+  Node(f: (Nat) -> Tree): Tree
+}
+fn depth(t: Tree): Nat {
+  ⊢ Nat from match t {
+    Leaf => 0
+    Node(f) => Succ(depth(f(0)))
+  }
+}
+theorem t(): depth(Node(n => Leaf)) = 1 { Refl(Nat, 1) }
+```
+checks."depth" = "checked"
+checks."t" = "checked"
+
+@ cases.a_default_arm_stands_for_the_other_constructors_1
+source = ```tauto
+inductive C: Type {
+  R: C
+  G: C
+  B: C
+}
+fn is_r(c: C): Bool {
+  ⊢ Bool from match c {
+    R => true
+    _ => false
+  }
+}
+theorem t(): is_r(B) = false { Refl(Bool, false) }
+```
+checks."is_r" = "checked"
+checks."t" = "checked"
+
+@ cases.a_default_arm_stands_for_the_other_constructors_2
+source = ```tauto
+fn pred(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    _ => Zero
+  }
+}
+theorem t(): pred(3) = 0 { Refl(Nat, 0) }
+```
+checks."t" = "checked"
+
+@ cases.a_default_arm_stands_for_the_other_constructors_3
+source = ```tauto
+fn f(n: Nat): Nat {
+  ⊢ Nat from match n {
+    _ => Zero
+    Zero => Zero
+  }
+}
+```
+checks."f" = "error: must be the last"
+
+@ cases.a_default_arm_stands_for_the_other_constructors_4
+source = ```tauto
+fn f(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(k) => k
+    _ => Zero
+  }
+}
+```
+checks."f" = "error: matches no constructor"
+
+@ cases.a_default_arm_stands_for_the_other_constructors_5
+source = ```tauto
+inductive Le: (Nat, Nat) -> Prop {
+  Lz(m: Nat): Le(Zero, m)
+  Ls(n: Nat, m: Nat, h: Le(n, m)): Le(Succ(n), Succ(m))
+}
+theorem t(n: Nat, h: Le(n, Zero)): n = Zero {
+  ⊢ n = Zero from match h {
+    _ => Refl(Nat, Zero)
+  }
+}
+```
+checks."t" = "checked"
+
+@ cases.induction_by_a_recursive_theorem_1
+source = ```tauto
+fn plus(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
+  }
+}
+theorem plus_zero(n: Nat): plus(n, Zero) = n {
+  ⊢ plus(n, Zero) = n from match n {
+    Zero => Refl(Nat, Zero)
+    Succ(k) => Eq::subst(Nat, plus(k, Zero), k, y => Succ(plus(k, Zero)) = Succ(y), plus_zero(k), Refl(Nat, Succ(plus(k, Zero))))
+  }
+}
+```
+checks."plus_zero" = "checked"
+
+@ cases.induction_by_a_recursive_theorem_2
+source = ```tauto
+fn plus(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
+  }
+}
+theorem plus_zero(n: Nat): plus(n, Zero) = n {
+  ⊢ plus(n, Zero) = n from match n {
+    Zero => Refl(Nat, Zero)
+    Succ(k) => Eq::subst(Nat, plus(k, Zero), k, y => Succ(plus(k, Zero)) = Succ(y), Refl(Nat, Zero), Refl(Nat, Succ(plus(k, Zero))))
+  }
+}
+```
+checks."plus_zero" = "error: mismatch"
+
+@ cases.a_dependent_arm_must_fit_its_refined_result
+source = ```tauto
+theorem t(n: Nat): n = n {
+  ⊢ n = n from match n {
+    Zero => Refl(Nat, Zero)
+    Succ(k) => Refl(Nat, Zero)
+  }
+}
+```
+checks."t" = "error: mismatch"
+
+@ cases.a_proposition_without_large_elimination_does_not_make_data
+source = ```tauto
+fn pick(A: Prop, B: Prop, p: Or(A, B)): Nat {
+  ⊢ Nat from match p {
+    OrInl(a) => 0
+    OrInr(b) => 1
+  }
+}
+```
+checks."pick" = "error: large elimination"
+
+@ cases.an_effectful_or_executable_function_is_not_a_proof_term
+source = ```tauto
+effect ask(q: Int): Int
+fn noisy(): Nat ! {ask} { 0 }
+fn imperative(n: Nat): Nat {
+  var i := 0
+  while i < n {
+    i := i + 1
+  }
+  i
+}
+theorem a(): noisy() = 0 { Refl(Nat, 0) }
+theorem b(): imperative(1) = 0 { Refl(Nat, 0) }
+```
+checks."noisy" = "skipped"
+checks."imperative" = "skipped"
+checks."a" = "error: not defined"
+checks."b" = "error: not defined"
+
+@ cases.a_constructor_in_another_case_convention_is_named
+source = ```tauto
+inductive Held: Type {
+  HeldRoot: Held
+  HeldEdge(h: Held): Held
+}
+theorem a(): Held { held_root }
+theorem b(): Held { held_edg }
+theorem c(): Held { HeldEdge(HeldRoot) }
+```
+checks."a" = "error: `held_root` is not defined; did you mean the constructor `HeldRoot`?"
+checks."b" = "error: `held_edg` is not defined"
+checks."c" = "ok"
+
+// Whether a name is defined does not depend on a type: a declaration that
+// fails at one name that is not defined is told of every other one in it,
+// a name bound only in its type (`\forall p`) among them.
+@ cases.every_name_that_is_not_defined_in_a_declaration_is_told
+source = ```tauto
+inductive Two: Type {
+  One: Two
+  Other: Two
+}
+theorem t(a: Two): twice(a) = add(twice(a), a) {
+  let s: \forall p: Two. p = p := (q: Two) => Refl(Two, p)
+  Refl(Two, a)
+}
+```
+checks."t" = "error: `twice` is not defined"
+diagnostics = [
+  { "name" => "t", "message" => "`twice` is not defined", "span" => "): «twice»(a) =" },
+  { "name" => "t", "message" => "`add` is not defined", "span" => "= «add»(" },
+  { "name" => "t", "message" => "`twice` is not defined", "span" => "add(«twice»(a)" },
+  { "name" => "t", "message" => "`p` is not defined", "span" => "Refl(Two, «p»)" },
+]
+
+@ cases.a_lambda_keeps_its_parameters_and_its_if
+source = ```tauto
+fn is_zero(n: Nat): Bool {
+  ⊢ Bool from match n {
+    Zero => true
+    Succ(m) => false
+  }
+}
+fn ap(k: (Nat) -> Nat): Nat { k(0) }
+fn pick(): Nat { ap((x: Nat) => if is_zero(x) { 2 } else { 3 }) }
+theorem pick_two(): pick() = 2 { Refl(Nat, 2) }
+fn ap2(k: (Nat, Nat) -> Nat): Nat { k(1, 2) }
+fn second(l: Nat): Nat {
+  let q: Nat := l
+  ap2((a: Nat, b: Nat) => ⊢ Nat from match a {
+    Zero => q
+    Succ(x) => b
+  })
+}
+theorem second_two(): second(5) = 2 { Refl(Nat, 2) }
+mutual {
+  fn even(n: Nat): Nat {
+    ⊢ Nat from match n {
+      Zero => 0
+      Succ(g) => ap2((a: Nat, b: Nat) => odd(g, b))
+    }
+  }
+  fn odd(n: Nat, x: Nat): Nat {
+    ⊢ Nat from match n {
+      Zero => x
+      Succ(g) => even(g)
+    }
+  }
+}
+theorem even_two(): even(1) = 2 { Refl(Nat, 2) }
+```
+checks."pick" = "checked"
+checks."pick_two" = "checked"
+checks."second" = "checked"
+checks."second_two" = "checked"
+checks."even" = "checked"
+checks."odd" = "checked"
+checks."even_two" = "checked"
+
+@ cases.induction_on_nat
+source = ```tauto
+theorem all_true(n: Nat): True {
+  Nat::ind(m => True, Trivial, m => ih => Trivial, n)
+}
+```
+checks."all_true" = "checked"
+
+@ cases.a_lambda_does_not_capture_a_variable_of_its_expected_type
+source = ```tauto
+inductive T: Type {
+  A: T
+  B(x: T): T
+}
+inductive W: Type {
+  Mk(x: T): W
+}
+fn unw(u: W): T {
+  ⊢ T from match u {
+    Mk(y) => y
+  }
+}
+theorem cap(x: T, u: W): x = unw(u) {
+  W::ind(v => x = unw(v), x => Refl(T, x), u)
+}
+```
+checks."cap" = "error: mismatch"
+
+@ cases.a_pattern_variable_does_not_capture_a_variable_of_the_result
+source = ```tauto
+inductive T: Type {
+  A: T
+  B(x: T): T
+}
+inductive W: Type {
+  Mk(x: T): W
+}
+fn unw(u: W): T {
+  ⊢ T from match u {
+    Mk(y) => y
+  }
+}
+theorem cap(x: T, u: W): x = unw(u) {
+  ⊢ x = unw(u) from match u {
+    Mk(x) => Refl(T, x)
+  }
+}
+```
+checks."cap" = "error: mismatch"
+
+@ cases.a_sort_cannot_be_redefined_1
+source = ```tauto
+def Type(): Type := False
+```
+checks."Type" = "error: reserved"
+
+@ cases.a_sort_cannot_be_redefined_2
+source = ```tauto
+def Type(): Type := False
+theorem f(): False { Nat }
+```
+checks."f" = "error: mismatch"
+
+@ cases.a_sort_cannot_be_redefined_3
+source = ```tauto
+inductive Prop: Type {
+  Mk: Prop
+}
+```
+checks."Prop" = "error: reserved"
+
+@ cases.a_sort_cannot_be_redefined_4
+source = ```tauto
+theorem _(): True { Trivial }
+```
+checks."_" = "error: reserved"
+
+@ cases.a_sort_cannot_name_a_variable_1
+source = ```tauto
+theorem z(Type: Prop): Type { Nat }
+```
+checks."z" = "error: is a sort"
+
+@ cases.a_sort_cannot_name_a_variable_2
+source = ```tauto
+theorem z(): (Prop) -> Prop { Type => Type }
+```
+checks."z" = "error: is a sort"
+
+@ cases.an_underscore_binds_nothing_1
+source = ```tauto
+theorem bad(): ∀ x: Prop. ∀ y: Prop. ∀ h: y. x { _ => _ => h => h }
+```
+checks."bad" = "error: mismatch"
+
+@ cases.an_underscore_binds_nothing_2
+source = ```tauto
+theorem bad(_: Prop): ∀ y: Prop. ∀ h: y. _ { _ => h => h }
+```
+checks."bad" = "error: not a value"
+
+@ cases.a_field_does_not_capture_its_family
+source = ```tauto
+inductive I: Type1 {
+  C(I: Type): I
+}
+theorem f(): False { C(False) }
+```
+checks."I" = "error: must return"
+checks."f" = "error: not defined"
+
+@ cases.a_field_does_not_capture_a_parameter_or_a_constructor_1
+source = ```tauto
+inductive J(A: Type): Type1 {
+  Mk(A: Type): J(A)
+}
+```
+checks."J" = "error: must return"
+
+@ cases.a_field_does_not_capture_a_parameter_or_a_constructor_2
+source = ```tauto
+inductive K: Type {
+  KOf(k: Nat): K
+  W(f: ∀ f: Nat. K): K
+}
+theorem t(x: K): Eq(Nat, K::rec(v => Nat, n => n, f => ih => 0, KOf(3)), 3) { Refl(Nat, 3) }
+```
+checks."K" = "checked"
+checks."t" = "checked"
+
+@ cases.a_recursive_argument_uses_the_parameters_1
+source = ```tauto
+inductive L(A: Type): Type {
+  Z(a: A): L(A)
+  C(x: L(Nat)): L(A)
+}
+theorem bad(): False {
+  L::ind(False, t => False, a => a, x => ih => ih, C(False, Z(Nat, 5)))
+}
+```
+checks."L" = "error: must be applied to its parameters"
+
+@ cases.a_recursive_argument_uses_the_parameters_2
+source = ```tauto
+inductive L(A: Type): Type1 {
+  Z(a: A): L(A)
+  C(x: ∀ A: Type. L(A)): L(A)
+}
+```
+checks."L" = "error: must be applied to its parameters"
+
+@ cases.a_generated_name_is_not_overwritten_1
+source = ```tauto
+module Y { theorem ind(): True { Trivial } }
+inductive Y: Prop {
+  C: Y
+}
+```
+checks."Y" = "error: already defined"
+
+@ cases.a_generated_name_is_not_overwritten_2
+source = ```tauto
+module N { theorem nc(): True { Trivial } }
+inductive N: Type {
+  A: N
+  B: N
+}
+theorem t(): True { N::nc }
+```
+checks."N" = "checked"
+checks."t" = "checked"
+
+@ cases.a_proof_using_a_failed_theorem_fails
+source = ```tauto
+theorem bad(): False { Trivial }
+theorem good(): False { bad }
+```
+checks."bad" = "error: mismatch"
+checks."good" = "error: did not check"
+
+@ cases.a_let_names_a_proof_and_its_type_is_checked_1
+source = ```tauto
+theorem t(x: Nat): x = x {
+  let e: x = x := Refl(Nat, x)
+  Eq::sym(e)
+}
+```
+checks."t" = "checked"
+
+@ cases.a_let_names_a_proof_and_its_type_is_checked_2
+source = ```tauto
+theorem t(x: Nat): x = x {
+  let e: x = Zero := Refl(Nat, x)
+  Eq::sym(Eq::sym(e))
+}
+```
+checks."t" = "error: mismatch"
+
+@ cases.a_let_names_a_proof_and_its_type_is_checked_3
+source = ```tauto
+theorem t(x: Nat): x = x {
+  let e: x = Zero := Refl(Nat, x)
+  Refl(Nat, x)
+}
+```
+checks."t" = "error: not used"
+
+@ cases.a_let_names_a_proof_and_its_type_is_checked_4
+source = ```tauto
+theorem t(x: Nat): x = x {
+  let e := Refl(Nat, x)
+  e
+}
+```
+checks."t" = "checked"
+
+@ cases.a_let_in_a_function_computes
+source = ```tauto
+fn two(): Nat {
+  let one: Nat := Succ(Zero)
+  Succ(one)
+}
+theorem t(): two() = 2 { Refl(Nat, 2) }
+```
+checks."t" = "checked"
+
+@ cases.an_index_can_fix_an_earlier_parameter
+source = ```tauto
+inductive Le: (Nat, Nat) -> Prop {
+  Lz(m: Nat): Le(Zero, m)
+  Ls(n: Nat, m: Nat, h: Le(n, m)): Le(Succ(n), Succ(m))
+}
+fn pred(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(k) => k
+  }
+}
+theorem t(n: Nat, m: Nat, h: Le(Succ(n), m)): Le(n, pred(m)) {
+  ⊢ Le(n, pred(m)) from match h {
+    Ls(a, b, h1) => h1
+  }
+}
+```
+checks."t" = "checked"
+
+@ cases.a_match_on_a_non_variable_index_may_recurse
+source = ```tauto
+inductive R: (Nat) -> Prop {
+  Base: R(Zero)
+  Up(n: Nat, h: R(n)): R(n)
+}
+theorem no_succ(n: Nat, h: R(Succ(n))): False {
+  ⊢ False from match h {
+    Up(k, h1) => no_succ(n, h1)
+  }
+}
+```
+checks."no_succ" = "checked"
+
+@ cases.a_nested_pattern_is_a_match_in_the_arm
+source = ```tauto
+inductive P: Type {
+  Pair(x: Nat, y: Nat): P
+}
+fn f(p: P): Nat {
+  ⊢ Nat from match p {
+    Pair(Zero, Zero) => 0
+    Pair(Zero, Succ(m)) => m
+    Pair(Succ(n), y) => y
+  }
+}
+theorem t(): f(Pair(0, 4)) = 3 { Refl }
+theorem u(): f(Pair(2, 4)) = 4 { Refl }
+```
+checks."t" = "checked"
+checks."u" = "checked"
+
+@ cases.nested_arms_do_not_overlap_or_leave_cases_out_1
+source = ```tauto
+inductive P: Type {
+  Pair(x: Nat, y: Nat): P
+}
+fn f(p: P): Nat {
+  ⊢ Nat from match p {
+    Pair(Zero, y) => 0
+    Pair(x, Succ(m)) => m
+  }
+}
+```
+checks."f" = "error: overlap"
+
+@ cases.nested_arms_do_not_overlap_or_leave_cases_out_2
+source = ```tauto
+fn g(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(Succ(m)) => m
+  }
+}
+```
+checks."g" = "error: missing case `Zero`"
+
+@ cases.a_nested_pattern_refines_a_dependent_goal
+source = ```tauto
+fn p2(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(Zero) => Zero
+    Succ(Succ(m)) => m
+  }
+}
+theorem t(n: Nat): p2(p2(n)) = p2(p2(n)) {
+  match n {
+    Zero => Refl
+    Succ(Zero) => Refl
+    Succ(Succ(m)) => Refl(Nat, p2(m))
+  }
+}
+```
+checks."t" = "checked"
+
+@ cases.a_stuck_index_waits_for_an_impossible_one
+source = ```tauto
+inductive T: Type {
+  Lam(b: T): T
+  Ap(f: T, a: T): T
+}
+fn inst(b: T, a: T): T {
+  ⊢ T from match b {
+    Lam(c) => c
+    Ap(f, x) => a
+  }
+}
+inductive P: (T, T) -> Prop {
+  PLam(b: T, b2: T, h: P(b, b2)): P(Lam(b), Lam(b2))
+  PBeta(b: T, a: T): P(Ap(Lam(b), a), inst(b, a))
+}
+theorem inv(b: T, d: T, h: P(Lam(b), Lam(d))): P(b, d) {
+  match h {
+    PLam(b0, b2, h1) => h1
+  }
+}
+```
+checks."inv" = "checked"
+
+@ cases.a_constructor_generic_is_inferred_and_may_be_left_out_of_a_pattern
+source = ```tauto
+inductive St: (Nat, Nat) -> Prop {
+  StRefl(n: Nat): St(n, n)
+  StSucc<n: Nat, m: Nat>(h: St(n, m)): St(n, Succ(m))
+}
+theorem two(): St(0, 2) { StSucc(StSucc(StRefl(0))) }
+theorem full(): St(0, 1) { StSucc(0, 0, StRefl(0)) }
+theorem up<n: Nat, m: Nat>(h: St(n, m)): St(Succ(n), Succ(m)) {
+  match h {
+    StRefl(k) => StRefl(Succ(k))
+    StSucc(h1) => StSucc(up(h1))
+  }
+}
+```
+checks."two" = "checked"
+checks."full" = "checked"
+checks."up" = "checked"
+
+@ cases.a_function_typed_field_called_on_its_arguments_is_structural_rejected_1
+source = ```tauto
+inductive Tree: Type {
+  Leaf: Tree
+  Node(f: (Nat) -> Tree): Tree
+}
+fn depth(t: Tree): Nat {
+  ⊢ Nat from match t {
+    Leaf => 0
+    Node(f) => Succ(depth(f))
+  }
+}
+theorem t(): depth(Node(n => Leaf)) = 1 { Refl(Nat, 1) }
+```
+checks."depth" = "error: is not structural"
+
+@ cases.a_function_typed_field_called_on_its_arguments_is_structural_rejected_2
+source = ```tauto
+inductive Tree: Type {
+  Leaf: Tree
+  Node(f: (Nat) -> Tree): Tree
+}
+fn depth(t: Tree): Nat {
+  ⊢ Nat from match t {
+    Leaf => 0
+    Node(f) => Succ(depth(f(0, 1)))
+  }
+}
+theorem t(): depth(Node(n => Leaf)) = 1 { Refl(Nat, 1) }
+```
+checks."depth" = "error: is not structural"
+
+@ cases.a_function_typed_field_called_on_its_arguments_is_structural_rejected_3
+source = ```tauto
+inductive Tree: Type {
+  Leaf: Tree
+  Node(f: (Nat) -> Tree): Tree
+}
+fn depth(t: Tree): Nat {
+  ⊢ Nat from match t {
+    Leaf => 0
+    Node(f) => Succ(depth(f(Leaf)))
+  }
+}
+theorem t(): depth(Node(n => Leaf)) = 1 { Refl(Nat, 1) }
+```
+checks."depth" = "error: mismatch"
+
+@ cases.core_proofs_are_checked_1
+source = ```tauto
+theorem t(A: Prop, a: A): A { a }
+```
+checks."t" = "checked"
+
+@ cases.core_proofs_are_checked_2
+source = ```tauto
+theorem t(): 2 + 2 = 4 { Refl(Nat, 4) }
+```
+checks."t" = "checked"
+
+@ cases.core_proofs_are_checked_3
+source = ```tauto
+theorem t(n: Nat): n + 2 = Succ(Succ(n)) { Refl(Nat, Succ(Succ(n))) }
+```
+checks."t" = "checked"
+
+@ cases.core_proofs_are_checked_4
+source = ```tauto
+theorem t(): 2 + 2 = 5 { Refl(Nat, 4) }
+```
+checks."t" = "error: mismatch"
+
+@ cases.core_proofs_are_checked_5
+source = ```tauto
+theorem t(A: Prop, B: Prop, a: A): B { a }
+```
+checks."t" = "error: mismatch"
+
+@ cases.core_proofs_are_checked_6
+source = ```tauto
+theorem t(): False { Trivial }
+```
+checks."t" = "error: mismatch"
+
+@ cases.core_proofs_are_checked_7
+source = ```tauto
+theorem t(): Nat::rec(k => Nat, 0, k => ih => Succ(Succ(ih)), 3) = 6 { Refl(Nat, 6) }
+```
+checks."t" = "checked"
+
+@ cases.core_proofs_are_checked_8
+source = ```tauto
+theorem t(e: Eq(Nat, 1, 1)): Eq::rec(Nat, 1, y => p => Nat, 7, 1, e) = 7 { Refl(Nat, 7) }
+```
+checks."t" = "checked"
+
+@ cases.core_a_false_equation_is_rejected_without_unfolding_twice_1
+source = ```tauto
+fn double(n: Nat): Nat { ⊢ Nat from match n { Zero => Zero
+ Succ(m) => Succ(Succ(double(m))) } }
+fn add2(a: Nat, b: Nat): Nat { ⊢ Nat from match a { Zero => b
+ Succ(m) => Succ(add2(m, b)) } }
+```
+checks."double" = "checked"
+checks."add2" = "checked"
+
+@ cases.core_false_equation
+source = ```tauto
+fn double(n: Nat): Nat { ⊢ Nat from match n { Zero => Zero
+ Succ(m) => Succ(Succ(double(m))) } }
+fn add2(a: Nat, b: Nat): Nat { ⊢ Nat from match a { Zero => b
+ Succ(m) => Succ(add2(m, b)) } }
+theorem t(): double(20) = add2(23, 20) { Refl(Nat, double(20)) }
+```
+checks."t" = "error: mismatch"
+
+@ cases.core_a_redex_is_typed_without_computing_1
+source = ```tauto
+fn add2(a: Nat, b: Nat): Nat { ⊢ Nat from match a { Zero => b
+ Succ(m) => Succ(add2(m, b)) } }
+fn fib(n: Nat): Nat { ⊢ Nat from match n { Zero => 1
+ Succ(m) => ⊢ Nat from match m { Zero => 1
+ Succ(p) => add2(fib(m), fib(p)) } } }
+```
+checks."add2" = "checked"
+checks."fib" = "checked"
+
+@ cases.core_a_wrong_number_is_rejected_by_its_value_1
+source = ```tauto
+fn h(n: Nat): Nat { ⊢ Nat from match n { Zero => 123456789
+ Succ(m) => Nat::rem_nz(Nat::sub(h(m), 7), 1000003, (e: Eq(Nat, 1000003, 0)) => Eq::subst((x: Nat) => ⊢ Prop from match x {
+   Zero => False
+   Succ(_) => True
+ }, e, Trivial)) } }
+```
+checks."h" = "checked"
+
+@ cases.core_names_are_read_by_their_binders_1
+source = ```tauto
+theorem t(Type: Prop): Type { Nat }
+```
+checks."t" = "error: is a sort"
+
+@ cases.core_names_are_read_by_their_binders_2
+source = ```tauto
+theorem t(): ∀ x: Prop. ∀ y: Prop. ∀ h: y. x { _ => _ => h => h }
+```
+checks."t" = "error: mismatch"
+
+@ cases.core_names_are_read_by_their_binders_3
+source = ```tauto
+theorem t(): ∀ x: Prop. ∀ y: Prop. ∀ h: y. x { a => b => h => h }
+```
+checks."t" = "error: mismatch"
+
+@ cases.core_a_redex_types_its_argument_2
+source = ```tauto
+theorem t(): Nat { (x => 0)(Trivial) }
+```
+checks."t" = "checked"
+
+@ cases.core_inductive_declarations_are_read_again_1
+source = ```tauto
+inductive L(A: Type): Type {
+  Nil: L(A)
+  Cons(h: A, t: L(A)): L(A)
+}
+```
+checks."L" = "checked"
+
+@ cases.core_inductive_declarations_are_read_again_2
+source = ```tauto
+inductive V(A: Type): (Nat) -> Type {
+  Vnil: V(A, 0)
+  Vcons(n: Nat, h: A, t: V(A, n)): V(A, Succ(n))
+}
+```
+checks."V" = "checked"
+
+@ cases.core_inductive_declarations_are_read_again_3
+source = ```tauto
+inductive I: Type1 {
+  C(I: Type): I
+}
+```
+checks."I" = "error: must return"
+
+@ cases.core_inductive_declarations_are_read_again_4
+source = ```tauto
+inductive L(A: Type): Type {
+  Z(a: A): L(A)
+  C(x: L(Nat)): L(A)
+}
+```
+checks."L" = "error: parameters"
+
+@ cases.core_inductive_declarations_are_read_again_5
+source = ```tauto
+inductive B: Type {
+  Mk(f: (B) -> Nat): B
+}
+```
+checks."B" = "error: negative"
+
+@ cases.core_inductive_declarations_are_read_again_6
+source = ```tauto
+inductive B: Type {
+  Mk(f: Eq(Type, B, B)): B
+}
+```
+checks."B" = "error: type mismatch"
+
+@ cases.core_inductive_declarations_are_read_again_7
+source = ```tauto
+inductive U: Type {
+  Mk(T: Type): U
+}
+```
+checks."U" = "error: universe"
+
+@ cases.core_inductive_declarations_are_read_again_8
+source = ```tauto
+inductive O: Type {
+  Mk: Nat
+}
+```
+checks."O" = "error: must return"
+
+@ cases.cache_proof_before
+source = ```tauto
+fn two(): Nat {
+  Succ(Succ(Zero))
+}
+theorem t(): two() = 2 { Refl }
+```
+checks."two" = "checked"
+checks."t" = "checked"
+
+@ cases.cache_proof_after
+source = ```tauto
+fn two(): Nat {
+  Succ(Succ(Succ(Zero)))
+}
+theorem t(): two() = 2 { Refl }
+```
+checks."two" = "checked"
+checks."t" = "error: mismatch"
+
+@ cases.cache_function_before
+source = ```tauto
+fn two(): Nat {
+  Succ(Succ(Zero))
+}
+fn four(): Nat {
+  Succ(Succ(two()))
+}
+theorem t(): four() = 4 { Refl(Nat, 4) }
+```
+checks."four" = "checked"
+checks."t" = "checked"
+
+@ cases.cache_function_after
+source = ```tauto
+fn two(): Bool {
+  true
+}
+fn four(): Nat {
+  Succ(Succ(two()))
+}
+theorem t(): four() = 4 { Refl(Nat, 4) }
+```
+checks."four" = "error: mismatch"
+
+@ cases.cache_term_checked
+source = ```tauto
+fn two(): Nat {
+  Succ(Succ(Zero))
+}
+```
+checks."two" = "checked"
+
+@ cases.cache_term_serialization
+source = ```tauto
+theorem t(): Nat { (x: Nat) => f(x, 3, true) }
+```
+parses = true
+
+@ cases.differential_prefix
+source = ```tauto
+
+def NN(): Type := (Nat) -> Nat
+
+fn double(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(m) => Succ(Succ(double(m)))
+  }
+}
+
+fn add2(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => m
+    Succ(k) => Succ(add2(k, m))
+  }
+}
+
+inductive Box(P: Prop, p: P): Type {
+  Mk: Box(P, p)
+}
+
+inductive DBox(n: Nat): Type {
+  Dmk: DBox(n)
+}
+
+inductive Fam(g: (Nat) -> Type): Type1 {
+  Fm: Fam(g)
+}
+```
+checks_all = "checked"
+
+@ cases.mutable_a_mut_parameter_comes_back_with_the_value
+source = ```tauto
+
+
+inductive Counter: Type {
+  Mk(n: Nat, hits: Nat): Counter
+}
+
+fn set_to<A>(&mut slot: A, v: A): Unit {
+  slot := v
+}
+
+fn bump(&mut c: Counter): Nat {
+  set_to(&mut c.n, Succ(c.n))
+  set_to(&mut c.hits, Succ(c.hits))
+  c.n
+}
+
+theorem bumped(): bump(Counter::Mk(Zero, Zero)) = mut1(Succ(Zero), Counter::Mk(Succ(Zero), Succ(Zero))) {
+  Refl(Mut1(Nat, Counter), mut1(Succ(Zero), Counter::Mk(Succ(Zero), Succ(Zero))))
+}
+```
+checks_all = "checked"
+
+@ cases.mutable_calls_and_vars_pass_the_state_along
+source = ```tauto
+
+
+inductive Counter: Type {
+  Mk(n: Nat, hits: Nat): Counter
+}
+
+fn set_to<A>(&mut slot: A, v: A): Unit {
+  slot := v
+}
+
+fn bump(&mut c: Counter): Nat {
+  set_to(&mut c.n, Succ(c.n))
+  set_to(&mut c.hits, Succ(c.hits))
+  c.n
+}
+
+fn twice(&mut c: Counter): Nat {
+  var last: Nat := bump(&mut c)
+  last := bump(&mut c)
+  last
+}
+
+theorem two(): twice(Counter::Mk(Zero, Zero)) = mut1(Succ(Succ(Zero)), Counter::Mk(Succ(Succ(Zero)), Succ(Succ(Zero)))) {
+  Refl(Mut1(Nat, Counter), mut1(Succ(Succ(Zero)), Counter::Mk(Succ(Succ(Zero)), Succ(Succ(Zero)))))
+}
+```
+checks_all = "checked"
+
+@ cases.mutable_a_match_that_changes_the_state_returns_it
+source = ```tauto
+
+
+inductive Counter: Type {
+  Mk(n: Nat, hits: Nat): Counter
+}
+
+fn set_to<A>(&mut slot: A, v: A): Unit {
+  slot := v
+}
+
+fn bump(&mut c: Counter): Nat {
+  set_to(&mut c.n, Succ(c.n))
+  set_to(&mut c.hits, Succ(c.hits))
+  c.n
+}
+
+fn maybe(&mut c: Counter, go: Bool): Nat {
+  if go {
+    set_to(&mut c.hits, Succ(c.hits))
+  }
+  match go {
+    true => bump(&mut c)
+    false => c.n
+  }
+}
+
+theorem yes_twice(): maybe(Counter::Mk(Zero, Zero), true) = mut1(Succ(Zero), Counter::Mk(Succ(Zero), Succ(Succ(Zero)))) {
+  Refl(Mut1(Nat, Counter), mut1(Succ(Zero), Counter::Mk(Succ(Zero), Succ(Succ(Zero)))))
+}
+
+theorem no_never(): maybe(Counter::Mk(Zero, Zero), false) = mut1(Zero, Counter::Mk(Zero, Zero)) {
+  Refl(Mut1(Nat, Counter), mut1(Zero, Counter::Mk(Zero, Zero)))
+}
+```
+checks_all = "checked"
+
+@ cases.mutable_a_let_reads_the_state_where_it_is_written
+source = ```tauto
+
+
+inductive Counter: Type {
+  Mk(n: Nat, hits: Nat): Counter
+}
+
+fn set_to<A>(&mut slot: A, v: A): Unit {
+  slot := v
+}
+
+fn bump(&mut c: Counter): Nat {
+  set_to(&mut c.n, Succ(c.n))
+  set_to(&mut c.hits, Succ(c.hits))
+  c.n
+}
+
+fn before(&mut c: Counter): Nat {
+  let n := c.n
+  bump(&mut c)
+  n
+}
+
+theorem old(): before(Counter::Mk(Zero, Zero)) = mut1(Zero, Counter::Mk(Succ(Zero), Succ(Zero))) {
+  Refl(Mut1(Nat, Counter), mut1(Zero, Counter::Mk(Succ(Zero), Succ(Zero))))
+}
+```
+checks_all = "checked"
+
+@ cases.mutable_the_right_of_and_changes_the_state_only_when_it_runs
+source = ```tauto
+
+
+inductive Counter: Type {
+  Mk(n: Nat, hits: Nat): Counter
+}
+
+fn set_to<A>(&mut slot: A, v: A): Unit {
+  slot := v
+}
+
+fn bump(&mut c: Counter): Nat {
+  set_to(&mut c.n, Succ(c.n))
+  set_to(&mut c.hits, Succ(c.hits))
+  c.n
+}
+
+fn is_zero(n: Nat): Bool {
+  ⊢ Bool from match n {
+    Zero => true
+    Succ(m) => false
+  }
+}
+
+fn maybe_bump(&mut c: Counter, go: Bool): Bool {
+  go && is_zero(bump(&mut c))
+}
+
+theorem not_bumped(): maybe_bump(Counter::Mk(Zero, Zero), false) = mut1(false, Counter::Mk(Zero, Zero)) {
+  Refl(Mut1(Bool, Counter), mut1(false, Counter::Mk(Zero, Zero)))
+}
+```
+checks_all = "checked"
+
+@ cases.mutable_a_matched_variable_stays_in_scope
+source = ```tauto
+
+
+inductive Counter: Type {
+  Mk(n: Nat, hits: Nat): Counter
+}
+
+fn set_to<A>(&mut slot: A, v: A): Unit {
+  slot := v
+}
+
+fn bump(&mut c: Counter): Nat {
+  set_to(&mut c.n, Succ(c.n))
+  set_to(&mut c.hits, Succ(c.hits))
+  c.n
+}
+
+fn again(&mut c: Counter, n: Nat): Nat {
+  match n {
+    Zero => bump(&mut c)
+    _ => n
+  }
+}
+
+theorem kept(): again(Counter::Mk(Zero, Zero), Succ(Zero)) = mut1(Succ(Zero), Counter::Mk(Zero, Zero)) {
+  Refl(Mut1(Nat, Counter), mut1(Succ(Zero), Counter::Mk(Zero, Zero)))
+}
+```
+checks_all = "checked"
+
+@ cases.mutable_mut_lends_only_the_state
+source = ```tauto
+
+
+inductive Counter: Type {
+  Mk(n: Nat, hits: Nat): Counter
+}
+
+fn set_to<A>(&mut slot: A, v: A): Unit {
+  slot := v
+}
+
+fn bump(&mut c: Counter): Nat {
+  set_to(&mut c.n, Succ(c.n))
+  set_to(&mut c.hits, Succ(c.hits))
+  c.n
+}
+
+fn wrong(c: Counter): Nat {
+  bump(&mut c)
+}
+```
+checks.wrong = "error: `&mut` lends"
+
+
+@ cases.a_function_type_is_written_where_an_expression_is
+source = ```tauto
+fn Imp(o: Bool, p: Prop, q: Prop): Prop {
+  ⊢ Prop from match o {
+    false => (p) -> q
+    true => (h: p) -> q
+  }
+}
+theorem imp_id(o: Bool, p: Prop): Imp(o, p, p) {
+  match o {
+    false => (h: p) => h
+    true => (h: p) => h
+  }
+}
+theorem cases_with_a_hypothesis(P: (Bool) -> Prop, o: Bool, a: P(false), b: P(true)): (o = o) -> P(o) {
+  Bool::ind((x: Bool) => (x = x) -> P(x), (e: false = false) => a, (e: true = true) => b, o)
+}
+```
+checks."imp_id" = "checked"
+checks."cases_with_a_hypothesis" = "checked"
+
+
+@ cases.an_argument_used_twice_is_reduced_once
+source = ```tauto
+inductive Seq: Type {
+  Stop: Seq
+  More(n: Nat, rest: Seq): Seq
+}
+fn r#copy(s: Seq): Seq {
+  ⊢ Seq from match s {
+    Stop => Stop
+    More(n, rest) => More(n, r#copy(rest))
+  }
+}
+fn longer(s: Seq): Nat {
+  ⊢ Nat from match s {
+    Stop => 0
+    More(n, rest) => Succ(longer(rest))
+  }
+}
+fn keep(k: Nat, s: Seq): Seq {
+  (⊢ (Seq) -> Seq from match k {
+    Zero => (t: Seq) => r#copy(t)
+    Succ(j) => (t: Seq) => t
+  })(s)
+}
+fn step(s: Seq): Seq {
+  keep(longer(s), s)
+}
+fn grow(k: Nat): Seq {
+  ⊢ Seq from match k {
+    Zero => More(1, More(2, More(3, Stop)))
+    Succ(j) => step(grow(j))
+  }
+}
+theorem t(): grow(16) = More(1, More(2, More(3, Stop))) { Refl }
+```
+checks."t" = "checked"
+
+@ cases.core_an_argument_is_reduced_once_1
+source = ```tauto
+fn mx(a: Nat, b: Nat): Nat { ⊢ Nat from match Nat::lt(a, b) { false => a
+ true => b } }
+fn m(n: Nat): Nat { mx(n, n) }
+```
+checks."mx" = "checked"
+checks."m" = "checked"
+
+@ cases.a_large_offset_is_compared_at_once_1
+source = ```tauto
+theorem t(x: Nat, n: Nat, h: Nat::lt(Succ(x + 9007199254740992), Succ(n)) = true): Nat::lt(x + 9007199254740992, n) = true { h }
+theorem s(x: Nat): Succ(Succ(x + 9007199254740990)) = Succ(x) + 9007199254740991 { Refl(Nat, Succ(Succ(x + 9007199254740990))) }
+```
+checks."t" = "checked"
+checks."s" = "checked"
+
+@ cases.a_large_offset_is_compared_at_once_2
+source = ```tauto
+theorem t(x: Nat, h: x + 9007199254740993 = 0): x + 9007199254740992 = 0 { h }
+```
+checks."t" = "error: mismatch"
+
+@ cases.core_a_deep_wrong_argument_is_rejected_in_linear_steps_1
+source = ```tauto
+fn pow2(n: Nat): Nat { ⊢ Nat from match n { Zero => 1
+ Succ(k) => 2 * pow2(k) } }
+fn big(s: Nat): Nat { pow2(s + 400) }
+fn is_zero(n: Nat): Bool { ⊢ Bool from match n { Zero => true
+ Succ(k) => false } }
+fn pos(x: Nat): Prop { is_zero(x) = false }
+```
+checks."pow2" = "checked"
+checks."big" = "checked"
+checks."is_zero" = "checked"
+checks."pos" = "checked"

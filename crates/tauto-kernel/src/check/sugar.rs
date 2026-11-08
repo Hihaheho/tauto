@@ -39,8 +39,9 @@
 //!   `@a e` is read where its type is known (`Kernel::elaborate_at`): `@label.a.Mk(e)`
 //!   for a value, the family for a type.
 
+use crate::surface::Name;
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 use super::{Kernel, T};
 use crate::surface::{MatchArm, Pattern, Stmt, TermKind};
@@ -57,17 +58,18 @@ struct Sugar {
     keep_products: bool,
     /// `C::m` for the methods and laws of the classes (`check/classes.rs`):
     /// what `C::m(…)` is written as, a call of the projection.
-    members: HashSet<String>,
+    members: HashMap<(Name, String), Name>,
     /// The constructor of `Text` a literal is made with, when `Text` is
     /// declared: `Text::Mk`, or its full name `std::Text::Text::Mk` when another
     /// file declares a `Text` constructor of that name too, so a literal still means std's.
-    text: Option<String>,
+    text: Option<Name>,
     /// `Float::of_raw` (or its full name) beside the constructor of `Float`,
     /// when `Float` is declared.
-    float: Option<String>,
+    float: Option<Name>,
     /// The functions of [`Sugar::OPERATORS`] that are declared: an operator
     /// is read as its function only when that function is.
-    ops: HashSet<&'static str>,
+    ops: HashMap<&'static str, Name>,
+    /// `false` and `true` read as the constructors of `Bool` they are.
     bools: bool,
     records: Records,
     /// The labels met, when `@a T` is read as its family; `None` (extraction) leaves
@@ -76,22 +78,43 @@ struct Sugar {
 }
 
 /// The family a label `@a T` is `@label.a(T)` of.
-pub(super) fn label_family(tag: &str) -> String {
-    format!("@label.{tag}")
+fn label_symbols(tag: &str) -> (Name, Name) {
+    static LABELS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, (Name, Name)>>> =
+        std::sync::LazyLock::new(Default::default);
+    LABELS
+        .lock()
+        .expect("label declarations are available")
+        .entry(tag.to_string())
+        .or_insert_with(|| {
+            (
+                tauto_surface::identity::DeclRef::fresh(format!("@label.{tag}")).into(),
+                tauto_surface::identity::DeclRef::fresh(format!("@label.{tag}::Mk")).into(),
+            )
+        })
+        .clone()
+}
+
+pub(super) fn label_family(tag: &str) -> Name {
+    label_symbols(tag).0
+}
+
+pub(super) fn label_constructor(family: &Name) -> Name {
+    label_symbols(label_of(family).expect("a label family has a constructor")).1
 }
 
 /// The label `a` of the family `@label.a`. A name inside the family, such as its
 /// constructor `@label.a::Mk`, is not the family: `@label.a::Mk(e)` is the value
 /// already wrapped, and reading it as `@a e` again would wrap it without end.
-pub(super) fn label_of(family: &str) -> Option<&str> {
+pub(super) fn label_of(family: &Name) -> Option<&str> {
     family
         .strip_prefix("@label.")
         .filter(|label| !label.is_empty() && !label.contains("::"))
+        .filter(|label| !family.is_resolved() || label_family(label) == *family)
 }
 
 /// For each family with one constructor: that constructor and the names of
 /// its fields (after its implicit arguments).
-pub type Records = HashMap<String, (String, Vec<String>)>;
+pub type Records = HashMap<Name, (Name, Vec<Name>)>;
 
 impl Kernel {
     pub(super) fn program_sugar(&self, stmt: &Stmt) -> Stmt {
@@ -100,42 +123,40 @@ impl Kernel {
 
     pub(super) fn program_sugar_labels(&self, stmt: &Stmt) -> (Stmt, BTreeSet<String>) {
         let text = self
-            .inds
-            .get("Text")
+            .resolver
+            .source_reference("Text")
+            .as_ref()
+            .and_then(|reference| self.inds.get(reference))
             .and_then(|i| match i.ctors.as_slice() {
                 [c] if is_mk(&c.name) => Some(c.name.clone()),
                 _ => None,
             });
         let float = self
-            .inds
-            .iter()
-            .find(|(n, _)| tauto_surface::surface::qualify::short(n) == "Float")
-            .and_then(|(_, i)| match i.ctors.as_slice() {
-                [c] if is_mk(&c.name) => {
-                    // `Float::of_raw`, in the module of the type whose
-                    // constructor is `Float::Mk`.
-                    let family = c.name.strip_suffix("::Mk")?;
-                    [family, tauto_surface::surface::qualify::short(family)]
-                        .into_iter()
-                        .map(|t| format!("{t}::of_raw"))
-                        .find(|f| self.globals.contains_key(f.as_str()))
-                }
-                _ => None,
-            });
+            .resolver
+            .source_reference("Float::of_raw")
+            .filter(|reference| self.globals.contains_key(reference));
         // An operator is sugar for a function the program has: `Nat::lt` and
         // `Bool::and` are the prelude's, `Nat::le` and `Bool::or` are std's.
-        let ops = if self.inds.contains_key("Bool") {
+        let ops = if self
+            .inds
+            .contains_key(&tauto_surface::bindings::library_name("Bool"))
+        {
             Sugar::OPERATORS
                 .iter()
                 .map(|(_, f, _)| *f)
-                .filter(|f| self.globals.contains_key(*f))
+                .filter_map(|f| {
+                    let reference = self.resolver.source_reference(f)?;
+                    self.globals
+                        .contains_key(&reference)
+                        .then_some((f, reference))
+                })
                 .collect()
         } else {
-            HashSet::new()
+            HashMap::new()
         };
         let sugar = Sugar {
             keep_products: false,
-            members: self.classes.members().clone(),
+            members: self.classes.member_bindings(),
             text,
             float,
             ops,
@@ -167,10 +188,13 @@ impl Kernel {
             let decl = InductiveDecl {
                 name: family.clone(),
                 vis: Vis::Open,
-                params: vec![("T".into(), SurfaceTerm::var("Type", sp))],
-                sort: SurfaceTerm::var("Type", sp),
+                params: vec![(
+                    "T".into(),
+                    SurfaceTerm::var(&tauto_surface::bindings::library_name("Type"), sp),
+                )],
+                sort: SurfaceTerm::var(&tauto_surface::bindings::library_name("Type"), sp),
                 constructors: vec![Constructor {
-                    name: format!("{family}::Mk"),
+                    name: label_symbols(tag).1,
                     implicit: 0,
                     params: vec![("value".into(), param.clone())],
                     result: app(&family, vec![param.clone()], &param),
@@ -178,7 +202,12 @@ impl Kernel {
                 generates: Generates::default(),
                 span: sp,
             };
-            if let super::Verdict::Failed(d) = self.inductive(&decl) {
+            let mut statements = [Stmt::Inductive(decl)];
+            self.resolve_statements(&mut statements);
+            let Stmt::Inductive(decl) = &statements[0] else {
+                unreachable!()
+            };
+            if let super::Verdict::Failed(d) = self.inductive(decl) {
                 return Err(d);
             }
         }
@@ -204,10 +233,10 @@ impl Kernel {
 pub fn record_sugar(records: &Records, stmt: &Stmt) -> Stmt {
     Sugar {
         keep_products: true,
-        members: HashSet::new(),
+        members: HashMap::new(),
         text: None,
         float: None,
-        ops: HashSet::new(),
+        ops: HashMap::new(),
         bools: false,
         records: records.clone(),
         labels: None,
@@ -216,10 +245,26 @@ pub fn record_sugar(records: &Records, stmt: &Stmt) -> Stmt {
 }
 
 impl Sugar {
+    fn record(&self, name: &Name) -> Option<&(Name, Vec<Name>)> {
+        if let Some(record) = self.records.get(name) {
+            return Some(record);
+        }
+        let mut found = self.records.values().filter(|(constructor, _)| match name {
+            Name::Selection(selection) => selection
+                .candidates()
+                .iter()
+                .any(|reference| constructor == &Name::Global(reference.clone())),
+            _ => constructor == name,
+        });
+        let record = found.next()?;
+        found.next().is_none().then_some(record)
+    }
+
     fn stmt(&self, stmt: &Stmt) -> Stmt {
         match stmt {
             Stmt::Fn(f) => {
                 let mut f = f.clone();
+                f.generic_types = f.generic_types.iter().map(|ty| self.ty(ty)).collect();
                 f.param_types = f
                     .param_types
                     .iter()
@@ -306,12 +351,16 @@ impl Sugar {
         }
     }
 
-    fn literal(&self, ctor: &str, s: &str, t: &T) -> T {
+    fn literal(&self, ctor: &Name, s: &str, t: &T) -> T {
         let sp = t.span;
-        let mut list = app("Nil", vec![T::var("Nat", sp)], t);
+        let mut list = app(
+            &tauto_surface::bindings::library_name("Nil"),
+            vec![T::var(&tauto_surface::bindings::library_name("Nat"), sp)],
+            t,
+        );
         for b in s.bytes().rev() {
             list = app(
-                "Cons",
+                &tauto_surface::bindings::library_name("Cons"),
                 vec![T::new(TermKind::Nat(b.to_string()), sp), list],
                 t,
             );
@@ -332,11 +381,13 @@ impl Sugar {
 
     /// The function a binary operator is, with its operands swapped or not,
     /// when that function is declared.
-    fn operator(&self, op: &str) -> Option<(&'static str, bool)> {
+    fn operator(&self, op: &Name) -> Option<(&Name, bool)> {
         Self::OPERATORS
             .iter()
-            .find(|(o, f, _)| *o == op && self.ops.contains(f))
-            .map(|&(_, f, swap)| (f, swap))
+            .find(|(o, f, _)| {
+                tauto_surface::bindings::is_library(op, o) && self.ops.contains_key(f)
+            })
+            .map(|&(_, f, swap)| (&self.ops[f], swap))
     }
 
     /// `t` in the place of a type. The unit type is written `Unit`; `#()` is only the value
@@ -348,9 +399,9 @@ impl Sugar {
                 function,
                 arguments,
             } if arguments.is_empty()
-                && matches!(&*function.kind, TermKind::Var(f) if f == "Tuple") =>
+                && matches!(&*function.kind, TermKind::Var(f) if tauto_surface::bindings::is_library(&f, "Tuple")) =>
             {
-                T::var("#()", t.span)
+                T::var(&tauto_surface::bindings::library_name("#()"), t.span)
             }
             _ => self.term(t),
         }
@@ -360,7 +411,13 @@ impl Sugar {
         let sp = t.span;
         let kind = match &*t.kind {
             TermKind::Text(s) if let Some(ctor) = &self.text => return self.literal(ctor, s, t),
-            TermKind::Bool(b) if self.bools => TermKind::Var(b.to_string()),
+            TermKind::Bool(b) if self.bools => {
+                TermKind::Var(tauto_surface::bindings::library_name(if *b {
+                    "true"
+                } else {
+                    "false"
+                }))
+            }
             // `#(a, b)` is the product `prod_mk(a, b)` where it is elaborated, never a `Pair`
             // written by its name; extraction keeps the product.
             TermKind::Tuple(_) if self.bools => {
@@ -372,9 +429,9 @@ impl Sugar {
                 arguments,
             } if self.bools
                 && arguments.is_empty()
-                && matches!(&*function.kind, TermKind::Var(f) if f == "Tuple") =>
+                && matches!(&*function.kind, TermKind::Var(f) if tauto_surface::bindings::is_library(&f, "Tuple")) =>
             {
-                TermKind::Var("Star".into())
+                TermKind::Var(tauto_surface::bindings::library_name("Star"))
             }
             TermKind::Float(s)
                 if let Some(f) = &self.float
@@ -391,7 +448,7 @@ impl Sugar {
                 function,
                 arguments,
             } if self.float.is_some()
-                && matches!(&*function.kind, TermKind::Var(op) if op == "-")
+                && matches!(&*function.kind, TermKind::Var(op) if tauto_surface::bindings::is_library(&op, "-"))
                 && let [x] = arguments.as_slice()
                 && let TermKind::Float(s) = &*x.kind =>
             {
@@ -421,21 +478,24 @@ impl Sugar {
             // stand in the order they are written: `A × B` and `B × A` are two types. The names are read after the program's names are
             // told apart: `Pair` and `Unit` are then the prelude's, as a file's own
             // declaration of either has its full name.
-            // A member that is itself a product gives its members, and a member `Unit` gives
-            // none: `(A × B) × C` is `A × B × C`, `A × Unit` is `A`, and a product left with
-            // no member is `Unit`.
+            // A member `Unit` gives none: `A × Unit` is `A`, and a product left with no member
+            // is `Unit`. A member that is itself a product stays one member: `(A × B) × C` is
+            // `Prod(Prod(A, B), C)`, the type a `T × C` at `T := A × B` has, and not `A × B × C`.
             TermKind::Product(items) => {
                 let mut items = crate::surface::qualify::product_type_members(items);
                 if items.len() < 2 {
                     return match items.pop() {
                         Some(one) => self.ty(&one),
-                        None => T::var("Unit", sp),
+                        None => T::var(&tauto_surface::bindings::library_name("Unit"), sp),
                     };
                 }
                 let mut items: Vec<T> = items.iter().map(|i| self.ty(i)).collect();
                 let last = items.pop().expect("two or more");
                 return items.into_iter().rev().fold(last, |snd, fst| {
-                    let cell = T::new(TermKind::Var("Prod".into()), fst.span);
+                    let cell = T::new(
+                        TermKind::Var(tauto_surface::bindings::library_name("Prod")),
+                        fst.span,
+                    );
                     T::new(
                         TermKind::App {
                             function: Box::new(cell),
@@ -469,11 +529,21 @@ impl Sugar {
             // `#(@b y, @a x)` and `#(#(a, b), c)` are put in the order of their type's members
             // where the tuple is read (`tuple_as_pairs`); a `Pair { fst, snd }` written by its
             // name is the inductive `Pair` and stands as it is written.
-            TermKind::Record { name, fields, .. } => match self.records.get(name) {
+            // `f(<x: v>, h)`: the implicit arguments named, each a term.
+            TermKind::Record { name, fields, base }
+                if name.spelling() == Some(tauto_surface::IMPLICITS) =>
+            {
+                TermKind::Record {
+                    name: name.clone(),
+                    fields: fields.iter().map(|(f, v)| (f.clone(), self.term(v))).collect(),
+                    base: base.clone(),
+                }
+            }
+            TermKind::Record { name, fields, .. } => match self.record(name) {
                 Some((ctor, names)) => {
                     let mut args = Vec::new();
                     for n in names {
-                        match fields.iter().find(|(f, _)| f == n) {
+                        match fields.iter().find(|(f, _)| f.as_str() == n.as_str()) {
                             Some((_, e)) => args.push(self.term(e)),
                             // A missing field is left for the kernel to
                             // report: an unbound name.
@@ -484,12 +554,12 @@ impl Sugar {
                 }
                 None => (*t.kind).clone(),
             },
-            TermKind::Field { base, name } if matches!(&*base.kind, TermKind::Var(c) if self.members.contains(&format!("{c}::{name}"))) =>
+            TermKind::Field { base, name } if matches!(&*base.kind, TermKind::Var(c) if self.members.contains_key(&(c.clone(), name.clone()))) =>
             {
                 let TermKind::Var(c) = &*base.kind else {
                     unreachable!()
                 };
-                TermKind::Var(format!("{c}::{name}"))
+                TermKind::Var(self.members[&(c.clone(), name.clone())].clone())
             }
             TermKind::Field { base, name } => TermKind::Field {
                 base: Box::new(self.term(base)),
@@ -540,7 +610,7 @@ impl Sugar {
                 binder,
                 arms,
             } if arms.iter().any(|a| a.guard.is_some()) => {
-                let chain = guard_chain(scrutinee, result.as_deref(), binder.as_deref(), arms, sp);
+                let chain = guard_chain(scrutinee, result.as_deref(), binder.as_ref(), arms, sp);
                 return self.term(&chain);
             }
             TermKind::Match {
@@ -590,7 +660,7 @@ impl Sugar {
             },
             other => other.clone(),
         };
-        T::new(kind, sp)
+        t.with_kind(kind, sp)
     }
 
     fn pattern(&self, p: &Pattern) -> Pattern {
@@ -601,15 +671,7 @@ impl Sugar {
             return Pattern::Tuple(items.iter().map(|q| self.pattern(q)).collect());
         }
         if let Pattern::Tuple(_) = p {
-            let pair = if self.records.contains_key("Pair") {
-                "Pair".to_string()
-            } else {
-                format!(
-                    "{}{}Pair",
-                    crate::surface::qualify::PRELUDE_MODULE,
-                    crate::surface::qualify::SEPARATOR
-                )
-            };
+            let pair = tauto_surface::bindings::library_name("Pair");
             return self.pattern(&crate::surface::qualify::tuple_pattern_as_pairs(p, &pair));
         }
         // `#(p, #())` is `p`, as the value is.
@@ -617,23 +679,17 @@ impl Sugar {
             return self.pattern(&flat);
         }
         match p {
-            // `#(a, b)` names the prelude's `Pair` by its full name; the
-            // kernel declares it by its short one, whether or not the file
-            // imports anything of the library.
-            Pattern::Record { name, fields } => match self.records.get(name).or_else(|| {
-                let short = name
-                    .strip_prefix(crate::surface::qualify::PRELUDE_MODULE)?
-                    .strip_prefix(crate::surface::qualify::SEPARATOR)?;
-                self.records.get(short)
-            }) {
+            Pattern::Record { name, fields } => match self.record(name) {
                 Some((ctor, names)) => Pattern::Ctor {
                     name: ctor.clone(),
                     args: names
                         .iter()
-                        .map(|n| match fields.iter().find(|(f, _)| f == n) {
-                            Some((_, q)) => self.pattern(q),
-                            None => Pattern::Wild,
-                        })
+                        .map(
+                            |n| match fields.iter().find(|(f, _)| f.as_str() == n.as_str()) {
+                                Some((_, q)) => self.pattern(q),
+                                None => Pattern::Wild,
+                            },
+                        )
                         .collect(),
                 },
                 // `C<n: m>(…)`'s implicit arguments, which `full_fields` places.
@@ -663,7 +719,7 @@ impl Sugar {
                 for tag in tags.iter().rev() {
                     labels.borrow_mut().insert(tag.clone());
                     out = Pattern::Ctor {
-                        name: format!("{}::Mk", label_family(tag)),
+                        name: label_symbols(tag).1,
                         args: vec![out],
                     };
                 }
@@ -673,7 +729,10 @@ impl Sugar {
                 name: name.clone(),
                 args: args.iter().map(|a| self.pattern(a)).collect(),
             },
-            Pattern::Bool(b) if self.bools => Pattern::Bind(b.to_string()),
+            Pattern::Bool(b) if self.bools => Pattern::Ctor {
+                name: tauto_surface::bindings::library_name(if *b { "true" } else { "false" }),
+                args: Vec::new(),
+            },
             other => other.clone(),
         }
     }
@@ -699,7 +758,7 @@ pub(super) fn literal_chain(
 ) -> Option<T> {
     let (last, literals) = arms.split_last()?;
     if literals.is_empty()
-        || arms.iter().any(|a| a.guard.is_some() || a.goal.is_some())
+        || arms.iter().any(|a| a.guard.is_some())
         || !literals.iter().all(|a| {
             matches!(
                 (&a.pattern, kind),
@@ -709,8 +768,19 @@ pub(super) fn literal_chain(
     {
         return None;
     }
+    // A goal written on an arm is the type of its body.
+    let body = |a: &MatchArm| match &a.goal {
+        Some(g) => T::new(
+            TermKind::Ascribe {
+                term: Box::new(a.body.clone()),
+                ty: Box::new(g.clone()),
+            },
+            a.body.span,
+        ),
+        None => a.body.clone(),
+    };
     let mut chain = match &last.pattern {
-        Pattern::Wild => last.body.clone(),
+        Pattern::Wild => body(last),
         Pattern::Bind(other) => T::new(
             TermKind::Block(vec![
                 Stmt::Let {
@@ -720,7 +790,7 @@ pub(super) fn literal_chain(
                     borrow: false,
                     borrow_mut: false,
                 },
-                Stmt::Expr(last.body.clone()),
+                Stmt::Expr(body(last)),
             ]),
             last.body.span,
         ),
@@ -728,7 +798,10 @@ pub(super) fn literal_chain(
     };
     let arm = |name: &str, body: T| MatchArm {
         goal: None,
-        pattern: Pattern::Bind(name.into()),
+        pattern: Pattern::Ctor {
+            name: tauto_surface::bindings::library_name(name),
+            args: Vec::new(),
+        },
         guard: None,
         body,
     };
@@ -739,20 +812,28 @@ pub(super) fn literal_chain(
             Pattern::Int(n) => {
                 let numeral = T::new(TermKind::Nat(n.unsigned_abs().to_string()), at);
                 if *n < 0 {
-                    app("-", vec![numeral], scrutinee)
+                    app(
+                        &tauto_surface::bindings::library_name("-"),
+                        vec![numeral],
+                        scrutinee,
+                    )
                 } else {
                     numeral
                 }
             }
             _ => unreachable!(),
         };
-        let test = app("==", vec![scrutinee.clone(), literal], scrutinee);
+        let test = app(
+            &tauto_surface::bindings::library_name("=="),
+            vec![scrutinee.clone(), literal],
+            scrutinee,
+        );
         chain = T::new(
             TermKind::Match {
                 scrutinee: Box::new(test),
                 result: result.map(|r| Box::new(r.clone())),
                 binder: None,
-                arms: vec![arm("true", a.body.clone()), arm("false", chain)],
+                arms: vec![arm("true", body(a)), arm("false", chain)],
             },
             sp,
         );
@@ -768,7 +849,7 @@ pub(super) fn literal_chain(
 pub fn guard_chain(
     scrutinee: &T,
     result: Option<&T>,
-    binder: Option<&str>,
+    binder: Option<&Name>,
     arms: &[MatchArm],
     sp: tauto_parol::Span,
 ) -> T {
@@ -777,7 +858,7 @@ pub fn guard_chain(
             TermKind::Match {
                 scrutinee: Box::new(scrutinee.clone()),
                 result: result.map(|r| Box::new(r.clone())),
-                binder: binder.map(str::to_string),
+                binder: binder.cloned(),
                 arms: arms.to_vec(),
             },
             sp,
@@ -788,7 +869,10 @@ pub fn guard_chain(
     let otherwise = guard_chain(scrutinee, result, None, rest, sp);
     let branch = |name: &str, body: T| MatchArm {
         goal: None,
-        pattern: Pattern::Bind(name.into()),
+        pattern: Pattern::Ctor {
+            name: tauto_surface::bindings::library_name(name),
+            args: Vec::new(),
+        },
         guard: None,
         body,
     };
@@ -827,7 +911,10 @@ pub fn guard_chain(
     guard_chain(scrutinee, result, binder, &out, sp)
 }
 
-fn app(f: &str, args: Vec<T>, at: &T) -> T {
+fn app<N: ?Sized>(f: &N, args: Vec<T>, at: &T) -> T
+where
+    for<'a> Name: From<&'a N>,
+{
     T::new(
         TermKind::App {
             function: Box::new(T::var(f, at.span)),
@@ -839,13 +926,45 @@ fn app(f: &str, args: Vec<T>, at: &T) -> T {
 
 #[cfg(test)]
 mod tests {
-    use super::label_of;
+    use super::{label_constructor, label_family, label_of};
+    use crate::surface::Name;
+
+    #[test]
+    fn text_sugar_keeps_the_selected_constructor_reference() {
+        let constructor: Name = tauto_surface::identity::DeclRef::fresh("Text::Mk").into();
+        let sugar = super::Sugar {
+            keep_products: false,
+            members: Default::default(),
+            text: Some(constructor.clone()),
+            float: None,
+            ops: Default::default(),
+            bools: false,
+            records: Default::default(),
+            labels: None,
+        };
+        let text = super::T::new(super::TermKind::Text("a".into()), Default::default());
+        let term = sugar.term(&text);
+        let super::TermKind::App { function, .. } = &*term.kind else {
+            panic!("constructor application")
+        };
+        assert!(matches!(&*function.kind, super::TermKind::Var(n) if n == &constructor));
+    }
 
     #[test]
     fn label_of_accepts_only_label_families() {
-        assert_eq!(label_of("@label.a"), Some("a"));
+        assert_eq!(label_of(&Name::from("@label.a")), Some("a"));
+        let family = label_family("a");
+        assert_eq!(label_of(&family), Some("a"));
+        assert_eq!(
+            label_constructor(&family),
+            label_constructor(&label_family("a"))
+        );
+        assert_eq!(
+            label_of(&tauto_surface::identity::DeclRef::fresh("@label.a").into()),
+            None
+        );
         for name in ["@label.a::Mk", "@label.a::ind", "@label.", "@other.a"] {
-            assert_eq!(label_of(name), None, "{name}");
+            assert_eq!(label_of(&Name::from(name)), None, "{name}");
         }
     }
 }

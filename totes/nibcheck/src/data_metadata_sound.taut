@@ -28,7 +28,7 @@ pub fn data_metadata(data: Data): Data {
   }
 }
 pub fn data_metadata_option(o: Option(Data)): Option(Data) {
-  match o: Option(Data) {
+  ⊢ Option(Data) from match o {
     None => None
     Some(data) => Some(data_metadata(data))
   }
@@ -64,7 +64,10 @@ pub theorem data_metadata_insert_at(
   v: Data,
   ordered: Ordmap::ordered(m, Ordmap::compare_text),
   compatible: data_metadata_lookup(m, k) = Some(data_metadata(v))
-): data_metadata_lookup(m, k) = data_metadata_lookup(Ordmap::insert(m, k, v, Ordmap::compare_text), k) {
+): data_metadata_lookup(
+  m,
+  k
+) = data_metadata_lookup(Ordmap::insert(m, k, v, Ordmap::compare_text), k) {
   Eq::trans(
     compatible,
     Eq::sym(Eq::congr(data_metadata_option, Ordmap::text_get_insert_same(m, k, v, ordered)))
@@ -80,10 +83,19 @@ pub theorem data_metadata_insert_k(
   n: Text,
   o: Ordering,
   eo: Ordmap::compare_text(n, k) = o
-): data_metadata_lookup(m, n) = data_metadata_lookup(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
-  match o: data_metadata_lookup(m, n) = data_metadata_lookup(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
+): data_metadata_lookup(
+  m,
+  n
+) = data_metadata_lookup(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
+  ⊢ data_metadata_lookup(
+    m,
+    n
+  ) = data_metadata_lookup(Ordmap::insert(m, k, v, Ordmap::compare_text), n) from match o {
     Equal => Eq::subst(
-      (key: Text) => data_metadata_lookup(m, key) = data_metadata_lookup(Ordmap::insert(m, k, v, Ordmap::compare_text), key),
+      (key: Text) => data_metadata_lookup(
+        m,
+        key
+      ) = data_metadata_lookup(Ordmap::insert(m, k, v, Ordmap::compare_text), key),
       Eq::sym(Ordmap::compare_text_eq(n, k, eo)),
       data_metadata_insert_at(m, k, v, ordered, compatible)
     )
@@ -156,13 +168,18 @@ pub theorem data_metadata_map(
   entries: DataEntriesFrom(es, original),
   preserves: ∀ data: Data. data_metadata(f(data)) = data_metadata(data)
 ): DataMetadataSame(original, datas_map_decls(es, f, acc)) {
-  match es: DataMetadataSame(original, datas_map_decls(es, f, acc)) {
+  ⊢ DataMetadataSame(original, datas_map_decls(es, f, acc)) from match es {
     Nil => same
     Cons(e, rest) => {
       let k: Text := summary_key(e)
       let v: Data := f(data_entry_value(e))
       let next: Ordmap(Text, Data) := Ordmap::insert(acc, k, v, Ordmap::compare_text)
-      let compatible: data_metadata_lookup(acc, k) = Some(data_metadata(v)) := Eq::trans(
+      let compatible: data_metadata_lookup(
+        acc,
+        k
+      ) = Some(
+        data_metadata(v)
+      ) := Eq::trans(
         Eq::sym(same(k)),
         Eq::trans(
           Eq::congr(data_metadata_option, entries(e, MemHere(rest))),
@@ -178,7 +195,14 @@ pub theorem data_metadata_map(
         f,
         original,
         next,
-        Ordmap::insert_ordered(Ordmap::compare_text, Ordmap::compare_text_law(), acc, k, v, ordered),
+        Ordmap::insert_ordered(
+          Ordmap::compare_text,
+          Ordmap::compare_text_law(),
+          acc,
+          k,
+          v,
+          ordered
+        ),
         n => Eq::trans(same(n), unchanged(n)),
         entry => member => entries(entry, MemThere(e, rest, member)),
         preserves
@@ -254,7 +278,7 @@ pub theorem data_metadata_round_test(
   ready: SummaryReady(d),
   found: datas_decl(d, n) = Some(data)
 ): DataMetadataRound(d, summary_round_test(rest, d, grew, n, data, b)) {
-  match b: DataMetadataRound(d, summary_round_test(rest, d, grew, n, data, b)) {
+  ⊢ DataMetadataRound(d, summary_round_test(rest, d, grew, n, data, b)) from match b {
     true => ih(d, grew, ready)
     false => key => Eq::trans(
       data_metadata_update(d, n, data, And::left(ready), found)(key),
@@ -275,7 +299,7 @@ pub theorem data_metadata_round_decl(
     next
   ). DataMetadataRound(next, datas_round(rest, next, flag))
 ): DataMetadataRound(d, summary_round_decl(rest, d, grew, n, o)) {
-  match o: DataMetadataRound(d, summary_round_decl(rest, d, grew, n, o)) {
+  ⊢ DataMetadataRound(d, summary_round_decl(rest, d, grew, n, o)) from match o {
     None => ih(d, grew, ready)
     Some(data) => data_metadata_round_test(
       rest,
@@ -297,7 +321,7 @@ pub theorem data_metadata_round(
   grew: Bool,
   ready: SummaryReady(d)
 ): DataMetadataRound(d, datas_round(es, d, grew)) {
-  match es: DataMetadataRound(d, datas_round(es, d, grew)) {
+  ⊢ DataMetadataRound(d, datas_round(es, d, grew)) from match es {
     Nil => n => Refl
     Cons(e, rest) => Eq::subst(
       (r: Pair(Datas, Bool)) => DataMetadataRound(d, r),
@@ -322,7 +346,7 @@ pub theorem data_metadata_choice(
   b: Bool,
   next: DataMetadataPreserved(d, datas_rounds(j, d))
 ): DataMetadataPreserved(d, summary_rounds_choice(j, d, b)) {
-  match b: DataMetadataPreserved(d, summary_rounds_choice(j, d, b)) {
+  ⊢ DataMetadataPreserved(d, summary_rounds_choice(j, d, b)) from match b {
     true => next
     false => n => Refl
   }
@@ -333,7 +357,7 @@ pub theorem data_metadata_rounds(
   d: Datas,
   ready: SummaryReady(d)
 ): DataMetadataPreserved(d, datas_rounds(k, d)) {
-  match k: DataMetadataPreserved(d, datas_rounds(k, d)) {
+  ⊢ DataMetadataPreserved(d, datas_rounds(k, d)) from match k {
     Zero => data_metadata_map_entries(
       summary_decls(d),
       data_top,

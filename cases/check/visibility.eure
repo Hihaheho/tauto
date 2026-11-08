@@ -1,0 +1,213 @@
+@ cases.a-declaration-without-pub-is-seen-only-in-its-file
+files."lib.taut" = ```tauto
+fn secret(): i64 { 1 }
+pub fn shown(): i64 { secret() }
+```
+files."main.nib" = ```tauto
+import "lib.taut"
+fn f(): i64 { secret() }
+```
+checks."main.nib::macro" = "error: `secret` is private to the file `lib`; write `pub` before its declaration there to use it from another file"
+
+@ cases.a-pub-type-cannot-be-built-outside-its-file
+files."lib.taut" = ```tauto
+pub struct Html { html: Text }
+pub fn escape(t: Text): Html { Html { html: t } }
+```
+files."main.nib" = ```tauto
+import "lib.taut"
+fn f(): Html { Html { html: "<b>" } }
+```
+checks."main.nib::macro" = "error: `Html` is a constructor of `Html`, which the file `lib` declares without `pub(open)`: outside that file the type is abstract; use the functions it makes public"
+
+@ cases.a-pub-type-has-no-fields-outside-its-file
+files."lib.taut" = ```tauto
+pub struct Html { html: Text }
+pub fn escape(t: Text): Html { Html { html: t } }
+```
+files."main.nib" = ```tauto
+import "lib.taut"
+fn f(h: Html): Text { h.html }
+```
+checks."main.nib::macro" = "error: `html` is a field of `Html`, which the file `lib` declares without `pub(open)`: outside that file the type is abstract; use the functions it makes public"
+
+@ cases.a-pub-type-cannot-be-matched-outside-its-file
+files."lib.taut" = ```tauto
+pub enum Shape { Circle(i64), Square(i64) }
+pub fn circle(r: i64): Shape { Circle(r) }
+```
+files."main.nib" = ```tauto
+import "lib.taut"
+fn f(s: Shape): i64 {
+  match s {
+    Circle(r) => r
+    _ => 0
+  }
+}
+```
+checks."main.nib::macro" = "error: `Shape::Circle` is a constructor of `Shape`, which the file `lib` declares without `pub(open)`: outside that file the type is abstract; use the functions it makes public"
+
+@ cases.only-the-declaring-file-handles-a-pub-effect
+files."lib.taut" = ```tauto
+pub effect session(): i64
+pub fn with_session(f: () -> i64 ! {session}): i64 {
+  handle { f() } with {
+    session(), k => k(7)
+    return v => v
+  }
+}
+```
+files."main.nib" = ```tauto
+import "lib.taut"
+fn forged(): i64 {
+  handle { perform session() } with {
+    session(), k => k(0)
+    return v => v
+  }
+}
+```
+checks."main.nib::macro" = "error: `session` is an effect the file `lib` declares without `pub(open)`: only that file may handle it; perform it here, and leave its answer to the handler that file writes"
+
+@ cases.pub-and-pub-open-are-used-from-another-file
+files."lib.taut" = ```tauto
+pub struct Html { html: Text }
+pub fn escape(t: Text): Html { Html { html: t } }
+pub fn html_text(h: Html): Text { h.html }
+pub(open) struct Point { x: i64, y: i64 }
+pub effect session(): i64
+pub(open) effect ask(): i64
+pub fn with_session(f: () -> i64 ! {session}): i64 {
+  handle { f() } with {
+    session(), k => k(7)
+    return v => v
+  }
+}
+```
+files."main.nib" = ```tauto
+import "lib.taut"
+import std::prelude::Os
+fn sum(p: Point): i64 {
+  match p {
+    Point { x, y } => x + y
+  }
+}
+fn asked(): i64 {
+  handle { perform ask() } with {
+    ask(), k => k(3)
+    return v => v
+  }
+}
+print(html_text(escape("ok")))
+print(Text::of_i64(sum(Point { x: 1, y: 2 }) + with_session(() => perform session()) + asked()))
+```
+stdout = "ok13"
+
+@ cases.a-pub-prelude-type-cannot-be-built
+files."main.nib" = ```tauto
+import std::prelude::Par
+
+fn f(): Atomic { Atomic {} }
+```
+checks."main.nib::macro" = "error: `Atomic` is a constructor of `Atomic`, which the prelude declares without `pub(open)`: outside that file the type is abstract; use the functions it makes public"
+
+@ cases.a-constructor-of-a-file-not-imported-does-not-take-a-pattern-name
+files."http.taut" = ```tauto
+pub(open) enum Method { Get, Head }
+pub fn method(): Method { Head }
+```
+files."view.taut" = ```tauto
+pub fn first(xs: List(i64)): i64 {
+  match xs {
+    Cons(head, _) => head
+    Nil => 0
+  }
+}
+```
+files."main.nib" = ```tauto
+import "http.taut"
+import "view.taut"
+import std::prelude::Os
+print(Text::of_i64(first([4, 5])))
+```
+stdout = "4"
+
+@ cases.a-field-of-an-open-inductive-is-not-taken-for-a-prelude-field
+files."data.taut" = ```tauto
+pub(open) inductive Global: Type {
+  Mk(name: Nat, value: Option(Nat)): Global
+}
+```
+files."main.nib" = ```tauto
+import "data.taut"
+pub fn get(g: Global): Option(Nat) { g.value }
+```
+checks_all = "ok"
+
+@ cases.a-pub-inductive-has-no-fields-outside-its-file
+files."data.taut" = ```tauto
+pub inductive Global: Type {
+  Mk(name: Nat, secret: Option(Nat)): Global
+}
+```
+files."main.nib" = ```tauto
+import "data.taut"
+pub fn get(g: Global): Option(Nat) { g.secret }
+```
+checks."main.nib::macro" = "error: `secret` is a field of `Global`, which the file `data` declares without `pub(open)`: outside that file the type is abstract; use the functions it makes public"
+
+@ cases.only-the-declaring-file-writes-instances-of-a-pub-class
+files."lib.taut" = ```tauto
+pub class Size(A: Type) {
+  fn size(a: A): i64
+}
+instance Size(i64) {
+  fn size(a: i64): i64 { a }
+}
+```
+files."main.nib" = ```tauto
+import "lib.taut"
+instance Size(Bool) {
+  fn size(a: Bool): i64 { 1 }
+}
+```
+checks."main.nib::macro" = "error: `Size` is a class the file `lib` declares without `pub(open)`: only that file may write its instances; use the instances that file writes, or ask for `pub(open)` there"
+
+@ cases.a-pub-open-class-takes-instances-from-another-file
+files."lib.taut" = ```tauto
+pub(open) class Same(A: Type) {
+  fn same(a: A): A
+}
+```
+files."main.nib" = ```tauto
+import "lib.taut"
+instance Same(Bool) {
+  fn same(a: Bool): Bool { a }
+}
+fn f(): Bool { Same::same(true) }
+```
+checks_all = "ok"
+
+@ cases.a-pub-function-cannot-bound-a-private-class
+files."main.nib" = ```tauto
+class Size(A: Type) {
+  fn size(a: A): i64
+}
+pub fn twice<A>(a: A): i64 where Size(A) { Size::size(a) + Size::size(a) }
+```
+checks."main.nib::macro" = "error: `twice` is `pub`, but its `where` names `Size`, a class this file declares without `pub`: no other file could meet it; write `pub` before the class, or leave the function private"
+
+@ cases.a-pub-open-class-method-types-see-builtin-types
+files."lib.taut" = ```tauto
+pub(open) class Size(A: Type) {
+  fn size(a: A): i64
+}
+```
+files."main.nib" = ```tauto
+import "lib.taut"
+instance Size(Bool) {
+  fn size(a: Bool): i64 { 1 }
+}
+```
+checks.Size = "skipped"
+checks."Size(Bool)" = "skipped"
+checks_all = "ok"

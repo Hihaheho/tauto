@@ -1,0 +1,739 @@
+// Differential cases: each named route compares the self-hosted component with its oracle, not only evaluator success.
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-001
+source = ```tauto
+fn pred(n: Nat): Nat { ⊢ Nat from match n { Zero => 0
+Succ(k) => k } }
+fn answer(): Nat { pred(0) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "0\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-002
+source = ```tauto
+fn answer(): Bool { 9223372036854775807 == 9223372036854775807 && 2147483648 > 2147483647 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "true\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-003
+source = ```tauto
+fn identity<A>(x: A): A { x }
+fn answer(): Bool { identity(9223372036854775807) == 9223372036854775807 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "true\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-004
+source = ```tauto
+fn ignore<A>(x: A): Bool { true }
+fn answer(): Bool { ignore(9223372036854775807) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "true\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-005
+source = ```tauto
+fn identity<A>(x: A): A { x }
+fn answer(): i64 { identity(42) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "42\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-006
+source = ```tauto
+inductive Boxed(A: Type): Type { Mk(value: A): Boxed(A) }
+fn unbox<A>(x: Boxed(A)): A { ⊢ A from match x { Mk(value) => value } }
+fn answer(): Nat { unbox(Boxed::Mk(42)) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "42\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-007
+source = ```tauto
+fn first<A>(xs: List(A), fallback: A): A { ⊢ A from match xs { Nil => fallback
+Cons(x, rest) => x } }
+fn answer(): i64 { first(Nil, 42) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "42\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-008
+source = ```tauto
+fn identity<A>(x: A): A { x }
+fn answer(): i64 { let text := identity("text")
+if text == "text" { identity(42) } else { 0 } }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "42\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-009
+source = ```tauto
+fn sub(a: Nat, b: Nat): Nat { a - b }
+fn answer(): Nat { sub(0, 1) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "0\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-010
+source = ```tauto
+fn pred(n: Nat): Nat { ⊢ Nat from match n { Zero => 0
+Succ(k) => k } }
+fn answer(): Nat { pred(Succ(42)) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "42\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-011
+source = ```tauto
+inductive Tree: Type { Leaf(n: i64): Tree
+Branch(left: Tree, right: Tree): Tree }
+fn sum(t: Tree): i64 { ⊢ i64 from match t { Leaf(n) => n
+Branch(l, r) => sum(l) + sum(r) } }
+fn answer(): i64 { let t := Branch(Leaf(10), Leaf(11))
+sum(t) + sum(t) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "42\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-012
+source = ```tauto
+inductive Words: Type { End: Words
+Word(value: Text, next: Words): Words }
+fn count(w: Words): i64 { ⊢ i64 from match w { End => 0
+Word(s, rest) => if s == "" { count(rest) } else { 1 + count(rest) } } }
+fn answer(): i64 { let w := Word("日本語", Word("", End))
+count(w) + count(w) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "2\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-013
+source = ```tauto
+inductive Pair: Type { Mk(left: i64, right: i64): Pair }
+fn answer(): i64 { let p := Pair::Mk(20, 22)
+p.left + p.right }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "42\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-014
+source = ```tauto
+fn same(s: Text): Bool { s == "日本語\n\"" }
+fn answer(): Bool { same("日本語\n\"") }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "true\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-015
+source = ```tauto
+fn choose(b: Bool, n: i64): i64 { if b { -n } else { +n } }
+fn answer(): i64 { choose(false, 42) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "42\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-016
+source = ```tauto
+fn even(n: i64): Bool { if n == 0 { true } else { odd(n - 1) } }
+fn odd(n: i64): Bool { if n == 0 { false } else { even(n - 1) } }
+fn answer(): Bool { even(10) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "true\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-017
+source = ```tauto
+fn answer(): i64 { 42 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "42\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-018
+source = ```tauto
+fn answer(): i64 { twice(21) }
+fn twice(x: i64): i64 { x + x }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "42\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-019
+source = ```tauto
+fn answer(): i64 { let x: i64 := 9
+let y := x * 5
+y - 3 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "42\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-020
+source = ```tauto
+fn fact(n: i64): i64 { if n == 0 { 1 } else { n * fact(n - 1) } }
+fn answer(): i64 { fact(5) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "120\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-021
+source = ```tauto
+fn answer(): Bool { not(2 > 3) && (4 <= 4) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "true\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-022
+source = ```tauto
+fn answer(): Bool { true || (9223372036854775807 + 1 == 0) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "true\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-023
+source = ```tauto
+fn 足す(数: i64): i64 { 数 + 1 }
+fn answer(): i64 { 足す(41) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "42\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-024
+source = ```tauto
+fn answer(): i64 { let move := 42
+move }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "42\n"
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-025
+source = ```tauto
+fn f(succ: Nat): Nat { succ(1) }
+fn answer(): Nat { f(2) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'f: calling a local value is unsupported'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-026
+source = ```tauto
+fn f(text_concat: Text): Text { text_concat("a", "b") }
+fn answer(): Text { f("x") }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'f: calling a local value is unsupported'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-027
+source = ```tauto
+fn answer(): Nat { 1 - 2 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'function result type mismatch'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-028
+source = ```tauto
+fn mixed(a: Nat, b: i64): Bool { a == b }
+fn answer(): Bool { mixed(1, 1) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'mixed: generic type mismatch'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-029
+source = ```tauto
+fn answer(): i64 { ⊢ i64 from match Cons(1, Nil) { Nil => 0
+Cons(x, x) => x } }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: duplicate field binder in pattern'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-030
+source = ```tauto
+fn same<A>(a: A, b: A): A { a }
+fn answer(): i64 { same(1, true) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: numeric literal requires integer type'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-031
+source = ```tauto
+fn bad<A>(a: A): i64 { a }
+fn answer(): i64 { bad(1) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'function result type mismatch'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-032
+source = ```tauto
+fn phantom<A>(): i64 { 42 }
+fn answer(): i64 { phantom() }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: cannot infer a result-erased type parameter'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-033
+source = ```tauto
+fn answer(): i64 { let xs := Nil
+42 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: unresolved type requires an annotation'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-034
+source = ```tauto
+fn answer(): i64 { let xs: List(i64, Text) := Nil
+42 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: unknown annotation type'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-035
+source = ```tauto
+inductive T(A: Type, B: Type): Type { C(value: A): T(B, A) }
+fn answer(): i64 { 1 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'constructor must return its family with unchanged parameters'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-036
+source = ```tauto
+mutual { fn answer(): i64 { 42 }
+let x := 1 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'cannot parse source'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-037
+source = ```tauto
+inductive T: Type => fn T::beq { A: T }
+fn answer(): i64 { 1 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'generated declarations are unsupported'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-038
+source = ```tauto
+inductive T: Type { A(n: i64): T }
+fn answer(): i64 { ⊢ i64 from match A(1) { A(x, y) => x } }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: too many pattern fields'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-039
+source = ```tauto
+inductive T: Type { A: T
+B: T }
+inductive W: Type { Wrap(x: T): W }
+fn answer(): i64 { ⊢ i64 from match Wrap(B) { Wrap(A) => 1 } }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: nested constructor patterns are unsupported'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-040
+source = ```tauto
+fn yes(): i64 { 1 }
+fn answer(): i64 { yes() }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'reserved function name'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-041
+source = ```tauto
+inductive T: Type { A: T
+B: T }
+fn answer(): i64 { ⊢ i64 from match A { A => 1 } }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: non-exhaustive match'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-042
+source = ```tauto
+inductive T: Type { A: T
+B: T }
+fn answer(): i64 { ⊢ i64 from match A { A => 1
+A => 2 } }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: duplicate match constructor'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-043
+source = ```tauto
+inductive T: Type { A: T }
+inductive U: Type { B: U }
+fn answer(): i64 { ⊢ i64 from match A { B => 1 } }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: constructor belongs to another type'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-044
+source = ```tauto
+inductive T: Type { A(n: i64): T }
+fn answer(): i64 { ⊢ i64 from match A(1) { A => 1 } }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: missing pattern fields'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-045
+source = ```tauto
+inductive T: Type { A(n: i64): T }
+fn answer(): i64 { ⊢ i64 from match A(true) { A(n) => n } }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: generic type mismatch'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-046
+source = ```tauto
+inductive T: Type { A: T }
+fn answer(): Bool { A == A }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: unsupported comparison type'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-047
+source = ```tauto
+inductive T(n: Nat): Type { C: T(n) }
+fn answer(): i64 { 1 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'indexed and higher-universe data are unsupported'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-048
+source = ```tauto
+inductive T: Type { A(x: Missing): T }
+fn answer(): i64 { 1 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'unknown declared type'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-049
+source = ```tauto
+inductive T: Type { A: T
+B: T }
+fn answer(): i64 { ⊢ i64 from match A { A => 1
+B => true } }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: numeric literal requires integer type'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-050
+source = ```tauto
+inductive T: Type { A(n: i64): T
+B: T }
+fn answer(): i64 { A(1).n }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: field requires a single-constructor type'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-051
+source = ```tauto
+inductive T: Type { A(n: i64): T }
+fn answer(): i64 { ⊢ i64 from match A(1) { A(_) => 1 } }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: pattern fields require names'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-052
+source = ```tauto
+inductive T: Type { A: i64 }
+fn answer(): i64 { 1 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'constructor must return its family with unchanged parameters'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-053
+source = ```tauto
+fn answer(): bool { true }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'entry function must have no parameters'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-054
+source = ```tauto
+fn answer(): i64 { 1 / 0 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: unknown or unsupported function: /'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-055
+source = ```tauto
+fn answer(): i64 { 1 % 2 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'cannot parse source'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-056
+source = ```tauto
+fn answer(): i64 { true }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'function result type mismatch'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-057
+source = ```tauto
+fn answer(): i64 { absent(1) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: unknown or unsupported function: absent'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-058
+source = ```tauto
+fn f(x: i64): i64 { x }
+fn answer(): i64 { f(true) }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: generic type mismatch'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-059
+source = ```tauto
+fn answer(): i64 { if true { 1 } else { false } }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: numeric literal requires integer type'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-060
+source = ```tauto
+fn answer(): i64 { 9223372036854775808 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: unsupported integer literal'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-061
+source = ```tauto
+fn answer(): i64 { 1 }
+fn unused(): i64 { 1 / 1 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'unused: unknown or unsupported function: /'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-062
+source = ```tauto
+fn answer(): i64 { 1 }
+fn answer(): i64 { 2 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'duplicate function'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-063
+source = ```tauto
+fn f(x: i64, x: i64): i64 { x }
+fn answer(): i64 { 1 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'duplicate parameter'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-064
+source = ```tauto
+fn answer(): i64 ! {} { answer() }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'borrows and effects are unsupported'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-065
+source = ```tauto
+fn answer(x: i64): i64 { x }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'entry function must have no parameters'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-066
+source = ```tauto
+fn answer(): i64 { var x := 1
+x }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: unsupported block statement: StVar'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-067
+source = ```tauto
+fn answer(): i64 { let x := 1
+let x := 2
+x }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: shadowed locals are unsupported'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-068
+source = ```tauto
+fn answer(): i64 { perform show(1)
+1 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'answer: only a final expression is supported'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-069
+source = ```tauto
+fn answer(): i64 { 1 } trailing invalid
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_compile_error = 'cannot parse source'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-070
+source = ```tauto
+fn answer(): i64 { 9223372036854775807 + 1 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_run_error = 'the number is too large'
+
+// rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs
+@ cases.rust-backend-compiles-real-type-engine-and-rejects-unsupported-inputs-071
+source = ```tauto
+fn answer(): i64 { 9223372036854775807 + 1 }
+perform show("result", answer())
+```
+differential = "rustgen"
+
+// natural_runtime_range_is_checked_not_wrapped
+@ cases.natural-runtime-range-is-checked-not-wrapped-072
+source = ```tauto
+fn answer(): Nat { let n: Nat := 9223372036854775807
+(n + n) + 1 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_stdout = "18446744073709551615\n"
+
+// natural_runtime_range_is_checked_not_wrapped
+@ cases.natural-runtime-range-is-checked-not-wrapped-073
+source = ```tauto
+fn answer(): Nat { let n: Nat := 9223372036854775807
+(n + n) + 2 }
+```
+differential = "rustgen"
+selfhost_entry = 'answer'
+selfhost_run_error = 'the number is too large'

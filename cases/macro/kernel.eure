@@ -1,0 +1,62 @@
+// A macro's function calls functions written in the kernel's language: the
+// kernel checks them, and the macro runs them as extraction writes them, so
+// that one definition serves both the proofs and the macros.
+
+@ cases.a-macro-calls-a-function-the-proofs-are-about
+extract = true
+entry = "main.taut"
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+
+pub fn limit(): Nat { 2 }
+
+pub fn within(n: Nat, k: Nat): Bool {
+  match n {
+    Zero => true
+    Succ(m) => match k {
+      Zero => false
+      Succ(j) => within(m, j)
+    }
+  }
+}
+
+pub theorem one_within(): (within(1, limit()) = true) { Refl }
+
+pub macro fn sized_one(e: SynExpr): SynExpr ! {macro_error} {
+  if within(1, limit()) { quote { "small" } } else { Syn::error(Syn::call_span(), "more than the limit") }
+}
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+fn f(): Text { sized_one!(1) }
+perform show("f", f())
+````
+shows = ["f = \"small\""]
+
+@ cases.a-macro-refuses-by-a-function-the-proofs-are-about
+extract = true
+entry = "main.taut"
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+
+pub fn limit(): Nat { 2 }
+
+pub fn within(n: Nat, k: Nat): Bool {
+  match n {
+    Zero => true
+    Succ(m) => match k {
+      Zero => false
+      Succ(j) => within(m, j)
+    }
+  }
+}
+
+pub macro fn sized(e: SynExpr): SynExpr ! {macro_error} {
+  if within(3, limit()) { quote { "small" } } else { Syn::error(Syn::call_span(), "more than the limit") }
+}
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+fn f(): Text { sized!(1) }
+````
+load_error = "macro.error: more than the limit"

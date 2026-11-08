@@ -1,0 +1,16 @@
+import std::prelude::Par
+import std::prelude::Os
+
+// Runs until Ctrl-C (or SIGTERM), then cleans up and returns normally. A
+// second Ctrl-C ends the run at once.
+linear struct Lock {}
+fn unlock(l: Lock): Unit ! {stdout} {
+  match l { Lock {} => perform stdout("cleaned up\n") }
+}
+
+let token := perform shutdown_token()
+let lock := Lock {}
+perform stdout("running; press Ctrl-C to stop\n")
+perform stdout_flush()
+perform wait(CancelToken::signal(token))
+unlock(lock)

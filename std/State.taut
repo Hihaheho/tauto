@@ -14,7 +14,7 @@ pub def StatePreserves(S: Type, C: Type, step: (S, C) -> S, invariant: (S) -> Pr
 ∀ s: S, c: C. (invariant(s)) -> invariant(step(s, c))
 
 pub fn state_run<S, C>(step: (S, C) -> S, commands: List(C), state: S): S {
-  match commands: S {
+  ⊢ S from match commands {
     Nil => state
     Cons(command, rest) => state_run(step, rest, step(state, command))
   }
@@ -28,7 +28,7 @@ pub theorem state_run_preserves<S: Type, C: Type>(
   state: S,
   valid: invariant(state)
 ): invariant(state_run(step, commands, state)) {
-  match commands: invariant(state_run(step, commands, state)) {
+  ⊢ invariant(state_run(step, commands, state)) from match commands {
     Nil => valid
     Cons(command, rest) => state_run_preserves(
       step,

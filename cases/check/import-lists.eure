@@ -1,0 +1,145 @@
+@ cases.a-list-brings-a-type-with-its-constructors
+files."value.taut" = ```tauto
+pub(open) enum Value { Vnum(Nat), Vflag(Bool) }
+pub fn zero(): Nat { 0 }
+```
+files."main.nib" = ```tauto
+import "value.taut" { Value }
+fn size(v: Value): Nat {
+  match v {
+    Vnum(n) => n
+    Vflag(b) => 1
+  }
+}
+fn one(): Value { Vnum(1) }
+```
+checks_all = "ok"
+checks."main.nib::size" = "skipped"
+checks."main.nib::one" = "skipped"
+
+@ cases.a-name-used-and-not-listed-is-an-error
+files."value.taut" = ```tauto
+pub(open) enum Value { Vnum(Nat), Vflag(Bool) }
+pub fn zero(): Nat { 0 }
+```
+files."main.nib" = ```tauto
+import "value.taut" { Value }
+fn one(): Value { Vnum(zero()) }
+```
+checks."main.nib::macro" = 'error: `zero` comes through `import "value.taut"`, whose list does not write it; write `zero` in its list'
+@ cases.a-name-used-and-not-listed-is-an-error.diagnostics[]
+file = "main.nib"
+name = "macro"
+message = 'comes through `import "value.taut"`'
+fix = 'import "value.taut" { Value, zero }'
+fixed_source = ```tauto
+import "value.taut" { Value, zero }
+fn one(): Value { Vnum(zero()) }
+```
+
+@ cases.a-listed-name-the-file-does-not-use-is-a-warning
+description = "A name the list writes and the file does not use changes nothing the program means, so it is a warning, not an error."
+files_tote = "app"
+tote_warnings = ['`zero` is in the list of `import "value.taut"`, but this file does not use it']
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/value.taut" = ```tauto
+pub(open) enum Value { Vnum(Nat), Vflag(Bool) }
+pub fn zero(): Nat { 0 }
+```
+files."app/src/main.taut" = ```tauto
+import "value.taut" { Value, zero }
+pub fn one(): Value { Vnum(1) }
+```
+
+@ cases.a-listed-name-the-imported-file-does-not-declare-is-an-error
+files."value.taut" = ```tauto
+pub(open) enum Value { Vnum(Nat), Vflag(Bool) }
+fn hidden(): Nat { 0 }
+```
+files."main.nib" = ```tauto
+import "value.taut" { Value, hidden }
+fn one(): Value { Vnum(1) }
+```
+checks."main.nib::macro" = 'error: `hidden` is in the list of `import "value.taut"`, but the imported file declares no `hidden` for other files'
+
+@ cases.a-module-import-takes-a-list-too
+files."main.nib" = ```tauto
+import std::prelude::Os { Response }
+fn wait_for(s: Response): Nat { 1 }
+```
+checks_all = "ok"
+checks."main.nib::wait_for" = "skipped"
+
+@ cases.a-list-leaves-out-what-would-be-ambiguous
+files."a.taut" = ```tauto
+pub fn size(): Nat { 1 }
+pub fn one(): Nat { 1 }
+```
+files."b.taut" = ```tauto
+pub fn size(): Nat { 2 }
+```
+files."main.taut" = ```tauto
+import "a.taut" { one }
+import "b.taut" { size }
+pub fn two(): Nat { size() }
+pub fn also(): Nat { one() }
+```
+entry = "main.taut"
+checks."main.taut::two" = "ok"
+
+@ cases.without-lists-the-same-name-is-ambiguous
+files."a.taut" = ```tauto
+pub fn size(): Nat { 1 }
+```
+files."b.taut" = ```tauto
+pub fn size(): Nat { 2 }
+```
+files."main.taut" = ```tauto
+import "a.taut"
+import "b.taut"
+pub fn two(): Nat { size() }
+```
+entry = "main.taut"
+checks."main.taut::macro" = "error: `size` is ambiguous"
+
+@ cases.a-name-a-quote-writes-is-used-through-the-import
+files."value.taut" = ```tauto
+pub fn zero(): Nat { 0 }
+pub fn one(): Nat { 1 }
+```
+files."main.nib" = ```tauto
+import "value.taut" { one }
+import std::prelude::Macro { SynCtx, SynExpr, SynIdent, SynSpan }
+pub macro fn z(e: SynExpr): SynExpr { quote { zero() } }
+fn two(): Nat { one() }
+```
+checks."main.nib::macro" = 'error: `zero` comes through `import "value.taut"`, whose list does not write it; write `zero` in its list'
+
+@ cases.a-listed-macro-keeps-its-source-name-after-binding
+entry = "main.taut"
+files."lib.taut" = ```tauto
+import std::prelude::Macro
+pub macro fn identity(value: SynExpr): SynExpr { value }
+```
+files."main.taut" = ```tauto
+import "lib.taut" { identity }
+pub theorem one(): Nat { identity!(1) }
+```
+checks.one = "ok"
+
+@ cases.lint-fix-keeps-an-import-used-by-a-bound-macro
+entry = "main.taut"
+files."lib.taut" = ```tauto
+import std::prelude::Macro
+pub macro fn identity(value: SynExpr): SynExpr { value }
+```
+files."main.taut" = ```tauto
+import "lib.taut"
+pub theorem one(): Nat { identity!(1) }
+```
+fixes.lint = true
+fixes.applied = ["Write the list of what the import brings"]
+fixes.files."main.taut" = ```tauto
+import "lib.taut" { identity }
+pub theorem one(): Nat { identity!(1) }
+```

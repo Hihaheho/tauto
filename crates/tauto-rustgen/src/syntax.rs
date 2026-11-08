@@ -9,17 +9,23 @@ use tauto_nir::Indirect;
 use tauto_syntax::{FieldTy, Payload, Tables, TypeDef};
 
 impl Gen<'_> {
-    fn syntax_ctor(&self, data: &str, ctor: &str, values: Vec<Rs>) -> Rs {
+    fn syntax_ctor(&self, parser: usize, data: &str, ctor: &str, values: Vec<Rs>) -> Rs {
         let d = self
-            .data(data)
+            .data(&self.pkg.syntax_parsers[parser].data_bindings[data])
             .expect("runtime syntax data is retained by NIR");
         let c = d
             .ctors
             .iter()
-            .find(|c| d.is_struct || c.name == ctor || c.name.rsplit("::").next() == Some(ctor))
+            .find(|c| {
+                d.is_struct
+                    || self.pkg.syntax_parsers[parser]
+                        .constructor_bindings
+                        .get(&(data.to_string(), ctor.to_string()))
+                        == Some(&c.name)
+            })
             .unwrap_or_else(|| panic!("schema constructor {data}::{ctor}: {:?}", d.ctors));
         assert_eq!(values.len(), c.fields.len());
-        let path = self.ctor_path(data, &c.name, d.is_struct);
+        let path = self.ctor_path(&d.name, &c.name, d.is_struct);
         let values: Vec<_> = values
             .into_iter()
             .zip(&c.fields)
@@ -42,9 +48,9 @@ impl Gen<'_> {
         }
     }
 
-    fn syntax_list(&self, items: Rs) -> Rs {
-        let nil = self.syntax_ctor("List", "Nil", vec![]);
-        let cons = self.syntax_ctor("List", "Cons", vec![quote!(item), quote!(tail)]);
+    fn syntax_list(&self, parser: usize, items: Rs) -> Rs {
+        let nil = self.syntax_ctor(parser, "List", "Nil", vec![]);
+        let cons = self.syntax_ctor(parser, "List", "Cons", vec![quote!(item), quote!(tail)]);
         quote!((#items).into_iter().rev().fold(#nil, |tail, item| #cons))
     }
 
@@ -55,10 +61,16 @@ impl Gen<'_> {
                 quote!(#f(#ast, text))
             }
             FieldTy::Token => {
-                let span = self.syntax_ctor("SynSpan", "SynSpan", vec![quote!(token.start as u64)]);
-                let empty = self.syntax_ctor("List", "Nil", vec![]);
-                let ctx = self.syntax_ctor("SynCtx", "SynCtx", vec![empty]);
+                let span = self.syntax_ctor(
+                    parser,
+                    "SynSpan",
+                    "SynSpan",
+                    vec![quote!(token.start as u64)],
+                );
+                let empty = self.syntax_ctor(parser, "List", "Nil", vec![]);
+                let ctx = self.syntax_ctor(parser, "SynCtx", "SynCtx", vec![empty]);
                 let token = self.syntax_ctor(
+                    parser,
                     "SynToken",
                     "SynToken",
                     vec![
@@ -74,8 +86,10 @@ impl Gen<'_> {
             }
             FieldTy::List(inner) => {
                 let value = self.syntax_field(parser, syntax, inner, quote!(item));
-                let list = self
-                    .syntax_list(quote!(items.into_iter().map(|item| #value).collect::<Vec<_>>()));
+                let list = self.syntax_list(
+                    parser,
+                    quote!(items.into_iter().map(|item| #value).collect::<Vec<_>>()),
+                );
                 quote!({ let __tauto_syntax_runtime::Ast::List(items) = #ast else { unreachable!("validated list schema") }; #list })
             }
             FieldTy::Opt(inner) => {
@@ -116,13 +130,14 @@ impl Gen<'_> {
                     ),
                 };
                 let data = tauto_syntax::type_name(&parser.name, name);
-                let result = Self::data_name(&data);
+                let result = Self::data_name(self.pkg, &parser.data_bindings[&data]);
                 let fun = id(&format!("__tauto_syn_{i}_{name}"));
                 let mut arms = Vec::new();
                 for (ctor_index, (ctor, span, fields)) in ctors.into_iter().enumerate() {
                     let mut values = Vec::new();
                     if span {
                         values.push(self.syntax_ctor(
+                            i,
                             "SynSpan",
                             "SynSpan",
                             vec![quote!(span.0 as u64)],
@@ -136,7 +151,7 @@ impl Gen<'_> {
                             quote!(fields.next().expect("validated schema field")),
                         ));
                     }
-                    let value = self.syntax_ctor(&data, ctor, values);
+                    let value = self.syntax_ctor(i, &data, ctor, values);
                     let c = num(ctor_index as u64);
                     arms.push(quote!(#c => #value));
                 }
@@ -159,10 +174,22 @@ impl Gen<'_> {
             let name = lit(&parser.name);
             let source = lit(&parser.tables);
             let result = self.ty(&parser.result);
-            let expected = self.syntax_list(quote!(
-                d.expected.into_iter().map(Text::from).collect::<Vec<_>>()
-            ));
+            let expected = self.syntax_list(
+                i,
+                quote!(d.expected.into_iter().map(Text::from).collect::<Vec<_>>()),
+            );
+            let arg = self.syntax_ctor(
+                i,
+                "SynArg",
+                "SynArg",
+                vec![quote!(Text::from(n)), quote!(Text::from(v))],
+            );
+            let args = self.syntax_list(
+                i,
+                quote!(d.args.into_iter().map(|(n, v)| #arg).collect::<Vec<_>>()),
+            );
             let diag = self.syntax_ctor(
+                i,
                 "SynDiag",
                 "SynDiag",
                 vec![
@@ -170,6 +197,7 @@ impl Gen<'_> {
                     quote!(d.at as u64),
                     expected,
                     quote!(Text::from("macro.syntax_error")),
+                    args,
                 ],
             );
             out.extend(quote! {

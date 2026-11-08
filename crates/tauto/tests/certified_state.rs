@@ -15,11 +15,9 @@ fn false_certificate_rejects_before_extraction() {
     tauto_messages::install();
     let file = root().join("examples/certified-state/rejected/forged.taut");
     let entries = check_file(&file).unwrap();
-    assert!(
-        entries
-            .iter()
-            .any(|e| e.entry.name == "forged" && matches!(e.entry.verdict, Verdict::Failed(_)))
-    );
+    assert!(entries.iter().any(
+        |e| e.entry.name.as_str() == "forged" && matches!(e.entry.verdict, Verdict::Failed(_))
+    ));
     assert!(extract_files(&[file]).is_err());
 }
 
@@ -50,9 +48,8 @@ fn changing_the_executed_transition_invalidates_the_same_proofs() {
         fs::write(&file, original.replace(from, to)).unwrap();
         let entries = check_file(&file).unwrap();
         assert!(
-            entries
-                .iter()
-                .any(|e| e.entry.name == failed && matches!(e.entry.verdict, Verdict::Failed(_))),
+            entries.iter().any(|e| e.entry.name.as_str() == failed
+                && matches!(e.entry.verdict, Verdict::Failed(_))),
             "{name}"
         );
         assert!(

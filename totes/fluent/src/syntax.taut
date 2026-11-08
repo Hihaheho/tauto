@@ -75,12 +75,12 @@ pub fn is_id_char(c: Nat): Bool {
 }
 
 pub fn byte_list_eq(a: List(Nat), b: List(Nat)): Bool {
-  match a: Bool {
-    Nil => match b: Bool {
+  ⊢ Bool from match a {
+    Nil => ⊢ Bool from match b {
       Nil => true
       Cons(d, u) => false
     }
-    Cons(c, t) => match b: Bool {
+    Cons(c, t) => ⊢ Bool from match b {
       Nil => false
       Cons(d, u) => Bool::and(Nat::eq(c, d), byte_list_eq(t, u))
     }
@@ -88,9 +88,9 @@ pub fn byte_list_eq(a: List(Nat), b: List(Nat)): Bool {
 }
 
 pub fn skip_inline(s: List(Nat)): List(Nat) {
-  match s: List(Nat) {
+  ⊢ List(Nat) from match s {
     Nil => Nil
-    Cons(c, t) => match Nat::eq(c, 32): List(Nat) {
+    Cons(c, t) => ⊢ List(Nat) from match Nat::eq(c, 32) {
       true => skip_inline(t)
       false => s
     }
@@ -98,9 +98,9 @@ pub fn skip_inline(s: List(Nat)): List(Nat) {
 }
 
 pub fn skip_blank(s: List(Nat)): List(Nat) {
-  match s: List(Nat) {
+  ⊢ List(Nat) from match s {
     Nil => Nil
-    Cons(c, t) => match Bool::or(Nat::eq(c, 32), Nat::eq(c, 10)): List(Nat) {
+    Cons(c, t) => ⊢ List(Nat) from match Bool::or(Nat::eq(c, 32), Nat::eq(c, 10)) {
       true => skip_blank(t)
       false => s
     }
@@ -108,9 +108,9 @@ pub fn skip_blank(s: List(Nat)): List(Nat) {
 }
 
 pub fn skip_line(s: List(Nat)): List(Nat) {
-  match s: List(Nat) {
+  ⊢ List(Nat) from match s {
     Nil => Nil
-    Cons(c, t) => match Nat::eq(c, 10): List(Nat) {
+    Cons(c, t) => ⊢ List(Nat) from match Nat::eq(c, 10) {
       true => t
       false => skip_line(t)
     }
@@ -118,12 +118,12 @@ pub fn skip_line(s: List(Nat)): List(Nat) {
 }
 
 pub fn strip_cr(s: List(Nat)): List(Nat) {
-  match s: List(Nat) {
+  ⊢ List(Nat) from match s {
     Nil => Nil
-    Cons(c, t) => match Nat::eq(c, 13): List(Nat) {
-      true => match t: List(Nat) {
+    Cons(c, t) => ⊢ List(Nat) from match Nat::eq(c, 13) {
+      true => ⊢ List(Nat) from match t {
         Nil => Cons(c, Nil)
-        Cons(d, u) => match Nat::eq(d, 10): List(Nat) {
+        Cons(d, u) => ⊢ List(Nat) from match Nat::eq(d, 10) {
           true => strip_cr(t)
           false => Cons(c, strip_cr(t))
         }
@@ -140,16 +140,16 @@ pub(open) inductive Got(A: Type): Type {
 }
 
 pub fn cons_got(c: Nat, g: Got(List(Nat))): Got(List(Nat)) {
-  match g: Got(List(Nat)) {
+  ⊢ Got(List(Nat)) from match g {
     MkGot(v, r) => MkGot(Cons(c, v), r)
     Bad => Bad
   }
 }
 
 pub fn ident_tail(s: List(Nat)): Got(List(Nat)) {
-  match s: Got(List(Nat)) {
+  ⊢ Got(List(Nat)) from match s {
     Nil => MkGot(Nil, Nil)
-    Cons(c, t) => match is_id_char(c): Got(List(Nat)) {
+    Cons(c, t) => ⊢ Got(List(Nat)) from match is_id_char(c) {
       true => cons_got(c, ident_tail(t))
       false => MkGot(Nil, s)
     }
@@ -158,9 +158,9 @@ pub fn ident_tail(s: List(Nat)): Got(List(Nat)) {
 
 // `[a-zA-Z][a-zA-Z0-9_-]*`
 pub fn ident(s: List(Nat)): Got(List(Nat)) {
-  match s: Got(List(Nat)) {
+  ⊢ Got(List(Nat)) from match s {
     Nil => Bad
-    Cons(c, t) => match is_alpha(c): Got(List(Nat)) {
+    Cons(c, t) => ⊢ Got(List(Nat)) from match is_alpha(c) {
       true => cons_got(c, ident_tail(t))
       false => Bad
     }
@@ -168,11 +168,11 @@ pub fn ident(s: List(Nat)): Got(List(Nat)) {
 }
 
 pub fn number_tail(s: List(Nat), acc: Nat): Got(Nat) {
-  match s: Got(Nat) {
+  ⊢ Got(Nat) from match s {
     Nil => MkGot(acc, Nil)
-    Cons(c, t) => match is_digit(c): Got(Nat) {
+    Cons(c, t) => ⊢ Got(Nat) from match is_digit(c) {
       true => number_tail(t, Nat::add(Nat::mul(acc, 10), Nat::sub(c, 48)))
-      false => match Nat::eq(c, 46): Got(Nat) {
+      false => ⊢ Got(Nat) from match Nat::eq(c, 46) {
         // a fraction is not read (numbers are whole and not negative)
         true => Bad
         false => MkGot(acc, s)
@@ -183,9 +183,9 @@ pub fn number_tail(s: List(Nat), acc: Nat): Got(Nat) {
 
 // `[0-9]+`
 pub fn number(s: List(Nat)): Got(Nat) {
-  match s: Got(Nat) {
+  ⊢ Got(Nat) from match s {
     Nil => Bad
-    Cons(c, t) => match is_digit(c): Got(Nat) {
+    Cons(c, t) => ⊢ Got(Nat) from match is_digit(c) {
       true => number_tail(t, Nat::sub(c, 48))
       false => Bad
     }
@@ -194,17 +194,17 @@ pub fn number(s: List(Nat)): Got(Nat) {
 
 // The bytes of a string literal up to its closing `"`; `\"` and `\\` are escapes.
 pub fn string_tail(s: List(Nat)): Got(List(Nat)) {
-  match s: Got(List(Nat)) {
+  ⊢ Got(List(Nat)) from match s {
     Nil => Bad
-    Cons(c, t) => match Nat::eq(c, 34): Got(List(Nat)) {
+    Cons(c, t) => ⊢ Got(List(Nat)) from match Nat::eq(c, 34) {
       true => MkGot(Nil, t)
-      false => match Nat::eq(c, 10): Got(List(Nat)) {
+      false => ⊢ Got(List(Nat)) from match Nat::eq(c, 10) {
         true => Bad
-        false => match Nat::eq(c, 92): Got(List(Nat)) {
+        false => ⊢ Got(List(Nat)) from match Nat::eq(c, 92) {
           false => cons_got(c, string_tail(t))
-          true => match t: Got(List(Nat)) {
+          true => ⊢ Got(List(Nat)) from match t {
             Nil => Bad
-            Cons(d, u) => match Bool::or(Nat::eq(d, 34), Nat::eq(d, 92)): Got(List(Nat)) {
+            Cons(d, u) => ⊢ Got(List(Nat)) from match Bool::or(Nat::eq(d, 34), Nat::eq(d, 92)) {
               true => cons_got(d, string_tail(u))
               false => Bad
             }
@@ -216,11 +216,11 @@ pub fn string_tail(s: List(Nat)): Got(List(Nat)) {
 }
 
 pub fn attr_opt(s: List(Nat)): Got(Option(List(Nat))) {
-  match s: Got(Option(List(Nat))) {
+  ⊢ Got(Option(List(Nat))) from match s {
     Nil => MkGot(None, Nil)
-    Cons(c, t) => match Nat::eq(c, 46): Got(Option(List(Nat))) {
+    Cons(c, t) => ⊢ Got(Option(List(Nat))) from match Nat::eq(c, 46) {
       false => MkGot(None, s)
-      true => match ident(t): Got(Option(List(Nat))) {
+      true => ⊢ Got(Option(List(Nat))) from match ident(t) {
         MkGot(a, r) => MkGot(Some(a), r)
         Bad => Bad
       }
@@ -229,14 +229,14 @@ pub fn attr_opt(s: List(Nat)): Got(Option(List(Nat))) {
 }
 
 pub fn literal(s: List(Nat)): Got(Lit) {
-  match s: Got(Lit) {
+  ⊢ Got(Lit) from match s {
     Nil => Bad
-    Cons(c, t) => match Nat::eq(c, 34): Got(Lit) {
-      true => match string_tail(t): Got(Lit) {
+    Cons(c, t) => ⊢ Got(Lit) from match Nat::eq(c, 34) {
+      true => ⊢ Got(Lit) from match string_tail(t) {
         MkGot(v, r) => MkGot(LitStr(v), r)
         Bad => Bad
       }
-      false => match number(s): Got(Lit) {
+      false => ⊢ Got(Lit) from match number(s) {
         MkGot(n, r) => MkGot(LitNum(n), r)
         Bad => Bad
       }
@@ -245,7 +245,7 @@ pub fn literal(s: List(Nat)): Got(Lit) {
 }
 
 pub fn cons_arg(a: NamedArg, g: Got(List(NamedArg))): Got(List(NamedArg)) {
-  match g: Got(List(NamedArg)) {
+  ⊢ Got(List(NamedArg)) from match g {
     MkGot(v, r) => MkGot(Cons(a, v), r)
     Bad => Bad
   }
@@ -253,13 +253,13 @@ pub fn cons_arg(a: NamedArg, g: Got(List(NamedArg))): Got(List(NamedArg)) {
 
 mutual {
   pub fn args_more(fuel: Nat, s: List(Nat)): Got(List(NamedArg)) {
-    match fuel: Got(List(NamedArg)) {
+    ⊢ Got(List(NamedArg)) from match fuel {
       Zero => Bad
-      Succ(j) => match skip_blank(s): Got(List(NamedArg)) {
+      Succ(j) => ⊢ Got(List(NamedArg)) from match skip_blank(s) {
         Nil => Bad
-        Cons(c, t) => match Nat::eq(c, 41): Got(List(NamedArg)) {
+        Cons(c, t) => ⊢ Got(List(NamedArg)) from match Nat::eq(c, 41) {
           true => MkGot(Nil, t)
-          false => match Nat::eq(c, 44): Got(List(NamedArg)) {
+          false => ⊢ Got(List(NamedArg)) from match Nat::eq(c, 44) {
             true => args_list(j, t)
             false => Bad
           }
@@ -269,19 +269,19 @@ mutual {
   }
 
   pub fn args_list(fuel: Nat, s: List(Nat)): Got(List(NamedArg)) {
-    match fuel: Got(List(NamedArg)) {
+    ⊢ Got(List(NamedArg)) from match fuel {
       Zero => Bad
-      Succ(j) => match skip_blank(s): Got(List(NamedArg)) {
+      Succ(j) => ⊢ Got(List(NamedArg)) from match skip_blank(s) {
         Nil => Bad
-        Cons(c, t) => match Nat::eq(c, 41): Got(List(NamedArg)) {
+        Cons(c, t) => ⊢ Got(List(NamedArg)) from match Nat::eq(c, 41) {
           true => MkGot(Nil, t)
-          false => match ident(Cons(c, t)): Got(List(NamedArg)) {
+          false => ⊢ Got(List(NamedArg)) from match ident(Cons(c, t)) {
             Bad => Bad
-            MkGot(name, r) => match skip_blank(r): Got(List(NamedArg)) {
+            MkGot(name, r) => ⊢ Got(List(NamedArg)) from match skip_blank(r) {
               Nil => Bad
-              Cons(d, u) => match Nat::eq(d, 58): Got(List(NamedArg)) {
+              Cons(d, u) => ⊢ Got(List(NamedArg)) from match Nat::eq(d, 58) {
                 false => Bad
-                true => match literal(skip_blank(u)): Got(List(NamedArg)) {
+                true => ⊢ Got(List(NamedArg)) from match literal(skip_blank(u)) {
                   Bad => Bad
                   MkGot(v, r2) => cons_arg(Named(name, v), args_more(j, r2))
                 }
@@ -295,9 +295,9 @@ mutual {
 }
 
 pub fn args_opt(s: List(Nat)): Got(List(NamedArg)) {
-  match s: Got(List(NamedArg)) {
+  ⊢ Got(List(NamedArg)) from match s {
     Nil => MkGot(Nil, Nil)
-    Cons(c, t) => match Nat::eq(c, 40): Got(List(NamedArg)) {
+    Cons(c, t) => ⊢ Got(List(NamedArg)) from match Nat::eq(c, 40) {
       true => args_list(Succ(List::length(t)), t)
       false => MkGot(Nil, s)
     }
@@ -305,11 +305,11 @@ pub fn args_opt(s: List(Nat)): Got(List(NamedArg)) {
 }
 
 pub fn term_ref(s: List(Nat)): Got(Expr) {
-  match ident(s): Got(Expr) {
+  ⊢ Got(Expr) from match ident(s) {
     Bad => Bad
-    MkGot(id, r) => match attr_opt(r): Got(Expr) {
+    MkGot(id, r) => ⊢ Got(Expr) from match attr_opt(r) {
       Bad => Bad
-      MkGot(a, r2) => match args_opt(r2): Got(Expr) {
+      MkGot(a, r2) => ⊢ Got(Expr) from match args_opt(r2) {
         Bad => Bad
         MkGot(args, r3) => MkGot(ExTerm(id, a, args), r3)
       }
@@ -318,14 +318,14 @@ pub fn term_ref(s: List(Nat)): Got(Expr) {
 }
 
 pub fn message_ref(s: List(Nat)): Got(Expr) {
-  match ident(s): Got(Expr) {
+  ⊢ Got(Expr) from match ident(s) {
     Bad => Bad
-    MkGot(id, r) => match r: Got(Expr) {
+    MkGot(id, r) => ⊢ Got(Expr) from match r {
       Nil => MkGot(ExMsg(id, None), Nil)
-      Cons(c, t) => match Nat::eq(c, 40): Got(Expr) {
+      Cons(c, t) => ⊢ Got(Expr) from match Nat::eq(c, 40) {
         // a function call such as `NUMBER($n)` is not read
         true => Bad
-        false => match attr_opt(r): Got(Expr) {
+        false => ⊢ Got(Expr) from match attr_opt(r) {
           Bad => Bad
           MkGot(a, r2) => MkGot(ExMsg(id, a), r2)
         }
@@ -336,24 +336,24 @@ pub fn message_ref(s: List(Nat)): Got(Expr) {
 
 // An expression that is not a select expression.
 pub fn inline_expr(s: List(Nat)): Got(Expr) {
-  match s: Got(Expr) {
+  ⊢ Got(Expr) from match s {
     Nil => Bad
-    Cons(c, t) => match Nat::eq(c, 34): Got(Expr) {
-      true => match string_tail(t): Got(Expr) {
+    Cons(c, t) => ⊢ Got(Expr) from match Nat::eq(c, 34) {
+      true => ⊢ Got(Expr) from match string_tail(t) {
         MkGot(v, r) => MkGot(ExStr(v), r)
         Bad => Bad
       }
-      false => match is_digit(c): Got(Expr) {
-        true => match number(s): Got(Expr) {
+      false => ⊢ Got(Expr) from match is_digit(c) {
+        true => ⊢ Got(Expr) from match number(s) {
           MkGot(n, r) => MkGot(ExNum(n), r)
           Bad => Bad
         }
-        false => match Nat::eq(c, 36): Got(Expr) {
-          true => match ident(t): Got(Expr) {
+        false => ⊢ Got(Expr) from match Nat::eq(c, 36) {
+          true => ⊢ Got(Expr) from match ident(t) {
             MkGot(v, r) => MkGot(ExVar(v), r)
             Bad => Bad
           }
-          false => match Nat::eq(c, 45): Got(Expr) {
+          false => ⊢ Got(Expr) from match Nat::eq(c, 45) {
             true => term_ref(t)
             false => message_ref(s)
           }
@@ -364,14 +364,14 @@ pub fn inline_expr(s: List(Nat)): Got(Expr) {
 }
 
 pub fn key(s: List(Nat)): Got(Key) {
-  match s: Got(Key) {
+  ⊢ Got(Key) from match s {
     Nil => Bad
-    Cons(c, t) => match is_digit(c): Got(Key) {
-      true => match number(s): Got(Key) {
+    Cons(c, t) => ⊢ Got(Key) from match is_digit(c) {
+      true => ⊢ Got(Key) from match number(s) {
         MkGot(n, r) => MkGot(KeyNum(n), r)
         Bad => Bad
       }
-      false => match ident(s): Got(Key) {
+      false => ⊢ Got(Key) from match ident(s) {
         MkGot(v, r) => MkGot(KeyId(v), r)
         Bad => Bad
       }
@@ -384,11 +384,11 @@ pub(open) inductive RawVariant: Type {
 }
 
 pub fn push_char(c: Nat, g: Got(List(Elem))): Got(List(Elem)) {
-  match g: Got(List(Elem)) {
+  ⊢ Got(List(Elem)) from match g {
     Bad => Bad
-    MkGot(es, r) => match es: Got(List(Elem)) {
+    MkGot(es, r) => ⊢ Got(List(Elem)) from match es {
       Nil => MkGot(Cons(ElText(Cons(c, Nil)), Nil), r)
-      Cons(e, rest) => match e: Got(List(Elem)) {
+      Cons(e, rest) => ⊢ Got(List(Elem)) from match e {
         ElText(bs) => MkGot(Cons(ElText(Cons(c, bs)), rest), r)
         ElPlace(x) => MkGot(Cons(ElText(Cons(c, Nil)), es), r)
       }
@@ -397,7 +397,7 @@ pub fn push_char(c: Nat, g: Got(List(Elem))): Got(List(Elem)) {
 }
 
 pub fn push_elem(e: Elem, g: Got(List(Elem))): Got(List(Elem)) {
-  match g: Got(List(Elem)) {
+  ⊢ Got(List(Elem)) from match g {
     Bad => Bad
     MkGot(es, r) => MkGot(Cons(e, es), r)
   }
@@ -405,11 +405,11 @@ pub fn push_elem(e: Elem, g: Got(List(Elem))): Got(List(Elem)) {
 
 // A blank line inside a pattern is kept as a line end when the pattern goes on after it.
 pub fn blank_line(started: Bool, g: Got(List(Elem))): Got(List(Elem)) {
-  match g: Got(List(Elem)) {
+  ⊢ Got(List(Elem)) from match g {
     Bad => Bad
-    MkGot(es, r) => match es: Got(List(Elem)) {
+    MkGot(es, r) => ⊢ Got(List(Elem)) from match es {
       Nil => g
-      Cons(e, rest) => match started: Got(List(Elem)) {
+      Cons(e, rest) => ⊢ Got(List(Elem)) from match started {
         true => push_char(10, g)
         false => g
       }
@@ -424,7 +424,7 @@ pub fn ends_pattern(c: Nat): Bool {
 }
 
 pub fn cons_raw(v: RawVariant, g: Got(List(RawVariant))): Got(List(RawVariant)) {
-  match g: Got(List(RawVariant)) {
+  ⊢ Got(List(RawVariant)) from match g {
     MkGot(vs, r) => MkGot(Cons(v, vs), r)
     Bad => Bad
   }
@@ -432,12 +432,12 @@ pub fn cons_raw(v: RawVariant, g: Got(List(RawVariant))): Got(List(RawVariant)) 
 
 // A selector is a literal, a variable or an attribute of a term.
 pub fn valid_selector(e: Expr): Bool {
-  match e: Bool {
+  ⊢ Bool from match e {
     ExStr(b) => true
     ExNum(n) => true
     ExVar(v) => true
     ExMsg(i, a) => false
-    ExTerm(i, a, args) => match a: Bool {
+    ExTerm(i, a, args) => ⊢ Bool from match a {
       None => false
       Some(x) => true
     }
@@ -450,11 +450,11 @@ pub fn trim_bytes(bs: List(Nat)): List(Nat) {
 }
 
 pub fn trim_rev(es: List(Elem)): List(Elem) {
-  match es: List(Elem) {
+  ⊢ List(Elem) from match es {
     Nil => Nil
-    Cons(e, rest) => match e: List(Elem) {
+    Cons(e, rest) => ⊢ List(Elem) from match e {
       ElPlace(x) => es
-      ElText(bs) => match trim_bytes(bs): List(Elem) {
+      ElText(bs) => ⊢ List(Elem) from match trim_bytes(bs) {
         Nil => rest
         Cons(c, t) => Cons(ElText(Cons(c, t)), rest)
       }
@@ -475,11 +475,11 @@ pub fn trim_end(es: List(Elem)): List(Elem) {
 
 // The smaller of the indentation found so far and `n`, a line's indentation (never zero).
 pub fn min_indent(m: Option(Nat), n: Nat): Option(Nat) {
-  match n: Option(Nat) {
+  ⊢ Option(Nat) from match n {
     Zero => m
-    Succ(x) => match m: Option(Nat) {
+    Succ(x) => ⊢ Option(Nat) from match m {
       None => Some(n)
-      Some(k) => match Nat::le(k, n): Option(Nat) {
+      Some(k) => ⊢ Option(Nat) from match Nat::le(k, n) {
         true => Some(k)
         false => Some(n)
       }
@@ -490,17 +490,17 @@ pub fn min_indent(m: Option(Nat), n: Nat): Option(Nat) {
 // The least indentation of the lines in `bs`; `lead` is whether the bytes begin a line's
 // indentation, `run` how many spaces of it were read.
 pub fn indent_bytes(bs: List(Nat), lead: Bool, run: Nat, m: Option(Nat)): Option(Nat) {
-  match bs: Option(Nat) {
-    Nil => match lead: Option(Nat) {
+  ⊢ Option(Nat) from match bs {
+    Nil => ⊢ Option(Nat) from match lead {
       // the text ends in indentation: a placeable begins the line
       true => min_indent(m, run)
       false => m
     }
-    Cons(c, t) => match Nat::eq(c, 10): Option(Nat) {
+    Cons(c, t) => ⊢ Option(Nat) from match Nat::eq(c, 10) {
       true => indent_bytes(t, true, 0, m)
-      false => match Bool::and(lead, Nat::eq(c, 32)): Option(Nat) {
+      false => ⊢ Option(Nat) from match Bool::and(lead, Nat::eq(c, 32)) {
         true => indent_bytes(t, true, Succ(run), m)
-        false => match lead: Option(Nat) {
+        false => ⊢ Option(Nat) from match lead {
           true => indent_bytes(t, false, 0, min_indent(m, run))
           false => indent_bytes(t, false, 0, m)
         }
@@ -512,9 +512,9 @@ pub fn indent_bytes(bs: List(Nat), lead: Bool, run: Nat, m: Option(Nat)): Option
 // A text element always ends before a placeable or the end of the pattern, so only the first
 // one can begin with indentation without a line end before it.
 pub fn indent_elems(es: List(Elem), first: Bool, m: Option(Nat)): Option(Nat) {
-  match es: Option(Nat) {
+  ⊢ Option(Nat) from match es {
     Nil => m
-    Cons(e, rest) => match e: Option(Nat) {
+    Cons(e, rest) => ⊢ Option(Nat) from match e {
       ElPlace(x) => indent_elems(rest, false, m)
       ElText(bs) => indent_elems(rest, false, indent_bytes(bs, first, 0, m))
     }
@@ -524,11 +524,11 @@ pub fn indent_elems(es: List(Elem), first: Bool, m: Option(Nat)): Option(Nat) {
 // `bs` with up to `k` spaces taken off the beginning of each line; `d` is how many were taken
 // off the line being read.
 pub fn dedent_bytes(bs: List(Nat), k: Nat, lead: Bool, d: Nat): List(Nat) {
-  match bs: List(Nat) {
+  ⊢ List(Nat) from match bs {
     Nil => Nil
-    Cons(c, t) => match Nat::eq(c, 10): List(Nat) {
+    Cons(c, t) => ⊢ List(Nat) from match Nat::eq(c, 10) {
       true => Cons(c, dedent_bytes(t, k, true, 0))
-      false => match Bool::and(Bool::and(lead, Nat::eq(c, 32)), Nat::lt(d, k)): List(Nat) {
+      false => ⊢ List(Nat) from match Bool::and(Bool::and(lead, Nat::eq(c, 32)), Nat::lt(d, k)) {
         true => dedent_bytes(t, k, true, Succ(d))
         false => Cons(c, dedent_bytes(t, k, false, d))
       }
@@ -537,11 +537,11 @@ pub fn dedent_bytes(bs: List(Nat), k: Nat, lead: Bool, d: Nat): List(Nat) {
 }
 
 pub fn dedent_elems(es: List(Elem), k: Nat, first: Bool): List(Elem) {
-  match es: List(Elem) {
+  ⊢ List(Elem) from match es {
     Nil => Nil
-    Cons(e, rest) => match e: List(Elem) {
+    Cons(e, rest) => ⊢ List(Elem) from match e {
       ElPlace(x) => Cons(e, dedent_elems(rest, k, false))
-      ElText(bs) => match dedent_bytes(bs, k, first, 0): List(Elem) {
+      ElText(bs) => ⊢ List(Elem) from match dedent_bytes(bs, k, first, 0) {
         Nil => dedent_elems(rest, k, false)
         Cons(c, t) => Cons(ElText(Cons(c, t)), dedent_elems(rest, k, false))
       }
@@ -550,7 +550,7 @@ pub fn dedent_elems(es: List(Elem), k: Nat, first: Bool): List(Elem) {
 }
 
 pub fn dedent(es: List(Elem)): List(Elem) {
-  match indent_elems(es, true, None): List(Elem) {
+  ⊢ List(Elem) from match indent_elems(es, true, None) {
     None => es
     Some(k) => dedent_elems(es, k, true)
   }
@@ -561,10 +561,10 @@ pub fn finish(es: List(Elem)): List(Elem) {
 }
 
 pub fn plain_variants(vs: List(RawVariant)): List(Variant) {
-  match vs: List(Variant) {
+  ⊢ List(Variant) from match vs {
     Nil => Nil
-    Cons(v, rest) => match v: List(Variant) {
-      Raw(d, k, p) => match d: List(Variant) {
+    Cons(v, rest) => ⊢ List(Variant) from match v {
+      Raw(d, k, p) => ⊢ List(Variant) from match d {
         true => plain_variants(rest)
         false => Cons(Variant::Mk(k, p), plain_variants(rest))
       }
@@ -573,10 +573,10 @@ pub fn plain_variants(vs: List(RawVariant)): List(Variant) {
 }
 
 pub fn default_count(vs: List(RawVariant)): Nat {
-  match vs: Nat {
+  ⊢ Nat from match vs {
     Nil => 0
-    Cons(v, rest) => match v: Nat {
-      Raw(d, k, p) => match d: Nat {
+    Cons(v, rest) => ⊢ Nat from match v {
+      Raw(d, k, p) => ⊢ Nat from match d {
         true => Succ(default_count(rest))
         false => default_count(rest)
       }
@@ -585,10 +585,10 @@ pub fn default_count(vs: List(RawVariant)): Nat {
 }
 
 pub fn default_of(sel: Expr, all: List(RawVariant), vs: List(RawVariant)): Option(Expr) {
-  match vs: Option(Expr) {
+  ⊢ Option(Expr) from match vs {
     Nil => None
-    Cons(v, rest) => match v: Option(Expr) {
-      Raw(d, k, p) => match d: Option(Expr) {
+    Cons(v, rest) => ⊢ Option(Expr) from match v {
+      Raw(d, k, p) => ⊢ Option(Expr) from match d {
         true => Some(ExSelect(sel, plain_variants(all), k, p))
         false => default_of(sel, all, rest)
       }
@@ -598,16 +598,16 @@ pub fn default_of(sel: Expr, all: List(RawVariant), vs: List(RawVariant)): Optio
 
 // A select expression needs a valid selector, at least one variant and exactly one default.
 pub fn make_select(sel: Expr, vs: List(RawVariant)): Option(Expr) {
-  match Bool::and(valid_selector(sel), Nat::eq(default_count(vs), 1)): Option(Expr) {
+  ⊢ Option(Expr) from match Bool::and(valid_selector(sel), Nat::eq(default_count(vs), 1)) {
     false => None
     true => default_of(sel, vs, vs)
   }
 }
 
 pub fn select_got(sel: Expr, g: Got(List(RawVariant))): Got(Expr) {
-  match g: Got(Expr) {
+  ⊢ Got(Expr) from match g {
     Bad => Bad
-    MkGot(vs, r) => match make_select(sel, vs): Got(Expr) {
+    MkGot(vs, r) => ⊢ Got(Expr) from match make_select(sel, vs) {
       None => Bad
       Some(e) => MkGot(e, r)
     }
@@ -616,8 +616,8 @@ pub fn select_got(sel: Expr, g: Got(List(RawVariant))): Got(Expr) {
 
 // A term attribute is private: it can only be a selector.
 pub fn placeable_ok(e: Expr): Bool {
-  match e: Bool {
-    ExTerm(i, a, args) => match a: Bool {
+  ⊢ Bool from match e {
+    ExTerm(i, a, args) => ⊢ Bool from match a {
       None => true
       Some(x) => false
     }
@@ -633,18 +633,18 @@ mutual {
   // Text, placeables and continued lines, up to where the pattern ends. `started` is whether
   // anything of the pattern has been read (a line end before the first text is not kept).
   pub fn p_text(fuel: Nat, s: List(Nat), started: Bool): Got(List(Elem)) {
-    match fuel: Got(List(Elem)) {
+    ⊢ Got(List(Elem)) from match fuel {
       Zero => Bad
-      Succ(j) => match s: Got(List(Elem)) {
+      Succ(j) => ⊢ Got(List(Elem)) from match s {
         Nil => MkGot(Nil, Nil)
-        Cons(c, t) => match Nat::eq(c, 10): Got(List(Elem)) {
+        Cons(c, t) => ⊢ Got(List(Elem)) from match Nat::eq(c, 10) {
           true => p_line(j, t, started)
-          false => match Nat::eq(c, 123): Got(List(Elem)) {
-            true => match p_place(j, t): Got(List(Elem)) {
+          false => ⊢ Got(List(Elem)) from match Nat::eq(c, 123) {
+            true => ⊢ Got(List(Elem)) from match p_place(j, t) {
               Bad => Bad
               MkGot(e, r) => push_elem(ElPlace(e), p_text(j, r, true))
             }
-            false => match Nat::eq(c, 125): Got(List(Elem)) {
+            false => ⊢ Got(List(Elem)) from match Nat::eq(c, 125) {
               true => MkGot(Nil, s)
               false => push_char(c, p_text(j, t, true))
             }
@@ -658,17 +658,20 @@ mutual {
   // with `.`, `[`, `*` or `}`. Otherwise it ends, and the rest is that whole line. The
   // indentation is kept here; `dedent` takes off the part the lines have in common.
   pub fn p_line(fuel: Nat, s: List(Nat), started: Bool): Got(List(Elem)) {
-    match fuel: Got(List(Elem)) {
+    ⊢ Got(List(Elem)) from match fuel {
       Zero => Bad
-      Succ(j) => match skip_inline(s): Got(List(Elem)) {
+      Succ(j) => ⊢ Got(List(Elem)) from match skip_inline(s) {
         Nil => MkGot(Nil, Nil)
-        Cons(c, t) => match Nat::eq(c, 10): Got(List(Elem)) {
+        Cons(c, t) => ⊢ Got(List(Elem)) from match Nat::eq(c, 10) {
           true => blank_line(started, p_line(j, t, started))
-          false => match s: Got(List(Elem)) {
+          false => ⊢ Got(List(Elem)) from match s {
             Nil => MkGot(Nil, Nil)
-            Cons(c0, t0) => match Bool::and(Nat::eq(c0, 32), not(ends_pattern(c))): Got(List(Elem)) {
+            Cons(c0, t0) => ⊢ Got(List(Elem)) from match Bool::and(
+              Nat::eq(c0, 32),
+              not(ends_pattern(c))
+            ) {
               false => MkGot(Nil, s)
-              true => match started: Got(List(Elem)) {
+              true => ⊢ Got(List(Elem)) from match started {
                 true => push_char(10, p_text(j, s, true))
                 false => p_text(j, s, true)
               }
@@ -680,22 +683,22 @@ mutual {
   }
 
   pub fn p_place(fuel: Nat, s: List(Nat)): Got(Expr) {
-    match fuel: Got(Expr) {
+    ⊢ Got(Expr) from match fuel {
       Zero => Bad
-      Succ(j) => match inline_expr(skip_blank(s)): Got(Expr) {
+      Succ(j) => ⊢ Got(Expr) from match inline_expr(skip_blank(s)) {
         Bad => Bad
-        MkGot(e, r) => match skip_blank(r): Got(Expr) {
+        MkGot(e, r) => ⊢ Got(Expr) from match skip_blank(r) {
           Nil => Bad
-          Cons(c, t) => match Nat::eq(c, 125): Got(Expr) {
-            true => match placeable_ok(e): Got(Expr) {
+          Cons(c, t) => ⊢ Got(Expr) from match Nat::eq(c, 125) {
+            true => ⊢ Got(Expr) from match placeable_ok(e) {
               true => MkGot(e, t)
               false => Bad
             }
-            false => match Nat::eq(c, 45): Got(Expr) {
+            false => ⊢ Got(Expr) from match Nat::eq(c, 45) {
               false => Bad
-              true => match t: Got(Expr) {
+              true => ⊢ Got(Expr) from match t {
                 Nil => Bad
-                Cons(d, u) => match Nat::eq(d, 62): Got(Expr) {
+                Cons(d, u) => ⊢ Got(Expr) from match Nat::eq(d, 62) {
                   false => Bad
                   true => select_got(e, p_variants(j, u))
                 }
@@ -708,19 +711,19 @@ mutual {
   }
 
   pub fn p_variants(fuel: Nat, s: List(Nat)): Got(List(RawVariant)) {
-    match fuel: Got(List(RawVariant)) {
+    ⊢ Got(List(RawVariant)) from match fuel {
       Zero => Bad
-      Succ(j) => match skip_blank(s): Got(List(RawVariant)) {
+      Succ(j) => ⊢ Got(List(RawVariant)) from match skip_blank(s) {
         Nil => Bad
-        Cons(c, t) => match Nat::eq(c, 125): Got(List(RawVariant)) {
+        Cons(c, t) => ⊢ Got(List(RawVariant)) from match Nat::eq(c, 125) {
           true => MkGot(Nil, t)
-          false => match Nat::eq(c, 91): Got(List(RawVariant)) {
+          false => ⊢ Got(List(RawVariant)) from match Nat::eq(c, 91) {
             true => p_variant(j, t, false)
-            false => match Nat::eq(c, 42): Got(List(RawVariant)) {
+            false => ⊢ Got(List(RawVariant)) from match Nat::eq(c, 42) {
               false => Bad
-              true => match t: Got(List(RawVariant)) {
+              true => ⊢ Got(List(RawVariant)) from match t {
                 Nil => Bad
-                Cons(d, u) => match Nat::eq(d, 91): Got(List(RawVariant)) {
+                Cons(d, u) => ⊢ Got(List(RawVariant)) from match Nat::eq(d, 91) {
                   true => p_variant(j, u, true)
                   false => Bad
                 }
@@ -733,15 +736,15 @@ mutual {
   }
 
   pub fn p_variant(fuel: Nat, s: List(Nat), d: Bool): Got(List(RawVariant)) {
-    match fuel: Got(List(RawVariant)) {
+    ⊢ Got(List(RawVariant)) from match fuel {
       Zero => Bad
-      Succ(j) => match key(skip_blank(s)): Got(List(RawVariant)) {
+      Succ(j) => ⊢ Got(List(RawVariant)) from match key(skip_blank(s)) {
         Bad => Bad
-        MkGot(k, r) => match skip_blank(r): Got(List(RawVariant)) {
+        MkGot(k, r) => ⊢ Got(List(RawVariant)) from match skip_blank(r) {
           Nil => Bad
-          Cons(c, t) => match Nat::eq(c, 93): Got(List(RawVariant)) {
+          Cons(c, t) => ⊢ Got(List(RawVariant)) from match Nat::eq(c, 93) {
             false => Bad
-            true => match p_text(j, skip_inline(t), false): Got(List(RawVariant)) {
+            true => ⊢ Got(List(RawVariant)) from match p_text(j, skip_inline(t), false) {
               Bad => Bad
               MkGot(p, r2) => cons_raw(Raw(d, k, finish(p)), p_variants(j, r2))
             }
@@ -758,17 +761,17 @@ pub fn fuel_of(s: List(Nat)): Nat {
 
 // A pattern after `=`: `None` when it reads nothing, and the rest must begin a line.
 pub fn pattern(s: List(Nat)): Got(Option(List(Elem))) {
-  match p_text(fuel_of(s), skip_inline(s), false): Got(Option(List(Elem))) {
+  ⊢ Got(Option(List(Elem))) from match p_text(fuel_of(s), skip_inline(s), false) {
     Bad => Bad
-    MkGot(p, r) => match r: Got(Option(List(Elem))) {
-      Cons(c, t) => match Nat::eq(c, 125): Got(Option(List(Elem))) {
+    MkGot(p, r) => ⊢ Got(Option(List(Elem))) from match r {
+      Cons(c, t) => ⊢ Got(Option(List(Elem))) from match Nat::eq(c, 125) {
         true => Bad
-        false => match finish(p): Got(Option(List(Elem))) {
+        false => ⊢ Got(Option(List(Elem))) from match finish(p) {
           Nil => MkGot(None, r)
           Cons(e, es) => MkGot(Some(Cons(e, es)), r)
         }
       }
-      Nil => match finish(p): Got(Option(List(Elem))) {
+      Nil => ⊢ Got(Option(List(Elem))) from match finish(p) {
         Nil => MkGot(None, r)
         Cons(e, es) => MkGot(Some(Cons(e, es)), r)
       }
@@ -777,9 +780,9 @@ pub fn pattern(s: List(Nat)): Got(Option(List(Elem))) {
 }
 
 pub fn equals_pattern(s: List(Nat)): Got(Option(List(Elem))) {
-  match skip_inline(s): Got(Option(List(Elem))) {
+  ⊢ Got(Option(List(Elem))) from match skip_inline(s) {
     Nil => Bad
-    Cons(c, t) => match Nat::eq(c, 61): Got(Option(List(Elem))) {
+    Cons(c, t) => ⊢ Got(Option(List(Elem))) from match Nat::eq(c, 61) {
       true => pattern(t)
       false => Bad
     }
@@ -787,28 +790,28 @@ pub fn equals_pattern(s: List(Nat)): Got(Option(List(Elem))) {
 }
 
 pub fn cons_attr(a: Attr, g: Got(List(Attr))): Got(List(Attr)) {
-  match g: Got(List(Attr)) {
+  ⊢ Got(List(Attr)) from match g {
     MkGot(v, r) => MkGot(Cons(a, v), r)
     Bad => Bad
   }
 }
 
 pub fn attrs(fuel: Nat, s: List(Nat)): Got(List(Attr)) {
-  match fuel: Got(List(Attr)) {
+  ⊢ Got(List(Attr)) from match fuel {
     Zero => Bad
-    Succ(j) => match s: Got(List(Attr)) {
+    Succ(j) => ⊢ Got(List(Attr)) from match s {
       Nil => MkGot(Nil, Nil)
-      Cons(c0, t0) => match Nat::eq(c0, 32): Got(List(Attr)) {
+      Cons(c0, t0) => ⊢ Got(List(Attr)) from match Nat::eq(c0, 32) {
         false => MkGot(Nil, s)
-        true => match skip_inline(s): Got(List(Attr)) {
+        true => ⊢ Got(List(Attr)) from match skip_inline(s) {
           Nil => MkGot(Nil, Nil)
-          Cons(c, t) => match Nat::eq(c, 46): Got(List(Attr)) {
+          Cons(c, t) => ⊢ Got(List(Attr)) from match Nat::eq(c, 46) {
             false => MkGot(Nil, s)
-            true => match ident(t): Got(List(Attr)) {
+            true => ⊢ Got(List(Attr)) from match ident(t) {
               Bad => Bad
-              MkGot(id, r) => match equals_pattern(r): Got(List(Attr)) {
+              MkGot(id, r) => ⊢ Got(List(Attr)) from match equals_pattern(r) {
                 Bad => Bad
-                MkGot(p, r2) => match p: Got(List(Attr)) {
+                MkGot(p, r2) => ⊢ Got(List(Attr)) from match p {
                   None => Bad
                   Some(pat) => cons_attr(Attr::Mk(id, pat), attrs(j, r2))
                 }
@@ -827,14 +830,14 @@ pub fn make_entry(
   v: Option(List(Elem)),
   a: List(Attr)
 ): Option(Entry) {
-  match is_term: Option(Entry) {
-    true => match v: Option(Entry) {
+  ⊢ Option(Entry) from match is_term {
+    true => ⊢ Option(Entry) from match v {
       None => None
       Some(p) => Some(Term(id, p, a))
     }
-    false => match v: Option(Entry) {
+    false => ⊢ Option(Entry) from match v {
       Some(p) => Some(Message(id, v, a))
-      None => match a: Option(Entry) {
+      None => ⊢ Option(Entry) from match a {
         Nil => None
         Cons(x, xs) => Some(Message(id, None, a))
       }
@@ -843,13 +846,13 @@ pub fn make_entry(
 }
 
 pub fn entry_after_id(is_term: Bool, g: Got(List(Nat))): Got(Entry) {
-  match g: Got(Entry) {
+  ⊢ Got(Entry) from match g {
     Bad => Bad
-    MkGot(id, r) => match equals_pattern(r): Got(Entry) {
+    MkGot(id, r) => ⊢ Got(Entry) from match equals_pattern(r) {
       Bad => Bad
-      MkGot(v, r2) => match attrs(fuel_of(r2), r2): Got(Entry) {
+      MkGot(v, r2) => ⊢ Got(Entry) from match attrs(fuel_of(r2), r2) {
         Bad => Bad
-        MkGot(a, r3) => match make_entry(is_term, id, v, a): Got(Entry) {
+        MkGot(a, r3) => ⊢ Got(Entry) from match make_entry(is_term, id, v, a) {
           None => Bad
           Some(e) => MkGot(e, r3)
         }
@@ -859,9 +862,9 @@ pub fn entry_after_id(is_term: Bool, g: Got(List(Nat))): Got(Entry) {
 }
 
 pub fn entry(s: List(Nat)): Got(Entry) {
-  match s: Got(Entry) {
+  ⊢ Got(Entry) from match s {
     Nil => Bad
-    Cons(c, t) => match Nat::eq(c, 45): Got(Entry) {
+    Cons(c, t) => ⊢ Got(Entry) from match Nat::eq(c, 45) {
       true => entry_after_id(true, ident(t))
       false => entry_after_id(false, ident(s))
     }
@@ -870,13 +873,16 @@ pub fn entry(s: List(Nat)): Got(Entry) {
 
 // Junk runs to the next line that begins an entry or a comment, the line itself included.
 pub fn junk_lines(fuel: Nat, s: List(Nat)): List(Nat) {
-  match fuel: List(Nat) {
+  ⊢ List(Nat) from match fuel {
     Zero => s
-    Succ(j) => match s: List(Nat) {
+    Succ(j) => ⊢ List(Nat) from match s {
       Nil => Nil
-      Cons(c, t) => match Bool::or(Nat::eq(c, 32), Nat::eq(c, 10)): List(Nat) {
+      Cons(c, t) => ⊢ List(Nat) from match Bool::or(Nat::eq(c, 32), Nat::eq(c, 10)) {
         true => junk_lines(j, skip_line(s))
-        false => match Bool::or(Nat::eq(c, 125), Bool::or(Nat::eq(c, 91), Nat::eq(c, 42))): List(Nat) {
+        false => ⊢ List(Nat) from match Bool::or(
+          Nat::eq(c, 125),
+          Bool::or(Nat::eq(c, 91), Nat::eq(c, 42))
+        ) {
           true => junk_lines(j, skip_line(s))
           false => s
         }
@@ -890,34 +896,34 @@ pub fn bytes_before(s: List(Nat), r: List(Nat)): List(Nat) {
 }
 
 pub fn add_entry(e: Entry, r: Resource): Resource {
-  match r: Resource {
+  ⊢ Resource from match r {
     Mk(es, js) => Resource::Mk(Cons(e, es), js)
   }
 }
 
 pub fn add_junk(j: List(Nat), r: Resource): Resource {
-  match r: Resource {
+  ⊢ Resource from match r {
     Mk(es, js) => Resource::Mk(es, Cons(j, js))
   }
 }
 
 mutual {
   pub fn entries(fuel: Nat, s: List(Nat)): Resource {
-    match fuel: Resource {
+    ⊢ Resource from match fuel {
       Zero => Resource::Mk(Nil, Nil)
-      Succ(j) => match s: Resource {
+      Succ(j) => ⊢ Resource from match s {
         Nil => Resource::Mk(Nil, Nil)
-        Cons(c, t) => match Bool::or(Nat::eq(c, 10), Nat::eq(c, 35)): Resource {
+        Cons(c, t) => ⊢ Resource from match Bool::or(Nat::eq(c, 10), Nat::eq(c, 35)) {
           true => entries(j, skip_line(s))
-          false => match Nat::eq(c, 32): Resource {
-            true => match skip_inline(s): Resource {
+          false => ⊢ Resource from match Nat::eq(c, 32) {
+            true => ⊢ Resource from match skip_inline(s) {
               Nil => Resource::Mk(Nil, Nil)
-              Cons(d, u) => match Nat::eq(d, 10): Resource {
+              Cons(d, u) => ⊢ Resource from match Nat::eq(d, 10) {
                 true => entries(j, u)
                 false => junk_at(j, s)
               }
             }
-            false => match entry(s): Resource {
+            false => ⊢ Resource from match entry(s) {
               MkGot(e, r) => add_entry(e, entries(j, r))
               Bad => junk_at(j, s)
             }
@@ -928,7 +934,7 @@ mutual {
   }
 
   pub fn junk_at(fuel: Nat, s: List(Nat)): Resource {
-    match fuel: Resource {
+    ⊢ Resource from match fuel {
       Zero => Resource::Mk(Nil, Nil)
       Succ(j) => add_junk(
         bytes_before(s, junk_lines(fuel_of(s), skip_line(s))),

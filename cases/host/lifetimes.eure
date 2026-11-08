@@ -1,0 +1,67 @@
+// What the generated code releases, and when, for values a closure captures
+// or a handler abandons. The standard Probe writes each drop down by name.
+
+@ cases.an-owned-closure-releases-its-capture-at-each-boundary
+files_tote = "p"
+backends = ["rust", "javascript"]
+shows = ["unused = 1", "shadow = 2", "abort = 3", "finished = 4"]
+probe_drops = ["unused", "shadowed", "shadowing", "abort"]
+
+files."p/Tauto.eure" = 'package { name = "p" }'
+files."p/src/main.taut" = ```tauto
+affine struct Probe {}
+module Probe {
+  extern {
+    fn new(&name: Text): Probe
+  }
+}
+effect stop(): Never resume 0
+fn lambda_unused(): Unit {
+  let captured := Probe::new("unused")
+  { let unused: affine (Unit) -> Probe := (u) => captured; #() }
+  perform show("unused", 1)
+}
+fn lambda_shadow(): Unit {
+  let captured := Probe::new("shadowed")
+  { let consume: affine (Unit) -> Probe := (u) => captured
+    let captured := Probe::new("shadowing")
+    let result := consume(#())
+  }
+  perform show("shadow", 2)
+}
+fn lambda_abort(): Unit {
+  let captured := Probe::new("abort")
+  { let consume: affine (i64) -> Probe := (marker) => captured
+    handle { let result := consume(perform stop()); #() } with { stop() => #() }
+    perform show("abort", 3)
+  }
+}
+lambda_unused()
+lambda_shadow()
+lambda_abort()
+perform show("finished", 4)
+```
+
+@ cases.a-temporary-borrowed-by-an-abandoned-handler-is-released-once
+files_tote = "p"
+backends = ["rust", "javascript"]
+shows = ["result = 0"]
+probe_drops = ["temporary"]
+
+files."p/Tauto.eure" = 'package { name = "p" }'
+files."p/src/main.taut" = ```tauto
+affine struct Probe {}
+module Probe {
+  extern {
+    fn new(&name: Text): Probe
+  }
+}
+effect stop(): Never resume 0
+fn look(&probe: Probe): i64 { 1 }
+fn abandon(&probe: Probe): i64 ! {stop} {
+  let first := look(&probe)
+  perform stop()
+}
+let result := handle { abandon(&Probe::new("temporary")) } with { stop() => 0 }
+perform show("result", result)
+```

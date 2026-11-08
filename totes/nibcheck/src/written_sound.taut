@@ -32,14 +32,14 @@ mutual {
     term,
     ck_val(ck_written_in(term, c, generics))
   ) {
-    match term: WrittenTerm(
+    ⊢ WrittenTerm(
       ck_datas_of(c),
       generics,
       frame_constructor_position(c),
       frame_under_borrow(c),
       term,
       ck_val(ck_written_in(term, c, generics))
-    ) {
+    ) from match term {
       SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => written_in_step(
         ast_occurrence,
         sk,
@@ -76,14 +76,14 @@ mutual {
     sk,
     ck_val(ck_written_kind(sk, c, generics, span, under_borrow))
   ) {
-    match sk: WrittenKind(
+    ⊢ WrittenKind(
       ck_datas_of(c),
       generics,
       frame_constructor_position(c),
       under_borrow,
       sk,
       ck_val(ck_written_kind(sk, c, generics, span, under_borrow))
-    ) {
+    ) from match sk {
       SkVar(name) => written_transfer(
         Ty,
         (t: Ty) => WrittenKind(
@@ -733,14 +733,7 @@ mutual {
         branch_clean => False::elim(false_ne_true(Eq::congr(decl_names_empty, branch_clean))),
         clean
       )
-      SkStep(
-        arg_tactic,
-        arg_arg,
-        arg_call_start,
-        arg_call_end,
-        arg_before,
-        arg_arms
-      ) => written_transfer(
+      SkStep(arg_tactic, arg_arg, arg_call_start, arg_call_end, arg_before, arg_arms) => written_transfer(
         Ty,
         (t: Ty) => WrittenKind(
           ck_datas_of(c),
@@ -788,13 +781,13 @@ mutual {
     terms,
     ck_val(ck_written_each(terms, c, generics))
   ) {
-    match terms: WrittenTerms(
+    ⊢ WrittenTerms(
       ck_datas_of(c),
       generics,
       frame_constructor_position(c),
       terms,
       ck_val(ck_written_each(terms, c, generics))
-    ) {
+    ) from match terms {
       Nil => WrittenTermsNil
       Cons(first, rest) => written_transfer(
         List(Ty),
@@ -848,13 +841,13 @@ mutual {
     written_drop_parameters(params, skip),
     ck_val(ck_written_params(params, c, generics, skip))
   ) {
-    match params: WrittenParameters(
+    ⊢ WrittenParameters(
       ck_datas_of(c),
       generics,
       frame_constructor_position(c),
       written_drop_parameters(params, skip),
       ck_val(ck_written_params(params, c, generics, skip))
-    ) {
+    ) from match params {
       Nil => WrittenParametersNil
       Cons(first, rest) => written_params_cons_step(
         first,
@@ -896,14 +889,14 @@ mutual {
     written_param_body(p),
     ck_val(ck_written_param(p, c, generics))
   ) {
-    match p: WrittenTerm(
+    ⊢ WrittenTerm(
       ck_datas_of(c),
       generics,
       frame_constructor_position(c),
       false,
       written_param_body(p),
       ck_val(ck_written_param(p, c, generics))
-    ) {
+    ) from match p {
       SurfaceParamMk(name, body) => written_param_step(
         name,
         body,

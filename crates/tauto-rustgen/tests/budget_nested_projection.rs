@@ -12,7 +12,9 @@ const MANIFEST: &str = r#"rust {
 
 fn package(source: &str) -> Package {
     let mut package = tauto_nir::compile_with(source, true).unwrap();
-    package.exports.retain(|export| export.name == "run");
+    package
+        .exports
+        .retain(|export| export.name.as_str() == "run");
     assert_eq!(package.exports.len(), 1);
     package
 }
@@ -161,9 +163,16 @@ fn genuinely_unknown_intermediate_types_still_fail_closed() {
     qualified_only(&source);
     for unknown in [Ty::Infer, Ty::Param("Unknown".into())] {
         let mut package = package(&source);
+        let inner = package
+            .datas
+            .iter()
+            .find(|data| data.name.as_str() == "Inner")
+            .unwrap()
+            .name
+            .clone();
         let mut changed = 0;
         for function in &mut package.fns {
-            if function.source != "inspect" {
+            if function.source.as_str() != "inspect" {
                 continue;
             }
             let ExprKind::Field { base, field, .. } =
@@ -172,8 +181,10 @@ fn genuinely_unknown_intermediate_types_still_fail_closed() {
                 panic!("expected the values projection");
             };
             assert_eq!(field.name, "values");
-            assert!(matches!(&base.kind, ExprKind::Field { field, .. } if field.name == "inner"));
-            assert_eq!(base.ty, Ty::Data("Inner".into(), Vec::new()));
+            assert!(
+                matches!(&base.kind, ExprKind::Field { field, .. } if field.name.as_str() == "inner")
+            );
+            assert_eq!(base.ty, Ty::Data(inner.clone(), Vec::new()));
             base.ty = unknown.clone();
             changed += 1;
         }
@@ -200,12 +211,19 @@ fn a_safe_projected_field_does_not_hide_an_unproven_sibling() {
         r#"shared struct Outer { inner: Inner, read: (u64) -> u64 }"#,
     );
     let package = package(&source);
+    let outer = package
+        .datas
+        .iter()
+        .find(|data| data.name.as_str() == "Outer")
+        .unwrap()
+        .name
+        .clone();
     let mut reads = 0;
     for function in &package.fns {
-        if function.source == "inspect" {
+        if function.source.as_str() == "inspect" {
             function.body.walk(&mut |expr| {
-                if matches!(&expr.kind, ExprKind::Read { local, .. } if local.name == "value") {
-                    assert_eq!(expr.ty, Ty::Data("Outer".into(), Vec::new()));
+                if matches!(&expr.kind, ExprKind::Read { local, .. } if local.name.as_str() == "value") {
+                    assert_eq!(expr.ty, Ty::Data(outer.clone(), Vec::new()));
                     reads += 1;
                 }
             });

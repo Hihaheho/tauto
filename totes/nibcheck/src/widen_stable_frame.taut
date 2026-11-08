@@ -13,7 +13,7 @@ pub theorem widen_store_frame_stable(
   occurs: Bool,
   ordered: CkOrdered(c)
 ): StableOrderedFrame(c, widen_store(c, rv, value, occurs)) {
-  match occurs: StableOrderedFrame(c, widen_store(c, rv, value, occurs)) {
+  ⊢ StableOrderedFrame(c, widen_store(c, rv, value, occurs)) from match occurs {
     false => stable_ordered_return(c, Star, ordered)
     true => stable_ordered_rewrap(
       c,
@@ -47,7 +47,7 @@ pub theorem widen_attempt_frame_stable(
   success: Bool,
   ordered: CkOrdered(c)
 ): StableOrderedFrame(c, widen_attempt(c, rv, wide, success)) {
-  match success: StableOrderedFrame(c, widen_attempt(c, rv, wide, success)) {
+  ⊢ StableOrderedFrame(c, widen_attempt(c, rv, wide, success)) from match success {
     true => widen_store_true_frame_stable(c, rv, ck_resolve(c, wide), ordered)
     false => stable_ordered_return(c, false, ordered)
   }
@@ -65,12 +65,17 @@ pub theorem widen_fn_allowed_frame_stable(
   allowed: Bool,
   ordered: CkOrdered(c)
 ): StableOrderedFrame(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) {
-  match allowed: StableOrderedFrame(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) {
+  ⊢ StableOrderedFrame(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) from match allowed {
     true => stable_ordered_bind(
       Bool,
       Bool,
       c,
-      (success: Bool, c1: Checker) => widen_attempt(c1, rv, TyFn(pb, rb, kind_join(ka, kb)), success),
+      (success: Bool, c1: Checker) => widen_attempt(
+        c1,
+        rv,
+        TyFn(pb, rb, kind_join(ka, kb)),
+        success
+      ),
       ck_attempt_unify(c, TyFn(pa, ra, kind_join(ka, kb)), TyFn(pb, rb, kind_join(ka, kb))),
       ck_attempt_unify_stable_ordered(
         c,
@@ -99,7 +104,7 @@ pub theorem widen_fn_current_frame_stable(
   current: Ty,
   ordered: CkOrdered(c)
 ): StableOrderedFrame(c, widen_fn_current(c, pa, ra, ka, rv, current)) {
-  match current: StableOrderedFrame(c, widen_fn_current(c, pa, ra, ka, rv, current)) {
+  ⊢ StableOrderedFrame(c, widen_fn_current(c, pa, ra, ka, rv, current)) from match current {
     TyInt(w) => stable_ordered_return(c, false, ordered)
     TyBool => stable_ordered_return(c, false, ordered)
     TyText => stable_ordered_return(c, false, ordered)
@@ -139,7 +144,7 @@ pub theorem widen_fn_arm_frame_stable(
   arm: Ty,
   ordered: CkOrdered(c)
 ): StableOrderedFrame(c, widen_fn_arm(c, current, rv, arm)) {
-  match arm: StableOrderedFrame(c, widen_fn_arm(c, current, rv, arm)) {
+  ⊢ StableOrderedFrame(c, widen_fn_arm(c, current, rv, arm)) from match arm {
     TyInt(w) => stable_ordered_return(c, false, ordered)
     TyBool => stable_ordered_return(c, false, ordered)
     TyText => stable_ordered_return(c, false, ordered)
@@ -182,7 +187,7 @@ pub theorem widen_fits_if_frame_stable(
   allowed: Bool,
   ordered: CkOrdered(c)
 ): StableOrderedFrame(c, widen_fits_if(c, a, b, allowed)) {
-  match allowed: StableOrderedFrame(c, widen_fits_if(c, a, b, allowed)) {
+  ⊢ StableOrderedFrame(c, widen_fits_if(c, a, b, allowed)) from match allowed {
     true => stable_ordered_rewrap(
       c,
       ck_attempt_fits(c, a, b),
@@ -199,7 +204,7 @@ pub theorem widen_borrow_current_frame_stable(
   current: Ty,
   ordered: CkOrdered(c)
 ): StableOrderedFrame(c, widen_borrow_current(c, a, rv, current)) {
-  match current: StableOrderedFrame(c, widen_borrow_current(c, a, rv, current)) {
+  ⊢ StableOrderedFrame(c, widen_borrow_current(c, a, rv, current)) from match current {
     TyInt(w) => stable_ordered_return(c, false, ordered)
     TyBool => stable_ordered_return(c, false, ordered)
     TyText => stable_ordered_return(c, false, ordered)
@@ -260,7 +265,7 @@ pub theorem widen_borrow_arm_frame_stable(
   arm: Ty,
   ordered: CkOrdered(c)
 ): StableOrderedFrame(c, widen_borrow_arm(c, current, arm)) {
-  match arm: StableOrderedFrame(c, widen_borrow_arm(c, current, arm)) {
+  ⊢ StableOrderedFrame(c, widen_borrow_arm(c, current, arm)) from match arm {
     TyInt(w) => stable_ordered_return(c, false, ordered)
     TyBool => stable_ordered_return(c, false, ordered)
     TyText => stable_ordered_return(c, false, ordered)
@@ -309,7 +314,7 @@ pub theorem widen_final_fits_frame_stable(
   failed: Bool,
   ordered: CkOrdered(c)
 ): StableOrderedFrame(c, widen_final_fits(c, a, current, rv, failed)) {
-  match failed: StableOrderedFrame(c, widen_final_fits(c, a, current, rv, failed)) {
+  ⊢ StableOrderedFrame(c, widen_final_fits(c, a, current, rv, failed)) from match failed {
     true => stable_ordered_rewrap(
       c,
       ck_set_subst(c, rv, ty_union(Cons(current, Cons(ck_resolve(c, a), Nil)))),
@@ -332,7 +337,7 @@ pub theorem widen_after_arm_frame_stable(
   failed: Bool,
   ordered: CkOrdered(c)
 ): StableOrderedFrame(c, widen_after_arm(c, a, current, rv, failed)) {
-  match failed: StableOrderedFrame(c, widen_after_arm(c, a, current, rv, failed)) {
+  ⊢ StableOrderedFrame(c, widen_after_arm(c, a, current, rv, failed)) from match failed {
     true => stable_ordered_bind(
       Bool,
       Unit,
@@ -340,14 +345,7 @@ pub theorem widen_after_arm_frame_stable(
       (success: Bool, c1: Checker) => widen_final_fits(c1, a, current, rv, not(success)),
       ck_attempt_fits(c, a, current),
       ck_attempt_fits_stable_ordered(c, a, current, ordered),
-      success => c1 => o_c1 => widen_final_fits_frame_stable(
-        c1,
-        a,
-        current,
-        rv,
-        not(success),
-        o_c1
-      )
+      success => c1 => o_c1 => widen_final_fits_frame_stable(c1, a, current, rv, not(success), o_c1)
     )
     false => stable_ordered_return(c, Star, ordered)
   }
@@ -361,7 +359,7 @@ pub theorem widen_after_current_frame_stable(
   failed: Bool,
   ordered: CkOrdered(c)
 ): StableOrderedFrame(c, widen_after_current(c, a, current, rv, failed)) {
-  match failed: StableOrderedFrame(c, widen_after_current(c, a, current, rv, failed)) {
+  ⊢ StableOrderedFrame(c, widen_after_current(c, a, current, rv, failed)) from match failed {
     true => stable_ordered_bind(
       Bool,
       Unit,
@@ -369,14 +367,7 @@ pub theorem widen_after_current_frame_stable(
       (success: Bool, c1: Checker) => widen_after_arm(c1, a, current, rv, not(success)),
       ck_widen_borrowed_arm(c, a, current),
       ck_widen_borrowed_arm_run_frame_stable(c, a, current, ordered),
-      success => c1 => o_c1 => widen_after_arm_frame_stable(
-        c1,
-        a,
-        current,
-        rv,
-        not(success),
-        o_c1
-      )
+      success => c1 => o_c1 => widen_after_arm_frame_stable(c1, a, current, rv, not(success), o_c1)
     )
     false => stable_ordered_return(c, Star, ordered)
   }
@@ -390,7 +381,7 @@ pub theorem widen_after_fn_frame_stable(
   failed: Bool,
   ordered: CkOrdered(c)
 ): StableOrderedFrame(c, widen_after_fn(c, a, current, rv, failed)) {
-  match failed: StableOrderedFrame(c, widen_after_fn(c, a, current, rv, failed)) {
+  ⊢ StableOrderedFrame(c, widen_after_fn(c, a, current, rv, failed)) from match failed {
     true => stable_ordered_bind(
       Bool,
       Unit,

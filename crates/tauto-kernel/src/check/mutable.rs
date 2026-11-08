@@ -28,6 +28,7 @@
 //! a later one changes the state is bound first. `&x` is `x`, and `()` is
 //! `Star` (its type `Unit`). Extraction reads the function as written.
 
+use crate::surface::Name;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -41,30 +42,23 @@ use crate::surface::{
 
 type T = SurfaceTerm;
 
-fn var(name: &str, span: Span) -> T {
-    T::var(name, span)
+fn var(name: impl Into<Name>, span: Span) -> T {
+    T::var(&name.into(), span)
 }
 
-fn app(function: &str, arguments: Vec<T>, span: Span) -> T {
-    T::app(function, arguments, span)
+fn app(function: impl Into<Name>, arguments: Vec<T>, span: Span) -> T {
+    T::app(&function.into(), arguments, span)
 }
 
 /// The family and the constructor that carry a value and `k` states.
-pub(super) fn family(k: usize) -> (String, String) {
-    (format!("Mut{k}"), format!("mut{k}"))
+pub(super) fn family(k: usize) -> (Name, Name) {
+    let (family, constructor) = tauto_surface::bindings::state_family(k);
+    (family.into(), constructor.into())
 }
 
 fn is_unit(t: &T) -> bool {
     matches!(&*t.kind, TermKind::App { function, arguments }
-        if arguments.is_empty() && matches!(&*function.kind, TermKind::Var(f) if f == "Tuple"))
-}
-
-/// `t` written as a type: `()` is `Unit`.
-fn ty(t: &T) -> T {
-    if is_unit(t) {
-        return var("Unit", t.span);
-    }
-    t.clone()
+        if arguments.is_empty() && matches!(&*function.kind, TermKind::Var(f) if tauto_surface::bindings::is_library(&f, "Tuple")))
 }
 
 fn any(t: &T, p: &dyn Fn(&T) -> bool) -> bool {
@@ -93,7 +87,7 @@ fn needs(f: &FnDecl) -> bool {
     if f.effects.as_ref().is_some_and(|e| !e.is_empty()) {
         return false;
     }
-    if f.borrows.iter().any(Option::is_some) || f.result.as_ref().is_some_and(is_unit) {
+    if f.borrows.iter().any(Option::is_some) {
         return true;
     }
     // A loop or a `return` keeps the function executable, and so does a
@@ -141,15 +135,17 @@ fn prepare(t: &T) -> T {
                     return;
                 };
                 let (a, b) = (arguments[0].clone(), arguments[1].clone());
-                let (then, otherwise) = match op.as_str() {
-                    "&&" => (b, var("false", sp)),
-                    "||" => (var("true", sp), b),
-                    _ => return,
+                let (then, otherwise) = if tauto_surface::bindings::is_library(op, "&&") {
+                    (b, var(&tauto_surface::bindings::library_name("false"), sp))
+                } else if tauto_surface::bindings::is_library(op, "||") {
+                    (var(&tauto_surface::bindings::library_name("true"), sp), b)
+                } else {
+                    return;
                 };
                 let arm = |name: &str, body: T| MatchArm {
                     goal: None,
                     pattern: Pattern::Ctor {
-                        name: name.into(),
+                        name: tauto_surface::bindings::library_name(name),
                         args: Vec::new(),
                     },
                     guard: None,
@@ -158,7 +154,10 @@ fn prepare(t: &T) -> T {
                 t.kind = Arc::new(TermKind::Match {
                     binder: None,
                     scrutinee: Box::new(a),
-                    result: Some(Box::new(var("Bool", sp))),
+                    result: Some(Box::new(var(
+                        &tauto_surface::bindings::library_name("Bool"),
+                        sp,
+                    ))),
                     arms: vec![arm("true", then), arm("false", otherwise)],
                 });
             }
@@ -173,7 +172,7 @@ fn prepare(t: &T) -> T {
                 }
                 // `match mut0(x) { mut0(x') => match x' { … } }`
                 let (_, ctor) = family(0);
-                let copy = format!("{x}'m");
+                let copy = Name::Local(tauto_surface::identity::LocalRef::fresh(format!("{x}'m")));
                 let inner = T::new(
                     TermKind::Match {
                         binder: None,
@@ -204,33 +203,32 @@ enum Bind {
     /// `match call { mutK(value, outs…) => … }`.
     Call {
         call: T,
-        value: String,
-        outs: Vec<String>,
+        value: Name,
+        outs: Vec<Name>,
     },
-    Let {
-        name: String,
-        ty: Option<T>,
-        value: T,
-    },
+    /// `let name: ty = value`, as written.
+    Let { name: Name, ty: Option<T>, value: T },
 }
 
 struct Rewrite<'k> {
     kernel: &'k Kernel,
     /// The states in scope, the latest last: each name and its type when
     /// known.
-    states: Vec<(String, Option<T>)>,
-    outs: Vec<String>,
+    states: Vec<(Name, Option<T>)>,
+    /// The `&mut` parameters, which the function returns.
+    outs: Vec<Name>,
+    /// The families `MutK` used.
     used: HashSet<usize>,
     fresh: usize,
 }
 
 impl Rewrite<'_> {
-    fn fresh(&mut self) -> String {
+    fn fresh(&mut self) -> Name {
         self.fresh += 1;
-        format!("v'{}", self.fresh)
+        tauto_surface::identity::LocalRef::fresh(format!("v'{}", self.fresh)).into()
     }
 
-    fn state(&self, name: &str) -> Option<&Option<T>> {
+    fn state(&self, name: &Name) -> Option<&Option<T>> {
         self.states
             .iter()
             .rev()
@@ -291,7 +289,8 @@ impl Rewrite<'_> {
         rest
     }
 
-    fn assign(&mut self, name: &str, value: T, binds: &mut Vec<Bind>) {
+    /// `name` bound to `value`.
+    fn assign(&mut self, name: &Name, value: T, binds: &mut Vec<Bind>) {
         let span = value.span;
         let value = match self.state(name).cloned().flatten() {
             Some(t) => vec![t, value],
@@ -300,12 +299,13 @@ impl Rewrite<'_> {
         self.used.insert(0);
         binds.push(Bind::Call {
             call: app(&family(0).1, value, span),
-            value: name.to_string(),
+            value: name.clone(),
             outs: Vec::new(),
         });
     }
 
-    fn record_of(&self, name: &str, span: Span) -> Result<(String, Vec<String>), Diagnostic> {
+    /// The type of the state `name` as a record: its constructor and fields.
+    fn record_of(&self, name: &Name, span: Span) -> Result<(Name, Vec<Name>), Diagnostic> {
         let head = match self.state(name) {
             Some(Some(t)) => match &*t.kind {
                 TermKind::Var(n) => Some(n.clone()),
@@ -320,7 +320,10 @@ impl Rewrite<'_> {
         let records = self.kernel.records();
         match head.and_then(|h| records.get(&h).cloned()) {
             Some(r) => Ok(r),
-            None => err(msg!("kernel-mut-field-family", name = name), span),
+            None => err(
+                msg!("kernel-mut-field-family", name = (name).to_string()),
+                span,
+            ),
         }
     }
 
@@ -337,11 +340,13 @@ impl Rewrite<'_> {
         let mut values = Vec::new();
         for (i, (own, v)) in parts.into_iter().enumerate() {
             binds.extend(own);
+            // Only reads of mutable state can change across later bindings.
+            // An immutable recursive field retains its structural identity.
             let read_early = last_change.is_some_and(|l| i < l)
-                && !matches!(
-                    &*v.kind,
-                    TermKind::Nat(_) | TermKind::Float(_) | TermKind::Text(_) | TermKind::Bool(_)
-                );
+                && self
+                    .states
+                    .iter()
+                    .any(|(state, _)| super::occurs(&v, state));
             if read_early {
                 let name = self.fresh();
                 let span = v.span;
@@ -363,9 +368,11 @@ impl Rewrite<'_> {
     /// is its type when known, which a `match` that changes the state needs.
     fn expr(&mut self, t: &T, binds: &mut Vec<Bind>, want: Option<&T>) -> Result<T, Diagnostic> {
         let sp = t.span;
-        let same = |kind| Ok(T::new(kind, sp));
+        // Rewriting a source expression keeps its occurrence for checked
+        // implicit-argument metadata, including calls nested in effect code.
+        let same = |kind| Ok(t.with_kind(kind, sp));
         match &*t.kind {
-            _ if is_unit(t) => Ok(var("Star", sp)),
+            _ if is_unit(t) => Ok(var(&tauto_surface::bindings::library_name("Star"), sp)),
             TermKind::App {
                 function,
                 arguments,
@@ -438,12 +445,12 @@ impl Rewrite<'_> {
                     let (ctor, names) = self.record_of(&x, sp)?;
                     let made = names
                         .iter()
-                        .map(|n| match n == &f {
+                        .map(|n| match n.as_str() == f {
                             true => var(&t, sp),
                             false => T::new(
                                 TermKind::Field {
                                     base: Box::new(var(&x, sp)),
-                                    name: n.clone(),
+                                    name: n.to_string(),
                                 },
                                 sp,
                             ),
@@ -486,7 +493,7 @@ impl Rewrite<'_> {
             } => {
                 let scrutinee = self.expr(scrutinee, binds, None)?;
                 if self.states.is_empty() || !arms.iter().any(|a| mutates(&a.body)) {
-                    let goal = result.as_deref().map(ty).or(want.cloned());
+                    let goal = result.as_deref().cloned().or(want.cloned());
                     let arms = arms
                         .iter()
                         .map(|a| {
@@ -506,11 +513,11 @@ impl Rewrite<'_> {
                     });
                 }
                 // The whole state goes in and comes out.
-                let Some(value_ty) = result.as_deref().map(ty).or(want.cloned()) else {
+                let Some(value_ty) = result.as_deref().cloned().or(want.cloned()) else {
                     return err(msg!("kernel-mut-match-type"), sp);
                 };
                 // The latest binding of each state, all typed.
-                let mut names: Vec<String> = Vec::new();
+                let mut names: Vec<Name> = Vec::new();
                 for (n, _) in self.states.iter().rev() {
                     if !names.contains(n) {
                         names.push(n.clone());
@@ -522,7 +529,7 @@ impl Rewrite<'_> {
                     match self.state(n).cloned().flatten() {
                         Some(t) => tys.push(t),
                         None => {
-                            return err(msg!("kernel-mut-var-type", name = n), sp);
+                            return err(msg!("kernel-mut-var-type", name = (n).to_string()), sp);
                         }
                     }
                 }
@@ -534,7 +541,9 @@ impl Rewrite<'_> {
                     .map(|a| {
                         let body = self.tail(&a.body, &finish, Some(&whole_ty))?;
                         Ok(MatchArm {
-                            goal: a.goal.clone(),
+                            // A goal written on the arm is the type of its value; the arm
+                            // now gives the value with the states, so it is not compared.
+                            goal: None,
                             pattern: a.pattern.clone(),
                             guard: a.guard.clone(),
                             body,
@@ -606,7 +615,7 @@ impl Rewrite<'_> {
                     value: v,
                     ..
                 } => {
-                    let t = t.as_ref().map(ty);
+                    let t = t.clone();
                     let v = self.expr(v, binds, t.as_ref())?;
                     if self.states.is_empty() {
                         binds.push(Bind::Let {
@@ -634,7 +643,7 @@ impl Rewrite<'_> {
                     value: v,
                     borrow: false,
                 } => {
-                    let t = t.as_ref().map(ty);
+                    let t = t.clone();
                     let v = self.expr(v, binds, t.as_ref())?;
                     self.states.push((name.clone(), t));
                     self.assign(name, v, binds);
@@ -650,7 +659,7 @@ impl Rewrite<'_> {
                 }
                 Stmt::Assign { name, value: v, .. } => {
                     if self.state(name).is_none() {
-                        return err(msg!("kernel-mut-assign", name = name), v.span);
+                        return err(msg!("kernel-mut-assign", name = (name).to_string()), v.span);
                     }
                     let want = self.state(name).cloned().flatten();
                     let v = self.expr(v, binds, want.as_ref())?;
@@ -658,7 +667,7 @@ impl Rewrite<'_> {
                 }
                 Stmt::Expr(e) if last => value = Some(self.expr(e, binds, want)?),
                 Stmt::Expr(e) => {
-                    let unit = var("Unit", e.span);
+                    let unit = var(&tauto_surface::bindings::library_name("Unit"), e.span);
                     self.expr(e, binds, Some(&unit))?;
                 }
                 _ => {
@@ -667,12 +676,17 @@ impl Rewrite<'_> {
             }
         }
         self.states.truncate(depth);
-        Ok(value.unwrap_or_else(|| var("Star", t_span(stmts))))
+        Ok(value.unwrap_or_else(|| {
+            var(
+                &tauto_surface::bindings::library_name("Star"),
+                t_span(stmts),
+            )
+        }))
     }
 
     /// `t` in last position: the term that ends with `mutK(v, finish…)`.
     /// `goal` is its type, when known.
-    fn tail(&mut self, t: &T, finish: &[String], goal: Option<&T>) -> Result<T, Diagnostic> {
+    fn tail(&mut self, t: &T, finish: &[Name], goal: Option<&T>) -> Result<T, Diagnostic> {
         let sp = t.span;
         match &*t.kind {
             TermKind::If { .. } => self.tail(&if_match(t), finish, goal),
@@ -690,7 +704,9 @@ impl Rewrite<'_> {
                     .iter()
                     .map(|a| {
                         Ok(MatchArm {
-                            goal: a.goal.clone(),
+                            // The arm gives its value with the states: a goal written on it,
+                            // the value's type, is not compared.
+                            goal: None,
                             pattern: a.pattern.clone(),
                             guard: a.guard.clone(),
                             body: self.tail(&a.body, finish, goal)?,
@@ -720,7 +736,7 @@ impl Rewrite<'_> {
                 let mut inner = Vec::new();
                 for s in init {
                     if let Stmt::Var { name, ty: t, .. } = s {
-                        inner.push((name.clone(), t.as_ref().map(ty)));
+                        inner.push((name.clone(), t.clone()));
                     }
                 }
                 self.states.extend(inner);
@@ -771,7 +787,7 @@ pub(super) fn if_match(t: &T) -> T {
     let arm = |name: &str, body: T| MatchArm {
         goal: None,
         pattern: Pattern::Ctor {
-            name: name.into(),
+            name: tauto_surface::bindings::library_name(name),
             args: Vec::new(),
         },
         guard: None,
@@ -780,7 +796,7 @@ pub(super) fn if_match(t: &T) -> T {
     let otherwise = otherwise
         .as_deref()
         .cloned()
-        .unwrap_or_else(|| var("Star", t.span));
+        .unwrap_or_else(|| var(&tauto_surface::bindings::library_name("Star"), t.span));
     T::new(
         TermKind::Match {
             binder: None,
@@ -795,7 +811,7 @@ pub(super) fn if_match(t: &T) -> T {
 impl Kernel {
     /// `stmt` with its functions' `&mut` and `var`s read as above, the
     /// families `MutK` they use declared first.
-    pub(super) fn mutable_sugar(&mut self, stmt: &Stmt) -> Result<Stmt, (String, Diagnostic)> {
+    pub(super) fn mutable_sugar(&mut self, stmt: &Stmt) -> Result<Stmt, (Name, Diagnostic)> {
         match stmt {
             Stmt::Fn(f) if needs(f) => Ok(Stmt::Fn(self.mutable_fn(f)?)),
             Stmt::Mutual { items, span }
@@ -814,7 +830,7 @@ impl Kernel {
         }
     }
 
-    fn mutable_fn(&mut self, f: &FnDecl) -> Result<FnDecl, (String, Diagnostic)> {
+    fn mutable_fn(&mut self, f: &FnDecl) -> Result<FnDecl, (Name, Diagnostic)> {
         let failed = |d| (f.name.clone(), d);
         let mut rw = Rewrite {
             kernel: self,
@@ -826,14 +842,14 @@ impl Kernel {
         let mut out_tys = Vec::new();
         for ((p, b), t) in f.params.iter().zip(&f.borrows).zip(&f.param_types) {
             if *b == Some(true) {
-                let t = t.as_ref().map(ty);
+                let t = t.clone();
                 rw.states.push((p.clone(), t.clone()));
                 rw.outs.push(p.clone());
                 match t {
                     Some(t) => out_tys.push(t),
                     None => {
                         return Err(failed(Diagnostic::new(
-                            msg!("kernel-mut-param-type", name = p),
+                            msg!("kernel-mut-param-type", name = (p).to_string()),
                             Some(f.span),
                         )));
                     }
@@ -842,7 +858,7 @@ impl Kernel {
         }
         let outs = rw.outs.clone();
         let result = f.result.as_ref().map(|r| {
-            let r = ty(r);
+            let r = r.clone();
             match out_tys.len() {
                 0 => r,
                 k => {
@@ -867,7 +883,7 @@ impl Kernel {
         }
         Ok(FnDecl {
             borrows: vec![None; f.params.len()],
-            param_types: f.param_types.iter().map(|t| t.as_ref().map(ty)).collect(),
+            param_types: f.param_types.clone(),
             result,
             body,
             ..f.clone()
@@ -880,12 +896,17 @@ impl Kernel {
         if self.inds.contains_key(&name) {
             return Ok(());
         }
-        let params: Vec<(String, T)> = std::iter::once("R".to_string())
+        let params: Vec<(Name, T)> = std::iter::once("R".to_string())
             .chain((1..=k).map(|i| format!("S{i}")))
-            .map(|p| (p, var("Type", span)))
+            .map(|p| {
+                (
+                    Name::from(p),
+                    var(&tauto_surface::bindings::library_name("Type"), span),
+                )
+            })
             .collect();
-        let fields = std::iter::once(("value'".to_string(), var("R", span)))
-            .chain((1..=k).map(|i| (format!("s'{i}"), var(&format!("S{i}"), span))))
+        let fields = std::iter::once((Name::from("value'"), var("R", span)))
+            .chain((1..=k).map(|i| (Name::from(format!("s'{i}")), var(&format!("S{i}"), span))))
             .collect();
         let result = app(
             &name,
@@ -897,7 +918,7 @@ impl Kernel {
             generates: Default::default(),
             name: name.clone(),
             params,
-            sort: var("Type", span),
+            sort: var(&tauto_surface::bindings::library_name("Type"), span),
             constructors: vec![Constructor {
                 name: ctor,
                 implicit: 0,
@@ -906,13 +927,18 @@ impl Kernel {
             }],
             span,
         };
-        match self.inductive(&decl) {
+        let mut statements = [Stmt::Inductive(decl)];
+        self.resolve_statements(&mut statements);
+        let Stmt::Inductive(decl) = &statements[0] else {
+            unreachable!()
+        };
+        match self.inductive(decl) {
             super::Verdict::Checked { .. } => Ok(()),
             super::Verdict::Failed(d) => Err(d),
             v => err(
                 msg!(
                     "kernel-mut-verdict",
-                    name = name,
+                    name = (name).to_string(),
                     verdict = format!("{v:?}")
                 ),
                 span,

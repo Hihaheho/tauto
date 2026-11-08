@@ -24,7 +24,7 @@ pub theorem allocation_error_if(
   state: CheckerAllocation(c),
   flag: Bool
 ): AllocationAdvance(c, frame_error_if(c, message, span, flag)) {
-  match flag: AllocationAdvance(c, frame_error_if(c, message, span, flag)) { true => AndIntro(
+  ⊢ AllocationAdvance(c, frame_error_if(c, message, span, flag)) from match flag { true => AndIntro(
     Nat::le_refl(ck_next_of(c)),
     state
   )
@@ -39,7 +39,7 @@ pub theorem constructor_return_allocation(
   args_bound: TypeListAllocated(ck_next_of(c), args),
   fields_bound: FieldsAllocated(ck_next_of(c), fields)
 ): AllocationResult(c, leaf_constructor_return(c, name, args, fields)) {
-  match fields: AllocationResult(c, leaf_constructor_return(c, name, args, fields)) {
+  ⊢ AllocationResult(c, leaf_constructor_return(c, name, args, fields)) from match fields {
     Nil => allocation_result_return(c, TyNamed(name, args), state, args_bound)
     Cons(head, tail) => allocation_result_return(
       c,
@@ -67,13 +67,13 @@ pub theorem constructor_fields_allocation(
     (ignored: Unit, next: Checker) => leaf_constructor_return(next, data_name, args, fields),
     frame_error_if(
       c,
-      cat5("`", name, "` is a struct: write `", name, " { field: value }`"),
+      struct_value_message(name),
       span,
       data_is_struct(ck_datas_of(c), data_name)
     ),
     allocation_error_if(
       c,
-      cat5("`", name, "` is a struct: write `", name, " { field: value }`"),
+      struct_value_message(name),
       span,
       state,
       data_is_struct(ck_datas_of(c), data_name)
@@ -116,7 +116,7 @@ pub theorem constructor_after_allocation(
     m
   )
 ) {
-  match m: AllocationResult(
+  ⊢ AllocationResult(
     c,
     frame_bind(
       List(Ty),
@@ -132,7 +132,7 @@ pub theorem constructor_after_allocation(
       ),
       m
     )
-  ) {
+  ) from match m {
     mut1(args, next) => allocation_result_start(
       c,
       next,
@@ -224,10 +224,10 @@ pub theorem constructor_choice_allocation(
   declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
   ambiguous: Bool
 ): AllocationResult(c, leaf_constructor_choice(c, data_name, index, span, name, ambiguous)) {
-  match ambiguous: AllocationResult(
+  ⊢ AllocationResult(
     c,
     leaf_constructor_choice(c, data_name, index, span, name, ambiguous)
-  ) {
+  ) from match ambiguous {
     true => allocation_result_rewrap(
       c,
       ck_defer_constructor(c, name, span),

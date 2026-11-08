@@ -37,7 +37,7 @@ pub theorem inference_block_end_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, inference_block_end(j, c, env, last, stopped)) {
-  match stopped: CkScopeChecked(c, inference_block_end(j, c, env, last, stopped)) {
+  ⊢ CkScopeChecked(c, inference_block_end(j, c, env, last, stopped)) from match stopped {
     true => pattern_return_frame_checked(c, env, TyNever, ordered)
     false => pattern_return_frame_checked(c, env, last, ordered)
   }
@@ -53,7 +53,7 @@ pub theorem inference_block_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, inference_block(j, c, env, stopped, last, stmts)) {
-  match stmts: CkScopeChecked(c, inference_block(j, c, env, stopped, last, stmts)) {
+  ⊢ CkScopeChecked(c, inference_block(j, c, env, stopped, last, stmts)) from match stmts {
     Nil => inference_block_end_frame_checked(j, c, env, last, stopped, ih, ordered)
     Cons(s, rest) => pattern_bind_frame_checked(
       Ty,
@@ -108,10 +108,10 @@ pub theorem inference_app_clone_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_app_clone(j, c, term, function, arguments, env, name, clone)) {
-  match clone: CkCheckedFrame(
+  ⊢ CkCheckedFrame(
     c,
     inference_app_clone(j, c, term, function, arguments, env, name, clone)
-  ) {
+  ) from match clone {
     true => checked_frame_rewrap(
       c,
       ck_clone_of_in(j, c, arguments, env, span_of(term)),
@@ -137,10 +137,10 @@ pub theorem inference_app_operator_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_app_operator(j, c, term, function, arguments, env, name, operator)) {
-  match operator: CkCheckedFrame(
+  ⊢ CkCheckedFrame(
     c,
     inference_app_operator(j, c, term, function, arguments, env, name, operator)
-  ) {
+  ) from match operator {
     true => checked_frame_bind(
       List(Ty),
       Ty,
@@ -194,10 +194,10 @@ pub theorem inference_app_tuple_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_app_tuple(j, c, term, function, arguments, env, name, tuple)) {
-  match tuple: CkCheckedFrame(
+  ⊢ CkCheckedFrame(
     c,
     inference_app_tuple(j, c, term, function, arguments, env, name, tuple)
-  ) {
+  ) from match tuple {
     true => checked_frame_return(c, TyUnit, ordered)
     false => inference_app_operator_frame_checked(
       j,
@@ -225,10 +225,10 @@ pub theorem inference_app_name_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_app_name(j, c, term, function, arguments, env, r#direct)) {
-  match r#direct: CkCheckedFrame(
+  ⊢ CkCheckedFrame(
     c,
     inference_app_name(j, c, term, function, arguments, env, r#direct)
-  ) {
+  ) from match r#direct {
     None => checked_frame_rewrap(
       c,
       ck_app_call_in(j, c, term, function, arguments, env),
@@ -280,7 +280,7 @@ pub theorem inference_statement_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, inference_statement(j, c, env, s)) {
-  match s: CkScopeChecked(c, inference_statement(j, c, env, s)) {
+  ⊢ CkScopeChecked(c, inference_statement(j, c, env, s)) from match s {
     StLet(name, ty, value, borrow, bm) => pattern_bind_one_frame_checked(
       Ty,
       Ty,

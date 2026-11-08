@@ -4,13 +4,13 @@
 @ cases.addition-by-structural-recursion
 parses = true
 source = ```tauto
-fn plus(n: Nat, m: Nat) -> Nat {
-  match n -> Nat {
-    zero => m
-    succ(k) => succ(plus(k, m))
+fn plus(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
   }
 }
-theorem two_plus_three(): Eq(Nat, plus(2, 3), 5) { refl(Nat, 5) }
+theorem two_plus_three(): plus(2, 3) = 5 { Refl(Nat, 5) }
 ```
 checks.plus = "ok"
 checks.two_plus_three = "ok"
@@ -18,16 +18,16 @@ checks.two_plus_three = "ok"
 @ cases.n-plus-zero-by-induction
 parses = true
 source = ```tauto
-fn plus(n: Nat, m: Nat) -> Nat {
-  match n -> Nat {
-    zero => m
-    succ(k) => succ(plus(k, m))
+fn plus(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
   }
 }
-theorem plus_zero(n: Nat): Eq(Nat, plus(n, zero), n) {
-  match n -> Eq(Nat, plus(n, zero), n) {
-    zero => refl(Nat, zero)
-    succ(k) => Eq_subst(Nat, plus(k, zero), k, y => Eq(Nat, succ(plus(k, zero)), succ(y)), plus_zero(k), refl(Nat, succ(plus(k, zero))))
+theorem plus_zero(n: Nat): plus(n, Zero) = n {
+  ⊢ plus(n, Zero) = n from match n {
+    Zero => Refl(Nat, Zero)
+    Succ(k) => Eq::subst(Nat, plus(k, Zero), k, y => Succ(plus(k, Zero)) = Succ(y), plus_zero(k), Refl(Nat, Succ(plus(k, Zero))))
   }
 }
 ```
@@ -36,10 +36,10 @@ checks.plus_zero = "ok"
 @ cases.a-non-structural-recursion-is-rejected
 parses = true
 source = ```tauto
-fn again(n: Nat) -> Nat {
-  match n -> Nat {
-    zero => zero
-    succ(k) => again(n)
+fn again(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(k) => again(n)
   }
 }
 ```
@@ -48,15 +48,15 @@ checks.again = "error: not structural"
 @ cases.a-wrong-theorem-is-rejected
 parses = true
 source = ```tauto
-theorem bad(): Eq(Nat, 2 + 2, 5) { refl(Nat, 4) }
+theorem bad(): 2 + 2 = 5 { Refl(Nat, 4) }
 ```
 checks.bad = "error: type mismatch"
 
 @ cases.eq-substitution
 parses = true
 source = ```tauto
-theorem sym(A: Type, a: A, b: A, e: Eq(A, a, b)): Eq(A, b, a) {
-  Eq_subst(A, a, b, y => Eq(A, y, a), e, refl(A, a))
+theorem sym(A: Type, a: A, b: A, e: a = b): b = a {
+  Eq::subst(A, a, b, y => y = a, e, Refl(A, a))
 }
 ```
 checks.sym = "ok"
@@ -65,13 +65,13 @@ checks.sym = "ok"
 parses = true
 source = ```tauto
 inductive Vec(A: Type): (Nat) -> Type {
-  vnil(): Vec(A, zero)
-  vcons(n: Nat, h: A, t: Vec(A, n)): Vec(A, succ(n))
+  Vnil: Vec(A, Zero)
+  Vcons(n: Nat, h: A, t: Vec(A, n)): Vec(A, Succ(n))
 }
-fn head(A: Type, n: Nat, v: Vec(A, succ(n))) -> A {
-  Vec_rec(A, m => w => Nat_rec(q => Type, Unit, k => ih => A, m), star, k => h => t => ih => h, succ(n), v)
+fn head(A: Type, n: Nat, v: Vec(A, Succ(n))): A {
+  Vec::rec(A, m => w => Nat::rec(q => Type, Unit, k => ih => A, m), Star, k => h => t => ih => h, Succ(n), v)
 }
-theorem first(): Eq(Nat, head(Nat, 0, vcons(Nat, 0, 7, vnil(Nat))), 7) { refl(Nat, 7) }
+theorem first(): head(Nat, 0, Vcons(Nat, 0, 7, Vnil(Nat))) = 7 { Refl(Nat, 7) }
 ```
 checks.head = "ok"
 checks.first = "ok"
@@ -79,10 +79,10 @@ checks.first = "ok"
 @ cases.an-arm-that-ignores-the-dependent-type-is-rejected
 parses = true
 source = ```tauto
-theorem t(n: Nat): Eq(Nat, n, n) {
-  match n -> Eq(Nat, n, n) {
-    zero => refl(Nat, zero)
-    succ(k) => refl(Nat, zero)
+theorem t(n: Nat): n = n {
+  ⊢ n = n from match n {
+    Zero => Refl(Nat, Zero)
+    Succ(k) => Refl(Nat, Zero)
   }
 }
 ```
@@ -91,9 +91,9 @@ checks.t = "error: type mismatch"
 @ cases.an-effectful-function-is-not-a-proof-term
 parses = true
 source = ```tauto
-effect ask: (q: Int) -> Int
-fn noisy() -> Nat ! {ask} { 0 }
-theorem a(): Eq(Nat, noisy(), 0) { refl(Nat, 0) }
+effect ask(q: Int): Int
+fn noisy(): Nat ! {ask} { 0 }
+theorem a(): noisy() = 0 { Refl(Nat, 0) }
 ```
 checks.noisy = "skipped"
 checks.a = "error: not defined"
@@ -101,31 +101,31 @@ checks.a = "error: not defined"
 @ cases.mutual-tree-and-forest-sizes
 parses = true
 source = ```tauto
-fn plus(n: Nat, m: Nat) -> Nat {
-  match n -> Nat {
-    zero => m
-    succ(k) => succ(plus(k, m))
+fn plus(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
   }
 }
 mutual {
-  inductive Tree(): Type {
-    node(x: Nat, f: Forest): Tree
+  inductive Tree: Type {
+    Node(x: Nat, f: Forest): Tree
   }
-  inductive Forest(): Type {
-    nil(): Forest
-    cons(t: Tree, rest: Forest): Forest
+  inductive Forest: Type {
+    Nil: Forest
+    Cons(t: Tree, rest: Forest): Forest
   }
 }
 mutual {
-  fn tree_size(t: Tree) -> Nat {
-    match t -> Nat {
-      node(x, f) => succ(forest_size(f))
+  fn tree_size(t: Tree): Nat {
+    ⊢ Nat from match t {
+      Node(x, f) => Succ(forest_size(f))
     }
   }
-  fn forest_size(f: Forest) -> Nat {
-    match f -> Nat {
-      nil => zero
-      cons(t, rest) => plus(tree_size(t), forest_size(rest))
+  fn forest_size(f: Forest): Nat {
+    ⊢ Nat from match f {
+      Nil => Zero
+      Cons(t, rest) => plus(tree_size(t), forest_size(rest))
     }
   }
 }
@@ -133,28 +133,98 @@ mutual {
 checks.tree_size = "ok"
 checks.forest_size = "ok"
 
+@ cases.mutual-call-passes-a-changed-earlier-parameter
+parses = true
+source = ```tauto
+fn plus(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
+  }
+}
+inductive L(A: Type): Type {
+  Nil: L(A)
+  Cons(head: A, tail: L(A)): L(A)
+}
+inductive T: Type {
+  Leaf(n: Nat): T
+  Node(ts: L(T)): T
+}
+mutual {
+  fn step(acc: Nat, t: T): Nat {
+    ⊢ Nat from match t {
+      Leaf(n) => plus(acc, n)
+      Node(ts) => steps(acc, ts)
+    }
+  }
+  fn steps(acc: Nat, ts: L(T)): Nat {
+    ⊢ Nat from match ts {
+      Nil => acc
+      Cons(t, rest) => steps(step(acc, t), rest)
+    }
+  }
+}
+theorem sum(): steps(0, Cons(Leaf(1), Cons(Leaf(2), Nil))) = 3 { Refl }
+theorem stale(): steps(0, Cons(Leaf(1), Cons(Leaf(2), Nil))) = 2 { Refl }
+```
+checks.plus = "ok"
+checks.step = "ok"
+checks.steps = "ok"
+checks.sum = "ok"
+checks.stale = "error: type mismatch"
+
+@ cases.an-arm-variable-may-not-hide-a-generalized-parameter
+parses = true
+source = ```tauto
+inductive L(A: Type): Type {
+  Nil: L(A)
+  Cons(head: A, tail: L(A)): L(A)
+}
+fn last(ts: L(Nat), acc: Nat): Nat {
+  ⊢ Nat from match ts {
+    Nil => acc
+    Cons(acc, rest) => acc
+  }
+}
+fn again(acc: Nat, ts: L(Nat)): Nat {
+  ⊢ Nat from match ts {
+    Nil => acc
+    Cons(acc, rest) => again(acc, rest)
+  }
+}
+fn self_named(ts: L(Nat)): Nat {
+  ⊢ Nat from match ts {
+    Nil => 0
+    Cons(n, ts) => n
+  }
+}
+```
+checks.last = "ok"
+checks.again = "error: names a variable `acc`"
+checks.self_named = "error: names a variable `ts`"
+
 @ cases.mutual-recursion-must-follow-fields
 parses = true
 source = ```tauto
 mutual {
-  inductive Tree(): Type {
-    node(x: Nat, f: Forest): Tree
+  inductive Tree: Type {
+    Node(x: Nat, f: Forest): Tree
   }
-  inductive Forest(): Type {
-    nil(): Forest
-    cons(t: Tree, rest: Forest): Forest
+  inductive Forest: Type {
+    Nil: Forest
+    Cons(t: Tree, rest: Forest): Forest
   }
 }
 mutual {
-  fn tree_size(t: Tree) -> Nat {
-    match t -> Nat {
-      node(x, f) => succ(forest_size(f))
+  fn tree_size(t: Tree): Nat {
+    ⊢ Nat from match t {
+      Node(x, f) => Succ(forest_size(f))
     }
   }
-  fn forest_size(f: Forest) -> Nat {
-    match f -> Nat {
-      nil => zero
-      cons(t, rest) => forest_size(f)
+  fn forest_size(f: Forest): Nat {
+    ⊢ Nat from match f {
+      Nil => Zero
+      Cons(t, rest) => forest_size(f)
     }
   }
 }
@@ -165,27 +235,27 @@ checks.tree_size = "error: not structural"
 parses = true
 source = ```tauto
 inductive Vec(A: Type): (Nat) -> Type {
-  vnil(): Vec(A, zero)
-  vcons(n: Nat, h: A, t: Vec(A, n)): Vec(A, succ(n))
+  Vnil: Vec(A, Zero)
+  Vcons(n: Nat, h: A, t: Vec(A, n)): Vec(A, Succ(n))
 }
-fn head(A: Type, n: Nat, v: Vec(A, succ(n))) -> A {
-  match v -> A {
-    vcons(k, h, t) => h
+fn head(A: Type, n: Nat, v: Vec(A, Succ(n))): A {
+  ⊢ A from match v {
+    Vcons(k, h, t) => h
   }
 }
-fn second(A: Type, n: Nat, v: Vec(A, succ(succ(n)))) -> A {
-  match v -> A {
-    vcons(k, h, t) => match t -> A {
-      vcons(j, h2, t2) => h2
+fn second(A: Type, n: Nat, v: Vec(A, Succ(Succ(n)))): A {
+  ⊢ A from match v {
+    Vcons(k, h, t) => ⊢ A from match t {
+      Vcons(j, h2, t2) => h2
     }
   }
 }
-theorem only(A: Type, v: Vec(A, 0)): Eq(Vec(A, 0), v, vnil(A)) {
-  match v -> Eq(Vec(A, 0), v, vnil(A)) {
-    vnil => refl(Vec(A, 0), vnil(A))
+theorem only(A: Type, v: Vec(A, 0)): v = Vnil(A) {
+  ⊢ v = Vnil(A) from match v {
+    Vnil => Refl(Vec(A, 0), Vnil(A))
   }
 }
-theorem snd(): Eq(Nat, second(Nat, 0, vcons(Nat, 1, 4, vcons(Nat, 0, 9, vnil(Nat)))), 9) { refl(Nat, 9) }
+theorem snd(): second(Nat, 0, Vcons(Nat, 1, 4, Vcons(Nat, 0, 9, Vnil(Nat)))) = 9 { Refl(Nat, 9) }
 ```
 checks.head = "ok"
 checks.second = "ok"
@@ -196,12 +266,12 @@ checks.snd = "ok"
 parses = true
 source = ```tauto
 inductive Vec(A: Type): (Nat) -> Type {
-  vnil(): Vec(A, zero)
-  vcons(n: Nat, h: A, t: Vec(A, n)): Vec(A, succ(n))
+  Vnil: Vec(A, Zero)
+  Vcons(n: Nat, h: A, t: Vec(A, n)): Vec(A, Succ(n))
 }
-fn head(A: Type, n: Nat, v: Vec(A, succ(n))) -> A {
-  match v -> A {
-    vnil => head(A, n, v)
+fn head(A: Type, n: Nat, v: Vec(A, Succ(n))): A {
+  ⊢ A from match v {
+    Vnil => head(A, n, v)
   }
 }
 ```
@@ -210,15 +280,15 @@ checks.head = "error: missing case"
 @ cases.constructors-are-injective-and-disjoint
 parses = true
 source = ```tauto
-inductive Ty(): Type {
-  base(): Ty
-  arr(a: Ty, b: Ty): Ty
+inductive Ty: Type {
+  Base: Ty
+  Arr(a: Ty, b: Ty): Ty
 }
-theorem arr_inj(a: Ty, b: Ty, c: Ty, d: Ty, e: Eq(Ty, arr(a, b), arr(c, d))): Eq(Ty, a, c) {
-  Ty_noconf(Eq(Ty, a, c), arr(a, b), arr(c, d), e, p => q => p)
+theorem arr_inj(a: Ty, b: Ty, c: Ty, d: Ty, e: Arr(a, b) = Arr(c, d)): a = c {
+  Ty::noconf(a = c, Arr(a, b), Arr(c, d), e, p => q => p)
 }
-theorem base_not_arr(a: Ty, b: Ty, e: Eq(Ty, base, arr(a, b))): False {
-  Ty_noconf(False, base, arr(a, b), e)
+theorem base_not_arr(a: Ty, b: Ty, e: Base = Arr(a, b)): False {
+  Ty::noconf(False, Base, Arr(a, b), e)
 }
 ```
 checks.arr_inj = "ok"
@@ -228,33 +298,33 @@ checks.base_not_arr = "ok"
 parses = true
 source = ```tauto
 inductive Seq(A: Type): Type {
-  nil(): Seq(A)
-  cons(h: A, t: Seq(A)): Seq(A)
+  Nil: Seq(A)
+  Cons(h: A, t: Seq(A)): Seq(A)
 }
-fn plus(n: Nat, m: Nat) -> Nat {
-  match n -> Nat {
-    zero => m
-    succ(k) => succ(plus(k, m))
+fn plus(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
   }
 }
-inductive Tree(): Type {
-  node(x: Nat, cs: Seq(Tree)): Tree
+inductive Tree: Type {
+  Node(x: Nat, cs: Seq(Tree)): Tree
 }
-fn leaf(x: Nat) -> Tree { node(x, nil) }
+fn leaf(x: Nat): Tree { Node(x, Nil) }
 mutual {
-  fn size(t: Tree) -> Nat {
-    match t -> Nat {
-      node(x, cs) => succ(sizes(cs))
+  fn size(t: Tree): Nat {
+    ⊢ Nat from match t {
+      Node(x, cs) => Succ(sizes(cs))
     }
   }
-  fn sizes(l: Seq(Tree)) -> Nat {
-    match l -> Nat {
-      nil => zero
-      cons(h, rest) => plus(size(h), sizes(rest))
+  fn sizes(l: Seq(Tree)): Nat {
+    ⊢ Nat from match l {
+      Nil => Zero
+      Cons(h, rest) => plus(size(h), sizes(rest))
     }
   }
 }
-theorem t(): Eq(Nat, size(node(7, cons(leaf(1), cons(leaf(2), nil)))), 3) { refl() }
+theorem t(): size(Node(7, Cons(leaf(1), Cons(leaf(2), Nil)))) = 3 { Refl }
 ```
 checks.Tree = "ok"
 checks.size = "ok"
@@ -265,10 +335,10 @@ checks.t = "ok"
 parses = true
 source = ```tauto
 inductive Fn(A: Type): Type {
-  mk(f: (A) -> Nat): Fn(A)
+  Mk(f: (A) -> Nat): Fn(A)
 }
-inductive Bad(): Type {
-  bad(x: Fn(Bad)): Bad
+inductive Bad: Type {
+  Mk(x: Fn(Bad)): Bad
 }
 ```
 checks.Bad = "error: negative"
@@ -276,42 +346,38 @@ checks.Bad = "error: negative"
 @ cases.mutual-functions-can-share-a-step-count
 parses = true
 source = ```tauto
-inductive Yn(): Type {
-  no(): Yn
-  yes(): Yn
-}
 mutual {
-  fn even(k: Nat, n: Nat) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match n -> Yn {
-        zero => yes
-        succ(m) => odd(j, m)
+  fn even(k: Nat, n: Nat): Bool {
+    ⊢ Bool from match k {
+      Zero => false
+      Succ(j) => ⊢ Bool from match n {
+        Zero => true
+        Succ(m) => odd(j, m)
       }
     }
   }
-  fn odd(k: Nat, n: Nat) -> Yn {
-    match k -> Yn {
-      zero => no
-      succ(j) => match n -> Yn {
-        zero => no
-        succ(m) => even(j, m)
+  fn odd(k: Nat, n: Nat): Bool {
+    ⊢ Bool from match k {
+      Zero => false
+      Succ(j) => ⊢ Bool from match n {
+        Zero => false
+        Succ(m) => even(j, m)
       }
     }
   }
-  fn halves(k: Nat, n: Nat) -> Nat {
-    match k -> Nat {
-      zero => zero
-      succ(j) => match even(j, n) -> Nat {
-        yes => n
-        no => halves(j, succ(n))
+  fn halves(k: Nat, n: Nat): Nat {
+    ⊢ Nat from match k {
+      Zero => Zero
+      Succ(j) => ⊢ Nat from match even(j, n) {
+        true => n
+        false => halves(j, Succ(n))
       }
     }
   }
 }
-theorem four(): Eq(Yn, even(10, 4), yes) { refl() }
-theorem five(): Eq(Yn, odd(10, 5), yes) { refl() }
-theorem up(): Eq(Nat, halves(10, 3), 4) { refl() }
+theorem four(): even(10, 4) = true { Refl }
+theorem five(): odd(10, 5) = true { Refl }
+theorem up(): halves(10, 3) = 4 { Refl }
 ```
 checks.even = "ok"
 checks.odd = "ok"
@@ -319,3 +385,536 @@ checks.halves = "ok"
 checks.four = "ok"
 checks.five = "ok"
 checks.up = "ok"
+
+@ cases.an-empty-mutual-group-is-an-error
+parses = true
+source = ```tauto
+mutual {
+}
+```
+checks.mutual = "error: a `mutual` group needs at least one declaration"
+
+@ cases.a-recursive-call-may-change-an-earlier-parameter
+parses = true
+source = ```tauto
+fn pred(t: Nat): Nat {
+  ⊢ Nat from match t {
+    Zero => Zero
+    Succ(k) => k
+  }
+}
+fn sub(t: Nat, n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => t
+    Succ(k) => sub(pred(t), k)
+  }
+}
+fn count(acc: Nat, n: Nat, extra: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => acc
+    Succ(k) => count(Succ(acc), k, extra)
+  }
+}
+theorem five_minus_two(): sub(5, 2) = 3 { Refl }
+theorem two_plus_three(): count(2, 3, 0) = 5 { Refl }
+```
+checks.sub = "ok"
+checks.count = "ok"
+checks.five_minus_two = "ok"
+checks.two_plus_three = "ok"
+
+@ cases.an-earlier-parameter-the-matched-type-mentions-stays-unchanged
+parses = true
+source = ```tauto
+inductive Vec(A: Type): (Nat) -> Type {
+  Vnil: Vec(A, Zero)
+  Vcons(n: Nat, h: A, t: Vec(A, n)): Vec(A, Succ(n))
+}
+fn swap(A: Type, n: Nat, v: Vec(A, n)): Nat {
+  ⊢ Nat from match v {
+    Vnil => Zero
+    Vcons(k, h, t) => swap(Nat, k, t)
+  }
+}
+```
+checks.swap = "error: the type of `v` depends on `A`"
+
+@ cases.a-recursive-call-leaves-the-generics-out
+parses = true
+source = ```tauto
+inductive Le: (Nat, Nat) -> Prop {
+  LeZero(m: Nat): Le(Zero, m)
+  LeSs(n: Nat, m: Nat, h: Le(n, m)): Le(Succ(n), Succ(m))
+}
+theorem le_pred<d: Nat, n: Nat>(h: Le(Succ(d), Succ(n))): Le(d, n) {
+  match h {
+    LeSs(a, b, k) => k
+  }
+}
+theorem le_again<d: Nat, n: Nat>(h: Le(d, n)): Le(d, n) {
+  ⊢ Le(d, n) from match d {
+    Zero => LeZero(n)
+    Succ(d2) => ⊢ Le(Succ(d2), n) from match n {
+      Zero => h
+      Succ(n2) => LeSs(d2, n2, le_again(le_pred(h)))
+    }
+  }
+}
+```
+checks.le_again = "ok"
+
+@ cases.a-recursion-on-a-field-of-a-field
+parses = true
+source = ```tauto
+inductive L: Type {
+  Nil: L
+  Cons(h: Nat, t: L): L
+}
+fn len(l: L): Nat {
+  ⊢ Nat from match l {
+    Nil => Zero
+    Cons(a, r) => Succ(len(r))
+  }
+}
+fn dbl(l: L): L {
+  ⊢ L from match l {
+    Nil => Nil
+    Cons(a, r) => Cons(a, Cons(a, dbl(r)))
+  }
+}
+fn halve(l: L): Nat {
+  ⊢ Nat from match l {
+    Nil => Zero
+    Cons(a, Nil) => Zero
+    Cons(a, Cons(b, rest)) => Succ(halve(rest))
+  }
+}
+fn thirds(acc: Nat, l: L): Nat {
+  ⊢ Nat from match l {
+    Nil => acc
+    Cons(a, r) => ⊢ Nat from match r {
+      Nil => acc
+      Cons(b, s) => ⊢ Nat from match s {
+        Nil => acc
+        Cons(c, rest) => thirds(Succ(acc), rest)
+      }
+    }
+  }
+}
+theorem halve_dbl(l: L): halve(dbl(l)) = len(l) {
+  ⊢ halve(dbl(l)) = len(l) from match l {
+    Nil => Refl
+    Cons(a, r) => Eq::congr(Succ, halve_dbl(r))
+  }
+}
+theorem halve_self(l: L): halve(l) = halve(l) {
+  ⊢ halve(l) = halve(l) from match l {
+    Nil => Refl
+    Cons(a, Nil) => Refl
+    Cons(a, Cons(b, rest)) => Eq::congr(Succ, halve_self(rest))
+  }
+}
+theorem halve_five(): halve(Cons(1, Cons(2, Cons(3, Cons(4, Cons(5, Nil)))))) = 2 { Refl }
+theorem thirds_seven(): thirds(0, Cons(1, Cons(2, Cons(3, Cons(4, Cons(5, Cons(6, Cons(7, Nil)))))))) = 2 {
+  Refl
+}
+```
+checks.halve = "ok"
+checks.thirds = "ok"
+checks.halve_dbl = "ok"
+checks.halve_self = "ok"
+checks.halve_five = "ok"
+checks.thirds_seven = "ok"
+
+@ cases.a-recursion-on-a-part-of-an-indexed-value
+parses = true
+source = ```tauto
+inductive Vec(A: Type): (Nat) -> Type {
+  Vnil: Vec(A, Zero)
+  Vcons(n: Nat, h: A, t: Vec(A, n)): Vec(A, Succ(n))
+}
+fn vhalf(n: Nat, v: Vec(Nat, n)): Nat {
+  ⊢ Nat from match v {
+    Vnil => Zero
+    Vcons(k, a, r) => ⊢ Nat from match r {
+      Vnil => Zero
+      Vcons(j, b, rest) => Succ(vhalf(j, rest))
+    }
+  }
+}
+theorem vhalf_four(): vhalf(4, Vcons(3, 1, Vcons(2, 1, Vcons(1, 1, Vcons(0, 1, Vnil))))) = 2 {
+  Refl
+}
+```
+checks.vhalf = "ok"
+checks.vhalf_four = "ok"
+
+@ cases.a-recursion-on-a-part-in-an-arm-of-a-match-on-it
+parses = true
+source = ```tauto
+inductive L: Type {
+  Nil: L
+  Cons(h: Nat, t: L): L
+}
+fn tail2(l: L): Nat {
+  ⊢ Nat from match l {
+    Nil => Zero
+    Cons(a, r) => ⊢ Nat from match r {
+      Nil => Zero
+      Cons(b, s) => ⊢ Nat from match s {
+        Nil => Succ(tail2(s))
+        Cons(c, rest) => Succ(tail2(s))
+      }
+    }
+  }
+}
+fn skip3(l: L): Nat {
+  ⊢ Nat from match l {
+    Nil => Zero
+    Cons(a, r) => ⊢ Nat from match r {
+      Nil => Zero
+      Cons(b, s) => ⊢ Nat from match s {
+        Nil => Zero
+        Cons(c, t) => ⊢ Nat from match t {
+          Nil => skip3(s)
+          Cons(d, rest) => Succ(skip3(s))
+        }
+      }
+    }
+  }
+}
+theorem skip3_six(): skip3(Cons(1, Cons(2, Cons(3, Cons(4, Cons(5, Cons(6, Nil))))))) = 2 { Refl }
+theorem tail2_five(): tail2(Cons(1, Cons(2, Cons(3, Cons(4, Cons(5, Nil)))))) = 2 { Refl }
+```
+checks.tail2 = "ok"
+checks.tail2_five = "ok"
+checks.skip3 = "ok"
+checks.skip3_six = "ok"
+
+@ cases.a-recursion-on-what-is-not-a-part-is-rejected
+parses = true
+source = ```tauto
+inductive L: Type {
+  Nil: L
+  Cons(h: Nat, t: L): L
+}
+fn other(l: L, m: L): Nat {
+  ⊢ Nat from match l {
+    Nil => Zero
+    Cons(a, r) => ⊢ Nat from match m {
+      Nil => Zero
+      Cons(b, rest) => other(rest, rest)
+    }
+  }
+}
+fn rebuilt(l: L): Nat {
+  ⊢ Nat from match l {
+    Nil => Zero
+    Cons(a, r) => ⊢ Nat from match r {
+      Nil => Zero
+      Cons(b, rest) => rebuilt(Cons(b, rest))
+    }
+  }
+}
+fn whole(l: L): Nat {
+  ⊢ Nat from match l {
+    Nil => Zero
+    Cons(a, r) => ⊢ Nat from match r {
+      Nil => Zero
+      Cons(b, rest) => whole(l)
+    }
+  }
+}
+```
+checks.other = "error: and `rest` is not."
+checks.rebuilt = "ok"
+checks.whole = "error: not structural"
+
+@ cases.a-recursion-inside-a-match-applied-to-its-generalized-arguments
+parses = true
+source = ```tauto
+inductive Le: (Nat, Nat) -> Prop {
+  LeZero(m: Nat): Le(Zero, m)
+  LeSs(n: Nat, m: Nat, h: Le(n, m)): Le(Succ(n), Succ(m))
+}
+theorem le_pred<d: Nat, n: Nat>(h: Le(Succ(d), Succ(n))): Le(d, n) {
+  match h {
+    LeSs(a, b, k) => k
+  }
+}
+fn shift(n: Nat, acc: Nat): Nat {
+  (⊢ (Nat) -> Nat from match n {
+    Zero => a => a
+    Succ(k) => a => shift(k, Succ(a))
+  })(acc)
+}
+theorem shift_ok(): shift(2, 3) = 5 { Refl }
+theorem le_succ_any(n: Nat, h: Le(n, n)): Le(n, Succ(n)) {
+  (⊢ (Le(n, n)) -> Le(n, Succ(n)) from match n {
+    Zero => k => LeZero(Succ(Zero))
+    Succ(m) => k => LeSs(m, Succ(m), le_succ_any(m, le_pred(k)))
+  })(h)
+}
+```
+checks.shift = "ok"
+checks.shift_ok = "ok"
+checks.le_succ_any = "ok"
+
+@ cases.an-applied-match-still-recurses-only-on-parts
+parses = true
+source = ```tauto
+fn bad(n: Nat, acc: Nat): Nat {
+  (⊢ (Nat) -> Nat from match n {
+    Zero => a => a
+    Succ(k) => a => bad(Succ(k), a)
+  })(acc)
+}
+```
+checks.bad = "error: and `Succ(k)` is not."
+
+@ cases.decreasing-by-names-the-parameter-of-a-structural-recursion
+parses = true
+source = ```tauto
+inductive Le: (Nat, Nat) -> Prop {
+  LeZero(m: Nat): Le(Zero, m)
+  LeSs(n: Nat, m: Nat, h: Le(n, m)): Le(Succ(n), Succ(m))
+}
+inductive Tree: Type {
+  Leaf: Tree
+  Node(l: Tree, r: Tree): Tree
+}
+theorem le_pred<d: Nat, n: Nat>(h: Le(Succ(d), Succ(n))): Le(d, n) {
+  match h {
+    LeSs(a, b, k) => k
+  }
+}
+fn add(a: Nat, b: Nat): Nat {
+  ⊢ Nat from match a {
+    Zero => b
+    Succ(k) => Succ(add(k, b))
+  }
+}
+fn size(fuel: Nat, t: Tree): Nat decreasing_by fuel {
+  ⊢ Nat from match t {
+    Leaf => Succ(Zero)
+    Node(l, r) => ⊢ Nat from match fuel {
+      Zero => Zero
+      Succ(f) => add(size(f, l), size(f, r))
+    }
+  }
+}
+theorem size_ok(): size(5, Node(Leaf, Node(Leaf, Leaf))) = 3 { Refl }
+theorem le_trans(a: Nat, b: Nat, c: Nat, h1: Le(a, b), h2: Le(b, c)): Le(a, c) decreasing_by a {
+  (⊢ (Le(a, b)) -> (Le(b, c)) -> Le(a, c) from match b {
+    Zero => k1 => k2 => (⊢ (Le(a, Zero)) -> Le(a, c) from match a {
+      Zero => _k => LeZero(c)
+      Succ(a2) => k => ⊢ Le(Succ(a2), c) from match k {
+      }
+    })(k1)
+    Succ(b2) => k1 => k2 => (⊢ (Le(Succ(b2), c)) -> Le(a, c) from match c {
+      Zero => k => ⊢ Le(a, Zero) from match k {
+      }
+      Succ(c2) => k => (⊢ (Le(a, Succ(b2))) -> Le(a, Succ(c2)) from match a {
+        Zero => _k => LeZero(Succ(c2))
+        Succ(a2) => j => LeSs(a2, c2, le_trans(a2, b2, c2, le_pred(j), le_pred(k)))
+      })(k1)
+    })(k2)
+  })(h1)(h2)
+}
+```
+checks.size = "ok"
+checks.size_ok = "ok"
+checks.le_trans = "ok"
+
+@ cases.without-decreasing-by-the-recursion-is-on-the-matched-parameter
+parses = true
+source = ```tauto
+fn count(fuel: Nat, n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(k) => ⊢ Nat from match fuel {
+      Zero => Zero
+      Succ(f) => count(f, n)
+    }
+  }
+}
+```
+checks.count = "error: name it after the result type: `decreasing_by fuel`"
+
+@ cases.a-recursion-on-a-deeper-part-of-a-family-with-a-function-typed-field
+parses = true
+source = ```tauto
+inductive W: Type {
+  Wleaf: W
+  Wnode(k: (Nat) -> W, t: W): W
+}
+fn f(w: W): Nat {
+  ⊢ Nat from match w {
+    Wleaf => Zero
+    Wnode(k, t) => ⊢ Nat from match t {
+      Wleaf => Succ(f(k(Zero)))
+      Wnode(k2, t2) => Succ(f(t2))
+    }
+  }
+}
+theorem f_ok(): f(Wnode(n => Wleaf, Wnode(n => Wleaf, Wnode(n => Wnode(m => Wleaf, Wleaf), Wleaf)))) = 3 { Refl }
+```
+checks.f = "ok"
+checks.f_ok = "ok"
+
+@ cases.functions-of-a-block-that-match-on-the-same-family
+parses = true
+source = ```tauto
+mutual {
+  fn evens(n: Nat): Nat {
+    ⊢ Nat from match n {
+      Zero => Succ(Zero)
+      Succ(k) => odds(k)
+    }
+  }
+  fn odds(n: Nat): Nat {
+    ⊢ Nat from match n {
+      Zero => Zero
+      Succ(k) => evens(k)
+    }
+  }
+}
+theorem evens_4(): evens(4) = 1 { Refl }
+theorem odds_4(): odds(4) = 0 { Refl }
+inductive Even: (Nat) -> Prop {
+  EvZero: Even(Zero)
+  EvSs(n: Nat, h: Even(n)): Even(Succ(Succ(n)))
+}
+mutual {
+  theorem ev(n: Nat): Or(Even(n), Even(Succ(n))) {
+    ⊢ Or(Even(n), Even(Succ(n))) from match n {
+      Zero => OrInl(EvZero)
+      Succ(k) => ⊢ Or(Even(Succ(k)), Even(Succ(Succ(k)))) from match od(k) {
+        OrInl(a) => OrInl(a)
+        OrInr(b) => OrInr(EvSs(k, b))
+      }
+    }
+  }
+  theorem od(n: Nat): Or(Even(Succ(n)), Even(n)) {
+    ⊢ Or(Even(Succ(n)), Even(n)) from match n {
+      Zero => OrInr(EvZero)
+      Succ(k) => ⊢ Or(Even(Succ(Succ(k))), Even(Succ(k))) from match ev(k) {
+        OrInl(a) => OrInl(EvSs(k, a))
+        OrInr(b) => OrInr(b)
+      }
+    }
+  }
+}
+```
+checks.evens = "ok"
+checks.odds = "ok"
+checks.evens_4 = "ok"
+checks.odds_4 = "ok"
+checks.ev = "ok"
+checks.od = "ok"
+
+@ cases.a-hypothesis-taken-by-a-lambda-in-a-nested-match-still-recurses
+parses = true
+source = ```tauto
+inductive Le: (Nat, Nat) -> Prop {
+  LeZero(m: Nat): Le(Zero, m)
+  LeSs(n: Nat, m: Nat, h: Le(n, m)): Le(Succ(n), Succ(m))
+}
+theorem le_pred<d: Nat, n: Nat>(h: Le(Succ(d), Succ(n))): Le(d, n) {
+  match h {
+    LeSs(a, b, k) => k
+  }
+}
+fn walk(n: Nat, m: Nat, h: Le(n, m)): Nat {
+  (⊢ (Le(n, m)) -> Nat from match n {
+    Zero => k => m
+    Succ(a) => k => (⊢ (Le(Succ(a), m)) -> Nat from match m {
+      Zero => k2 => Zero
+      Succ(b) => k2 => walk(a, b, le_pred(k2))
+    })(k)
+  })(h)
+}
+```
+checks.walk = "ok"
+
+@ cases.a-helper-with-the-same-match-unfolds-to-the-same-term
+parses = true
+source = ```tauto
+fn km(x: Nat): Bool {
+  ⊢ Bool from match x {
+    Zero => true
+    Succ(p) => false
+  }
+}
+fn find_step(o: Bool, y: Nat, later: Option(Nat)): Option(Nat) {
+  ⊢ Option(Nat) from match o {
+    true => Some(y)
+    false => later
+  }
+}
+fn find(vs: List(Nat)): Option(Nat) {
+  ⊢ Option(Nat) from match vs {
+    Nil => None
+    Cons(x, rest) => ⊢ Option(Nat) from match km(x) {
+      true => Some(x)
+      false => find(rest)
+    }
+  }
+}
+theorem find_cons(x: Nat, rest: List(Nat)): find(Cons(x, rest)) = find_step(km(x), x, find(rest)) {
+  Refl
+}
+```
+checks.find_cons = "ok"
+
+@ cases.a-helper-unfolds-the-same-over-a-list-of-a-mutual-type
+parses = true
+source = ```tauto
+mutual {
+  inductive Elem: Type {
+    ElText(n: Nat): Elem
+    ElSel(vs: List(Variant)): Elem
+  }
+  inductive Variant: Type {
+    Mk(k: Nat, e: Elem): Variant
+  }
+}
+fn km(x: Variant): Bool {
+  ⊢ Bool from match x {
+    Mk(k, e) => true
+  }
+}
+fn find_step(o: Bool, y: Variant, later: Option(Variant)): Option(Variant) {
+  ⊢ Option(Variant) from match o {
+    true => Some(y)
+    false => later
+  }
+}
+fn find(vs: List(Variant)): Option(Variant) {
+  ⊢ Option(Variant) from match vs {
+    Nil => None
+    Cons(x, rest) => ⊢ Option(Variant) from match km(x) {
+      true => Some(x)
+      false => find(rest)
+    }
+  }
+}
+theorem find_cons(x: Variant, rest: List(Variant)): find(Cons(x, rest)) = find_step(km(x), x, find(rest)) {
+  Refl
+}
+```
+checks.find_cons = "ok"
+
+@ cases.a-recursive-call-may-change-a-later-parameter
+parses = true
+source = ```tauto
+fn rev_onto(xs: List(Nat), acc: List(Nat)): List(Nat) {
+  ⊢ List(Nat) from match xs {
+    Nil => acc
+    Cons(x, rest) => rev_onto(rest, Cons(x, acc))
+  }
+}
+theorem rev_three(): rev_onto(Cons(1, Cons(2, Nil)), Nil) = Cons(2, Cons(1, Nil)) { Refl }
+```
+checks.rev_onto = "ok"
+checks.rev_three = "ok"

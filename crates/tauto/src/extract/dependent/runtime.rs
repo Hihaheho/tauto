@@ -13,7 +13,12 @@ pub(super) const FUNCTIONS: &[&str] = &[
     "TautoErasedDrop#r0",
 ];
 
-pub(super) fn definitions() -> String {
+pub(super) fn definitions(computations: bool) -> String {
+    let extra = if computations {
+        "TautoErasedBind#r0(call(TautoErasedTake#r0(arity, args)), $F(1, (returned: List($V)) => match returned { Cons(value, Nil) => TautoErasedApply#r0(value, TautoErasedDrop#r0(arity, args))\n _ => extract_unreachable() }))"
+    } else {
+        "TautoErasedApply#r0(call(TautoErasedTake#r0(arity, args)), TautoErasedDrop#r0(arity, args))"
+    };
     r#"
 fn TautoErasedLength#r0(xs: List($V)): nat {
   match xs { Nil => 0
@@ -44,7 +49,7 @@ fn TautoErasedApply#r0(f: $V, args: List($V)): $V {
       } else if count == arity {
         call(args)
       } else {
-        TautoErasedApply#r0(call(TautoErasedTake#r0(arity, args)), TautoErasedDrop#r0(arity, args))
+        $EXTRA
       }
     }
     $E => $E
@@ -52,6 +57,7 @@ fn TautoErasedApply#r0(f: $V, args: List($V)): $V {
   }
 }
 "#
+    .replace("$EXTRA", extra)
     .replace("$V", VALUE)
     .replace("$F", FUN)
     .replace("$E", ERASED)

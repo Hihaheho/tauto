@@ -25,7 +25,7 @@ fn arm_limitation(arm: &OpArm, operation: &OpDef) -> Option<String> {
                 .any(Ty::has_infer))
         .then(|| "no sealed full operation instance is available".into());
     };
-    if operation.name == "show" {
+    if tauto::bindings::is_library(&operation.name, "show") {
         return (instance.admission != OperationAdmission::BuiltinShow).then(|| {
             "a user operation named show does not have the builtin erased operation identity".into()
         });
@@ -72,7 +72,7 @@ pub(crate) fn diagnostics(package: &Package) -> TokenStream {
             }
             ExprKind::Perform(perform) => {
                 if let Some(instance) = &perform.instance {
-                    if package.ops[perform.op].name == "show"
+                    if tauto::bindings::is_library(&package.ops[perform.op].name, "show")
                         && instance.admission != OperationAdmission::BuiltinShow {
                         messages.insert(format!("Rust operation instance show at byte {}: a user declaration does not have the builtin erased operation identity", perform.span.start));
                     } else if instance.admission == OperationAdmission::Unique {
@@ -98,6 +98,26 @@ pub(crate) fn diagnostics(package: &Package) -> TokenStream {
 mod tests {
     use super::*;
 
+    fn compile_both(source: &str) -> (Package, Package) {
+        let loaded =
+            tauto::program::load_texts(vec![("operation-instance.nib".into(), source.into())])
+                .unwrap();
+        let rust = tauto_nir::compile_loaded_with_observer(&loaded, false, false, |_| {}).unwrap();
+        let mut javascript =
+            tauto_nir::compile_loaded_with_observer(&loaded, false, true, |_| {}).unwrap();
+        // Each lowering allocates its own synthetic entry declaration.
+        if let (Some(a), Some(b)) = (rust.top, javascript.top) {
+            let source = rust.fns.iter().find(|f| f.id == a).unwrap().source.clone();
+            javascript
+                .fns
+                .iter_mut()
+                .find(|f| f.id == b)
+                .unwrap()
+                .source = source;
+        }
+        (rust, javascript)
+    }
+
     #[test]
     fn unresolved_instance_diagnostics_are_only_a_rust_boundary() {
         for case in [
@@ -109,9 +129,7 @@ mod tests {
                 "types/operation-instances.eure",
                 case,
             );
-            let javascript = tauto_nir::compile_javascript(source)
-                .unwrap_or_else(|error| panic!("{case}: {error}"));
-            let rust = tauto_nir::compile(source).unwrap_or_else(|error| panic!("{case}: {error}"));
+            let (rust, javascript) = compile_both(source);
             let emitted = diagnostics(&rust).to_string();
             assert!(emitted.contains("compile_error"), "{case}: {emitted}");
             assert_eq!(
@@ -129,8 +147,7 @@ mod tests {
                 "types/operation-instances.eure",
                 name,
             );
-            let javascript = tauto_nir::compile_javascript(source).unwrap();
-            let rust = tauto_nir::compile(source).unwrap();
+            let (rust, javascript) = compile_both(source);
             assert!(
                 diagnostics(&rust).to_string().contains("compile_error"),
                 "{name}"
@@ -153,7 +170,9 @@ perform show("answer", result)"#;
             function
                 .body
                 .walk(&mut |expression| match &expression.kind {
-                    ExprKind::Perform(perform) if package.ops[perform.op].name == "keep" => {
+                    ExprKind::Perform(perform)
+                        if package.ops[perform.op].name.as_str() == "keep" =>
+                    {
                         let instance = perform.instance.as_ref().unwrap();
                         assert_eq!(instance.admission, OperationAdmission::Unique);
                         assert_eq!(perform.args[0].ty, instance.params[0]);
@@ -162,7 +181,7 @@ perform show("answer", result)"#;
                     }
                     ExprKind::Handle(handle) => {
                         for arm in &handle.susp {
-                            if package.ops[arm.op].name == "keep" {
+                            if package.ops[arm.op].name.as_str() == "keep" {
                                 let instance = arm.instance.as_ref().unwrap();
                                 assert_eq!(arm.params, instance.params);
                                 assert!(matches!(arm.pats[0], Pat::Wild));
@@ -181,7 +200,27 @@ perform show("answer", result)"#;
         let source = r#"effect show<A>(value: A): A
 let result := handle { perform show(7) } with { ∀ A. show<A>(value), k => k(value) }"#;
         let package = tauto_nir::compile(source).unwrap();
-        assert!(diagnostics(&package).to_string().contains("compile_error"));
+        assert!(diagnostics(&package).is_empty());
+        let operation = package
+            .ops
+            .iter()
+            .find(|op| op.name.as_str() == "show" && !tauto::bindings::is_library(&op.name, "show"))
+            .unwrap();
+        let mut requests = 0;
+        for function in &package.fns {
+            function.body.walk(&mut |expression| {
+                if let ExprKind::Perform(perform) = &expression.kind
+                    && package.ops[perform.op].name == operation.name
+                {
+                    assert_ne!(
+                        perform.instance.as_ref().unwrap().admission,
+                        OperationAdmission::BuiltinShow
+                    );
+                    requests += 1;
+                }
+            });
+        }
+        assert_eq!(requests, 1);
     }
 }
 

@@ -1,9 +1,9 @@
-import "Lib.taut"
-import "../../std/Tactic.taut"
-import "../../std/Rewrite.taut"
+import "Lib.taut" { nat }
+import "../../std/Tactic.taut" { nat_norm }
+import "../../std/Rewrite.taut" { rewrite }
 
 pub fn pred(n: Nat): Nat {
-  match n: Nat {
+  ⊢ Nat from match n {
     Zero => Zero
     Succ(k) => k
   }
@@ -21,42 +21,42 @@ pub theorem add_zero_r(n: Nat): nat!(`$n + 0 = $n`) {
   Refl
 }
 
-pub theorem add_succ_r(n: Nat, m: Nat): nat!(`$n + ${Succ(m)} = ${Succ(n + m)}`) {
+pub theorem add_succ_r(n: Nat, m: Nat): nat!(`$n + $Succ(m) = $Succ(n + m)`) {
   Refl
 }
 
 pub theorem add_zero_l(n: Nat): nat!(`0 + $n = $n`) {
-  match n: nat!(`0 + $n = $n`) {
+  ⊢ nat!(`0 + $n = $n`) from match n {
     Zero => Refl
     Succ(k) => succ_cong(add_zero_l(k))
   }
 }
 
-pub theorem add_succ_l(n: Nat, m: Nat): nat!(`${Succ(n)} + $m = ${Succ(n + m)}`) {
-  match m: nat!(`${Succ(n)} + $m = ${Succ(n + m)}`) {
+pub theorem add_succ_l(n: Nat, m: Nat): nat!(`$Succ(n) + $m = $Succ(n + m)`) {
+  ⊢ nat!(`$Succ(n) + $m = $Succ(n + m)`) from match m {
     Zero => Refl
     Succ(k) => succ_cong(add_succ_l(n, k))
   }
 }
 
 pub theorem add_comm(n: Nat, m: Nat): nat!(`$n + $m = $m + $n`) {
-  match m: nat!(`$n + $m = $m + $n`) {
+  ⊢ nat!(`$n + $m = $m + $n`) from match m {
     Zero => Eq::sym(add_zero_l(n))
-    Succ(k) => by rewrite!(add_succ_l(k, n)): nat!(`$n + ${Succ(k)} = ${Succ(k)} + $n`) {
-      ⊢ nat!(`$n + ${Succ(k)} = ${Succ(k + n)}`) from succ_cong(add_comm(n, k))
+    Succ(k) => by rewrite!(add_succ_l(k, n)): nat!(`$n + $Succ(k) = $Succ(k) + $n`) {
+      ⊢ nat!(`$n + $Succ(k) = $Succ(k + n)`) from succ_cong(add_comm(n, k))
     }
   }
 }
 
 pub theorem add_assoc(a: Nat, b: Nat, c: Nat): nat!(`($a + $b) + $c = $a + ($b + $c)`) {
-  match c: nat!(`($a + $b) + $c = $a + ($b + $c)`) {
+  ⊢ nat!(`($a + $b) + $c = $a + ($b + $c)`) from match c {
     Zero => Refl
     Succ(k) => succ_cong(add_assoc(a, b, k))
   }
 }
 
 pub theorem add_cancel_r(a: Nat, b: Nat, c: Nat, h: nat!(`$a + $c = $b + $c`)): nat!(`$a = $b`) {
-  match c: nat!(`$a = $b`) {
+  ⊢ nat!(`$a = $b`) from match c {
     Zero => h
     Succ(k) => add_cancel_r(a, b, k, succ_inj(h))
   }
@@ -71,7 +71,7 @@ pub theorem add_left_comm(a: Nat, b: Nat, c: Nat): nat!(`$a + ($b + $c) = $b + (
 }
 
 pub theorem add_eq_zero_l(a: Nat, b: Nat, e: nat!(`$a + $b = 0`)): nat!(`$a = 0`) {
-  match b: nat!(`$a = 0`) {
+  ⊢ nat!(`$a = 0`) from match b {
     Zero => e
     Succ(k) => Nat::noconf(a = 0, Succ(a + k), Zero, e)
   }

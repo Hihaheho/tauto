@@ -469,36 +469,36 @@ pub theorem inference_unf_ck_handle_body_in(
   guard: Option(SurfaceTerm),
   body: SurfaceTerm
 ): ck_handle_body_in(
-    Succ(j),
-    c,
-    env,
-    result,
-    rv,
-    eff,
-    params,
-    answer,
-    rigid,
-    names,
-    patterns,
-    cont,
-    guard,
-    body
-  ) = inference_step_ck_handle_body_in(
-    j,
-    c,
-    env,
-    result,
-    rv,
-    eff,
-    params,
-    answer,
-    rigid,
-    names,
-    patterns,
-    cont,
-    guard,
-    body
-  ) { Refl }
+  Succ(j),
+  c,
+  env,
+  result,
+  rv,
+  eff,
+  params,
+  answer,
+  rigid,
+  names,
+  patterns,
+  cont,
+  guard,
+  body
+) = inference_step_ck_handle_body_in(
+  j,
+  c,
+  env,
+  result,
+  rv,
+  eff,
+  params,
+  answer,
+  rigid,
+  names,
+  patterns,
+  cont,
+  guard,
+  body
+) { Refl }
 
 pub fn inference_handler_arity(
   j: Nat,
@@ -517,7 +517,7 @@ pub fn inference_handler_arity(
   pa: ArmSig,
   wrong: Bool
 ): Mut1(Unit, Checker) {
-  match wrong: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match wrong {
     true => ck_rewrap1(
       ck_error(
         c,
@@ -590,7 +590,7 @@ pub theorem inference_handler_arity_frame(
     wrong
   )
 ) {
-  match wrong: CkRunFrame(
+  ⊢ CkRunFrame(
     c,
     inference_handler_arity(
       j,
@@ -609,7 +609,7 @@ pub theorem inference_handler_arity_frame(
       pa,
       wrong
     )
-  ) {
+  ) from match wrong {
     true => run_frame_read(
       c,
       ck_rewrap1(
@@ -708,7 +708,7 @@ pub fn inference_handler_signature(
   body: SurfaceTerm,
   signature: Option(ArmSig)
 ): Mut1(Unit, Checker) {
-  match signature: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match signature {
     None => mut1(Star, c)
     Some(pa) => inference_handler_arity(
       j,
@@ -766,7 +766,7 @@ pub theorem inference_handler_signature_frame(
     signature
   )
 ) {
-  match signature: CkRunFrame(
+  ⊢ CkRunFrame(
     c,
     inference_handler_signature(
       j,
@@ -784,7 +784,7 @@ pub theorem inference_handler_signature_frame(
       body,
       signature
     )
-  ) {
+  ) from match signature {
     None => run_frame_return(c, Star, ordered)
     Some(pa) => inference_handler_arity_frame(
       j,
@@ -943,34 +943,34 @@ pub theorem inference_unf_ck_handle_arm_in(
   guard: Option(SurfaceTerm),
   body: SurfaceTerm
 ): ck_handle_arm_in(
-    Succ(j),
-    c,
-    env,
-    result,
-    rv,
-    budget_ty,
-    eff,
-    binds,
-    types,
-    patterns,
-    cont,
-    guard,
-    body
-  ) = inference_step_ck_handle_arm_in(
-    j,
-    c,
-    env,
-    result,
-    rv,
-    budget_ty,
-    eff,
-    binds,
-    types,
-    patterns,
-    cont,
-    guard,
-    body
-  ) { Refl }
+  Succ(j),
+  c,
+  env,
+  result,
+  rv,
+  budget_ty,
+  eff,
+  binds,
+  types,
+  patterns,
+  cont,
+  guard,
+  body
+) = inference_step_ck_handle_arm_in(
+  j,
+  c,
+  env,
+  result,
+  rv,
+  budget_ty,
+  eff,
+  binds,
+  types,
+  patterns,
+  cont,
+  guard,
+  body
+) { Refl }
 
 pub fn inference_budget_push(
   j: Nat,
@@ -981,7 +981,7 @@ pub fn inference_budget_push(
   budget_ty: Ty,
   answers: Bool
 ): Mut1(Unit, Checker) {
-  match answers: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match answers {
     true => inference_set_exceeded(c, Cons(budget_ty, inference_exceeded(c)))
     false => mut1(Star, c)
   }
@@ -998,10 +998,10 @@ pub theorem inference_budget_push_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_budget_push(j, c, body, handlers, env, budget_ty, answers)) {
-  match answers: CkRunFrame(
+  ⊢ CkRunFrame(
     c,
     inference_budget_push(j, c, body, handlers, env, budget_ty, answers)
-  ) {
+  ) from match answers {
     true => run_frame_read(
       c,
       inference_set_exceeded(c, Cons(budget_ty, inference_exceeded(c))),
@@ -1013,7 +1013,7 @@ pub theorem inference_budget_push_frame(
 }
 
 pub fn inference_budget_pop(j: Nat, c: Checker, answers: Bool): Mut1(Unit, Checker) {
-  match answers: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match answers {
     true => inference_set_exceeded(c, List::tail(inference_exceeded(c)))
     false => mut1(Star, c)
   }
@@ -1026,7 +1026,7 @@ pub theorem inference_budget_pop_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_budget_pop(j, c, answers)) {
-  match answers: CkRunFrame(c, inference_budget_pop(j, c, answers)) {
+  ⊢ CkRunFrame(c, inference_budget_pop(j, c, answers)) from match answers {
     true => run_frame_read(
       c,
       inference_set_exceeded(c, List::tail(inference_exceeded(c))),
@@ -1268,14 +1268,7 @@ pub fn inference_handle_original(
   result
 }
 
-pub theorem inference_handle_boolean(
-  j: Nat,
-  c: Checker,
-  body: SurfaceTerm,
-  handlers: List(SurfaceHandler),
-  env: List(Local),
-  answers: Bool
-): inference_handle_original(j, c, body, handlers, env, answers) = inference_handle_after(j, c, body, handlers, env, answers) { match answers: inference_handle_original(j, c, body, handlers, env, answers) = inference_handle_after(j, c, body, handlers, env, answers) { true => Refl
+pub theorem inference_handle_boolean(j: Nat, c: Checker, body: SurfaceTerm, handlers: List(SurfaceHandler), env: List(Local), answers: Bool): inference_handle_original(j, c, body, handlers, env, answers) = inference_handle_after(j, c, body, handlers, env, answers) { ⊢ inference_handle_original(j, c, body, handlers, env, answers) = inference_handle_after(j, c, body, handlers, env, answers) from match answers { true => Refl
     false => Refl } }
 
 pub fn inference_step_ck_handle_in(
@@ -1345,4 +1338,16 @@ pub theorem inference_unf_ck_handle_in(
   body: SurfaceTerm,
   handlers: List(SurfaceHandler),
   env: List(Local)
-): ck_handle_in(Succ(j), c, body, handlers, env) = inference_step_ck_handle_in(j, c, body, handlers, env) { inference_handle_boolean(j, c, body, handlers, env, handlers_answer_exceeded(handlers)) }
+): ck_handle_in(
+  Succ(j),
+  c,
+  body,
+  handlers,
+  env
+) = inference_step_ck_handle_in(
+  j,
+  c,
+  body,
+  handlers,
+  env
+) { inference_handle_boolean(j, c, body, handlers, env, handlers_answer_exceeded(handlers)) }

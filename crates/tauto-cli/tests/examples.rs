@@ -228,7 +228,7 @@ fn typed_lang_reads_checks_and_runs_text() {
          > rejected by the type checker\n\
          > rejected by the type checker\n\
          > rejected by the type checker\n\
-         > syntax error: macro.syntax_error: in tl: expected Num or KwTrue or KwFalse or LParen, found Error\n\
+         > syntax error: this text is not a token of the syntax\n\
          > 5 : Nat\n\
          > > "
     );

@@ -1,3 +1,5 @@
+import std::List
+import std::Text
 import "operations.taut"
 import "builtins.taut"
 import "mval.taut"
@@ -28,6 +30,13 @@ pub(open) inductive MStep: Type {
   // Every task waits for a timer: the host sleeps until the clock reads `until`, then wakes
   // the machine (`m_wake`).
   MstepSleep(until: Int, cx: MCx): MStep
+  // The host starts the request, which waits (a stream, a started program), and wakes the
+  // machine (`m_wake`) with the other tasks at once; the task that asked waits for the
+  // pending `p`, which the host fills with the answer when it comes (`m_fulfill`).
+  MstepStart(name: Text, args: List(MVal), p: Nat, cx: MCx): MStep
+  // Every task waits and no timer runs: only an answer to a started request
+  // (`m_fulfill`) lets one go on; with none started, the tasks are deadlocked.
+  MstepIdle(cx: MCx): MStep
   MstepError(message: Text): MStep
 }
 
@@ -158,6 +167,15 @@ mutual {
         )
       }
       MpLit(l) => if m_eq(ctors, cx, l, v) { Some(Pair { fst: binds, snd: cx }) } else { None }
+      MpProduct(ps) => match m_get(ctors, cx, v) {
+        MvProduct(members) => if Nat::eq(List::length(ps), List::length(members)) {
+          match v {
+            MvRef(cell, path) => m_fit_ref(ctors, cx, ps, cell, path, 0, binds)
+            _ => m_fit_list(ctors, cx, ps, members, binds)
+          }
+        } else { None }
+        _ => None
+      }
       MpCtor(c, ps) => match m_get(ctors, cx, v) {
         MvData(d, fs) => if Nat::eq(c, d) {
           match v {
@@ -278,13 +296,7 @@ pub fn m_tail_frames(fr: List(MFrame)): Option(List(MFrame)) {
 }
 
 pub fn m_raised(cx: MCx, s: Nat): Bool {
-  match cx_obj(cx, s) {
-    Some(o) => match o {
-      MoSignal(raised, handed) => raised
-      _ => false
-    }
-    None => false
-  }
+  m_signal_raised(cx, m_signal_inputs(cx, s))
 }
 
 // Puts the running task aside; with `front`, it is the next to run.
@@ -335,7 +347,7 @@ pub fn m_pick(cx: MCx, ts: List(MTask)): Option(Pair(MTask, List(MTask))) {
     Nil => None
     Cons(t, rest) => match t {
       Mtask(MkCode, slots, st, fr, Wait, result, Asked) => {
-        let runs := match Wait: Bool {
+        let runs := ⊢ Bool from match Wait {
           None => true
           Some(s) => m_raised(cx, s)
         }
@@ -379,10 +391,59 @@ pub fn m_switch(cx0: MCx): MStep {
         }
         None => match m_first_timer(cx, Timers, None) {
           Some(at) => MstepSleep(at, cx)
-          None => if cx_top_done(cx) { MstepDone } else { MstepError(m_deadlock()) }
+          None => if cx_top_done(cx) { MstepDone } else { MstepIdle(cx) }
         }
       }
     }
+  }
+}
+
+// The requests whose answer may take long: the host starts them (`MstepStart`) and the
+// other tasks go on while they wait.
+pub fn m_waits(name: Text): Bool {
+  List::any(
+    (w: Text) => Text::eq(name, w),
+    Cons("Os::tcp_accept", Cons("Os::tcp_read", Cons("Os::child_read", Cons("Os::child_wait", Nil))))
+  )
+}
+
+// The running task asks the host a request that waits: it waits for a new pending, then
+// takes its value (`Pending::take`, builtin 119), and the other tasks go on.
+pub fn m_start(
+  name: Text,
+  args: List(MVal),
+  k: MCode,
+  slots: List(MVal),
+  st: List(MVal),
+  fr: List(MFrame),
+  cx: MCx
+): MStep {
+  match m_new_pending(cx, MpendRunning, false) {
+    Pair { fst: pid, snd: cx2 } => match m_pending_of(cx2, pid) {
+      Pair { fst: state, snd: s } => MstepStart(
+        name,
+        args,
+        pid,
+        m_park(
+          cx2,
+          Mtask(McBuiltin(119, 1, k), slots, Cons(MvPending(pid), st), fr, Some(s), None, None),
+          false
+        )
+      )
+    }
+  }
+}
+
+// The host's answer `v` to the request it started for the pending `pid`.
+pub fn m_fulfill(cx: MCx, pid: Nat, v: MVal): MCx {
+  match m_pending_of(cx, pid) {
+    Pair { fst: state, snd: s } => m_raise(cx_put(cx, pid, MoPending(MpendReady(v), s)), s, None)
+  }
+}
+
+pub fn m_fulfill_state(st: MState, pid: Nat, v: MVal): MState {
+  match st {
+    Mstate(MkCode, slots, stack, fr, cx) => Mstate(MkCode, slots, stack, fr, m_fulfill(cx, pid, v))
   }
 }
 
@@ -622,19 +683,17 @@ pub fn m_unhandled(
       shown,
       Mstate(k, slots, Cons(MvUnit, st), fr, cx)
     )
-  } else {
-    if Bool::and(m_text_eq(op, "wait"), Nat::eq(List::length(args), 1)) {
-      match m_get(ctors, cx, m_nth_or_unit(args, 0)) {
-        MvSignal(s) => if m_raised(cx, s) {
-          m_go(k, slots, Cons(MvUnit, st), fr, cx)
-        } else {
-          m_switch(m_park(cx, Mtask(k, slots, Cons(MvUnit, st), fr, Some(s), None, None), false))
-        }
-        _ => MstepError(m_nothing_handles(op))
+  } else if Bool::and(m_text_eq(op, "wait"), Nat::eq(List::length(args), 1)) {
+    match m_get(ctors, cx, m_nth_or_unit(args, 0)) {
+      MvSignal(s) => if m_raised(cx, s) {
+        m_go(k, slots, Cons(MvUnit, st), fr, cx)
+      } else {
+        m_switch(m_park(cx, Mtask(k, slots, Cons(MvUnit, st), fr, Some(s), None, None), false))
       }
-    } else {
-      MstepError(m_nothing_handles(op))
+      _ => MstepError(m_nothing_handles(op))
     }
+  } else {
+    MstepError(m_nothing_handles(op))
   }
 }
 
@@ -1007,21 +1066,19 @@ pub fn step_parts(
             Nil,
             Mstate(McBuiltin(126, 2, k), slots, Cons(m_nth_or_unit(args, 0), rest), fr, cx)
           )
+        } else if Nat::eq(b, 126) {
+          m_out(
+            p,
+            m_timer(m_get(ctors, cx, m_nth_or_unit(args, 0)), m_nth_or_unit(args, 1), cx),
+            k,
+            slots,
+            rest,
+            fr
+          )
         } else {
-          if Nat::eq(b, 126) {
-            m_out(
-              p,
-              m_timer(m_get(ctors, cx, m_nth_or_unit(args, 0)), m_nth_or_unit(args, 1), cx),
-              k,
-              slots,
-              rest,
-              fr
-            )
-          } else {
-            match m_builtin(ctors, cx, b, args) {
-              MoutPerform(op) => m_perform(p, op, 0, Nil, 0, k, slots, rest, fr, cx)
-              o => m_out(p, o, k, slots, rest, fr)
-            }
+          match m_builtin(ctors, cx, b, args) {
+            MoutPerform(op) => m_perform(p, op, 0, Nil, 0, k, slots, rest, fr, cx)
+            o => m_out(p, o, k, slots, rest, fr)
           }
         }
       }
@@ -1029,11 +1086,11 @@ pub fn step_parts(
     McAsk(name, n, k) => match m_pop(n, st) {
       None => m_bad()
       Some(r) => match r {
-        Pair { fst: args, snd: rest } => MstepAsk(
-          name,
-          m_get_all(ctors, cx, args),
-          Mstate(k, slots, rest, fr, cx)
-        )
+        Pair { fst: args, snd: rest } => if m_waits(name) {
+          m_start(name, m_get_all(ctors, cx, args), k, slots, rest, fr, cx)
+        } else {
+          MstepAsk(name, m_get_all(ctors, cx, args), Mstate(k, slots, rest, fr, cx))
+        }
       }
     }
   }

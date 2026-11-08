@@ -197,15 +197,29 @@ pub(crate) fn scan(t: &Tables, text: &str, base: u32) -> Result<Vec<Token>, LexE
     let mut stack: Vec<usize> = Vec::new();
     let mut held: Vec<Option<DynValue>> = vec![None; t.dyn_states.len()];
     while pos < text.len() {
-        let Some((mut end, terminal, _)) = find_next(t, &t.modes[mode].states, text, pos, &held)
-        else {
+        // `$(` and `$[`: a parenthesised expression and a list literal, read before the
+        // modes' automata as `${` is.
+        let paren = embed
+            .filter(|_| text[pos..].starts_with("$(") || text[pos..].starts_with("$["));
+        let found = match paren {
+            Some(e) => Some((pos + 1, e)),
+            None => find_next(t, &t.modes[mode].states, text, pos, &held)
+                .map(|(end, term, _)| (end, term)),
+        };
+        let Some((mut end, terminal)) = found else {
             return Err(LexError {
                 at: base + pos as u32,
             });
         };
-        // `${`: the token goes on to the matching `}`. (`$n` ends with its name.)
-        if Some(terminal) == embed && text.as_bytes()[end - 1] == b'{' {
-            match embed_end(text, end) {
+        // `${`: the token goes on to the matching `}`. `$f(…)`, `$m!(…)` and `$(…)` go on
+        // over the calls written right after (`docs/design/macro.md`「DSL の中の tauto の式」).
+        if Some(terminal) == embed {
+            let braced = text.as_bytes()[end - 1] == b'{';
+            match if braced {
+                embed_end(text, end)
+            } else {
+                postfix_end(text, end)
+            } {
                 Some(e) => end = e,
                 None => {
                     return Err(LexError {
@@ -250,13 +264,40 @@ pub(crate) fn scan(t: &Tables, text: &str, base: u32) -> Result<Vec<Token>, LexE
 /// Where the tauto expression that `${` opened ends: just after the `}` that
 /// closes it. Braces inside a string or a comment do not count.
 fn embed_end(text: &str, from: usize) -> Option<usize> {
+    close_end(text, from, b'{', b'}')
+}
+
+/// Where a `$` expression without braces ends. `from` is just after `$name` (or just
+/// after the `$` of `$(`), the name with its `::` path read by the scanner as tauto
+/// reads a name: then a `!` that a `(` follows, then each `(…)` written right after it.
+/// A `.` is not read: a field is `$(p.f)`.
+fn postfix_end(text: &str, from: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut i = from;
+    // `$[…]`: a list literal, which no call follows. A `[` after `$name` is the DSL's own
+    // (`$b[$a]`), not part of the expression.
+    if from > 0 && bytes[from - 1] == b'$' && bytes.get(i) == Some(&b'[') {
+        return close_end(text, i + 1, b'[', b']');
+    }
+    if bytes.get(i) == Some(&b'!') && bytes.get(i + 1) == Some(&b'(') {
+        i += 1;
+    }
+    while bytes.get(i) == Some(&b'(') {
+        i = close_end(text, i + 1, b'(', b')')?;
+    }
+    Some(i)
+}
+
+/// Just after the `close` that matches an `open` before `from`. Brackets inside a
+/// string or a comment do not count.
+fn close_end(text: &str, from: usize, open: u8, close: u8) -> Option<usize> {
     let bytes = text.as_bytes();
     let mut depth = 1usize;
     let mut i = from;
     while i < bytes.len() {
         match bytes[i] {
-            b'{' => depth += 1,
-            b'}' => {
+            b if b == open => depth += 1,
+            b if b == close => {
                 depth -= 1;
                 if depth == 0 {
                     return Some(i + 1);
@@ -286,7 +327,7 @@ fn embed_end(text: &str, from: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::embed_end;
+    use super::{embed_end, postfix_end};
 
     #[test]
     fn an_embedded_expression_ends_at_its_closing_brace() {
@@ -295,5 +336,32 @@ mod tests {
         let t = "${ if a { 1 } else { \"}\" } } rest";
         assert_eq!(embed_end(t, 2), Some(t.find(" rest").unwrap()));
         assert_eq!(embed_end("${ never", 2), None);
+    }
+
+    #[test]
+    fn a_postfix_expression_ends_after_its_calls() {
+        fn end(t: &str, name: usize) -> Option<&str> {
+            postfix_end(t, name).map(|e| &t[..e])
+        }
+        assert_eq!(end("$n = 2", 2), Some("$n"));
+        assert_eq!(end("$n. Then", 2), Some("$n"));
+        assert_eq!(
+            end("$add(add(a, b), c) from", 4),
+            Some("$add(add(a, b), c)")
+        );
+        assert_eq!(end("$Eq::sym(h) x", 8), Some("$Eq::sym(h)"));
+        assert_eq!(end("$Iの数(x) = y", "$Iの数".len()), Some("$Iの数(x)"));
+        assert_eq!(end("$nat!(a = b) x", 4), Some("$nat!(a = b)"));
+        assert_eq!(end("$(1 + n) = m", 1), Some("$(1 + n)"));
+        assert_eq!(end("$f (x)", 2), Some("$f"));
+        assert_eq!(end("$b[$a] : B", 2), Some("$b"));
+        assert_eq!(end("$[a, b] = c", 1), Some("$[a, b]"));
+        assert_eq!(end("$[x, ..rest](y)", 1), Some("$[x, ..rest]"));
+        assert_eq!(end("$[] x", 1), Some("$[]"));
+        assert_eq!(end("$[[a], [b, c]]. Then", 1), Some("$[[a], [b, c]]"));
+        assert_eq!(end("$[\"]\"] x", 1), Some("$[\"]\"]"));
+        assert_eq!(end("$[a", 1), None);
+        assert_eq!(end("$f(\")\") y", 2), Some("$f(\")\")"));
+        assert_eq!(end("$f(never", 2), None);
     }
 }

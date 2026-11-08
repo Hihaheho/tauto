@@ -132,7 +132,15 @@ impl Gen<'_> {
             | (Ty::Pair(a, b), Ty::Pair(c, d)) => {
                 self.same_abi(a, from_args, c, to_args) && self.same_abi(b, from_args, d, to_args)
             }
-            (Ty::Data(a, args), Ty::Data(b, other)) | (Ty::Std(a, args), Ty::Std(b, other)) => {
+            (Ty::Data(a, args), Ty::Data(b, other)) => {
+                a == b
+                    && args.len() == other.len()
+                    && args
+                        .iter()
+                        .zip(other)
+                        .all(|(a, b)| self.same_abi(a, from_args, b, to_args))
+            }
+            (Ty::Std(a, args), Ty::Std(b, other)) => {
                 a == b
                     && args.len() == other.len()
                     && args

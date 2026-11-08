@@ -1,0 +1,262 @@
+// Differential cases: each named route compares the self-hosted component with its oracle, not only evaluator success.
+
+// cases
+@ cases.cases-001
+source = ```tauto
+fn f(x__m1: Nat): Nat { let y__m1 := x__m1
+ y__m1 }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-002
+source = ```tauto
+fn f(x: Nat): Nat { let t__m1 := x
+ t__m1 }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-003
+source = ```tauto
+fn g(a: Nat): Nat { a }
+fn f(g: Nat): Nat { g__m1(g) }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-004
+source = ```tauto
+fn helper__m1(a: Nat): Nat { a }
+fn f(a: Nat): Nat { helper__m1(a) }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-005
+source = ```tauto
+struct P__m1 { x: Nat }
+fn f(p: P__m1): Nat { p.x }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-006
+source = ```tauto
+enum E__m1 { A__m1, B__m1(Nat) }
+fn f(e: E__m1): Nat { match e { A__m1 => 1, B__m1(n__m1) => n__m1 } }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-007
+source = ```tauto
+enum E { A, B(Nat) }
+fn f(e: E): Nat { match e { A => 1, B(n) => n } }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-008
+source = ```tauto
+enum E { A__m1, B }
+fn f(e: E): Nat { match e { A__m1 => 1, B => 2 } }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-009
+source = ```tauto
+theorem t__m1(a__m1: Nat): a__m1 == a__m1 { Refl }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-010
+source = ```tauto
+fn f(n: Nat): Nat { let r := (x__m1, y__m1) => x__m1
+ r(n, n) }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-011
+source = ```tauto
+fn f(n: Nat): Nat { if n == 0 { let a__m1 := 1
+ a__m1 } else { let a__m1 := 2
+ a__m1 } }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-012
+source = ```tauto
+mutual { fn a__m1(): Nat { b__m1() }
+ fn b__m1(): Nat { 1 } }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-013
+source = ```tauto
+module m { fn a__m1(): Nat { 1 }
+ fn b(): Nat { a__m1() } }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-014
+source = ```tauto
+effect Ask__m1(): Nat
+fn f(): Nat { perform Ask__m1() }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-015
+source = ```tauto
+inductive Nat2__m1: Type { Z__m1: Nat2__m1
+ S__m1(n__m1: Nat2__m1): Nat2__m1 }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-016
+source = ```tauto
+fn f(n: Nat): Nat { var a__m1 := n
+ a__m1 := a__m1
+ a__m1 }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-017
+source = ```tauto
+fn f(n: Nat): Nat { let g__m1 := n
+ let g := n
+ g__m1 }
+```
+differential = "macros"
+
+// cases
+@ cases.cases-018
+source = ```tauto
+fn f(g: Nat): Nat { let h := g__m2
+ g__m1 }
+```
+differential = "macros"
+
+// quote_cases
+@ cases.quote-cases-019
+source = ```tauto
+let $n := $v
+$n
+```
+differential = "macros"
+
+// quote_cases
+@ cases.quote-cases-020
+source = ```tauto
+fn $name($p: Nat): Nat { $p }
+```
+differential = "macros"
+
+// quote_cases
+@ cases.quote-cases-021
+source = ```tauto
+match $e { Some($x) => $x, None => 0 }
+```
+differential = "macros"
+
+// quote_cases
+@ cases.quote-cases-022
+source = ```tauto
+quote { x }
+```
+differential = "macros"
+
+// quote-fragment
+@ cases.quote-fragment-extra-001
+source = ```tauto
+x
+```
+differential = "macros"
+
+// quote-fragment
+@ cases.quote-fragment-extra-002
+source = ```tauto
+$x
+```
+differential = "macros"
+
+// quote-fragment
+@ cases.quote-fragment-extra-003
+source = ```tauto
+$(f(a, b))
+```
+differential = "macros"
+
+// quote-fragment
+@ cases.quote-fragment-extra-004
+source = ```tauto
+f($x, 1)
+```
+differential = "macros"
+
+// quote-fragment
+@ cases.quote-fragment-extra-005
+source = ```tauto
+$x + $y
+```
+differential = "macros"
+
+// quote-fragment
+@ cases.quote-fragment-extra-006
+source = ```tauto
+$body
+```
+differential = "macros"
+
+// quote-fragment
+@ cases.quote-fragment-extra-007
+source = ```tauto
+$a
+$b
+x
+```
+differential = "macros"
+
+// quote-fragment
+@ cases.quote-fragment-extra-008
+source = ```tauto
+[1, 2, $x]
+```
+differential = "macros"
+
+// quote-fragment
+@ cases.quote-fragment-extra-009
+source = ```tauto
+-5
+```
+differential = "macros"
+
+// quote-fragment
+@ cases.quote-fragment-extra-010
+source = ```tauto
+"text"
+```
+differential = "macros"
+
+// quote-fragment
+@ cases.quote-fragment-extra-011
+source = ```tauto
+(1, $x)
+```
+differential = "macros"
+
+// quote-fragment
+@ cases.quote-fragment-extra-012
+source = ```tauto
+if $c { $a } else { $b }
+```
+differential = "macros"

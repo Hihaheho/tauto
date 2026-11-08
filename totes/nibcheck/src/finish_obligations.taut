@@ -11,21 +11,24 @@ pub theorem diagnostic_kept_unf(
   k: TyKept,
   rest: List(TyKept),
   c: Checker
-): ck_check_kept(Cons(k, rest), c) = diagnostic_after(
-    (next: Checker) => ck_check_kept(rest, next),
-    frame_error_if(
-      c,
-      "a generic escapes the type that binds it",
-      TySpan { start: 0, end: 0 },
-      finish_kept_bad(c, k)
-    )
-  ) { Refl }
+): ck_check_kept(
+  Cons(k, rest),
+  c
+) = diagnostic_after(
+  (next: Checker) => ck_check_kept(rest, next),
+  frame_error_if(
+    c,
+    "a generic escapes the type that binds it",
+    TySpan { start: 0, end: 0 },
+    finish_kept_bad(c, k)
+  )
+) { Refl }
 pub theorem ck_check_kept_accepts(
   xs: List(TyKept),
   c: Checker,
   clean: DiagnosticClean(ck_st(ck_check_kept(xs, c)))
 ): DiagnosticItemsResult(DiagnosticKept, xs, c, ck_check_kept(xs, c)) {
-  match xs: DiagnosticItemsResult(DiagnosticKept, xs, c, ck_check_kept(xs, c)) {
+  ⊢ DiagnosticItemsResult(DiagnosticKept, xs, c, ck_check_kept(xs, c)) from match xs {
     Nil => AndIntro(DiagnosticItemsNil, Refl)
     Cons(k, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => DiagnosticItemsResult(DiagnosticKept, Cons(k, rest), c, z),
@@ -72,21 +75,24 @@ pub theorem diagnostic_closures_unf(
   r: TyClosure,
   rest: List(TyClosure),
   c: Checker
-): ck_check_closures(Cons(r, rest), c) = diagnostic_after(
-    (next: Checker) => ck_check_closures(rest, next),
-    frame_error_if(
-      c,
-      "a closure cannot return a borrow",
-      finish_closure_span(r),
-      finish_closure_bad(c, r)
-    )
-  ) { Refl }
+): ck_check_closures(
+  Cons(r, rest),
+  c
+) = diagnostic_after(
+  (next: Checker) => ck_check_closures(rest, next),
+  frame_error_if(
+    c,
+    "a closure cannot return a borrow",
+    finish_closure_span(r),
+    finish_closure_bad(c, r)
+  )
+) { Refl }
 pub theorem ck_check_closures_accepts(
   xs: List(TyClosure),
   c: Checker,
   clean: DiagnosticClean(ck_st(ck_check_closures(xs, c)))
 ): DiagnosticItemsResult(DiagnosticClosures, xs, c, ck_check_closures(xs, c)) {
-  match xs: DiagnosticItemsResult(DiagnosticClosures, xs, c, ck_check_closures(xs, c)) {
+  ⊢ DiagnosticItemsResult(DiagnosticClosures, xs, c, ck_check_closures(xs, c)) from match xs {
     Nil => AndIntro(DiagnosticItemsNil, Refl)
     Cons(r, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => DiagnosticItemsResult(DiagnosticClosures, Cons(r, rest), c, z),

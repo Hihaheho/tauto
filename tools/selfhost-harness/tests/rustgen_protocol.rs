@@ -9,7 +9,7 @@ fn opt_in_contract_reports_compilation_without_changing_default_output() {
         &[
             (
                 "accepted".into(),
-                r#"fn pred(n: Nat): Nat { match n: Nat { Zero => 0
+                r#"fn pred(n: Nat): Nat { ⊢ Nat from match n { Zero => 0
 Succ(k) => k } }
 fn answer(): Nat { pred(0) }"#
                     .to_string(),

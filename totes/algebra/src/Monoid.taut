@@ -29,7 +29,7 @@ pub def algebra_monoid_elim<u: Level>(): ∀ A: Type(
     ∀ x: A. AlgebraEq(u, A, op(unit, x), x)
   ). ∀ right: (
     ∀ x: A. AlgebraEq(u, A, op(x, unit), x)
-  ). motive(AlgebraMonoid::Mk(u, A, unit, op, assoc, left, right))
+  ). motive(AlgebraMonoid::Mk(<u: u, A: A>, unit, op, assoc, left, right))
 ) -> (∀ structure: AlgebraMonoid(u, A). motive(structure)) := recursor(AlgebraMonoid(u), u)
 
 pub def algebra_unit<u: Level, A: Type(u)>(m: AlgebraMonoid(u, A)): A :=
@@ -39,7 +39,7 @@ pub def algebra_op<u: Level, A: Type(u)>(m: AlgebraMonoid(u, A)): (A, A) -> A :=
 algebra_monoid_elim(
   u,
   A,
-  structure => AlgebraOperation(u, A),
+  structure => AlgebraOperation(<u: u>, A),
   unit => op => assoc => left => right => op,
   m
 )
@@ -54,17 +54,15 @@ pub theorem algebra_assoc<u: Level, A: Type(
 ): AlgebraEq(
   u,
   A,
-  algebra_op(u, A, m)(algebra_op(u, A, m)(x, y), z),
-  algebra_op(u, A, m)(x, algebra_op(u, A, m)(y, z))
+  algebra_op(<u: u, A: A>, m)(algebra_op(<u: u, A: A>, m)(x, y), z),
+  algebra_op(<u: u, A: A>, m)(x, algebra_op(<u: u, A: A>, m)(y, z))
 ) {
-  AlgebraMonoid::ind(
-    u,
-    A,
+  AlgebraMonoid::ind(<u: u, A: A>,
     structure => AlgebraEq(
       u,
       A,
-      algebra_op(u, A, structure)(algebra_op(u, A, structure)(x, y), z),
-      algebra_op(u, A, structure)(x, algebra_op(u, A, structure)(y, z))
+      algebra_op(<u: u, A: A>, structure)(algebra_op(<u: u, A: A>, structure)(x, y), z),
+      algebra_op(<u: u, A: A>, structure)(x, algebra_op(<u: u, A: A>, structure)(y, z))
     ),
     unit => op => assoc => left => right => assoc(x, y, z),
     m
@@ -76,11 +74,9 @@ pub theorem algebra_left_unit<u: Level, A: Type(
 )>(
   m: AlgebraMonoid(u, A),
   x: A
-): AlgebraEq(u, A, algebra_op(u, A, m)(algebra_unit(u, A, m), x), x) {
-  AlgebraMonoid::ind(
-    u,
-    A,
-    structure => AlgebraEq(u, A, algebra_op(u, A, structure)(algebra_unit(u, A, structure), x), x),
+): AlgebraEq(u, A, algebra_op(<u: u, A: A>, m)(algebra_unit(<u: u, A: A>, m), x), x) {
+  AlgebraMonoid::ind(<u: u, A: A>,
+    structure => AlgebraEq(u, A, algebra_op(<u: u, A: A>, structure)(algebra_unit(<u: u, A: A>, structure), x), x),
     unit => op => assoc => left => right => left(x),
     m
   )
@@ -91,11 +87,9 @@ pub theorem algebra_right_unit<u: Level, A: Type(
 )>(
   m: AlgebraMonoid(u, A),
   x: A
-): AlgebraEq(u, A, algebra_op(u, A, m)(x, algebra_unit(u, A, m)), x) {
-  AlgebraMonoid::ind(
-    u,
-    A,
-    structure => AlgebraEq(u, A, algebra_op(u, A, structure)(x, algebra_unit(u, A, structure)), x),
+): AlgebraEq(u, A, algebra_op(<u: u, A: A>, m)(x, algebra_unit(<u: u, A: A>, m)), x) {
+  AlgebraMonoid::ind(<u: u, A: A>,
+    structure => AlgebraEq(u, A, algebra_op(<u: u, A: A>, structure)(x, algebra_unit(<u: u, A: A>, structure)), x),
     unit => op => assoc => left => right => right(x),
     m
   )
@@ -106,21 +100,12 @@ pub theorem algebra_unit_unique<u: Level, A: Type(
 )>(
   m: AlgebraMonoid(u, A),
   candidate: A,
-  left: ∀ x: A. AlgebraEq(u, A, algebra_op(u, A, m)(candidate, x), x)
-): AlgebraEq(u, A, candidate, algebra_unit(u, A, m)) {
-  algebra_trans(
-    u,
-    A,
-    candidate,
-    algebra_op(u, A, m)(candidate, algebra_unit(u, A, m)),
-    algebra_unit(u, A, m),
-    algebra_sym(
-      u,
-      A,
-      algebra_op(u, A, m)(candidate, algebra_unit(u, A, m)),
-      candidate,
-      algebra_right_unit(u, A, m, candidate)
+  left: ∀ x: A. AlgebraEq(u, A, algebra_op(<u: u, A: A>, m)(candidate, x), x)
+): AlgebraEq(u, A, candidate, algebra_unit(<u: u, A: A>, m)) {
+  algebra_trans(<u: u, A: A, a: candidate, b: algebra_op(<u: u, A: A>, m)(candidate, algebra_unit(<u: u, A: A>, m)), c: algebra_unit(<u: u, A: A>, m)>,
+    algebra_sym(<u: u, A: A, a: algebra_op(<u: u, A: A>, m)(candidate, algebra_unit(<u: u, A: A>, m)), b: candidate>,
+      algebra_right_unit(<u: u, A: A>, m, candidate)
     ),
-    left(algebra_unit(u, A, m))
+    left(algebra_unit(<u: u, A: A>, m))
   )
 }

@@ -7,26 +7,26 @@ pub(open) inductive ShapeDecision(a: Shape, b: Shape): Type {
 }
 
 pub fn shape_dec(a: Shape, b: Shape): ShapeDecision(a, b) {
-  match a: ShapeDecision(a, b) {
-    Empty => match b: ShapeDecision(Empty, b) {
+  ⊢ ShapeDecision(a, b) from match a {
+    Empty => ⊢ ShapeDecision(Empty, b) from match b {
       Empty => ShapeSame(Refl)
-      NumOn(tail) => ShapeDifferent(e => match e: False {})
-      BoolOn(tail) => ShapeDifferent(e => match e: False {})
+      NumOn(tail) => ShapeDifferent(e => ⊢ False from match e {})
+      BoolOn(tail) => ShapeDifferent(e => ⊢ False from match e {})
     }
-    NumOn(tail) => match b: ShapeDecision(NumOn(tail), b) {
-      Empty => ShapeDifferent(e => match e: False {})
-      NumOn(other) => match shape_dec(tail, other): ShapeDecision(NumOn(tail), NumOn(other)) {
+    NumOn(tail) => ⊢ ShapeDecision(NumOn(tail), b) from match b {
+      Empty => ShapeDifferent(e => ⊢ False from match e {})
+      NumOn(other) => ⊢ ShapeDecision(NumOn(tail), NumOn(other)) from match shape_dec(tail, other) {
         ShapeSame(e) => ShapeSame(Eq::congr(NumOn, e))
-        ShapeDifferent(refute) => ShapeDifferent(e => match e: False { Refl => refute(Refl) })
+        ShapeDifferent(refute) => ShapeDifferent(e => ⊢ False from match e { Refl => refute(Refl) })
       }
-      BoolOn(other) => ShapeDifferent(e => match e: False {})
+      BoolOn(other) => ShapeDifferent(e => ⊢ False from match e {})
     }
-    BoolOn(tail) => match b: ShapeDecision(BoolOn(tail), b) {
-      Empty => ShapeDifferent(e => match e: False {})
-      NumOn(other) => ShapeDifferent(e => match e: False {})
-      BoolOn(other) => match shape_dec(tail, other): ShapeDecision(BoolOn(tail), BoolOn(other)) {
+    BoolOn(tail) => ⊢ ShapeDecision(BoolOn(tail), b) from match b {
+      Empty => ShapeDifferent(e => ⊢ False from match e {})
+      NumOn(other) => ShapeDifferent(e => ⊢ False from match e {})
+      BoolOn(other) => ⊢ ShapeDecision(BoolOn(tail), BoolOn(other)) from match shape_dec(tail, other) {
         ShapeSame(e) => ShapeSame(Eq::congr(BoolOn, e))
-        ShapeDifferent(refute) => ShapeDifferent(e => match e: False { Refl => refute(Refl) })
+        ShapeDifferent(refute) => ShapeDifferent(e => ⊢ False from match e { Refl => refute(Refl) })
       }
     }
   }
@@ -68,7 +68,7 @@ pub(open) inductive Typing: (Code, Shape, Shape) -> Prop {
 }
 
 pub fn decision_output(code: Code, input: Shape, decision: CodeCheck(code, input)): Option(Shape) {
-  match decision: Option(Shape) {
+  ⊢ Option(Shape) from match decision {
     CodeAccepted(output, derivation, unique) => Some(output)
     CodeRejected(refute) => None
   }
@@ -83,7 +83,7 @@ pub fn execute_decision(
   stack: Stack,
   decision: CodeCheck(code, shape(stack))
 ): Option(Stack) {
-  match decision: Option(Stack) {
+  ⊢ Option(Stack) from match decision {
     CodeAccepted(output, derivation, unique) => run(code, stack)
     CodeRejected(refute) => None
   }

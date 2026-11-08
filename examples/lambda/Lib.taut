@@ -16,14 +16,14 @@ pub(open) inductive Tm: Type {
 
 // Renaming and substitution act on de Bruijn indices; going under a binder lifts the map.
 pub fn upR(xi: (Nat) -> Nat, n: Nat): Nat {
-  match n: Nat {
+  ⊢ Nat from match n {
     Zero => Zero
     Succ(m) => Succ(xi(m))
   }
 }
 
 pub fn ren(t: Tm, xi: (Nat) -> Nat): Tm {
-  match t: Tm {
+  ⊢ Tm from match t {
     Tvar(i) => Tvar(xi(i))
     Lam(A, b) => Lam(A, ren(b, upR(xi)))
     App(f, a) => App(ren(f, xi), ren(a, xi))
@@ -32,14 +32,14 @@ pub fn ren(t: Tm, xi: (Nat) -> Nat): Tm {
 }
 
 pub fn up(sigma: (Nat) -> Tm, n: Nat): Tm {
-  match n: Tm {
+  ⊢ Tm from match n {
     Zero => Tvar(Zero)
     Succ(m) => ren(sigma(m), Succ)
   }
 }
 
 pub fn subst(t: Tm, sigma: (Nat) -> Tm): Tm {
-  match t: Tm {
+  ⊢ Tm from match t {
     Tvar(i) => sigma(i)
     Lam(A, b) => Lam(A, subst(b, up(sigma)))
     App(f, a) => App(subst(f, sigma), subst(a, sigma))
@@ -48,7 +48,7 @@ pub fn subst(t: Tm, sigma: (Nat) -> Tm): Tm {
 }
 
 pub fn single(a: Tm, n: Nat): Tm {
-  match n: Tm {
+  ⊢ Tm from match n {
     Zero => a
     Succ(m) => Tvar(m)
   }
@@ -68,21 +68,21 @@ pub(open) inductive TyDec(A: Ty, C: Ty): Type {
 }
 
 pub fn ty_dec(A: Ty, C: Ty): TyDec(A, C) {
-  match A: TyDec(A, C) {
-    Tunit => match C: TyDec(Tunit, C) {
+  ⊢ TyDec(A, C) from match A {
+    Tunit => ⊢ TyDec(Tunit, C) from match C {
       Tunit => TySame(Refl)
-      Arr(c1, c2) => TyDiff(e => match e: False {})
+      Arr(c1, c2) => TyDiff(e => ⊢ False from match e {})
     }
-    Arr(a1, a2) => match C: TyDec(Arr(a1, a2), C) {
-      Tunit => TyDiff(e => match e: False {})
-      Arr(c1, c2) => match ty_dec(a1, c1): TyDec(Arr(a1, a2), Arr(c1, c2)) {
-        TySame(e1) => match ty_dec(a2, c2): TyDec(Arr(a1, a2), Arr(c1, c2)) {
+    Arr(a1, a2) => ⊢ TyDec(Arr(a1, a2), C) from match C {
+      Tunit => TyDiff(e => ⊢ False from match e {})
+      Arr(c1, c2) => ⊢ TyDec(Arr(a1, a2), Arr(c1, c2)) from match ty_dec(a1, c1) {
+        TySame(e1) => ⊢ TyDec(Arr(a1, a2), Arr(c1, c2)) from match ty_dec(a2, c2) {
           TySame(e2) => TySame(
             Eq::trans(Eq::congr((x: Ty) => Arr(x, a2), e1), Eq::congr((x: Ty) => Arr(c1, x), e2))
           )
-          TyDiff(no2) => TyDiff(e => match e: False { Refl => no2(Refl) })
+          TyDiff(no2) => TyDiff(e => ⊢ False from match e { Refl => no2(Refl) })
         }
-        TyDiff(no1) => TyDiff(e => match e: False { Refl => no1(Refl) })
+        TyDiff(no1) => TyDiff(e => ⊢ False from match e { Refl => no1(Refl) })
       }
     }
   }

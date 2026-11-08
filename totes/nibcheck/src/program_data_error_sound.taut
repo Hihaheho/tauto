@@ -16,7 +16,7 @@ pub theorem registration_if_errors(
   take: Bool,
   h: CkErrorFrame(c, m)
 ): CkErrorFrame(c, registration_if(c, m, take)) {
-  match take: CkErrorFrame(c, registration_if(c, m, take)) {
+  ⊢ CkErrorFrame(c, registration_if(c, m, take)) from match take {
     true => error_frame_rewrap(c, m, h)
     false => clean => clean
   }
@@ -25,7 +25,7 @@ pub theorem ck_program_data_one_errors(
   c: Checker,
   s: SurfaceStmt
 ): CkErrorFrame(c, ck_program_data_one(c, s)) {
-  match s: CkErrorFrame(c, ck_program_data_one(c, s)) {
+  ⊢ CkErrorFrame(c, ck_program_data_one(c, s)) from match s {
     StLet(name, ty, value, borrow, mutable) => clean => clean
     StVar(name, ty, value, borrow) => clean => clean
     StModule(name, stmts, start, end) => clean => clean
@@ -51,12 +51,20 @@ pub theorem ck_program_data_one_errors(
     StStruct(d) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),
       Eq::sym(registration_program_StStruct_unf(d, c)),
-      error_frame_rewrap(c, ck_declare_data(c, d, true, false), ck_declare_data_errors(c, d, true, false))
+      error_frame_rewrap(
+        c,
+        ck_declare_data(c, d, true, false),
+        ck_declare_data_errors(c, d, true, false)
+      )
     )
     StEnum(d) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),
       Eq::sym(registration_program_StEnum_unf(d, c)),
-      error_frame_rewrap(c, ck_declare_data(c, d, false, false), ck_declare_data_errors(c, d, false, false))
+      error_frame_rewrap(
+        c,
+        ck_declare_data(c, d, false, false),
+        ck_declare_data_errors(c, d, false, false)
+      )
     )
   }
 }
@@ -64,7 +72,7 @@ pub theorem ck_program_data_errors(
   stmts: List(SurfaceStmt),
   c: Checker
 ): CkErrorFrame(c, ck_program_data(stmts, c)) {
-  match stmts: CkErrorFrame(c, ck_program_data(stmts, c)) {
+  ⊢ CkErrorFrame(c, ck_program_data(stmts, c)) from match stmts {
     Nil => clean => clean
     Cons(s, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),
@@ -90,7 +98,7 @@ pub theorem ck_prelude_data_one_errors(
   s: SurfaceStmt,
   own: Ordmap(Text, Bool)
 ): CkErrorFrame(c, ck_prelude_data_one(c, s, own)) {
-  match s: CkErrorFrame(c, ck_prelude_data_one(c, s, own)) {
+  ⊢ CkErrorFrame(c, ck_prelude_data_one(c, s, own)) from match s {
     StLet(name, ty, value, borrow, mutable) => clean => clean
     StVar(name, ty, value, borrow) => clean => clean
     StModule(name, stmts, start, end) => clean => clean
@@ -149,7 +157,7 @@ pub theorem ck_prelude_data_errors(
   c: Checker,
   own: Ordmap(Text, Bool)
 ): CkErrorFrame(c, ck_prelude_data(stmts, c, own)) {
-  match stmts: CkErrorFrame(c, ck_prelude_data(stmts, c, own)) {
+  ⊢ CkErrorFrame(c, ck_prelude_data(stmts, c, own)) from match stmts {
     Nil => clean => clean
     Cons(s, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkErrorFrame(c, m),

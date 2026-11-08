@@ -20,9 +20,9 @@ pub fn is_c0_or_space(b: Nat): Bool {
 }
 
 pub fn drop_c0_space(l: List(Nat)): List(Nat) {
-  match l: List(Nat) {
+  ⊢ List(Nat) from match l {
     Nil => Nil
-    Cons(b, t) => match is_c0_or_space(b): List(Nat) {
+    Cons(b, t) => ⊢ List(Nat) from match is_c0_or_space(b) {
       true => drop_c0_space(t)
       false => l
     }
@@ -77,18 +77,21 @@ pub fn forbidden_host(b: Nat): Bool {
 // A byte of a domain this library reads: printable ASCII, not a forbidden
 // domain code point. Bytes from 0x80 on would need IDNA, and are refused.
 pub fn domain_byte(b: Nat): Bool {
-  Bool::and(Nat::lt(32, b), Bool::and(Nat::lt(b, 127), Bool::and(not(forbidden_host(b)), not(Nat::eq(b, 37)))))
+  Bool::and(
+    Nat::lt(32, b),
+    Bool::and(Nat::lt(b, 127), Bool::and(not(forbidden_host(b)), not(Nat::eq(b, 37))))
+  )
 }
 
 // Whether a label starts with `xn--`, which would need IDNA.
 pub fn is_ace(l: List(Nat)): Bool {
-  match l: Bool {
+  ⊢ Bool from match l {
     Nil => false
-    Cons(a, t) => match t: Bool {
+    Cons(a, t) => ⊢ Bool from match t {
       Nil => false
-      Cons(b, t2) => match t2: Bool {
+      Cons(b, t2) => ⊢ Bool from match t2 {
         Nil => false
-        Cons(c, t3) => match t3: Bool {
+        Cons(c, t3) => ⊢ Bool from match t3 {
           Nil => false
           Cons(d, t4) => Bool::and(
             Nat::eq(a, 120),
@@ -101,9 +104,9 @@ pub fn is_ace(l: List(Nat)): Bool {
 }
 
 pub fn last_piece(ps: List(List(Nat))): List(Nat) {
-  match ps: List(Nat) {
+  ⊢ List(Nat) from match ps {
     Nil => Nil
-    Cons(p, rest) => match rest: List(Nat) {
+    Cons(p, rest) => ⊢ List(Nat) from match rest {
       Nil => p
       Cons(q, more) => last_piece(rest)
     }
@@ -112,12 +115,12 @@ pub fn last_piece(ps: List(List(Nat))): List(Nat) {
 
 // The last label, without an empty label after the last dot.
 pub fn last_label(ps: List(List(Nat))): List(Nat) {
-  match ps: List(Nat) {
+  ⊢ List(Nat) from match ps {
     Nil => Nil
-    Cons(p, rest) => match rest: List(Nat) {
+    Cons(p, rest) => ⊢ List(Nat) from match rest {
       Nil => p
-      Cons(q, more) => match more: List(Nat) {
-        Nil => match is_empty(q): List(Nat) {
+      Cons(q, more) => ⊢ List(Nat) from match more {
+        Nil => ⊢ List(Nat) from match is_empty(q) {
           true => p
           false => q
         }
@@ -129,11 +132,14 @@ pub fn last_label(ps: List(List(Nat))): List(Nat) {
 
 // A number as the IPv4 parser reads one: decimal, or `0x` and hex digits.
 pub fn is_number(l: List(Nat)): Bool {
-  match l: Bool {
+  ⊢ Bool from match l {
     Nil => false
-    Cons(a, t) => match t: Bool {
+    Cons(a, t) => ⊢ Bool from match t {
       Nil => is_digit(a)
-      Cons(b, t2) => match Bool::and(Nat::eq(a, 48), Bool::or(Nat::eq(b, 120), Nat::eq(b, 88))): Bool {
+      Cons(b, t2) => ⊢ Bool from match Bool::and(
+        Nat::eq(a, 48),
+        Bool::or(Nat::eq(b, 120), Nat::eq(b, 88))
+      ) {
         true => all_bytes(is_hex, t2)
         false => all_bytes(is_digit, l)
       }
@@ -144,7 +150,7 @@ pub fn is_number(l: List(Nat)): Bool {
 // A part of an IPv4 address as the serializer writes it: 0 to 255, no
 // leading zero.
 pub fn ipv4_part(l: List(Nat)): Bool {
-  match l: Bool {
+  ⊢ Bool from match l {
     Nil => false
     Cons(a, t) => Bool::and(
       all_bytes(is_digit, l),
@@ -152,7 +158,7 @@ pub fn ipv4_part(l: List(Nat)): Bool {
         Bool::or(is_empty(t), not(Nat::eq(a, 48))),
         Bool::and(
           Nat::lt(List::length(l), 4),
-          match digits_value(0, l): Bool {
+          ⊢ Bool from match digits_value(0, l) {
             None => false
             Some(v) => Nat::lt(v, 256)
           }
@@ -183,7 +189,7 @@ pub fn domain_ok(l: List(Nat)): Bool {
 }
 
 pub fn host_special(h: List(Nat)): Option(List(Nat)) {
-  match domain_ok(lower(h)): Option(List(Nat)) {
+  ⊢ Option(List(Nat)) from match domain_ok(lower(h)) {
     true => Some(lower(h))
     false => None
   }
@@ -192,30 +198,30 @@ pub fn host_special(h: List(Nat)): Option(List(Nat)) {
 // The host of a URL that is not special: anything but a forbidden host code
 // point, C0 controls percent-encoded. An IPv6 address (`[`) is refused.
 pub fn host_opaque(h: List(Nat)): Option(List(Nat)) {
-  match all_bytes((b: Nat) => not(forbidden_host(b)), h): Option(List(Nat)) {
+  ⊢ Option(List(Nat)) from match all_bytes((b: Nat) => not(forbidden_host(b)), h) {
     true => Some(pct_encode(c0_control_set, h))
     false => None
   }
 }
 
 pub fn host_of(special: Bool, h: List(Nat)): Option(List(Nat)) {
-  match special: Option(List(Nat)) {
+  ⊢ Option(List(Nat)) from match special {
     true => host_special(h)
     false => host_opaque(h)
   }
 }
 
 pub fn port_value(default: Option(Nat), v: Nat): Option(Option(Nat)) {
-  match Nat::lt(v, 65536): Option(Option(Nat)) {
+  ⊢ Option(Option(Nat)) from match Nat::lt(v, 65536) {
     false => None
     true => port_value_after(default, v)
   }
 }
 
 pub fn port_value_after(default: Option(Nat), v: Nat): Option(Option(Nat)) {
-  match default: Option(Option(Nat)) {
+  ⊢ Option(Option(Nat)) from match default {
     None => Some(Some(v))
-    Some(d) => match Nat::eq(v, d): Option(Option(Nat)) {
+    Some(d) => ⊢ Option(Option(Nat)) from match Nat::eq(v, d) {
       true => Some(None)
       false => Some(Some(v))
     }
@@ -225,21 +231,21 @@ pub fn port_value_after(default: Option(Nat), v: Nat): Option(Option(Nat)) {
 // The port after `:`: none when empty or the default, refused when not a
 // number below 65536.
 pub fn port_of(default: Option(Nat), l: List(Nat)): Option(Option(Nat)) {
-  match l: Option(Option(Nat)) {
+  ⊢ Option(Option(Nat)) from match l {
     Nil => Some(None)
     Cons(b, t) => port_digits(default, digits_value(0, l))
   }
 }
 
 pub fn port_digits(default: Option(Nat), o: Option(Nat)): Option(Option(Nat)) {
-  match o: Option(Option(Nat)) {
+  ⊢ Option(Option(Nat)) from match o {
     None => None
     Some(v) => port_value(default, v)
   }
 }
 
 pub fn default_port(s: List(Nat)): Option(Nat) {
-  match scheme_kind(s): Option(Nat) {
+  ⊢ Option(Nat) from match scheme_kind(s) {
     Special(d) => Some(d)
     File => None
     NotSpecial => None
@@ -248,17 +254,20 @@ pub fn default_port(s: List(Nat)): Option(Nat) {
 
 pub fn is_dot_byte(l: List(Nat)): Option(List(Nat)) {
   // `.` or `%2e`, and what follows it.
-  match l: Option(List(Nat)) {
+  ⊢ Option(List(Nat)) from match l {
     Nil => None
-    Cons(a, t) => match Nat::eq(a, 46): Option(List(Nat)) {
+    Cons(a, t) => ⊢ Option(List(Nat)) from match Nat::eq(a, 46) {
       true => Some(t)
-      false => match Nat::eq(a, 37): Option(List(Nat)) {
+      false => ⊢ Option(List(Nat)) from match Nat::eq(a, 37) {
         false => None
-        true => match t: Option(List(Nat)) {
+        true => ⊢ Option(List(Nat)) from match t {
           Nil => None
-          Cons(b, t2) => match t2: Option(List(Nat)) {
+          Cons(b, t2) => ⊢ Option(List(Nat)) from match t2 {
             Nil => None
-            Cons(c, t3) => match Bool::and(Nat::eq(b, 50), Bool::or(Nat::eq(c, 101), Nat::eq(c, 69))): Option(List(Nat)) {
+            Cons(c, t3) => ⊢ Option(List(Nat)) from match Bool::and(
+              Nat::eq(b, 50),
+              Bool::or(Nat::eq(c, 101), Nat::eq(c, 69))
+            ) {
               true => Some(t3)
               false => None
             }
@@ -271,13 +280,13 @@ pub fn is_dot_byte(l: List(Nat)): Option(List(Nat)) {
 
 // `.` and `..`, also written with `%2e`: 1 and 2; any other segment: 0.
 pub fn dots(s: List(Nat)): Nat {
-  match is_dot_byte(s): Nat {
+  ⊢ Nat from match is_dot_byte(s) {
     None => 0
-    Some(t) => match t: Nat {
+    Some(t) => ⊢ Nat from match t {
       Nil => 1
-      Cons(b, u) => match is_dot_byte(t): Nat {
+      Cons(b, u) => ⊢ Nat from match is_dot_byte(t) {
         None => 0
-        Some(t2) => match t2: Nat {
+        Some(t2) => ⊢ Nat from match t2 {
           Nil => 2
           Cons(c, v) => 0
         }
@@ -287,7 +296,7 @@ pub fn dots(s: List(Nat)): Nat {
 }
 
 pub fn pop(stack: List(List(Nat))): List(List(Nat)) {
-  match stack: List(List(Nat)) {
+  ⊢ List(List(Nat)) from match stack {
     Nil => Nil
     Cons(s, rest) => rest
   }
@@ -297,28 +306,28 @@ pub fn pop(stack: List(List(Nat))): List(List(Nat)) {
 // (URL Standard, "path state"): `..` removes the last segment, `.` stays out,
 // and either leaves an empty segment when it is the last one.
 pub fn walk(stack: List(List(Nat)), segs: List(List(Nat))): List(List(Nat)) {
-  match segs: List(List(Nat)) {
+  ⊢ List(List(Nat)) from match segs {
     Nil => stack
     Cons(s, rest) => walk(walk_step(stack, pct_encode(path_set, s), is_empty_list(rest)), rest)
   }
 }
 
 pub fn walk_step(stack: List(List(Nat)), e: List(Nat), last: Bool): List(List(Nat)) {
-  match dots(e): List(List(Nat)) {
+  ⊢ List(List(Nat)) from match dots(e) {
     Zero => Cons(e, stack)
     Succ(k) => walk_dots(k, stack, last)
   }
 }
 
 pub fn walk_dots(k: Nat, stack: List(List(Nat)), last: Bool): List(List(Nat)) {
-  match k: List(List(Nat)) {
+  ⊢ List(List(Nat)) from match k {
     Zero => push_last(stack, last)
     Succ(k2) => push_last(pop(stack), last)
   }
 }
 
 pub fn push_last(stack: List(List(Nat)), last: Bool): List(List(Nat)) {
-  match last: List(List(Nat)) {
+  ⊢ List(List(Nat)) from match last {
     true => Cons(Nil, stack)
     false => stack
   }
@@ -338,7 +347,7 @@ pub fn tail_of(qset: (Nat) -> Bool, l: List(Nat)): Tail {
 }
 
 pub fn tail_cut(qset: (Nat) -> Bool, l: List(Nat), o: Option(Pair(List(Nat), List(Nat)))): Tail {
-  match o: Tail {
+  ⊢ Tail from match o {
     None => tail_query(qset, l, None)
     Some(p) => tail_query(qset, p.fst, Some(pct_encode(fragment_set, p.snd)))
   }
@@ -354,23 +363,23 @@ pub fn tail_query_cut(
   f: Option(List(Nat)),
   o: Option(Pair(List(Nat), List(Nat)))
 ): Tail {
-  match o: Tail {
+  ⊢ Tail from match o {
     None => MkTail(l, None, f)
     Some(p) => MkTail(p.fst, Some(pct_encode(qset, p.snd)), f)
   }
 }
 
 pub fn backslash_to_slash(b: Nat): Nat {
-  match Nat::eq(b, 92): Nat {
+  ⊢ Nat from match Nat::eq(b, 92) {
     true => 47
     false => b
   }
 }
 
 pub fn drop_slashes(l: List(Nat)): List(Nat) {
-  match l: List(Nat) {
+  ⊢ List(Nat) from match l {
     Nil => Nil
-    Cons(b, t) => match Nat::eq(b, 47): List(Nat) {
+    Cons(b, t) => ⊢ List(Nat) from match Nat::eq(b, 47) {
       true => drop_slashes(t)
       false => l
     }
@@ -381,8 +390,11 @@ pub fn user_pass(c: List(Nat)): Pair(List(Nat), List(Nat)) {
   user_pass_cut(c, cut(58, c))
 }
 
-pub fn user_pass_cut(c: List(Nat), o: Option(Pair(List(Nat), List(Nat)))): Pair(List(Nat), List(Nat)) {
-  match o: Pair(List(Nat), List(Nat)) {
+pub fn user_pass_cut(
+  c: List(Nat),
+  o: Option(Pair(List(Nat), List(Nat)))
+): Pair(List(Nat), List(Nat)) {
+  ⊢ Pair(List(Nat), List(Nat)) from match o {
     None => Pair { fst: pct_encode(userinfo_set, c), snd: Nil }
     Some(p) => Pair { fst: pct_encode(userinfo_set, p.fst), snd: pct_encode(userinfo_set, p.snd) }
   }
@@ -407,9 +419,9 @@ pub fn host_port_cut(
   hp: List(Nat),
   o: Option(Pair(List(Nat), List(Nat)))
 ): Option(Authority) {
-  match o: Option(Authority) {
+  ⊢ Option(Authority) from match o {
     None => host_with_port(special, user, pass, hp, Some(None))
-    Some(p) => match is_empty(p.fst): Option(Authority) {
+    Some(p) => ⊢ Option(Authority) from match is_empty(p.fst) {
       true => None
       false => host_with_port(special, user, pass, p.fst, port_of(default, p.snd))
     }
@@ -423,14 +435,19 @@ pub fn host_with_port(
   h: List(Nat),
   port: Option(Option(Nat))
 ): Option(Authority) {
-  match port: Option(Authority) {
+  ⊢ Option(Authority) from match port {
     None => None
     Some(pt) => with_host(user, pass, pt, host_of(special, h))
   }
 }
 
-pub fn with_host(user: List(Nat), pass: List(Nat), pt: Option(Nat), o: Option(List(Nat))): Option(Authority) {
-  match o: Option(Authority) {
+pub fn with_host(
+  user: List(Nat),
+  pass: List(Nat),
+  pt: Option(Nat),
+  o: Option(List(Nat))
+): Option(Authority) {
+  ⊢ Option(Authority) from match o {
     None => None
     Some(host) => Some(Auth(user, pass, host, pt))
   }
@@ -446,9 +463,9 @@ pub fn authority_cut(
   a: List(Nat),
   o: Option(Pair(List(Nat), List(Nat)))
 ): Option(Authority) {
-  match o: Option(Authority) {
+  ⊢ Option(Authority) from match o {
     None => host_port(special, default, Nil, Nil, a)
-    Some(p) => match is_empty(p.snd): Option(Authority) {
+    Some(p) => ⊢ Option(Authority) from match is_empty(p.snd) {
       true => None
       false => host_port(special, default, user_pass(p.fst).fst, user_pass(p.fst).snd, p.snd)
     }
@@ -457,7 +474,7 @@ pub fn authority_cut(
 
 // The path after an authority with nothing after it: `/` in a special URL.
 pub fn empty_path(special: Bool): List(List(Nat)) {
-  match special: List(List(Nat)) {
+  ⊢ List(List(Nat)) from match special {
     true => Cons(Nil, Nil)
     false => Nil
   }
@@ -479,7 +496,7 @@ pub fn auth_path_cut(
   l: List(Nat),
   o: Option(Pair(List(Nat), List(Nat)))
 ): Option(Pair(Authority, List(List(Nat)))) {
-  match o: Option(Pair(Authority, List(List(Nat)))) {
+  ⊢ Option(Pair(Authority, List(List(Nat)))) from match o {
     None => with_path(authority_of(special, default, l), empty_path(special))
     Some(p) => with_path(authority_of(special, default, p.fst), path_of(Nil, p.snd))
   }
@@ -489,7 +506,7 @@ pub fn with_path(
   a: Option(Authority),
   ss: List(List(Nat))
 ): Option(Pair(Authority, List(List(Nat)))) {
-  match a: Option(Pair(Authority, List(List(Nat)))) {
+  ⊢ Option(Pair(Authority, List(List(Nat)))) from match a {
     None => None
     Some(x) => Some(Pair { fst: x, snd: ss })
   }
@@ -500,18 +517,14 @@ pub fn ends_with_space(l: List(Nat)): Bool {
 }
 
 pub fn first_is_space(l: List(Nat)): Bool {
-  match l: Bool {
+  ⊢ Bool from match l {
     Nil => false
     Cons(b, t) => Nat::eq(b, 32)
   }
 }
 
-pub fn mk(
-  scheme: List(Nat),
-  ap: Option(Pair(Authority, List(List(Nat)))),
-  t: Tail
-): Option(Url) {
-  match ap: Option(Url) {
+pub fn mk(scheme: List(Nat), ap: Option(Pair(Authority, List(List(Nat)))), t: Tail): Option(Url) {
+  ⊢ Option(Url) from match ap {
     None => None
     Some(p) => Some(MkUrl(scheme, Some(p.fst), Segments(p.snd), t.query, t.fragment))
   }
@@ -524,9 +537,9 @@ pub fn parse_special(scheme: List(Nat), d: Nat, t: Tail): Option(Url) {
 }
 
 pub fn parse_plain(scheme: List(Nat), t: Tail): Option(Url) {
-  match t.hier: Option(Url) {
+  ⊢ Option(Url) from match t.hier {
     Nil => Some(MkUrl(scheme, None, Opaque(Nil), t.query, t.fragment))
-    Cons(b, rest) => match Nat::eq(b, 47): Option(Url) {
+    Cons(b, rest) => ⊢ Option(Url) from match Nat::eq(b, 47) {
       false => parse_opaque(scheme, t)
       true => plain_slash(scheme, rest, t)
     }
@@ -535,9 +548,9 @@ pub fn parse_plain(scheme: List(Nat), t: Tail): Option(Url) {
 
 // After the first `/`: an authority after a second, else a path.
 pub fn plain_slash(scheme: List(Nat), rest: List(Nat), t: Tail): Option(Url) {
-  match rest: Option(Url) {
+  ⊢ Option(Url) from match rest {
     Nil => Some(MkUrl(scheme, None, Segments(path_of(Nil, Nil)), t.query, t.fragment))
-    Cons(b2, rest2) => match Nat::eq(b2, 47): Option(Url) {
+    Cons(b2, rest2) => ⊢ Option(Url) from match Nat::eq(b2, 47) {
       true => mk(scheme, auth_path(false, None, rest2), t)
       false => Some(MkUrl(scheme, None, Segments(path_of(Nil, rest)), t.query, t.fragment))
     }
@@ -550,7 +563,7 @@ pub fn parse_opaque(scheme: List(Nat), t: Tail): Option(Url) {
 
 // An opaque path that ends with a space is refused.
 pub fn opaque_path(scheme: List(Nat), o: List(Nat), t: Tail): Option(Url) {
-  match ends_with_space(o): Option(Url) {
+  ⊢ Option(Url) from match ends_with_space(o) {
     true => None
     false => Some(MkUrl(scheme, None, Opaque(o), t.query, t.fragment))
   }
@@ -558,7 +571,7 @@ pub fn opaque_path(scheme: List(Nat), o: List(Nat), t: Tail): Option(Url) {
 
 // After `scheme:`. `file` URLs are refused.
 pub fn parse_after_scheme(s: List(Nat), rest: List(Nat)): Option(Url) {
-  match scheme_kind(s): Option(Url) {
+  ⊢ Option(Url) from match scheme_kind(s) {
     Special(d) => parse_special(s, d, tail_of(special_query_set, rest))
     File => None
     NotSpecial => parse_plain(s, tail_of(query_set, rest))
@@ -570,9 +583,9 @@ pub fn scheme_of(l: List(Nat)): Option(Pair(List(Nat), List(Nat))) {
 }
 
 pub fn scheme_cut(o: Option(Pair(List(Nat), List(Nat)))): Option(Pair(List(Nat), List(Nat))) {
-  match o: Option(Pair(List(Nat), List(Nat))) {
+  ⊢ Option(Pair(List(Nat), List(Nat))) from match o {
     None => None
-    Some(p) => match scheme_ok(lower(p.fst)): Option(Pair(List(Nat), List(Nat))) {
+    Some(p) => ⊢ Option(Pair(List(Nat), List(Nat))) from match scheme_ok(lower(p.fst)) {
       true => Some(Pair { fst: lower(p.fst), snd: p.snd })
       false => None
     }
@@ -585,7 +598,7 @@ pub fn parse_bytes(l: List(Nat)): Option(Url) {
 }
 
 pub fn parse_scheme(o: Option(Pair(List(Nat), List(Nat)))): Option(Url) {
-  match o: Option(Url) {
+  ⊢ Option(Url) from match o {
     None => None
     Some(p) => parse_after_scheme(p.fst, p.snd)
   }

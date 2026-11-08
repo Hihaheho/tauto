@@ -3,7 +3,7 @@
 //! each completed node collects its children in input order.
 
 use parol_runtime::{ParolError, Token, parser::parse_tree_type::TreeConstruct};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 use crate::declared::DECLARED;
@@ -286,7 +286,7 @@ impl<'t> TreeConstruct<'t> for CstBuilder {
         name: &'static str,
         _size_hint: Option<usize>,
     ) -> Result<(), Self::Error> {
-        let kind = NonTerminalKind::from_non_terminal_name(name);
+        let kind = non_terminal_kind(name);
         let id = self.nodes.len();
         self.nodes.push(CstNode {
             kind: NodeKind::NonTerminal(kind),
@@ -379,4 +379,18 @@ mod tests {
         };
         assert_eq!(cst.children_iter(0).next(), Some(1));
     }
+}
+
+/// The kind of a non-terminal the parser opens by name. The parser opens one
+/// for each production it takes, so this is a table and not the generated
+/// match, which compares the name with each kind's in turn.
+fn non_terminal_kind(name: &'static str) -> NonTerminalKind {
+    thread_local! {
+        static KINDS: std::cell::RefCell<HashMap<&'static str, NonTerminalKind>> = Default::default();
+    }
+    KINDS.with_borrow_mut(|kinds| {
+        *kinds
+            .entry(name)
+            .or_insert_with(|| NonTerminalKind::from_non_terminal_name(name))
+    })
 }

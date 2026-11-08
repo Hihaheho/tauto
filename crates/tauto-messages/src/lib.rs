@@ -243,15 +243,35 @@ fn split(ftl: &str) -> Vec<(&str, &str)> {
     out
 }
 
+/// A text argument at least this long is not handed to the formatter: the
+/// formatter builds its output as a list of bytes and joins lists by
+/// recursion, one call per byte, so a whole generated program as an
+/// argument would take more stack than any thread has. A key of a select
+/// is never this long, so such a text selects the default variant either
+/// way, and the formatter gets a short stand-in that the text replaces
+/// after it.
+const LONG_ARG: usize = 1024;
+
 fn format(bundle: &Bundle, id: &str, args: &[(String, Plain)]) -> String {
+    let mut long: Vec<(String, &str)> = Vec::new();
     let args = args.iter().rev().fold(List::Nil, |rest, (name, v)| {
         let arg: Arg = match v {
+            Plain::Text(s) if s.len() >= LONG_ARG => {
+                let stand_in = format!("\u{F8FF}{}\u{F8FF}", long.len());
+                let arg = fl_arg_str(Text::from(name.as_str()), Text::from(stand_in.as_str()));
+                long.push((stand_in, s.as_str()));
+                arg
+            }
             Plain::Text(s) => fl_arg_str(Text::from(name.as_str()), Text::from(s.as_str())),
             Plain::Number(n) => fl_arg_num(Text::from(name.as_str()), Nat::from_u64(*n)),
         };
         List::Cons(arg, Rc::new(rest).into())
     });
-    fl_format(bundle.clone(), Text::from(id), args).to_string()
+    let mut out = fl_format(bundle.clone(), Text::from(id), args).to_string();
+    for (stand_in, text) in &long {
+        out = out.replace(stand_in.as_str(), text);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -332,6 +352,15 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// An argument as long as a generated program is written without
+    /// running out of stack, on the thread the messages are written on.
+    #[test]
+    fn a_long_argument_is_written() {
+        let long = "x".repeat(64 << 20);
+        let text = english(&msg!("no-command", name = long.as_str()));
+        assert!(text.contains(&long));
     }
 
     #[test]

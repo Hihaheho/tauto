@@ -14,13 +14,13 @@ pub(open) inductive Rat: Type {
 
 module Rat {
   pub fn num(x: Rat): Int {
-    match x: Int {
+    ⊢ Int from match x {
       Mk(n, d) => n
     }
   }
 
   pub fn den(x: Rat): Nat {
-    match x: Nat {
+    ⊢ Nat from match x {
       Mk(n, d) => Succ(d)
     }
   }
@@ -40,9 +40,9 @@ module Rat {
 
   // The greatest common divisor, by Euclid's steps counted down from `fuel`.
   pub fn gcd(fuel: Nat, a: Nat, b: Nat): Nat {
-    match fuel: Nat {
+    ⊢ Nat from match fuel {
       Zero => a
-      Succ(j) => match Nat::eq(b, 0) eqn h: Nat {
+      Succ(j) => ⊢ Nat from match Nat::eq(b, 0) eqn h {
         true => a
         false => gcd(j, b, Nat::rem_nz(a, b, Nat::ne_zero(b, h)))
       }
@@ -54,7 +54,7 @@ module Rat {
   // correct but larger representation. A `g` of 0 (only when `n` and `d` are 0)
   // keeps `n / d` too.
   pub fn reduce(n: Int, d: Nat): Rat {
-    match Nat::eq(gcd(400, d, Int::abs_nat(n)), 0) eqn hg: Rat {
+    ⊢ Rat from match Nat::eq(gcd(400, d, Int::abs_nat(n)), 0) eqn hg {
       true => Rat::Mk(n, d - 1)
       false => reduce_by(
         n,
@@ -78,10 +78,7 @@ module Rat {
   }
 
   pub fn pick_by(o: Bool, x: Rat, c: Rat): Rat {
-    match o: Rat {
-      false => x
-      true => c
-    }
+    ⊢ Rat from match o { false => x, true => c }
   }
 
   pub fn neg(x: Rat): Rat {
@@ -108,7 +105,7 @@ module Rat {
   }
 
   pub fn inv(x: Rat, h: is_zero(x) = false): Rat {
-    match num(x): Rat {
+    ⊢ Rat from match num(x) {
       IntOfNat(n) => Rat::Mk(IntOfNat(den(x)), n - 1)
       IntNegSucc(n) => Rat::Mk(Int::neg(IntOfNat(den(x))), n)
     }
@@ -131,7 +128,7 @@ module Rat {
   }
 
   pub fn abs(x: Rat): Rat {
-    match num(x): Rat {
+    ⊢ Rat from match num(x) {
       IntOfNat(n) => x
       IntNegSucc(n) => neg(x)
     }
@@ -146,7 +143,7 @@ module Rat {
   }
 
   pub fn pow2_neg(k: Nat): Rat {
-    Rat::Mk(1, Nat::pow2(k) - 1)
+    Rat::Mk(IntOfNat(1), Nat::pow2(k) - 1)
   }
 
   pub theorem examples(): eq(add(frac(1, 1), frac(1, 2)), frac(5, 5)) = true {
@@ -160,7 +157,7 @@ module Rat {
 
 module Int {
   pub fn abs_nat(n: Int): Nat {
-    match n: Nat {
+    ⊢ Nat from match n {
       IntOfNat(k) => k
       IntNegSucc(k) => Succ(k)
     }
@@ -168,7 +165,7 @@ module Int {
 
   // `n / g` of a multiple `n` of `g`.
   pub fn div_nat(n: Int, g: Nat, hg: ¬(g = 0)): Int {
-    match n: Int {
+    ⊢ Int from match n {
       IntOfNat(k) => IntOfNat(Nat::div_nz(k, g, hg))
       IntNegSucc(k) => neg(IntOfNat(Nat::div_nz(Succ(k), g, hg)))
     }

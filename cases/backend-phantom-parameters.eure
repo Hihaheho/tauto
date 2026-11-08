@@ -1,0 +1,54 @@
+// A type parameter that only an effect row mentions is erased from the Rust types of the
+// functions that carry it. The generated type keeps it in a `PhantomData`, since Rust
+// refuses a parameter that nothing uses.
+@ cases.a-struct-parameter-only-in-an-effect-row
+backends = ["rust"]
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+effect wait<E: Shared>(reason: Text): Unit
+
+struct Options(A: Shared, E: Shared) {
+  run: (x: A) -> A ! {wait(E), Div},
+  label: Text,
+}
+
+fn make<A: Shared, E: Shared>(label: Text): Options(A, E) {
+  Options { run: x => x, label: label }
+}
+
+fn label_of(o: Options(Nat, Text)): Text {
+  match o {
+    Options { run, label } => label
+  }
+}
+
+perform show("label", label_of(make("kept")))
+```
+rust_shows = ["label = \"kept\""]
+
+@ cases.an-enum-parameter-only-in-an-effect-row
+backends = ["rust"]
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+effect wait<E: Shared>(reason: Text): Unit
+
+enum Step(A: Shared, E: Shared) {
+  Idle
+  Run((x: A) -> A ! {wait(E), Div})
+  Named(Text)
+}
+
+fn name(s: Step(Nat, Text)): Text {
+  match s {
+    Idle => "idle"
+    Run(f) => "run"
+    Named(t) => t
+  }
+}
+
+perform show("idle", name(Idle))
+perform show("named", name(Named("n")))
+```
+rust_shows = ["idle = \"idle\"", "named = \"n\""]

@@ -1,0 +1,134 @@
+import std::prelude::Macro { Syn, SynExpr, SynHighlight, SynSpan, SynTok, SynToken, macro_error }
+import std::prelude::Shared { concat }
+import std::prelude::Std { List, Option }
+
+// A chain of equalities, or of equivalences:
+//
+//   calc!(```
+//     $add(add(a, b), c)
+//     = $add(a, add(b, c)) from $add_assoc(a, b, c)
+//     = $add(add(a, c), b) from $Eq::sym(add_assoc(a, c, b))
+//     ```)
+//
+// Each line is the relation, the next expression and its proof. It is the nest of
+// `Eq::trans` (`Iff::trans` for `↔`) to the right, each step a `let` with its type,
+// so a wrong step is reported at its own line.
+syntax!(calc_syntax, ```par
+%start Chain
+%title "chain of equalities"
+%describe TautoExpr "an expression ($x or ${…})"
+%describe EqSign "'='"
+%%
+Chain: TautoExpr Step { Step };
+Step: Rel TautoExpr 'from'^ TautoExpr;
+Rel: EqSign | IffSign;
+EqSign: '=';
+IffSign: /↔|\\iff/;
+```, with(fmt: calc_fmt, tokens: calc_tokens)) => struct Chain, struct Step, enum Rel, fn parse
+
+// How `tauto fmt` lays a chain out: the first expression, then one step to a
+// line, `= next from proof`. A chain written on one line stays on one line, a
+// space between the parts. Only the white space changes.
+fn calc_is_white(t: SynTok): Bool { t.kind == "Whitespace" || t.kind == "Newline" }
+
+fn calc_is_rel(t: SynTok): Bool { t.kind == "EqSign" || t.kind == "IffSign" }
+
+fn calc_multiline(ts: List(SynTok)): Bool {
+  match ts {
+    Nil => false
+    Cons(t, rest) => if t.kind == "Newline" { true } else { calc_multiline(rest) }
+  }
+}
+
+fn calc_lay(ts: List(SynTok), lines: Bool, first: Bool): Text ! {Div} {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => if calc_is_white(t) {
+      calc_lay(rest, lines, first)
+    } else {
+      let sep := if first { "" } else if calc_is_rel(t) { if lines { "\n" } else { " " } } else { " " }
+      concat(sep, concat(t.text, calc_lay(rest, lines, false)))
+    }
+  }
+}
+
+pub fn calc_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+  Some(calc_lay(ts, calc_multiline(ts), true))
+}
+
+// The relations are operators and `from` is a keyword; the expressions are left to
+// the colours of tauto itself.
+pub fn calc_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => if calc_is_rel(t) {
+      Cons(SynHighlight { start: t.start, end: t.end, kind: "operator" }, calc_tokens(rest))
+    } else if t.text == "from" {
+      Cons(SynHighlight { start: t.start, end: t.end, kind: "keyword" }, calc_tokens(rest))
+    } else {
+      calc_tokens(rest)
+    }
+  }
+}
+
+fn calc_iff(r: calc_syntax::Rel): Bool {
+  match r {
+    EqSign(t) => false
+    IffSign(t) => true
+  }
+}
+
+fn calc_last(iff: Bool, prev: SynExpr, next: SynExpr, proof: SynExpr): SynExpr {
+  if iff {
+    quote {
+      {
+        let h: $prev ↔ $next := $proof
+        h
+      }
+    }
+  } else {
+    quote {
+      {
+        let h: $prev = $next := $proof
+        h
+      }
+    }
+  }
+}
+
+fn calc_steps(
+  iff: Bool,
+  prev: SynExpr,
+  s: calc_syntax::Step,
+  rest: List(calc_syntax::Step)
+): SynExpr ! {macro_error, Div} {
+  if calc_iff(s.rel) != iff { Syn::error(s.span, "`calc!` mixes `=` and `↔`") } else {
+    let next := s.tauto_expr
+    let proof := s.tauto_expr_2
+    match rest {
+      Nil => calc_last(iff, prev, next, proof)
+      Cons(t, more) => {
+        let tail := calc_steps(iff, next, t, more)
+        if iff {
+          quote {
+            {
+              let h: $prev ↔ $next := $proof
+              Iff::trans(h, $tail)
+            }
+          }
+        } else {
+          quote {
+            {
+              let h: $prev = $next := $proof
+              Eq::trans(h, $tail)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub macro fn calc(c: calc_syntax::Chain): SynExpr ! {macro_error, Div} {
+  calc_steps(calc_iff(c.step.rel), c.tauto_expr, c.step, c.step_2)
+}

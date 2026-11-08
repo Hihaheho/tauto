@@ -76,18 +76,16 @@ pub fn proof_simp_walk(
       None => Ok(ProofSimpPlan { goal: goal, moves: moves })
       Some(change) => if fuel == 0 {
         Err("simp_only!: rewrite budget exhausted")
+      } else if proof_simp_seen(change.after, seen) {
+        Err("simp_only!: rewrite cycle detected")
       } else {
-        if proof_simp_seen(change.after, seen) {
-          Err("simp_only!: rewrite cycle detected")
-        } else {
-          proof_simp_walk(
-            change.after,
-            rules,
-            fuel - 1,
-            Cons(change.after, seen),
-            Cons(change, moves)
-          )
-        }
+        proof_simp_walk(
+          change.after,
+          rules,
+          fuel - 1,
+          Cons(change.after, seen),
+          Cons(change, moves)
+        )
       }
     }
   }
@@ -100,12 +98,12 @@ pub fn proof_simp_plan(
   rules: List(ProofSimpRule),
   fuel: u64
 ): Result(ProofSimpPlan, Text) {
-  if fuel > 256 { Err("simp_only!: rewrite budget must be at most 256") } else {
-    if proof_simp_supported(goal) {
-      proof_simp_walk(goal, rules, fuel, Cons(goal, Nil), Nil)
-    } else {
-      Err("simp_only!: only application trees are rewritten; split binder goals explicitly")
-    }
+  if fuel > 256 {
+    Err("simp_only!: rewrite budget must be at most 256")
+  } else if proof_simp_supported(goal) {
+    proof_simp_walk(goal, rules, fuel, Cons(goal, Nil), Nil)
+  } else {
+    Err("simp_only!: only application trees are rewritten; split binder goals explicitly")
   }
 }
 
@@ -171,7 +169,12 @@ pub fn proof_simp_wrap(
   match moves {
     Nil => proof
     Cons(change, rest) => {
-      let binder := SynIdent { name: "simp_value", ctx: SynCtx { scopes: Nil }, span: at }
+      let binder := SynIdent {
+        declaration: None,
+        name: "simp_value",
+        ctx: SynCtx { scopes: Nil },
+        span: at
+      }
       let body := match Syn::abstract(
         change.before,
         change.after,

@@ -20,7 +20,7 @@ pub theorem access_info_unbounded_frame_errors(
   h: Ty,
   unbounded: Bool
 ): CkErrorFrame(c, access_info_unbounded(c, term, name, h, unbounded)) {
-  match unbounded: CkErrorFrame(c, access_info_unbounded(c, term, name, h, unbounded)) {
+  ⊢ CkErrorFrame(c, access_info_unbounded(c, term, name, h, unbounded)) from match unbounded {
     true => (clean_errors => clean_errors)
     false => error_frame_rewrap(
       c,
@@ -37,7 +37,7 @@ pub theorem access_info_frame_errors(
   h: Ty,
   more: Bool
 ): CkErrorFrame(c, access_info(c, term, name, h, more)) {
-  match more: CkErrorFrame(c, access_info(c, term, name, h, more)) {
+  ⊢ CkErrorFrame(c, access_info(c, term, name, h, more)) from match more {
     true => (clean_errors => clean_errors)
     false => access_info_unbounded_frame_errors(c, term, name, h, Text::eq(name, "unbounded"))
   }
@@ -48,7 +48,7 @@ pub theorem access_borrow_frame_errors(
   t: Ty,
   borrow: Bool
 ): CkErrorFrame(c, access_borrow(c, t, borrow)) {
-  match borrow: CkErrorFrame(c, access_borrow(c, t, borrow)) {
+  ⊢ CkErrorFrame(c, access_borrow(c, t, borrow)) from match borrow {
     true => (clean_errors => clean_errors)
     false => (clean_errors => clean_errors)
   }
@@ -62,7 +62,7 @@ pub theorem access_found_frame_errors(
   borrowed: Bool,
   found: Option(Ty)
 ): CkErrorFrame(c, access_found(c, term, name, d, borrowed, found)) {
-  match found: CkErrorFrame(c, access_found(c, term, name, d, borrowed, found)) {
+  ⊢ CkErrorFrame(c, access_found(c, term, name, d, borrowed, found)) from match found {
     None => error_frame_bind(
       Unit,
       Ty,
@@ -85,7 +85,7 @@ pub theorem access_struct_frame_errors(
   borrowed: Bool,
   structural: Bool
 ): CkErrorFrame(c, access_struct(c, term, name, d, args, borrowed, structural)) {
-  match structural: CkErrorFrame(c, access_struct(c, term, name, d, args, borrowed, structural)) {
+  ⊢ CkErrorFrame(c, access_struct(c, term, name, d, args, borrowed, structural)) from match structural {
     true => access_found_frame_errors(
       c,
       term,
@@ -110,7 +110,7 @@ pub theorem access_field_frame_errors(
   borrowed: Bool,
   t: Ty
 ): CkErrorFrame(c, access_field(c, term, name, original, borrowed, t)) {
-  match t: CkErrorFrame(c, access_field(c, term, name, original, borrowed, t)) {
+  ⊢ CkErrorFrame(c, access_field(c, term, name, original, borrowed, t)) from match t {
     TyInt(pat_w) => error_frame_rewrap(
       c,
       ck_field_missing(c, term, original, name),

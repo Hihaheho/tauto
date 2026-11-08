@@ -18,7 +18,8 @@ pub enum Reply {
     Text(String),
     Texts(Vec<String>),
     Bytes(Vec<u8>),
-    Product(Vec<Reply>),
+    /// A `Pair`: `A × B`.
+    Pair(Box<Reply>, Box<Reply>),
     Some(Box<Reply>),
     None,
     Ok(Box<Reply>),
@@ -39,9 +40,7 @@ impl Reply {
                     .into_iter(),
             ),
             Reply::Bytes(b) => Value::Bytes(Rc::from(b)),
-            Reply::Product(ms) => {
-                Value::Product(Rc::new(ms.into_iter().map(|m| m.value(k)).collect()))
-            }
+            Reply::Pair(a, b) => k.pair(a.value(k), b.value(k)),
             Reply::Some(a) => k.some(a.value(k)),
             Reply::None => k.none(),
             Reply::Ok(a) => k.ok(a.value(k)),
@@ -158,10 +157,10 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
                     Bytes::from(body),
                 );
                 result(r, |(items, body)| {
-                    Reply::Product(vec![
-                        Reply::Bytes(body.to_vec()),
-                        Reply::Texts(texts(items)),
-                    ])
+                    Reply::Pair(
+                        Box::new(Reply::Bytes(body.to_vec())),
+                        Box::new(Reply::Texts(texts(items))),
+                    )
                 })
             })
         }
@@ -185,7 +184,10 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
                     Bytes::from(stdin),
                 );
                 result(r, |(items, out)| {
-                    Reply::Product(vec![Reply::Bytes(out.to_vec()), Reply::Texts(texts(items))])
+                    Reply::Pair(
+                        Box::new(Reply::Bytes(out.to_vec())),
+                        Box::new(Reply::Texts(texts(items))),
+                    )
                 })
             })
         }
@@ -320,7 +322,10 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
                     d,
                 );
                 timed(r, |(items, cert)| {
-                    Reply::Product(vec![Reply::Bytes(cert), Reply::Texts(texts(items))])
+                    Reply::Pair(
+                        Box::new(Reply::Bytes(cert)),
+                        Box::new(Reply::Texts(texts(items))),
+                    )
                 })
             })
         }
@@ -343,7 +348,10 @@ pub fn job(k: &Known, name: &str, a: &[Value]) -> R<Job> {
                     d,
                 );
                 timed(r, |(items, cert)| {
-                    Reply::Product(vec![Reply::Bytes(cert), Reply::Texts(texts(items))])
+                    Reply::Pair(
+                        Box::new(Reply::Bytes(cert)),
+                        Box::new(Reply::Texts(texts(items))),
+                    )
                 })
             })
         }

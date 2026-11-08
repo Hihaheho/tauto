@@ -1,4 +1,3 @@
-
 import "../src/engine.taut"
 import "../src/admission.taut"
 import "../src/history.taut"
@@ -17,7 +16,7 @@ pub theorem ix_and_right(
 ): right = true { And::right(Bool::and_split(left, right, accepted)) }
 
 pub fn ix_option_or<A>(value: Option(A), fallback: A): A {
-  match value: A {
+  ⊢ A from match value {
     None => fallback
     Some(item) => item
   }
@@ -32,7 +31,7 @@ pub theorem ix_some_injective<A>(
 pub theorem ix_none_ne_some<A>(
   value: A,
   equality: None = Some(value)
-): False { match equality: False { } }
+): False { ⊢ False from match equality { } }
 
 pub theorem ix_gate_sound<A>(
   allowed: Bool,
@@ -40,7 +39,7 @@ pub theorem ix_gate_sound<A>(
   output: A,
   accepted: ix_gate(allowed, result) = Some(output)
 ): And(allowed = true, result = Some(output)) {
-  match allowed: And(allowed = true, result = Some(output)) {
+  ⊢ And(allowed = true, result = Some(output)) from match allowed {
     false => False::elim(ix_none_ne_some(output, accepted))
     true => AndIntro(Refl, accepted)
   }
@@ -61,10 +60,10 @@ pub theorem ix_batch_atomic(
   batch: IxBatch,
   rejected: ix_step(state, batch) = None
 ): ix_commit(state, batch) = state {
-  ix_state_option_subst((result: Option(IxState)) => match result: IxState {
+  ix_state_option_subst((result: Option(IxState)) => (⊢ IxState from match result {
       None => state
       Some(next) => next
-    } = state, None, ix_step(state, batch), Eq::sym(rejected), Refl)
+    }) = state, None, ix_step(state, batch), Eq::sym(rejected), Refl)
 }
 
 pub theorem ix_source_bound(
@@ -79,17 +78,17 @@ pub theorem ix_source_bound(
   expected: Nat,
   actual: Nat,
   accepted: ix_usable(
-      observers,
-      witnesses,
-      limits,
-      states,
-      origins,
-      local_receipts,
-      now,
-      key,
-      expected,
-      actual
-    ) = true
+    observers,
+    witnesses,
+    limits,
+    states,
+    origins,
+    local_receipts,
+    now,
+    key,
+    expected,
+    actual
+  ) = true
 ): expected = actual {
   Nat::eq_sound(
     expected,
@@ -132,17 +131,17 @@ pub theorem ix_clock_monotone(
   key: IxKey,
   digest: Nat,
   accepted: ix_evaluate(
-      previous_now,
-      observers,
-      witnesses,
-      limits,
-      states,
-      origins,
-      local_receipts,
-      now,
-      key,
-      digest
-    ) = true
+    previous_now,
+    observers,
+    witnesses,
+    limits,
+    states,
+    origins,
+    local_receipts,
+    now,
+    key,
+    digest
+  ) = true
 ): Nat::le(previous_now, now) = true {
   ix_and_left(
     Nat::le(previous_now, now),
@@ -152,7 +151,7 @@ pub theorem ix_clock_monotone(
 }
 
 pub theorem ix_and_no_right(left: Bool): Bool::and(left, false) = false {
-  match left: Bool::and(left, false) = false {
+  ⊢ Bool::and(left, false) = false from match left {
     false => Refl
     true => Refl
   }
@@ -167,9 +166,9 @@ pub theorem ix_reobserve_rejected(
 ): ix_event_allowed(state, IxObserve(key, digest, first)) = false {
   ix_bool_subst(
     (observed: Bool) => Bool::and(
-        not(ix_state_retired(state)),
-        Bool::and(not(observed), Nat::le(first, ix_state_issued(state)))
-      ) = false,
+      not(ix_state_retired(state)),
+      Bool::and(not(observed), Nat::le(first, ix_state_issued(state)))
+    ) = false,
     true,
     ix_observed(key, state),
     Eq::sym(known),
@@ -188,7 +187,21 @@ pub theorem ix_receipt_ignores_backdating(
   now: Nat,
   age: Nat,
   receipt: IxReceipt
-): ix_receipt_ready(trust, state, IxObservation::Mk(key, digest, first, born), now, age, receipt) = ix_receipt_ready(trust, state, IxObservation::Mk(key, digest, backdated, born), now, age, receipt) {
+): ix_receipt_ready(
+  trust,
+  state,
+  IxObservation::Mk(key, digest, first, born),
+  now,
+  age,
+  receipt
+) = ix_receipt_ready(
+  trust,
+  state,
+  IxObservation::Mk(key, digest, backdated, born),
+  now,
+  age,
+  receipt
+) {
   Refl
 }
 
@@ -209,7 +222,9 @@ pub theorem ix_pin_source_fixed(
 ) {
   let checked: And(
     ix_pin_allowed(trust, state, origins) = true,
-    Some(IxTrust::Mk(ix_trust_index(trust), ix_trust_source(trust), ix_state_head(state))) = Some(next)
+    Some(
+      IxTrust::Mk(ix_trust_index(trust), ix_trust_source(trust), ix_state_head(state))
+    ) = Some(next)
   ) :=
   ix_gate_sound(
     ix_pin_allowed(trust, state, origins),
@@ -217,7 +232,11 @@ pub theorem ix_pin_source_fixed(
     next,
     accepted
   )
-  let equality: IxTrust::Mk(ix_trust_index(trust), ix_trust_source(trust), ix_state_head(state)) = next :=
+  let equality: IxTrust::Mk(
+    ix_trust_index(trust),
+    ix_trust_source(trust),
+    ix_state_head(state)
+  ) = next :=
   ix_some_injective(
     IxTrust::Mk(ix_trust_index(trust), ix_trust_source(trust), ix_state_head(state)),
     next,

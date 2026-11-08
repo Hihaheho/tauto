@@ -23,7 +23,9 @@
 //! extraction reads the block as written. The kernel and `check/core.rs`
 //! check the terms these make, as any others.
 
+use crate::surface::Name;
 use std::collections::HashMap;
+use tauto_surface::identity::{Generation, LocalRef};
 
 use tauto_message::{Message, msg};
 use tauto_parol::Span;
@@ -37,16 +39,16 @@ use crate::surface::{
 /// two arms.
 struct Member<'a> {
     f: &'a FnDecl,
-    pred: String,
+    pred: Name,
     zero: &'a SurfaceTerm,
     succ: &'a SurfaceTerm,
 }
 
-fn var(name: &str, span: Span) -> SurfaceTerm {
-    SurfaceTerm::var(name, span)
+fn var(name: impl Into<Name>, span: Span) -> SurfaceTerm {
+    SurfaceTerm::new(TermKind::Var(name.into()), span)
 }
 
-fn app(function: &str, arguments: Vec<SurfaceTerm>, span: Span) -> SurfaceTerm {
+fn app(function: impl Into<Name>, arguments: Vec<SurfaceTerm>, span: Span) -> SurfaceTerm {
     SurfaceTerm::new(
         TermKind::App {
             function: Box::new(var(function, span)),
@@ -65,7 +67,12 @@ fn arm(pattern: Pattern, body: SurfaceTerm) -> MatchArm {
     }
 }
 
-fn matching(scrutinee: &str, result: &SurfaceTerm, arms: Vec<MatchArm>, span: Span) -> SurfaceTerm {
+fn matching(
+    scrutinee: &Name,
+    result: &SurfaceTerm,
+    arms: Vec<MatchArm>,
+    span: Span,
+) -> SurfaceTerm {
     SurfaceTerm::new(
         TermKind::Match {
             binder: None,
@@ -77,10 +84,21 @@ fn matching(scrutinee: &str, result: &SurfaceTerm, arms: Vec<MatchArm>, span: Sp
     )
 }
 
-fn ctor_pattern(name: &str, args: &[String]) -> Pattern {
+fn ctor_pattern(name: &Name, args: &[Name]) -> Pattern {
     Pattern::Ctor {
-        name: name.to_string(),
+        name: name.clone(),
         args: args.iter().map(|a| Pattern::Bind(a.clone())).collect(),
+    }
+}
+
+fn nat_constructor(name: &Name, constructor: &str) -> bool {
+    match name {
+        Name::Global(reference) => reference.is_primitive(constructor),
+        Name::Selection(selection) => selection
+            .candidates()
+            .iter()
+            .any(|r| r.is_primitive(constructor)),
+        _ => false,
     }
 }
 
@@ -91,8 +109,20 @@ fn member(f: &FnDecl) -> Option<Member<'_>> {
         return None;
     }
     let first = f.params.first()?;
+    // Request fields do not bind the fuel, and answers have no parameters.
+    if f.param_types
+        .iter()
+        .skip(1)
+        .flatten()
+        .any(|ty| super::occurs(ty, first))
+        || f.params
+            .iter()
+            .any(|parameter| super::occurs(f.result.as_ref().unwrap(), parameter))
+    {
+        return None;
+    }
     match &*f.param_types.first()?.as_ref()?.kind {
-        TermKind::Var(n) if n == "Nat" => {}
+        TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "Nat") => {}
         _ => return None,
     }
     let TermKind::Match {
@@ -111,14 +141,16 @@ fn member(f: &FnDecl) -> Option<Member<'_>> {
             return None;
         }
         match &a.pattern {
-            Pattern::Bind(n) if n == "Zero" => zero = Some(&a.body),
-            Pattern::Ctor { name, args } if name == "Zero" && args.is_empty() => {
+            Pattern::Bind(n) if nat_constructor(n, "Zero") => zero = Some(&a.body),
+            Pattern::Ctor { name, args } if nat_constructor(name, "Zero") && args.is_empty() => {
                 zero = Some(&a.body)
             }
-            Pattern::Ctor { name, args } if name == "Succ" => match args.as_slice() {
-                [Pattern::Bind(j)] => succ = Some((j.clone(), &a.body)),
-                _ => return None,
-            },
+            Pattern::Ctor { name, args } if nat_constructor(name, "Succ") => {
+                match args.as_slice() {
+                    [Pattern::Bind(j)] => succ = Some((j.clone(), &a.body)),
+                    _ => return None,
+                }
+            }
             _ => return None,
         }
     }
@@ -134,14 +166,14 @@ fn member(f: &FnDecl) -> Option<Member<'_>> {
 /// The names a function of the block is called through: its request, the
 /// `get` of its result type and its `Zero`.
 struct Call {
-    request: String,
-    get: String,
-    zero: String,
+    request: Name,
+    get: Name,
+    zero: Name,
 }
 
 /// `t` with each call `g(e, a⃗)` of a function `g` of the block made a
 /// request: `get(read(e, request_g(a⃗)), zero_g(a⃗))`.
-fn requests(t: &SurfaceTerm, calls: &HashMap<String, Call>, read: &str) -> SurfaceTerm {
+fn requests(t: &SurfaceTerm, calls: &HashMap<Name, Call>, read: &Name) -> SurfaceTerm {
     let sp = t.span;
     let all = |ts: &[SurfaceTerm]| -> Vec<SurfaceTerm> {
         ts.iter().map(|a| requests(a, calls, read)).collect()
@@ -166,7 +198,7 @@ fn requests(t: &SurfaceTerm, calls: &HashMap<String, Call>, read: &str) -> Surfa
                 );
                 return app(&call.get, vec![asked, app(&call.zero, rest, sp)], sp);
             }
-            SurfaceTerm::new(
+            t.with_kind(
                 TermKind::App {
                     function: Box::new(requests(function, calls, read)),
                     arguments: all(arguments),
@@ -178,7 +210,7 @@ fn requests(t: &SurfaceTerm, calls: &HashMap<String, Call>, read: &str) -> Surfa
             params,
             body,
             types,
-        } => SurfaceTerm::new(
+        } => t.with_kind(
             TermKind::Lam {
                 params: params.clone(),
                 body: Box::new(requests(body, calls, read)),
@@ -191,7 +223,7 @@ fn requests(t: &SurfaceTerm, calls: &HashMap<String, Call>, read: &str) -> Surfa
             result,
             binder,
             arms,
-        } => SurfaceTerm::new(
+        } => t.with_kind(
             TermKind::Match {
                 binder: binder.clone(),
                 scrutinee: Box::new(requests(scrutinee, calls, read)),
@@ -208,14 +240,14 @@ fn requests(t: &SurfaceTerm, calls: &HashMap<String, Call>, read: &str) -> Surfa
             },
             sp,
         ),
-        TermKind::Field { base, name } => SurfaceTerm::new(
+        TermKind::Field { base, name } => t.with_kind(
             TermKind::Field {
                 base: Box::new(requests(base, calls, read)),
                 name: name.clone(),
             },
             sp,
         ),
-        TermKind::Record { name, fields, .. } => SurfaceTerm::new(
+        TermKind::Record { name, fields, .. } => t.with_kind(
             TermKind::Record {
                 name: name.clone(),
                 fields: fields
@@ -245,31 +277,59 @@ impl Kernel {
             members.push(member(f)?);
         }
         let base = &members[0].f.name;
-        let request = format!("{base}'request");
-        let answer = format!("{base}'answer");
-        let read = format!("{base}'read");
-        let steps = "steps'".to_string();
-        let asked = "request'".to_string();
-        let ty = |name: &str| var(name, span);
+        let request = self.resolver.generated(base, Generation::SharedStepRequest);
+        let answer = self.resolver.generated(base, Generation::SharedStepAnswer);
+        let read = self.resolver.generated(base, Generation::SharedStepRead);
+        let steps: Name = LocalRef::fresh("steps'").into();
+        let asked: Name = LocalRef::fresh("request'").into();
+        let fuel: Name = LocalRef::fresh("k'").into();
+        let ty = |name: &Name| var(name, span);
 
-        let mut results: Vec<(String, SurfaceTerm)> = Vec::new();
+        // The result types, each with its answer and its `get`.
+        let mut results: Vec<SurfaceTerm> = Vec::new();
         let mut result_of = Vec::new();
         for m in &members {
             let r = m.f.result.clone().unwrap();
-            let key = super::describe(&r);
-            let i = match results.iter().position(|(k, _)| *k == key) {
+            let i = match results
+                .iter()
+                .position(|other| crate::surface::same_term_structure(other, &r))
+            {
                 Some(i) => i,
                 None => {
-                    results.push((key, r));
+                    results.push(r);
                     results.len() - 1
                 }
             };
             result_of.push(i);
         }
-        let answer_ctor = |i: usize| format!("{answer}'{i}");
-        let get = |i: usize| format!("{base}'get'{i}");
-        let request_ctor = |m: &Member| format!("{request}'{}", m.f.name);
-        let zero = |m: &Member| format!("{base}'Zero'{}", m.f.name);
+        let positions: HashMap<Name, usize> = members
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.f.name.clone(), i))
+            .collect();
+        let request_ctors: Vec<Name> = (0..members.len())
+            .map(|i| {
+                self.resolver
+                    .generated(&request, Generation::Constructor(i))
+            })
+            .collect();
+        let answer_ctors: Vec<Name> = (0..results.len())
+            .map(|i| self.resolver.generated(&answer, Generation::Constructor(i)))
+            .collect();
+        let gets: Vec<Name> = (0..results.len())
+            .map(|i| self.resolver.generated(base, Generation::SharedStepGet(i)))
+            .collect();
+        let zeros: Vec<Name> = members
+            .iter()
+            .map(|m| {
+                self.resolver
+                    .generated(&m.f.name, Generation::SharedStepZero)
+            })
+            .collect();
+        let answer_ctor = |i: usize| answer_ctors[i].clone();
+        let get = |i: usize| gets[i].clone();
+        let request_ctor = |m: &Member| request_ctors[positions[&m.f.name]].clone();
+        let zero = |m: &Member| zeros[positions[&m.f.name]].clone();
         let mut calls = HashMap::new();
         for (m, i) in members.iter().zip(&result_of) {
             calls.insert(
@@ -308,7 +368,7 @@ impl Kernel {
             generates: Default::default(),
             name: request.clone(),
             params: Vec::new(),
-            sort: ty("Type"),
+            sort: ty(&tauto_surface::bindings::library_name("Type")),
             constructors: ctors,
             span,
         }));
@@ -317,21 +377,25 @@ impl Kernel {
             generates: Default::default(),
             name: answer.clone(),
             params: Vec::new(),
-            sort: ty("Type"),
+            sort: ty(&tauto_surface::bindings::library_name("Type")),
             constructors: results
                 .iter()
                 .enumerate()
-                .map(|(i, (_, r))| Constructor {
+                .map(|(i, r)| Constructor {
                     name: answer_ctor(i),
                     implicit: 0,
-                    params: vec![("value'".into(), r.clone())],
+                    params: vec![(LocalRef::fresh("value'").into(), r.clone())],
                     result: ty(&answer),
                 })
                 .collect(),
             span,
         }));
         for m in &members {
-            let body = self.subst(m.zero, &m.f.params[0], &var("Zero", span));
+            let body = self.subst(
+                m.zero,
+                &m.f.params[0],
+                &var(&tauto_surface::bindings::library_name("Zero"), span),
+            );
             decls.push(Stmt::Fn(FnDecl {
                 budget: None,
                 vis: Default::default(),
@@ -339,6 +403,7 @@ impl Kernel {
                 opaque: false,
                 decreasing_by: None,
                 name: zero(m),
+                generic_types: Vec::new(),
                 generics: Vec::new(),
                 rows: Vec::new(),
                 bounds: Vec::new(),
@@ -353,13 +418,16 @@ impl Kernel {
                 body,
             }));
         }
-        for (i, (_, r)) in results.iter().enumerate() {
+        for (i, r) in results.iter().enumerate() {
+            let value: Name = LocalRef::fresh("value'").into();
+            let answer_parameter: Name = LocalRef::fresh("answer'").into();
+            let default: Name = LocalRef::fresh("default'").into();
             let mut arms = vec![arm(
-                ctor_pattern(&answer_ctor(i), &["value'".into()]),
-                var("value'", span),
+                ctor_pattern(&answer_ctor(i), std::slice::from_ref(&value)),
+                var(&value, span),
             )];
             if results.len() > 1 {
-                arms.push(arm(Pattern::Wild, var("default'", span)));
+                arms.push(arm(Pattern::Wild, var(&default, span)));
             }
             decls.push(Stmt::Fn(FnDecl {
                 budget: None,
@@ -368,18 +436,19 @@ impl Kernel {
                 opaque: false,
                 decreasing_by: None,
                 name: get(i),
+                generic_types: Vec::new(),
                 generics: Vec::new(),
                 rows: Vec::new(),
                 bounds: Vec::new(),
                 bound_spans: Vec::new(),
-                params: vec!["answer'".into(), "default'".into()],
+                params: vec![answer_parameter.clone(), default],
                 borrows: vec![None, None],
                 param_types: vec![Some(ty(&answer)), Some(r.clone())],
                 result: Some(r.clone()),
                 effects: None,
                 where_: Vec::new(),
                 span,
-                body: matching("answer'", r, arms, span),
+                body: matching(&answer_parameter, r, arms, span),
             }));
         }
         let mut zero_arms = Vec::new();
@@ -388,10 +457,27 @@ impl Kernel {
             let pattern = ctor_pattern(&request_ctor(m), &m.f.params[1..]);
             zero_arms.push(arm(
                 pattern.clone(),
-                app(&answer_ctor(*i), vec![m.zero.clone()], span),
+                app(
+                    &answer_ctor(*i),
+                    vec![app(
+                        &zero(m),
+                        m.f.params[1..].iter().map(|p| var(p, span)).collect(),
+                        span,
+                    )],
+                    span,
+                ),
             ));
             // A `let` stands for its value (`expand_lets`), calls included.
             let succ = self.expand_lets(m.succ).unwrap_or_else(|_| m.succ.clone());
+            let succ = self.subst(
+                &succ,
+                &m.f.params[0],
+                &app(
+                    &tauto_surface::bindings::library_name("Succ"),
+                    vec![var(&steps, span)],
+                    span,
+                ),
+            );
             let body = self.subst(&succ, &m.pred, &var(&steps, span));
             succ_arms.push(arm(
                 pattern,
@@ -406,27 +492,34 @@ impl Kernel {
             opaque: false,
             decreasing_by: None,
             name: read.clone(),
+            generic_types: Vec::new(),
             generics: Vec::new(),
             rows: Vec::new(),
             bounds: Vec::new(),
             bound_spans: Vec::new(),
-            params: vec!["k'".into(), asked.clone()],
+            params: vec![fuel.clone(), asked.clone()],
             borrows: vec![None, None],
-            param_types: vec![Some(ty("Nat")), Some(ty(&request))],
+            param_types: vec![
+                Some(ty(&tauto_surface::bindings::library_name("Nat"))),
+                Some(ty(&request)),
+            ],
             result: Some(answer_ty.clone()),
             effects: None,
             where_: Vec::new(),
             span,
             body: matching(
-                "k'",
+                &fuel,
                 &answer_ty,
                 vec![
                     arm(
-                        Pattern::Bind("Zero".into()),
+                        Pattern::Bind(tauto_surface::bindings::library_name("Zero")),
                         matching(&asked, &answer_ty, zero_arms, span),
                     ),
                     arm(
-                        ctor_pattern("Succ", std::slice::from_ref(&steps)),
+                        ctor_pattern(
+                            &tauto_surface::bindings::library_name("Succ"),
+                            std::slice::from_ref(&steps),
+                        ),
                         matching(&asked, &answer_ty, succ_arms, span),
                     ),
                 ],
@@ -450,6 +543,7 @@ impl Kernel {
 
         // The requests, the answers and `read` first; a failure there is the
         // block's.
+        self.resolver.statements(&mut decls);
         let helpers = decls.len() - members.len();
         let mut out = Vec::new();
         for (at, d) in decls.iter().enumerate() {
@@ -477,6 +571,42 @@ impl Kernel {
                 verdict,
             });
         }
+        if self.record_sites
+            && out
+                .iter()
+                .all(|entry| matches!(entry.verdict, Verdict::Checked { .. }))
+        {
+            for member in &members {
+                let TermKind::Match { arms, .. } = &*member.f.body.kind else {
+                    unreachable!()
+                };
+                for arm in arms {
+                    let written = match &arm.pattern {
+                        Pattern::Bind(name) | Pattern::Ctor { name, .. } => name,
+                        _ => unreachable!(),
+                    };
+                    let constructor = if nat_constructor(written, "Zero") {
+                        "Zero"
+                    } else {
+                        "Succ"
+                    };
+                    let occurrences = self
+                        .ctor_site_origins
+                        .get(&arm.body.id())
+                        .cloned()
+                        .unwrap_or_else(|| vec![arm.body.id()]);
+                    for occurrence in occurrences {
+                        self.ctor_sites.push(super::CtorSite {
+                            expression: false,
+                            occurrence,
+                            span: arm.body.span,
+                            written: written.clone(),
+                            resolved: tauto_surface::bindings::library_name(constructor),
+                        });
+                    }
+                }
+            }
+        }
         Some(out)
     }
 
@@ -488,5 +618,23 @@ impl Kernel {
                 verdict: Verdict::Failed(super::Diagnostic::new(message.clone(), Some(span))),
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tauto_surface::identity::{DeclRef, Selection};
+
+    #[test]
+    fn natural_patterns_select_by_identity_from_candidates() {
+        let zero = DeclRef::primitive("Zero").unwrap();
+        let other = DeclRef::fresh("Zero");
+        let selected: Name = Selection::new("renamed", vec![other.clone(), zero]).into();
+        assert!(nat_constructor(&selected, "Zero"));
+        assert!(!nat_constructor(&selected, "Succ"));
+        let unrelated: Name = Selection::new("Zero", vec![other]).into();
+        assert!(!nat_constructor(&unrelated, "Zero"));
+        assert!(!nat_constructor(&Name::from("Zero"), "Zero"));
     }
 }

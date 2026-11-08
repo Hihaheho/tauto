@@ -3,15 +3,18 @@
 pub mod check {
     pub(crate) use crate::read::stmt_span;
     pub use crate::read::{
-        Checker, anchor_of, check, check_file, check_file_full, check_file_lib, check_file_sourced,
-        check_file_timed, check_file_with, check_files, check_files_cached, check_tote_files,
-        elaborate_file, eval_file, expansion_infos, localize_entries, macro_failures_of, text_of,
-        time_limits,
+        Checker, KernelStatements, anchor_of, check, check_file, check_file_full, check_file_lib,
+        check_file_sourced, check_file_timed, check_file_with, check_files, check_files_cached,
+        check_tote_files, elaborate_file, eval_file, expansion_infos, kept_entries,
+        localize_entries, localize_kept, macro_failures_of, text_of, time_limits,
     };
     pub use tauto_kernel::check::*;
 }
 pub use tauto_nibcheck::host;
+pub use tauto_surface::bindings;
 pub use tauto_surface::direct;
+pub use tauto_surface::identity;
+pub use tauto_surface::resolve;
 pub mod eval {
     pub use crate::read::{run, run_checking_ownership, run_loaded_with, run_with_budget};
     pub use tauto_eval::eval::*;

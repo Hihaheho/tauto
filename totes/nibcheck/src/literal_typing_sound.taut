@@ -18,7 +18,7 @@ pub theorem diagnostic_items_member<A: Type, p: (
 ) -> Prop, c: Checker, item: A, items: List(
   A
 )>(member: Mem(A, item, items), checked: DiagnosticItems(A, p, c, items)): p(c, item) {
-  match member: p(c, item) {
+  ⊢ p(c, item) from match member {
     MemHere(rest) => diagnostic_items_head(checked)
     MemThere(head, rest, tail) => diagnostic_items_member(tail, diagnostic_items_tail(checked))
   }
@@ -43,7 +43,11 @@ pub theorem natural_literal_checked(
   surface_term_mk(SkNat(value), start, end),
   ty
 ) {
-  let fits: width_fits(width, false, magnitude) = true := Eq::subst(
+  let fits: width_fits(
+    width,
+    false,
+    magnitude
+  ) = true := Eq::subst(
     (t: Ty) => DiagnosticLiteralType(
       natural_literal_record(TySpan { start: start, end: end }, magnitude, ty),
       t
@@ -86,12 +90,12 @@ pub theorem natural_record_typing(
   surface_term_mk(SkNat(value), start, end),
   ty
 ) {
-  match recorded: NaturalTyping(
+  ⊢ NaturalTyping(
     ck_subst_of(c),
     KeptOk(ck_kept_of(c)),
     surface_term_mk(SkNat(value), start, end),
     ty
-  ) {
+  ) from match recorded {
     Mk(magnitude, parsed, stored) => natural_literal_checked(
       c,
       value,
@@ -127,12 +131,12 @@ pub theorem natural_literal_accepted_at(
   surface_term_mk(SkNat(value), start, end),
   ty
 ) {
-  match resolved: NaturalTyping(
+  ⊢ NaturalTyping(
     ck_subst_of(c),
     KeptOk(ck_kept_of(c)),
     surface_term_mk(SkNat(value), start, end),
     ty
-  ) {
+  ) from match resolved {
     TyInt(w) => NaturalTyped(
       value,
       magnitude,
@@ -184,12 +188,12 @@ pub theorem natural_record_checked_sound(
   surface_term_mk(SkNat(value), start, end),
   ty
 ) {
-  match recorded: NaturalTyping(
+  ⊢ NaturalTyping(
     ck_subst_of(c),
     KeptOk(ck_kept_of(c)),
     surface_term_mk(SkNat(value), start, end),
     ty
-  ) {
+  ) from match recorded {
     Mk(magnitude, parsed, stored) => natural_literal_accepted_at(
       c,
       value,

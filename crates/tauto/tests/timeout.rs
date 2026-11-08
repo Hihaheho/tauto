@@ -9,7 +9,7 @@ use tauto::check::{Kernel, Verdict, declare_prelude};
 /// `p` counts a numeral down one at a time, so `p(10^12)` does not finish.
 fn source() -> String {
     r#"fn p(n: Nat): Nat {
-  match n: Nat {
+  ⊢ Nat from match n {
     Zero => 0
     Succ(k) => p(k)
   }
@@ -37,7 +37,13 @@ fn a_declaration_that_runs_out_of_time_is_rejected_and_nothing_after_it_is_check
     declare_prelude(&mut k).unwrap();
     k.set_timeout(Some(Duration::from_millis(200)));
     let entries = k.declare_program(&loaded.program);
-    let verdict = |name: &str| &entries.iter().find(|e| e.name == name).unwrap().verdict;
+    let verdict = |name: &str| {
+        &entries
+            .iter()
+            .find(|e| e.name.as_str() == name)
+            .unwrap()
+            .verdict
+    };
     assert!(matches!(verdict("p"), Verdict::Checked { .. }));
     match verdict("slow") {
         Verdict::Failed(d) => assert!(
@@ -48,7 +54,11 @@ fn a_declaration_that_runs_out_of_time_is_rejected_and_nothing_after_it_is_check
         other => panic!("{other:?}"),
     }
     assert!(matches!(verdict("after"), Verdict::Skipped(_)));
-    let slow = k.timings().iter().find(|t| t.name == "slow").unwrap();
+    let slow = k
+        .timings()
+        .iter()
+        .find(|t| t.name.as_str() == "slow")
+        .unwrap();
     assert!(slow.elapsed >= Duration::from_millis(200));
     assert_eq!(slow.top.first().map(|(n, _)| n.as_str()), Some("p"));
     let _ = std::fs::remove_dir_all(&dir);

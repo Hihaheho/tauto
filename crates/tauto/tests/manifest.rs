@@ -3,6 +3,39 @@
 use std::path::Path;
 
 use tauto::manifest::{merge_bindings, parse};
+use tauto_message::{Message, Value};
+
+/// The message under the `Tauto.eure` file and key it was found in.
+fn root(e: &Message) -> &Message {
+    match e.get("error") {
+        Some(Value::Message(inner)) if e.id == "tauto-in-file" || e.id == "tauto-in-key" => {
+            root(inner)
+        }
+        _ => e,
+    }
+}
+
+#[test]
+fn bundled_standard_files_keep_the_distribution_check_policy() {
+    tauto_messages::install();
+    let policy = parse(include_str!("../../../Tauto.eure"), Path::new("Tauto.eure"))
+        .unwrap()
+        .check;
+    for (name, _) in tauto::stdlib::FILES {
+        let expected = policy
+            .slow
+            .get(&format!("std/{name}"))
+            .copied()
+            .or(policy.time_limit)
+            .unwrap_or(tauto::manifest::DEFAULT_TIME_LIMIT);
+        let path = Path::new(tauto::stdlib::ROOT).join(name);
+        assert_eq!(
+            tauto::manifest::time_limit(&path).unwrap(),
+            expected,
+            "{name}"
+        );
+    }
+}
 
 const MANIFEST: &str = r#"
 package {
@@ -49,15 +82,18 @@ fn an_unknown_key_is_an_error() {
         Path::new("Tauto.eure"),
     )
     .unwrap_err();
-    assert!(e.contains("unknown key extrn"), "{e}");
+    assert_eq!(root(&e).id, "tauto-manifest-unknown-key");
+    assert_eq!(root(&e).get("key"), Some(&"extrn".into()));
     let e = parse(
         "package {\n  name = \"x\"\n  color = \"red\"\n}\n",
         Path::new("Tauto.eure"),
     )
     .unwrap_err();
-    assert!(e.contains("unknown key color"), "{e}");
+    assert_eq!(root(&e).id, "tauto-manifest-unknown-key");
+    assert_eq!(root(&e).get("key"), Some(&"color".into()));
     let e = parse("rusty {\n}\n", Path::new("Tauto.eure")).unwrap_err();
-    assert!(e.contains("unknown key rusty"), "{e}");
+    assert_eq!(root(&e).id, "tauto-manifest-unknown-key");
+    assert_eq!(root(&e).get("key"), Some(&"rusty".into()));
 }
 
 #[test]
@@ -76,10 +112,10 @@ fn the_same_extern_in_two_bindings_is_an_error() {
         Path::new("bind/b.eure"),
     )
     .unwrap_err();
-    assert_eq!(
-        e,
-        "error: regex_new is bound twice: bind/a.eure and bind/b.eure"
-    );
+    assert_eq!(e.id, "tauto-manifest-bound-twice");
+    assert_eq!(e.get("name"), Some(&"regex_new".into()));
+    assert_eq!(e.get("first"), Some(&"bind/a.eure".into()));
+    assert_eq!(e.get("second"), Some(&"bind/b.eure".into()));
 }
 
 #[test]
@@ -141,34 +177,30 @@ fn nonresuming_contract_keys_and_entry_values_are_strict() {
         Path::new("Tauto.eure"),
     )
     .unwrap_err();
-    assert!(
-        unknown.contains("unknown rust.nonresuming key unsafe_all"),
-        "{unknown}"
-    );
+    assert_eq!(root(&unknown).id, "tauto-manifest-unknown-nonresuming-key");
+    assert_eq!(root(&unknown).get("key"), Some(&"unsafe_all".into()));
     let callback_key = parse(
         "rust { nonresuming { callbacks { run_with_nonresuming_contract = \"run:read\" } } }",
         Path::new("Tauto.eure"),
     )
     .unwrap_err();
-    assert!(
-        callback_key.contains("unknown rust.nonresuming key callbacks"),
-        "{callback_key}"
+    assert_eq!(
+        root(&callback_key).id,
+        "tauto-manifest-unknown-nonresuming-key"
     );
+    assert_eq!(root(&callback_key).get("key"), Some(&"callbacks".into()));
     let wrong_type = parse(
         "rust { nonresuming { extern { native_read = true } } }",
         Path::new("Tauto.eure"),
     )
     .unwrap_err();
-    assert!(wrong_type.contains("expected a text"), "{wrong_type}");
+    assert_eq!(root(&wrong_type).id, "tauto-manifest-expected-text");
     let wrong_entry_type = parse(
         "rust { nonresuming { entries { run_with_nonresuming_contract = true } } }",
         Path::new("Tauto.eure"),
     )
     .unwrap_err();
-    assert!(
-        wrong_entry_type.contains("expected a text"),
-        "{wrong_entry_type}"
-    );
+    assert_eq!(root(&wrong_entry_type).id, "tauto-manifest-expected-text");
 }
 
 #[test]
@@ -182,7 +214,8 @@ fn generated_bindings_cannot_add_nonresuming_trust() {
         Path::new("bind/generated.eure"),
     )
     .unwrap_err();
-    assert!(error.contains("unknown key nonresuming"), "{error}");
+    assert_eq!(root(&error).id, "tauto-manifest-unknown-key");
+    assert_eq!(root(&error).get("key"), Some(&"nonresuming".into()));
     assert_eq!(m.rust, before);
     let entry_error = merge_bindings(
         &mut m.rust,
@@ -190,10 +223,8 @@ fn generated_bindings_cannot_add_nonresuming_trust() {
         Path::new("bind/generated.eure"),
     )
     .unwrap_err();
-    assert!(
-        entry_error.contains("unknown key nonresuming"),
-        "{entry_error}"
-    );
+    assert_eq!(root(&entry_error).id, "tauto-manifest-unknown-key");
+    assert_eq!(root(&entry_error).get("key"), Some(&"nonresuming".into()));
     assert_eq!(m.rust, before);
 }
 
@@ -205,7 +236,8 @@ fn duplicate_nonresuming_facade_keys_are_errors() {
         Path::new("Tauto.eure"),
     )
     .unwrap_err();
-    assert!(error.contains("trusted"), "{error}");
+    assert_eq!(error.id, "tauto-in-file");
+    assert!(error.to_string().contains("trusted"), "{error}");
 }
 
 #[test]
@@ -257,42 +289,42 @@ fn a_command_is_written_strictly() {
     for (text, expected) in [
         (
             "commands { Bk { main = \"cmd/bk.taut\"\n about = \"a\" } }",
-            "Bk is not a command name",
+            "tauto-manifest-not-command-name",
         ),
         (
             "commands { bk { main = \"../bk.taut\"\n about = \"a\" } }",
-            "main is a .taut or .tauto file inside the tote",
+            "tauto-manifest-command-main-path",
         ),
         (
             "commands { bk { main = \"cmd/bk.txt\"\n about = \"a\" } }",
-            "main is a .taut or .tauto file inside the tote",
+            "tauto-manifest-command-main-path",
         ),
         (
             "commands { bk { main = \"cmd/bk.taut\" } }",
-            "about is one line",
+            "tauto-manifest-command-about",
         ),
         (
             "commands { bk { main = \"cmd/bk.taut\"\n about = \"a\"\n allow = true } }",
-            "unknown key allow",
+            "tauto-manifest-command-key",
         ),
         (
             "trust { commands { bk { read = [\"src\"] } } }",
-            "tote names the tote whose command this is",
+            "tauto-manifest-trust-tote",
         ),
         (
             "trust { commands { bk { tote = \"a\"\n all = true } } }",
-            "all is not granted to a command",
+            "tauto-manifest-trust-all",
         ),
         (
             "trust { commands { bk { tote = \"a\"\n read = [] } } }",
-            "an empty list grants nothing",
+            "tauto-manifest-trust-empty",
         ),
         (
             "trust { commands { bk { tote = \"a\"\n clipboard = [\"x\"] } } }",
-            "clipboard is `true`",
+            "tauto-manifest-trust-clipboard",
         ),
     ] {
         let e = parse(text, Path::new("Tauto.eure")).unwrap_err();
-        assert!(e.contains(expected), "{text}: {e}");
+        assert_eq!(root(&e).id, expected, "{text}: {e}");
     }
 }

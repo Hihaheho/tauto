@@ -1,6 +1,7 @@
 //! Presentation rules over recorded judgments. Every claim still points to
 //! that judgment; bounded core queries only choose how to explain it.
 use super::bindings;
+mod structure;
 fn show(t: &T) -> String {
     crate::surface::print::print_term(&crate::check::Kernel::eqs_written(t))
 }
@@ -12,6 +13,7 @@ use std::{
 };
 use tauto_message::msg;
 
+#[derive(Clone)]
 struct Text {
     reference: String,
     number: Option<usize>,
@@ -69,10 +71,13 @@ pub(super) fn render(
     notation: &super::notation::Notation,
     out: &mut String,
 ) {
+    let root = structure::names(root);
+    let root = &root;
     // Plan labels from actual uses, including references inside inline calls.
     // Displayed DSL text is never searched for strings resembling a label.
     let mut scratch = String::new();
     let mut plan = Writer::new(library, inspector, notation, &mut scratch, None);
+    plan.count(root);
     plan.emit(root, 0, true);
     let mut referenced: Vec<_> = plan.referenced.into_iter().collect();
     referenced.sort_unstable();
@@ -82,6 +87,7 @@ pub(super) fn render(
         .map(|(i, n)| (n, i + 1))
         .collect();
     let mut writer = Writer::new(library, inspector, notation, out, Some(&labels));
+    writer.count(root);
     if !root.context.is_empty() {
         writeln!(
             writer.out,
@@ -93,7 +99,10 @@ pub(super) fn render(
                         .context
                         .iter()
                         .enumerate()
-                        .map(|(i, (n, t))| (n.clone(), notation.show(t, &root.context[..i], true)))
+                        .map(|(i, (n, t))| (
+                            n.to_string(),
+                            notation.show(t, &root.context[..i], true)
+                        ))
                         .collect::<Vec<_>>()
                 )
             )
@@ -116,6 +125,10 @@ pub(super) fn render(
     writer.emit(root, 0, true);
 }
 
+type Judgment = (Vec<(crate::surface::Name, T)>, T, T);
+fn same_judgment(a: &Judgment, b: &Judgment) -> bool {
+    super::Scopes::same(&a.0, &b.0) && super::same_term(&a.1, &b.1) && super::same_term(&a.2, &b.2)
+}
 struct Writer<'a> {
     notation: &'a super::notation::Notation,
     library: &'a [LibEntry],
@@ -124,9 +137,10 @@ struct Writer<'a> {
     next: usize,
     scope: usize,
     next_scope: usize,
-    known: HashMap<(usize, String), usize>,
+    known: Vec<(usize, Judgment, usize)>,
     labels: Option<&'a HashMap<usize, usize>>,
     referenced: HashSet<usize>,
+    uses: Vec<(Judgment, usize)>,
 }
 
 impl<'a> Writer<'a> {
@@ -146,23 +160,31 @@ impl<'a> Writer<'a> {
             next: 0,
             scope: 0,
             next_scope: 0,
-            known: HashMap::new(),
+            known: Vec::new(),
             referenced: HashSet::new(),
+            uses: Vec::new(),
         }
     }
     fn emit(&mut self, d: &Derivation, depth: usize, force: bool) -> Text {
-        let key = format!(
-            "{}\n{}\n{}",
-            bindings(
-                &d.context
-                    .iter()
-                    .map(|(n, t)| (n.clone(), show(t)))
-                    .collect::<Vec<_>>()
-            ),
-            show(&d.term),
-            show(&d.ty)
-        );
-        if let Some(n) = self.known.get(&(self.scope, key.clone())) {
+        if d.is_complete() {
+            let ty = self.display_type(&d.context, &d.ty);
+            if !super::same_term(&ty, &d.ty) {
+                let mut display = d.clone();
+                display.ty = ty;
+                return self.emit(&display, depth, force);
+            }
+        }
+        if let Some(inner) = self.transparent(d) {
+            let mut inner = inner.clone();
+            inner.ty = d.ty.clone();
+            return self.emit(&inner, depth, force);
+        }
+        let key = (d.context.clone(), d.term.clone(), d.ty.clone());
+        if let Some((_, _, n)) = self
+            .known
+            .iter()
+            .find(|(scope, prior, _)| *scope == self.scope && same_judgment(prior, &key))
+        {
             return Text::result(*n, self.labels);
         }
         let indent = "  ".repeat(depth);
@@ -183,11 +205,24 @@ impl<'a> Writer<'a> {
             }
             args.reverse();
         }
+        if d.is_complete() && is_proof == Some(true) {
+            if let Some(chain) = self.chain(d, false) {
+                if let Some(text) = self.emit_chain(d, key.clone(), depth, chain) {
+                    return text;
+                }
+            }
+            if let Some(text) = self.elimination(d, key.clone(), depth) {
+                return text;
+            }
+            if let Some(text) = self.construction(d, key.clone(), depth) {
+                return text;
+            }
+        }
         if d.rule == Rule::Introduction {
             let local = bindings(
                 &d.introduced
                     .iter()
-                    .map(|(n, t)| (n.clone(), self.notation.show(t, &d.context, true)))
+                    .map(|(n, t)| (n.to_string(), self.notation.show(t, &d.context, true)))
                     .collect::<Vec<_>>(),
             );
             writeln!(
@@ -232,7 +267,37 @@ impl<'a> Writer<'a> {
         if d.rule == Rule::Application && !args.is_empty() {
             let function = self.emit(head, depth, false);
             let supplied: Vec<_> = args.iter().map(|p| self.emit(p, depth, false)).collect();
-            let call = Text::application(&function, &supplied);
+            let implicit = match &*head.term.kind {
+                TermKind::Var(n) => self
+                    .library
+                    .iter()
+                    .find(|g| g.name == *n)
+                    .map_or(0, |g| g.implicit),
+                _ => 0,
+            };
+            // An implicit proof still has an obligation and a dependency.
+            let visible: Vec<_> = supplied
+                .iter()
+                .enumerate()
+                .filter(|(i, t)| {
+                    *i >= implicit
+                        || !t.dependencies.is_empty()
+                        || self.inspector.is_proof(args[*i]) != Some(false)
+                        || !self.inline_value(args[*i])
+                })
+                .map(|(_, t)| t.clone())
+                .collect();
+            let call = Text::application(&function, &visible);
+            if !force
+                && d.is_complete()
+                && is_proof == Some(true)
+                && !reflexivity(d, head, &args)
+                && self.use_count(d) == 1
+                && call.reference.chars().count() <= 72
+                && supplied.iter().all(|t| t.dependencies.is_empty())
+            {
+                return call;
+            }
             if is_proof == Some(false) && d.is_complete() && !force {
                 return if call.dependencies.is_empty() {
                     Text::inline(self.notation.show(&d.term, &d.context, true))
@@ -364,7 +429,7 @@ impl<'a> Writer<'a> {
             d.rule,
             Rule::Assumption | Rule::Constant | Rule::Literal | Rule::Sort
         ) {
-            return true;
+            return self.inspector.is_proof(d) == Some(false);
         }
         matches!(
             d.rule,
@@ -375,7 +440,7 @@ impl<'a> Writer<'a> {
 
     fn step(
         &mut self,
-        key: String,
+        key: Judgment,
         indent: &str,
         sentence: String,
         calculations: Option<&[String]>,
@@ -393,7 +458,7 @@ impl<'a> Writer<'a> {
             }
         }
         self.out.push('\n');
-        self.known.insert((self.scope, key), n);
+        self.known.push((self.scope, key, n));
         Text::result(n, self.labels)
     }
 
@@ -404,7 +469,7 @@ impl<'a> Writer<'a> {
     ) -> (Option<String>, Vec<String>, bool) {
         let mut pairs = Vec::new();
         if let (Some(a), Some(b)) = (equality(&before.ty), equality(&after.ty)) {
-            if show(&a[0]) == show(&b[0]) {
+            if super::same_term(&a[0], &b[0]) {
                 pairs.push((&a[1], &b[1]));
                 pairs.push((&a[2], &b[2]));
             }
@@ -416,7 +481,7 @@ impl<'a> Writer<'a> {
         let mut definitions = Vec::new();
         let mut forward = true;
         for (a, b) in pairs {
-            if show(a) == show(b) {
+            if super::same_term(a, b) {
                 continue;
             }
             let Some(left) = self.inspector.reduce(&after.context, a) else {
@@ -425,18 +490,17 @@ impl<'a> Writer<'a> {
             let Some(right) = self.inspector.reduce(&after.context, b) else {
                 return (None, Vec::new(), false);
             };
-            if show(&left.normal) != show(&right.normal) {
+            if !super::same_term(&left.normal, &right.normal) {
                 return (None, Vec::new(), false);
             }
-            let normal = show(&left.normal);
-            if show(a) != normal {
+            if !super::same_term(a, &left.normal) {
                 calculations.push(format!(
                     "{} → {}",
                     self.notation.show(a, &after.context, true),
                     self.notation.show(&left.normal, &after.context, true)
                 ));
             }
-            if show(b) != normal {
+            if !super::same_term(b, &right.normal) {
                 forward = false;
                 let line = format!(
                     "{} → {}",
@@ -461,7 +525,15 @@ impl<'a> Writer<'a> {
         let reason = if definitions.is_empty() {
             msg!("proof-natural-computation").to_string()
         } else {
-            msg!("proof-natural-definitions", names = definitions.join(", ")).to_string()
+            msg!(
+                "proof-natural-definitions",
+                names = definitions
+                    .iter()
+                    .map(|n| n.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .to_string()
         };
         (Some(reason), calculations, forward)
     }
@@ -476,32 +548,33 @@ fn references(items: &[Text], referenced: &mut HashSet<usize>) -> String {
         .join(", ")
 }
 fn same_context(a: &Derivation, b: &Derivation) -> bool {
-    a.context
-        .iter()
-        .map(|(n, t)| (n, show(t)))
-        .eq(b.context.iter().map(|(n, t)| (n, show(t))))
+    super::Scopes::same(&a.context, &b.context)
 }
 fn equality(t: &T) -> Option<&[T]> {
     match &*t.kind {
         TermKind::App {
             function,
             arguments,
-        } if matches!(&*function.kind,TermKind::Var(n) if n=="Eq") && arguments.len() == 3 => {
+        } if matches!(&*function.kind,TermKind::Var(n) if tauto_surface::bindings::is_library(n, "Eq"))
+            && arguments.len() == 3 =>
+        {
             Some(arguments)
         }
         _ => None,
     }
 }
 fn congruence(d: &Derivation, head: &Derivation, args: &[&Derivation]) -> Option<(String, String)> {
-    if !matches!(&*head.term.kind,TermKind::Var(n) if n=="Eq::congr") || args.len() != 6 {
+    if !matches!(&*head.term.kind,TermKind::Var(n) if tauto_surface::bindings::is_library(n, "Eq::congr"))
+        || args.len() != 6
+    {
         return None;
     }
     let premise = equality(&args[5].ty)?;
     let result = equality(&d.ty)?;
-    if show(&premise[0]) != show(&args[0].term)
-        || show(&premise[1]) != show(&args[2].term)
-        || show(&premise[2]) != show(&args[3].term)
-        || show(&result[0]) != show(&args[1].term)
+    if !super::same_term(&premise[0], &args[0].term)
+        || !super::same_term(&premise[1], &args[2].term)
+        || !super::same_term(&premise[2], &args[3].term)
+        || !super::same_term(&result[0], &args[1].term)
     {
         return None;
     }
@@ -510,21 +583,21 @@ fn congruence(d: &Derivation, head: &Derivation, args: &[&Derivation]) -> Option
             TermKind::App {
                 function,
                 arguments,
-            } if show(function) == show(&args[4].term)
+            } if super::same_term(function, &args[4].term)
                 && arguments.len() == 1
-                && show(&arguments[0]) == show(&arg.term) => {}
+                && super::same_term(&arguments[0], &arg.term) => {}
             _ => return None,
         }
     }
     Some((show(&args[4].term), show(&args[5].term)))
 }
 fn reflexivity(d: &Derivation, head: &Derivation, args: &[&Derivation]) -> bool {
-    matches!(&*head.term.kind,TermKind::Var(n) if n=="Refl")
+    matches!(&*head.term.kind,TermKind::Var(n) if tauto_surface::bindings::is_library(n, "Refl"))
         && args.len() == 2
         && equality(&d.ty).is_some_and(|e| {
-            show(&e[0]) == show(&args[0].term)
-                && show(&e[1]) == show(&args[1].term)
-                && show(&e[1]) == show(&e[2])
+            super::same_term(&e[0], &args[0].term)
+                && super::same_term(&e[1], &args[1].term)
+                && super::same_term(&e[1], &e[2])
         })
 }
 fn claim(d: &Derivation, is_proof: Option<bool>, notation: &super::notation::Notation) -> String {

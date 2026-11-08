@@ -31,6 +31,14 @@ impl SpanMap {
         self.origins.get(i).copied()
     }
 
+    /// The spans made from the `from`-th on, as made for a statement that has since moved by
+    /// `by` bytes: the positions written in a file move with it.
+    pub fn moved_from(&mut self, from: usize, by: i64) {
+        for (written, _) in self.origins.iter_mut().skip(from) {
+            *written = crate::surface::shift::position(*written, by);
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.origins.len()
     }

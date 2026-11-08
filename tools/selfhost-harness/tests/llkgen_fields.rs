@@ -46,7 +46,6 @@ const KEYWORDS: &[&str] = &[
     "where",
     "class",
     "instance",
-    "law",
     "extern",
     "true",
     "false",

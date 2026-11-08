@@ -2,17 +2,17 @@ import "surface.taut"
 import "occurrence.taut"
 
 pub fn surface_occurrence_term_start(value: SurfaceTerm): Nat {
-  match value: Nat {
+  ⊢ Nat from match value {
     SurfaceTermIndexedMk(slot_kind, slot_start, slot_end, slot_occurrence) => slot_start
   }
 }
 pub fn surface_occurrence_term_end(value: SurfaceTerm): Nat {
-  match value: Nat {
+  ⊢ Nat from match value {
     SurfaceTermIndexedMk(slot_kind, slot_start, slot_end, slot_occurrence) => slot_end
   }
 }
 pub fn surface_occurrence_term_id(value: SurfaceTerm): Option(TermOccurrence) {
-  match value: Option(TermOccurrence) {
+  ⊢ Option(TermOccurrence) from match value {
     SurfaceTermIndexedMk(slot_kind, slot_start, slot_end, slot_occurrence) => slot_occurrence
   }
 }
@@ -26,8 +26,8 @@ pub theorem surface_index_start(
   path: List(Nat),
   keep: Bool
 ): surface_occurrence_term_start(
-    surface_index_surfaceterm(SurfaceTermIndexedMk(kind, start, end, old), path, keep)
-  ) = start {
+  surface_index_surfaceterm(SurfaceTermIndexedMk(kind, start, end, old), path, keep)
+) = start {
   Refl
 }
 
@@ -39,8 +39,8 @@ pub theorem surface_index_end(
   path: List(Nat),
   keep: Bool
 ): surface_occurrence_term_end(
-    surface_index_surfaceterm(SurfaceTermIndexedMk(kind, start, end, old), path, keep)
-  ) = end {
+  surface_index_surfaceterm(SurfaceTermIndexedMk(kind, start, end, old), path, keep)
+) = end {
   Refl
 }
 
@@ -51,8 +51,8 @@ pub theorem surface_index_identity(
   old: Option(TermOccurrence),
   path: List(Nat)
 ): surface_occurrence_term_id(
-    surface_index_surfaceterm(SurfaceTermIndexedMk(kind, start, end, old), path, true)
-  ) = Some(TermOccurrenceMk(path)) {
+  surface_index_surfaceterm(SurfaceTermIndexedMk(kind, start, end, old), path, true)
+) = Some(TermOccurrenceMk(path)) {
   Refl
 }
 
@@ -63,8 +63,8 @@ pub theorem surface_index_erase_text(
   old: Option(TermOccurrence),
   path: List(Nat)
 ): surface_erase_occurrences(
-    surface_index_surfaceterm(SurfaceTermIndexedMk(SkText(value), start, end, old), path, true)
-  ) = surface_term_mk(SkText(value), start, end) {
+  surface_index_surfaceterm(SurfaceTermIndexedMk(SkText(value), start, end, old), path, true)
+) = surface_term_mk(SkText(value), start, end) {
   Refl
 }
 
@@ -74,12 +74,8 @@ pub theorem surface_same_span_child_identity(
   start: Nat,
   end: Nat
 ): surface_occurrence_term_id(
-    surface_index_surfaceterm(
-      surface_term_mk(SkText(value), start, end),
-      Cons(0, Cons(1, Nil)),
-      true
-    )
-  ) = Some(TermOccurrenceMk(Cons(0, Cons(1, Nil)))) {
+  surface_index_surfaceterm(surface_term_mk(SkText(value), start, end), Cons(0, Cons(1, Nil)), true)
+) = Some(TermOccurrenceMk(Cons(0, Cons(1, Nil)))) {
   Refl
 }
 
@@ -91,12 +87,12 @@ pub theorem surface_index_replaces_prior_identity(
   first: List(Nat),
   next: List(Nat)
 ): surface_occurrence_term_id(
-    surface_index_surfaceterm(
-      surface_index_surfaceterm(SurfaceTermIndexedMk(kind, start, end, old), first, true),
-      next,
-      true
-    )
-  ) = Some(TermOccurrenceMk(next)) {
+  surface_index_surfaceterm(
+    surface_index_surfaceterm(SurfaceTermIndexedMk(kind, start, end, old), first, true),
+    next,
+    true
+  )
+) = Some(TermOccurrenceMk(next)) {
   Refl
 }
 
@@ -107,37 +103,37 @@ pub theorem surface_index_equal_span_siblings(
   start: Nat,
   end: Nat
 ): surface_index_surfaceterm(
-    surface_term_mk(
-      SkApp(
-        surface_term_mk(SkVar(name), start, end),
-        Cons(surface_term_mk(SkText(text), start, end), Nil)
-      ),
-      start,
-      end
-    ),
-    Cons(0, Nil),
-    true
-  ) = SurfaceTermIndexedMk(
+  surface_term_mk(
     SkApp(
-      SurfaceTermIndexedMk(
-        SkVar(name),
-        start,
-        end,
-        Some(TermOccurrenceMk(Cons(0, Cons(0, Cons(0, Nil)))))
-      ),
-      Cons(
-        SurfaceTermIndexedMk(
-          SkText(text),
-          start,
-          end,
-          Some(TermOccurrenceMk(Cons(0, Cons(0, Cons(1, Cons(0, Nil))))))
-        ),
-        Nil
-      )
+      surface_term_mk(SkVar(name), start, end),
+      Cons(surface_term_mk(SkText(text), start, end), Nil)
     ),
     start,
-    end,
-    Some(TermOccurrenceMk(Cons(0, Nil)))
-  ) {
+    end
+  ),
+  Cons(0, Nil),
+  true
+) = SurfaceTermIndexedMk(
+  SkApp(
+    SurfaceTermIndexedMk(
+      SkVar(name),
+      start,
+      end,
+      Some(TermOccurrenceMk(Cons(0, Cons(0, Cons(0, Nil)))))
+    ),
+    Cons(
+      SurfaceTermIndexedMk(
+        SkText(text),
+        start,
+        end,
+        Some(TermOccurrenceMk(Cons(0, Cons(0, Cons(1, Cons(0, Nil))))))
+      ),
+      Nil
+    )
+  ),
+  start,
+  end,
+  Some(TermOccurrenceMk(Cons(0, Nil)))
+) {
   Refl
 }

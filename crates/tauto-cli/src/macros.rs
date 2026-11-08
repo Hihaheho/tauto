@@ -242,7 +242,11 @@ fn trace_diff(loaded: &Loaded) {
             e.macro_name,
             place(loaded, e.call.start)
         );
-        let input = if e.text.is_empty() { &e.input } else { &e.text };
+        let input = if e.text.is_empty() {
+            e.input_text()
+        } else {
+            e.text.clone()
+        };
         for l in input.lines() {
             println!("- {l}");
         }
@@ -270,7 +274,7 @@ fn inspect(loaded: &Loaded, at: &str, json: bool) -> ExitCode {
                 ("macro", Json::Str(e.macro_name.clone())),
                 ("kind", Json::Str(e.kind.into())),
                 ("syntax", Json::Str(e.syntax.clone())),
-                ("input", Json::Str(e.input.clone())),
+                ("input", Json::Str(e.input_text())),
                 ("output", Json::Str(e.output.clone())),
             ])
             .render()
@@ -281,7 +285,7 @@ fn inspect(loaded: &Loaded, at: &str, json: bool) -> ExitCode {
             e.macro_name,
             e.kind,
             i18n::t!("macros-input"),
-            e.input,
+            e.input_text(),
             i18n::t!("macros-output"),
             e.output
         );

@@ -52,14 +52,16 @@ fn matrix_proofs_detect_mutations_of_the_actual_operations() {
         let entries = check_file(&path).expect("mutated library still parses");
         std::fs::remove_dir_all(dir).unwrap();
         assert!(
-            entries.iter().any(|entry| entry.entry.name == failed
-                && matches!(entry.entry.verdict, Verdict::Failed(_))),
+            entries
+                .iter()
+                .any(|entry| entry.entry.name.as_str() == failed
+                    && matches!(entry.entry.verdict, Verdict::Failed(_))),
             "generic proof {failed} accepted the changed operation"
         );
         assert!(
             entries
                 .iter()
-                .any(|entry| entry.entry.name == "algebra_sum_swap"
+                .any(|entry| entry.entry.name.as_str() == "algebra_sum_swap"
                     && matches!(entry.entry.verdict, Verdict::Checked { .. }))
         );
     }
@@ -106,14 +108,13 @@ fn equality_adapter_rejects_a_congruent_but_wrong_product_operation() {
     let entries = check_file(&file).expect("mutated implementation still parses");
     std::fs::remove_dir_all(dir).unwrap();
     // Addition is also congruent: representation-independence alone is not product correctness.
-    assert!(entries.iter().any(
-        |e| e.entry.name == "algebra_relation_matrix_product_equality"
-            && matches!(e.entry.verdict, Verdict::Failed(_))
-    ));
+    assert!(entries.iter().any(|e| e.entry.name.as_str()
+        == "algebra_relation_matrix_product_equality"
+        && matches!(e.entry.verdict, Verdict::Failed(_))));
     assert!(
         entries
             .iter()
-            .any(|e| e.entry.name == "algebra_relation_sum_congr"
+            .any(|e| e.entry.name.as_str() == "algebra_relation_sum_congr"
                 && matches!(e.entry.verdict, Verdict::Checked { .. }))
     );
 }

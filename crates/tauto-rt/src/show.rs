@@ -3,10 +3,10 @@
 //! program's own types.
 
 use crate::stdlib::{
-    Atomic, Bytes, HashMap, Mutex, MutexGuard, Pending, Ref, Secret, Signal, Weak, atomic_load,
-    ref_with,
+    Atomic, Bytes, HashMap, Mutex, MutexGuard, Pending, Ref, Secret, Signal, SynDeclaration, Weak,
+    atomic_load, ref_with,
 };
-use crate::{Nat, Never, Owned, Product, Rc, Shared, Text, Unlink};
+use crate::{Nat, Never, Owned, Rc, Shared, Text, Unlink};
 
 /// A value already shown: what `show` carries to the host.
 #[derive(Debug, Clone)]
@@ -20,6 +20,12 @@ impl Shown {
 
 pub trait Show {
     fn show(&self) -> String;
+
+    /// The members of `#(…)` that this value is the rest of: itself, or, for a pair, its first
+    /// member and the rest of its second (`#(a, b, c)` is nested pairs).
+    fn show_members(&self) -> String {
+        self.show()
+    }
 }
 
 macro_rules! plain {
@@ -141,28 +147,13 @@ impl<T: Show, E: Show> Show for Result<T, E> {
     }
 }
 
-macro_rules! product_show {
-    ($($t:ident $i:tt),+) => {
-        impl<$($t: Show),+> Show for Product<($($t,)+)> {
-            fn show(&self) -> String {
-                let members: Vec<String> = vec![$(self.0.$i.show()),+];
-                members.join(" × ")
-            }
-        }
-    };
-}
-
-product_show!(A 0, B 1);
-product_show!(A 0, B 1, C 2);
-product_show!(A 0, B 1, C 2, D 3);
-product_show!(A 0, B 1, C 2, D 3, E 4);
-product_show!(A 0, B 1, C 2, D 3, E 4, F 5);
-product_show!(A 0, B 1, C 2, D 3, E 4, F 5, G 6);
-product_show!(A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7);
-
 impl<A: Show, B: Show> Show for (A, B) {
     fn show(&self) -> String {
-        format!("Pair {{ fst: {}, snd: {} }}", self.0.show(), self.1.show())
+        format!("#({})", self.show_members())
+    }
+
+    fn show_members(&self) -> String {
+        format!("{}, {}", self.0.show(), self.1.show_members())
     }
 }
 
@@ -243,5 +234,11 @@ impl<T> Show for Secret<T> {
 impl<T> Show for Pending<T> {
     fn show(&self) -> String {
         "Pending".to_string()
+    }
+}
+
+impl Show for SynDeclaration {
+    fn show(&self) -> String {
+        "<declaration reference>".into()
     }
 }

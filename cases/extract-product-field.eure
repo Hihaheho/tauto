@@ -1,0 +1,70 @@
+// A product written in an inductive's constructor field stays a product in the
+// declaration the program sees: matched, the field is passed to a function
+// typed with the same product, and extracted, Nib sees the same type on both
+// sides.
+@ cases.product-field-passed-to-a-function
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+inductive Element: Type { E(attrs: List(Nat × Nat)): Element }
+
+fn count(attrs: List(Nat × Nat)): Nat {
+  ⊢ Nat from match attrs {
+    Nil => 0
+    Cons(pair, rest) => 1 + count(rest)
+  }
+}
+
+fn read(element: Element): Nat {
+  ⊢ Nat from match element { E(attrs) => count(attrs) }
+}
+
+perform show("count", read(E(Nil)))
+perform show("two", read(E(Cons(#(1, 2), Cons(#(3, 4), Nil)))))
+```
+shows = ["count = 0", "two = 2"]
+rust_shows = ["count = 0", "two = 2"]
+javascript_shows = ["count = 0", "two = 2"]
+
+@ cases.labelled-product-field-passed-to-a-function
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+inductive Element: Type { E(attrs: List(@name Nat × @value Nat)): Element }
+
+fn count(attrs: List(@name Nat × @value Nat)): Nat {
+  ⊢ Nat from match attrs {
+    Nil => 0
+    Cons(pair, rest) => 1 + count(rest)
+  }
+}
+
+fn read(element: Element): Nat {
+  ⊢ Nat from match element { E(attrs) => count(attrs) }
+}
+
+perform show("count", read(E(Nil)))
+```
+shows = ["count = 0"]
+rust_shows = ["count = 0"]
+javascript_shows = ["count = 0"]
+
+@ cases.product-field-direct
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+inductive Cell: Type { C(p: Nat × Nat): Cell }
+
+fn first(p: Nat × Nat): Nat {
+  ⊢ Nat from match p { #(a, b) => a }
+}
+
+fn get(c: Cell): Nat {
+  ⊢ Nat from match c { C(p) => first(p) }
+}
+
+perform show("first", get(C(#(7, 8))))
+```
+shows = ["first = 7"]
+rust_shows = ["first = 7"]
+javascript_shows = ["first = 7"]

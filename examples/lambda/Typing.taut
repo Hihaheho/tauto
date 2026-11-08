@@ -3,7 +3,7 @@ import "Lib.taut"
 pub theorem has_pred<G: List(
   Ty
 ), A: Ty, B: Ty, i: Nat>(h: Has(Cons(B, G), Succ(i), A)): Has(G, i, A) {
-  match h: Has(G, i, A) {
+  ⊢ Has(G, i, A) from match h {
     HasThere(h0) => h0
   }
 }
@@ -23,8 +23,8 @@ pub theorem renok_up_at<xi: (
   A: Ty,
   h: Has(Cons(C, G), i, A)
 ): Has(Cons(C, D), upR(xi, i), A) {
-  match i: Has(Cons(C, D), upR(xi, i), A) {
-    Zero => match h: Has(Cons(Ty, C, D), Zero, A) {
+  ⊢ Has(Cons(C, D), upR(xi, i), A) from match i {
+    Zero => ⊢ Has(Cons(<A: Ty>, C, D), Zero, A) from match h {
       HasHere(g, a) => HasHere
     }
     Succ(m) => HasThere(r(m, A, has_pred(h)))
@@ -46,10 +46,10 @@ pub theorem ren_typing<G: List(
   xi: (Nat) -> Nat,
   D: List(Ty),
   r: RenOk(xi, G, D)
-): lc!(`$D |- ${ren(t, xi)} : $A`) {
-  match h: Typing(D, ren(t, xi), A) {
+): lc!(`$D |- $ren(t, xi) : $A`) {
+  ⊢ Typing(D, ren(t, xi), A) from match h {
     TVar(G1, i, A1, hv) => TVar(r(i, A1, hv))
-    TLam(G1, A1, B1, b, hb) => TLam(ren_typing(hb, upR(xi), Cons(Ty, A1, D), renok_up(A1, r)))
+    TLam(G1, A1, B1, b, hb) => TLam(ren_typing(hb, upR(xi), Cons(<A: Ty>, A1, D), renok_up(A1, r)))
     TApp(G1, A1, B1, f, a, hf, ha) => TApp(ren_typing(hf, xi, D, r), ren_typing(ha, xi, D, r))
     TStar(G1) => TStar
   }
@@ -58,7 +58,7 @@ pub theorem ren_typing<G: List(
 pub def SubOk(sigma: (Nat) -> Tm, G: List(Ty), D: List(Ty)): Prop :=
 ∀ i: Nat. ∀ A: Ty. (Has(G, i, A)) -> Typing(D, sigma(i), A)
 
-pub theorem renok_succ(D: List(Ty), C: Ty): RenOk(Succ, D, Cons(Ty, C, D)) {
+pub theorem renok_succ(D: List(Ty), C: Ty): RenOk(Succ, D, Cons(<A: Ty>, C, D)) {
   i => A => h => HasThere(h)
 }
 
@@ -72,13 +72,13 @@ pub theorem subok_up_at<sigma: (
   r: SubOk(sigma, G, D),
   i: Nat,
   A: Ty,
-  h: Has(Cons(Ty, C, G), i, A)
-): Typing(Cons(Ty, C, D), up(sigma, i), A) {
-  match i: Typing(Cons(Ty, C, D), up(sigma, i), A) {
-    Zero => match h: Typing(Cons(Ty, C, D), Tvar(Zero), A) {
+  h: Has(Cons(<A: Ty>, C, G), i, A)
+): Typing(Cons(<A: Ty>, C, D), up(sigma, i), A) {
+  ⊢ Typing(Cons(<A: Ty>, C, D), up(sigma, i), A) from match i {
+    Zero => ⊢ Typing(Cons(<A: Ty>, C, D), Tvar(Zero), A) from match h {
       HasHere(g, a) => TVar(HasHere)
     }
-    Succ(m) => ren_typing(r(m, A, has_pred(h)), Succ, Cons(Ty, C, D), renok_succ(D, C))
+    Succ(m) => ren_typing(r(m, A, has_pred(h)), Succ, Cons(<A: Ty>, C, D), renok_succ(D, C))
   }
 }
 
@@ -86,7 +86,7 @@ pub theorem subok_up<sigma: (
   Nat
 ) -> Tm, G: List(
   Ty
-), D: List(Ty)>(C: Ty, r: SubOk(sigma, G, D)): SubOk(up(sigma), Cons(Ty, C, G), Cons(Ty, C, D)) {
+), D: List(Ty)>(C: Ty, r: SubOk(sigma, G, D)): SubOk(up(sigma), Cons(<A: Ty>, C, G), Cons(<A: Ty>, C, D)) {
   i => A => h => subok_up_at(r, i, A, h)
 }
 
@@ -97,10 +97,10 @@ pub theorem subst_typing<G: List(
   sigma: (Nat) -> Tm,
   D: List(Ty),
   r: SubOk(sigma, G, D)
-): lc!(`$D |- ${subst(t, sigma)} : $A`) {
-  match h: Typing(D, subst(t, sigma), A) {
+): lc!(`$D |- $subst(t, sigma) : $A`) {
+  ⊢ Typing(D, subst(t, sigma), A) from match h {
     TVar(G1, i, A1, hv) => r(i, A1, hv)
-    TLam(G1, A1, B1, b, hb) => TLam(subst_typing(hb, up(sigma), Cons(Ty, A1, D), subok_up(A1, r)))
+    TLam(G1, A1, B1, b, hb) => TLam(subst_typing(hb, up(sigma), Cons(<A: Ty>, A1, D), subok_up(A1, r)))
     TApp(G1, A1, B1, f, a, hf, ha) => TApp(
       subst_typing(hf, sigma, D, r),
       subst_typing(ha, sigma, D, r)
@@ -115,10 +115,10 @@ pub theorem subok_single_at<G: List(
   ha: Typing(G, a, C),
   i: Nat,
   A: Ty,
-  h: Has(Cons(Ty, C, G), i, A)
+  h: Has(Cons(<A: Ty>, C, G), i, A)
 ): Typing(G, single(a, i), A) {
-  match i: Typing(G, single(a, i), A) {
-    Zero => match h: Typing(G, a, A) {
+  ⊢ Typing(G, single(a, i), A) from match i {
+    Zero => ⊢ Typing(G, a, A) from match h {
       HasHere(g, a0) => ha
     }
     Succ(m) => TVar(has_pred(h))
@@ -128,7 +128,7 @@ pub theorem subok_single_at<G: List(
 pub theorem subst_single_typing<G: List(
   Ty
 ), b: Tm, a: Tm, A: Ty, B: Ty>(
-  hb: lc!(`${Cons(A, G)} |- $b : $B`),
+  hb: lc!(`$Cons(A, G) |- $b : $B`),
   ha: lc!(`$G |- $a : $A`)
 ): lc!(`$G |- $b[$a] : $B`) {
   subst_typing(hb, single(a), G, i => C => h => subok_single_at(ha, i, C, h))
@@ -141,19 +141,19 @@ pub(open) inductive InvApp(G: List(Ty), f: Tm, a: Tm, B: Ty): Prop {
 pub theorem invert_app<G: List(
   Ty
 ), f: Tm, a: Tm, B: Ty>(h: lc!(`$G |- $f $a : $B`)): InvApp(G, f, a, B) {
-  match h: InvApp(G, f, a, B) {
+  ⊢ InvApp(G, f, a, B) from match h {
     TApp(hf, ha) => InvApp::Mk(hf, ha)
   }
 }
 
 pub(open) inductive InvLam(G: List(Ty), A: Ty, b: Tm, T: Ty): Prop {
-  Mk<B: Ty>(e: T = Arr(A, B), hb: Typing(Cons(Ty, A, G), b, B)): InvLam(G, A, b, T)
+  Mk<B: Ty>(e: T = Arr(A, B), hb: Typing(Cons(<A: Ty>, A, G), b, B)): InvLam(G, A, b, T)
 }
 
 pub theorem invert_lam<G: List(
   Ty
 ), A: Ty, b: Tm, T: Ty>(h: Typing(G, Lam(A, b), T)): InvLam(G, A, b, T) {
-  match h: InvLam(G, A, b, T) {
+  ⊢ InvLam(G, A, b, T) from match h {
     TLam(hb) => InvLam::Mk(Refl, hb)
   }
 }
@@ -164,30 +164,30 @@ pub theorem preservation<t: Tm, t2: Tm>(
   A: Ty,
   h: lc!(`$G |- $t : $A`)
 ): lc!(`$G |- $t2 : $A`) {
-  match s: Typing(G, t2, A) {
-    SBeta(A0, b, a) => match invert_app(h): Typing(G, subst(b, single(a)), A) {
-      Mk(A1, hf, ha) => match invert_lam(hf): Typing(G, subst(b, single(a)), A) {
-        Mk(B1, e, hb) => match e: Typing(G, subst(b, single(a)), A) {
+  ⊢ Typing(G, t2, A) from match s {
+    SBeta(A0, b, a) => ⊢ Typing(G, subst(b, single(a)), A) from match invert_app(h) {
+      Mk(A1, hf, ha) => ⊢ Typing(G, subst(b, single(a)), A) from match invert_lam(hf) {
+        Mk(B1, e, hb) => ⊢ Typing(G, subst(b, single(a)), A) from match e {
           Refl => subst_single_typing(hb, ha)
         }
       }
     }
-    SLam(A0, b, b2, hs) => match invert_lam(h): Typing(G, Lam(A0, b2), A) {
-      Mk(B1, e, hb) => match e: Typing(G, Lam(A0, b2), A) {
-        Refl => TLam(preservation(hs, Cons(Ty, A0, G), B1, hb))
+    SLam(A0, b, b2, hs) => ⊢ Typing(G, Lam(A0, b2), A) from match invert_lam(h) {
+      Mk(B1, e, hb) => ⊢ Typing(G, Lam(A0, b2), A) from match e {
+        Refl => TLam(preservation(hs, Cons(<A: Ty>, A0, G), B1, hb))
       }
     }
-    SAppL(f, f2, a, hs) => match invert_app(h): Typing(G, App(f2, a), A) {
+    SAppL(f, f2, a, hs) => ⊢ Typing(G, App(f2, a), A) from match invert_app(h) {
       Mk(A1, hf, ha) => TApp(preservation(hs, G, Arr(A1, A), hf), ha)
     }
-    SAppR(f, a, a2, hs) => match invert_app(h): Typing(G, App(f, a2), A) {
+    SAppR(f, a, a2, hs) => ⊢ Typing(G, App(f, a2), A) from match invert_app(h) {
       Mk(A1, hf, ha) => TApp(hf, preservation(hs, G, A1, ha))
     }
   }
 }
 
 pub theorem star_not_arr<G: List(Ty), A: Ty, B: Ty>(h: Typing(G, Tstar, Arr(A, B))): False {
-  match h: False {
+  ⊢ False from match h {
   }
 }
 
@@ -198,16 +198,16 @@ pub(open) inductive CanStep(t: Tm): Prop {
 pub def Prog(t: Tm): Prop := Or(Value(t), CanStep(t))
 
 pub theorem progress<t: Tm, A: Ty>(h: lc!(`|- $t : $A`)): Prog(t) {
-  match h: Prog(t) {
-    TVar(G1, i, A1, hv) => match hv: Prog(Tvar(i)) {
+  ⊢ Prog(t) from match h {
+    TVar(G1, i, A1, hv) => ⊢ Prog(Tvar(i)) from match hv {
     }
     TLam(G1, A1, B1, b, hb) => OrInl(VLam)
-    TApp(G1, A1, B1, f, a, hf, ha) => match progress(f, Arr(A1, B1), hf): Prog(App(f, a)) {
-      OrInl(vf) => (match vf: (Typing(Nil(Ty), f, Arr(A1, B1))) -> Prog(App(f, a)) {
+    TApp(G1, A1, B1, f, a, hf, ha) => ⊢ Prog(App(f, a)) from match progress(<t: f, A: Arr(A1, B1)>, hf) {
+      OrInl(vf) => (⊢ (Typing(Nil(<A: Ty>), f, Arr(A1, B1))) -> Prog(App(f, a)) from match vf {
         VLam(A0, b) => k => OrInr(CanStep::Mk(SBeta))
         VStar => k => False::elim(star_not_arr(k))
       })(hf)
-      OrInr(cf) => match cf: Prog(App(f, a)) {
+      OrInr(cf) => ⊢ Prog(App(f, a)) from match cf {
         Mk(f2, s) => OrInr(CanStep::Mk(SAppL(s)))
       }
     }
@@ -216,8 +216,8 @@ pub theorem progress<t: Tm, A: Ty>(h: lc!(`|- $t : $A`)): Prog(t) {
 }
 
 pub theorem type_safety<t: Tm, u: Tm, A: Ty>(r: lc!(`$t ~>* $u`), h: lc!(`|- $t : $A`)): Prog(u) {
-  match r: Prog(u) {
+  ⊢ Prog(u) from match r {
     StepsRefl(t0) => progress(h)
-    StepsStep(t0, u0, w, s, r0) => type_safety(r0, preservation(s, Nil(Ty), A, h))
+    StepsStep(t0, u0, w, s, r0) => type_safety(r0, preservation(s, Nil(<A: Ty>), A, h))
   }
 }

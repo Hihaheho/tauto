@@ -17,6 +17,7 @@
 //! `Unknown` atom, and an `Unknown` in a frontier is an error, so it is never
 //! read as the empty set.
 
+use crate::surface::Name;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
@@ -24,7 +25,7 @@ use tauto_parol::Span;
 
 use crate::lin::pattern_names;
 use crate::surface::{FnDecl, Handler, Pattern, Program, Stmt, SurfaceTerm, TermKind};
-use crate::types::{Datas, ParamId, Ty, TypeReport, prelude, site};
+use crate::types::{Datas, ParamId, Ty, TypeReport, site};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CycleDiag {
@@ -85,7 +86,7 @@ enum Bound {
 }
 
 struct Binding {
-    name: String,
+    name: Name,
     bound: Bound,
     frame: usize,
 }
@@ -181,6 +182,8 @@ fn extern_model(name: &str) -> Option<Extern> {
         | "Os::write_file"
         | "Os::read_bytes"
         | "Os::write_bytes"
+        | "Os::read_under"
+        | "Os::read_bytes_under"
         | "Os::secure_random"
         | "Os::create_dir"
         | "Os::list_dir"
@@ -217,6 +220,11 @@ fn extern_model(name: &str) -> Option<Extern> {
         | "Pending::take"
         | "Pending::is_ready"
         | "Pending::signal"
+        | "Signal::fresh"
+        | "Signal::raise"
+        | "Signal::is_raised"
+        | "Signal::either"
+        | "Signal::listen"
         | "Mutex::claim"
         // The guard holds the mutex, so reading or writing through it is
         // reading or writing the mutex's content.
@@ -328,24 +336,30 @@ pub struct Analysis<'a> {
     lams: Vec<LamInfo>,
     unknowns: Vec<(String, Span)>,
     /// The values performed at each effect's operation, and what resumes it.
-    effect_args: HashMap<String, Vec<Node>>,
-    effect_resume: HashMap<String, Node>,
-    globals: HashMap<String, usize>,
-    methods: HashMap<String, Vec<usize>>,
+    effect_args: HashMap<Name, Vec<Node>>,
+    effect_resume: HashMap<Name, Node>,
+    globals: HashMap<Name, usize>,
+    methods: HashMap<Name, Vec<usize>>,
     bindings: Vec<Binding>,
     frames: Vec<Frame>,
     /// The frames being built, innermost last: every value made and every
     /// name bound flows into the last.
     scopes: Vec<Node>,
+    /// Calls whose row has no effect a handler captures a continuation of: their
+    /// frames are not on the stack of any continuation (`lean/Proto/Nib/KeptFrames.lean`).
+    settled_calls: HashSet<crate::surface::TermId>,
+    /// What made each closure or continuation, for the path of a cycle.
+    lam_sites: HashMap<usize, (&'static str, Span)>,
+    next_lam_site: Option<(&'static str, Span)>,
     /// Nodes of the global function declarations by name.
     lam_names: Vec<String>,
-    hosts: HashMap<String, usize>,
+    hosts: HashMap<Name, usize>,
     /// Functions an `extern` block declares that the checker does not know.
-    host_fns: HashSet<String>,
+    host_fns: HashSet<Name>,
     /// The generic global functions, analysed afresh at each direct call.
-    generic_fns: HashMap<String, Rc<FnDecl>>,
+    generic_fns: HashMap<Name, Rc<FnDecl>>,
     /// The generic functions being analysed afresh now, innermost last.
-    cloning: Vec<String>,
+    cloning: Vec<Name>,
     /// How many fresh copies have been made: past `MAX_CLONES` a call
     /// shares the one copy every other use reads.
     clones: usize,
@@ -360,6 +374,9 @@ impl<'a> Analysis<'a> {
     fn new(types: &'a TypeReport) -> Self {
         let mut a = Analysis {
             types,
+            settled_calls: HashSet::new(),
+            lam_sites: HashMap::new(),
+            next_lam_site: None,
             pts: Vec::new(),
             succ: Vec::new(),
             loads: Vec::new(),
@@ -428,12 +445,12 @@ impl<'a> Analysis<'a> {
     }
 
     /// The state of a host function, one for all its calls.
-    fn host_cell(&mut self, name: &str, span: Span) -> usize {
+    fn host_cell(&mut self, name: &Name, span: Span) -> usize {
         if let Some(s) = self.hosts.get(name) {
             return *s;
         }
         let (s, _) = self.cell(&format!("the host state of {name}"), span);
-        self.hosts.insert(name.to_string(), s);
+        self.hosts.insert(name.clone(), s);
         s
     }
 
@@ -448,7 +465,11 @@ impl<'a> Analysis<'a> {
             env,
             frame,
         });
-        self.lams.len() - 1
+        let l = self.lams.len() - 1;
+        if let Some(site) = self.next_lam_site.take() {
+            self.lam_sites.insert(l, site);
+        }
+        l
     }
 
     fn join(&mut self, parts: &[Node]) -> Node {
@@ -472,7 +493,7 @@ impl<'a> Analysis<'a> {
         self.types.term(t)
     }
 
-    fn local_ty(&self, name: &str, at: &SurfaceTerm) -> Option<&Ty> {
+    fn local_ty(&self, name: &Name, at: &SurfaceTerm) -> Option<&Ty> {
         self.types.local(name, site(at))
     }
 
@@ -485,8 +506,10 @@ impl<'a> Analysis<'a> {
         }
     }
 
-    fn find(&self, name: &str) -> Option<usize> {
-        self.bindings.iter().rposition(|b| b.name == name)
+    // ---- names ----
+
+    fn find(&self, name: &Name) -> Option<usize> {
+        self.bindings.iter().rposition(|b| b.name == *name)
     }
 
     fn hold(&mut self, n: Node) {
@@ -502,12 +525,12 @@ impl<'a> Analysis<'a> {
         }
     }
 
-    fn bind(&mut self, name: &str, bound: Bound) {
+    fn bind(&mut self, name: &Name, bound: Bound) {
         let held = self.bound_node(bound);
         self.hold(held);
         let frame = self.frames.len() - 1;
         self.bindings.push(Binding {
-            name: name.to_string(),
+            name: name.clone(),
             bound,
             frame,
         });
@@ -537,7 +560,7 @@ impl<'a> Analysis<'a> {
                 Stmt::Fn(f) => {
                     let l = self.new_lam(f.params.len());
                     self.globals.insert(f.name.clone(), l);
-                    self.lam_names.push(f.name.clone());
+                    self.lam_names.push(f.name.to_string());
                     if !f.generics.is_empty() {
                         self.generic_fns.insert(f.name.clone(), Rc::new(f.clone()));
                     }
@@ -553,7 +576,7 @@ impl<'a> Analysis<'a> {
                 Stmt::Mutual { items, .. } => self.collect_fns(items, decls),
                 Stmt::Extern { fns, .. } => {
                     for f in fns {
-                        self.lam_names.push(f.name.clone());
+                        self.lam_names.push(f.name.to_string());
                         if extern_model(&f.name).is_none() {
                             self.host_fns.insert(f.name.clone());
                         }
@@ -641,7 +664,8 @@ impl<'a> Analysis<'a> {
     fn eval_inner(&mut self, t: &SurfaceTerm, raw: bool) -> Node {
         match &*t.kind {
             TermKind::Var(name) => self.var(name, t, raw),
-            TermKind::Nat(_)
+            TermKind::Declaration(_)
+            | TermKind::Nat(_)
             | TermKind::Float(_)
             | TermKind::Text(_)
             | TermKind::Bool(_)
@@ -681,10 +705,14 @@ impl<'a> Analysis<'a> {
             }
             TermKind::Block(stmts) => self.block(stmts, raw),
             TermKind::Lam { params, body, .. } => {
+                self.next_lam_site = Some(("closure", t.span));
                 self.closure(params, &vec![None; params.len()], body, false)
             }
             TermKind::BorrowLam { borrows, lam } => match &*lam.kind {
-                TermKind::Lam { params, body, .. } => self.closure(params, borrows, body, false),
+                TermKind::Lam { params, body, .. } => {
+                    self.next_lam_site = Some(("closure", t.span));
+                    self.closure(params, borrows, body, false)
+                }
                 _ => self.unknown("a borrowing closure of an unexpected shape", t.span),
             },
             TermKind::Borrow { term, .. } => self.borrow(term),
@@ -735,9 +763,9 @@ impl<'a> Analysis<'a> {
         }
     }
 
-    fn effect_slots(&mut self, effect: &str, arity: usize) -> Vec<Node> {
+    fn effect_slots(&mut self, effect: &Name, arity: usize) -> Vec<Node> {
         if !self.effect_args.contains_key(effect) {
-            self.effect_args.insert(effect.to_string(), Vec::new());
+            self.effect_args.insert(effect.clone(), Vec::new());
         }
         while self.effect_args[effect].len() < arity {
             let n = self.node();
@@ -746,16 +774,16 @@ impl<'a> Analysis<'a> {
         self.effect_args[effect][..arity].to_vec()
     }
 
-    fn effect_resume_node(&mut self, effect: &str) -> Node {
+    fn effect_resume_node(&mut self, effect: &Name) -> Node {
         if let Some(n) = self.effect_resume.get(effect) {
             return *n;
         }
         let n = self.node();
-        self.effect_resume.insert(effect.to_string(), n);
+        self.effect_resume.insert(effect.clone(), n);
         n
     }
 
-    fn var(&mut self, name: &str, t: &SurfaceTerm, raw: bool) -> Node {
+    fn var(&mut self, name: &Name, t: &SurfaceTerm, raw: bool) -> Node {
         if let Some(b) = self.find(name) {
             self.capture(b);
             return match self.bindings[b].bound {
@@ -927,7 +955,7 @@ impl<'a> Analysis<'a> {
 
     fn closure(
         &mut self,
-        params: &[String],
+        params: &[Name],
         borrows: &[Option<bool>],
         body: &SurfaceTerm,
         raw: bool,
@@ -940,7 +968,7 @@ impl<'a> Analysis<'a> {
     fn closure_body(
         &mut self,
         l: usize,
-        params: &[String],
+        params: &[Name],
         borrows: &[Option<bool>],
         body: &SurfaceTerm,
         raw: bool,
@@ -970,19 +998,24 @@ impl<'a> Analysis<'a> {
 
     fn app(&mut self, t: &SurfaceTerm, function: &SurfaceTerm, arguments: &[SurfaceTerm]) -> Node {
         let named = match &*function.kind {
-            TermKind::Var(n) if self.find(n).is_none() => Some(n.as_str()),
+            TermKind::Var(n) if self.find(n).is_none() => Some(n),
             _ => None,
         };
+        let settled = self.settled_calls.contains(&t.id());
         if let Some(name) = named {
             if let Some(l) = self.clone_of(name) {
                 self.args(arguments, Some(l));
-                self.hold(self.lams[l].frame);
+                if !settled {
+                    self.hold(self.lams[l].frame);
+                }
                 return self.lams[l].ret;
             }
             if let Some(l) = self.globals.get(name).copied() {
                 let args = self.args(arguments, Some(l));
                 let res = self.lams[l].ret;
-                self.hold(self.lams[l].frame);
+                if !settled {
+                    self.hold(self.lams[l].frame);
+                }
                 let _ = args;
                 return res;
             }
@@ -1005,7 +1038,10 @@ impl<'a> Analysis<'a> {
                 }
                 return res;
             }
-            if self.types.datas.has_ctor(name) || is_operator(name) || name == "Tuple" {
+            if self.types.datas.has_ctor(name)
+                || is_operator(name)
+                || tauto_surface::bindings::is_library(&name, "Tuple")
+            {
                 let parts: Vec<Node> = arguments.iter().map(|a| self.eval(a, false)).collect();
                 return self.join(&parts);
             }
@@ -1017,7 +1053,11 @@ impl<'a> Analysis<'a> {
         let callee = self.eval(function, false);
         let args: Vec<Node> = arguments.iter().map(|a| self.eval(a, false)).collect();
         let res = self.node();
-        let frame = self.scopes.last().copied().unwrap_or(EMPTY);
+        let frame = if settled {
+            self.node()
+        } else {
+            self.scopes.last().copied().unwrap_or(EMPTY)
+        };
         self.calls.push(Call {
             callee,
             args,
@@ -1035,7 +1075,7 @@ impl<'a> Analysis<'a> {
     /// so it makes every value and storage the call may make; a call to a
     /// function already being copied (recursion) and every use as a value
     /// read the shared copy instead.
-    fn clone_of(&mut self, name: &str) -> Option<usize> {
+    fn clone_of(&mut self, name: &Name) -> Option<usize> {
         let decl = self.generic_fns.get(name)?.clone();
         if self.cloning.iter().any(|n| n == name) || self.clones >= MAX_CLONES {
             return None;
@@ -1053,7 +1093,7 @@ impl<'a> Analysis<'a> {
         );
         let bindings = std::mem::take(&mut self.bindings);
         let scopes = std::mem::take(&mut self.scopes);
-        self.cloning.push(name.to_string());
+        self.cloning.push(name.clone());
         self.function(l, &decl);
         self.cloning.pop();
         self.frames = frames;
@@ -1075,7 +1115,7 @@ impl<'a> Analysis<'a> {
     fn extern_call(
         &mut self,
         model: Extern,
-        name: &str,
+        name: &Name,
         t: &SurfaceTerm,
         arguments: &[SurfaceTerm],
     ) -> Node {
@@ -1233,6 +1273,7 @@ impl<'a> Analysis<'a> {
                     if let Some(k) = cont {
                         // The continuation holds the stack of the body and
                         // the handler.
+                        self.next_lam_site = Some(("continuation", arm.span));
                         let l = self.new_lam(1);
                         let resume = self.effect_resume_node(effect);
                         let p = self.lams[l].params[0];
@@ -1398,6 +1439,76 @@ impl<'a> Analysis<'a> {
         (cells, unknown)
     }
 
+    /// The closures and continuations through which `contents` holds `target`.
+    fn held_through(&self, contents: Node, target: usize) -> Vec<usize> {
+        let mut stack: Vec<(Atom, Vec<usize>)> = self.pts[contents]
+            .iter()
+            .map(|a| (*a, Vec::new()))
+            .collect();
+        let mut seen = BTreeSet::new();
+        while let Some((atom, path)) = stack.pop() {
+            match atom {
+                Atom::Cell(c) | Atom::Place(c) if c == target => return path,
+                Atom::Lam(l) if seen.insert(l) => {
+                    let mut next = path.clone();
+                    next.push(l);
+                    stack.extend(
+                        self.pts[self.lams[l].env]
+                            .iter()
+                            .map(|a| (*a, next.clone())),
+                    );
+                }
+                _ => {}
+            }
+        }
+        Vec::new()
+    }
+
+    /// The shortest way from storage `start` back to itself, one step a line. A place is
+    /// written `«byte N»`, which whoever knows the files replaces.
+    fn cycle_path(&self, start: usize, edges: &[BTreeSet<usize>]) -> String {
+        let mut parent: HashMap<usize, usize> = HashMap::new();
+        let mut queue: std::collections::VecDeque<usize> = edges[start].iter().copied().collect();
+        for d in edges[start].iter() {
+            parent.insert(*d, start);
+        }
+        while let Some(c) = queue.pop_front() {
+            if c == start {
+                break;
+            }
+            for d in &edges[c] {
+                if !parent.contains_key(d) {
+                    parent.insert(*d, c);
+                    queue.push_back(*d);
+                }
+            }
+        }
+        let mut steps = vec![start];
+        let mut at = parent[&start];
+        while at != start {
+            steps.push(at);
+            at = parent[&at];
+        }
+        steps.reverse();
+        let mut out = String::new();
+        for (i, c) in steps.iter().enumerate() {
+            let next = steps[(i + 1) % steps.len()];
+            let info = &self.cells[*c];
+            out.push_str(&format!(
+                "\n  {} «byte {}» holds",
+                info.what, info.span.start
+            ));
+            for l in self.held_through(info.contents, next) {
+                if let Some((what, span)) = self.lam_sites.get(&l) {
+                    out.push_str(&format!(" {what} «byte {}» which holds", span.start));
+                }
+            }
+            let target = &self.cells[next];
+            out.push_str(&format!(" {} «byte {}»", target.what, target.span.start));
+        }
+        out
+    }
+
     /// The errors, each independent of the order the analysis numbered
     /// things in, sorted by where they are: what the self-hosted checker
     /// computes the same.
@@ -1462,6 +1573,7 @@ impl<'a> Analysis<'a> {
             } else {
                 format!("strong reference cycle among {}", names.join(", "))
             };
+            let message = format!("{message}{}", self.cycle_path(c, &edges));
             out.push(CycleDiag {
                 message,
                 span: self.cells[component[0]].span,
@@ -1486,7 +1598,7 @@ fn is_operator(name: &str) -> bool {
 }
 
 /// The name a place starts at: `x`, `x.f`.
-fn place_root(t: &SurfaceTerm) -> Option<String> {
+fn place_root(t: &SurfaceTerm) -> Option<Name> {
     match &*t.kind {
         TermKind::Var(n) => Some(n.clone()),
         TermKind::Field { base, .. } => place_root(base),
@@ -1494,7 +1606,7 @@ fn place_root(t: &SurfaceTerm) -> Option<String> {
     }
 }
 
-fn holds(datas: &Datas, t: &Ty, seen: &mut HashSet<String>) -> bool {
+fn holds(datas: &Datas, t: &Ty, seen: &mut HashSet<Name>) -> bool {
     match t {
         Ty::Int(_)
         | Ty::Bool
@@ -1510,16 +1622,27 @@ fn holds(datas: &Datas, t: &Ty, seen: &mut HashSet<String>) -> bool {
         // its parameter counting as an unknown type.
         Ty::Param(p, _) if matches!(p.id(), ParamId::Data { .. }) => false,
         Ty::Fn(..) | Ty::Poly(..) | Ty::Var(_) | Ty::Param(..) | Ty::App(..) => true,
-        Ty::Union(ts) | Ty::Product(ts) => ts.iter().any(|t| holds(datas, t, seen)),
+        Ty::Union(ts) => ts.iter().any(|t| holds(datas, t, seen)),
         Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) => holds(datas, t, seen),
         Ty::Named(n, args) => {
-            if matches!(
-                n.as_str(),
-                "Ref" | "Mutex" | "MutexGuard" | "Vec" | "HashMap" | "Slice" | "Task" | "Pending"
-            ) {
+            if tauto_surface::bindings::is_library(n, n.as_str())
+                && matches!(
+                    n.as_str(),
+                    "Ref"
+                        | "Mutex"
+                        | "MutexGuard"
+                        | "Vec"
+                        | "HashMap"
+                        | "Slice"
+                        | "Task"
+                        | "Pending"
+                )
+            {
                 return true;
             }
-            if matches!(n.as_str(), "Atomic" | "Buf" | "Bytes") {
+            if tauto_surface::bindings::is_library(n, n.as_str())
+                && matches!(n.as_str(), "Atomic" | "Buf" | "Bytes" | "SynDeclaration")
+            {
                 return false;
             }
             if args.iter().any(|a| holds(datas, a, seen)) {
@@ -1571,7 +1694,7 @@ fn storage_kinds(
     datas: &Datas,
     t: &Ty,
     kinds: &mut BTreeSet<&'static str>,
-    seen: &mut HashSet<String>,
+    seen: &mut HashSet<Name>,
 ) -> bool {
     match t {
         Ty::Int(_)
@@ -1585,7 +1708,7 @@ fn storage_kinds(
         // As in `holds`: the argument the `Named` case has already read.
         Ty::Param(p, _) if matches!(p.id(), ParamId::Data { .. }) => true,
         Ty::Fn(..) | Ty::Poly(..) | Ty::Var(_) | Ty::Param(..) | Ty::App(..) => false,
-        Ty::Union(ts) | Ty::Product(ts) => ts.iter().all(|t| storage_kinds(datas, t, kinds, seen)),
+        Ty::Union(ts) => ts.iter().all(|t| storage_kinds(datas, t, kinds, seen)),
         Ty::Tagged(_, t) | Ty::Info(t) | Ty::Borrow(t, _) => storage_kinds(datas, t, kinds, seen),
         Ty::Named(n, args) => {
             // The storages the prelude declares, read by name as `holds`
@@ -1594,7 +1717,9 @@ fn storage_kinds(
                 kinds.insert(k);
                 return true;
             }
-            if matches!(n.as_str(), "Atomic" | "Buf" | "Bytes") {
+            if tauto_surface::bindings::is_library(n, n.as_str())
+                && matches!(n.as_str(), "Atomic" | "Buf" | "Bytes" | "SynDeclaration")
+            {
                 return true;
             }
             if !args.iter().all(|a| storage_kinds(datas, a, kinds, seen)) {
@@ -1620,8 +1745,11 @@ fn storage_kinds(
     }
 }
 
-fn storage_kind_of_type(name: &str) -> Option<&'static str> {
-    Some(match name {
+fn storage_kind_of_type(name: &Name) -> Option<&'static str> {
+    if !tauto_surface::bindings::is_library(name, name.as_str()) {
+        return None;
+    }
+    Some(match name.as_str() {
         "Ref" => "Ref",
         "Mutex" => "Mutex",
         "Vec" => "Vec",
@@ -1631,10 +1759,51 @@ fn storage_kind_of_type(name: &str) -> Option<&'static str> {
 }
 
 /// The reference cycles a program may build, as errors.
+/// The calls that cannot be on the stack when a continuation is kept: an arm that only calls its
+/// `k` keeps nothing. A row that cannot be
+/// read (an error, a row variable, an effect not followed) keeps the call.
+fn settled_calls(program: &Program, types: &TypeReport) -> HashSet<crate::surface::TermId> {
+    let rows = crate::rows::check_program_rows_with_types(program, types);
+    if !rows.errors.is_empty() {
+        return HashSet::new();
+    }
+    let mut captured: HashSet<Name> = HashSet::new();
+    let prelude = crate::types::prelude_for(program);
+    for stmt in prelude.stmts.iter().chain(&program.stmts) {
+        let mut stmt = stmt.clone();
+        crate::surface::walk::stmt(&mut stmt, &mut |t| {
+            if let TermKind::Handle { handlers, .. } = &*t.kind {
+                for h in handlers {
+                    if let Handler::Operation {
+                        effect,
+                        cont: Some(k),
+                        guard,
+                        body,
+                        ..
+                    } = h
+                        && crate::lin::keeps_continuation(k, guard.as_ref(), body)
+                    {
+                        captured.insert(effect.clone());
+                    }
+                }
+            }
+        });
+    }
+    rows.calls
+        .iter()
+        .filter(|(_, row)| {
+            row.iter()
+                .all(|e| e.row_variable().is_none() && !e.starts_with('?') && !captured.contains(e))
+        })
+        .map(|(id, _)| *id)
+        .collect()
+}
+
 pub fn check(program: &Program, types: &TypeReport) -> Vec<CycleDiag> {
     let mut a = Analysis::new(types);
+    a.settled_calls = settled_calls(program, types);
     let mut decls = Vec::new();
-    a.collect_fns(&prelude().stmts, &mut decls);
+    a.collect_fns(&crate::types::prelude_for(program).stmts, &mut decls);
     a.collect_fns(&program.stmts, &mut decls);
     a.frames.push(Frame {
         lam: None,

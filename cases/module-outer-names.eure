@@ -1,0 +1,45 @@
+description = "Inside a module, a short name that names both the module's own declaration and one declared outside every module is ambiguous; the module's own is written with its path."
+
+// `u8` in `Font` could be `Font::u8` or the builtin type: neither is chosen.
+@ cases.a-module-function-named-as-a-builtin-type-is-ambiguous
+source = ```tauto
+module Font {
+  fn u8(x: i64): i64 { x + 1 }
+  fn two(): u8 { 2 }
+}
+```
+types = "error: u8 names both Font::u8 and a declaration outside every module here"
+
+// A top-level function and the module's function of the same name.
+@ cases.a-module-function-named-as-a-top-level-one-is-ambiguous
+source = ```tauto
+fn fire(x: i64): i64 { x * 10 }
+module Ui {
+  fn fire(x: i64): i64 { x + 1 }
+  fn both(): i64 { fire(1) }
+}
+```
+types = "error: fire names both Ui::fire and a declaration outside every module here"
+
+// Written with its path, the module's function is not ambiguous, and
+// declaring it alone changes nothing.
+@ cases.the-module-function-written-with-its-path
+source = ```tauto
+module Font {
+  fn u8(x: i64): i64 { x + 1 }
+  fn shifted(): i64 { Font::u8(41) }
+}
+perform show("shifted", Font::shifted())
+```
+shows = ["shifted = 42"]
+
+// A name only the module declares is written short inside it.
+@ cases.a-name-only-the-module-declares-is-written-short
+source = ```tauto
+module M {
+  fn width(): i64 { 3 }
+  fn area(): i64 { width() * width() }
+}
+perform show("area", M::area())
+```
+shows = ["area = 9"]

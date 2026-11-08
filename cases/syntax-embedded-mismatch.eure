@@ -1,0 +1,112 @@
+description = "A caller's expression that a macro places inside a call of its own and that does not fit is pointed at where the caller wrote it, not at the macro's call around it. An argument is checked against its parameter's type, so a call in the argument takes its instance from that type first, and the mismatch is at the part that does not fit. A member of a product written with `#(…)` that fits no member expected of it is pointed at the same way."
+@ cases.embedded-expression-in-a-macro-call
+entry = "src/main.taut"
+files."Tauto.eure" = 'package { name = "embedded-mismatch" version = "0.1.0" }'
+files."src/syntax-defs.taut" = ````tauto
+import std::prelude::Macro
+syntax!(caller, ```par
+{{par:caller_expression}}```) => struct Root, fn parse
+pub fn count(xs: List(i64)): i64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + count(rest)
+  }
+}
+macro fn one(e: caller::Root): SynExpr {
+  let body := e.tauto_expr
+  quote { count(Cons($body, Nil)) }
+}
+````
+files."src/main.taut" = ````tauto
+import std::prelude::Macro
+import "syntax-defs.taut"
+let q := "text"
+let n := one!(```caller
+  ($q)
+```)
+````
+diagnostics[] {
+  stage = "types"
+  file = "src/main.taut"
+  message = "an argument: Text does not fit i64"
+  span = "($«»q)"
+}
+
+@ cases.argument-in-a-call-of-an-argument
+source = ```tauto
+fn count(xs: List(i64)): i64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + count(rest)
+  }
+}
+let n := count(Cons(1, Cons("two", Nil)))
+```
+types = "error: an argument: Text does not fit i64"
+diagnostics[] {
+  stage = "types"
+  message = "an argument: Text does not fit i64"
+  span = "Cons(1, Cons(«\"two\"», Nil))"
+}
+
+@ cases.embedded-expression-in-a-macro-product
+entry = "src/main.taut"
+files."Tauto.eure" = 'package { name = "embedded-product-mismatch" version = "0.1.0" }'
+files."src/syntax-defs.taut" = ````tauto
+import std::prelude::Macro
+syntax!(caller, ```par
+{{par:caller_expression}}```) => struct Root, fn parse
+pub fn count(xs: List(Text × i64)): i64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + count(rest)
+  }
+}
+macro fn field(e: caller::Root): SynExpr {
+  let body := e.tauto_expr
+  quote { count(Cons(#("key", $body), Nil)) }
+}
+````
+files."src/main.taut" = ````tauto
+import std::prelude::Macro
+import "syntax-defs.taut"
+let q := "text"
+let n := field!(```caller
+  ($q)
+```)
+````
+diagnostics[] {
+  stage = "types"
+  file = "src/main.taut"
+  message = "a member of a product: Text does not fit i64"
+  span = "($«»q)"
+}
+
+@ cases.member-of-a-product-in-an-argument
+source = ```tauto
+fn count(xs: List(Text × i64)): i64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + count(rest)
+  }
+}
+let n := count(Cons(#("key", "two"), Nil))
+```
+types = "error: a member of a product: Text does not fit i64"
+diagnostics[] {
+  stage = "types"
+  message = "a member of a product: Text does not fit i64"
+  span = "Cons(#(\"key\", «\"two\"»), Nil)"
+}
+
+@ cases.members-of-a-product-that-trade-places
+source = ```tauto
+fn count(xs: List(Text × i64)): i64 {
+  match xs {
+    Nil => 0
+    Cons(x, rest) => 1 + count(rest)
+  }
+}
+let n := count(Cons(#(2, "key"), Nil))
+```
+types = "ok"

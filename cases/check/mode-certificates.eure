@@ -1,0 +1,410 @@
+@ cases.handwritten-contract
+source = path`../fixtures/mode-certificates.taut`
+checks_all = "ok"
+diagnostics = []
+
+@ cases.generated-contracts
+source = path`../fixtures/mode-generated.taut`
+diagnostics = []
+checks.Depth = "ok"
+checks.Le = "ok"
+checks.answer = "ok"
+checks.empty_depth = "ok"
+checks.two_depth = "ok"
+checks.le_bool = "ok"
+checks.le_true = "ok"
+checks.le_false = "ok"
+checks.Nested = "ok"
+checks.nested_value = "ok"
+checks.nested_yes = "ok"
+checks.nested_no = "ok"
+checks.Mixed = "ok"
+checks.mixed_value = "ok"
+checks.mixed_left = "ok"
+checks.mixed_right = "ok"
+checks.mixed_none = "ok"
+checks.Packet = "ok"
+checks.Build = "ok"
+checks.BoolAnswer = "ok"
+checks.bool_dec = "ok"
+checks.Select = "ok"
+checks.selected = "ok"
+checks.selected_yes = "ok"
+checks.selected_diff = "ok"
+checks.selected_shape = "ok"
+checks.depth_unique = "ok"
+checks.select_contract = "ok"
+checks.le_contract = "ok"
+checks.NeverRelated = "ok"
+checks.never_contract = "ok"
+checks.BoolIdentity = "ok"
+checks.bool_value = "ok"
+checks.bool_true = "ok"
+checks.bool_false = "ok"
+checks.depth = "ok"
+checks.Measured = "ok"
+checks.le = "ok"
+checks.LeResult = "ok"
+checks.nested = "ok"
+checks.NestedAnswer = "ok"
+checks.mixed = "ok"
+checks.MixedAnswer = "ok"
+checks.build = "ok"
+checks.Built = "ok"
+checks.select = "ok"
+checks.Selected = "ok"
+checks.never = "ok"
+checks.NeverAnswer = "ok"
+checks.bool_identity = "ok"
+checks.BoolIdentityAnswer = "ok"
+
+@ cases.requires-rec
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(`f(in n, out m) -> Answer { Yes | No }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop { Rule: R(Zero, Zero) }
+```
+macro_error = "exactly one rec position"
+
+@ cases.one-rec
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(`f(rec n, rec m) -> Answer { Yes | No }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop { Rule: R(Zero, Zero) }
+```
+macro_error = "exactly one rec position"
+
+@ cases.one-output
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(`f(rec n, out m, out k) -> Answer { Yes | No }`) => inductive Answer, fn f
+inductive R: (Nat, Nat, Nat) -> Prop { Rule: R(Zero, Zero, Zero) }
+```
+macro_error = "at most one out position"
+
+@ cases.distinct-position-names
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(`f(rec n, out n) -> Answer { Yes | No }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop { Rule: R(Zero, Zero) }
+```
+macro_error = "repeated position name n"
+
+@ cases.linear-inputs
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(`f(rec n, in m) -> Answer { Yes | No }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop { Rule<x: Nat>: R(x, x) }
+```
+macro_error = "rule Rule repeats input variable x"
+
+@ cases.unbound-premise-input
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(`f(rec n, out m) -> Answer { Yes | No }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop {
+  Rule<n: Nat, hidden: Nat>(h: R(hidden, Zero)): R(Succ(n), Zero)
+}
+```
+macro_error = "rule Rule has unbound hidden in inputs of premise h"
+
+@ cases.unbound-output
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(`f(rec n, out m) -> Answer { Yes | No }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop { Rule<n: Nat, hidden: Nat>: R(n, hidden) }
+```
+macro_error = "rule Rule has unbound hidden in the conclusion output"
+
+@ cases.nondecreasing-recursion
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(`f(rec n, out m) -> Answer { Yes | No }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop {
+  Rule<n: Nat, m: Nat>(h: R(Succ(n), m)): R(Succ(n), m)
+}
+```
+macro_error = "premise h does not recurse on a strict input subterm"
+
+@ cases.non-constructor-input
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+fn twice(n: Nat): Nat { n }
+@mode!(`f(rec n) -> Answer { Yes | No }`) => inductive Answer, fn f
+inductive R: (Nat) -> Prop { Rule<n: Nat>: R(twice(n)) }
+```
+macro_error = "rule Rule has a non-constructor pattern twice"
+
+@ cases.dependent-position-order
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(`f(in T, rec value, out result) -> Answer { Yes | No }`) => inductive Answer, fn f
+inductive R: (A: Type) -> (A) -> (A) -> Prop {
+  Rule<A: Type, x: A>: R(A, x, x)
+}
+```
+macro_error = "type of position value depends on unavailable position T"
+
+@ cases.duplicate-equality
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(`f(rec n, out m) -> Answer { Yes | No } eq Nat: dec { Same | Diff } eq Nat: dec { Same | Diff }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop { Rule: R(Zero, Zero) }
+```
+macro_error = "duplicate eq clause for Nat"
+
+@ cases.duplicate-via
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(`f(rec n, out m) -> Answer { Yes | No } via R: g { Found | Absent } via R: g { Found | Absent }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop { Rule: R(Zero, Zero) }
+```
+macro_error = "duplicate via clause for R"
+
+@ cases.non-functional
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(`f(rec n, out m) -> Answer { Yes | No }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop {
+  RZero: R(Zero, Zero)
+  ROne: R(Zero, Succ(Zero))
+}
+```
+macro_error = "the rules RZero and ROne apply to the same inputs"
+
+@ cases.type-is-not-a-proposition
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(`f(rec n) -> Answer { Yes | No }`) => inductive Answer, fn f
+inductive R: (Nat) -> Type { Rule: R(Zero) }
+```
+macro_error = "the relation must end in Prop"
+
+@ cases.missing-equality
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(`f(rec n, in m) -> Answer { Yes | No }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop {
+  RZero<m: Nat>: R(Zero, m)
+  RSucc<n: Nat, m: Nat>(h: R(n, m)): R(Succ(n), m)
+}
+@mode!(`g(rec n, out m) -> Computed { Good | Bad }`) => inductive Computed, fn g
+inductive S: (Nat, Nat) -> Prop {
+  SZero: S(Zero, Zero)
+  SSucc<n: Nat>(h: S(n, n)): S(Succ(n), n)
+}
+```
+macro_error = "no eq clause for the compared output type"
+
+@ cases.via-needs-uniqueness
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+inductive Other: (Nat, Nat) -> Prop { OtherRule<n: Nat>: Other(n, n) }
+inductive OldAnswer(n: Nat): Type {
+  Good(out: Nat, h: Other(n, out)): OldAnswer(n)
+  Bad(refute: (∀ out: Nat. (Other(n, out)) -> False)): OldAnswer(n)
+}
+fn other(n: Nat): OldAnswer(n) { Good(n, OtherRule) }
+@mode!(`f(rec n, out m) -> Answer { Yes | No } via Other: other { Good | Bad }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop { Rule<n: Nat, m: Nat>(h: Other(n, m)): R(n, m) }
+```
+macro_error = "via Other success needs output, derivation and uniqueness"
+
+@ cases.via-needs-refutation
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+inductive Other: (Nat, Nat) -> Prop { OtherRule<n: Nat>: Other(n, n) }
+inductive OldAnswer(n: Nat): Type {
+  Good(out: Nat, h: Other(n, out), unique: (∀ y: Nat. (Other(n, y)) -> Eq(Nat, y, out))): OldAnswer(n)
+  Bad: OldAnswer(n)
+}
+fn other(n: Nat): OldAnswer(n) { Good(n, OtherRule, y => h => ⊢ Eq(Nat, y, n) from match h { OtherRule(k) => Refl }) }
+@mode!(`f(rec n, out m) -> Answer { Yes | No } via Other: other { Good | Bad }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop { Rule<n: Nat, m: Nat>(h: Other(n, m)): R(n, m) }
+```
+macro_error = "via Other rejection needs a refutation"
+
+@ cases.constructor-metadata
+entry = "main.taut"
+files."lib.taut" = ```tauto
+import std::prelude::Macro
+
+pub macro fn metadata(c: Judgement): SynExpr ! {elab} {
+  let list_ok := match Elab::constructor_arity(SynIdent { declaration: None, name: "Cons", ctx: SynCtx { scopes: Nil }, span: SynSpan { id: 0 } }) { Some(n) => n == 2
+    None => false }
+  let packet_ok := match Elab::constructor_arity(SynIdent { declaration: None, name: "Packet", ctx: SynCtx { scopes: Nil }, span: SynSpan { id: 0 } }) { Some(n) => n == 2
+    None => false }
+  let bool_ok := match Elab::constructor_arity(SynIdent { declaration: None, name: "true", ctx: SynCtx { scopes: Nil }, span: SynSpan { id: 0 } }) { Some(n) => n == 0
+    None => false }
+  let missing_ok := match Elab::constructor_arity(SynIdent { declaration: None, name: "Payload", ctx: SynCtx { scopes: Nil }, span: SynSpan { id: 0 } }) { Some(_) => false
+    None => true }
+  if list_ok && packet_ok && bool_ok && missing_ok { quote { Zero } } else { quote { Succ(Zero) } }
+}
+```
+files."main.taut" = ```tauto
+import "lib.taut"
+inductive Payload(A: Type): (Nat) -> Type {
+  Packet<k: Nat>(value: A): Payload(A, k)
+}
+theorem metadata_contract(): Eq(Nat, metadata!(Zero), Zero) { Refl }
+```
+checks.metadata_contract = "ok"
+diagnostics = []
+
+@ cases.via-uniqueness-type-is-checked
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+inductive Other: (Nat, Nat) -> Prop { OtherRule<n: Nat>: Other(n, n) }
+inductive OldAnswer(n: Nat): Type {
+  Good(out: Nat, h: Other(n, out), unique: (∀ y: Nat. (Other(n, y)) -> True)): OldAnswer(n)
+  Bad(refute: (∀ y: Nat. (Other(n, y)) -> False)): OldAnswer(n)
+}
+fn other(n: Nat): OldAnswer(n) { Good(n, OtherRule, y => h => Trivial) }
+@mode!(`f(rec n, out m) -> Answer { Yes | No } via Other: other { Good | Bad }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop { Rule<n: Nat, m: Nat>(h: Other(n, m)): R(n, m) }
+```
+checks.other = "ok"
+checks.f = "error: "
+
+@ cases.via-refutation-type-is-checked
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+inductive Other: (Nat, Nat) -> Prop { OtherRule<n: Nat>: Other(n, n) }
+inductive OldAnswer(n: Nat): Type {
+  Good(out: Nat, h: Other(n, out), unique: (∀ y: Nat. (Other(n, y)) -> Eq(Nat, y, out))): OldAnswer(n)
+  Bad(refute: (∀ y: Nat. (Other(n, y)) -> True)): OldAnswer(n)
+}
+fn other(n: Nat): OldAnswer(n) {
+  Good(n, OtherRule, y => h => ⊢ Eq(Nat, y, n) from match h { OtherRule(k) => Refl })
+}
+@mode!(`f(rec n, out m) -> Answer { Yes | No } via Other: other { Good | Bad }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop { Rule<n: Nat, m: Nat>(h: Other(n, m)): R(n, m) }
+```
+checks.other = "ok"
+checks.f = "error: type mismatch"
+
+@ cases.cannot-forge-refutation
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(`f(rec n, out m) -> Answer { Yes | No }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop { Rule<n: Nat>: R(n, n) }
+fn forged(n: Nat): Answer(n) { No(m => h => Trivial) }
+```
+checks.f = "ok"
+checks.forged = "error: type mismatch"
+
+@ cases.eq-needs-refutation
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+inductive NatAnswer(a: Nat, b: Nat): Type {
+  Same(e: Eq(Nat, a, b)): NatAnswer(a, b)
+  Diff: NatAnswer(a, b)
+}
+fn dec(a: Nat, b: Nat): NatAnswer(a, b) { Diff }
+@mode!(`f(rec n, out m) -> Answer { Yes | No } eq Nat: dec { Same | Diff }`) => inductive Answer, fn f
+inductive R: (Nat, Nat) -> Prop {
+  RZero: R(Zero, Zero)
+  RSucc<n: Nat>(h: R(n, n)): R(Succ(n), n)
+}
+```
+macro_error = "eq rejection needs a refutation"
+
+@ cases.erased-execution
+backends = ["rust", "javascript"]
+source = path`../fixtures/mode-generated.taut`
+extract = true
+shows = ["selected = true", "different = false", "shape = false", "le = true", "not-le = false", "true = true", "false = false"]
+
+@ cases.type-inference-contract
+imports = [path`../../examples/lambda/Lib.taut`]
+source = ```tauto
+fn inferred_type(t: Tm, G: List(Ty)): Option(Ty) {
+  ⊢ Option(Ty) from match infer(t, G) {
+    inferred(A, h, unique) => Some(A)
+    not_inferred(refute) => None
+  }
+}
+theorem infer_identity(): Eq(Option(Ty), inferred_type(Lam(Tunit, Tvar(Zero)), Nil), Some(Arr(Tunit, Tunit))) { Refl }
+theorem infer_application(): Eq(Option(Ty), inferred_type(App(Lam(Tunit, Tvar(Zero)), Tstar), Nil), Some(Tunit)) { Refl }
+theorem reject_shape(): Eq(Option(Ty), inferred_type(App(Tstar, Tstar), Nil), None) { Refl }
+theorem reject_argument(): Eq(Option(Ty), inferred_type(App(Lam(Arr(Tunit, Tunit), Tstar), Tstar), Nil), None) { Refl }
+theorem reject_variable(): Eq(Option(Ty), inferred_type(Tvar(Zero), Nil), None) { Refl }
+theorem infer_unique(t: Tm, G: List(Ty), A: Ty, B: Ty, ha: Typing(G, t, A), hb: Typing(G, t, B)): Eq(Ty, A, B) {
+  ⊢ Eq(Ty, A, B) from match infer(t, G) {
+    inferred(C, h, unique) => Eq::trans(unique(A, ha), Eq::sym(unique(B, hb)))
+    not_inferred(refute) => False::elim(refute(A, ha))
+  }
+}
+fn infer_contract(t: Tm, G: List(Ty)): Or(Exists(Ty, A => Typing(G, t, A)), (∀ A: Ty. (Typing(G, t, A)) -> False)) {
+  ⊢ Or(Exists(Ty, A => Typing(G, t, A)), (∀ A: Ty. (Typing(G, t, A)) -> False)) from match infer(t, G) {
+    inferred(A, h, unique) => OrInl(ExIntro(A, h))
+    not_inferred(refute) => OrInr(refute)
+  }
+}
+```
+checks.infer = "ok"
+checks.inferred_type = "ok"
+checks.lookup = "ok"
+checks.infer_identity = "ok"
+checks.infer_application = "ok"
+checks.reject_shape = "ok"
+checks.reject_argument = "ok"
+checks.reject_variable = "ok"
+checks.infer_unique = "ok"
+checks.infer_contract = "ok"
+diagnostics = []
+
+@ cases.position-names-do-not-capture
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(`named(rec h, in unique, out mode_other) -> NamedAnswer { NamedYes | NamedNo }`) => inductive NamedAnswer, fn named
+inductive Named: (Nat, Nat, Nat) -> Prop {
+  NamedRule<x: Nat, y: Nat>: Named(x, y, x)
+}
+fn named_contract(h: Nat, unique: Nat): Or(Exists(Nat, n => Named(h, unique, n)), (∀ n: Nat. (Named(h, unique, n)) -> False)) {
+  ⊢ Or(Exists(Nat, n => Named(h, unique, n)), (∀ n: Nat. (Named(h, unique, n)) -> False)) from match named(h, unique) {
+    NamedYes(n, proof, one) => OrInl(ExIntro(n, proof))
+    NamedNo(absent) => OrInr(absent)
+  }
+}
+@mode!(`labels(rec B, in A, in pair, out n) -> LabelsAnswer { LabelsYes | LabelsNo }`) => inductive LabelsAnswer, fn labels
+inductive Labels: (A: Type) -> (B: Type) -> (Pair(A, B)) -> (Nat) -> Prop {
+  LabelsRule<X: Type, Y: Type, p: Pair(X, Y)>: Labels(X, Y, p, Zero)
+}
+fn labels_value(A: Type, B: Type, p: Pair(A, B)): Nat {
+  ⊢ Nat from match labels(A, B, p) {
+    LabelsYes(n, proof, one) => n
+    LabelsNo(absent) => Zero
+  }
+}
+theorem labels_zero(): Eq(Nat, labels_value(Nat, Bool, Pair { fst: Succ(Zero), snd: true }), Zero) { Refl }
+```
+checks.named = "ok"
+checks.named_contract = "ok"
+checks.labels = "ok"
+checks.labels_zero = "ok"
+diagnostics = []
+
+@ cases.type-input-contract
+imports = [path`../../std/Mode.taut`]
+source = ```tauto
+@mode!(
+  `label(rec T, in value, out result) -> LabelAnswer { LabelYes | LabelNo }`
+) => inductive LabelAnswer, fn label
+inductive Label: (A: Type) -> (A) -> (Nat) -> Prop {
+  LabelRule<A: Type, x: A>: Label(A, x, Zero)
+}
+fn label_value(A: Type, x: A): Nat {
+  ⊢ Nat from match label(A, x) {
+    LabelYes(n, h, unique) => n
+    LabelNo(refute) => Zero
+  }
+}
+theorem label_contract(): Eq(Nat, label_value(Nat, Succ(Zero)), Zero) { Refl }
+```
+checks.Label = "ok"
+checks.LabelAnswer = "ok"
+checks.label = "ok"
+checks.label_value = "ok"
+checks.label_contract = "ok"
+diagnostics = []

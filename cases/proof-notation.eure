@@ -1,0 +1,169 @@
+@ cases.dsl
+files."math.taut" = path`fixtures/proof-notation.taut`
+files."main.taut" = ```tauto
+import "math.taut"
+pub theorem dsl_sum(): math!(`1 + 2 = 3`) { Refl(Nat, 3) }
+```
+entry = "main.taut"
+checks.dsl_sum = "ok"
+proofs = [
+  { format => "natural", output => path`expected/proof-display/notation-dsl-01-natural.txt` },
+  { format => "natural", full => true, output => path`expected/proof-display/notation-dsl-02-natural-full.txt` },
+  { format => "tree", output => path`expected/proof-display/notation-dsl-03-tree.txt` },
+  { format => "block", output => path`expected/proof-display/notation-dsl-04-block.html` },
+  { format => "node", output => path`expected/proof-display/notation-dsl-05-node.html` },
+  { format => "tree-html", output => path`expected/proof-display/notation-dsl-06-tree-html.html` },
+  { format => "json", output => path`expected/proof-display/notation-dsl-07-json.json` },
+]
+
+@ cases.parameters
+files."math.taut" = path`fixtures/proof-notation.taut`
+files."main.taut" = ```tauto
+import "math.taut"
+pub theorem dsl_assumption(n: Nat, h: math!(`$n + 1 = $n + 1`)): math!(`$n + 1 = $n + 1`) { h }
+```
+entry = "main.taut"
+checks.dsl_assumption = "ok"
+proofs = [
+  { format => "natural", output => path`expected/proof-display/notation-parameters-01-natural.txt` },
+]
+
+@ cases.ambiguous
+files."math.taut" = path`fixtures/proof-notation.taut`
+files."main.taut" = ```tauto
+import "math.taut"
+pub theorem dsl_ambiguous(n: Nat, h: math!(`$n + 1 = $n + 1`)): other!(`$n + 1 = $n + 1`) { h }
+```
+entry = "main.taut"
+checks.dsl_ambiguous = "ok"
+proofs = [
+  { format => "natural", output => path`expected/proof-display/notation-ambiguous-01-natural.txt` },
+  { format => "tree", output => path`expected/proof-display/notation-ambiguous-02-tree.txt` },
+]
+
+@ cases.isolation
+files."math.taut" = path`fixtures/proof-notation.taut`
+files."main.taut" = ```tauto
+import "math.taut"
+pub theorem dsl_source(): math!(`1 + 2 = 3`) { Refl(Nat, 3) }
+pub theorem plain_source(): Eq(Nat, 1 + 2, 3) { Refl(Nat, 3) }
+```
+entry = "main.taut"
+checks.dsl_source = "ok"
+checks.plain_source = "ok"
+proofs = [
+  { format => "natural", output => path`expected/proof-display/notation-isolation-01-natural.txt` },
+]
+
+@ cases.computation
+files."math.taut" = path`fixtures/proof-notation.taut`
+files."main.taut" = ```tauto
+import "math.taut"
+pub theorem dsl_conversion(h: math!(`1 + 2 = 3`)): Eq(Nat, 3, 3) { h }
+```
+entry = "main.taut"
+checks.dsl_conversion = "ok"
+proofs = [
+  { format => "natural", output => path`expected/proof-display/notation-computation-01-natural.txt` },
+]
+
+@ cases.inner-binding
+files."math.taut" = path`fixtures/proof-notation.taut`
+files."main.taut" = ```tauto
+import "math.taut"
+pub theorem dsl_binder(n: Nat): (m: Nat) -> math!(`$m = $m`) { m => Refl(Nat, m) }
+```
+entry = "main.taut"
+checks.dsl_binder = "ok"
+proofs = [
+  { format => "natural", output => path`expected/proof-display/notation-inner-binding-01-natural.txt` },
+]
+
+@ cases.expression-macro
+files."expr.taut" = ```tauto
+import std::prelude::Macro
+pub macro fn identity_expr(e: SynExpr): SynExpr { e }
+```
+files."main.taut" = ```tauto
+import "expr.taut"
+pub theorem expression_macro(P: Prop, h: P): identity_expr!(P) { h }
+```
+entry = "main.taut"
+checks.expression_macro = "ok"
+proofs = [
+  { format => "natural", output => path`expected/proof-display/notation-expression-macro-01-natural.txt` },
+]
+
+@ cases.subexpression
+files."expr.taut" = ```tauto
+import std::prelude::Macro
+pub macro fn identity_expr(e: SynExpr): SynExpr { e }
+```
+files."main.taut" = ```tauto
+import "expr.taut"
+pub theorem subexpression(): Eq(Nat, identity_expr!(1 + 2), 3) { Refl(Nat, 3) }
+```
+entry = "main.taut"
+checks.subexpression = "ok"
+proofs = [
+  { format => "natural", output => path`expected/proof-display/notation-subexpression-01-natural.txt` },
+]
+
+@ cases.html-escape
+files."expr.taut" = ```tauto
+import std::prelude::Macro
+pub macro fn identity_expr(e: SynExpr): SynExpr { e }
+```
+files."main.taut" = ```tauto
+import std::Text
+import "expr.taut"
+pub theorem escaped_dsl(): identity_expr!(Eq(Text, "<script>&", "<script>&")) {
+  Refl(Text, "<script>&")
+}
+```
+entry = "main.taut"
+checks.escaped_dsl = "ok"
+proofs = [
+  { format => "block", output => path`expected/proof-display/notation-html-escape-01-block.html` },
+]
+
+@ cases.constant-motive
+files."expr.taut" = ```tauto
+import std::prelude::Macro
+pub macro fn identity_expr(e: SynExpr): SynExpr { e }
+```
+files."main.taut" = ```tauto
+import "expr.taut"
+pub theorem motive(P: Prop, h: P, n: Nat): identity_expr!(P) {
+  ⊢ identity_expr!(P) from match n {
+    Zero => h
+    Succ(k) => h
+  }
+}
+```
+entry = "main.taut"
+checks.motive = "ok"
+proofs = [
+  { output => path`expected/proof-display/notation-constant-motive.txt` },
+  { format => "tree", output => path`expected/proof-display/notation-constant-motive-tree.txt` },
+]
+
+@ cases.global-motive-scope
+files."expr.taut" = ```tauto
+import std::prelude::Macro
+pub macro fn identity_expr(e: SynExpr): SynExpr { e }
+```
+files."main.taut" = ```tauto
+import "expr.taut"
+pub theorem global_motive(n: Nat): identity_expr!(Eq(Nat, 0, 0)) {
+  ⊢ identity_expr!(Eq(Nat, 0, 0)) from match n {
+    Zero => Refl(Nat, 0)
+    Succ(k) => Refl(Nat, 0)
+  }
+}
+```
+entry = "main.taut"
+checks.global_motive = "ok"
+proofs = [
+  { output => path`expected/proof-display/notation-global-motive-scope.txt` },
+]

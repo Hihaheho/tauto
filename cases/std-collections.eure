@@ -1,0 +1,135 @@
+description = "The collections of std run: double-ended queue, priority queue, ordered set, hash map and hash set."
+
+@ cases.deque-runs
+backends = ["rust", "javascript"]
+extract = true
+imports = [path`../std/Deque.taut`]
+source = ```tauto
+let d := Deque::push_front(Deque::push_back(Deque::push_back(Deque::new(), 1), 2), 0)
+perform show("list", Deque::to_list(d))
+perform show("len", Deque::len(d))
+perform show("front", Deque::peek_front(d))
+perform show("back", Deque::peek_back(d))
+let rest := ⊢ Deque(Nat) from match Deque::pop_back(d) {
+  None => Deque::new()
+  Some(#(value, remaining)) => remaining
+}
+perform show("after pop_back", Deque::to_list(rest))
+let rest2 := ⊢ Deque(Nat) from match Deque::pop_front(rest) {
+  None => Deque::new()
+  Some(#(value, remaining)) => remaining
+}
+perform show("after pop_front", Deque::to_list(Deque::push_back(rest2, 3)))
+let none: Deque(Nat) := Deque::new()
+perform show("empty", Deque::is_empty(none))
+```
+shows = [
+  "list = Cons(0, Cons(1, Cons(2, Nil)))",
+  "len = 3",
+  "front = Some(0)",
+  "back = Some(2)",
+  "after pop_back = Cons(0, Cons(1, Nil))",
+  "after pop_front = Cons(1, Cons(3, Nil))",
+  "empty = true",
+]
+
+@ cases.heap-runs
+backends = ["rust", "javascript"]
+extract = true
+imports = [path`../std/Heap.taut`, path`../std/Map.taut`]
+source = ```tauto
+let h := Heap::of_list(Ordmap::compare_nat, Cons(5, Cons(1, Cons(4, Cons(1, Cons(3, Cons(9, Cons(2, Nil))))))))
+perform show("len", Heap::len(h))
+perform show("peek", Heap::peek(h))
+perform show("sorted", Heap::into_sorted(Ordmap::compare_nat, h))
+let m := Heap::merge(Ordmap::compare_nat, h, Heap::push(Ordmap::compare_nat, Heap::new(), 0))
+perform show("merged", Heap::into_sorted(Ordmap::compare_nat, m))
+let popped := ⊢ Nat from match Heap::pop(Ordmap::compare_nat, m) {
+  None => 100
+  Some(#(value, remaining)) => value
+}
+perform show("popped", popped)
+let none: Heap(Nat) := Heap::new()
+perform show("empty pop", Heap::peek(none))
+```
+shows = [
+  "len = 7",
+  "peek = Some(1)",
+  "sorted = Cons(1, Cons(1, Cons(2, Cons(3, Cons(4, Cons(5, Cons(9, Nil)))))))",
+  "merged = Cons(0, Cons(1, Cons(1, Cons(2, Cons(3, Cons(4, Cons(5, Cons(9, Nil))))))))",
+  "popped = 0",
+  "empty pop = None",
+]
+
+@ cases.ordset-runs
+backends = ["rust", "javascript"]
+extract = true
+imports = [path`../std/Set.taut`, path`../std/Map.taut`]
+source = ```tauto
+let a := Ordset::of_list(Cons(3, Cons(1, Cons(4, Cons(1, Cons(5, Nil))))), Ordmap::compare_nat)
+let b := Ordset::of_list(Cons(4, Cons(5, Cons(6, Nil))), Ordmap::compare_nat)
+perform show("a", Ordset::to_list(a))
+perform show("size", Ordset::size(a))
+perform show("has 4", Ordset::contains(a, 4, Ordmap::compare_nat))
+perform show("has 2", Ordset::contains(a, 2, Ordmap::compare_nat))
+perform show("removed", Ordset::to_list(Ordset::remove(a, 3, Ordmap::compare_nat)))
+perform show("union", Ordset::to_list(Ordset::union(a, b, Ordmap::compare_nat)))
+perform show("intersection", Ordset::to_list(Ordset::intersection(a, b, Ordmap::compare_nat)))
+perform show("difference", Ordset::to_list(Ordset::difference(a, b, Ordmap::compare_nat)))
+```
+shows = [
+  "a = Cons(1, Cons(3, Cons(4, Cons(5, Nil))))",
+  "size = 4",
+  "has 4 = true",
+  "has 2 = false",
+  "removed = Cons(1, Cons(4, Cons(5, Nil)))",
+  "union = Cons(1, Cons(3, Cons(4, Cons(5, Cons(6, Nil)))))",
+  "intersection = Cons(4, Cons(5, Nil))",
+  "difference = Cons(1, Cons(3, Nil))",
+]
+
+@ cases.hashmap-runs
+backends = ["rust", "javascript"]
+extract = true
+imports = [path`../std/HashMap.taut`, path`../std/Base.taut`, path`../std/Map.taut`]
+source = ```tauto
+// Keys from 2 on share a hash, so their entries share a bucket.
+fn small_hash(k: Nat): Nat {
+  Nat::min(k, 2)
+}
+
+fn key_eq(a: Nat, b: Nat): Bool {
+  ⊢ Bool from match Ordmap::compare_nat(a, b) {
+    Less => false
+    Equal => true
+    Greater => false
+  }
+}
+
+let m0 := Hmap::of_list(Cons(#(1, 10), Cons(#(2, 20), Cons(#(3, 30), Nil))), small_hash, key_eq)
+let m1 := Hmap::insert(m0, 2, 22, small_hash, key_eq)
+perform show("get 2", Hmap::get(m1, 2, small_hash, key_eq))
+perform show("get 3", Hmap::get(m1, 3, small_hash, key_eq))
+perform show("size", Hmap::size(m1))
+let m2 := Hmap::remove(m1, 3, small_hash, key_eq)
+perform show("get 3 after remove", Hmap::get(m2, 3, small_hash, key_eq))
+perform show("size after remove", Hmap::size(m2))
+perform show("size after removing a missing key", Hmap::size(Hmap::remove(m2, 7, small_hash, key_eq)))
+perform show("entries", Hmap::entries(m2))
+let s := Hset::insert(Hset::insert(Hset::insert(Hset::empty(), 5, small_hash, key_eq), 0, small_hash, key_eq), 5, small_hash, key_eq)
+perform show("set", Hset::to_list(s))
+perform show("set has 0", Hset::contains(s, 0, small_hash, key_eq))
+perform show("set has 0 after remove", Hset::contains(Hset::remove(s, 0, small_hash, key_eq), 0, small_hash, key_eq))
+```
+shows = [
+  "get 2 = Some(22)",
+  "get 3 = Some(30)",
+  "size = 3",
+  "get 3 after remove = None",
+  "size after remove = 2",
+  "size after removing a missing key = 2",
+  "entries = Cons(#(1, 10), Cons(#(2, 22), Nil))",
+  "set = Cons(0, Cons(5, Nil))",
+  "set has 0 = true",
+  "set has 0 after remove = false",
+]

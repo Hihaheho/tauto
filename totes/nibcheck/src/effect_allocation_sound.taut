@@ -23,7 +23,7 @@ import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub fn OptionEffectAllocated(limit: Nat, found: Option(EffectSig)): Prop {
-  match found: Prop { None => True
+  ⊢ Prop from match found { None => True
     Some(sig) => TypeAllocated(limit, handle_effect_type(sig)) }
 }
 pub def EffectsAllocated(
@@ -46,7 +46,7 @@ pub theorem application_effect_arity_allocation(
   expected: TypeListAllocated(ck_next_of(c), ps),
   bad: Bool
 ): AllocationAdvance(c, application_effect_arity(c, eff, types, args, span, ps, bad)) {
-  match bad: AllocationAdvance(c, application_effect_arity(c, eff, types, args, span, ps, bad)) {
+  ⊢ AllocationAdvance(c, application_effect_arity(c, eff, types, args, span, ps, bad)) from match bad {
     true => allocation_advance_rewrap(
       c,
       ck_error(
@@ -82,10 +82,10 @@ pub theorem application_effect_inst_allocation(
   inst: Ty,
   bounded: TypeAllocated(ck_next_of(c), inst)
 ): AllocationResult(c, application_effect_inst(c, eff, types, args, span, original, inst)) {
-  match inst: AllocationResult(
+  ⊢ AllocationResult(
     c,
     application_effect_inst(c, eff, types, args, span, original, inst)
-  ) {
+  ) from match inst {
     TyInt(w) => allocation_result_return(c, original, state, original_bound)
     TyBool => allocation_result_return(c, original, state, original_bound)
     TyText => allocation_result_return(c, original, state, original_bound)
@@ -150,7 +150,7 @@ pub theorem application_effect_found_allocation(
   found: Option(EffectSig),
   bounded: OptionEffectAllocated(ck_next_of(c), found)
 ): AllocationResult(c, application_effect_found(c, eff, types, args, span, found)) {
-  match found: AllocationResult(c, application_effect_found(c, eff, types, args, span, found)) {
+  ⊢ AllocationResult(c, application_effect_found(c, eff, types, args, span, found)) from match found {
     None => allocation_error_fresh(c, cat3("no effect `", eff, "` is declared"), span, state)
     Some(sig) => allocation_result_ty_bind(
       c,

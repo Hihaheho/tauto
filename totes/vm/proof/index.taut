@@ -15,9 +15,7 @@ pub fn m_vec_get_reference(ctors: List(MCtor), cx: MCx, r: MVal, i: MVal, index:
     match m_item_ref(cx, r, MpathItem(m_as_nat(i))) {
       Pair { fst: x, snd: cx2 } => MoutVal(if index { x } else { m_some(x) }, cx2)
     }
-  } else {
-    if index { MoutPerform("out_of_bounds") } else { MoutVal(m_none(), cx) }
-  }
+  } else if index { MoutPerform("out_of_bounds") } else { MoutVal(m_none(), cx) }
 }
 
 pub theorem m_vec_get_correct(
@@ -28,14 +26,14 @@ pub theorem m_vec_get_correct(
   index: Bool
 ): m_vec_get(ctors, cx, r, i, index) = m_vec_get_reference(ctors, cx, r, i, index) {
   Eq::congr(
-    (n: Nat) => match Bool::and(not(m_is_neg(i)), Nat::lt(m_as_nat(i), n)): MOut {
-      true => match m_item_ref(cx, r, MpathItem(m_as_nat(i))): MOut {
-        Pair { fst: x, snd: cx2 } => MoutVal(match index: MVal {
+    (n: Nat) => ⊢ MOut from match Bool::and(not(m_is_neg(i)), Nat::lt(m_as_nat(i), n)) {
+      true => ⊢ MOut from match m_item_ref(cx, r, MpathItem(m_as_nat(i))) {
+        Pair { fst: x, snd: cx2 } => MoutVal(⊢ MVal from match index {
           true => x
           false => m_some(x)
         }, cx2)
       }
-      false => match index: MOut {
+      false => ⊢ MOut from match index {
         true => MoutPerform("out_of_bounds")
         false => MoutVal(m_none(), cx)
       }

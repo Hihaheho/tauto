@@ -27,7 +27,7 @@ pub fn bundle_new(locale: Text): Bundle {
 }
 
 pub fn bundle_isolating(b: Bundle, on: Bool): Bundle {
-  match b: Bundle {
+  ⊢ Bundle from match b {
     Mk(l, iso, es) => Bundle::Mk(l, on, es)
   }
 }
@@ -41,21 +41,21 @@ pub fn arg_num(name: Text, n: Nat): Arg {
 }
 
 pub fn entry_id(e: Entry): List(Nat) {
-  match e: List(Nat) {
+  ⊢ List(Nat) from match e {
     Message(i, v, a) => i
     Term(i, v, a) => Cons(45, i)
   }
 }
 
 pub fn is_term(e: Entry): Bool {
-  match e: Bool {
+  ⊢ Bool from match e {
     Message(i, v, a) => false
     Term(i, v, a) => true
   }
 }
 
 pub fn defined(es: List(Entry), e: Entry): Bool {
-  match es: Bool {
+  ⊢ Bool from match es {
     Nil => false
     Cons(x, rest) => Bool::or(
       Bool::and(Bool::eq(is_term(x), is_term(e)), byte_list_eq(entry_id(x), entry_id(e))),
@@ -73,9 +73,9 @@ pub fn add_dup(
 
 // The new entries not defined before, and the names of those that were.
 pub fn add_entries(old: List(Entry), new: List(Entry)): Pair(List(Entry), List(ResourceError)) {
-  match new: Pair(List(Entry), List(ResourceError)) {
+  ⊢ Pair(List(Entry), List(ResourceError)) from match new {
     Nil => Pair { fst: old, snd: Nil }
-    Cons(e, rest) => match defined(old, e): Pair(List(Entry), List(ResourceError)) {
+    Cons(e, rest) => ⊢ Pair(List(Entry), List(ResourceError)) from match defined(old, e) {
       true => add_dup(entry_id(e), add_entries(old, rest))
       false => add_entries(List::append(old, Cons(e, Nil)), rest)
     }
@@ -83,15 +83,15 @@ pub fn add_entries(old: List(Entry), new: List(Entry)): Pair(List(Entry), List(R
 }
 
 pub fn junk_errors(js: List(List(Nat))): List(ResourceError) {
-  match js: List(ResourceError) {
+  ⊢ List(ResourceError) from match js {
     Nil => Nil
     Cons(j, rest) => Cons(Junk(Text::Mk(j)), junk_errors(rest))
   }
 }
 
 pub fn add_parsed(b: Bundle, r: Resource): Added {
-  match b: Added {
-    Mk(l, iso, es) => match r: Added {
+  ⊢ Added from match b {
+    Mk(l, iso, es) => ⊢ Added from match r {
       Mk(new, js) => Added::Mk(
         Bundle::Mk(l, iso, add_entries(es, new).fst),
         List::append(junk_errors(js), add_entries(es, new).snd)
@@ -105,20 +105,20 @@ pub fn add_resource(b: Bundle, ftl: Text): Added {
 }
 
 pub fn with_resource(b: Bundle, ftl: Text): Bundle {
-  match add_resource(b, ftl): Bundle {
+  ⊢ Bundle from match add_resource(b, ftl) {
     Added::Mk(b2, errs) => b2
   }
 }
 
 pub fn has_message(b: Bundle, id: Text): Bool {
-  match find_message(bundle_entries(b), Text::bytes(id)): Bool {
+  ⊢ Bool from match find_message(bundle_entries(b), Text::bytes(id)) {
     None => false
     Some(m) => true
   }
 }
 
 pub fn formatted_of(x: Ev): Formatted {
-  match x: Formatted {
+  ⊢ Formatted from match x {
     Mk(v, es) => Formatted::Mk(Text::Mk(value_bytes(v)), es)
   }
 }
@@ -132,13 +132,13 @@ pub fn format_attr(b: Bundle, id: Text, name: Text, args: List(Arg)): Formatted 
 }
 
 pub fn format_text(b: Bundle, id: Text, args: List(Arg)): Text {
-  match format(b, id, args): Text {
+  ⊢ Text from match format(b, id, args) {
     Formatted::Mk(t, es) => t
   }
 }
 
 pub fn error_text(e: FluentError): Text {
-  match e: Text {
+  ⊢ Text from match e {
     UnknownMessage(i) => Text::concat("unknown message: ", Text::Mk(i))
     UnknownTerm(i) => Text::concat("unknown term: -", Text::Mk(i))
     UnknownAttribute(i, a) => Text::concat(

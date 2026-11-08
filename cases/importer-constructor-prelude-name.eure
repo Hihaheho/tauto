@@ -1,0 +1,42 @@
+description = "A prelude name a file writes keeps its meaning when a file that imports it, directly or through others, declares a constructor of the same name."
+
+// `main` declares a constructor `None`; `helper` is imported by `main` and writes the prelude's `None`.
+@ cases.an-importer-declaring-the-name-does-not-make-it-ambiguous
+files."helper.taut" = ```tauto
+import std::Base
+
+pub theorem none_ok(): None = None(Nat) { Refl }
+```
+files."main.taut" = ```tauto
+import "helper.taut"
+
+pub(open) inductive Pen: Type {
+  None: Pen
+  Mk(width: Nat): Pen
+}
+```
+entry = "main.taut"
+checks."none_ok" = "ok"
+
+// The same through a file in between.
+@ cases.an-importer-through-another-file-declaring-the-name
+files."helper.taut" = ```tauto
+import std::Base
+
+pub theorem none_ok(): None = None(Nat) { Refl }
+```
+files."middle.taut" = ```tauto
+import "helper.taut"
+
+pub theorem again(): None = None(Nat) { none_ok() }
+```
+files."main.taut" = ```tauto
+import "middle.taut"
+
+pub(open) inductive Pen: Type {
+  None: Pen
+  Mk(width: Nat): Pen
+}
+```
+entry = "main.taut"
+checks."none_ok" = "ok"

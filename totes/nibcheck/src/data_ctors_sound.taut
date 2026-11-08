@@ -81,7 +81,9 @@ pub theorem data_ctors_after_sound(
   ihhead: ∀ clean: DiagnosticClean(
     ck_st(m)
   ). WrittenDataFields(ck_datas_of(c), generics, frame_constructor_position(c), fields, ck_val(m)),
-  ihtail: ∀ next: Checker. ∀ ordinary_next: frame_under_borrow(next) = false. ∀ clean: DiagnosticClean(
+  ihtail: ∀ next: Checker. ∀ ordinary_next: frame_under_borrow(
+    next
+  ) = false. ∀ clean: DiagnosticClean(
     ck_st(ck_data_ctors(rest, next, generics))
   ). WrittenDataCtors(
     ck_datas_of(next),
@@ -98,13 +100,13 @@ pub theorem data_ctors_after_sound(
   Cons(SurfaceDataCtorMk(name, fields), rest),
   ck_val(data_ctors_after(name, rest, generics, m))
 ) {
-  match m: WrittenDataCtors(
+  ⊢ WrittenDataCtors(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
     Cons(SurfaceDataCtorMk(name, fields), rest),
     ck_val(data_ctors_after(name, rest, generics, m))
-  ) {
+  ) from match m {
     mut1(types, next) => {
       let tail_clean: DiagnosticClean(
         ck_st(ck_data_ctors(rest, next, generics))
@@ -146,7 +148,11 @@ pub theorem data_ctors_after_sound(
             ck_val(ck_data_ctors(rest, next, generics)),
             Eq::congr(frame_read_datas, read),
             Eq::congr(written_context_position, context),
-            ihtail(next, Eq::trans(Eq::congr(written_context_borrow, context), ordinary), tail_clean)
+            ihtail(
+              next,
+              Eq::trans(Eq::congr(written_context_borrow, context), ordinary),
+              tail_clean
+            )
           )
         )
       )
@@ -159,7 +165,9 @@ pub theorem data_ctors_cons_elaborates(
   c: Checker,
   generics: Ordmap(Text, Ty),
   ordinary: frame_under_borrow(c) = false,
-  ih: ∀ next: Checker. ∀ ordinary_next: frame_under_borrow(next) = false. ∀ clean: DiagnosticClean(
+  ih: ∀ next: Checker. ∀ ordinary_next: frame_under_borrow(
+    next
+  ) = false. ∀ clean: DiagnosticClean(
     ck_st(ck_data_ctors(rest, next, generics))
   ). WrittenDataCtors(
     ck_datas_of(next),
@@ -176,13 +184,13 @@ pub theorem data_ctors_cons_elaborates(
   Cons(ctor, rest),
   ck_val(registration_ctors_cons(ctor, rest, c, generics))
 ) {
-  match ctor: WrittenDataCtors(
+  ⊢ WrittenDataCtors(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
     Cons(ctor, rest),
     ck_val(registration_ctors_cons(ctor, rest, c, generics))
-  ) {
+  ) from match ctor {
     SurfaceDataCtorMk(name, fields) => data_ctors_after_sound(
       c,
       name,
@@ -212,13 +220,13 @@ pub theorem ck_data_ctors_sound(
   ctors,
   ck_val(ck_data_ctors(ctors, c, generics))
 ) {
-  match ctors: WrittenDataCtors(
+  ⊢ WrittenDataCtors(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
     ctors,
     ck_val(ck_data_ctors(ctors, c, generics))
-  ) {
+  ) from match ctors {
     Nil => WrittenDataCtorsNil
     Cons(ctor, rest) => written_transfer(
       List(DataCtor),

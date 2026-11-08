@@ -6,6 +6,7 @@ import "Int.taut" { Int }
 import "IntLaws.taut" { Int, Nat }
 import "Nat.taut" { Nat }
 import "Rat.taut" { Rat }
+import "Calc.taut" { calc }
 
 // The rational numbers as an `OrderedField` (`std/Real.taut`): the classes
 // of `Rat` under `Rat::equiv`, so that the laws, which `std/RatLaws.taut`
@@ -17,12 +18,12 @@ import "Rat.taut" { Rat }
 pub def RatQ(): Type := Quot(Rat, Rat::equiv)
 
 pub fn ratq(x: Rat): Quot(Rat, Rat::equiv) {
-  Quot::mk(Rat, Rat::equiv, x)
+  Quot::mk(<A: Rat, r: Rat::equiv>, x)
 }
 
 module RatQ {
   pub theorem sound(x: Rat, y: Rat, h: Rat::equiv(x, y)): ratq(x) = ratq(y) {
-    Quot::sound(Rat, Rat::equiv, x, y, h)
+    Quot::sound(<A: Rat, r: Rat::equiv, a: x, b: y>, h)
   }
 
   pub fn add(a: Quot(Rat, Rat::equiv), b: Quot(Rat, Rat::equiv)): Quot(Rat, Rat::equiv) {
@@ -61,9 +62,9 @@ module RatQ {
 module Rat {
 
   pub fn inv_of(n: Int, d: Nat): Rat {
-    match n: Rat {
-      IntOfNat(k) => match k: Rat {
-        Zero => Rat::Mk(0, 0)
+    ⊢ Rat from match n {
+      IntOfNat(k) => ⊢ Rat from match k {
+        Zero => Rat::Mk(IntOfNat(0), 0)
         Succ(j) => Rat::Mk(IntOfNat(d), j)
       }
       IntNegSucc(j) => Rat::Mk(Int::neg(IntOfNat(d)), j)
@@ -72,7 +73,7 @@ module Rat {
 
   // `1 / x`, and 0 for 0, so that it gives the same number for the same number.
   pub fn recip(x: Rat): Rat {
-    match x: Rat {
+    ⊢ Rat from match x {
       Mk(n, p) => inv_of(n, Succ(p))
     }
   }
@@ -115,11 +116,12 @@ module Rat {
         IntOfNat(Succ(p2))
       ) = Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(j)))
     ) {}
-    calc Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(j2))) {
-      = Int::mul(IntOfNat(Succ(j2)), IntOfNat(Succ(p))) from s1
-      = Int::mul(IntOfNat(Succ(j)), IntOfNat(Succ(p2))) from s2
-      = Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(j))) from s3
-    }
+    calc!(```
+      $Int::mul(IntOfNat(Succ(p)), IntOfNat(Succ(j2)))
+      = $Int::mul(IntOfNat(Succ(j2)), IntOfNat(Succ(p))) from $s1
+      = $Int::mul(IntOfNat(Succ(j)), IntOfNat(Succ(p2))) from $s2
+      = $Int::mul(IntOfNat(Succ(p2)), IntOfNat(Succ(j))) from $s3
+      ```)
   }
 
   pub theorem recip_neg(
@@ -160,16 +162,17 @@ module Rat {
         IntOfNat(Succ(p2))
       ) = Int::mul(Int::neg(IntOfNat(Succ(p2))), IntOfNat(Succ(j)))
     ) {}
-    calc Int::mul(Int::neg(IntOfNat(Succ(p))), IntOfNat(Succ(j2))) {
-      = Int::mul(Int::neg(IntOfNat(Succ(j2))), IntOfNat(Succ(p))) from s1
-      = Int::mul(Int::neg(IntOfNat(Succ(j))), IntOfNat(Succ(p2))) from s2
-      = Int::mul(Int::neg(IntOfNat(Succ(p2))), IntOfNat(Succ(j))) from s3
-    }
+    calc!(```
+      $Int::mul(Int::neg(IntOfNat(Succ(p))), IntOfNat(Succ(j2)))
+      = $Int::mul(Int::neg(IntOfNat(Succ(j2))), IntOfNat(Succ(p))) from $s1
+      = $Int::mul(Int::neg(IntOfNat(Succ(j))), IntOfNat(Succ(p2))) from $s2
+      = $Int::mul(Int::neg(IntOfNat(Succ(p2))), IntOfNat(Succ(j))) from $s3
+      ```)
   }
 
   pub theorem recip_resp(x: Rat, x2: Rat, h: equiv(x, x2)): equiv(recip(x), recip(x2)) {
-    match x: equiv(recip(x), recip(x2)) {
-      Mk(n, p) => match x2: equiv(recip(Rat::Mk(n, p)), recip(x2)) {
+    ⊢ equiv(recip(x), recip(x2)) from match x {
+      Mk(n, p) => ⊢ equiv(recip(Rat::Mk(n, p)), recip(x2)) from match x2 {
         Mk(n2, p2) => recip_resp_at(n, p, n2, p2, h)
       }
     }
@@ -200,7 +203,7 @@ module Int {
   }
 
   pub theorem eq_refl(x: Int): eq(x, x) = true {
-    match x: eq(x, x) = true {
+    ⊢ eq(x, x) = true from match x {
       IntOfNat(n) => Nat::eq_refl(n)
       IntNegSucc(n) => Nat::eq_refl(n)
     }
@@ -215,13 +218,13 @@ module Rat {
     p2: Nat,
     h: Int::mul(n, IntOfNat(Succ(p2))) = Int::mul(n2, IntOfNat(Succ(p)))
   ): equiv(inv_of(n, Succ(p)), inv_of(n2, Succ(p2))) {
-    match n: equiv(inv_of(n, Succ(p)), inv_of(n2, Succ(p2))) {
-      IntOfNat(k) => match k: equiv(inv_of(IntOfNat(k), Succ(p)), inv_of(n2, Succ(p2))) {
-        Zero => match n2: equiv(inv_of(IntOfNat(Zero), Succ(p)), inv_of(n2, Succ(p2))) {
-          IntOfNat(k2) => match k2: equiv(
+    ⊢ equiv(inv_of(n, Succ(p)), inv_of(n2, Succ(p2))) from match n {
+      IntOfNat(k) => ⊢ equiv(inv_of(IntOfNat(k), Succ(p)), inv_of(n2, Succ(p2))) from match k {
+        Zero => ⊢ equiv(inv_of(IntOfNat(Zero), Succ(p)), inv_of(n2, Succ(p2))) from match n2 {
+          IntOfNat(k2) => ⊢ equiv(
             inv_of(IntOfNat(Zero), Succ(p)),
             inv_of(IntOfNat(k2), Succ(p2))
-          ) {
+          ) from match k2 {
             Zero => Refl
             Succ(j2) => False::elim(Int::zero_ne_pos(p2, j2, p, h))
           }
@@ -234,11 +237,11 @@ module Rat {
             )
           )
         }
-        Succ(j) => match n2: equiv(inv_of(IntOfNat(Succ(j)), Succ(p)), inv_of(n2, Succ(p2))) {
-          IntOfNat(k2) => match k2: equiv(
+        Succ(j) => ⊢ equiv(inv_of(IntOfNat(Succ(j)), Succ(p)), inv_of(n2, Succ(p2))) from match n2 {
+          IntOfNat(k2) => ⊢ equiv(
             inv_of(IntOfNat(Succ(j)), Succ(p)),
             inv_of(IntOfNat(k2), Succ(p2))
-          ) {
+          ) from match k2 {
             Zero => False::elim(Int::zero_ne_pos(p, j, p2, Eq::sym(h)))
             Succ(j2) => recip_pos(j, p, j2, p2, h)
           }
@@ -252,11 +255,11 @@ module Rat {
           )
         }
       }
-      IntNegSucc(j) => match n2: equiv(inv_of(IntNegSucc(j), Succ(p)), inv_of(n2, Succ(p2))) {
-        IntOfNat(k2) => match k2: equiv(
+      IntNegSucc(j) => ⊢ equiv(inv_of(IntNegSucc(j), Succ(p)), inv_of(n2, Succ(p2))) from match n2 {
+        IntOfNat(k2) => ⊢ equiv(
           inv_of(IntNegSucc(j), Succ(p)),
           inv_of(IntOfNat(k2), Succ(p2))
-        ) {
+        ) from match k2 {
           Zero => False::elim(
             Int::nonneg_ne_neg(
               Int::mul(0, IntOfNat(Succ(p))),
@@ -280,12 +283,12 @@ module Rat {
   }
 
   pub theorem mul_raw_recip(x: Rat, nz: ¬equiv(x, zero())): equiv(mul_raw(x, recip(x)), one()) {
-    match x: equiv(mul_raw(x, recip(x)), one()) {
-      Mk(n, p) => match n: equiv(mul_raw(Rat::Mk(n, p), recip(Rat::Mk(n, p))), one()) {
-        IntOfNat(k) => match k: equiv(
+    ⊢ equiv(mul_raw(x, recip(x)), one()) from match x {
+      Mk(n, p) => ⊢ equiv(mul_raw(Rat::Mk(n, p), recip(Rat::Mk(n, p))), one()) from match n {
+        IntOfNat(k) => ⊢ equiv(
           mul_raw(Rat::Mk(IntOfNat(k), p), recip(Rat::Mk(IntOfNat(k), p))),
           one()
-        ) {
+        ) from match k {
           Zero => False::elim(nz(zero_rep(p)))
           Succ(j) => recip_pos_one(j, p)
         }
@@ -397,10 +400,7 @@ module RatQ {
   pub theorem zero_ne_one(): ¬(ratq(Rat::zero()) = ratq(Rat::one())) {
     (e: ratq(Rat::zero()) = ratq(Rat::one())) => Rat::zero_ne_one(
       Quot::exact(
-        Rat,
-        Rat::equiv,
-        Rat::zero(),
-        Rat::one(),
+        <A: Rat, r: Rat::equiv, a: Rat::zero(), b: Rat::one()>,
         Rat::eq,
         (x: Rat) => Rat::eq_of_equiv(x, x, Rat::equiv_refl(x)),
         x => y => z => (p: Rat::equiv(y, z)) => Bool::eq_of_iff(
@@ -429,16 +429,13 @@ module RatQ {
     c: Quot(Rat, Rat::equiv)
   ): add(add(a, b), c) = add(a, add(b, c)) {
     Quot::ind(
-      Rat,
-      Rat::equiv,
+      <A: Rat, r: Rat::equiv>,
       (w: Quot(Rat, Rat::equiv)) => add(add(w, b), c) = add(w, add(b, c)),
       (x: Rat) => Quot::ind(
-        Rat,
-        Rat::equiv,
+        <A: Rat, r: Rat::equiv>,
         (w: Quot(Rat, Rat::equiv)) => add(add(ratq(x), w), c) = add(ratq(x), add(w, c)),
         (y: Rat) => Quot::ind(
-          Rat,
-          Rat::equiv,
+          <A: Rat, r: Rat::equiv>,
           (w: Quot(Rat, Rat::equiv)) => add(
             add(ratq(x), ratq(y)),
             w
@@ -458,12 +455,10 @@ module RatQ {
 
   pub theorem add_comm(a: Quot(Rat, Rat::equiv), b: Quot(Rat, Rat::equiv)): add(a, b) = add(b, a) {
     Quot::ind(
-      Rat,
-      Rat::equiv,
+      <A: Rat, r: Rat::equiv>,
       (w: Quot(Rat, Rat::equiv)) => add(w, b) = add(b, w),
       (x: Rat) => Quot::ind(
-        Rat,
-        Rat::equiv,
+        <A: Rat, r: Rat::equiv>,
         (w: Quot(Rat, Rat::equiv)) => add(ratq(x), w) = add(w, ratq(x)),
         (y: Rat) => sound(Rat::add(x, y), Rat::add(y, x), Rat::add_comm(x, y)),
         b
@@ -474,8 +469,7 @@ module RatQ {
 
   pub theorem add_zero(a: Quot(Rat, Rat::equiv)): add(a, ratq(Rat::zero())) = a {
     Quot::ind(
-      Rat,
-      Rat::equiv,
+      <A: Rat, r: Rat::equiv>,
       (w: Quot(Rat, Rat::equiv)) => add(w, ratq(Rat::zero())) = w,
       (x: Rat) => sound(Rat::add(x, Rat::zero()), x, Rat::add_zero(x)),
       a
@@ -484,8 +478,7 @@ module RatQ {
 
   pub theorem add_neg(a: Quot(Rat, Rat::equiv)): add(a, neg(a)) = ratq(Rat::zero()) {
     Quot::ind(
-      Rat,
-      Rat::equiv,
+      <A: Rat, r: Rat::equiv>,
       (w: Quot(Rat, Rat::equiv)) => add(w, neg(w)) = ratq(Rat::zero()),
       (x: Rat) => sound(Rat::add(x, Rat::neg(x)), Rat::zero(), Rat::add_neg(x)),
       a
@@ -498,16 +491,13 @@ module RatQ {
     c: Quot(Rat, Rat::equiv)
   ): mul(mul(a, b), c) = mul(a, mul(b, c)) {
     Quot::ind(
-      Rat,
-      Rat::equiv,
+      <A: Rat, r: Rat::equiv>,
       (w: Quot(Rat, Rat::equiv)) => mul(mul(w, b), c) = mul(w, mul(b, c)),
       (x: Rat) => Quot::ind(
-        Rat,
-        Rat::equiv,
+        <A: Rat, r: Rat::equiv>,
         (w: Quot(Rat, Rat::equiv)) => mul(mul(ratq(x), w), c) = mul(ratq(x), mul(w, c)),
         (y: Rat) => Quot::ind(
-          Rat,
-          Rat::equiv,
+          <A: Rat, r: Rat::equiv>,
           (w: Quot(Rat, Rat::equiv)) => mul(
             mul(ratq(x), ratq(y)),
             w
@@ -527,12 +517,10 @@ module RatQ {
 
   pub theorem mul_comm(a: Quot(Rat, Rat::equiv), b: Quot(Rat, Rat::equiv)): mul(a, b) = mul(b, a) {
     Quot::ind(
-      Rat,
-      Rat::equiv,
+      <A: Rat, r: Rat::equiv>,
       (w: Quot(Rat, Rat::equiv)) => mul(w, b) = mul(b, w),
       (x: Rat) => Quot::ind(
-        Rat,
-        Rat::equiv,
+        <A: Rat, r: Rat::equiv>,
         (w: Quot(Rat, Rat::equiv)) => mul(ratq(x), w) = mul(w, ratq(x)),
         (y: Rat) => sound(Rat::mul(x, y), Rat::mul(y, x), Rat::mul_comm(x, y)),
         b
@@ -543,8 +531,7 @@ module RatQ {
 
   pub theorem mul_one(a: Quot(Rat, Rat::equiv)): mul(a, ratq(Rat::one())) = a {
     Quot::ind(
-      Rat,
-      Rat::equiv,
+      <A: Rat, r: Rat::equiv>,
       (w: Quot(Rat, Rat::equiv)) => mul(w, ratq(Rat::one())) = w,
       (x: Rat) => sound(Rat::mul(x, Rat::one()), x, Rat::mul_one(x)),
       a
@@ -557,19 +544,16 @@ module RatQ {
     c: Quot(Rat, Rat::equiv)
   ): mul(a, add(b, c)) = add(mul(a, b), mul(a, c)) {
     Quot::ind(
-      Rat,
-      Rat::equiv,
+      <A: Rat, r: Rat::equiv>,
       (w: Quot(Rat, Rat::equiv)) => mul(w, add(b, c)) = add(mul(w, b), mul(w, c)),
       (x: Rat) => Quot::ind(
-        Rat,
-        Rat::equiv,
+        <A: Rat, r: Rat::equiv>,
         (w: Quot(Rat, Rat::equiv)) => mul(
           ratq(x),
           add(w, c)
         ) = add(mul(ratq(x), w), mul(ratq(x), c)),
         (y: Rat) => Quot::ind(
-          Rat,
-          Rat::equiv,
+          <A: Rat, r: Rat::equiv>,
           (w: Quot(Rat, Rat::equiv)) => mul(
             ratq(x),
             add(ratq(y), w)
@@ -591,8 +575,7 @@ module RatQ {
     a: Quot(Rat, Rat::equiv)
   ): (¬(a = ratq(Rat::zero()))) -> (mul(a, inv(a)) = ratq(Rat::one())) {
     Quot::ind(
-      Rat,
-      Rat::equiv,
+      <A: Rat, r: Rat::equiv>,
       (w: Quot(Rat, Rat::equiv)) => (
         ¬(w = ratq(Rat::zero()))
       ) -> (mul(w, inv(w)) = ratq(Rat::one())),
@@ -614,8 +597,7 @@ pub def RatQLe(
 module RatQ {
   pub theorem le_refl(a: Quot(Rat, Rat::equiv)): RatQLe(a, a) {
     Quot::ind(
-      Rat,
-      Rat::equiv,
+      <A: Rat, r: Rat::equiv>,
       (w: Quot(Rat, Rat::equiv)) => RatQLe(w, w),
       (x: Rat) => Rat::le_refl(x),
       a
@@ -628,16 +610,13 @@ module RatQ {
     c: Quot(Rat, Rat::equiv)
   ): (RatQLe(a, b)) -> (RatQLe(b, c)) -> RatQLe(a, c) {
     Quot::ind(
-      Rat,
-      Rat::equiv,
+      <A: Rat, r: Rat::equiv>,
       (w: Quot(Rat, Rat::equiv)) => (RatQLe(w, b)) -> (RatQLe(b, c)) -> RatQLe(w, c),
       (x: Rat) => Quot::ind(
-        Rat,
-        Rat::equiv,
+        <A: Rat, r: Rat::equiv>,
         (w: Quot(Rat, Rat::equiv)) => (RatQLe(ratq(x), w)) -> (RatQLe(w, c)) -> RatQLe(ratq(x), c),
         (y: Rat) => Quot::ind(
-          Rat,
-          Rat::equiv,
+          <A: Rat, r: Rat::equiv>,
           (w: Quot(Rat, Rat::equiv)) => (
             RatQLe(ratq(x), ratq(y))
           ) -> (RatQLe(ratq(y), w)) -> RatQLe(ratq(x), w),
@@ -655,12 +634,10 @@ module RatQ {
     b: Quot(Rat, Rat::equiv)
   ): (RatQLe(a, b)) -> (RatQLe(b, a)) -> (a = b) {
     Quot::ind(
-      Rat,
-      Rat::equiv,
+      <A: Rat, r: Rat::equiv>,
       (w: Quot(Rat, Rat::equiv)) => (RatQLe(w, b)) -> (RatQLe(b, w)) -> (w = b),
       (x: Rat) => Quot::ind(
-        Rat,
-        Rat::equiv,
+        <A: Rat, r: Rat::equiv>,
         (w: Quot(Rat, Rat::equiv)) => (RatQLe(ratq(x), w)) -> (RatQLe(w, ratq(x))) -> (ratq(x) = w),
         (y: Rat) => (l1: RatLe(x, y)) => (l2: RatLe(y, x)) => sound(
           x,
@@ -678,12 +655,10 @@ module RatQ {
     b: Quot(Rat, Rat::equiv)
   ): RatQLe(a, b) ∨ RatQLe(b, a) {
     Quot::ind(
-      Rat,
-      Rat::equiv,
+      <A: Rat, r: Rat::equiv>,
       (w: Quot(Rat, Rat::equiv)) => RatQLe(w, b) ∨ RatQLe(b, w),
       (x: Rat) => Quot::ind(
-        Rat,
-        Rat::equiv,
+        <A: Rat, r: Rat::equiv>,
         (w: Quot(Rat, Rat::equiv)) => RatQLe(ratq(x), w) ∨ RatQLe(w, ratq(x)),
         (y: Rat) => Rat::le_total(x, y),
         b
@@ -698,16 +673,13 @@ module RatQ {
     c: Quot(Rat, Rat::equiv)
   ): (RatQLe(a, b)) -> RatQLe(add(a, c), add(b, c)) {
     Quot::ind(
-      Rat,
-      Rat::equiv,
+      <A: Rat, r: Rat::equiv>,
       (w: Quot(Rat, Rat::equiv)) => (RatQLe(w, b)) -> RatQLe(add(w, c), add(b, c)),
       (x: Rat) => Quot::ind(
-        Rat,
-        Rat::equiv,
+        <A: Rat, r: Rat::equiv>,
         (w: Quot(Rat, Rat::equiv)) => (RatQLe(ratq(x), w)) -> RatQLe(add(ratq(x), c), add(w, c)),
         (y: Rat) => Quot::ind(
-          Rat,
-          Rat::equiv,
+          <A: Rat, r: Rat::equiv>,
           (w: Quot(Rat, Rat::equiv)) => (
             RatQLe(ratq(x), ratq(y))
           ) -> RatQLe(add(ratq(x), w), add(ratq(y), w)),
@@ -727,14 +699,12 @@ module RatQ {
     RatQLe(ratq(Rat::zero()), a)
   ) -> (RatQLe(ratq(Rat::zero()), b)) -> RatQLe(ratq(Rat::zero()), mul(a, b)) {
     Quot::ind(
-      Rat,
-      Rat::equiv,
+      <A: Rat, r: Rat::equiv>,
       (w: Quot(Rat, Rat::equiv)) => (
         RatQLe(ratq(Rat::zero()), w)
       ) -> (RatQLe(ratq(Rat::zero()), b)) -> RatQLe(ratq(Rat::zero()), mul(w, b)),
       (x: Rat) => Quot::ind(
-        Rat,
-        Rat::equiv,
+        <A: Rat, r: Rat::equiv>,
         (w: Quot(Rat, Rat::equiv)) => (
           RatQLe(ratq(Rat::zero()), ratq(x))
         ) -> (RatQLe(ratq(Rat::zero()), w)) -> RatQLe(ratq(Rat::zero()), mul(ratq(x), w)),

@@ -35,6 +35,7 @@ use super::policy::{
     self, Limits, MAX_POLICY, Policy, Rule, Trusted, Witness, expect, read_indexes,
 };
 use super::strict::{self, Doc, Fields, hex_of};
+use tauto_message::{Message, msg};
 
 /// The wait of the safe default: 14 days.
 pub const SAFE_MIN_AGE: u64 = 14 * 24 * 60 * 60;
@@ -67,11 +68,15 @@ impl Default for UserPolicy {
 }
 
 pub fn parse(bytes: &[u8], name: &str) -> Result<UserPolicy, String> {
+    parse_message(bytes, name).map_err(|e| e.to_string())
+}
+
+pub(crate) fn parse_message(bytes: &[u8], name: &str) -> Result<UserPolicy, Message> {
     let doc = Doc::parse(bytes, name, MAX_POLICY)?;
     let mut f = doc.fields(doc.root(), name)?;
     let format = f.integer("format")?;
     if format != 1 {
-        return Err(say!(
+        return Err(msg!(
             "totebag-at",
             place = name,
             error = tauto_message::msg!("totebag-unknown-format", format = format)
@@ -82,7 +87,7 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<UserPolicy, String> {
     let index_items = match f.optional("indexes") {
         Some(id) => doc
             .list(id, MAX_ITEMS)
-            .map_err(|e| say!("totebag-at", place = format!("{name}.indexes"), error = e))?,
+            .map_err(|e| msg!("totebag-at", place = format!("{name}.indexes"), error = e))?,
         None => Vec::new(),
     };
     let require = f.optional("require");
@@ -100,18 +105,18 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<UserPolicy, String> {
     let mut f = doc.fields(require, &what)?;
     let names = |f: &mut Fields<'_>, key: &str| {
         if f.has(key) {
-            policy::aliases(f, key).map_err(|e| say!("totebag-at", place = &what, error = e))
+            policy::aliases(f, key).map_err(|e| msg!("totebag-at", place = &what, error = e))
         } else {
             Ok(Vec::new())
         }
     };
     let observers = names(&mut f, "observers")?;
     let witnesses = names(&mut f, "age_witnesses")?;
-    let at = |e: String| say!("totebag-at", place = &what, error = e);
+    let at = |e: Message| msg!("totebag-at", place = &what, error = e);
     user.observers = policy::observers(&observers, &indexes).map_err(at)?;
     user.witnesses = policy::witnesses(&witnesses, &indexes).map_err(at)?;
     policy::independent(&user.observers, &user.witnesses).map_err(at)?;
-    let mut seconds = |key: &str| -> Result<Option<u64>, String> {
+    let mut seconds = |key: &str| -> Result<Option<u64>, Message> {
         if f.has(key) {
             f.read(key, |d, id| strict::seconds(d.integer(id)?))
                 .map(Some)
@@ -125,7 +130,7 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<UserPolicy, String> {
     user.max_checkpoint_lifetime = seconds("max_checkpoint_lifetime_seconds")?;
     user.max_source_check_age = seconds("max_source_check_age_seconds")?;
     if user.max_checkpoint_lifetime == Some(0) || user.max_source_check_age == Some(0) {
-        return Err(say!(
+        return Err(msg!(
             "totebag-at",
             place = &what,
             error = tauto_message::msg!("totebag-limits-positive")
@@ -137,11 +142,15 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<UserPolicy, String> {
 
 impl UserPolicy {
     pub fn strengthen(&self, project: &Policy) -> Result<Policy, String> {
+        self.strengthen_message(project).map_err(|e| e.to_string())
+    }
+
+    pub(crate) fn strengthen_message(&self, project: &Policy) -> Result<Policy, Message> {
         let mut indexes = project.indexes.clone();
         for u in &self.indexes {
             if let Some(t) = indexes.iter().find(|t| t.index == u.index) {
                 if (&t.url, &t.reference, &t.pin) != (&u.url, &u.reference, &u.pin) {
-                    return Err(say!(
+                    return Err(msg!(
                         "totebag-user-changes-index",
                         alias = &u.alias,
                         index = hex_of(&u.index),
@@ -157,7 +166,7 @@ impl UserPolicy {
                 continue;
             }
             if let Some(t) = indexes.iter().find(|t| t.alias == u.alias) {
-                return Err(say!(
+                return Err(msg!(
                     "totebag-user-alias-taken",
                     alias = &u.alias,
                     index = hex_of(&t.index),
@@ -174,7 +183,7 @@ impl UserPolicy {
                 .cloned()
                 .unwrap_or_else(|| t.clone())
         };
-        let strengthen = |rule: &Rule| -> Result<Rule, String> {
+        let strengthen = |rule: &Rule| -> Result<Rule, Message> {
             let mut out = rule.clone();
             for o in &self.observers {
                 if !out.observers.iter().any(|t| t.index == o.index) {
@@ -218,7 +227,7 @@ impl UserPolicy {
             .map(|(p, r)| {
                 strengthen(r)
                     .map(|r| (*p, r))
-                    .map_err(|e| say!("totebag-rule-for", project = hex_of(p), error = e))
+                    .map_err(|e| msg!("totebag-rule-for", project = hex_of(p), error = e))
             })
             .collect::<Result<_, _>>()?;
         Ok(Policy {
@@ -240,8 +249,8 @@ mod tests {
 
     const HEAD: &str = "format = 1\nkind = \"user-policy\"\ntrack = \"dependency-closure\"\n\n";
 
-    fn user(rest: &str) -> Result<UserPolicy, String> {
-        parse(format!("{HEAD}{rest}").as_bytes(), "trust.eure")
+    fn user(rest: &str) -> Result<UserPolicy, Message> {
+        parse_message(format!("{HEAD}{rest}").as_bytes(), "trust.eure")
     }
 
     /// Every rule of `strong` requires at least what `weak`'s does.

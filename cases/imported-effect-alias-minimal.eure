@@ -1,0 +1,185 @@
+// Concrete callbacks isolate alias expansion from proof-library extraction.
+
+@ cases.single-file-control
+entry = "main.taut"
+files."main.taut" = ```tauto
+effect touch(): i64 direct
+pub effect rt { touch }
+pub fn run_handler(): i64 ! {rt} { perform touch() }
+pub fn batch(f: () -> i64 ! {rt}): i64 ! {rt} { f() }
+fn fire(): i64 ! {rt} { batch(() => run_handler()) }
+```
+types = "ok"
+rows = "ok"
+
+@ cases.imported-alias-callback
+entry = "main.taut"
+files."runtime.taut" = ```tauto
+effect touch(): i64 direct
+pub effect rt { touch }
+pub fn run_handler(): i64 ! {rt} { perform touch() }
+pub fn batch(f: () -> i64 ! {rt}): i64 ! {rt} { f() }
+```
+files."main.taut" = ```tauto
+import "runtime.taut"
+fn fire(): i64 ! {rt} { batch(() => run_handler()) }
+```
+types = "ok"
+rows = "ok"
+
+@ cases.explicit-list-public-alias
+entry = "main.taut"
+files."runtime.taut" = ```tauto
+effect touch(): i64 direct
+pub effect rt { touch }
+pub fn run_handler(): i64 ! {rt} { perform touch() }
+pub fn batch(f: () -> i64 ! {rt}): i64 ! {rt} { f() }
+```
+files."main.taut" = ```tauto
+import "runtime.taut" { rt, batch, run_handler }
+fn fire(): i64 ! {rt} { batch(() => run_handler()) }
+```
+types = "ok"
+rows = "ok"
+
+@ cases.explicit-list-omits-used-alias
+entry = "main.taut"
+files."runtime.taut" = ```tauto
+effect touch(): i64 direct
+pub effect rt { touch }
+pub fn run_handler(): i64 ! {rt} { perform touch() }
+pub fn batch(f: () -> i64 ! {rt}): i64 ! {rt} { f() }
+```
+files."main.taut" = ```tauto
+import "runtime.taut" { batch, run_handler }
+fn fire(): i64 ! {rt} { batch(() => run_handler()) }
+```
+macro_error = "whose list does not write it"
+
+@ cases.private-alias-is-not-importable
+entry = "main.taut"
+files."runtime.taut" = ```tauto
+effect touch(): i64 direct
+effect rt { touch }
+pub fn run_handler(): i64 ! {rt} { perform touch() }
+pub fn batch(f: () -> i64 ! {rt}): i64 ! {rt} { f() }
+```
+files."main.taut" = ```tauto
+import "runtime.taut"
+fn fire(): i64 ! {rt} { batch(() => run_handler()) }
+```
+macro_error = "is private to"
+
+@ cases.public-alias-does-not-export-private-operation
+entry = "main.taut"
+files."runtime.taut" = ```tauto
+effect touch(): i64 direct
+pub effect rt { touch }
+pub fn run_handler(): i64 ! {rt} { perform touch() }
+pub fn batch(f: () -> i64 ! {rt}): i64 ! {rt} { f() }
+```
+files."main.taut" = ```tauto
+import "runtime.taut"
+fn bad(): i64 ! {rt} { perform touch() }
+```
+macro_error = "is private to"
+
+@ cases.single-file-forbidden-callback-control
+entry = "main.taut"
+files."main.taut" = ```tauto
+effect touch(): i64 direct
+pub effect rt { touch }
+pub fn run_handler(): i64 ! {rt} { perform touch() }
+pub fn batch(f: () -> i64 ! {rt}): i64 ! {rt} { f() }
+effect unexpected(): i64 direct
+fn bad(): i64 ! {rt} { batch(() => perform unexpected()) }
+```
+types = "ok"
+rows = "error: unexpected"
+
+@ cases.imported-concrete-operation-control
+entry = "main.taut"
+files."runtime.taut" = ```tauto
+pub effect touch(): i64 direct
+pub fn run_handler(): i64 ! {touch} { perform touch() }
+pub fn batch(f: () -> i64 ! {touch}): i64 ! {touch} { f() }
+```
+files."main.taut" = ```tauto
+import "runtime.taut"
+fn fire(): i64 ! {touch} { batch(() => run_handler()) }
+```
+types = "ok"
+rows = "ok"
+
+@ cases.a-private-alias-does-not-shadow-the-callers-alias
+entry = "main.taut"
+files."runtime.taut" = ```tauto
+effect touch(): i64 direct
+effect rt { touch }
+pub fn run_handler(): i64 ! {rt} { perform touch() }
+```
+files."main.taut" = ```tauto
+import "runtime.taut"
+effect other(): i64 direct
+effect rt { other }
+fn bad(): i64 ! {rt} { run_handler() }
+```
+types = "ok"
+rows = "error: touch"
+
+@ cases.two-public-aliases-need-an-unambiguous-name
+entry = "main.taut"
+files."a.taut" = ```tauto
+effect first(): i64 direct
+pub effect rt { first }
+```
+files."b.taut" = ```tauto
+effect second(): i64 direct
+pub effect rt { second }
+```
+files."main.taut" = ```tauto
+import "a.taut"
+import "b.taut"
+fn bad(): i64 ! {rt} { 0 }
+```
+macro_error = "ambiguous"
+
+@ cases.a-qualified-public-alias-is-listed-by-its-source-name
+entry = "main.taut"
+files."runtime.taut" = ```tauto
+effect touch(): i64 direct
+pub effect rt { touch }
+pub fn run_handler(): i64 ! {rt} { perform touch() }
+```
+files."main.taut" = ```tauto
+import "runtime.taut" { rt, run_handler }
+fn fire(): i64 ! {runtime::rt} { run_handler() }
+```
+types = "ok"
+rows = "ok"
+
+@ cases.a-transitive-import-does-not-bring-an-alias
+entry = "main.taut"
+files."hidden.taut" = ```tauto
+pub effect touch(): i64 direct
+pub effect rt { touch }
+```
+files."bridge.taut" = ```tauto
+import "hidden.taut"
+pub fn bridge(): i64 ! {rt} { perform touch() }
+```
+files."main.taut" = ```tauto
+import "bridge.taut"
+fn bad(): i64 ! {hidden::rt} { bridge() }
+```
+macro_error = "does not import"
+
+@ cases.alias-visibility-does-not-hide-an-open-field
+entry = "main.taut"
+files."main.taut" = ```tauto
+pub(open) struct OpenRecord { source: i64 }
+let record := OpenRecord { source: 7 }
+perform show("source", record.source)
+```
+types = "ok"
+shows = ["source = 7"]

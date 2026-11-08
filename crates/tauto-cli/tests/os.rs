@@ -386,8 +386,8 @@ match perform fs_read_bytes("{dir}/{roots}") {
     let client := TlsClient { server_name: "{name}", roots: OnlyRoots(ca), client_cert: None, alpn: ["http/1.1"] }
     match talk("127.0.0.1:{port}", client) {
       Ok(p) => {
-        perform show("reply", (p: Bytes))
-        perform show("alpn", (p: Option(Text)))
+        perform show("reply", p.fst)
+        perform show("alpn", p.snd)
       }
       Err(e) => perform show("error", io_message(e))
     }
@@ -510,8 +510,8 @@ match perform fs_read_bytes("{dir}/a.pem") {
       match perform tcp_listen("127.0.0.1:{port}") {
         Ok(l) => match serve(l, server) {
           Ok(p) => {
-            perform show("got", (p: Bytes))
-            perform show("sni", (p: Option(Text)))
+            perform show("got", p.fst)
+            perform show("sni", p.snd)
           }
           Err(e) => perform show("error", io_message(e))
         }
@@ -595,5 +595,32 @@ fn a_program_built_with_the_rust_backend_speaks_tls() {
         String::from_utf8_lossy(&run.stderr)
     );
     assert!(stdout.contains("alpn = Some(\"http/1.1\")"), "{stdout}");
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// The machine of `--backend vm` answers the stream and started-program
+/// requests: an accept waits in a task while the main task connects and
+/// writes, a read waiting in a task wakes when another shuts the stream
+/// down, and a started program is written to, waited for and read.
+#[test]
+fn the_vm_answers_streams_and_started_programs() {
+    let d = temp("vm-streams");
+    let main = d.join("main.taut");
+    fs::write(&main, include_str!("vm_streams.taut")).unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_tauto"))
+        .args(["run", "--backend", "vm", "--allow-net=127.0.0.1", "--allow-run=sh", "main.taut"])
+        .current_dir(&d)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}{}", String::from_utf8_lossy(&out.stderr));
+    for line in [
+        "write = Ok(())",
+        "served = Ok(Bytes[104, 101, 108, 108, 111])",
+        "read = Ok(Bytes[])",
+        "wait = Ok(Some(0))",
+    ] {
+        assert!(stdout.contains(line), "{line}: {stdout}");
+    }
     let _ = fs::remove_dir_all(&d);
 }

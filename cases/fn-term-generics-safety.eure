@@ -1,0 +1,229 @@
+description = "Native mixed-generic adapters recheck proofs, preserve values and do not capture identities."
+
+@ cases.invalid-proof-is-not-erased-without-checking
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn impossible<n: Nat, h: Eq(Nat, n, 0)>(): Nat { n }
+perform show("bad", impossible(1, Refl))
+```
+load_error = "native mixed-generic adapter did not type-check"
+
+@ cases.closed-proof-is-checked-under-dynamic-value
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn justified<n: Nat, h: Eq(Nat, n, n)>(): Nat { n }
+let number := 71
+perform show("proof", justified(number, Refl))
+```
+shows = ["proof = 71"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["proof = 71"]
+javascript_shows = ["proof = 71"]
+
+@ cases.polymorphic-native-path-keeps-local-type-binding
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn choose<A: Type, x: A>(): A { x }
+fn native<A: Type>(x: A): A {
+  var value := x
+  choose(A, value)
+}
+perform show("local", native(1))
+```
+shows = ["local = 1"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["local = 1"]
+javascript_shows = ["local = 1"]
+
+@ cases.generated-adapter-name-does-not-shadow-user-function
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn choose<A: Type, x: A>(): A { x }
+fn TautoGenericBoundary0(n: Nat): Nat { 99 }
+let number := 73
+perform show("chosen", choose(Nat, number))
+perform show("user", TautoGenericBoundary0(0))
+```
+shows = ["chosen = 73", "user = 99"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["chosen = 73", "user = 99"]
+javascript_shows = ["chosen = 73", "user = 99"]
+
+@ cases.recursive-call-preserves-dynamic-generic
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn descend<A: Type, n: Nat>(x: Nat): Nat {
+  ⊢ Nat from match x { Zero => n, Succ(k) => descend(A, n, k) }
+}
+let number := 79
+perform show("recursive", descend(Nat, number, 3))
+```
+shows = ["recursive = 79"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["recursive = 79"]
+javascript_shows = ["recursive = 79"]
+
+@ cases.mixed-adapter-does-not-hide-callback-effects
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn call<A: Type, f: (A) -> A>(x: A): A { f(x) }
+fn diverge(n: nat): nat ! {Div} { diverge(n) }
+perform show("bad", call(Nat, diverge, 0))
+```
+rows = "error: a function value may perform Div but its type permits {}"
+compile_errors.rust = "front: a function value may perform Div but its type permits {}"
+compile_errors.javascript = "front: a function value may perform Div but its type permits {}"
+compile_errors.vm = "front: a function value may perform Div but its type permits {}"
+
+
+@ cases.local-type-actual-is-not-captured-by-adapter
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn choose<A: Type, x: A>(): A { x }
+let local_type := Nat
+perform show("bad", choose(local_type, 1))
+```
+load_error = "requires closed type/proof arguments"
+
+@ cases.explicit-type-actual-is-not-reinferred-from-value
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn choose<A: Type, x: A>(): A { x }
+let number: nat := 42
+perform show("bad", choose(Bool, number))
+```
+types = "error: does not fit Bool"
+compile_errors.rust = "front: an argument: nat does not fit Bool"
+compile_errors.javascript = "front: an argument: nat does not fit Bool"
+compile_errors.vm = "front: an argument: nat does not fit Bool"
+
+@ cases.curried-explicit-type-actual-is-not-reinferred
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn choose<A: Type, x: A>(): A { x }
+let number: nat := 42
+perform show("bad", choose(Bool)(number))
+```
+types = "error: does not fit Bool"
+compile_errors.rust = "front: an argument: nat does not fit Bool"
+compile_errors.javascript = "front: an argument: nat does not fit Bool"
+compile_errors.vm = "front: an argument: nat does not fit Bool"
+
+@ cases.recursive-generic-retains-runtime-type-use
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn repeat<A: Type, x: A>(n: Nat): A {
+  ⊢ A from match n { Zero => x, Succ(k) => repeat(A, x, k) }
+}
+perform show("typed", repeat(Nat, 83, 3))
+```
+shows = ["typed = 83"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["typed = 83"]
+javascript_shows = ["typed = 83"]
+
+@ cases.native-unused-term-generic-is-not-silently-erased
+source = ```tauto
+fn forget<n: nat>(x: nat): nat { x }
+perform show("bad", forget(1))
+```
+types = "error: term generic `n` requires checked extraction before native compilation"
+compile_errors.rust = "front: term generic `n` requires checked extraction before native compilation"
+compile_errors.javascript = "front: term generic `n` requires checked extraction before native compilation"
+compile_errors.vm = "front: term generic `n` requires checked extraction before native compilation"
+
+@ cases.checked-unused-term-generic-keeps-its-argument
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn forget<n: Nat>(x: Nat): Nat { x }
+perform show("kept", forget(101, 1))
+```
+shows = ["kept = 1"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["kept = 1"]
+javascript_shows = ["kept = 1"]
+
+@ cases.checked-unused-term-generic-cannot-be-omitted
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn forget<n: Nat>(x: Nat): Nat { x }
+perform show("bad", forget(1))
+```
+load_error = "native call cannot infer omitted term generics"
+
+@ cases.native-value-generic-prefix-can-be-partially-applied
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn first<n: Nat>(x: Nat, y: Nat): Nat { n }
+let partial: (nat, nat) -> nat := first(97)
+perform show("partial", partial(1, 2))
+```
+shows = ["partial = 97"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["partial = 97"]
+javascript_shows = ["partial = 97"]
+
+@ cases.native-direct-row-first-value-generic-keeps-value
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn keep<!e, n: Nat>(callback: () -> Unit ! e): Nat ! {} ∪ e { callback(); n }
+perform show("row", keep(103, () => #()))
+```
+shows = ["row = 103"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["row = 103"]
+javascript_shows = ["row = 103"]
+
+@ cases.native-partial-prefix-is-evaluated-once-before-call
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn first<n: Nat>(x: Nat, y: Nat): Nat { n }
+let partial: (nat, nat) -> nat := first({ perform show("prefix", 1); 107 })
+perform show("between", 2)
+perform show("partial", partial(3, 4))
+```
+shows = ["prefix = 1", "between = 2", "partial = 107"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["prefix = 1", "between = 2", "partial = 107"]
+javascript_shows = ["prefix = 1", "between = 2", "partial = 107"]
+
+@ cases.native-effectful-partial-is-not-treated-as-pure
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+effect tick(): Unit resume 1
+fn first<n: Nat>(x: Nat, y: Nat): Nat ! {tick} { perform tick(); n }
+let partial := first(109)
+```
+load_error = "native partial term-generic application needs a pure owned checked telescope"
+
+@ cases.match-elaboration-keeps-inferred-term-call-identity
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+inductive At(n: Nat): Type { Mk: At(n) }
+fn index<n: Nat>(w: At(n)): Nat { n }
+fn answer(n: Nat): Nat {
+  ⊢ Nat from match n { Zero => 0, Succ(k) => index(At::Mk(k)) }
+}
+perform show("matched", answer(114))
+```
+shows = ["matched = 113"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["matched = 113"]
+javascript_shows = ["matched = 113"]

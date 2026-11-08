@@ -28,6 +28,7 @@ mutual
     | .text => exact .text
     | .dec => exact .dec
     | .flt => exact .flt
+    | .flt32 => exact .flt32
     | .prim hv => exact .prim hv
     | .viewApp hv hva ha hu hs => exact .viewApp hv hva (ha.mono hF) hu hs
     | .ref hf hv => exact .ref hf hv

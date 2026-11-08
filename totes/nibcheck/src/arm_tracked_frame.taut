@@ -13,12 +13,15 @@ import "types_match.taut"
 import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
-pub theorem ck_arm_enter_frame_tracked(c: Checker, xs: List(TypeName)): TrackedFrame(
-  c,
-  ck_arm_enter(c, xs)
-) { tracked_state_refl(c) }
+pub theorem ck_arm_enter_frame_tracked(
+  c: Checker,
+  xs: List(TypeName)
+): TrackedFrame(c, ck_arm_enter(c, xs)) { tracked_state_refl(c) }
 
-pub theorem ck_enter_fn_frame_tracked(c: Checker, scheme: Scheme): TrackedFrame(c, ck_enter_fn(c, scheme)) {
+pub theorem ck_enter_fn_frame_tracked(
+  c: Checker,
+  scheme: Scheme
+): TrackedFrame(c, ck_enter_fn(c, scheme)) {
   tracked_state_refl(c)
 }
 
@@ -34,7 +37,7 @@ pub theorem ck_arm_report_frame_tracked(
   rv: Option(Nat),
   body: SurfaceTerm
 ): TrackedFrame(c, ck_arm_report(c, why, rv, body)) {
-  match rv: TrackedFrame(c, ck_arm_report(c, why, rv, body)) {
+  ⊢ TrackedFrame(c, ck_arm_report(c, why, rv, body)) from match rv {
     Some(v) => ck_error_frame_tracked(c, why, span_of(body))
     None => tracked_state_refl(c)
   }
@@ -48,7 +51,7 @@ pub theorem arm_fresh_step_frame_tracked(
   has: Bool,
   ih: ∀ next: Checker. ∀ m: Ordmap(Text, Ty). TrackedFrame(next, ck_arm_fresh(next, rest, m))
 ): TrackedFrame(c, arm_fresh_step(c, g, rest, map, has)) {
-  match has: TrackedFrame(c, arm_fresh_step(c, g, rest, map, has)) {
+  ⊢ TrackedFrame(c, arm_fresh_step(c, g, rest, map, has)) from match has {
     true => tracked_rewrap(c, ck_arm_fresh(c, rest, map), ih(c, map))
     false => tracked_bind(
       Ty,
@@ -73,7 +76,7 @@ pub theorem ck_arm_fresh_frame_tracked(
   gs: List(Text),
   map: Ordmap(Text, Ty)
 ): TrackedFrame(c, ck_arm_fresh(c, gs, map)) {
-  match gs: TrackedFrame(c, ck_arm_fresh(c, gs, map)) {
+  ⊢ TrackedFrame(c, ck_arm_fresh(c, gs, map)) from match gs {
     Nil => tracked_state_refl(c)
     Cons(g, rest) => Eq::subst(
       (z: Mut1(Ordmap(Text, Ty), Checker)) => TrackedFrame(c, z),
@@ -96,9 +99,9 @@ pub theorem ck_arm_given_frame_tracked(
   types: List(SurfaceTerm),
   map: Ordmap(Text, Ty)
 ): TrackedFrame(c, ck_arm_given(c, typed, types, map)) {
-  match typed: TrackedFrame(c, ck_arm_given(c, typed, types, map)) {
+  ⊢ TrackedFrame(c, ck_arm_given(c, typed, types, map)) from match typed {
     Nil => tracked_state_refl(c)
-    Cons(g, gs) => match types: TrackedFrame(c, ck_arm_given(c, Cons(g, gs), types, map)) {
+    Cons(g, gs) => ⊢ TrackedFrame(c, ck_arm_given(c, Cons(g, gs), types, map)) from match types {
       Nil => tracked_state_refl(c)
       Cons(t, ts) => tracked_bind(
         Ty,
@@ -126,14 +129,17 @@ pub theorem ck_rigid_k_frame_tracked(
   m: Mut1(Ordmap(Text, Ty), Checker),
   h: TrackedFrame(c, m)
 ): TrackedFrame(c, ck_rigid_k(g, t, m)) {
-  match m: TrackedFrame(c, ck_rigid_k(g, t, m)) {
+  ⊢ TrackedFrame(c, ck_rigid_k(g, t, m)) from match m {
     mut1(x, c2) => h
   }
 }
 
 // Making rigid types only counts them.
-pub theorem ck_rigid_frame_tracked(gs: List(Pair(Text, Kind)), c: Checker): TrackedFrame(c, ck_rigid(gs, c)) {
-  match gs: TrackedFrame(c, ck_rigid(gs, c)) {
+pub theorem ck_rigid_frame_tracked(
+  gs: List(Pair(Text, Kind)),
+  c: Checker
+): TrackedFrame(c, ck_rigid(gs, c)) {
+  ⊢ TrackedFrame(c, ck_rigid(gs, c)) from match gs {
     Nil => tracked_state_refl(c)
     Cons(g, rest) => ck_rigid_k_frame_tracked(
       c,
@@ -154,7 +160,7 @@ pub theorem ck_arm_sig_at_frame_tracked(
   rv: Option(Nat),
   body: SurfaceTerm
 ): TrackedFrame(c, ck_arm_sig_at(c, s, typed, r#instance, binds, rv, body)) {
-  match r#instance: TrackedFrame(c, ck_arm_sig_at(c, s, typed, r#instance, binds, rv, body)) {
+  ⊢ TrackedFrame(c, ck_arm_sig_at(c, s, typed, r#instance, binds, rv, body)) from match r#instance {
     ArmBad(why) => tracked_bind(
       Unit,
       Option(ArmSig),
@@ -239,7 +245,7 @@ pub theorem arm_sig_found_frame_tracked(
   body: SurfaceTerm,
   found: Option(EffectSig)
 ): TrackedFrame(c, arm_sig_found(c, eff, binds, types, rv, body, found)) {
-  match found: TrackedFrame(c, arm_sig_found(c, eff, binds, types, rv, body, found)) {
+  ⊢ TrackedFrame(c, arm_sig_found(c, eff, binds, types, rv, body, found)) from match found {
     Some(s) => tracked_rewrap(
       c,
       ck_arm_sig_at(
@@ -284,10 +290,10 @@ pub theorem arm_sig_step_frame_tracked(
   body: SurfaceTerm,
   exceeded: Bool
 ): TrackedFrame(c, arm_sig_step(c, eff, binds, types, result, rv, budget_ty, body, exceeded)) {
-  match exceeded: TrackedFrame(
+  ⊢ TrackedFrame(
     c,
     arm_sig_step(c, eff, binds, types, result, rv, budget_ty, body, exceeded)
-  ) {
+  ) from match exceeded {
     true => tracked_state_refl(c)
     false => arm_sig_found_frame_tracked(
       c,
@@ -314,7 +320,16 @@ pub theorem ck_handle_arm_sig_frame_tracked(
   Eq::subst(
     (z: Mut1(Option(ArmSig), Checker)) => TrackedFrame(c, z),
     Eq::sym(arm_sig_unf(c, eff, binds, types, result, rv, budget_ty, body)),
-    arm_sig_step_frame_tracked(c, eff, binds, types, result, rv, budget_ty, body, Text::eq(eff, "exceeded"))
+    arm_sig_step_frame_tracked(
+      c,
+      eff,
+      binds,
+      types,
+      result,
+      rv,
+      budget_ty,
+      body,
+      Text::eq(eff, "exceeded")
+    )
   )
 }
-

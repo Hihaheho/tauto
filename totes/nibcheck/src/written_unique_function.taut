@@ -21,7 +21,7 @@ pub theorem written_fn_kind_equal<params: List(
   other_kind: Kind,
   annotation: kind = other_kind
 ): TyFn(params, result, kind) = TyFn(other_params, other_result, other_kind) {
-  match equal: TyFn(params, result, kind) = TyFn(other_params, other_result, other_kind) {
+  ⊢ TyFn(params, result, kind) = TyFn(other_params, other_result, other_kind) from match equal {
     Refl => Eq::congr((k: Kind) => TyFn(params, result, k), annotation)
   }
 }
@@ -37,20 +37,8 @@ pub theorem written_unique_fn_kind<env: Datas, generics: Ordmap(
   ih: WrittenTermUnique(generics, partial, false, body, TyFn(params, result, original)),
   annotation: WrittenFunctionKind(spelling, kind)
 ): TyFn(params, result, kind) = other {
-  match meaning: TyFn(params, result, kind) = other {
-    WrittenKindFunctionKind(
-      gs,
-      mode,
-      borrowing,
-      label,
-      term,
-      other_params,
-      other_result,
-      other_original,
-      other_kind,
-      function,
-      other_annotation
-    ) => written_fn_kind_equal(
+  ⊢ TyFn(params, result, kind) = other from match meaning {
+    WrittenKindFunctionKind(gs, mode, borrowing, label, term, other_params, other_result, other_original, other_kind, function, other_annotation) => written_fn_kind_equal(
       ih(env, TyFn(other_params, other_result, other_original), function),
       kind,
       other_kind,
@@ -82,26 +70,8 @@ pub theorem written_unique_function<env: Datas, generics: Ordmap(
   ihparams: WrittenParametersUnique(inner, partial, suffix, arguments),
   ihresult: WrittenTermUnique(inner, partial, false, result, returns)
 ): t = other {
-  match meaning: t = other {
-    WrittenKindFunction(
-      gs,
-      mode,
-      borrowing,
-      source_params,
-      source_result,
-      source_effects,
-      other_binders,
-      other_suffix,
-      other_inner,
-      other_arguments,
-      other_returns,
-      value,
-      other_split,
-      other_scope,
-      parameter_types,
-      result_type,
-      other_polymorphic
-    ) => {
+  ⊢ t = other from match meaning {
+    WrittenKindFunction(gs, mode, borrowing, source_params, source_result, source_effects, other_binders, other_suffix, other_inner, other_arguments, other_returns, value, other_split, other_scope, parameter_types, result_type, other_polymorphic) => {
       let prefixes: Eq(
         Pair(List(Pair(Text, Kind)), List(SurfaceParam)),
         Pair { fst: binders, snd: suffix },
@@ -156,12 +126,27 @@ pub theorem written_unique_function<env: Datas, generics: Ordmap(
           Ordmap(Text, Ty),
           other_inner,
           inner,
-          (map: Ordmap(Text, Ty)) => WrittenTerm(env, map, mode, false, source_result, other_returns),
+          (map: Ordmap(Text, Ty)) => WrittenTerm(
+            env,
+            map,
+            mode,
+            false,
+            source_result,
+            other_returns
+          ),
           Eq::sym(scopes),
           result_type
         )
       )
-      let functions: TyFn(arguments, returns, KindShared) = TyFn(other_arguments, other_returns, KindShared) := Eq::trans(
+      let functions: TyFn(
+        arguments,
+        returns,
+        KindShared
+      ) = TyFn(
+        other_arguments,
+        other_returns,
+        KindShared
+      ) := Eq::trans(
         Eq::congr(
           List(Ty),
           Ty,

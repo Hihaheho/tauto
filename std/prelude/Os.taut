@@ -35,7 +35,7 @@ pub(open) struct Process {
   program: Text,
   args: List(Text),
   dir: Text,
-  env: List(Pair(Text, Text)),
+  env: List(Text × Text),
   stdin: Bytes
 }
 // How it ended: its exit status (`None` when a signal ended it), its
@@ -61,8 +61,8 @@ pub(open) enum ChildStream { ChildStdout, ChildStderr }
 // An HTTP request and its response. Header names and values are as sent,
 // and the body is its bytes as sent. A header value that is not UTF-8 is
 // not given to the program changed: the host refuses that response instead.
-pub(open) struct Request { method: Text, url: Text, headers: List(Pair(Text, Text)), body: Bytes }
-pub(open) struct Response { status: u64, headers: List(Pair(Text, Text)), body: Bytes }
+pub(open) struct Request { method: Text, url: Text, headers: List(Text × Text), body: Bytes }
+pub(open) struct Response { status: u64, headers: List(Text × Text), body: Bytes }
 
 // A byte stream's listener and the address the host bound (`tcp_listen`).
 pub(open) struct TcpListener { id: u64, address: Text }
@@ -134,6 +134,13 @@ pub(open) effect exit(code: i32): Never resume 0
 // `Result` or `fail` instead. A handler may answer it like any effect;
 // unanswered, the host ends the run with `message` as its error.
 pub(open) effect stop(message: Text): Never resume 0
+// A token whose request is raised when the run is asked to end from outside:
+// an interrupt (Ctrl-C, SIGINT) or a termination request (SIGTERM). Once a
+// program has asked for one, such a request no longer ends the run at once;
+// the program reads the token, cleans up and returns normally. A second
+// request ends the run at once, as if the program had not asked. Where the
+// host has no such requests (a browser), the request is never raised.
+pub(open) effect shutdown_token(): CancelToken direct
 // Milliseconds since the Unix epoch.
 pub(open) effect wall_clock(): i64 direct
 // Nanoseconds since a fixed moment of this run; it never goes back.
@@ -152,6 +159,15 @@ pub(open) effect fs_read(path: Text): Result(Text, IoError) direct
 pub(open) effect fs_write(path: Text, contents: Text): Result(Unit, IoError) direct
 // `--allow-read`: the contents of a file, byte by byte.
 pub(open) effect fs_read_bytes(path: Text): Result(Bytes, IoError) direct
+// `--allow-read` for `root`: the contents of the file `path` under the
+// directory `root`, as UTF-8, never leaving it. `path` is names joined by
+// `/` (not absolute, no empty name, `.` or `..`), and no component of it,
+// the file included, may be a link: each is opened from the one before
+// (`openat` with `O_NOFOLLOW`), so a link or a rename made meanwhile does
+// not lead the read out of `root`. Anything else is `Err(Failed(..))`.
+pub(open) effect fs_read_under(root: Text, path: Text): Result(Text, IoError) direct
+// `--allow-read` for `root`: as `fs_read_under`, byte by byte.
+pub(open) effect fs_read_bytes_under(root: Text, path: Text): Result(Bytes, IoError) direct
 // `--allow-write`: makes or replaces a file with these bytes.
 pub(open) effect fs_write_bytes(path: Text, contents: Bytes): Result(Unit, IoError) direct
 // `--allow-write`: makes a directory and any missing parents. A directory
@@ -165,6 +181,15 @@ pub(open) effect fs_remove(path: Text): Result(Unit, IoError) direct
 // `--allow-read`: what a path is; `Ok(None)` when nothing is there. A link
 // is followed, as for every path a permission covers.
 pub(open) effect fs_stat(path: Text): Result(Option(FileStat), IoError) direct
+// `--allow-read`: where the link at `path` points, not followed; `Ok(None)`
+// when what is there is not a link, or nothing is. The permission covers the
+// link itself: its directory with links followed, and its name.
+pub(open) effect fs_read_link(path: Text): Result(Option(Text), IoError) direct
+// `--allow-write`: makes a file with `contents` where nothing is. Anything
+// there fails it, a link too, even one that points at nothing, and it never
+// writes through a link. The permission covers the file itself, as for
+// `fs_read_link`.
+pub(open) effect fs_write_new(path: Text, contents: Text): Result(Unit, IoError) direct
 // `--allow-write`: moves a file or a directory to a path that is not there
 // yet, or replaces a file there. Both paths need the permission.
 pub(open) effect fs_rename(src: Text, dst: Text): Result(Unit, IoError) direct
@@ -364,12 +389,17 @@ module Os {
     fn write_file(path: Text, contents: Text): Result(Unit, Text) ! {fs_write}
     fn read_bytes(path: Text): Result(Bytes, Text) ! {fs_read_bytes}
     fn write_bytes(path: Text, contents: Bytes): Result(Unit, Text) ! {fs_write_bytes}
+    fn read_under(root: Text, path: Text): Result(Text, Text) ! {fs_read_under}
+    fn read_bytes_under(root: Text, path: Text): Result(Bytes, Text) ! {fs_read_bytes_under}
     fn create_dir(path: Text): Result(Unit, Text) ! {fs_create_dir}
     fn list_dir(path: Text): Result(List(Text), Text) ! {fs_list_dir}
     fn remove(path: Text): Result(Unit, Text) ! {fs_remove}
     // Empty when nothing is there; else the kind (`file`, `dir` or
     // `other`), the size and the time of the last change in milliseconds.
     fn stat(path: Text): Result(List(Text), Text) ! {fs_stat}
+    // Empty when what is there is not a link; else where it points.
+    fn read_link(path: Text): Result(List(Text), Text) ! {fs_read_link}
+    fn write_new(path: Text, contents: Text): Result(Unit, Text) ! {fs_write_new}
     fn move_path(src: Text, dst: Text): Result(Unit, Text) ! {fs_rename}
     fn copy_file(src: Text, dst: Text): Result(Unit, Text) ! {fs_copy}
     fn canonicalize(path: Text): Result(Text, Text) ! {fs_canonicalize}
@@ -418,6 +448,8 @@ module Os {
     // its end.
     fn read_stdin(max: u64): Bytes ! {stdin_bytes}
     fn flush(): Unit ! {stdout_flush}
+    // Raises `s` when the run is asked to end from outside.
+    fn on_shutdown(s: Signal): Unit ! {shutdown_token}
     fn env(name: Text): Option(Text) ! {env}
     fn wall_ms(): i64 ! {wall_clock}
     fn monotonic_ns(): i64 ! {monotonic_clock}
@@ -525,24 +557,79 @@ module Host {
     }
   }
 
-  pub fn flat_headers(hs: List(Pair(Text, Text))): List(Text) {
+  // A fresh request, raised by the host when the run is asked to end.
+  pub fn shutdown_token(): CancelToken {
+    let c := Cancellation::new()
+    let t := Cancellation::token(c)
+    Os::on_shutdown(CancelToken::signal(t))
+    t
+  }
+
+  pub fn flat_headers(hs: List(Text × Text)): List(Text) {
     match hs {
       Nil => Nil
-      Cons(Pair { fst: name, snd: value }, rest) => Cons(
-        name,
-        Cons(value, Host::flat_headers(rest))
-      )
+      Cons(#(name, value), rest) => Cons(name, Cons(value, Host::flat_headers(rest)))
     }
   }
 
-  pub fn paired_headers(ts: List(Text)): List(Pair(Text, Text)) {
+  pub fn paired_headers(ts: List(Text)): List(Text × Text) {
     match ts {
-      Cons(name, Cons(value, rest)) => Cons(
-        Pair { fst: name, snd: value },
-        Host::paired_headers(rest)
-      )
+      Cons(name, Cons(value, rest)) => Cons(#(name, value), Host::paired_headers(rest))
       Cons(_, Nil) => Nil
       Nil => Nil
+    }
+  }
+
+  pub fn link(r: Result(List(Text), Text)): Result(Option(Text), IoError) {
+    match r {
+      Ok(Cons(target, _)) => Ok(Some(target))
+      Ok(_) => Ok(None)
+      Err(why) => Err(Failed(why))
+    }
+  }
+
+  // The last `/` among the first `n` bytes of `t`.
+  pub fn slash_before(t: Text, n: u64): Option(u64) ! {Div} {
+    if n == 0 {
+      None
+    } else {
+      let j := n - 1
+      if Text::byte(t, j) == Some(47) { Some(j) } else { Host::slash_before(t, j) }
+    }
+  }
+
+  pub fn slice_or(t: Text, start: u64, end: u64, otherwise: Text): Text {
+    match Text::slice(t, start, end) {
+      Some(part) => part
+      None => otherwise
+    }
+  }
+
+  // The place of the entry `path` names, for an effect that acts on the entry and not on what a
+  // link there points at: the permission is checked on the directory, links followed, and the
+  // name is kept as written. A name that is empty, `.` or `..` names no entry.
+  pub fn entry(kind: Text, path: Text): Option(Text) ! {permission, Div} {
+    let n := Text::len(path)
+    let slash := Host::slash_before(path, n)
+    let dir := match slash {
+      None => "."
+      Some(i) => if i == 0 { "/" } else { Host::slice_or(path, 0, i, "") }
+    }
+    let name := match slash {
+      None => path
+      Some(i) => Host::slice_or(path, i + 1, n, "")
+    }
+    if name == "" || name == "." || name == ".." {
+      None
+    } else {
+      match Os::check(kind, dir) {
+        None => None
+        Some(real) => if Text::byte(real, Text::len(real) - 1) == Some(47) {
+          Some(concat(real, name))
+        } else {
+          Some(concat(concat(real, "/"), name))
+        }
+      }
     }
   }
 
@@ -550,9 +637,8 @@ module Host {
     match r {
       Ok(Cons(kind, Cons(size, Cons(modified, _)))) => {
         let k := match Text::byte(kind, 0) {
-          Some(100) => IsDir
-          Some(102) => IsFile
-          _ => IsOther
+          Some(byte) => match byte { 100 => IsDir, 102 => IsFile, other => IsOther }
+          None => IsOther
         }
         Ok(Some(FileStat { kind: k, size: Os::status(size), modified_ms: Os::status(modified) }))
       }
@@ -576,10 +662,7 @@ module Host {
   }
 
   pub fn mode(s: Stdio): Text {
-    match s {
-      StdioPiped => "0"
-      StdioInherit => "1"
-    }
+    match s { StdioPiped => "0", StdioInherit => "1" }
   }
 
   pub fn child(r: Result(List(Text), Text)): Result(Child, IoError) {
@@ -624,10 +707,7 @@ module Host {
     deadline: Option(i64)
   ): Result(Bytes, IoError) ! {wait} {
     let id := c.id
-    let w := match which {
-      ChildStdout => 1
-      ChildStderr => 2
-    }
+    let w := match which { ChildStdout => 1, ChildStderr => 2 }
     Host::timed(Pending::join(Os::offload(() => Os::child_read(id, w, max, deadline))))
   }
 
@@ -747,11 +827,7 @@ module Host {
   }
 
   pub fn shutdown_code(how: Shutdown): u64 {
-    match how {
-      ShutdownRead => 0
-      ShutdownWrite => 1
-      ShutdownBoth => 2
-    }
+    match how { ShutdownRead => 0, ShutdownWrite => 1, ShutdownBoth => 2 }
   }
 
   pub fn tcp_accept(l: TcpListener, deadline: Option(i64)): Result(TcpStream, IoError) ! {wait} {
@@ -887,15 +963,14 @@ module Host {
   // The host's answers, around the whole program and around each task. What
   // may take a while is a `Pending` the answer waits for: `wait` is left to
   // the host that runs the tasks, which goes on with the others meanwhile.
-  pub fn run<A, !e>(
-    &body: () -> A ! {stdout, stderr, stdin, stdin_bytes, stdout_flush, argv, exit, stop, wall_clock, monotonic_clock, sleep, random, secure_random, fs_read, fs_write, fs_read_bytes, fs_write_bytes, fs_create_dir, fs_list_dir, fs_remove, fs_stat, fs_rename, fs_copy, fs_canonicalize, fs_temp_dir, proc_spawn, proc_read, proc_write, proc_close_stdin, proc_wait, proc_close, proc_run, env, permission, net, net_addr, net_resolve, tcp_listen, tcp_accept, tcp_connect, tcp_read, tcp_write, tcp_shutdown, tcp_close, tcp_unlisten, tls_accept, tls_connect, tls_read, tls_write, tls_shutdown, tls_close} ∪ e
-  ): A ! {wait} ∪ e {
+  pub fn run<A, !e>(&body: () -> A ! {stdout, stderr, stdin, stdin_bytes, stdout_flush, shutdown_token, argv, exit, stop, wall_clock, monotonic_clock, sleep, random, secure_random, fs_read, fs_write, fs_read_bytes, fs_write_bytes, fs_read_under, fs_read_bytes_under, fs_create_dir, fs_list_dir, fs_remove, fs_stat, fs_read_link, fs_write_new, fs_rename, fs_copy, fs_canonicalize, fs_temp_dir, proc_spawn, proc_read, proc_write, proc_close_stdin, proc_wait, proc_close, proc_run, env, permission, net, net_addr, net_resolve, tcp_listen, tcp_accept, tcp_connect, tcp_read, tcp_write, tcp_shutdown, tcp_close, tcp_unlisten, tls_accept, tls_connect, tls_read, tls_write, tls_shutdown, tls_close} ∪ e): A ! {wait} ∪ e {
     handle { body() } with {
       stdout(t), k => k(Os::print(t))
       stderr(t), k => k(Os::eprint(t))
       stdin(), k => k(Os::read_line())
       stdin_bytes(max), k => k(Os::read_stdin(max))
       stdout_flush(), k => k(Os::flush())
+      shutdown_token(), k => k(Host::shutdown_token())
       argv(), k => k(Os::args())
       exit(code) => Os::exit(code)
       stop(message) => Os::stop(message)
@@ -923,6 +998,14 @@ module Host {
         Some(real) => Host::failed(Os::write_bytes(real, contents))
         None => Err(Host::denied("write", path))
       })
+      fs_read_under(root, path), k => k(match Os::check("read", root) {
+        Some(real) => Host::failed(Os::read_under(real, path))
+        None => Err(Host::denied("read", root))
+      })
+      fs_read_bytes_under(root, path), k => k(match Os::check("read", root) {
+        Some(real) => Host::failed(Os::read_bytes_under(real, path))
+        None => Err(Host::denied("read", root))
+      })
       fs_create_dir(path), k => k(match Os::check("write", path) {
         Some(real) => Host::failed(Os::create_dir(real))
         None => Err(Host::denied("write", path))
@@ -938,6 +1021,14 @@ module Host {
       fs_stat(path), k => k(match Os::check("read", path) {
         Some(real) => Host::stat(Os::stat(real))
         None => Err(Host::denied("read", path))
+      })
+      fs_read_link(path), k => k(match Host::entry("read", path) {
+        Some(real) => Host::link(Os::read_link(real))
+        None => Err(Host::denied("read", path))
+      })
+      fs_write_new(path, contents), k => k(match Host::entry("write", path) {
+        Some(real) => Host::failed(Os::write_new(real, contents))
+        None => Err(Host::denied("write", path))
       })
       fs_rename(src, dst), k => k(match Os::check("write", src) {
         Some(from_real) => match Os::check("write", dst) {

@@ -18,13 +18,13 @@ import "../../text/src/text.taut"
 
 mutual {
   pub fn term_mentions(t: SurfaceTerm, name: Text): Bool {
-    match t: Bool {
+    ⊢ Bool from match t {
       SurfaceTermIndexedMk(k, start, end, ast_occurrence) => kind_mentions(k, name)
     }
   }
 
   pub fn kind_mentions(k: SurfaceKind, name: Text): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       SkVar(v) => v == name
       SkApp(f, args) => term_mentions(f, name) || terms_mention(args, name)
       SkPi(params, result, effects) => params_mention(params, name) || term_mentions(result, name)
@@ -40,30 +40,30 @@ mutual {
   }
 
   pub fn terms_mention(ts: List(SurfaceTerm), name: Text): Bool {
-    match ts: Bool {
+    ⊢ Bool from match ts {
       Nil => false
       Cons(t, rest) => term_mentions(t, name) || terms_mention(rest, name)
     }
   }
 
   pub fn params_mention(ps: List(SurfaceParam), name: Text): Bool {
-    match ps: Bool {
+    ⊢ Bool from match ps {
       Nil => false
       Cons(p, rest) => param_mentions(p, name) || params_mention(rest, name)
     }
   }
 
   pub fn param_mentions(p: SurfaceParam, name: Text): Bool {
-    match p: Bool {
+    ⊢ Bool from match p {
       SurfaceParamMk(n, ty) => term_mentions(ty, name)
     }
   }
 }
 
 pub fn opt_terms_mention(ts: List(Option(SurfaceTerm)), name: Text): Bool {
-  match ts: Bool {
+  ⊢ Bool from match ts {
     Nil => false
-    Cons(t, rest) => match t: Bool {
+    Cons(t, rest) => ⊢ Bool from match t {
       Some(x) => term_mentions(x, name) || opt_terms_mention(rest, name)
       None => opt_terms_mention(rest, name)
     }
@@ -71,7 +71,7 @@ pub fn opt_terms_mention(ts: List(Option(SurfaceTerm)), name: Text): Bool {
 }
 
 pub fn opt_term_mentions(t: Option(SurfaceTerm), name: Text): Bool {
-  match t: Bool {
+  ⊢ Bool from match t {
     Some(x) => term_mentions(x, name)
     None => false
   }
@@ -81,8 +81,8 @@ pub fn opt_term_mentions(t: Option(SurfaceTerm), name: Text): Bool {
 // again.
 mutual {
   pub fn term_replace(t: SurfaceTerm, name: Text, r#by: SurfaceTerm): SurfaceTerm {
-    match t: SurfaceTerm {
-      SurfaceTermIndexedMk(k, start, end, ast_occurrence) => match k: SurfaceTerm {
+    ⊢ SurfaceTerm from match t {
+      SurfaceTermIndexedMk(k, start, end, ast_occurrence) => ⊢ SurfaceTerm from match k {
         SkVar(v) => if v == name { r#by } else { surface_term_mk(k, start, end) }
         _ => surface_term_mk(kind_replace(k, name, r#by), start, end)
       }
@@ -90,7 +90,7 @@ mutual {
   }
 
   pub fn kind_replace(k: SurfaceKind, name: Text, r#by: SurfaceTerm): SurfaceKind {
-    match k: SurfaceKind {
+    ⊢ SurfaceKind from match k {
       SkApp(f, args) => SkApp(term_replace(f, name, r#by), terms_replace(args, name, r#by))
       SkPi(params, result, effects) => SkPi(
         params_replace(params, name, r#by),
@@ -113,21 +113,21 @@ mutual {
   }
 
   pub fn terms_replace(ts: List(SurfaceTerm), name: Text, r#by: SurfaceTerm): List(SurfaceTerm) {
-    match ts: List(SurfaceTerm) {
+    ⊢ List(SurfaceTerm) from match ts {
       Nil => Nil
       Cons(t, rest) => Cons(term_replace(t, name, r#by), terms_replace(rest, name, r#by))
     }
   }
 
   pub fn params_replace(ps: List(SurfaceParam), name: Text, r#by: SurfaceTerm): List(SurfaceParam) {
-    match ps: List(SurfaceParam) {
+    ⊢ List(SurfaceParam) from match ps {
       Nil => Nil
       Cons(p, rest) => Cons(param_replace(p, name, r#by), params_replace(rest, name, r#by))
     }
   }
 
   pub fn param_replace(p: SurfaceParam, name: Text, r#by: SurfaceTerm): SurfaceParam {
-    match p: SurfaceParam {
+    ⊢ SurfaceParam from match p {
       SurfaceParamMk(n, ty) => SurfaceParamMk(n, term_replace(ty, name, r#by))
     }
   }
@@ -138,17 +138,21 @@ pub fn opt_terms_replace(
   name: Text,
   r#by: SurfaceTerm
 ): List(Option(SurfaceTerm)) {
-  match ts: List(Option(SurfaceTerm)) {
+  ⊢ List(Option(SurfaceTerm)) from match ts {
     Nil => Nil
-    Cons(t, rest) => Cons(match t: Option(SurfaceTerm) {
+    Cons(t, rest) => Cons(⊢ Option(SurfaceTerm) from match t {
       Some(x) => Some(term_replace(x, name, r#by))
       None => None
     }, opt_terms_replace(rest, name, r#by))
   }
 }
 
-pub fn opt_term_replace(t: Option(SurfaceTerm), name: Text, r#by: SurfaceTerm): Option(SurfaceTerm) {
-  match t: Option(SurfaceTerm) {
+pub fn opt_term_replace(
+  t: Option(SurfaceTerm),
+  name: Text,
+  r#by: SurfaceTerm
+): Option(SurfaceTerm) {
+  ⊢ Option(SurfaceTerm) from match t {
     Some(x) => Some(term_replace(x, name, r#by))
     None => None
   }
@@ -163,9 +167,9 @@ pub fn surface_unit_type(): SurfaceTerm {
 }
 
 pub fn opts_resize<A>(n: Nat, xs: List(Option(A))): List(Option(A)) {
-  match n: List(Option(A)) {
+  ⊢ List(Option(A)) from match n {
     Zero => Nil
-    Succ(m) => match xs: List(Option(A)) {
+    Succ(m) => ⊢ List(Option(A)) from match xs {
       Nil => Cons(None, opts_resize(m, Nil))
       Cons(x, rest) => Cons(x, opts_resize(m, rest))
     }
@@ -173,19 +177,19 @@ pub fn opts_resize<A>(n: Nat, xs: List(Option(A))): List(Option(A)) {
 }
 
 pub fn text_list_has(xs: List(Text), x: Text): Bool {
-  match xs: Bool {
+  ⊢ Bool from match xs {
     Nil => false
     Cons(y, rest) => y == x || text_list_has(rest, x)
   }
 }
 
 pub fn opt_bool_eq(a: Option(Bool), b: Option(Bool)): Bool {
-  match a: Bool {
-    None => match b: Bool {
+  ⊢ Bool from match a {
+    None => ⊢ Bool from match b {
       None => true
       Some(y) => false
     }
-    Some(x) => match b: Bool {
+    Some(x) => ⊢ Bool from match b {
       None => false
       Some(y) => x == y
     }
@@ -193,12 +197,12 @@ pub fn opt_bool_eq(a: Option(Bool), b: Option(Bool)): Bool {
 }
 
 pub fn borrows_eq(a: List(Option(Bool)), b: List(Option(Bool))): Bool {
-  match a: Bool {
-    Nil => match b: Bool {
+  ⊢ Bool from match a {
+    Nil => ⊢ Bool from match b {
       Nil => true
       Cons(y, more) => false
     }
-    Cons(x, rest) => match b: Bool {
+    Cons(x, rest) => ⊢ Bool from match b {
       Nil => false
       Cons(y, more) => opt_bool_eq(x, y) && borrows_eq(rest, more)
     }
@@ -216,7 +220,7 @@ pub fn instance_key(r#class: Text, ctor: Text): Text {
 
 // The type constructor at the head of a type, as the instance table keys it.
 pub fn ty_constructor(t: Ty): Option(Text) {
-  match t: Option(Text) {
+  ⊢ Option(Text) from match t {
     TyNamed(n, args) => Some(n)
     TyInt(w) => Some(ty_show(t))
     TyBool => Some(ty_show(t))
@@ -230,9 +234,9 @@ pub fn ty_constructor(t: Ty): Option(Text) {
 
 // The name an instance's head gives its functions (`expand.rs`).
 pub fn head_name(t: SurfaceTerm): Text {
-  match t.kind: Text {
+  ⊢ Text from match t.kind {
     SkVar(n) => n
-    SkApp(f, args) => match f.kind: Text {
+    SkApp(f, args) => ⊢ Text from match f.kind {
       SkVar(n) => n
       _ => ""
     }
@@ -245,16 +249,16 @@ pub fn span_at(start: Nat, end: Nat): TySpan {
 }
 
 pub fn class_named(cs: List(SurfaceClass), name: Text): Option(SurfaceClass) {
-  match cs: Option(SurfaceClass) {
+  ⊢ Option(SurfaceClass) from match cs {
     Nil => None
     Cons(c, rest) => if c.name == name { Some(c) } else { class_named(rest, name) }
   }
 }
 
 pub fn stmts_classes(ss: List(SurfaceStmt)): List(SurfaceClass) {
-  match ss: List(SurfaceClass) {
+  ⊢ List(SurfaceClass) from match ss {
     Nil => Nil
-    Cons(s, rest) => match s: List(SurfaceClass) {
+    Cons(s, rest) => ⊢ List(SurfaceClass) from match s {
       StClass(c) => Cons(c, stmts_classes(rest))
       _ => stmts_classes(rest)
     }
@@ -269,14 +273,14 @@ pub fn method_params(
   param: Text,
   r#by: SurfaceTerm
 ): List(SurfaceParam) {
-  match ts: List(SurfaceParam) {
+  ⊢ List(SurfaceParam) from match ts {
     Nil => Nil
     Cons(t, rest) => {
-      let written: SurfaceTerm := match t: SurfaceTerm {
+      let written: SurfaceTerm := ⊢ SurfaceTerm from match t {
         Some(x) => term_replace(x, param, r#by)
         None => surface_unit_type()
       }
-      let ty: SurfaceTerm := match list_head_or_none(borrows): SurfaceTerm {
+      let ty: SurfaceTerm := ⊢ SurfaceTerm from match list_head_or_none(borrows) {
         Some(m) => surface_at(SkBorrow(m, written), 0, 0)
         None => written
       }
@@ -288,13 +292,13 @@ pub fn method_params(
 // The method's own type generics make the dictionary polymorphic: the
 // binders `(A: Shared, B: Type, …)` lead.
 pub fn method_binders(gs: List(Text), bounds: List(Option(Text))): List(SurfaceParam) {
-  match gs: List(SurfaceParam) {
+  ⊢ List(SurfaceParam) from match gs {
     Nil => Nil
     Cons(g, rest) => {
       let more := method_binders(rest, List::tail(bounds))
-      match list_head_or_none(bounds): List(SurfaceParam) {
+      ⊢ List(SurfaceParam) from match list_head_or_none(bounds) {
         None => Cons(SurfaceParamMk(Some(g), surface_at(SkVar("affine"), 0, 0)), more)
-        Some(b) => match kind_parse(b): List(SurfaceParam) {
+        Some(b) => ⊢ List(SurfaceParam) from match kind_parse(b) {
           Some(k) => Cons(SurfaceParamMk(Some(g), surface_at(SkVar(b), 0, 0)), more)
           None => more
         }
@@ -304,7 +308,7 @@ pub fn method_binders(gs: List(Text), bounds: List(Option(Text))): List(SurfaceP
 }
 
 pub fn method_type(r#class: SurfaceClass, m: SurfaceFn, r#by: SurfaceTerm): SurfaceTerm {
-  let result: SurfaceTerm := match m.result: SurfaceTerm {
+  let result: SurfaceTerm := ⊢ SurfaceTerm from match m.result {
     Some(r) => term_replace(r, r#class.param, r#by)
     None => surface_unit_type()
   }
@@ -338,7 +342,7 @@ pub fn added_methods(
   r#by: SurfaceTerm,
   acc: Added
 ): Added {
-  match ms: Added {
+  ⊢ Added from match ms {
     Nil => acc
     Cons(m, rest) => added_methods(
       rest,
@@ -355,10 +359,10 @@ pub fn added_methods(
 }
 
 pub fn added_constraints(ws: List(SurfaceConstraint), cs: List(SurfaceClass), acc: Added): Added {
-  match ws: Added {
+  ⊢ Added from match ws {
     Nil => acc
-    Cons(w, rest) => match w.ty.kind: Added {
-      SkVar(g) => match class_named(cs, w.r#class): Added {
+    Cons(w, rest) => ⊢ Added from match w.ty.kind {
+      SkVar(g) => ⊢ Added from match class_named(cs, w.r#class) {
         Some(r#class) => added_constraints(
           rest,
           cs,
@@ -372,7 +376,7 @@ pub fn added_constraints(ws: List(SurfaceConstraint), cs: List(SurfaceClass), ac
 }
 
 pub fn structural_constraints(ws: List(SurfaceConstraint)): List(SurfaceConstraint) {
-  match ws: List(SurfaceConstraint) {
+  ⊢ List(SurfaceConstraint) from match ws {
     Nil => Nil
     Cons(w, rest) => if class_is_structural(w.r#class) {
       Cons(w, structural_constraints(rest))
@@ -387,8 +391,8 @@ pub fn structural_constraints(ws: List(SurfaceConstraint)): List(SurfaceConstrai
 // instance's function performs what the method's type says, which for the
 // prelude's classes is nothing.
 pub fn method_callee(f: SurfaceTerm, classes: List(Text)): SurfaceTerm {
-  match f.kind: SurfaceTerm {
-    SkField(base, name) => match base.kind: SurfaceTerm {
+  ⊢ SurfaceTerm from match f.kind {
+    SkField(base, name) => ⊢ SurfaceTerm from match base.kind {
       SkVar(cn) => if text_list_has(classes, cn) {
         surface_at(SkVar(cat3(cn, ".", name)), f.start, f.end)
       } else {
@@ -402,7 +406,7 @@ pub fn method_callee(f: SurfaceTerm, classes: List(Text)): SurfaceTerm {
 
 mutual {
   pub fn cls_term(t: SurfaceTerm, classes: List(Text)): SurfaceTerm {
-    match t: SurfaceTerm {
+    ⊢ SurfaceTerm from match t {
       SurfaceTermIndexedMk(k, start, end, ast_occurrence) => surface_term_mk(
         cls_kind(k, classes),
         start,
@@ -412,7 +416,7 @@ mutual {
   }
 
   pub fn cls_kind(k: SurfaceKind, classes: List(Text)): SurfaceKind {
-    match k: SurfaceKind {
+    ⊢ SurfaceKind from match k {
       SkApp(f, args) => SkApp(
         method_callee(cls_term(f, classes), classes),
         cls_terms(args, classes)
@@ -443,41 +447,41 @@ mutual {
   }
 
   pub fn cls_terms(ts: List(SurfaceTerm), classes: List(Text)): List(SurfaceTerm) {
-    match ts: List(SurfaceTerm) {
+    ⊢ List(SurfaceTerm) from match ts {
       Nil => Nil
       Cons(t, rest) => Cons(cls_term(t, classes), cls_terms(rest, classes))
     }
   }
 
   pub fn cls_opt(t: Option(SurfaceTerm), classes: List(Text)): Option(SurfaceTerm) {
-    match t: Option(SurfaceTerm) {
+    ⊢ Option(SurfaceTerm) from match t {
       None => None
       Some(x) => Some(cls_term(x, classes))
     }
   }
 
   pub fn cls_fields(fs: List(SurfaceField), classes: List(Text)): List(SurfaceField) {
-    match fs: List(SurfaceField) {
+    ⊢ List(SurfaceField) from match fs {
       Nil => Nil
       Cons(f, rest) => Cons(cls_field(f, classes), cls_fields(rest, classes))
     }
   }
 
   pub fn cls_field(f: SurfaceField, classes: List(Text)): SurfaceField {
-    match f: SurfaceField {
+    ⊢ SurfaceField from match f {
       SurfaceFieldMk(name, value) => SurfaceFieldMk(name, cls_term(value, classes))
     }
   }
 
   pub fn cls_handlers(hs: List(SurfaceHandler), classes: List(Text)): List(SurfaceHandler) {
-    match hs: List(SurfaceHandler) {
+    ⊢ List(SurfaceHandler) from match hs {
       Nil => Nil
       Cons(h, rest) => Cons(cls_handler(h, classes), cls_handlers(rest, classes))
     }
   }
 
   pub fn cls_handler(h: SurfaceHandler, classes: List(Text)): SurfaceHandler {
-    match h: SurfaceHandler {
+    ⊢ SurfaceHandler from match h {
       HdReturn(p, body) => HdReturn(p, cls_term(body, classes))
       HdOperation(eff, hfa, hty, ps, cont, guard, body) => HdOperation(
         eff,
@@ -492,14 +496,14 @@ mutual {
   }
 
   pub fn cls_arms(arms: List(SurfaceArm), classes: List(Text)): List(SurfaceArm) {
-    match arms: List(SurfaceArm) {
+    ⊢ List(SurfaceArm) from match arms {
       Nil => Nil
       Cons(a, rest) => Cons(cls_arm(a, classes), cls_arms(rest, classes))
     }
   }
 
   pub fn cls_arm(a: SurfaceArm, classes: List(Text)): SurfaceArm {
-    match a: SurfaceArm {
+    ⊢ SurfaceArm from match a {
       SurfaceArmMk(pattern, guard, goal, body) => SurfaceArmMk(
         pattern,
         cls_opt(guard, classes),
@@ -510,14 +514,14 @@ mutual {
   }
 
   pub fn cls_stmts(ss: List(SurfaceStmt), classes: List(Text)): List(SurfaceStmt) {
-    match ss: List(SurfaceStmt) {
+    ⊢ List(SurfaceStmt) from match ss {
       Nil => Nil
       Cons(st, rest) => Cons(cls_stmt(st, classes), cls_stmts(rest, classes))
     }
   }
 
   pub fn cls_stmt(st: SurfaceStmt, classes: List(Text)): SurfaceStmt {
-    match st: SurfaceStmt {
+    ⊢ SurfaceStmt from match st {
       StLet(name, ty, value, b, bm) => StLet(name, ty, cls_term(value, classes), b, bm)
       StVar(name, ty, value, vb) => StVar(name, ty, cls_term(value, classes), vb)
       StAssign(name, name_place, value) => StAssign(
@@ -534,7 +538,7 @@ mutual {
 }
 
 pub fn class_names(cs: List(SurfaceClass)): List(Text) {
-  match cs: List(Text) {
+  ⊢ List(Text) from match cs {
     Nil => Nil
     Cons(c, rest) => Cons(c.name, class_names(rest))
   }
@@ -560,7 +564,8 @@ pub fn expand_fn(f: SurfaceFn, cs: List(SurfaceClass)): SurfaceFn {
     wheres: structural_constraints(f.wheres),
     start: f.start,
     end: f.end,
-    body: cls_term(f.body, class_names(cs))
+    body: cls_term(f.body, class_names(cs)),
+    generic_types: f.generic_types
   }
 }
 
@@ -582,7 +587,8 @@ pub fn instance_method(i: SurfaceInstance, m: SurfaceFn, head: Text): SurfaceFn 
     wheres: i.wheres,
     start: m.start,
     end: m.end,
-    body: m.body
+    body: m.body,
+    generic_types: List::append(surface_type_generics(i.generics), m.generic_types)
   }
 }
 
@@ -592,7 +598,7 @@ pub fn expand_instance(
   cs: List(SurfaceClass),
   rest: List(SurfaceStmt)
 ): List(SurfaceStmt) {
-  match ms: List(SurfaceStmt) {
+  ⊢ List(SurfaceStmt) from match ms {
     Nil => rest
     Cons(m, more) => Cons(
       StFn(expand_fn(instance_method(i, m, head_name(i.head)), cs)),
@@ -602,9 +608,9 @@ pub fn expand_instance(
 }
 
 pub fn expand_stmts(ss: List(SurfaceStmt), cs: List(SurfaceClass)): List(SurfaceStmt) {
-  match ss: List(SurfaceStmt) {
+  ⊢ List(SurfaceStmt) from match ss {
     Nil => Nil
-    Cons(s, rest) => match s: List(SurfaceStmt) {
+    Cons(s, rest) => ⊢ List(SurfaceStmt) from match s {
       StClass(c) => expand_stmts(rest, cs)
       StInstance(i) => expand_instance(i, i.methods, cs, expand_stmts(rest, cs))
       StFn(f) => Cons(StFn(expand_fn(f, cs)), expand_stmts(rest, cs))
@@ -614,16 +620,16 @@ pub fn expand_stmts(ss: List(SurfaceStmt), cs: List(SurfaceClass)): List(Surface
 }
 
 pub fn classes_expand_prelude(ss: List(SurfaceStmt)): List(SurfaceStmt) {
-  match stmts_classes(ss): List(SurfaceStmt) {
+  ⊢ List(SurfaceStmt) from match stmts_classes(ss) {
     Nil => ss
     Cons(c, rest) => expand_stmts(ss, Cons(c, rest))
   }
 }
 
 pub fn stmts_class_names(ss: List(SurfaceStmt)): List(Text) {
-  match ss: List(Text) {
+  ⊢ List(Text) from match ss {
     Nil => Nil
-    Cons(s, rest) => match s: List(Text) {
+    Cons(s, rest) => ⊢ List(Text) from match s {
       StClass(c) => Cons(c.name, stmts_class_names(rest))
       _ => stmts_class_names(rest)
     }
@@ -631,9 +637,9 @@ pub fn stmts_class_names(ss: List(SurfaceStmt)): List(Text) {
 }
 
 pub fn stmts_type_names(ss: List(SurfaceStmt)): List(Text) {
-  match ss: List(Text) {
+  ⊢ List(Text) from match ss {
     Nil => Nil
-    Cons(s, rest) => match s: List(Text) {
+    Cons(s, rest) => ⊢ List(Text) from match s {
       StStruct(d) => Cons(d.name, stmts_type_names(rest))
       StEnum(d) => Cons(d.name, stmts_type_names(rest))
       _ => stmts_type_names(rest)
@@ -642,21 +648,21 @@ pub fn stmts_type_names(ss: List(SurfaceStmt)): List(Text) {
 }
 
 pub fn method_names_have(ms: List(SurfaceFn), name: Text): Bool {
-  match ms: Bool {
+  ⊢ Bool from match ms {
     Nil => false
     Cons(m, rest) => m.name == name || method_names_have(rest, name)
   }
 }
 
 pub fn method_named(ms: List(SurfaceFn), name: Text): Option(SurfaceFn) {
-  match ms: Option(SurfaceFn) {
+  ⊢ Option(SurfaceFn) from match ms {
     Nil => None
     Cons(m, rest) => if m.name == name { Some(m) } else { method_named(rest, name) }
   }
 }
 
 pub fn law_named(ls: List(SurfaceLaw), name: Text): Bool {
-  match ls: Bool {
+  ⊢ Bool from match ls {
     Nil => false
     Cons(l, rest) => l.name == name || law_named(rest, name)
   }
@@ -665,11 +671,11 @@ pub fn law_named(ls: List(SurfaceLaw), name: Text): Bool {
 // A law is a statement about the methods, and a method that performs effects
 // has none.
 pub fn ck_law_methods(ms: List(SurfaceFn), &mut c: Checker, cl: SurfaceClass): Unit {
-  match ms: Unit {
+  ⊢ Unit from match ms {
     Nil => #()
     Cons(m, rest) => {
-      match m.effects: Unit {
-        Some(es) => match es: Unit {
+      ⊢ Unit from match m.effects {
+        Some(es) => ⊢ Unit from match es {
           Cons(e, more) => ck_error(
             &mut c,
             cat5(
@@ -696,7 +702,7 @@ pub fn ck_class_laws_each(
   &mut c: Checker,
   cl: SurfaceClass
 ): Unit {
-  match ls: Unit {
+  ⊢ Unit from match ls {
     Nil => #()
     Cons(l, rest) => if text_list_has(seen, l.name) {
       ck_error(&mut c, cat4(cl.name, ".", l.name, " is declared twice"), span_at(l.start, l.end))
@@ -708,7 +714,7 @@ pub fn ck_class_laws_each(
 }
 
 pub fn ck_class_laws(&mut c: Checker, cl: SurfaceClass): Unit {
-  match cl.laws: Unit {
+  ⊢ Unit from match cl.laws {
     Nil => #()
     Cons(l, rest) => ck_law_methods(cl.methods, &mut c, cl)
   }
@@ -723,7 +729,7 @@ pub fn ck_instance_laws(
   i: SurfaceInstance,
   decl: SurfaceClass
 ): Unit {
-  match ls: Unit {
+  ⊢ Unit from match ls {
     Nil => #()
     Cons(l, rest) => if not(law_named(decl.laws, l.name)) {
       ck_error(&mut c, cat3(i.r#class, " has no law ", l.name), span_at(l.start, l.end))
@@ -748,14 +754,14 @@ pub fn ck_class_methods(
   &mut c: Checker,
   cl: SurfaceClass
 ): Unit {
-  match ms: Unit {
+  ⊢ Unit from match ms {
     Nil => #()
     Cons(m, rest) => {
       let span := span_at(m.start, m.end)
       if text_list_has(seen, m.name) {
         ck_error(&mut c, cat4(cl.name, ".", m.name, " is declared twice"), span)
       }
-      match m.wheres: Unit {
+      ⊢ Unit from match m.wheres {
         Nil => #()
         Cons(w, more) => ck_error(
           &mut c,
@@ -774,11 +780,11 @@ pub fn ck_class_methods(
 // The kind the class's parameter makes, and for a class of type
 // constructors, the kind it takes.
 pub fn ck_class_bound(&mut c: Checker, cl: SurfaceClass): Option(Pair(Kind, Option(Kind))) {
-  match cl.bound: Option(Pair(Kind, Option(Kind))) {
+  ⊢ Option(Pair(Kind, Option(Kind))) from match cl.bound {
     None => Some(Pair { fst: KindAffine, snd: None })
-    Some(b) => match kind_parse(b): Option(Pair(Kind, Option(Kind))) {
+    Some(b) => ⊢ Option(Pair(Kind, Option(Kind))) from match kind_parse(b) {
       Some(k) => Some(Pair { fst: k, snd: None })
-      None => match kind_parse_ctor(b): Option(Pair(Kind, Option(Kind))) {
+      None => ⊢ Option(Pair(Kind, Option(Kind))) from match kind_parse_ctor(b) {
         Some(ak) => Some(Pair { fst: ak.snd, snd: Some(ak.fst) })
         None => {
           ck_error(&mut c, cat2(b, " is not a kind"), span_at(cl.start, cl.end))
@@ -808,7 +814,7 @@ pub fn ck_declare_class(&mut c: Checker, cl: SurfaceClass, own_types: List(Text)
     )
     false
   } else {
-    match ck_class_bound(&mut c, cl): Bool {
+    ⊢ Bool from match ck_class_bound(&mut c, cl) {
       None => false
       Some(bound) => {
         ck_class_methods(cl.methods, Nil, &mut c, cl)
@@ -831,7 +837,7 @@ pub fn ck_declare_class(&mut c: Checker, cl: SurfaceClass, own_types: List(Text)
 // The bound of the class's parameter as written: `(arg)->bound` for a class
 // of type constructors.
 pub fn class_param_bound(info: ClassInfo): Text {
-  match info.arg: Text {
+  ⊢ Text from match info.arg {
     None => kind_name(info.bound)
     Some(arg) => Text::concat_all(
       Cons("(", Cons(kind_name(arg), Cons(")->", Cons(kind_name(info.bound), Nil))))
@@ -846,7 +852,7 @@ pub fn ck_declare_methods_each(
   cl: SurfaceClass,
   info: ClassInfo
 ): Unit {
-  match ms: Unit {
+  ⊢ Unit from match ms {
     Nil => #()
     Cons(m, rest) => {
       let f := SurfaceFn {
@@ -863,13 +869,15 @@ pub fn ck_declare_methods_each(
             r#class: cl.name,
             ty: surface_at(SkVar(cl.param), m.start, m.end),
             start: m.start,
-            end: m.end
+            end: m.end,
+            arguments: surface_class_tail_vars(cl.parameters, m.start, m.end)
           },
           Nil
         ),
         start: m.start,
         end: m.end,
-        body: m.body
+        body: m.body,
+        generic_types: Cons(surface_type_generic(), m.generic_types)
       }
       let scheme := ck_signature(&mut c, f)
       set_to(&mut c.fns, Ordmap::insert(c.fns, f.name, scheme, Ordmap::compare_text))
@@ -879,10 +887,10 @@ pub fn ck_declare_methods_each(
 }
 
 pub fn ck_declare_methods(cls: List(SurfaceClass), &mut c: Checker): Unit {
-  match cls: Unit {
+  ⊢ Unit from match cls {
     Nil => #()
     Cons(cl, rest) => {
-      match Ordmap::get(c.classes, cl.name, Ordmap::compare_text): Unit {
+      ⊢ Unit from match Ordmap::get(c.classes, cl.name, Ordmap::compare_text) {
         Some(info) => ck_declare_methods_each(cl.methods, &mut c, cl, info)
         None => #()
       }
@@ -896,9 +904,9 @@ pub fn ck_declare_class_list(
   &mut c: Checker,
   own_types: List(Text)
 ): List(SurfaceClass) {
-  match ss: List(SurfaceClass) {
+  ⊢ List(SurfaceClass) from match ss {
     Nil => Nil
-    Cons(s, rest) => match s: List(SurfaceClass) {
+    Cons(s, rest) => ⊢ List(SurfaceClass) from match s {
       StClass(cl) => {
         let ok := ck_declare_class(&mut c, cl, own_types)
         let tl := ck_declare_class_list(rest, &mut c, own_types)
@@ -916,11 +924,11 @@ pub fn instance_generics(
   bounds: List(Option(Text)),
   acc: SigGenerics
 ): SigGenerics {
-  match gs: SigGenerics {
+  ⊢ SigGenerics from match gs {
     Nil => SigGenerics { generics: List::reverse(acc.generics), map: acc.map, ctors: acc.ctors }
     Cons(g, rest) => {
-      let k: Kind := match list_head_or_none(bounds): Kind {
-        Some(b) => match kind_parse(b): Kind {
+      let k: Kind := ⊢ Kind from match list_head_or_none(bounds) {
+        Some(b) => ⊢ Kind from match kind_parse(b) {
           Some(x) => x
           None => KindAffine
         }
@@ -941,9 +949,9 @@ pub fn instance_generics(
 
 // Each argument is a generic of the instance, and no generic is written twice.
 pub fn head_args_ok(args: List(SurfaceTerm), gs: List(Text), before: List(Text)): Bool {
-  match args: Bool {
+  ⊢ Bool from match args {
     Nil => true
-    Cons(a, rest) => match a.kind: Bool {
+    Cons(a, rest) => ⊢ Bool from match a.kind {
       SkVar(g) => text_list_has(
         gs,
         g
@@ -956,9 +964,9 @@ pub fn head_args_ok(args: List(SurfaceTerm), gs: List(Text), before: List(Text))
 // The head: a type with no arguments, or a type constructor applied to
 // distinct generics.
 pub fn head_shape_ok(head: SurfaceTerm, gs: List(Text)): Bool {
-  match head.kind: Bool {
+  ⊢ Bool from match head.kind {
     SkVar(v) => not(text_list_has(gs, v))
-    SkApp(f, args) => match f.kind: Bool {
+    SkApp(f, args) => ⊢ Bool from match f.kind {
       SkVar(n) => head_args_ok(args, gs, Nil)
       _ => false
     }
@@ -967,7 +975,7 @@ pub fn head_shape_ok(head: SurfaceTerm, gs: List(Text)): Bool {
 }
 
 pub fn generic_not_in_head(gs: List(Text), head: SurfaceTerm): Option(Text) {
-  match gs: Option(Text) {
+  ⊢ Option(Text) from match gs {
     Nil => None
     Cons(g, rest) => if term_mentions(head, g) { generic_not_in_head(rest, head) } else { Some(g) }
   }
@@ -979,7 +987,7 @@ pub fn ck_instance_preds(
   gs: List(Text),
   preds: List(Pair(Text, Text))
 ): List(Pair(Text, Text)) {
-  match ws: List(Pair(Text, Text)) {
+  ⊢ List(Pair(Text, Text)) from match ws {
     Nil => List::reverse(preds)
     Cons(w, rest) => {
       let span := span_at(w.start, w.end)
@@ -989,7 +997,7 @@ pub fn ck_instance_preds(
         ck_error(&mut c, cat2(w.r#class, " is not a class"), span)
         ck_instance_preds(rest, &mut c, gs, preds)
       } else {
-        match w.ty.kind: List(Pair(Text, Text)) {
+        ⊢ List(Pair(Text, Text)) from match constraint_single_type(w).kind {
           SkVar(g) => if text_list_has(gs, g) {
             if preds_have(preds, w.r#class, g) {
               ck_error(&mut c, cat5(w.r#class, "(", g, ") is written twice", ""), span)
@@ -1012,14 +1020,14 @@ pub fn ck_instance_preds(
 }
 
 pub fn borrow_prefix(b: Option(Bool)): Text {
-  match b: Text {
+  ⊢ Text from match b {
     Some(m) => if m { "&mut " } else { "&" }
     None => ""
   }
 }
 
 pub fn list_head_or_none_ty(ts: List(Ty)): Option(Ty) {
-  match ts: Option(Ty) {
+  ⊢ Option(Ty) from match ts {
     Nil => None
     Cons(t, rest) => Some(t)
   }
@@ -1032,10 +1040,10 @@ pub fn shown_params(
   tys: List(Ty),
   c: Checker
 ): List(Text) {
-  match ps: List(Text) {
+  ⊢ List(Text) from match ps {
     Nil => Nil
     Cons(p, rest) => {
-      let ty: Text := match list_head_or_none_ty(tys): Text {
+      let ty: Text := ⊢ Text from match list_head_or_none_ty(tys) {
         Some(t) => ty_show(ck_shown(&c, ty_unborrowed(t)))
         None => ""
       }
@@ -1073,11 +1081,12 @@ pub fn ck_same_signature(
     wheres: i.wheres,
     start: expected.start,
     end: expected.end,
-    body: expected.body
+    body: expected.body,
+    generic_types: List::append(surface_type_generics(i.generics), expected.generic_types)
   }
   let wanted := ck_signature(&mut c, want)
   if not(ty_eq(wanted.ty, scheme.ty)) || not(borrows_eq(got.borrows, want.borrows)) {
-    let tys: List(Ty) := match wanted.ty: List(Ty) {
+    let tys: List(Ty) := ⊢ List(Ty) from match wanted.ty {
       TyFn(ps, r, k) => ps
       _ => Nil
     }
@@ -1104,9 +1113,9 @@ pub fn ck_instance_methods(
   shown: Text,
   out: List(SurfaceFn)
 ): List(SurfaceFn) {
-  match expected: List(SurfaceFn) {
+  ⊢ List(SurfaceFn) from match expected {
     Nil => out
-    Cons(e, rest) => match method_named(i.methods, e.name): List(SurfaceFn) {
+    Cons(e, rest) => ⊢ List(SurfaceFn) from match method_named(i.methods, e.name) {
       None => {
         ck_error(
           &mut c,
@@ -1131,7 +1140,8 @@ pub fn ck_instance_methods(
           wheres: i.wheres,
           start: m.start,
           end: m.end,
-          body: m.body
+          body: m.body,
+          generic_types: List::append(surface_type_generics(i.generics), m.generic_types)
         }
         let scheme := ck_signature(&mut c, f)
         ck_same_signature(&mut c, i, f, scheme, e, decl.param, shown)
@@ -1148,7 +1158,7 @@ pub fn ck_instance_extra(
   i: SurfaceInstance,
   decl: SurfaceClass
 ): Unit {
-  match ms: Unit {
+  ⊢ Unit from match ms {
     Nil => #()
     Cons(m, rest) => {
       if not(method_names_have(decl.methods, m.name)) {
@@ -1162,8 +1172,8 @@ pub fn ck_instance_extra(
 // How many arguments a declared type is written without, when it is
 // declared.
 pub fn ty_missing_args(&c: Checker, head: Ty): Option(Nat) {
-  match head: Option(Nat) {
-    TyNamed(n, args) => match datas_decl(c.datas, n): Option(Nat) {
+  ⊢ Option(Nat) from match head {
+    TyNamed(n, args) => ⊢ Option(Nat) from match datas_decl(c.datas, n) {
       None => None
       Some(d) => Some(list_len(d.generics) - list_len(args))
     }
@@ -1172,7 +1182,7 @@ pub fn ty_missing_args(&c: Checker, head: Ty): Option(Nat) {
 }
 
 pub fn ck_decl_arity(&c: Checker, n: Text): Nat {
-  match datas_decl(c.datas, n): Nat {
+  ⊢ Nat from match datas_decl(c.datas, n) {
     None => 0
     Some(d) => list_len(d.generics)
   }
@@ -1221,8 +1231,8 @@ pub fn ck_instance_head_message(
   ctor: Text
 ): Option(Pair(Text, TySpan)) {
   let span := span_at(i.start, i.end)
-  match info.arg: Option(Pair(Text, TySpan)) {
-    Some(arg) => match ty_missing_args(&c, head): Option(Pair(Text, TySpan)) {
+  ⊢ Option(Pair(Text, TySpan)) from match info.arg {
+    Some(arg) => ⊢ Option(Pair(Text, TySpan)) from match ty_missing_args(&c, head) {
       Some(m) => if m == 1 {
         let made := ty_apply(head, TyParam(kind_name(arg), arg))
         let k := datas_kind(c.datas, made)
@@ -1245,7 +1255,7 @@ pub fn ck_instance_head_message(
       }
       None => Some(ck_not_a_ctor_message(&c, i, head))
     }
-    None => match ty_missing_args(&c, head): Option(Pair(Text, TySpan)) {
+    None => ⊢ Option(Pair(Text, TySpan)) from match ty_missing_args(&c, head) {
       Some(m) => if m > 0 {
         Some(Pair {
           fst: cat4(ctor, " takes ", Text::of_nat(ck_decl_arity(&c, ctor)), " arguments"),
@@ -1306,6 +1316,37 @@ pub fn ck_declare_instance_rest(
   }
 }
 
+pub fn instance_type_generics(types: List(SurfaceTerm), bounds: List(Option(Text))): Bool {
+  ⊢ Bool from match types {
+    Nil => true
+    Cons(ty, rest) => {
+      let type_only := ⊢ Bool from match ty.kind {
+        SkVar(name) => name == "Type"
+        SkPi(params, result, effects) => ⊢ Bool from match bounds {
+          Cons(Some(bound), more) => ⊢ Bool from match kind_parse_ctor(bound) {
+            Some(kind) => true
+            None => false
+          }
+          _ => false
+        }
+        _ => false
+      }
+      let more_bounds := ⊢ List(Option(Text)) from match bounds {
+        Nil => Nil
+        Cons(bound, more) => more
+      }
+      type_only && instance_type_generics(rest, more_bounds)
+    }
+  }
+}
+
+pub fn instance_legacy_shape(i: SurfaceInstance): Bool {
+  ⊢ Bool from match i.arguments {
+    Nil => instance_type_generics(i.generic_types, i.bounds) && head_shape_ok(i.head, i.generics)
+    Cons(index, rest) => false
+  }
+}
+
 pub fn ck_declare_instance_at(
   &mut c: Checker,
   i: SurfaceInstance,
@@ -1321,11 +1362,11 @@ pub fn ck_declare_instance_at(
     i.bounds,
     SigGenerics { generics: Nil, map: Ordmap::empty(), ctors: Nil }
   )
-  if not(head_shape_ok(i.head, i.generics)) {
+  if not(instance_legacy_shape(i)) {
     ck_error(&mut c, "an instance head applies a type to distinct generics", hspan)
     out
   } else {
-    match generic_not_in_head(i.generics, i.head): List(SurfaceFn) {
+    ⊢ List(SurfaceFn) from match generic_not_in_head(i.generics, i.head) {
       Some(missing) => {
         ck_error(&mut c, cat2(missing, " does not appear in the head"), hspan)
         out
@@ -1334,14 +1375,14 @@ pub fn ck_declare_instance_at(
         set_to(&mut c.constructor_position, true)
         let head := ck_written(&mut c, i.head, g.map)
         set_to(&mut c.constructor_position, false)
-        match ty_constructor(head): List(SurfaceFn) {
+        ⊢ List(SurfaceFn) from match ty_constructor(head) {
           None => {
             ck_error(&mut c, "an instance head applies a type to distinct generics", hspan)
             out
           }
           Some(ctor) => {
             let shown := ty_show(ck_shown(&c, head))
-            match ck_instance_head_message(&c, i, info, head, ctor): List(SurfaceFn) {
+            ⊢ List(SurfaceFn) from match ck_instance_head_message(&c, i, info, head, ctor) {
               Some(m) => {
                 ck_error(&mut c, m.fst, m.snd)
                 out
@@ -1378,7 +1419,7 @@ pub fn ck_declare_instance(
     ck_error(&mut c, cat2(i.r#class, " is structural and has no instances to write"), span)
     out
   } else {
-    match Ordmap::get(c.classes, i.r#class, Ordmap::compare_text): List(SurfaceFn) {
+    ⊢ List(SurfaceFn) from match Ordmap::get(c.classes, i.r#class, Ordmap::compare_text) {
       None => {
         ck_error(&mut c, cat2(i.r#class, " is not a class"), span)
         out
@@ -1395,9 +1436,9 @@ pub fn ck_declare_instances(
   own_types: List(Text),
   out: List(SurfaceFn)
 ): List(SurfaceFn) {
-  match ss: List(SurfaceFn) {
+  ⊢ List(SurfaceFn) from match ss {
     Nil => out
-    Cons(s, rest) => match s: List(SurfaceFn) {
+    Cons(s, rest) => ⊢ List(SurfaceFn) from match s {
       StInstance(i) => {
         let next := ck_declare_instance(&mut c, i, own_classes, own_types, out)
         ck_declare_instances(rest, &mut c, own_classes, own_types, next)
@@ -1426,7 +1467,7 @@ pub(open) inductive Unresolved: Type {
 }
 
 pub fn ty_strip_one(t: Ty): Ty {
-  match t: Ty {
+  ⊢ Ty from match t {
     TyTagged(tags, x) => x
     TyBorrow(x, m) => x
     _ => t
@@ -1434,11 +1475,11 @@ pub fn ty_strip_one(t: Ty): Ty {
 }
 
 pub fn head_found(params: List(Ty), args: List(Ty), found: Ordmap(Text, Ty)): Ordmap(Text, Ty) {
-  match params: Ordmap(Text, Ty) {
+  ⊢ Ordmap(Text, Ty) from match params {
     Nil => found
-    Cons(p, prest) => match args: Ordmap(Text, Ty) {
+    Cons(p, prest) => ⊢ Ordmap(Text, Ty) from match args {
       Nil => found
-      Cons(a, arest) => match p: Ordmap(Text, Ty) {
+      Cons(a, arest) => ⊢ Ordmap(Text, Ty) from match p {
         TyParam(g, k) => head_found(prest, arest, Ordmap::insert(found, g, a, Ordmap::compare_text))
         _ => head_found(prest, arest, found)
       }
@@ -1447,14 +1488,14 @@ pub fn head_found(params: List(Ty), args: List(Ty), found: Ordmap(Text, Ty)): Or
 }
 
 pub fn ty_named_args(t: Ty): List(Ty) {
-  match t: List(Ty) {
+  ⊢ List(Ty) from match t {
     TyNamed(n, args) => args
     _ => Nil
   }
 }
 
 pub fn found_or_unit(found: Ordmap(Text, Ty), g: Text): Ty {
-  match Ordmap::get(found, g, Ordmap::compare_text): Ty {
+  ⊢ Ty from match Ordmap::get(found, g, Ordmap::compare_text) {
     Some(x) => x
     None => TyUnit
   }
@@ -1472,9 +1513,9 @@ mutual {
     t: Ty,
     assume: List(Pair(Text, Text))
   ): Unresolved {
-    match k: Unresolved {
+    ⊢ Unresolved from match k {
       Zero => UnresolvedUndetermined
-      Succ(j) => match t: Unresolved {
+      Succ(j) => ⊢ Unresolved from match t {
         TyParam(n, kind) => if preds_have(assume, r#class, n) {
           UnresolvedNone
         } else {
@@ -1488,13 +1529,13 @@ mutual {
             UnresolvedNoInstance(ty_show(ck_shown(&c, t)))
           }
         } else {
-          match ty_constructor(t): Unresolved {
+          ⊢ Unresolved from match ty_constructor(t) {
             None => UnresolvedNoInstance(ty_show(ck_shown(&c, t)))
-            Some(ctor) => match Ordmap::get(
+            Some(ctor) => ⊢ Unresolved from match Ordmap::get(
               c.instances,
               instance_key(r#class, ctor),
               Ordmap::compare_text
-            ): Unresolved {
+            ) {
               None => if ck_has_vars(&c, t) {
                 UnresolvedUndetermined
               } else {
@@ -1521,17 +1562,17 @@ mutual {
     found: Ordmap(Text, Ty),
     assume: List(Pair(Text, Text))
   ): Unresolved {
-    match k: Unresolved {
+    ⊢ Unresolved from match k {
       Zero => UnresolvedUndetermined
-      Succ(j) => match preds: Unresolved {
+      Succ(j) => ⊢ Unresolved from match preds {
         Nil => UnresolvedNone
-        Cons(p, rest) => match ck_resolve_class_in(
+        Cons(p, rest) => ⊢ Unresolved from match ck_resolve_class_in(
           j,
           &c,
           p.fst,
           ty_strip_one(ck_resolve(&c, found_or_unit(found, p.snd))),
           assume
-        ): Unresolved {
+        ) {
           UnresolvedNone => ck_resolve_preds_in(j, &c, rest, found, assume)
           UnresolvedUndetermined => UnresolvedUndetermined
           UnresolvedAssumption(x) => UnresolvedAssumption(x)
@@ -1553,7 +1594,7 @@ pub fn ck_resolve_class(
 
 pub fn ck_check_class_pending(&mut c: Checker, p: TyPending): Unit {
   let span := span_at(p.start, p.end)
-  match ck_resolve_class(&c, p.r#class, p.ty, p.assume): Unit {
+  ⊢ Unit from match ck_resolve_class(&c, p.r#class, p.ty, p.assume) {
     UnresolvedNone => #()
     UnresolvedUndetermined => ck_error(
       &mut c,

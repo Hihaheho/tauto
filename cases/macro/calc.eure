@@ -1,0 +1,192 @@
+// `calc!` (`std/Calc.taut`): a chain of equalities with `$` expressions.
+
+@ cases.calc-macro-chains-equalities
+imports = [path`../../std/Calc.taut`, path`../../std/Base.taut`, path`../../std/Nat.taut`]
+source = ````tauto
+theorem t(a: Nat, b: Nat, c: Nat): Nat::add(Nat::add(a, b), c) = Nat::add(Nat::add(a, c), b) {
+  calc!(```
+    $Nat::add(Nat::add(a, b), c)
+    = $Nat::add(a, Nat::add(b, c)) from $Nat::add_assoc(a, b, c)
+    = $Nat::add(a, Nat::add(c, b)) from $Eq::congr(⟦Nat::add(a, □)⟧, Nat::add_comm(b, c))
+    = $Nat::add(Nat::add(a, c), b) from $Eq::sym(Nat::add_assoc(a, c, b))
+    ```)
+}
+
+theorem one(n: Nat): n = n {
+  calc!(`$n = $n from $(Refl)`)
+}
+````
+checks.t = "ok"
+checks.one = "ok"
+diagnostics = []
+
+@ cases.calc-macro-rejects-a-wrong-step
+imports = [path`../../std/Calc.taut`, path`../../std/Base.taut`, path`../../std/Nat.taut`]
+source = ````tauto
+theorem t(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(a, b) {
+  calc!(```
+    $Nat::add(a, b)
+    = $Nat::add(b, a) from $(Refl)
+    = $Nat::add(a, b) from $Nat::add_comm(b, a)
+    ```)
+}
+````
+checks.t = "error: "
+
+@ cases.calc-macro-rejects-mixed-relations
+imports = [path`../../std/Calc.taut`, path`../../std/Base.taut`]
+source = ````tauto
+theorem t(p: Bool): p = p {
+  calc!(```
+    $p
+    = $p from $(Refl)
+    ↔ $p from $(Refl)
+    ```)
+}
+````
+macro_error = "macro.error"
+
+// A `$` expression is resolved in the scope of the module that calls the macro.
+@ cases.calc-macro-resolves-in-the-calling-module
+imports = [path`../../std/Calc.taut`, path`../../std/Base.taut`, path`../../std/Nat.taut`]
+source = ````tauto
+module Nat {
+  pub theorem plain(a: Nat, b: Nat): add(a, b) = add(b, a) {
+    Nat::add_comm(a, b)
+  }
+
+  pub theorem via_calc(a: Nat, b: Nat): add(a, b) = add(b, a) {
+    calc!(```
+      $add(a, b)
+      = $add(b, a) from $Nat::add_comm(a, b)
+      ```)
+  }
+}
+````
+checks."Nat::plain" = "ok"
+checks."Nat::via_calc" = "ok"
+diagnostics = []
+
+// A `$` name is read as tauto reads a name: it may go on in any letter.
+@ cases.calc-macro-reads-a-non-ascii-name
+imports = [path`../../std/Calc.taut`, path`../../std/Base.taut`]
+source = ````tauto
+fn Iの数(n: Nat): Nat { n }
+
+theorem t(n: Nat): Iの数(n) = Iの数(n) {
+  calc!(```
+    $Iの数(n)
+    = $Iの数(n) from $(Refl)
+    ```)
+}
+````
+checks.t = "ok"
+diagnostics = []
+
+@ cases.calc-literals-are-laid-out-one-step-to-a-line
+files."lib/Calc.taut" = path`../../std/Calc.taut`
+files."lib/.tauto-syntax/8002b584d6ccfb34dd9822833dd92f3dfac96ef475b74066dbc58eaa6ea4fba7.tables" = path`../../std/.tauto-syntax/8002b584d6ccfb34dd9822833dd92f3dfac96ef475b74066dbc58eaa6ea4fba7.tables`
+files."lib/.tauto-syntax/d082dbd36acfbc610dde69051b3d77d25305e8106db261bb13452d874f1277de.tables" = path`../../std/.tauto-syntax/d082dbd36acfbc610dde69051b3d77d25305e8106db261bb13452d874f1277de.tables`
+files."lib/.tauto-syntax/e3a1daede76b420879e8b463d6b4ff34d67accf16ce8b669437837ce7fb0d8ad.tables" = path`../../std/.tauto-syntax/e3a1daede76b420879e8b463d6b4ff34d67accf16ce8b669437837ce7fb0d8ad.tables`
+files."main.taut" = ````tauto
+import "lib/Calc.taut"
+
+theorem t(a: Nat, b: Nat, c: Nat): Nat::add(Nat::add(a, b), c) = Nat::add(Nat::add(a, c), b) {
+  calc!(```
+    $Nat::add(Nat::add(a, b), c)
+       = $Nat::add(a, Nat::add(b, c))   from $Nat::add_assoc(a, b, c)
+    =   $Nat::add(a, Nat::add(c, b)) from   $Eq::congr(⟦Nat::add(a, □)⟧, Nat::add_comm(b, c))
+
+    = $Nat::add(Nat::add(a, c), b) from $Eq::sym(Nat::add_assoc(a, c, b))
+    ```)
+}
+
+theorem both(p: Bool): Iff(p, p) {
+  calc!(```
+    $p
+        ↔   $p from $Iff::refl(p)
+
+    ↔ $p   from $Iff::refl(p)
+    ```)
+}
+
+theorem one(n: Nat): n = n {
+  calc!(`$n   =   $n  from  $(Refl)`)
+}
+````
+entry = "main.taut"
+format_literals = ````tauto
+import "lib/Calc.taut"
+
+theorem t(a: Nat, b: Nat, c: Nat): Nat::add(Nat::add(a, b), c) = Nat::add(Nat::add(a, c), b) {
+  calc!(```
+    $Nat::add(Nat::add(a, b), c)
+    = $Nat::add(a, Nat::add(b, c)) from $Nat::add_assoc(a, b, c)
+    = $Nat::add(a, Nat::add(c, b)) from $Eq::congr(⟦Nat::add(a, □)⟧, Nat::add_comm(b, c))
+    = $Nat::add(Nat::add(a, c), b) from $Eq::sym(Nat::add_assoc(a, c, b))
+    ```)
+}
+
+theorem both(p: Bool): Iff(p, p) {
+  calc!(```
+    $p
+    ↔ $p from $Iff::refl(p)
+    ↔ $p from $Iff::refl(p)
+    ```)
+}
+
+theorem one(n: Nat): n = n {
+  calc!(`$n = $n from $(Refl)`)
+}
+````
+format_literals_warnings = []
+
+@ cases.calc-literals-mixing-relations-are-laid-out-too
+files."lib/Calc.taut" = path`../../std/Calc.taut`
+files."lib/.tauto-syntax/8002b584d6ccfb34dd9822833dd92f3dfac96ef475b74066dbc58eaa6ea4fba7.tables" = path`../../std/.tauto-syntax/8002b584d6ccfb34dd9822833dd92f3dfac96ef475b74066dbc58eaa6ea4fba7.tables`
+files."lib/.tauto-syntax/d082dbd36acfbc610dde69051b3d77d25305e8106db261bb13452d874f1277de.tables" = path`../../std/.tauto-syntax/d082dbd36acfbc610dde69051b3d77d25305e8106db261bb13452d874f1277de.tables`
+files."lib/.tauto-syntax/e3a1daede76b420879e8b463d6b4ff34d67accf16ce8b669437837ce7fb0d8ad.tables" = path`../../std/.tauto-syntax/e3a1daede76b420879e8b463d6b4ff34d67accf16ce8b669437837ce7fb0d8ad.tables`
+files."main.taut" = ````tauto
+import "lib/Calc.taut"
+
+theorem mixed(p: Prop): Iff(p, p) {
+  calc!(```
+    $p
+        ↔   $p from $Iff::refl(p)
+
+    =   $p   from $Iff::refl(p)
+    ```)
+}
+````
+entry = "main.taut"
+format_literals = ````tauto
+import "lib/Calc.taut"
+
+theorem mixed(p: Prop): Iff(p, p) {
+  calc!(```
+    $p
+    ↔ $p from $Iff::refl(p)
+    = $p from $Iff::refl(p)
+    ```)
+}
+````
+format_literals_warnings = []
+
+@ cases.calc-highlights-relations-and-from
+files."lib/Calc.taut" = path`../../std/Calc.taut`
+files."lib/.tauto-syntax/8002b584d6ccfb34dd9822833dd92f3dfac96ef475b74066dbc58eaa6ea4fba7.tables" = path`../../std/.tauto-syntax/8002b584d6ccfb34dd9822833dd92f3dfac96ef475b74066dbc58eaa6ea4fba7.tables`
+files."lib/.tauto-syntax/d082dbd36acfbc610dde69051b3d77d25305e8106db261bb13452d874f1277de.tables" = path`../../std/.tauto-syntax/d082dbd36acfbc610dde69051b3d77d25305e8106db261bb13452d874f1277de.tables`
+files."lib/.tauto-syntax/e3a1daede76b420879e8b463d6b4ff34d67accf16ce8b669437837ce7fb0d8ad.tables" = path`../../std/.tauto-syntax/e3a1daede76b420879e8b463d6b4ff34d67accf16ce8b669437837ce7fb0d8ad.tables`
+files."main.taut" = ````tauto
+import "lib/Calc.taut"
+
+fn sample(n: Nat): calc_syntax::Chain {
+  ```calc_syntax
+  $n
+  = $n from $(Refl)
+  ```
+}
+````
+entry = "main.taut"
+editor_tokens = ["5:3 operator $", "5:4 parameter n", "6:3 operator =", "6:5 operator $", "6:6 parameter n", "6:8 keyword from", "6:13 operator $", "6:14 operator (", "6:15 enumMember Refl", "6:19 operator )"]
+editor_token_warnings = []

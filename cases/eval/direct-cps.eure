@@ -1,0 +1,89 @@
+@ cases.direct-evaluation-results
+imports = [path`../../totes/eval/src/eval.taut`, path`../../totes/eval/src/value.taut`, path`../../totes/vm/src/mval.taut`, path`../../totes/vm/src/cps.taut`]
+checks_all = "checked"
+checks."totes/text/src/text.taut::text_push_all" = "skipped"
+checks."totes/text/src/text.taut::text_push_joined" = "skipped"
+checks."totes/text/src/text.taut::text_parse_up" = "skipped"
+checks."totes/text/src/text.taut::text_parse_down" = "skipped"
+checks."totes/text/src/text.taut::text_parse_i64" = "skipped"
+checks."totes/text/src/text.taut::text_numbers" = "skipped"
+checks.declaration_literal = "ok"
+checks."std/UInt.taut::Nat::div" = "checked"
+checks."std/UInt.taut::Nat::rem" = "checked"
+checks."std/UInt.taut::U8::div" = "checked"
+checks."std/UInt.taut::U8::rem" = "checked"
+checks."std/UInt.taut::U32::div" = "checked"
+checks."std/UInt.taut::U32::rem" = "checked"
+checks."std/UInt.taut::U64::div" = "checked"
+checks."std/UInt.taut::U64::rem" = "checked"
+checks."std/Int.taut::Int::tdiv" = "checked"
+checks."std/Int.taut::Int::tmod" = "checked"
+checks."std/Int.taut::Int::fdiv" = "checked"
+checks."std/Int.taut::Int::fmod" = "checked"
+checks."std/SInt.taut::I32::tdiv" = "checked"
+checks."std/SInt.taut::I32::tmod" = "checked"
+checks."std/SInt.taut::I32::fdiv" = "checked"
+checks."std/SInt.taut::I32::fmod" = "checked"
+checks."std/SInt.taut::I64::tdiv" = "checked"
+checks."std/SInt.taut::I64::tmod" = "checked"
+checks."std/SInt.taut::I64::fdiv" = "checked"
+checks."std/SInt.taut::I64::fmod" = "checked"
+checks.arithmetic = "axioms: std::Float::Text::of_float"
+checks.selected_branch = "axioms: std::Float::Text::of_float"
+checks.sequence_value = "axioms: std::Float::Text::of_float"
+checks.source_local = "axioms: std::Float::Text::of_float"
+checks.exhausted = "axioms: std::Float::Text::of_float"
+checks.unbound = "axioms: std::Float::Text::of_float"
+checks.wrong_arity = "axioms: std::Float::Text::of_float"
+checks.division_by_zero = "axioms: std::Float::Text::of_float"
+checks.first_error = "axioms: std::Float::Text::of_float"
+checks.unsupported = "axioms: std::Float::Text::of_float"
+checks.left_to_right = "axioms: std::Float::Text::of_float"
+checks.cell_read = "axioms: std::Float::Text::of_float"
+source = ```taut
+import std::Int
+theorem declaration_literal(): e_value(CvDeclaration(7)) = MvDeclaration(7) { Refl }
+fn empty(): MCx { Mcx(MtLeaf, 0, None, IntOfNat(0), IntOfNat(0), Nil, None, Nil, false) }
+theorem arithmetic(): e_eval(8, Nil, Nil,
+  MkCPrim(CprArith(2, 1), [CPure(CvInt(IntOfNat(6))), CPure(CvInt(IntOfNat(7)))]), empty()) =
+  ErValue(MvInt(IntOfNat(42)), empty()) { Refl }
+theorem selected_branch(): e_eval(3, Nil, Nil,
+  CBranch(CPure(CvBool(false)), CCall(CPure(CvFn(0)), Nil, false), CPure(CvText("else"))), empty()) =
+  ErValue(MvText("else"), empty()) { Refl }
+theorem sequence_value(): e_eval(6, Nil, Nil,
+  CSeq([CPure(CvInt(IntOfNat(1))), CPure(CvInt(IntOfNat(2)))]), empty()) =
+  ErValue(MvInt(IntOfNat(2)), empty()) { Refl }
+theorem source_local(): e_eval(1, Nil,
+  [Pair { fst: 42, snd: EbValue(MvText("bound")) }], CRead(42, false), empty()) =
+  ErValue(MvText("bound"), empty()) { Refl }
+theorem exhausted(): e_eval(0, Nil, Nil, CPure(CvUnit), empty()) = ErFuel { Refl }
+theorem unbound(): e_eval(1, Nil, Nil, CRead(4, false), empty()) =
+  ErError("internal: an unbound local") { Refl }
+theorem wrong_arity(): e_eval(8, Nil, Nil,
+  MkCPrim(CprArith(0, 1), [CPure(CvInt(IntOfNat(1)))]), empty()) =
+  ErError("internal: a primitive has the wrong arity") { Refl }
+theorem division_by_zero(): e_eval(8, Nil, Nil,
+  MkCPrim(CprDivide(false, 1), [CPure(CvInt(IntOfNat(7))), CPure(CvInt(IntOfNat(0)))]), empty()) =
+  ErError(m_division_by_zero()) { Refl }
+theorem first_error(): e_eval(8, Nil, Nil,
+  MkCPrim(CprArith(0, 1), [CRead(4, false), CCall(CPure(CvFn(0)), Nil, false)]), empty()) =
+  ErError("internal: an unbound local") { Refl }
+theorem unsupported(): e_eval(1, Nil, Nil, CPerform("show", 0, Nil), empty()) =
+  ErUnsupported("perform") { Refl }
+fn observed(r: EResult(MVal)): List(MVal) {
+  match r {
+    ErValue(v, cx) => [v, cx_cell(cx, 0), cx_cell(cx, 1), MvInt(IntOfNat(cx_next(cx)))]
+    ErError(message) => Nil
+    ErFuel => Nil
+    ErUnsupported(construct) => Nil
+  }
+}
+theorem left_to_right(): observed(e_eval(8, Nil, Nil,
+  MkCPrim(CprProduct([Pair { fst: 0, snd: None }, Pair { fst: 1, snd: None }]),
+    [CMap(CPure(CvInt(IntOfNat(11))), CuTempRef), CMap(CPure(CvInt(IntOfNat(22))), CuTempRef)]), empty())) =
+  [MvProduct([MvRef(0, MrPath(Nil)), MvRef(1, MrPath(Nil))]),
+   MvInt(IntOfNat(11)), MvInt(IntOfNat(22)), MvInt(IntOfNat(2))] { Refl }
+theorem cell_read(): e_eval(1, Nil, [Pair { fst: 17, snd: EbCell(0) }], CRead(17, false),
+  cx_put(empty(), 0, MoCell(MvText("cell")))) =
+  ErValue(MvText("cell"), cx_put(empty(), 0, MoCell(MvText("cell")))) { Refl }
+```

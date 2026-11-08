@@ -1,0 +1,37 @@
+@ cases.truncate-regrow-and-borrowed-updates
+backends = ["rust", "javascript", "vm"]
+source = ```nib
+import std::prelude::Affine
+import std::prelude::Shared
+
+var v: Vec(i64) := Vec::new()
+Vec::push(&mut v, 1)
+Vec::push(&mut v, 2)
+Vec::push(&mut v, 3)
+Vec::truncate(&mut v, 1)
+Vec::push(&mut v, 9)
+perform show("past", Vec::get(&v, 2))
+perform show("regrown", Vec::get(&v, 1))
+Vec::truncate(&mut v, 99)
+perform show("len", Vec::len(&v))
+handle { Vec::swap(&mut v, 0, 1) } with {
+  out_of_bounds() => perform show("unexpected_bounds", true)
+}
+match Vec::get_mut(&mut v, 1) { Some(at) => { at := 7 }, None => #() }
+perform show("swapped", Vec::get(&v, 0))
+perform show("pop", Vec::pop(&mut v))
+perform show("after_pop", Vec::get(&v, 1))
+match Vec::last_mut(&mut v) { Some(at) => { at := 11 }, None => #() }
+let a := Vec::into_array(v)
+perform show("array", Array::to_list(a))
+perform show("array_past", Array::get(a, 1))
+let b := Array::of_list([4, 5])
+perform show("array_get", Array::get(b, 1))
+var empty: Vec(i64) := Vec::new()
+perform show("empty_pop", Vec::pop(&mut empty))
+Vec::push(&mut empty, 20)
+Vec::clear(&mut empty)
+Vec::push(&mut empty, 21)
+perform show("cleared", Vec::into_list(empty))
+```
+shows = ["past = None", "regrown = Some(9)", "len = 2", "swapped = Some(9)", "pop = Some(7)", "after_pop = None", "array = Cons(11, Nil)", "array_past = None", "array_get = Some(5)", "empty_pop = None", "cleared = Cons(21, Nil)"]

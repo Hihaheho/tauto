@@ -1,0 +1,155 @@
+description = "`Refined(A, P)` of `std/Refined.taut`: a value with a proof that it satisfies `P`. The proof is erased when the program runs, a value written in the program is proved by `Refl`, `refine_by` tests a value when the program runs, and two values with the same `val` are equal."
+
+@ cases.std-checks
+source = path`../std/Refined.taut`
+checks_all = "ok"
+
+@ cases.run
+extract = true
+imports = [path`../std/Nat.taut`, path`../std/Refined.taut`]
+source = ```tauto
+fn is_pos(n: Nat): Bool {
+  ⊢ Bool from match n {
+    Zero => false
+    Succ(k) => true
+  }
+}
+
+fn pos_pred(v: Nat, h: is_pos(v) = true): Nat {
+  ⊢ Nat from match v {
+    Zero => ⊢ Nat from match h {
+    }
+    Succ(k) => k
+  }
+}
+
+fn pred_of(n: Refined(Nat, y => is_pos(y) = true)): Nat {
+  ⊢ Nat from match n {
+    Mk(v, h) => pos_pred(v, h)
+  }
+}
+
+fn four(): Refined(Nat, y => is_pos(y) = true) {
+  Refined::Mk(4, Refl)
+}
+
+fn pred_or_zero(n: Nat): Nat {
+  ⊢ Nat from match refine_by(is_pos, n) {
+    None => 0
+    Some(r) => pred_of(r)
+  }
+}
+fn pred_four(): Nat {
+  pred_of(four())
+}
+fn read_pos(r: Refined(Nat, y => is_pos(y) = true)): Nat { r.val }
+perform show("four", read_pos(four()))
+perform show("pred", pred_four())
+perform show("checked", pred_or_zero(7))
+perform show("rejected", pred_or_zero(0))
+```
+shows = ["four = 4", "pred = 3", "checked = 6", "rejected = 0"]
+
+@ cases.literal-proof-rejected
+imports = [path`../std/Nat.taut`, path`../std/Refined.taut`]
+source = ```tauto
+fn is_pos(n: Nat): Bool {
+  ⊢ Bool from match n {
+    Zero => false
+    Succ(k) => true
+  }
+}
+
+fn zero_pos(): Refined(Nat, y => is_pos(y) = true) {
+  Refined::Mk(0, Refl)
+}
+```
+checks.zero_pos = "error: type mismatch: expected `is_pos(0) = true`"
+
+@ cases.nib-reads-a-refined-value
+extract = true
+imports = [path`../std/Nat.taut`, path`../std/Refined.taut`]
+source = ```tauto
+fn is_pos(n: Nat): Bool {
+  ⊢ Bool from match n {
+    Zero => false
+    Succ(k) => true
+  }
+}
+fn checked_pos(n: Nat): Option(Refined(Nat, y => is_pos(y) = true)) { refine_by(is_pos, n) }
+fn read_pos(r: Refined(Nat, y => is_pos(y) = true)): Nat { r.val }
+match checked_pos(9) {
+  Some(r) => perform show("val", read_pos(r))
+  None => perform show("none", 0)
+}
+match checked_pos(0) {
+  Some(r) => perform show("val", read_pos(r))
+  None => perform show("none", 0)
+}
+```
+shows = ["val = 9", "none = 0"]
+
+@ cases.nib-passes-a-refined-value
+extract = true
+imports = [path`../std/Nat.taut`, path`../std/Refined.taut`]
+source = ```tauto
+fn is_pos(n: Nat): Bool {
+  ⊢ Bool from match n {
+    Zero => false
+    Succ(k) => true
+  }
+}
+
+fn is_big(n: Nat): Bool {
+  Nat::lt(9, n)
+}
+
+fn pred_of(n: Refined(Nat, y => is_pos(y) = true)): Nat {
+  Nat::sub(n.val, 1)
+}
+fn checked_big(n: Nat): Option(Refined(Nat, y => is_big(y) = true)) { refine_by(is_big, n) }
+match checked_big(12) {
+  Some(r) => perform show("p", pred_of(r))
+  None => perform show("none", 0)
+}
+```
+types = "error: does not fit"
+
+@ cases.nib-calls-a-function-that-takes-a-proof
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn Pos(n: Nat): Prop { ¬(n = 0) }
+
+fn div_pos(a: Nat, b: Nat, h: Pos(b)): Nat {
+  Nat::div_nz(a, b, h)
+}
+perform show("q", div_pos(1, 0))
+```
+load_error = "`div_pos` takes a proof, which code the kernel does not check cannot give"
+
+@ cases.nib-calls-a-constructor-with-a-proof-field
+extract = true
+imports = [path`../std/Nat.taut`, path`../std/Refined.taut`]
+source = ```tauto
+fn Pos(n: Nat): Prop { ¬(n = 0) }
+
+fn pred_of(n: Refined(Nat, Pos)): Nat {
+  Nat::sub(n.val, 1)
+}
+perform show("p", pred_of(Refined::Mk(0)))
+```
+load_error = "`Refined::Mk` takes a proof, which code the kernel does not check cannot give"
+
+@ cases.nib-writes-a-record-with-a-proof-field
+extract = true
+imports = [path`../std/Nat.taut`, path`../std/Refined.taut`]
+source = ```tauto
+fn Pos(n: Nat): Prop { ¬(n = 0) }
+
+fn pred_of(n: Refined(Nat, Pos)): Nat {
+  Nat::sub(n.val, 1)
+}
+perform show("p", pred_of(Refined { val: 0 }))
+```
+load_error = "`Refined` has a proof field, which code the kernel does not check cannot give"

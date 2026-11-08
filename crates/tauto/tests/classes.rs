@@ -22,7 +22,7 @@ instance Ord(P) {
   fn compare(&a: P, &b: P): Ordering { Equal }
 }
 fn is_less<A>(a: A, b: A): Bool where Ord(A) {
-  match Ord::compare(a, b): Bool {
+  ⊢ Bool from match Ord::compare(a, b) {
     Less => true
     Equal => false
     Greater => false
@@ -48,7 +48,7 @@ fn use_it(a: P, b: P): Bool { is_less(a, b) }
     }
     assert!(!nib.contains(r#"class Ord"#), "{nib}");
     assert!(!nib.contains(r#"instance Ord(nat)"#), "{nib}");
-    assert!(!nib.contains(r#"law"#), "{nib}");
+    assert!(!nib.contains(r#"theorem"#), "{nib}");
 }
 
 #[test]
@@ -65,11 +65,11 @@ fn a_class_of_the_program_is_extracted_as_written() {
             BASE,
             r#"class Key(A: Type) {
   fn key(a: A): Nat
-  law same<a: A>(): Key::key(a) = Key::key(a)
+  theorem same<a: A>(): Key::key(a) = Key::key(a)
 }
 instance Key(Nat) {
   fn key(a: Nat): Nat { a }
-  law same<a: Nat>(): Key::key(a) = Key::key(a) { Refl }
+  theorem same<a: Nat>(): Key::key(a) = Key::key(a) { Refl }
 }
 fn key_of<A>(a: A): Nat where Key(A) { Key::key(a) }
 "#
@@ -103,17 +103,17 @@ fn a_law_not_written_is_filled_by_writing_it_into_the_instance() {
             r#"
 class Cmp(A: Type) {
   fn compare(a: A, b: A): Ordering
-  law refl<a: A>(): Cmp::compare(a, a) = Equal
-  law irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
+  theorem refl<a: A>(): Cmp::compare(a, a) = Equal
+  theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
 }
 
 fn nat_cmp(a: Nat, b: Nat): Ordering {
-  match a: Ordering {
-    Zero => match b: Ordering {
+  ⊢ Ordering from match a {
+    Zero => ⊢ Ordering from match b {
       Zero => Equal
       Succ(b2) => Less
     }
-    Succ(a2) => match b: Ordering {
+    Succ(a2) => ⊢ Ordering from match b {
       Zero => Greater
       Succ(b2) => nat_cmp(a2, b2)
     }
@@ -121,7 +121,7 @@ fn nat_cmp(a: Nat, b: Nat): Ordering {
 }
 
 theorem nat_cmp_refl(a: Nat): nat_cmp(a, a) = Equal {
-  match a: nat_cmp(a, a) = Equal {
+  ⊢ nat_cmp(a, a) = Equal from match a {
     Zero => Refl
     Succ(k) => nat_cmp_refl(k)
   }
@@ -129,8 +129,8 @@ theorem nat_cmp_refl(a: Nat): nat_cmp(a, a) = Equal {
 
 instance Cmp(Nat) {
   fn compare(a: Nat, b: Nat): Ordering { nat_cmp(a, b) }
-  law refl<a: Nat>(): Cmp::compare(a, a) = Equal { nat_cmp_refl(a) }
-  law irrefl<a: Nat>(h: Cmp::compare(a, a) = Less): False {
+  theorem refl<a: Nat>(): Cmp::compare(a, a) = Equal { nat_cmp_refl(a) }
+  theorem irrefl<a: Nat>(h: Cmp::compare(a, a) = Less): False {
     less_ne_equal(Eq::trans(Eq::sym(h), nat_cmp_refl(a)))
   }
 }
@@ -140,7 +140,7 @@ inductive P: Type {
 }
 instance Cmp(P) {
   fn compare(a: P, b: P): Ordering { Equal }
-  law refl<a: P>(): Cmp::compare(a, a) = Equal { Refl }
+  theorem refl<a: P>(): Cmp::compare(a, a) = Equal { Refl }
 }
 theorem uses_the_missing_law(a: P, h: Cmp::compare(a, a) = Less): False {
   Cmp::irrefl(h)
@@ -159,7 +159,7 @@ fn still_compares(a: P, b: P): Ordering { Cmp::compare(a, b) }
     .unwrap();
     assert!(attempt.accepted);
     assert!(
-        attempt.candidate.contains(r#"law irrefl<a: P>(h: Cmp::compare(a, a) = Less): False { False::elim(equal_ne_less(h)) }"#),
+        attempt.candidate.contains(r#"theorem irrefl<a: P>(h: Cmp::compare(a, a) = Less): False { False::elim(equal_ne_less(h)) }"#),
         "{}",
         attempt.candidate
     );

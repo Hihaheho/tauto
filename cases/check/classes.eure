@@ -1,0 +1,608 @@
+@ cases.a-class-with-laws-has-no-effectful-method-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+class C(A: Type) {
+  fn m(a: A): Unit ! {Div}
+  theorem l<a: A>(): Zero = Zero
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::C" = "error: "
+@ cases.a-class-with-laws-has-no-effectful-method-0.diagnostics[]
+file = "input/main.taut"
+name = "C"
+message = "C::m performs effects, so C cannot have laws"
+span = "«fn m(a: A): Unit ! {Div}»"
+
+@ cases.a-function-with-a-where-is-given-the-method-record-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+class Cmp(A: Type) {
+  fn compare(a: A, b: A): Ordering
+  theorem refl<a: A>(): Cmp::compare(a, a) = Equal
+  theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
+}
+
+fn nat_cmp(a: Nat, b: Nat): Ordering {
+  ⊢ Ordering from match a {
+    Zero => ⊢ Ordering from match b {
+      Zero => Equal
+      Succ(b2) => Less
+    }
+    Succ(a2) => ⊢ Ordering from match b {
+      Zero => Greater
+      Succ(b2) => nat_cmp(a2, b2)
+    }
+  }
+}
+
+theorem nat_cmp_refl(a: Nat): nat_cmp(a, a) = Equal {
+  ⊢ nat_cmp(a, a) = Equal from match a {
+    Zero => Refl
+    Succ(k) => nat_cmp_refl(k)
+  }
+}
+
+instance Cmp(Nat) {
+  fn compare(a: Nat, b: Nat): Ordering { nat_cmp(a, b) }
+  theorem refl<a: Nat>(): Cmp::compare(a, a) = Equal { nat_cmp_refl(a) }
+  theorem irrefl<a: Nat>(h: Cmp::compare(a, a) = Less): False {
+    less_ne_equal(Eq::trans(Eq::sym(h), nat_cmp_refl(a)))
+  }
+}
+
+fn is_less<A>(a: A, b: A): Bool where Cmp(A) {
+  ⊢ Bool from match Cmp::compare(a, b) {
+    Less => true
+    Equal => false
+    Greater => false
+  }
+}
+fn zero_less_than_one(): Bool { is_less(0, 1) }
+```
+
+checks_all = "ok"
+checks."input/main.taut::Cmp" = "ok"
+checks."input/main.taut::Cmp::compare" = "ok"
+checks."input/main.taut::Cmp::laws" = "ok"
+checks."input/main.taut::Cmp::refl" = "ok"
+checks."input/main.taut::Cmp::irrefl" = "ok"
+checks."input/main.taut::nat_cmp" = "ok"
+checks."input/main.taut::nat_cmp_refl" = "ok"
+checks."input/main.taut::Cmp::compare@Nat" = "ok"
+checks."input/main.taut::Cmp::refl@Nat" = "ok"
+checks."input/main.taut::Cmp::irrefl@Nat" = "ok"
+checks."input/main.taut::Cmp::inst@Nat" = "ok"
+checks."input/main.taut::Cmp::laws@Nat" = "ok"
+checks."input/main.taut::is_less" = "ok"
+checks."input/main.taut::zero_less_than_one" = "ok"
+
+@ cases.a-law-not-written-makes-the-laws-incomplete-and-what-uses-them-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+class Cmp(A: Type) {
+  fn compare(a: A, b: A): Ordering
+  theorem refl<a: A>(): Cmp::compare(a, a) = Equal
+  theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
+}
+
+fn nat_cmp(a: Nat, b: Nat): Ordering {
+  ⊢ Ordering from match a {
+    Zero => ⊢ Ordering from match b {
+      Zero => Equal
+      Succ(b2) => Less
+    }
+    Succ(a2) => ⊢ Ordering from match b {
+      Zero => Greater
+      Succ(b2) => nat_cmp(a2, b2)
+    }
+  }
+}
+
+theorem nat_cmp_refl(a: Nat): nat_cmp(a, a) = Equal {
+  ⊢ nat_cmp(a, a) = Equal from match a {
+    Zero => Refl
+    Succ(k) => nat_cmp_refl(k)
+  }
+}
+
+instance Cmp(Nat) {
+  fn compare(a: Nat, b: Nat): Ordering { nat_cmp(a, b) }
+  theorem refl<a: Nat>(): Cmp::compare(a, a) = Equal { nat_cmp_refl(a) }
+  theorem irrefl<a: Nat>(h: Cmp::compare(a, a) = Less): False {
+    less_ne_equal(Eq::trans(Eq::sym(h), nat_cmp_refl(a)))
+  }
+}
+
+inductive P: Type {
+  Mk: P
+}
+instance Cmp(P) {
+  fn compare(a: P, b: P): Ordering { Equal }
+  theorem refl<a: P>(): Cmp::compare(a, a) = Equal { Refl }
+}
+theorem uses_the_missing_law(a: P, h: Cmp::compare(a, a) = Less): False {
+  Cmp::irrefl(h)
+}
+theorem uses_a_law_it_has(a: P): Cmp::compare(a, a) = Equal { Cmp::refl() }
+fn still_compares(a: P, b: P): Ordering { Cmp::compare(a, b) }
+```
+
+checks_all = "ok"
+checks."input/main.taut::Cmp" = "ok"
+checks."input/main.taut::Cmp::compare" = "ok"
+checks."input/main.taut::Cmp::laws" = "ok"
+checks."input/main.taut::Cmp::refl" = "ok"
+checks."input/main.taut::Cmp::irrefl" = "ok"
+checks."input/main.taut::nat_cmp" = "ok"
+checks."input/main.taut::nat_cmp_refl" = "ok"
+checks."input/main.taut::Cmp::compare@Nat" = "ok"
+checks."input/main.taut::Cmp::refl@Nat" = "ok"
+checks."input/main.taut::Cmp::irrefl@Nat" = "ok"
+checks."input/main.taut::Cmp::inst@Nat" = "ok"
+checks."input/main.taut::Cmp::laws@Nat" = "ok"
+checks."input/main.taut::P" = "ok"
+checks."input/main.taut::Cmp::compare@P" = "ok"
+checks."input/main.taut::Cmp::refl@P" = "ok"
+checks."input/main.taut::Cmp::inst@P" = "ok"
+checks."input/main.taut::Cmp::laws@P" = "incomplete: ?law:Cmp(P)::irrefl"
+checks."input/main.taut::uses_the_missing_law" = "incomplete: uses Cmp::laws@P"
+checks."input/main.taut::uses_a_law_it_has" = "ok"
+checks."input/main.taut::still_compares" = "ok"
+holes = [{ declaration => "Cmp::laws@P", file => "input/main.taut", name => "law:Cmp(P)::irrefl", goal => "(a: P) -> (h: Cmp::compare(P, Cmp::inst@P, a, a) = Ordering::Less) -> False", context => [] }]
+
+@ cases.a-law-that-states-another-proposition-fails-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+class Cmp(A: Type) {
+  fn compare(a: A, b: A): Ordering
+  theorem refl<a: A>(): Cmp::compare(a, a) = Equal
+  theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
+}
+
+fn nat_cmp(a: Nat, b: Nat): Ordering {
+  ⊢ Ordering from match a {
+    Zero => ⊢ Ordering from match b {
+      Zero => Equal
+      Succ(b2) => Less
+    }
+    Succ(a2) => ⊢ Ordering from match b {
+      Zero => Greater
+      Succ(b2) => nat_cmp(a2, b2)
+    }
+  }
+}
+
+theorem nat_cmp_refl(a: Nat): nat_cmp(a, a) = Equal {
+  ⊢ nat_cmp(a, a) = Equal from match a {
+    Zero => Refl
+    Succ(k) => nat_cmp_refl(k)
+  }
+}
+
+instance Cmp(Nat) {
+  fn compare(a: Nat, b: Nat): Ordering { nat_cmp(a, b) }
+  theorem refl<a: Nat>(): Cmp::compare(a, a) = Equal { nat_cmp_refl(a) }
+  theorem irrefl<a: Nat>(h: Cmp::compare(a, a) = Less): False {
+    less_ne_equal(Eq::trans(Eq::sym(h), nat_cmp_refl(a)))
+  }
+}
+
+inductive Q: Type {
+  Mk: Q
+}
+instance Cmp(Q) {
+  fn compare(a: Q, b: Q): Ordering { Equal }
+  theorem refl<a: Q>(): Cmp::compare(a, a) = Less { ?x }
+  theorem irrefl<a: Q>(h: Cmp::compare(a, a) = Less): False { less_ne_equal(h) }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::Cmp" = "ok"
+checks."input/main.taut::Cmp::compare" = "ok"
+checks."input/main.taut::Cmp::laws" = "ok"
+checks."input/main.taut::Cmp::refl" = "ok"
+checks."input/main.taut::Cmp::irrefl" = "ok"
+checks."input/main.taut::nat_cmp" = "ok"
+checks."input/main.taut::nat_cmp_refl" = "ok"
+checks."input/main.taut::Cmp::compare@Nat" = "ok"
+checks."input/main.taut::Cmp::refl@Nat" = "ok"
+checks."input/main.taut::Cmp::irrefl@Nat" = "ok"
+checks."input/main.taut::Cmp::inst@Nat" = "ok"
+checks."input/main.taut::Cmp::laws@Nat" = "ok"
+checks."input/main.taut::Q" = "ok"
+checks."input/main.taut::Cmp::compare@Q" = "ok"
+checks."input/main.taut::Cmp::refl@Q" = "incomplete: ?x"
+checks."input/main.taut::Cmp::irrefl@Q" = "error: "
+checks."input/main.taut::Cmp::inst@Q" = "ok"
+checks."input/main.taut::Cmp::laws@Q" = "error: "
+holes = [{ declaration => "Cmp::refl@Q", file => "input/main.taut", name => "x", goal => "Cmp::compare@Q(a, a) = Ordering::Less", context => ["a: Q"] }]
+@ cases.a-law-that-states-another-proposition-fails-0.diagnostics[]
+file = "input/main.taut"
+name = "Cmp::irrefl@Q"
+message = "type mismatch: expected `Ordering::Less = Ordering::Equal`, found `Cmp::compare@Q(a, a) = Ordering::Less`\n  differing part: expected `Ordering::Less`, found `Ordering::Equal`"
+span = "less_ne_equal(«h»)"
+@ cases.a-law-that-states-another-proposition-fails-0.diagnostics[]
+file = "input/main.taut"
+name = "Cmp::laws@Q"
+message = "the law refl of Cmp(Q) states a different proposition"
+span = "«theorem refl<a: Q>(): Cmp::compare(a, a) = Less { ?x }»"
+
+@ cases.a-theorem-uses-the-laws-of-the-class-it-is-given-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+class Cmp(A: Type) {
+  fn compare(a: A, b: A): Ordering
+  theorem refl<a: A>(): Cmp::compare(a, a) = Equal
+  theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
+}
+
+fn nat_cmp(a: Nat, b: Nat): Ordering {
+  ⊢ Ordering from match a {
+    Zero => ⊢ Ordering from match b {
+      Zero => Equal
+      Succ(b2) => Less
+    }
+    Succ(a2) => ⊢ Ordering from match b {
+      Zero => Greater
+      Succ(b2) => nat_cmp(a2, b2)
+    }
+  }
+}
+
+theorem nat_cmp_refl(a: Nat): nat_cmp(a, a) = Equal {
+  ⊢ nat_cmp(a, a) = Equal from match a {
+    Zero => Refl
+    Succ(k) => nat_cmp_refl(k)
+  }
+}
+
+instance Cmp(Nat) {
+  fn compare(a: Nat, b: Nat): Ordering { nat_cmp(a, b) }
+  theorem refl<a: Nat>(): Cmp::compare(a, a) = Equal { nat_cmp_refl(a) }
+  theorem irrefl<a: Nat>(h: Cmp::compare(a, a) = Less): False {
+    less_ne_equal(Eq::trans(Eq::sym(h), nat_cmp_refl(a)))
+  }
+}
+
+theorem refl_generic<A>(x: A): Cmp::compare(x, x) = Equal where Cmp(A) { Cmp::refl() }
+theorem refl_nat(x: Nat): Cmp::compare(x, x) = Equal { refl_generic(x) }
+theorem refl_direct(x: Nat): Cmp::compare(x, x) = Equal { Cmp::refl() }
+```
+
+checks_all = "ok"
+checks."input/main.taut::Cmp" = "ok"
+checks."input/main.taut::Cmp::compare" = "ok"
+checks."input/main.taut::Cmp::laws" = "ok"
+checks."input/main.taut::Cmp::refl" = "ok"
+checks."input/main.taut::Cmp::irrefl" = "ok"
+checks."input/main.taut::nat_cmp" = "ok"
+checks."input/main.taut::nat_cmp_refl" = "ok"
+checks."input/main.taut::Cmp::compare@Nat" = "ok"
+checks."input/main.taut::Cmp::refl@Nat" = "ok"
+checks."input/main.taut::Cmp::irrefl@Nat" = "ok"
+checks."input/main.taut::Cmp::inst@Nat" = "ok"
+checks."input/main.taut::Cmp::laws@Nat" = "ok"
+checks."input/main.taut::refl_generic" = "ok"
+checks."input/main.taut::refl_nat" = "ok"
+checks."input/main.taut::refl_direct" = "ok"
+
+@ cases.a-type-with-no-instance-is-reported-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+class Cmp(A: Type) {
+  fn compare(a: A, b: A): Ordering
+  theorem refl<a: A>(): Cmp::compare(a, a) = Equal
+  theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
+}
+
+fn nat_cmp(a: Nat, b: Nat): Ordering {
+  ⊢ Ordering from match a {
+    Zero => ⊢ Ordering from match b {
+      Zero => Equal
+      Succ(b2) => Less
+    }
+    Succ(a2) => ⊢ Ordering from match b {
+      Zero => Greater
+      Succ(b2) => nat_cmp(a2, b2)
+    }
+  }
+}
+
+theorem nat_cmp_refl(a: Nat): nat_cmp(a, a) = Equal {
+  ⊢ nat_cmp(a, a) = Equal from match a {
+    Zero => Refl
+    Succ(k) => nat_cmp_refl(k)
+  }
+}
+
+instance Cmp(Nat) {
+  fn compare(a: Nat, b: Nat): Ordering { nat_cmp(a, b) }
+  theorem refl<a: Nat>(): Cmp::compare(a, a) = Equal { nat_cmp_refl(a) }
+  theorem irrefl<a: Nat>(h: Cmp::compare(a, a) = Less): False {
+    less_ne_equal(Eq::trans(Eq::sym(h), nat_cmp_refl(a)))
+  }
+}
+
+inductive R: Type {
+  Mk: R
+}
+theorem t(a: R): Cmp::compare(a, a) = Equal { Cmp::refl() }
+```
+
+checks_all = "ok"
+checks."input/main.taut::Cmp" = "ok"
+checks."input/main.taut::Cmp::compare" = "ok"
+checks."input/main.taut::Cmp::laws" = "ok"
+checks."input/main.taut::Cmp::refl" = "ok"
+checks."input/main.taut::Cmp::irrefl" = "ok"
+checks."input/main.taut::nat_cmp" = "ok"
+checks."input/main.taut::nat_cmp_refl" = "ok"
+checks."input/main.taut::Cmp::compare@Nat" = "ok"
+checks."input/main.taut::Cmp::refl@Nat" = "ok"
+checks."input/main.taut::Cmp::irrefl@Nat" = "ok"
+checks."input/main.taut::Cmp::inst@Nat" = "ok"
+checks."input/main.taut::Cmp::laws@Nat" = "ok"
+checks."input/main.taut::R" = "ok"
+checks."input/main.taut::t" = "error: "
+@ cases.a-type-with-no-instance-is-reported-0.diagnostics[]
+file = "input/main.taut"
+name = "t"
+message = "no instance of Cmp(R)"
+span = "R): «Cmp::compare»(a,"
+
+@ cases.an-instance-with-a-where-is-found-through-its-records-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+class Cmp(A: Type) {
+  fn compare(a: A, b: A): Ordering
+  theorem refl<a: A>(): Cmp::compare(a, a) = Equal
+  theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
+}
+
+fn nat_cmp(a: Nat, b: Nat): Ordering {
+  ⊢ Ordering from match a {
+    Zero => ⊢ Ordering from match b {
+      Zero => Equal
+      Succ(b2) => Less
+    }
+    Succ(a2) => ⊢ Ordering from match b {
+      Zero => Greater
+      Succ(b2) => nat_cmp(a2, b2)
+    }
+  }
+}
+
+theorem nat_cmp_refl(a: Nat): nat_cmp(a, a) = Equal {
+  ⊢ nat_cmp(a, a) = Equal from match a {
+    Zero => Refl
+    Succ(k) => nat_cmp_refl(k)
+  }
+}
+
+instance Cmp(Nat) {
+  fn compare(a: Nat, b: Nat): Ordering { nat_cmp(a, b) }
+  theorem refl<a: Nat>(): Cmp::compare(a, a) = Equal { nat_cmp_refl(a) }
+  theorem irrefl<a: Nat>(h: Cmp::compare(a, a) = Less): False {
+    less_ne_equal(Eq::trans(Eq::sym(h), nat_cmp_refl(a)))
+  }
+}
+
+fn cmp_then(a: Ordering, b: Ordering): Ordering {
+  ⊢ Ordering from match a {
+    Less => Less
+    Equal => b
+    Greater => Greater
+  }
+}
+instance<A> Cmp(List(A)) where Cmp(A) {
+  fn compare(xs: List(A), ys: List(A)): Ordering {
+    ⊢ Ordering from match xs {
+      Nil => ⊢ Ordering from match ys {
+        Nil => Equal
+        Cons(y, ys2) => Less
+      }
+      Cons(x, xs2) => ⊢ Ordering from match ys {
+        Nil => Greater
+        Cons(y, ys2) => cmp_then(Cmp::compare(x, y), Cmp::compare(xs2, ys2))
+      }
+    }
+  }
+  theorem refl<a: List(A)>(): Cmp::compare(a, a) = Equal {
+    ⊢ Cmp::compare(a, a) = Equal from match a {
+      Nil => Refl
+      Cons(x, xs) => Eq::subst(
+        Ordering, Equal, Cmp::compare(x, x),
+        y => cmp_then(y, Cmp::compare(xs, xs)) = Equal,
+        Eq::sym(Cmp::refl()),
+        Eq::subst(
+          Ordering, Equal, Cmp::compare(xs, xs),
+          z => cmp_then(Equal, z) = Equal,
+          Eq::sym(Cmp::refl(xs)),
+          Refl
+        )
+      )
+    }
+  }
+  theorem irrefl<a: List(A)>(h: Cmp::compare(a, a) = Less): False {
+    less_ne_equal(Eq::trans(Eq::sym(h), Cmp::refl()))
+  }
+}
+theorem refl_lists(xs: List(List(Nat))): Cmp::compare(xs, xs) = Equal { Cmp::refl() }
+```
+
+checks_all = "ok"
+checks."input/main.taut::Cmp" = "ok"
+checks."input/main.taut::Cmp::compare" = "ok"
+checks."input/main.taut::Cmp::laws" = "ok"
+checks."input/main.taut::Cmp::refl" = "ok"
+checks."input/main.taut::Cmp::irrefl" = "ok"
+checks."input/main.taut::nat_cmp" = "ok"
+checks."input/main.taut::nat_cmp_refl" = "ok"
+checks."input/main.taut::Cmp::compare@Nat" = "ok"
+checks."input/main.taut::Cmp::refl@Nat" = "ok"
+checks."input/main.taut::Cmp::irrefl@Nat" = "ok"
+checks."input/main.taut::Cmp::inst@Nat" = "ok"
+checks."input/main.taut::Cmp::laws@Nat" = "ok"
+checks."input/main.taut::cmp_then" = "ok"
+checks."input/main.taut::Cmp::compare@List" = "ok"
+checks."input/main.taut::Cmp::refl@List" = "ok"
+checks."input/main.taut::Cmp::irrefl@List" = "ok"
+checks."input/main.taut::Cmp::inst@List" = "ok"
+checks."input/main.taut::Cmp::laws@List" = "ok"
+checks."input/main.taut::refl_lists" = "ok"
+
+@ cases.an-instance-with-its-laws-proved-checks-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+class Cmp(A: Type) {
+  fn compare(a: A, b: A): Ordering
+  theorem refl<a: A>(): Cmp::compare(a, a) = Equal
+  theorem irrefl<a: A>(h: Cmp::compare(a, a) = Less): False
+}
+
+fn nat_cmp(a: Nat, b: Nat): Ordering {
+  ⊢ Ordering from match a {
+    Zero => ⊢ Ordering from match b {
+      Zero => Equal
+      Succ(b2) => Less
+    }
+    Succ(a2) => ⊢ Ordering from match b {
+      Zero => Greater
+      Succ(b2) => nat_cmp(a2, b2)
+    }
+  }
+}
+
+theorem nat_cmp_refl(a: Nat): nat_cmp(a, a) = Equal {
+  ⊢ nat_cmp(a, a) = Equal from match a {
+    Zero => Refl
+    Succ(k) => nat_cmp_refl(k)
+  }
+}
+
+instance Cmp(Nat) {
+  fn compare(a: Nat, b: Nat): Ordering { nat_cmp(a, b) }
+  theorem refl<a: Nat>(): Cmp::compare(a, a) = Equal { nat_cmp_refl(a) }
+  theorem irrefl<a: Nat>(h: Cmp::compare(a, a) = Less): False {
+    less_ne_equal(Eq::trans(Eq::sym(h), nat_cmp_refl(a)))
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::Cmp" = "ok"
+checks."input/main.taut::Cmp::compare" = "ok"
+checks."input/main.taut::Cmp::laws" = "ok"
+checks."input/main.taut::Cmp::refl" = "ok"
+checks."input/main.taut::Cmp::irrefl" = "ok"
+checks."input/main.taut::nat_cmp" = "ok"
+checks."input/main.taut::nat_cmp_refl" = "ok"
+checks."input/main.taut::Cmp::compare@Nat" = "ok"
+checks."input/main.taut::Cmp::refl@Nat" = "ok"
+checks."input/main.taut::Cmp::irrefl@Nat" = "ok"
+checks."input/main.taut::Cmp::inst@Nat" = "ok"
+checks."input/main.taut::Cmp::laws@Nat" = "ok"
+
+@ cases.a-class-in-a-file-with-no-imports-reaches-the-kernel-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Sg(A: Type) {
+  fn op(a: A, b: A): A
+  theorem comm<a: A, b: A>(): Sg::op(a, b) = Sg::op(b, a)
+}
+
+theorem comm_generic<A>(x: A, y: A): Sg::op(x, y) = Sg::op(y, x) where Sg(A) { Sg::comm() }
+```
+
+checks_all = "ok"
+checks."input/main.taut::Sg" = "ok"
+checks."input/main.taut::Sg::op" = "ok"
+checks."input/main.taut::Sg::laws" = "ok"
+checks."input/main.taut::Sg::comm" = "ok"
+checks."input/main.taut::comm_generic" = "ok"
+
+@ cases.an-instance-generic-is-not-captured-by-a-caller-generic-of-the-same-name
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Tag(A: Type) {
+  fn tag(a: A): Nat
+}
+inductive Two(K: Type, V: Type): Type {
+  Mk(k: K, v: V): Two(K, V)
+}
+instance Tag(Nat) {
+  fn tag(a: Nat): Nat { a }
+}
+instance<K, V> Tag(Two(K, V)) where Tag(K), Tag(V) {
+  fn tag(a: Two(K, V)): Nat {
+    ⊢ Nat from match a {
+      Mk(k, v) => Nat::add(Tag::tag(k), Tag::tag(v))
+    }
+  }
+}
+fn f<V>(s: Two(V, Nat)): Nat where Tag(V) { Tag::tag(s) }
+fn g<T>(s: Two(T, Nat)): Nat where Tag(T) { Tag::tag(s) }
+```
+
+checks."input/main.taut::f" = "ok"
+checks."input/main.taut::g" = "ok"
+
+@ cases.an-instance-is-found-through-a-type-alias-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+class Cmp(A: Type) {
+  fn compare(a: A, b: A): Ordering
+}
+
+inductive Box(T: Type): Type {
+  Mk(v: T): Box(T)
+}
+
+instance<T> Cmp(Box(T)) {
+  fn compare(a: Box(T), b: Box(T)): Ordering { Equal }
+}
+
+fn Reg(T: Type): Type { Box(T) }
+
+fn same(a: Reg(Nat), b: Reg(Nat)): Ordering { Cmp::compare(a, b) }
+```
+
+checks_all = "ok"
+
+@ cases.a-constructor-named-as-its-type-is-reported-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+inductive Region: Type {
+  Region(n: Nat): Region
+}
+```
+
+checks."input/main.taut::Region" = "error: "
+@ cases.a-constructor-named-as-its-type-is-reported-0.diagnostics[]
+file = "input/main.taut"
+name = "Region"
+message = "constructor `Region` has the name of a type; types and constructors share one namespace, so name it otherwise (as `MkRegion`)"

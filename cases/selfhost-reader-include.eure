@@ -1,0 +1,98 @@
+
+@ cases.dynamic_variable_is_not_evaluated
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn answer(path: Text): Text { include_text!(path) }
+```
+macro_error = "include.argument"
+
+@ cases.dynamic_concatenation_is_not_evaluated
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn answer(): Text { include_text!(Text::concat("data", ".txt")) }
+```
+files."data.txt" = "available"
+macro_error = "include.argument"
+
+@ cases.dynamic_function_is_not_evaluated
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn path(): Text { "data.txt" }
+fn answer(): Text { include_text!(path()) }
+```
+files."data.txt" = "available"
+macro_error = "include.argument"
+
+@ cases.outer_include_rejects_before_inner_read
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn answer(): Text { include_text!(include_text!("missing.txt")) }
+```
+macro_error = "include.argument"
+
+@ cases.empty_path_is_a_reader_diagnostic
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn answer(): Text { include_text!("") }
+```
+macro_error = "include.path"
+
+@ cases.imported_reader_failure_names_original_file
+entry = "main.taut"
+files."lib/part.taut" = ```tauto
+fn value(): Text { include_text!("missing.txt") }
+```
+files."main.taut" = ```tauto
+import "lib/part.taut"
+```
+macro_error = "lib/part.taut:19:47: include.read"
+
+@ cases.imported_resources_use_their_own_directory
+entry = "src/main.taut"
+files."Tauto.eure" = 'package { name="reader-fixture" }'
+files."src/lib/part.taut" = ```tauto
+fn value(): Text { include_text!("data.txt") }
+```
+files."src/lib/data.txt" = "from dependency"
+files."src/data.txt" = "from entry"
+files."src/main.taut" = ```tauto
+import "lib/part.taut"
+fn answer(): Text { value() }
+```
+selfhost_entry = "answer"
+selfhost_stdout = "from dependency\n"
+differential = "rustgen"
+
+@ cases.nearest_manifest_limits_an_imported_source
+entry = "src/main.taut"
+files."Tauto.eure" = 'package { name="outer" }'
+files."nested/Tauto.eure" = 'package { name="inner" }'
+files."nested/src/part.taut" = ```tauto
+fn value(): Text { include_text!("../../data.txt") }
+```
+files."data.txt" = "outside inner"
+files."src/main.taut" = ```tauto
+import "../nested/src/part.taut"
+```
+macro_error = "include.outside"
+
+@ cases.resource_text_is_not_recursively_read
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn answer(): Text { include_text!("data.txt") }
+```
+files."data.txt" = 'include_text!("missing.txt")'
+selfhost_entry = "answer"
+selfhost_stdout = 'include_text!("missing.txt")
+'
+differential = "rustgen"
+
+@ cases.empty_resource_is_a_value
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn answer(): Text { include_text!("empty.txt") }
+```
+files."empty.txt" = ""
+selfhost_entry = "answer"
+selfhost_stdout = "\n"
+differential = "rustgen"

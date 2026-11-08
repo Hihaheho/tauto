@@ -32,12 +32,18 @@ fn crate_name(path: &str) -> String {
 
 /// Where generated crates are built: `$TAUTO_TARGET_DIR`, else `target/tauto`
 /// in the tote's directory, so the output does not depend on where `tauto`
-/// was started (like the macro cache). A lone source file without a tote
-/// keeps `target/tauto` under the current directory.
-fn target_root(tote_dir: Option<&Path>) -> PathBuf {
-    std::env::var_os("TAUTO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| tote_dir.unwrap_or(Path::new("")).join("target/tauto"))
+/// was started (like the macro cache). Lone source files use separate
+/// namespaces for their canonical paths under the current directory.
+fn target_root(tote_dir: Option<&Path>, source: &Path) -> std::io::Result<PathBuf> {
+    if let Some(directory) = std::env::var_os("TAUTO_TARGET_DIR") {
+        return Ok(directory.into());
+    }
+    if let Some(directory) = tote_dir {
+        return Ok(directory.join("target/tauto"));
+    }
+    let source = source.canonicalize()?;
+    let identity = tauto_syntax::sha256_hex(source.as_os_str().as_encoded_bytes());
+    Ok(Path::new("target/tauto").join(format!("run-{identity}")))
 }
 
 pub fn command(args: &[String]) -> ExitCode {
@@ -243,8 +249,16 @@ pub(crate) fn command_with(
                 tauto_nir::CompilePhase::Lower => "lower",
             })
         };
+        let javascript_entries = manifest.as_ref().map(|m| {
+            m.javascript
+                .exports
+                .iter()
+                .chain(m.javascript.chunks.values().flatten())
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>()
+        });
         let compiled = if let Some(loaded) = &loaded {
-            tauto_nir::compile_loaded_with_observer(
+            tauto_nir::compile_loaded_entries_with_observer(
                 loaded,
                 if selected == "javascript" {
                     manifest.as_ref().is_some_and(|m| {
@@ -254,6 +268,11 @@ pub(crate) fn command_with(
                     library_entries
                 },
                 selected == "javascript",
+                if selected == "javascript" {
+                    javascript_entries.as_ref()
+                } else {
+                    None
+                },
                 observe,
             )
         } else if selected == "javascript" {
@@ -265,7 +284,7 @@ pub(crate) fn command_with(
             Ok(p) => p,
             Err(CompileError::Front(m)) => {
                 let message = match &loaded {
-                    Some(loaded) => super::locate_in(loaded, &path, &m),
+                    Some(loaded) => super::locate_front(loaded, &path, &m),
                     None => super::locate(&path, &source, &m),
                 };
                 eprintln!("{message}");
@@ -285,7 +304,7 @@ pub(crate) fn command_with(
                         "rust-unsupported",
                         place = &place,
                         backend = selected,
-                        what = u.what.to_string()
+                        what = u.what.clone()
                     )
                 );
                 return ExitCode::FAILURE;
@@ -311,7 +330,7 @@ pub(crate) fn command_with(
                     "rust-unsupported",
                     place = &place,
                     backend = selected,
-                    what = u.what.to_string()
+                    what = u.what.clone()
                 )
             );
             return ExitCode::FAILURE;
@@ -321,7 +340,13 @@ pub(crate) fn command_with(
             Some(m) if tote_dir.is_some() => crate_name(&m.package.name),
             _ => crate_name(&path),
         };
-        let root = target_root(tote_dir.as_deref().filter(|_| manifest.is_some()));
+        let root = match target_root(tote_dir.as_deref().filter(|_| manifest.is_some()), p) {
+            Ok(root) => root,
+            Err(error) => {
+                eprintln!("{}: {error}", p.display());
+                return ExitCode::FAILURE;
+            }
+        };
         if selected == "javascript" {
             return super::javascript::execute(
                 &root,

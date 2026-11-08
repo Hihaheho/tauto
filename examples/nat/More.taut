@@ -5,7 +5,7 @@ import "Lib.taut"
 import "Mul.taut"
 import "Order.taut"
 
-pub theorem add_one_r(n: Nat): nat!(`$n + 1 = ${Succ(n)}`) {
+pub theorem add_one_r(n: Nat): nat!(`$n + 1 = $Succ(n)`) {
   Eq::trans(add_succ_r(n, 0), succ_cong(add_zero_r(n)))
 }
 
@@ -66,17 +66,17 @@ pub theorem le_zero_eq<n: Nat>(h: nat!(`$n <= 0`)): nat!(`$n = 0`) {
   le_antisymm(h, zero_le(n))
 }
 
-pub theorem lt_succ_iff_mp<a: Nat, b: Nat>(h: nat!(`$a < ${Succ(b)}`)): nat!(`$a <= $b`) {
+pub theorem lt_succ_iff_mp<a: Nat, b: Nat>(h: nat!(`$a < $Succ(b)`)): nat!(`$a <= $b`) {
   le_pred(h)
 }
 
 pub theorem lt_trichotomy(a: Nat, b: Nat): nat!(`$a < $b or $a = $b or $b < $a`) {
-  match a: nat!(`$a < $b or $a = $b or $b < $a`) {
-    Zero => match b: nat!(`0 < $b or 0 = $b or $b < 0`) {
+  ⊢ nat!(`$a < $b or $a = $b or $b < $a`) from match a {
+    Zero => ⊢ nat!(`0 < $b or 0 = $b or $b < 0`) from match b {
       Zero => OrInr(OrInl(Refl))
       Succ(j) => OrInl(succ_le_succ(zero_le(j)))
     }
-    Succ(k) => match b: nat!(`${Succ(k)} < $b or ${Succ(k)} = $b or $b < ${Succ(k)}`) {
+    Succ(k) => ⊢ nat!(`$Succ(k) < $b or $Succ(k) = $b or $b < $Succ(k)`) from match b {
       Zero => OrInr(OrInr(succ_le_succ(zero_le(k))))
       Succ(j) => Or::elim(
         lt_trichotomy(k, j),
@@ -93,7 +93,7 @@ pub theorem add_le_cancel_r(
   b: Nat,
   h: nat!(`$a + $c <= $b + $c`)
 ): nat!(`$a <= $b`) {
-  match c: nat!(`$a <= $b`) {
+  ⊢ nat!(`$a <= $b`) from match c {
     Zero => h
     Succ(k) => add_le_cancel_r(k, a, b, le_pred(h))
   }
@@ -118,7 +118,7 @@ pub theorem add_le_cancel_l(
 }
 
 pub theorem mul_le_mono_r(c: Nat, a: Nat, b: Nat, h: nat!(`$a <= $b`)): nat!(`$a * $c <= $b * $c`) {
-  match c: nat!(`$a * $c <= $b * $c`) {
+  ⊢ nat!(`$a * $c <= $b * $c`) from match c {
     Zero => LeRefl
     Succ(k) => le_trans(
       add_le_mono_r(a, a * k, b * k, mul_le_mono_r(k, a, b, h)),
@@ -135,8 +135,8 @@ pub theorem mul_le_mono_l(c: Nat, a: Nat, b: Nat, h: nat!(`$a <= $b`)): nat!(`$c
   )
 }
 
-pub theorem pos_of_dvd_succ(a: Nat, b: Nat, h: nat!(`$a | ${Succ(b)}`)): nat!(`1 <= $a`) {
-  match a: nat!(`1 <= $a`) {
+pub theorem pos_of_dvd_succ(a: Nat, b: Nat, h: nat!(`$a | $Succ(b)`)): nat!(`1 <= $a`) {
+  ⊢ nat!(`1 <= $a`) from match a {
     Zero => Nat::noconf(nat!(`1 <= 0`), Zero, Succ(b), dvd_zero_l(h))
     Succ(k) => succ_le_succ(zero_le(k))
   }
@@ -145,8 +145,8 @@ pub theorem pos_of_dvd_succ(a: Nat, b: Nat, h: nat!(`$a | ${Succ(b)}`)): nat!(`1
 pub theorem dvd_antisymm_succ(
   a: Nat,
   b: Nat,
-  h1: nat!(`$a | ${Succ(b)}`),
-  h2: nat!(`${Succ(b)} | $a`)
-): nat!(`$a = ${Succ(b)}`) {
+  h1: nat!(`$a | $Succ(b)`),
+  h2: nat!(`$Succ(b) | $a`)
+): nat!(`$a = $Succ(b)`) {
   le_antisymm(le_of_dvd(succ_le_succ(zero_le(b)), h1), le_of_dvd(pos_of_dvd_succ(a, b, h1), h2))
 }

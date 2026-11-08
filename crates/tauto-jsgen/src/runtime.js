@@ -72,15 +72,26 @@ function shown(v) {
         case 'Signal':return 'Signal';
         case 'Pending':return 'Pending';
         case 'Secret':return 'Secret';
-        case 'Product':return v.fields.map(shown).join(' × ');
     }
     if (v === null) return '()';
+    if (typeof v === 'symbol') return '<declaration reference>';
     if (typeof v === 'string') return quoteText(v);
     if (typeof v === 'number') return floatText(v);
     if (typeof v !== 'object') return String(v);
     // A constructor is shown by the name written, not by its full name `m::C`:
     // the compiler, which knows the modules, writes that name in `shownNames`.
     const tag = shownNames.get(v.tag) ?? v.tag;
+    // `#(a, b, c)`: the `Pair`s nested to the right, as the value was written.
+    if (v.struct && tag === 'Pair' && v.fields.length === 2) {
+        const items = [shown(v.fields[0])];
+        let rest = v.fields[1];
+        while (rest && rest.fields && rest.struct && (shownNames.get(rest.tag) ?? rest.tag) === 'Pair' && rest.fields.length === 2) {
+            items.push(shown(rest.fields[0]));
+            rest = rest.fields[1];
+        }
+        items.push(shown(rest));
+        return '#(' + items.join(', ') + ')';
+    }
     if ((v.struct || v.fields.length > 0) && v.names.every(n => n !== null)) return tag + ' {' + (v.fields.length ? ' ' + v.fields.map((x,i) => v.names[i] + ': ' + shown(x)).join(', ') + ' ' : '') + '}';
     return tag + (v.fields.length ? '(' + v.fields.map(shown).join(', ') + ')' : '');
 }
@@ -163,19 +174,36 @@ function allStableMembers(values){
     for(let i=0;i<values.length;i++)if(!stableMember(values[i]))return false;
     return true;
 }
+function aggregateHooks(value){
+    return 'ref' in value||'resource' in value||'shared' in value||'retain' in value
+        ||'release' in value||'copy' in value||'project' in value||'operation' in value;
+}
 function stableAggregate(value){
     if(sharedData.has(value))return true;
     if(value===null||typeof value!=='object'||!stableData.has(value))return false;
     // These keys are absent from generated plain data. Do not invoke a host
     // getter while deciding whether an existing certificate is still usable.
-    if('ref' in value||'resource' in value||'shared' in value||'retain' in value
-        ||'release' in value||'copy' in value||'project' in value||'operation' in value){
+    if(aggregateHooks(value)){
         forgetStableData();return false;
     }
     return true;
 }
-function generatedAggregate(value,fields){
-    if(allStableMembers(fields))stableData.add(value);
+const retainedGraphs=new WeakMap(),retainedLeaves=new WeakSet();
+function retainedLeaf(value){retainedLeaves.add(value);return value;}
+function retainedMember(value){return stableMember(value)||retainedGraphs.has(value)||retainedLeaves.has(value);}
+function generatedAggregate(value,fields,retainable=false){
+    if(aggregateHooks(value)){forgetStableData();return value;}
+    if(allStableMembers(fields)){
+        if(retainable)share(value);
+        else stableData.add(value);
+    }
+    else if(retainable&&fields.every(retainedMember)){
+        // The node owns each field once. Copies own the node, so retaining a
+        // callback list does not visit its spine or its captures.
+        for(const field of fields)if(stableAggregate(field))share(field);
+        sharedFreeze(value.names);sharedFreeze(fields);sharedFreeze(value);
+        retainedGraphs.set(value,{owners:1});
+    }
     return value;
 }
 function forgetStableData(){stableData=marks();stableEpoch={};}
@@ -198,6 +226,21 @@ function share(value){
 // Gives the host a value it may change: shared parts are copied, once per
 // occurrence like any copy, and other parts are kept.
 function thaw(value){
+    if(retainedGraphs.has(value)){
+        // Transfer this owner to a mutable host graph. Each field copy owns
+        // its callbacks/handles independently of the persistent source.
+        const top={...value,fields:[]},pending=[[value,top]];
+        while(pending.length){
+            const [source,target]=pending.pop();
+            for(let i=0;i<source.fields.length;i++){
+                const field=source.fields[i];
+                if(retainedGraphs.has(field)){
+                    const child={...field,fields:[]};target.fields[i]=child;pending.push([field,child]);
+                }else target.fields[i]=thaw(copyValue(field));
+            }
+        }
+        dropValue(value);return top;
+    }
     const copyShared=root=>{
         const top={...root,fields:root.fields.slice()},pending=[top];
         while(pending.length){
@@ -213,12 +256,12 @@ function thaw(value){
         if(v===null||typeof v!=='object'||v.ref||v.shared||v.resource||seen.has(v))continue;
         seen.add(v);
         const slots=Array.isArray(v)?v:Array.isArray(v.fields)?v.fields:Array.isArray(v.items)?v.items:null;
-        if(slots){for(let i=0;i<slots.length;i++){const f=slots[i];if(sharedData.has(f))slots[i]=copyShared(f);else pending.push(f);}}
-        else if(v.union!==undefined){if(sharedData.has(v.value))v.value=copyShared(v.value);else pending.push(v.value);}
+        if(slots){for(let i=0;i<slots.length;i++){const f=slots[i];if(retainedGraphs.has(f))slots[i]=thaw(f);else if(sharedData.has(f))slots[i]=copyShared(f);else pending.push(f);}}
+        else if(v.union!==undefined){if(retainedGraphs.has(v.value))v.value=thaw(v.value);else if(sharedData.has(v.value))v.value=copyShared(v.value);else pending.push(v.value);}
     }
     return value;
 }
-function construct(tag, names, fields, order, isStruct, owner) {
+function construct(tag, names, fields, order, isStruct, owner, retainable=false) {
     charge(1+order.length);
     // Custom array operations may expose the fresh field storage to the host.
     // Preserve those operations, but never certify their result as private.
@@ -231,7 +274,7 @@ function construct(tag, names, fields, order, isStruct, owner) {
     if(!ordinary)forgetStableData();
     try{
         const value={owner, tag, names: order.map(i => names[i]), fields: order.map(i => fields[i]), struct:isStruct};
-        return ordinary?generatedAggregate(value,value.fields):value;
+        return ordinary?generatedAggregate(value,value.fields,retainable):value;
     }finally{if(!ordinary)forgetStableData();}
 }
 function tick(ev) {

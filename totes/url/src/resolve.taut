@@ -12,9 +12,9 @@ import std::Text
 // fragment.
 
 pub fn init(ss: List(List(Nat))): List(List(Nat)) {
-  match ss: List(List(Nat)) {
+  ⊢ List(List(Nat)) from match ss {
     Nil => Nil
-    Cons(s, rest) => match rest: List(List(Nat)) {
+    Cons(s, rest) => ⊢ List(List(Nat)) from match rest {
       Nil => Nil
       Cons(s2, more) => Cons(s, init(rest))
     }
@@ -22,14 +22,14 @@ pub fn init(ss: List(List(Nat))): List(List(Nat)) {
 }
 
 pub fn base_segments(p: UrlPath): Option(List(List(Nat))) {
-  match p: Option(List(List(Nat))) {
+  ⊢ Option(List(List(Nat))) from match p {
     Opaque(o) => None
     Segments(ss) => Some(ss)
   }
 }
 
 pub fn with_fragment(u: Url, f: Option(List(Nat))): Url {
-  match u: Url {
+  ⊢ Url from match u {
     MkUrl(s, a, p, q, f0) => MkUrl(s, a, p, q, f)
   }
 }
@@ -45,24 +45,24 @@ pub fn relative_hier(
   t: Tail,
   h: List(Nat)
 ): Option(Url) {
-  match h: Option(Url) {
+  ⊢ Option(Url) from match h {
     Nil => Some(
       MkUrl(
         s,
         a,
         Segments(base),
-        match t.query: Option(List(Nat)) {
+        ⊢ Option(List(Nat)) from match t.query {
           None => bq
           Some(q) => Some(q)
         },
         t.fragment
       )
     )
-    Cons(b, rest) => match Nat::eq(b, 47): Option(Url) {
+    Cons(b, rest) => ⊢ Option(Url) from match Nat::eq(b, 47) {
       false => Some(MkUrl(s, a, Segments(path_of(init(base), h)), t.query, t.fragment))
-      true => match starts_with(47, rest): Option(Url) {
+      true => ⊢ Option(Url) from match starts_with(47, rest) {
         false => Some(MkUrl(s, a, Segments(path_of(Nil, rest)), t.query, t.fragment))
-        true => match special: Option(Url) {
+        true => ⊢ Option(Url) from match special {
           true => mk(s, auth_path(true, default_port(s), drop_slashes(rest)), t)
           false => mk(s, auth_path(false, None, List::tail(rest)), t)
         }
@@ -72,11 +72,11 @@ pub fn relative_hier(
 }
 
 pub fn relative(base: Url, l: List(Nat)): Option(Url) {
-  match base: Option(Url) {
-    MkUrl(s, a, p, q, f) => match base_segments(p): Option(Url) {
-      None => match cut(35, l): Option(Url) {
+  ⊢ Option(Url) from match base {
+    MkUrl(s, a, p, q, f) => ⊢ Option(Url) from match base_segments(p) {
+      None => ⊢ Option(Url) from match cut(35, l) {
         None => None
-        Some(c) => match is_empty(c.fst): Option(Url) {
+        Some(c) => ⊢ Option(Url) from match is_empty(c.fst) {
           false => None
           true => Some(with_fragment(base, Some(pct_encode(fragment_set, c.snd))))
         }
@@ -93,7 +93,7 @@ pub fn relative_tail(
   q: Option(List(Nat)),
   t: Tail
 ): Option(Url) {
-  match is_special(s): Option(Url) {
+  ⊢ Option(Url) from match is_special(s) {
     true => relative_hier(s, true, a, ss, q, t, List::map(backslash_to_slash, t.hier))
     false => relative_hier(s, false, a, ss, q, t, t.hier)
   }
@@ -102,12 +102,15 @@ pub fn relative_tail(
 // With the same special scheme as the base and no slash after `:`, the
 // input is relative (`http:x` against `http://a/b` is `http://a/x`).
 pub fn resolve_bytes(base: Url, l: List(Nat)): Option(Url) {
-  match scheme_of(l): Option(Url) {
+  ⊢ Option(Url) from match scheme_of(l) {
     None => relative(base, l)
-    Some(p) => match Bool::and(
+    Some(p) => ⊢ Option(Url) from match Bool::and(
       is_special(p.fst),
-      Bool::and(bytes_eq(p.fst, base.scheme), not(starts_with(47, List::map(backslash_to_slash, p.snd))))
-    ): Option(Url) {
+      Bool::and(
+        bytes_eq(p.fst, base.scheme),
+        not(starts_with(47, List::map(backslash_to_slash, p.snd)))
+      )
+    ) {
       true => relative(base, p.snd)
       false => parse_after_scheme(p.fst, p.snd)
     }

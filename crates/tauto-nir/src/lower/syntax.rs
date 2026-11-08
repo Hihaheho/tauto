@@ -22,7 +22,7 @@ impl Lowerer<'_> {
             .any(|p| p.name == *syntax && p.sha == *sha && p.result == *ty)
         {
             let tables = tauto::syntax::tables_of(sha).map_err(|m| Unsupported {
-                what: m,
+                what: m.into(),
                 span: Some(span),
             })?;
             let Some(start) = tables
@@ -37,13 +37,99 @@ impl Lowerer<'_> {
             | tauto_syntax::TypeDef::Enum {
                 name: start_name, ..
             }) = start;
+            let mut schema_names: std::collections::BTreeSet<String> =
+                ["SynSpan", "SynDiag", "SynArg", "SynCtx", "SynToken", "List"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect();
+            for ty in &tables.schema().types {
+                let (TypeDef::Struct { name, .. } | TypeDef::Enum { name, .. }) = ty;
+                schema_names.insert(tauto_syntax::type_name(syntax, name));
+            }
+            let mut data_bindings = std::collections::BTreeMap::new();
+            let mut constructor_bindings = std::collections::BTreeMap::new();
+            let mut pending = vec![ty.clone()];
+            let mut seen = std::collections::HashSet::new();
+            while let Some(current) = pending.pop() {
+                let data = match current {
+                    Ty::Data(name, args) => {
+                        pending.extend(args);
+                        if !seen.insert(name.clone()) {
+                            continue;
+                        }
+                        let Some(index) = self.data_index.get(&name) else {
+                            continue;
+                        };
+                        &self.datas[*index]
+                    }
+                    Ty::Vec(t)
+                    | Ty::Array(t)
+                    | Ty::Slice(t)
+                    | Ty::Option(t)
+                    | Ty::Ref(t)
+                    | Ty::RefMut(t)
+                    | Ty::Info(t)
+                    | Ty::BudgetAnswer(t)
+                    | Ty::SharedVar(_, t) => {
+                        pending.push(*t);
+                        continue;
+                    }
+                    Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
+                        pending.extend([*a, *b]);
+                        continue;
+                    }
+                    Ty::Std(_, args) => {
+                        pending.extend(args);
+                        continue;
+                    }
+                    Ty::Fn(function) => {
+                        pending.extend(function.params);
+                        pending.push(function.ret);
+                        continue;
+                    }
+                    _ => continue,
+                };
+                for ctor in &data.ctors {
+                    pending.extend(ctor.fields.iter().map(|field| field.ty.clone()));
+                }
+                let Some(schema_name) = schema_names.iter().find(|schema| {
+                    data.name.as_str() == schema.as_str()
+                        || data.name.ends_with(&format!("::{schema}"))
+                }) else {
+                    continue;
+                };
+                for ctor in &data.ctors {
+                    let label = if data.is_struct {
+                        schema_name.rsplit("::").next().unwrap()
+                    } else {
+                        ctor.name.rsplit("::").next().unwrap()
+                    };
+                    constructor_bindings.insert(
+                        (schema_name.to_string(), label.to_string()),
+                        ctor.name.clone(),
+                    );
+                }
+                if data_bindings
+                    .insert(schema_name.to_string(), data.name.clone())
+                    .is_some()
+                {
+                    return unsupported(
+                        msg!(
+                            "nir-runtime-syntax-schema-does-not-match",
+                            name = schema_name
+                        ),
+                        span,
+                    );
+                }
+            }
             let result = Ty::Result(
                 Box::new(Ty::Data(
-                    tauto_syntax::type_name(syntax, start_name),
+                    tauto_syntax::type_name(syntax, start_name).into(),
                     vec![],
                 )),
                 Box::new(Ty::Data("SynDiag".into(), vec![])),
             );
+            let result = bind_type(result, &data_bindings);
             if *ty != result {
                 return unsupported(msg!("nir-runtime-syn-parse-result-must-match"), span);
             }
@@ -70,8 +156,10 @@ impl Lowerer<'_> {
             if expr {
                 return unsupported(msg!("nir-runtime-syntax-parsing-does-not-support"), span);
             }
-            self.validate_syntax_schema(syntax, &tables, span)?;
+            self.validate_syntax_schema(syntax, &tables, &data_bindings, span)?;
             self.syntax_parsers.push(SyntaxParser {
+                data_bindings,
+                constructor_bindings,
                 name: syntax.clone(),
                 sha: sha.clone(),
                 tables: tables.source().to_owned(),
@@ -81,7 +169,13 @@ impl Lowerer<'_> {
         Ok(())
     }
 
-    fn validate_syntax_schema(&self, syntax: &str, tables: &Tables, span: Span) -> R<()> {
+    fn validate_syntax_schema(
+        &self,
+        syntax: &str,
+        tables: &Tables,
+        bindings: &std::collections::BTreeMap<String, Name>,
+        span: Span,
+    ) -> R<()> {
         let named = |name: &str| Ty::Data(name.into(), vec![]);
         let list = |ty| Ty::Data("List".into(), vec![ty]);
         let field = |name: &str, ty| (Some(name.to_owned()), ty);
@@ -97,6 +191,7 @@ impl Lowerer<'_> {
             true,
             &[],
             vec![("SynSpan".into(), vec![field("id", Ty::Int(Width::U64))])],
+            bindings,
             span,
         )?;
         self.syntax_data(
@@ -110,8 +205,21 @@ impl Lowerer<'_> {
                     field("at", Ty::Int(Width::U64)),
                     field("expected", list(Ty::Text)),
                     field("code", Ty::Text),
+                    field("args", list(named("SynArg"))),
                 ],
             )],
+            bindings,
+            span,
+        )?;
+        self.syntax_data(
+            "SynArg",
+            true,
+            &[],
+            vec![(
+                "SynArg".into(),
+                vec![field("name", Ty::Text), field("value", Ty::Text)],
+            )],
+            bindings,
             span,
         )?;
         self.syntax_data(
@@ -128,6 +236,7 @@ impl Lowerer<'_> {
                     ],
                 ),
             ],
+            bindings,
             span,
         )?;
         if token {
@@ -139,6 +248,7 @@ impl Lowerer<'_> {
                     "SynCtx".into(),
                     vec![field("scopes", list(Ty::Int(Width::U64)))],
                 )],
+                bindings,
                 span,
             )?;
             self.syntax_data(
@@ -153,6 +263,7 @@ impl Lowerer<'_> {
                         field("ctx", named("SynCtx")),
                     ],
                 )],
+                bindings,
                 span,
             )?;
         }
@@ -165,7 +276,14 @@ impl Lowerer<'_> {
             match ty {
                 TypeDef::Struct { name, fields, .. } => {
                     let name = tauto_syntax::type_name(syntax, name);
-                    self.syntax_data(&name, true, &[], vec![(name.clone(), record(fields))], span)?;
+                    self.syntax_data(
+                        &name,
+                        true,
+                        &[],
+                        vec![(name.clone(), record(fields))],
+                        bindings,
+                        span,
+                    )?;
                 }
                 TypeDef::Enum { name, ctors } => {
                     let cs = ctors
@@ -180,7 +298,14 @@ impl Lowerer<'_> {
                             )
                         })
                         .collect();
-                    self.syntax_data(&tauto_syntax::type_name(syntax, name), false, &[], cs, span)?;
+                    self.syntax_data(
+                        &tauto_syntax::type_name(syntax, name),
+                        false,
+                        &[],
+                        cs,
+                        bindings,
+                        span,
+                    )?;
                 }
             }
         }
@@ -193,11 +318,12 @@ impl Lowerer<'_> {
         is_struct: bool,
         generics: &[String],
         ctors: Vec<(String, Vec<(Option<String>, Ty)>)>,
+        bindings: &std::collections::BTreeMap<String, Name>,
         span: Span,
     ) -> R<()> {
-        let valid = self
-            .data_index
+        let valid = bindings
             .get(name)
+            .and_then(|reference| self.data_index.get(reference))
             .and_then(|i| self.datas.get(*i))
             .is_some_and(|d| {
                 d.is_struct == is_struct
@@ -211,14 +337,12 @@ impl Lowerer<'_> {
                         // under the syntax's name has `calc::Atom::Num`; it is
                         // still the terminal written in the grammar. Either may also
                         // sit under the module of the file (`main::calc::Atom::Num`).
-                        let short = tauto::surface::qualify::short(&actual.name);
-                        (short == ctor || short == format!("{name}::{ctor}"))
+                        let label = actual.name.rsplit("::").next().unwrap();
+                        (is_struct || label == ctor.rsplit("::").next().unwrap())
                             && actual.fields.len() == fields.len()
-                            && actual
-                                .fields
-                                .iter()
-                                .zip(fields)
-                                .all(|(a, (n, t))| a.name == *n && a.ty == *t)
+                            && actual.fields.iter().zip(fields).all(|(a, (n, t))| {
+                                a.name == *n && a.ty == bind_type(t.clone(), bindings)
+                            })
                     })
             });
         if valid {
@@ -245,10 +369,31 @@ fn has_token(t: &FieldTy) -> bool {
 
 fn field_ty(syntax: &str, t: &FieldTy) -> Ty {
     match t {
-        FieldTy::Token => Ty::Data("SynToken".into(), vec![]),
-        FieldTy::Named(name) => Ty::Data(tauto_syntax::type_name(syntax, name), vec![]),
-        FieldTy::List(t) => Ty::Data("List".into(), vec![field_ty(syntax, t)]),
+        FieldTy::Token => Ty::Data(tauto::bindings::library_name("SynToken"), vec![]),
+        FieldTy::Named(name) => Ty::Data(tauto_syntax::type_name(syntax, name).into(), vec![]),
+        FieldTy::List(t) => Ty::Data(
+            tauto::bindings::library_name("List"),
+            vec![field_ty(syntax, t)],
+        ),
         FieldTy::Opt(t) => Ty::Option(Box::new(field_ty(syntax, t))),
         FieldTy::Expr => unreachable!("expression holes rejected before schema validation"),
+    }
+}
+
+fn bind_type(ty: Ty, bindings: &std::collections::BTreeMap<String, Name>) -> Ty {
+    match ty {
+        Ty::Data(name, args) => Ty::Data(
+            match name {
+                Name::Spelled(ref spelling) => bindings.get(spelling).cloned().unwrap_or(name),
+                _ => name,
+            },
+            args.into_iter().map(|t| bind_type(t, bindings)).collect(),
+        ),
+        Ty::Result(a, b) => Ty::Result(
+            Box::new(bind_type(*a, bindings)),
+            Box::new(bind_type(*b, bindings)),
+        ),
+        Ty::Option(inner) => Ty::Option(Box::new(bind_type(*inner, bindings))),
+        other => other,
     }
 }

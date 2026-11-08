@@ -260,6 +260,7 @@ mod tests {
             tauto: r#"fn value(): i64 { 1 }"#.to_string(),
             eure: String::new(),
             report: String::new(),
+            unbound: Vec::new(),
         };
         for existing in [None, Some("taut"), Some("tauto")] {
             let dir = root.join(existing.unwrap_or("new"));

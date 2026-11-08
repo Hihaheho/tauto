@@ -24,7 +24,7 @@ pub fn handle_direct_bad(
   guard: Option(SurfaceTerm),
   body: SurfaceTerm
 ): Bool {
-  let tail := match cont: Bool { Some(k) => Bool::and(dir_is_tail(body, k), dir_guard_ok(guard, k))
+  let tail := ⊢ Bool from match cont { Some(k) => Bool::and(dir_is_tail(body, k), dir_guard_ok(guard, k))
     None => false }
   Bool::and(quant_is_direct(quant), not(tail))
 }
@@ -68,7 +68,14 @@ pub theorem handle_direct_unf(
   cont: Option(Text),
   guard: Option(SurfaceTerm),
   body: SurfaceTerm
-): ck_handle_direct(c, quant, eff, cont, guard, body) = handle_direct(c, quant, eff, cont, guard, body) { Refl }
+): ck_handle_direct(
+  c,
+  quant,
+  eff,
+  cont,
+  guard,
+  body
+) = handle_direct(c, quant, eff, cont, guard, body) { Refl }
 
 pub theorem ck_handle_direct_frame(
   c: Checker,
@@ -93,7 +100,7 @@ pub fn handle_sig_found(
   body: SurfaceTerm,
   found: Option(EffectSig)
 ): Mut1(Option(Pair(List(Ty), Ty)), Checker) {
-  match found: Mut1(Option(Pair(List(Ty), Ty)), Checker) {
+  ⊢ Mut1(Option(Pair(List(Ty), Ty)), Checker) from match found {
     Some(s) => frame_bind(
       Ty,
       Option(Pair(List(Ty), Ty)),
@@ -117,7 +124,7 @@ pub theorem handle_sig_found_frame(
   body: SurfaceTerm,
   found: Option(EffectSig)
 ): CkReadFrame(c, handle_sig_found(c, eff, result, budget_ty, body, found)) {
-  match found: CkReadFrame(c, handle_sig_found(c, eff, result, budget_ty, body, found)) {
+  ⊢ CkReadFrame(c, handle_sig_found(c, eff, result, budget_ty, body, found)) from match found {
     Some(s) => frame_bind_ok(
       Ty,
       Option(Pair(List(Ty), Ty)),
@@ -147,7 +154,7 @@ pub fn handle_sig(
   body: SurfaceTerm,
   exceeded: Bool
 ): Mut1(Option(Pair(List(Ty), Ty)), Checker) {
-  match exceeded: Mut1(Option(Pair(List(Ty), Ty)), Checker) {
+  ⊢ Mut1(Option(Pair(List(Ty), Ty)), Checker) from match exceeded {
     true => mut1(Some(Pair { fst: Cons(TyInfo(result), Nil), snd: budget_ty }), c)
     false => handle_sig_found(
       c,
@@ -168,7 +175,7 @@ pub theorem handle_sig_frame(
   body: SurfaceTerm,
   exceeded: Bool
 ): CkReadFrame(c, handle_sig(c, eff, result, budget_ty, body, exceeded)) {
-  match exceeded: CkReadFrame(c, handle_sig(c, eff, result, budget_ty, body, exceeded)) {
+  ⊢ CkReadFrame(c, handle_sig(c, eff, result, budget_ty, body, exceeded)) from match exceeded {
     true => Refl
     false => handle_sig_found_frame(
       c,
@@ -187,7 +194,13 @@ pub theorem handle_sig_unf(
   result: Ty,
   budget_ty: Ty,
   body: SurfaceTerm
-): ck_handle_sig(c, eff, result, budget_ty, body) = handle_sig(c, eff, result, budget_ty, body, Text::eq(eff, "exceeded")) { Refl }
+): ck_handle_sig(
+  c,
+  eff,
+  result,
+  budget_ty,
+  body
+) = handle_sig(c, eff, result, budget_ty, body, Text::eq(eff, "exceeded")) { Refl }
 
 pub theorem ck_handle_sig_frame(
   c: Checker,
@@ -211,7 +224,7 @@ pub fn handle_patterns_cons(
   body: SurfaceTerm,
   tys: List(Ty)
 ): Mut2(Unit, Checker, Scope) {
-  match tys: Mut2(Unit, Checker, Scope) {
+  ⊢ Mut2(Unit, Checker, Scope) from match tys {
     Nil => mut2(Star, c, inner)
     Cons(t, more) => pattern_bind(
       Unit,
@@ -238,7 +251,7 @@ pub theorem handle_patterns_cons_frame(
   ). CkScopeFrame(next, ck_handle_patterns(rest, next, more, env, body)),
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, handle_patterns_cons(p, rest, c, inner, body, tys)) {
-  match tys: CkScopeFrame(c, handle_patterns_cons(p, rest, c, inner, body, tys)) {
+  ⊢ CkScopeFrame(c, handle_patterns_cons(p, rest, c, inner, body, tys)) from match tys {
     Nil => pattern_return_frame(c, inner, Star, ordered)
     Cons(t, more) => pattern_bind_frame(
       Unit,
@@ -265,7 +278,13 @@ pub theorem handle_patterns_unf(
   tys: List(Ty),
   inner: Scope,
   body: SurfaceTerm
-): ck_handle_patterns(Cons(p, rest), c, tys, inner, body) = handle_patterns_cons(p, rest, c, inner, body, tys) { Refl }
+): ck_handle_patterns(
+  Cons(p, rest),
+  c,
+  tys,
+  inner,
+  body
+) = handle_patterns_cons(p, rest, c, inner, body, tys) { Refl }
 pub theorem ck_handle_patterns_frame(
   ps: List(SurfacePattern),
   c: Checker,
@@ -274,7 +293,7 @@ pub theorem ck_handle_patterns_frame(
   body: SurfaceTerm,
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, ck_handle_patterns(ps, c, tys, inner, body)) {
-  match ps: CkScopeFrame(c, ck_handle_patterns(ps, c, tys, inner, body)) {
+  ⊢ CkScopeFrame(c, ck_handle_patterns(ps, c, tys, inner, body)) from match ps {
     Nil => AndIntro(ordered, Refl)
     Cons(p, rest) => Eq::subst(
       (z: Mut2(Unit, Checker, Scope)) => CkScopeFrame(c, z),
@@ -310,7 +329,7 @@ pub fn handle_cont(
   body: SurfaceTerm,
   cont: Option(Text)
 ): Mut2(Unit, Checker, Scope) {
-  match cont: Mut2(Unit, Checker, Scope) {
+  ⊢ Mut2(Unit, Checker, Scope) from match cont {
     None => mut2(Star, c, inner)
     Some(k) => pattern_bind_one(
       Unit,
@@ -346,7 +365,7 @@ pub theorem handle_cont_frame(
   cont: Option(Text),
   ordered: CkOrdered(c)
 ): CkScopeFrame(c, handle_cont(c, inner, quant, eff, answer, result, body, cont)) {
-  match cont: CkScopeFrame(c, handle_cont(c, inner, quant, eff, answer, result, body, cont)) {
+  ⊢ CkScopeFrame(c, handle_cont(c, inner, quant, eff, answer, result, body, cont)) from match cont {
     None => pattern_return_frame(c, inner, Star, ordered)
     Some(k) => pattern_bind_one_frame(
       Unit,
@@ -408,17 +427,17 @@ pub theorem handle_cont_frame(
   }
 }
 
-pub theorem handle_cont_unf(
-  c: Checker,
-  inner: Scope,
-  quant: Quant,
-  eff: Text,
-  cont: Option(Text),
-  answer: Ty,
-  result: Ty,
-  body: SurfaceTerm
-): ck_handle_cont(c, inner, quant, eff, cont, answer, result, body) = handle_cont(c, inner, quant, eff, answer, result, body, cont) { match cont: ck_handle_cont(c, inner, quant, eff, cont, answer, result, body) = handle_cont(c, inner, quant, eff, answer, result, body, cont) { None => Refl
-    Some(k) => match quant: ck_handle_cont(c, inner, quant, eff, Some(k), answer, result, body) = handle_cont(c, inner, quant, eff, answer, result, body, Some(k)) {
+pub theorem handle_cont_unf(c: Checker, inner: Scope, quant: Quant, eff: Text, cont: Option(Text), answer: Ty, result: Ty, body: SurfaceTerm): ck_handle_cont(c, inner, quant, eff, cont, answer, result, body) = handle_cont(c, inner, quant, eff, answer, result, body, cont) { ⊢ ck_handle_cont(c, inner, quant, eff, cont, answer, result, body) = handle_cont(c, inner, quant, eff, answer, result, body, cont) from match cont { None => Refl
+    Some(k) => ⊢ ck_handle_cont(
+      c,
+      inner,
+      quant,
+      eff,
+      Some(k),
+      answer,
+      result,
+      body
+    ) = handle_cont(c, inner, quant, eff, answer, result, body, Some(k)) from match quant {
       QuantZero => Refl
       QuantAtMostOne => Refl
       QuantOne => Refl

@@ -42,7 +42,7 @@ pub theorem body_after_prefix(
   present: DataBodyRegistered(ck_datas_of(ck_st(m)), source),
   no_name: NoDeclarationName(registration_name(source), rest)
 ): DataBodyRegistered(ck_datas_of(ck_st(body_program_after(rest, m))), source) {
-  match m: DataBodyRegistered(ck_datas_of(ck_st(body_program_after(rest, m))), source) {
+  ⊢ DataBodyRegistered(ck_datas_of(ck_st(body_program_after(rest, m))), source) from match m {
     mut1(ignored, next) => body_registered_lookup(
       present,
       ck_datas_of(ck_st(ck_rewrap1(ck_program_data(rest, next)))),
@@ -161,7 +161,11 @@ pub def RegisterBodies(
   rest: List(SurfaceStmt)
 ): Prop := ∀ next: Checker. ∀ source: SurfaceData. ∀ ordered: CkDatasOrdered(
   next
-). ∀ ordinary: frame_under_borrow(next) = false. ∀ position: frame_constructor_position(next) = false. ∀ declared: DeclaresData(
+). ∀ ordinary: frame_under_borrow(
+  next
+) = false. ∀ position: frame_constructor_position(
+  next
+) = false. ∀ declared: DeclaresData(
   rest,
   source
 ). ∀ fresh: UniqueDataNames(
@@ -183,7 +187,7 @@ pub theorem body_tail_after(
   ih: RegisterBodies(rest),
   clean: DiagnosticClean(ck_st(body_program_after(rest, m)))
 ): DataBodyRegistered(ck_datas_of(ck_st(body_program_after(rest, m))), source) {
-  match m: DataBodyRegistered(ck_datas_of(ck_st(body_program_after(rest, m))), source) {
+  ⊢ DataBodyRegistered(ck_datas_of(ck_st(body_program_after(rest, m))), source) from match m {
     mut1(ignored, next) => Eq::subst(
       (result: Mut1(Unit, Checker)) => DataBodyRegistered(ck_datas_of(ck_st(result)), source),
       Eq::sym(ck_rewrap1_id(ck_program_data(rest, next))),
@@ -216,10 +220,10 @@ pub theorem body_program_cons(
   ck_datas_of(ck_st(body_program_after(rest, ck_program_data_one(c, stmt)))),
   source
 ) {
-  match declared: DataBodyRegistered(
+  ⊢ DataBodyRegistered(
     ck_datas_of(ck_st(body_program_after(rest, ck_program_data_one(c, stmt)))),
     source
-  ) {
+  ) from match declared {
     DeclaresDataStruct(decl, tail) => body_after_prefix(
       tail,
       decl,
@@ -289,11 +293,8 @@ pub theorem ck_program_data_bodies(
   fresh: UniqueDataNames(types_data_decls(stmts)),
   clean: DiagnosticClean(ck_st(ck_program_data(stmts, c)))
 ): DataBodyRegistered(ck_datas_of(ck_st(ck_program_data(stmts, c))), source) {
-  match stmts: DataBodyRegistered(ck_datas_of(ck_st(ck_program_data(stmts, c))), source) {
-    Nil => match declared: DataBodyRegistered(
-      ck_datas_of(ck_st(ck_program_data(Nil, c))),
-      source
-    ) {
+  ⊢ DataBodyRegistered(ck_datas_of(ck_st(ck_program_data(stmts, c))), source) from match stmts {
+    Nil => ⊢ DataBodyRegistered(ck_datas_of(ck_st(ck_program_data(Nil, c))), source) from match declared {
     }
     Cons(stmt, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => DataBodyRegistered(ck_datas_of(ck_st(m)), source),

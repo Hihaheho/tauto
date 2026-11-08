@@ -1,0 +1,226 @@
+// A row and an arm write which instance of a generic operation they mean:
+// `res(Pos)` and `res<Pos>()` one instance, `∀ A. res(A)` and
+// `∀ A. res<A>()` every one, where an arm must work for every choice.
+
+@ cases.an-arm-cannot-resume-with-one-chosen-type
+source = ```nib
+struct Pos { x: i64 }
+struct Vel { v: i64 }
+effect res<A>(): A
+fn sum(): i64 ! {∀ A. res(A)} {
+  let p: Pos := perform res()
+  let v: Vel := perform res()
+  p.x + v.v
+}
+let r := handle { sum() } with { ∀ A. res<A>(), k => k(Pos { x: 1 }) }
+```
+types = "error: Pos does not fit A"
+
+@ cases.an-arm-cannot-let-a-payload-of-a-chosen-type-out
+source = ```nib
+effect give<A>(a: A): Unit
+fn f(): Unit ! {∀ A. give(A)} { perform give(1) }
+let r: Text := handle { f(); "none" } with { ∀ A. give<A>(a), k => a }
+```
+types = "error: the arm of `give` must work for whatever type arguments"
+
+@ cases.an-arm-that-works-for-every-type-argument-is-accepted
+source = ```nib
+effect wrap<A>(a: A): Option(A)
+fn f(): Option(i64) ! {∀ A. wrap(A)} { perform wrap(3) }
+let r := handle { f() } with { ∀ A. wrap<A>(a), k => k(Some(a)) }
+perform show("r", r)
+```
+types = "ok"
+shows = ['r = Some(3)']
+
+@ cases.a-row-that-writes-type-arguments-names-one-instance
+source = ```nib
+struct Pos { x: i64 }
+effect res<A>(): A
+fn get(): i64 ! {res(Pos)} {
+  let p: Pos := perform res()
+  p.x
+}
+let r := handle { get() } with { res<Pos>(), k => k(Pos { x: 4 }) }
+perform show("r", r)
+```
+types = "ok"
+shows = ['r = 4']
+
+// `res(Pos)` and `res(Vel)` are two effects: a handler of one does not see
+// the other, also when the handler is written once for every index (`res<C>`).
+@ cases.indexed-effects-tell-their-instances-apart
+source = ```nib
+struct Pos { x: i64 }
+struct Vel { v: i64 }
+effect res<A>(): A
+fn with_res<C, T, !e>(c: C, &body: () -> T ! {res(C)} ∪ e): T ! e {
+  handle { body() } with {
+    res<C>(), k => k(c)
+  }
+}
+fn sum(): i64 ! {res(Pos), res(Vel)} {
+  let p: Pos := perform res()
+  let v: Vel := perform res()
+  p.x + v.v
+}
+let r := with_res(Pos { x: 1 }, () => with_res(Vel { v: 40 }, () => sum()))
+let s := with_res(Vel { v: 2 }, () => with_res(Pos { x: 3 }, () => sum()))
+perform show("r", r)
+perform show("s", s)
+```
+types = "ok"
+shows = ['r = 41', 's = 5']
+
+@ cases.an-arm-of-one-instance-leaves-the-other-unhandled
+source = ```nib
+struct Pos { x: i64 }
+struct Vel { v: i64 }
+effect res<A>(): A
+fn sum(): i64 ! {res(Pos), res(Vel)} {
+  let p: Pos := perform res()
+  let v: Vel := perform res()
+  p.x + v.v
+}
+let r := handle { sum() } with { res<Pos>(), k => k(Pos { x: 1 }) }
+```
+rows = "error: unhandled effect res(Vel) at the top level"
+
+@ cases.a-row-must-name-the-instance-it-performs
+source = ```nib
+struct Pos { x: i64 }
+struct Vel { v: i64 }
+effect res<A>(): A
+fn get(): i64 ! {res(Pos)} {
+  let v: Vel := perform res()
+  v.v
+}
+```
+rows = "error: `get` may perform res(Vel) but its row is {res(Pos)}"
+
+// `fail(E)` is an effect for each `E`: each `catch` takes the one its result
+// says.
+@ cases.catch-takes-the-fail-its-result-names
+source = ```nib
+struct IoError { code: i64 }
+fn read(): i64 ! {fail(IoError)} { perform fail(IoError { code: 7 }) }
+fn parse(): i64 ! {fail(Text)} { perform fail("bad") }
+fn both(): i64 ! {fail(IoError), fail(Text)} { read() + parse() }
+let r: Result(Result(i64, Text), IoError) := catch(() => catch(() => both()))
+let shown := match r {
+  Ok(inner) => match inner {
+    Ok(v) => "ok"
+    Err(t) => t
+  }
+  Err(e) => "io"
+}
+perform show("r", shown)
+```
+types = "ok"
+shows = ['r = "io"']
+
+@ cases.a-catch-whose-fail-is-not-known-is-an-error
+source = ```nib
+struct IoError { code: i64 }
+fn read(): i64 ! {fail(IoError)} { perform fail(IoError { code: 7 }) }
+fn parse(): i64 ! {fail(Text)} { perform fail("bad") }
+fn both(): i64 ! {fail(IoError), fail(Text)} { read() + parse() }
+let r := catch(() => catch(() => both()))
+```
+types = "error: the type `T` of `catch` is not determined here"
+
+// A row that writes type arguments expands only in a program that checks;
+// in one that does not, the type error is what is reported, not the rows it
+// leaves unexpanded.
+@ cases.a-type-error-is-reported-before-the-rows-it-leaves-unexpanded
+source = ```nib
+fn g(): u64 { "a" }
+fn f(): i64 ! {fail(Text)} { perform fail("q") }
+perform show("x", catch(() => f()))
+```
+rows = "error: type error: the result of `g`: Text does not fit u64"
+
+// The instance is written, never left out.
+@ cases.a-row-must-write-the-instance-of-a-generic-operation
+source = ```nib
+effect res<A>(): A
+fn get(): i64 ! {res} { perform res() }
+```
+types = "error: write the instance of `res` the row means: `res(…)`, or `∀ A. res(A)` for every one"
+
+@ cases.an-arm-must-write-the-instance-it-answers
+source = ```nib
+effect ask<K, V>(k: K): V
+fn rule(): i64 ! {ask(Text, i64)} { perform ask("a") + 1 }
+let r := handle { rule() } with { ask(k), c => c(1) }
+```
+types = "error: write the instance the arm of `ask` answers: `ask<…>(…)`, or `∀ K, V. ask<K, V>(…)` for every one"
+
+@ cases.every-instance-binds-each-type-argument-in-order
+source = ```nib
+effect ask<K, V>(k: K): V
+fn rule(): i64 ! {∀ V, K. ask(K, V)} { 1 }
+```
+types = "error: `∀ V, K. ask(K, V)`: every instance of `ask` binds each type argument in order: `∀ K, V. ask(K, V)`"
+
+@ cases.an-operation-without-generics-takes-no-instance
+source = ```nib
+effect tick(): Unit
+let r := handle { perform tick(); 1 } with { tick<i64>(), k => k(#()) }
+```
+types = "error: `tick` takes no type arguments"
+
+// The instance a handler answers is fixed by the function it is written in:
+// a library chooses the key and the value, and a rule asks for them with
+// the effect.
+@ cases.a-handler-answers-the-instance-its-function-chooses
+source = ```nib
+effect ask<K, V>(k: K): V
+fn rule(): i64 ! {ask(Text, i64)} { perform ask("a") + 1 }
+fn run<K, V, !e>(db: (K) -> V, &rule: () -> V ! {ask(K, V)} ∪ e): V ! e {
+  handle { rule() } with { ask<K, V>(k), c => c(db(k)) }
+}
+let r := run((k: Text) => 41, () => rule())
+perform show("r", r)
+```
+types = "ok"
+shows = ['r = 42']
+
+// An arm for every instance names the type it reads the argument as.
+@ cases.an-arm-for-every-instance-names-its-type
+source = ```nib
+effect give<A>(a: A): Unit
+fn f(): Unit ! {∀ A. give(A)} { perform give(1); perform give("x") }
+let r := handle { f(); 0 } with { ∀ T. give<T>(a), k => { let kept: T := a; k(#()) } }
+perform show("r", r)
+```
+types = "ok"
+shows = ['r = 0']
+
+@ cases.a-function-name-does-not-replace-an-effect-reference
+source = ```nib
+fn fail(n: i64): i64 { n + 1 }
+fn reject(): i64 ! {fail(Text)} { perform fail("rejected") }
+let value := handle { reject() } with {
+  fail<Text>(message) => fail(40)
+}
+perform show("value", value)
+```
+types = "ok"
+rows = "ok"
+shows = ['value = 41']
+
+@ cases.a-function-and-an-effect-keep-separate-declarations
+source = ```nib
+effect answer(): i64 resume 1
+fn answer(n: i64): i64 { n + 1 }
+fn ask(): i64 ! {answer} { perform answer() }
+let value := handle { ask() } with {
+  answer(), k => k(answer(40))
+}
+perform show("value", value)
+```
+types = "ok"
+rows = "ok"
+shows = ['value = 41']

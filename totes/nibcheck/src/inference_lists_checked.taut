@@ -62,7 +62,7 @@ pub theorem inference_else_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_else(j, c, t, env, el)) {
-  match el: CkCheckedFrame(c, inference_else(j, c, t, env, el)) {
+  ⊢ CkCheckedFrame(c, inference_else(j, c, t, env, el)) from match el {
     None => checked_frame_return(c, TyUnit, ordered)
     Some(o) => checked_frame_bind(
       Ty,
@@ -101,7 +101,7 @@ pub theorem inference_guard_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_guard(j, c, env, guard)) {
-  match guard: CkCheckedFrame(c, inference_guard(j, c, env, guard)) {
+  ⊢ CkCheckedFrame(c, inference_guard(j, c, env, guard)) from match guard {
     None => checked_frame_return(c, Star, ordered)
     Some(g) => checked_frame_bind(
       Ty,
@@ -139,7 +139,7 @@ pub theorem inference_returned_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_returned(j, c, env, e)) {
-  match e: CkCheckedFrame(c, inference_returned(j, c, env, e)) {
+  ⊢ CkCheckedFrame(c, inference_returned(j, c, env, e)) from match e {
     None => checked_frame_return(c, Pair { fst: TyUnit, snd: TySpan { start: 0, end: 0 } }, ordered)
     Some(x) => checked_frame_bind(
       Ty,
@@ -193,7 +193,7 @@ pub theorem inference_list_ck_infer_each_in_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_list_ck_infer_each_in(j, c, env, ts)) {
-  match ts: CkCheckedFrame(c, inference_list_ck_infer_each_in(j, c, env, ts)) {
+  ⊢ CkCheckedFrame(c, inference_list_ck_infer_each_in(j, c, env, ts)) from match ts {
     Nil => checked_frame_return(c, Nil, ordered)
     Cons(t, rest) => checked_frame_bind(
       Ty,
@@ -255,7 +255,7 @@ pub theorem inference_list_ck_operands_in_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_list_ck_operands_in(j, c, env, arguments)) {
-  match arguments: CkCheckedFrame(c, inference_list_ck_operands_in(j, c, env, arguments)) {
+  ⊢ CkCheckedFrame(c, inference_list_ck_operands_in(j, c, env, arguments)) from match arguments {
     Nil => checked_frame_return(c, Nil, ordered)
     Cons(a, rest) => checked_frame_bind(
       Ty,
@@ -306,10 +306,7 @@ pub theorem inference_record_fields_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_record_fields(j, c, name, declared, env, seen, fields)) {
-  match fields: CkCheckedFrame(
-    c,
-    inference_record_fields(j, c, name, declared, env, seen, fields)
-  ) {
+  ⊢ CkCheckedFrame(c, inference_record_fields(j, c, name, declared, env, seen, fields)) from match fields {
     Nil => checked_frame_return(c, seen, ordered)
     Cons(f, rest) => checked_frame_bind(
       Ty,
@@ -404,7 +401,7 @@ pub theorem inference_handle_arms_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_handle_arms(j, c, env, result, rv, budget_ty, hs)) {
-  match hs: CkCheckedFrame(c, inference_handle_arms(j, c, env, result, rv, budget_ty, hs)) {
+  ⊢ CkCheckedFrame(c, inference_handle_arms(j, c, env, result, rv, budget_ty, hs)) from match hs {
     Nil => checked_frame_return(c, Star, ordered)
     Cons(h, rest) => checked_frame_bind(
       Unit,
@@ -450,7 +447,7 @@ pub theorem inference_handle_one_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_handle_one(j, c, env, result, rv, budget_ty, h)) {
-  match h: CkCheckedFrame(c, inference_handle_one(j, c, env, result, rv, budget_ty, h)) {
+  ⊢ CkCheckedFrame(c, inference_handle_one(j, c, env, result, rv, budget_ty, h)) from match h {
     HdReturn(p, b) => checked_frame_return(c, Star, ordered)
     HdOperation(eff, binds, types, patterns, cont, guard, body) => checked_frame_rewrap(
       c,
@@ -520,10 +517,10 @@ pub theorem inference_handle_result_frame_checked(
   c,
   inference_handle_result(j, c, handlers, env, result, first, budget_ty, variable)
 ) {
-  match variable: CkCheckedFrame(
+  ⊢ CkCheckedFrame(
     c,
     inference_handle_result(j, c, handlers, env, result, first, budget_ty, variable)
-  ) {
+  ) from match variable {
     None => checked_frame_return(c, Star, ordered)
     Some(rv) => checked_frame_bind(
       Unit,

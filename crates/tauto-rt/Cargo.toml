@@ -17,6 +17,8 @@ reactor = ["sync", "dep:tokio"]
 tls = ["dep:rustls", "dep:rustls-platform-verifier"]
 
 [dependencies]
+tauto-identity = { path = "../tauto-identity" }
+tauto-rt-signal = { path = "../tauto-rt-signal" }
 reqwest = { version = "=0.13.5", optional = true, default-features = false, features = ["blocking", "rustls"] }
 url = { version = "=2.5.8", optional = true }
 rustls = { version = "=0.23.46", optional = true, default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
@@ -25,6 +27,10 @@ rustls-platform-verifier = { version = "=0.7.1", optional = true }
 # The system's secure random source; a bare wasm32-unknown-unknown has none.
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
 getrandom = "=0.3.4"
+
+# `openat` with `O_NOFOLLOW`, for reads that stay under a root.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "=1.1.2", default-features = false, features = ["std", "fs"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { version = "=1.53.3", optional = true, default-features = false, features = ["rt", "time", "sync"] }

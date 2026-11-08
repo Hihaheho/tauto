@@ -4,14 +4,14 @@ import "../../../std/Int.taut" { Int }
 import "../../../std/Text.taut" { Text }
 
 pub fn rs_power_two(bits: Nat): Nat {
-  match bits: Nat {
+  ⊢ Nat from match bits {
     Zero => 1
     Succ(rest) => Nat::mul(2, rs_power_two(rest))
   }
 }
 
 pub fn rs_integer_fits(value: Int, signed: Bool, bits: Nat): Bool {
-  match bits: Bool {
+  ⊢ Bool from match bits {
     Zero => false
     Succ(rest) => if signed {
       let bound: Int := IntOfNat(rs_power_two(rest))
@@ -31,8 +31,8 @@ pub fn rs_checked_integer(value: Int, signed: Bool, bits: Nat, heap: RsStore): R
 // These operations describe the checked integer helpers, independently of
 // the host's integer representation or build profile.
 pub fn rs_integer_binary(name: Text, a: RsLiteral, b: RsLiteral, heap: RsStore): RsResult(RsValue) {
-  match a: RsResult(RsValue) {
-    RsInteger(x, sx, wx) => match b: RsResult(RsValue) {
+  ⊢ RsResult(RsValue) from match a {
+    RsInteger(x, sx, wx) => ⊢ RsResult(RsValue) from match b {
       RsInteger(y, sy, wy) => if not(Bool::eq(sx, sy) && Nat::eq(wx, wy)) {
         RsStuck
       } else if not(rs_integer_fits(x, sx, wx) && rs_integer_fits(y, sy, wy)) {
@@ -67,7 +67,7 @@ pub fn rs_integer_binary(name: Text, a: RsLiteral, b: RsLiteral, heap: RsStore):
 }
 
 pub fn rs_integer_neg(value: RsLiteral, heap: RsStore): RsResult(RsValue) {
-  match value: RsResult(RsValue) {
+  ⊢ RsResult(RsValue) from match value {
     RsInteger(x, signed, bits) => if signed && rs_integer_fits(x, signed, bits) {
       rs_checked_integer(Int::neg(x), signed, bits, heap)
     } else { RsStuck }

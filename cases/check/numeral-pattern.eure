@@ -1,0 +1,78 @@
+// A numeral pattern `n` on `Nat` is read as the constructors `Succ(…Succ(Zero))`,
+// a nested pattern: the kernel gets the same matches as if they were written.
+
+@ cases.a-numeral-pattern-is-its-constructors
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn byte_class(c: Nat): Nat {
+  ⊢ Nat from match c {
+    34 => 1
+    92 => 2
+    _ => 0
+  }
+}
+
+fn pred2(n: Nat): Nat {
+  ⊢ Nat from match n {
+    0 => 10
+    1 => 11
+    Succ(Succ(k)) => k
+  }
+}
+
+fn some_three(p: Option(Nat)): Bool {
+  ⊢ Bool from match p {
+    Some(3) => true
+    _ => false
+  }
+}
+
+theorem r#quote(): byte_class(34) = 1 { Refl }
+theorem backslash(): byte_class(92) = 2 { Refl }
+theorem other(): byte_class(35) = 0 { Refl }
+theorem one(): pred2(1) = 11 { Refl }
+theorem seven(): pred2(7) = 5 { Refl }
+theorem three(): some_three(Some(3)) = true { Refl }
+theorem four(): some_three(Some(4)) = false { Refl }
+```
+
+checks_all = "ok"
+
+@ cases.a-numeral-pattern-says-how-large-it-may-be
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn big(c: Nat): Nat {
+  ⊢ Nat from match c {
+    2000 => 1
+    _ => 0
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::big" = "error: "
+@ cases.a-numeral-pattern-says-how-large-it-may-be.diagnostics[]
+file = "input/main.taut"
+name = "big"
+message = "the numeral pattern `2000` is larger than 1024: it is read as 2000 nested `Succ`s; compare with `Nat::eq` instead"
+span = "«1»"
+
+@ cases.a-numeral-pattern-runs
+backends = ["rust", "javascript"]
+extract = true
+imports = [path`../../std/Base.taut`]
+source = ```tauto
+fn byte_class(c: Nat): Nat {
+  ⊢ Nat from match c {
+    34 => 1
+    92 => 2
+    _ => 0
+  }
+}
+perform show("quote", byte_class(34))
+perform show("backslash", byte_class(92))
+perform show("other", byte_class(7))
+```
+shows = ["quote = 1", "backslash = 2", "other = 0"]

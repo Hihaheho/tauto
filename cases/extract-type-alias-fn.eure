@@ -1,0 +1,25 @@
+// A function that returns a type names the type its body is, in programs
+// as in proofs: extraction unfolds it, with its parameters, wherever a type
+// is written.
+@ cases.type-alias-fn-unfolds
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn Maybes(A: Type): Type { List(Option(A)) }
+fn R(): Type { Option(Maybes(Nat)) }
+fn F(): Type { (R()) -> Nat }
+
+fn pick(o: R()): Nat {
+  ⊢ Nat from match o {
+    None => 0
+    Some(xs) => 1
+  }
+}
+
+fn apply(f: F()): Nat { f(Some([None])) }
+
+perform show("apply", apply(pick))
+```
+shows = ["apply = 1"]
+rust_shows = ["apply = 1"]
+javascript_shows = ["apply = 1"]

@@ -113,7 +113,7 @@ pub theorem allocated_unify_rest_step(
   left: TypeAllocated(ck_next_of(c), a),
   right: TypeAllocated(ck_next_of(c), b)
 ): AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, b)) {
-  match b: AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, b)) {
+  ⊢ AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, b)) from match b {
     TyInt(wb) => AndIntro(Refl, state)
     TyBool => AndIntro(Refl, state)
     TyText => AndIntro(Refl, state)
@@ -127,10 +127,10 @@ pub theorem allocated_unify_rest_step(
       ck_bind(c, vb, a),
       ck_bind_allocation_run(c, vb, a, ordered, state, right, left)
     )
-    TyFn(pb, rb, kb) => match a: AllocationRun(
+    TyFn(pb, rb, kb) => ⊢ AllocationRun(
       c,
       ck_unify_rest_in(Succ(fuel), c, a, TyFn(pb, rb, kb))
-    ) {
+    ) from match a {
       TyInt(wa) => AndIntro(Refl, state)
       TyBool => AndIntro(Refl, state)
       TyText => AndIntro(Refl, state)
@@ -178,7 +178,7 @@ pub theorem allocated_unify_rest_step(
       TyPoly(ga, xa) => AndIntro(Refl, state)
       TyApp(ha, xa) => AndIntro(Refl, state)
     }
-    TyUnion(tb) => match a: AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, TyUnion(tb))) {
+    TyUnion(tb) => ⊢ AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, TyUnion(tb))) from match a {
       TyInt(wa) => AndIntro(Refl, state)
       TyBool => AndIntro(Refl, state)
       TyText => AndIntro(Refl, state)
@@ -209,7 +209,7 @@ pub theorem allocated_unify_rest_step(
       TyPoly(ga, xa) => AndIntro(Refl, state)
       TyApp(ha, xa) => AndIntro(Refl, state)
     }
-    TyProduct(tb) => match a: AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, TyProduct(tb))) {
+    TyProduct(tb) => ⊢ AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, TyProduct(tb))) from match a {
       TyInt(wa) => AndIntro(Refl, state)
       TyBool => AndIntro(Refl, state)
       TyText => AndIntro(Refl, state)
@@ -240,10 +240,10 @@ pub theorem allocated_unify_rest_step(
       TyPoly(ga, xa) => AndIntro(Refl, state)
       TyApp(ha, xa) => AndIntro(Refl, state)
     }
-    TyNamed(nb, tb) => match a: AllocationRun(
+    TyNamed(nb, tb) => ⊢ AllocationRun(
       c,
       ck_unify_rest_in(Succ(fuel), c, a, TyNamed(nb, tb))
-    ) {
+    ) from match a {
       TyInt(wa) => AndIntro(Refl, state)
       TyBool => AndIntro(Refl, state)
       TyText => AndIntro(Refl, state)
@@ -278,10 +278,10 @@ pub theorem allocated_unify_rest_step(
         app_ih(c, ha, xa, nb, tb, ordered, state, And::left(left), And::right(left), right)
       )
     }
-    TyTagged(tagsb, xb) => match a: AllocationRun(
+    TyTagged(tagsb, xb) => ⊢ AllocationRun(
       c,
       ck_unify_rest_in(Succ(fuel), c, a, TyTagged(tagsb, xb))
-    ) {
+    ) from match a {
       TyInt(wa) => AndIntro(Refl, state)
       TyBool => AndIntro(Refl, state)
       TyText => AndIntro(Refl, state)
@@ -312,7 +312,7 @@ pub theorem allocated_unify_rest_step(
       TyPoly(ga, xa) => AndIntro(Refl, state)
       TyApp(ha, xa) => AndIntro(Refl, state)
     }
-    TyInfo(xb) => match a: AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, TyInfo(xb))) {
+    TyInfo(xb) => ⊢ AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, TyInfo(xb))) from match a {
       TyInt(wa) => AndIntro(Refl, state)
       TyBool => AndIntro(Refl, state)
       TyText => AndIntro(Refl, state)
@@ -336,10 +336,10 @@ pub theorem allocated_unify_rest_step(
       TyPoly(ga, xa) => AndIntro(Refl, state)
       TyApp(ha, xa) => AndIntro(Refl, state)
     }
-    TyBorrow(xb, mb) => match a: AllocationRun(
+    TyBorrow(xb, mb) => ⊢ AllocationRun(
       c,
       ck_unify_rest_in(Succ(fuel), c, a, TyBorrow(xb, mb))
-    ) {
+    ) from match a {
       TyInt(wa) => AndIntro(Refl, state)
       TyBool => AndIntro(Refl, state)
       TyText => AndIntro(Refl, state)
@@ -370,10 +370,7 @@ pub theorem allocated_unify_rest_step(
       TyPoly(ga, xa) => AndIntro(Refl, state)
       TyApp(ha, xa) => AndIntro(Refl, state)
     }
-    TyPoly(gb, xb) => match a: AllocationRun(
-      c,
-      ck_unify_rest_in(Succ(fuel), c, a, TyPoly(gb, xb))
-    ) {
+    TyPoly(gb, xb) => ⊢ AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, TyPoly(gb, xb))) from match a {
       TyInt(wa) => AndIntro(Refl, state)
       TyBool => AndIntro(Refl, state)
       TyText => AndIntro(Refl, state)
@@ -400,7 +397,7 @@ pub theorem allocated_unify_rest_step(
       )
       TyApp(ha, xa) => AndIntro(Refl, state)
     }
-    TyApp(hb, xb) => match a: AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, TyApp(hb, xb))) {
+    TyApp(hb, xb) => ⊢ AllocationRun(c, ck_unify_rest_in(Succ(fuel), c, a, TyApp(hb, xb))) from match a {
       TyInt(wa) => AndIntro(Refl, state)
       TyBool => AndIntro(Refl, state)
       TyText => AndIntro(Refl, state)

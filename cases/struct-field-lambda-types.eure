@@ -1,0 +1,21 @@
+description = "A λ written as a field of a struct literal learns its parameters' types from the field's, with what the fields written before it fixed, as a λ argument of a call does."
+
+@ cases.a-lambda-field-has-its-parameter-type-from-an-earlier-field
+source = ```tauto
+shared struct Done { n: u64 }
+struct Opts(B: Shared) { run: () -> B, on_success: (value: B) -> u64 }
+fn go<B: Shared>(o: Opts(B)): u64 { (o.on_success)((o.run)()) }
+perform show("n", go(Opts { run: () => Done { n: 1 }, on_success: value => value.n + 1 }))
+```
+types = "ok"
+shows = ["n = 2"]
+backends = ["rust", "javascript", "vm"]
+
+@ cases.a-lambda-field-written-before-the-field-that-fixes-its-type
+source = ```tauto
+shared struct Done { n: u64 }
+struct Opts(B: Shared) { run: () -> B, on_success: (value: B) -> u64 }
+fn go<B: Shared>(o: Opts(B)): u64 { (o.on_success)((o.run)()) }
+perform show("n", go(Opts { on_success: value => value.n + 1, run: () => Done { n: 1 } }))
+```
+types = "error: _ has no field `n`"

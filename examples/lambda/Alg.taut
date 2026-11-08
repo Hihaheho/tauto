@@ -14,7 +14,7 @@ pub theorem upR_ext_at(
   e: ExtR(xi, zeta),
   n: Nat
 ): upR(xi, n) = upR(zeta, n) {
-  match n: upR(xi, n) = upR(zeta, n) {
+  ⊢ upR(xi, n) = upR(zeta, n) from match n {
     Zero => Refl
     Succ(m) => Eq::congr(Succ, e(m))
   }
@@ -34,7 +34,7 @@ pub theorem ren_ext(
   zeta: (Nat) -> Nat,
   e: ExtR(xi, zeta)
 ): ren(t, xi) = ren(t, zeta) {
-  match t: ren(t, xi) = ren(t, zeta) {
+  ⊢ ren(t, xi) = ren(t, zeta) from match t {
     Tvar(i) => Eq::congr(Tvar, e(i))
     Lam(A, b) => Eq::congr(x => Lam(A, x), ren_ext(b, upR(xi), upR(zeta), upR_ext(xi, zeta, e)))
     App(f, a) => Eq::trans(
@@ -51,7 +51,7 @@ pub theorem up_ext_at(
   e: ExtS(sigma, tau),
   n: Nat
 ): up(sigma, n) = up(tau, n) {
-  match n: up(sigma, n) = up(tau, n) {
+  ⊢ up(sigma, n) = up(tau, n) from match n {
     Zero => Refl
     Succ(m) => Eq::congr(x => ren(x, Succ), e(m))
   }
@@ -71,7 +71,7 @@ pub theorem subst_ext(
   tau: (Nat) -> Tm,
   e: ExtS(sigma, tau)
 ): subst(t, sigma) = subst(t, tau) {
-  match t: subst(t, sigma) = subst(t, tau) {
+  ⊢ subst(t, sigma) = subst(t, tau) from match t {
     Tvar(i) => e(i)
     Lam(A, b) => Eq::congr(x => Lam(A, x), subst_ext(b, up(sigma), up(tau), up_ext(sigma, tau, e)))
     App(f, a) => Eq::trans(
@@ -87,7 +87,7 @@ pub theorem ren_ren_up(
   zeta: (Nat) -> Nat,
   n: Nat
 ): upR(zeta, upR(xi, n)) = upR(n0 => zeta(xi(n0)), n) {
-  match n: upR(zeta, upR(xi, n)) = upR(n0 => zeta(xi(n0)), n) {
+  ⊢ upR(zeta, upR(xi, n)) = upR(n0 => zeta(xi(n0)), n) from match n {
     Zero => Refl
     Succ(m) => Refl
   }
@@ -98,7 +98,7 @@ pub theorem ren_ren(
   xi: (Nat) -> Nat,
   zeta: (Nat) -> Nat
 ): ren(ren(t, xi), zeta) = ren(t, n => zeta(xi(n))) {
-  match t: ren(ren(t, xi), zeta) = ren(t, n => zeta(xi(n))) {
+  ⊢ ren(ren(t, xi), zeta) = ren(t, n => zeta(xi(n))) from match t {
     Tvar(i) => Refl
     Lam(A, b) => {
       let s1: ren(ren(b, upR(xi)), upR(zeta)) = ren(b, n => upR(zeta, upR(xi, n))) := ren_ren(b, upR(xi), upR(zeta))
@@ -123,7 +123,7 @@ pub theorem ren_subst_up(
   xi: (Nat) -> Nat,
   n: Nat
 ): ren(up(tau, n), upR(xi)) = up(m => ren(tau(m), xi), n) {
-  match n: ren(up(tau, n), upR(xi)) = up(m => ren(tau(m), xi), n) {
+  ⊢ ren(up(tau, n), upR(xi)) = up(m => ren(tau(m), xi), n) from match n {
     Zero => Refl
     Succ(m) => {
       let r1: ren(ren(tau(m), Succ), upR(xi)) = ren(tau(m), k => upR(xi, Succ(k))) := ren_ren(tau(m), Succ, upR(xi))
@@ -138,7 +138,7 @@ pub theorem ren_subst(
   tau: (Nat) -> Tm,
   xi: (Nat) -> Nat
 ): ren(subst(t, tau), xi) = subst(t, n => ren(tau(n), xi)) {
-  match t: ren(subst(t, tau), xi) = subst(t, n => ren(tau(n), xi)) {
+  ⊢ ren(subst(t, tau), xi) = subst(t, n => ren(tau(n), xi)) from match t {
     Tvar(i) => Refl
     Lam(A, b) => {
       let s1: ren(subst(b, up(tau)), upR(xi)) = subst(b, n => ren(up(tau, n), upR(xi))) := ren_subst(b, up(tau), upR(xi))
@@ -163,7 +163,7 @@ pub theorem subst_ren_up(
   xi: (Nat) -> Nat,
   n: Nat
 ): up(sigma, upR(xi, n)) = up(m => sigma(xi(m)), n) {
-  match n: up(sigma, upR(xi, n)) = up(m => sigma(xi(m)), n) {
+  ⊢ up(sigma, upR(xi, n)) = up(m => sigma(xi(m)), n) from match n {
     Zero => Refl
     Succ(m) => Refl
   }
@@ -174,7 +174,7 @@ pub theorem subst_ren(
   xi: (Nat) -> Nat,
   sigma: (Nat) -> Tm
 ): subst(ren(t, xi), sigma) = subst(t, n => sigma(xi(n))) {
-  match t: subst(ren(t, xi), sigma) = subst(t, n => sigma(xi(n))) {
+  ⊢ subst(ren(t, xi), sigma) = subst(t, n => sigma(xi(n))) from match t {
     Tvar(i) => Refl
     Lam(A, b) => {
       let s1: subst(ren(b, upR(xi)), up(sigma)) = subst(b, n => up(sigma, upR(xi, n))) := subst_ren(b, upR(xi), up(sigma))
@@ -199,7 +199,7 @@ pub theorem subst_subst_up(
   tau: (Nat) -> Tm,
   n: Nat
 ): subst(up(sigma, n), up(tau)) = up(m => subst(sigma(m), tau), n) {
-  match n: subst(up(sigma, n), up(tau)) = up(m => subst(sigma(m), tau), n) {
+  ⊢ subst(up(sigma, n), up(tau)) = up(m => subst(sigma(m), tau), n) from match n {
     Zero => Refl
     Succ(m) => {
       let r1: subst(ren(sigma(m), Succ), up(tau)) = subst(sigma(m), k => up(tau, Succ(k))) := subst_ren(sigma(m), Succ, up(tau))
@@ -214,7 +214,7 @@ pub theorem subst_subst(
   sigma: (Nat) -> Tm,
   tau: (Nat) -> Tm
 ): subst(subst(t, sigma), tau) = subst(t, n => subst(sigma(n), tau)) {
-  match t: subst(subst(t, sigma), tau) = subst(t, n => subst(sigma(n), tau)) {
+  ⊢ subst(subst(t, sigma), tau) = subst(t, n => subst(sigma(n), tau)) from match t {
     Tvar(i) => Refl
     Lam(A, b) => {
       let s1: subst(subst(b, up(sigma)), up(tau)) = subst(b, n => subst(up(sigma, n), up(tau))) := subst_subst(b, up(sigma), up(tau))
@@ -235,14 +235,14 @@ pub theorem subst_subst(
 }
 
 pub theorem up_tvar(n: Nat): up(Tvar, n) = Tvar(n) {
-  match n: up(Tvar, n) = Tvar(n) {
+  ⊢ up(Tvar, n) = Tvar(n) from match n {
     Zero => Refl
     Succ(m) => Refl
   }
 }
 
 pub theorem subst_id(t: Tm): subst(t, Tvar) = t {
-  match t: subst(t, Tvar) = t {
+  ⊢ subst(t, Tvar) = t from match t {
     Tvar(i) => Refl
     Lam(A, b) => {
       let s1: subst(b, up(Tvar)) = subst(b, Tvar) := subst_ext(b, up(Tvar), Tvar, n => up_tvar(n))
@@ -263,7 +263,7 @@ pub theorem subst_single_ren(u: Tm, w: Tm): subst(ren(u, Succ), single(w)) = u {
 }
 
 pub fn extend(w: Tm, sigma: (Nat) -> Tm, n: Nat): Tm {
-  match n: Tm {
+  ⊢ Tm from match n {
     Zero => w
     Succ(m) => sigma(m)
   }
@@ -274,7 +274,7 @@ pub theorem subst_up_single_at(
   w: Tm,
   n: Nat
 ): subst(up(sigma, n), single(w)) = extend(w, sigma, n) {
-  match n: subst(up(sigma, n), single(w)) = extend(w, sigma, n) {
+  ⊢ subst(up(sigma, n), single(w)) = extend(w, sigma, n) from match n {
     Zero => Refl
     Succ(m) => subst_single_ren(sigma(m), w)
   }
@@ -300,7 +300,7 @@ pub theorem subst_single_at(
   sigma: (Nat) -> Tm,
   n: Nat
 ): subst(single(a, n), sigma) = extend(subst(a, sigma), sigma, n) {
-  match n: subst(single(a, n), sigma) = extend(subst(a, sigma), sigma, n) {
+  ⊢ subst(single(a, n), sigma) = extend(subst(a, sigma), sigma, n) from match n {
     Zero => Refl
     Succ(m) => Refl
   }

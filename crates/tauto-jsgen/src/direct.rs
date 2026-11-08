@@ -61,14 +61,14 @@ fn plain(ty: &Ty) -> bool {
 /// would move it.
 struct Values<'p> {
     pkg: &'p Package,
-    data: BTreeSet<String>,
+    data: BTreeSet<Name>,
 }
 
 impl<'p> Values<'p> {
     fn new(pkg: &'p Package) -> Self {
         // Every type is assumed to qualify, and the ones with a field that does
         // not are taken out until none is left.
-        let mut data: BTreeSet<String> = pkg
+        let mut data: BTreeSet<Name> = pkg
             .datas
             .iter()
             .filter(|d| {
@@ -80,7 +80,7 @@ impl<'p> Values<'p> {
             .map(|d| d.name.clone())
             .collect();
         loop {
-            let keep: BTreeSet<String> = pkg
+            let keep: BTreeSet<Name> = pkg
                 .datas
                 .iter()
                 .filter(|d| {
@@ -106,7 +106,7 @@ impl<'p> Values<'p> {
             // A vector is changed in place only through a mutable borrow, and
             // bytes never are.
             Ty::Vec(a) => self.ty(a),
-            Ty::Std(name, args) => name == "Bytes" && args.is_empty(),
+            Ty::Std(name, args) => *name == tauto_nir::StdType::Bytes && args.is_empty(),
             Ty::Buf => true,
             // A generic function's own parameter: its callers check what it
             // stands for (`Eligible::call`).
@@ -216,20 +216,23 @@ impl<'p> Values<'p> {
         }
     }
 
-    fn is_struct(&self, name: &str) -> bool {
-        self.pkg.datas.iter().any(|d| d.name == name && d.is_struct)
+    fn is_struct(&self, name: &Name) -> bool {
+        self.pkg
+            .datas
+            .iter()
+            .any(|d| &d.name == name && d.is_struct)
     }
 }
 
 /// A field type of a qualifying data type, with its parameters left open.
-fn shape(data: &BTreeSet<String>, ty: &Ty) -> bool {
+fn shape(data: &BTreeSet<Name>, ty: &Ty) -> bool {
     match ty {
         Ty::Param(_) => true,
         Ty::Data(name, args) => data.contains(name) && args.iter().all(|a| shape(data, a)),
         Ty::Option(a) => shape(data, a),
         Ty::Result(a, b) | Ty::Pair(a, b) => shape(data, a) && shape(data, b),
         Ty::Vec(a) => shape(data, a),
-        Ty::Std(name, args) => name == "Bytes" && args.is_empty(),
+        Ty::Std(name, args) => *name == tauto_nir::StdType::Bytes && args.is_empty(),
         _ => plain(ty),
     }
 }
@@ -237,7 +240,7 @@ fn shape(data: &BTreeSet<String>, ty: &Ty) -> bool {
 /// Whether a clone of a value of type `ty` is a copy: bytes are shared and
 /// never changed, as plain values are.
 fn copied(ty: &Ty) -> bool {
-    !plain(ty) && !matches!(ty, Ty::Std(name, _) if name == "Bytes")
+    !plain(ty) && !matches!(ty, Ty::Std(name, _) if *name == tauto_nir::StdType::Bytes)
 }
 
 /// Whether `p` is `Some(..)`, `None` or `_`, as an arm of a match on an
@@ -247,7 +250,8 @@ fn option_pattern(p: &Pat) -> bool {
         Pat::Wild => true,
         Pat::Ctor { ctor, fields } => {
             matches!(ctor.data, DataRef::Option)
-                && (ctor.name == "Some" && fields.len() == 1 || ctor.name == "None")
+                && (tauto::bindings::is_library(&ctor.name, "Some") && fields.len() == 1
+                    || tauto::bindings::is_library(&ctor.name, "None"))
         }
         _ => false,
     }
@@ -410,7 +414,8 @@ impl Eligible<'_> {
             | ExprKind::Int(_)
             | ExprKind::Float(_)
             | ExprKind::Bool(_)
-            | ExprKind::Text(_) => true,
+            | ExprKind::Text(_)
+            | ExprKind::Declaration(_) => true,
             ExprKind::Read { local, .. } => self.locals.contains_key(&local.id),
             ExprKind::Field {
                 base,
@@ -568,6 +573,7 @@ impl Writer<'_> {
             ExprKind::Int(n) => format!("{n}n"),
             ExprKind::Float(x) => crate::cps::float_literal(*x),
             ExprKind::Bool(b) => b.to_string(),
+            ExprKind::Declaration(slot) => format!("declarationRefs[{slot}]"),
             ExprKind::Text(t) => quote(t),
             ExprKind::Read { local, how }
                 if self.values.is_cell(local, &self.locals[&local.id])
@@ -669,15 +675,21 @@ impl Writer<'_> {
                 };
                 let is_struct = match &ctor.data {
                     DataRef::Gen(owner) => self.values.is_struct(owner),
-                    DataRef::Pair | DataRef::Product => true,
+                    DataRef::Pair => true,
                     DataRef::Option | DataRef::Result => false,
                 };
                 format!(
-                    "dcons({},[{}],[{}],{is_struct},{})",
-                    quote(&ctor.name),
+                    "dcons({},[{}],[{}],{is_struct},{},{})",
+                    quote(crate::constructor_symbol(self.values.pkg, &ctor.name)),
                     pick(&names),
                     pick(&values),
-                    quote(data_owner(&ctor.data))
+                    quote(&crate::owner_symbol(
+                        self.values.pkg,
+                        &data_owner(&ctor.data)
+                    )),
+                    fields
+                        .iter()
+                        .all(|(_, field)| crate::cps::retainable_field(&field.ty))
                 )
             }
             ExprKind::Match(m) => {
@@ -978,14 +990,14 @@ impl Writer<'_> {
             let mut binds = String::new();
             match (&element, &arm.pat) {
                 (Some((ok, item)), Pat::Ctor { ctor, fields }) => {
-                    if ctor.name == "Some" {
+                    if tauto::bindings::is_library(&ctor.name, "Some") {
                         tests.push(ok.clone());
-                        pattern(&fields[0], item, &mut tests, &mut binds);
+                        pattern(self.values.pkg, &fields[0], item, &mut tests, &mut binds);
                     } else {
                         tests.push(format!("!{ok}"));
                     }
                 }
-                _ => pattern(&arm.pat, &s, &mut tests, &mut binds),
+                _ => pattern(self.values.pkg, &arm.pat, &s, &mut tests, &mut binds),
             }
             let test = if tests.is_empty() {
                 "true".into()
@@ -1147,7 +1159,7 @@ impl Writer<'_> {
 }
 
 /// The tests `p` makes of the value `v`, and the names it binds.
-fn pattern(p: &Pat, v: &str, tests: &mut Vec<String>, binds: &mut String) {
+fn pattern(pkg: &Package, p: &Pat, v: &str, tests: &mut Vec<String>, binds: &mut String) {
     match p {
         Pat::Wild => {}
         // Data holds an integer as a BigInt; the body holds it as a number.
@@ -1158,20 +1170,14 @@ fn pattern(p: &Pat, v: &str, tests: &mut Vec<String>, binds: &mut String) {
         Pat::Int(n) | Pat::Nat(n) => tests.push(format!("({v}=={n}n)")),
         Pat::Bool(b) => tests.push(format!("equal({b},{v})")),
         Pat::Text(t) => tests.push(format!("equal({},{v})", quote(t))),
-        // A product is matched by its members alone: its type says it is one.
-        Pat::Ctor { ctor, fields } if ctor.data == DataRef::Product => {
-            for (i, f) in fields.iter().enumerate() {
-                pattern(f, &format!("{v}.fields[{i}]"), tests, binds);
-            }
-        }
         Pat::Ctor { ctor, fields } => {
             tests.push(format!(
                 "{v}.tag==={}&&{v}.owner==={}",
-                quote(&ctor.name),
-                quote(data_owner(&ctor.data))
+                quote(crate::constructor_symbol(pkg, &ctor.name)),
+                quote(&crate::owner_symbol(pkg, &data_owner(&ctor.data)))
             ));
             for (i, f) in fields.iter().enumerate() {
-                pattern(f, &format!("{v}.fields[{i}]"), tests, binds);
+                pattern(pkg, f, &format!("{v}.fields[{i}]"), tests, binds);
             }
         }
     }
@@ -1255,6 +1261,7 @@ pub fn constant(f: &FnInst) -> bool {
                 | ExprKind::Float(_)
                 | ExprKind::Bool(_)
                 | ExprKind::Text(_)
+                | ExprKind::Declaration(_)
                 | ExprKind::Ctor { .. }
                 | ExprKind::Block(_)
         );

@@ -44,7 +44,10 @@ pub(crate) fn id(s: &str) -> Ident {
             .replace('@', "_at_")
             .replace('(', "_L")
             .replace(')', "_R")
-            .replace(',', "_C");
+            .replace(',', "_C")
+            // A record's struct, `@record.a.b`.
+            .replace('.', "_D")
+            .replace('#', "_H");
         return Ident::new(&s, Span::call_site());
     }
     Ident::new(s, Span::call_site())

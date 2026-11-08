@@ -44,8 +44,8 @@ use std::sync::{Arc, OnceLock};
 use tauto_message::{Message, msg};
 use tauto_parol::Span;
 
-use super::program::{Handler, NOT_A_DECLARATION, Pattern, Stmt, Vis, parse_program_as_written};
-use super::{SurfaceTerm, TermKind};
+use super::program::{Handler, NOT_A_DECLARATION, Pattern, Stmt, Vis};
+use super::{Name, SurfaceTerm, TermKind};
 
 pub const PRELUDE_MODULE: &str = "std::prelude";
 
@@ -55,7 +55,7 @@ pub const SEPARATOR: &str = "::";
 /// `test` are two names): an effect's name is kept with this mark before it.
 const EFFECT: &str = "!";
 /// Marks, in the names a file uses, the name of a macro or a syntax it calls.
-const CALLED: &str = "\u{1}";
+pub const CALLED: &str = "\u{1}";
 
 /// What the kernel makes for an inductive type `T`, named `T::rec`, …: it
 /// is renamed with `T`.
@@ -79,11 +79,42 @@ fn same_tote(a: &str, b: &str) -> bool {
     a.contains(SEPARATOR) && b.contains(SEPARATOR) && tote(a) == tote(b)
 }
 
+/// What a full name of the prelude (`std::prelude::Text`) names (`Text`).
+fn without_prelude_module(full: &str) -> Option<&str> {
+    full.strip_prefix(PRELUDE_MODULE)?.strip_prefix(SEPARATOR)
+}
+
+/// The root of the standard library's modules (`std::List`). A tote cannot
+/// take it as its name (the manifest rejects it), so a module under it is the
+/// library's, and this is the one place that reads a module's root.
+pub const STD_ROOT: &str = "std";
+
+/// A module path split into its root and the rest (`std::List` into `std`
+/// and `List`).
+pub fn module_root(module: &str) -> (&str, Option<&str>) {
+    match module.split_once(SEPARATOR) {
+        Some((root, rest)) => (root, Some(rest)),
+        None => (module, None),
+    }
+}
+
+/// The path of the library's module `module` within the library (`List` of
+/// `std::List`); none for a module of a tote and for the prelude's.
+pub fn std_module_path(module: &str) -> Option<&str> {
+    match module_root(module) {
+        (STD_ROOT, Some(path)) if module_root(path).0 != "prelude" => Some(path),
+        _ => None,
+    }
+}
+
+/// Whether the full name `full` is declared by the library, the prelude
+/// included.
+fn is_library_name(full: &str) -> bool {
+    matches!(module_root(full), (STD_ROOT, Some(_)))
+}
+
 fn is_std(module: &str) -> bool {
-    module
-        .strip_prefix("std")
-        .is_some_and(|r| r.starts_with(SEPARATOR))
-        && !module.starts_with(PRELUDE_MODULE)
+    std_module_path(module).is_some()
 }
 
 /// Whether `name` is a full name: it starts with the module of a file (or
@@ -108,42 +139,82 @@ pub fn written(name: &str) -> String {
     name.to_string()
 }
 
-/// The name as written in the source: a full name without its module.
-///
-/// The modules of the files the program is read from are known (`qualify`
-/// records them), so the name of a function of a module or of a constructor
-/// (`Text::Mk` of `std::Text::Text::Mk`) keeps its `::`; a name that starts with
-/// no module is its own short name.
-pub fn short(name: &str) -> &str {
+/// The source spelling of a bound reference, or of syntax being qualified.
+/// References retain this spelling independently of later source reads.
+pub trait SourceSpelling {
+    fn source_spelling(&self) -> &str;
+}
+
+impl<T: SourceSpelling + ?Sized> SourceSpelling for &T {
+    fn source_spelling(&self) -> &str {
+        (*self).source_spelling()
+    }
+}
+
+impl SourceSpelling for str {
+    fn source_spelling(&self) -> &str {
+        short_spelling(self)
+    }
+}
+impl SourceSpelling for String {
+    fn source_spelling(&self) -> &str {
+        short_spelling(self)
+    }
+}
+impl SourceSpelling for Name {
+    fn source_spelling(&self) -> &str {
+        match self {
+            Name::Global(reference) => {
+                let display = reference.source_display();
+                without_prelude_module(display).unwrap_or(display)
+            }
+            Name::Spelled(spelling) => short_spelling(spelling),
+            _ => self.as_str(),
+        }
+    }
+}
+
+/// The source spelling without the file module, retaining nested modules and owners.
+pub fn short<N: SourceSpelling + ?Sized>(name: &N) -> &str {
+    name.source_spelling()
+}
+
+/// `a::b::C` → `C`.
+fn last_segment(name: &str) -> &str {
+    name.rsplit("::").next().unwrap_or(name)
+}
+
+fn short_spelling(name: &str) -> &str {
     if let Some(rest) = name
         .strip_prefix(PRELUDE_MODULE)
         .and_then(|r| r.strip_prefix(SEPARATOR))
     {
         return rest;
     }
-    let known = known_modules().lock().unwrap_or_else(|e| e.into_inner());
-    let mut best: Option<&str> = None;
-    let mut at = 0;
-    while let Some(i) = name[at..].find(SEPARATOR) {
-        let end = at + i;
-        if known.contains(&name[..end]) {
-            best = Some(&name[end + SEPARATOR.len()..]);
+    with_known_modules(|known| {
+        let mut best: Option<&str> = None;
+        let mut at = 0;
+        while let Some(i) = name[at..].find(SEPARATOR) {
+            let end = at + i;
+            if known.contains(&name[..end]) {
+                best = Some(&name[end + SEPARATOR.len()..]);
+            }
+            at = end + SEPARATOR.len();
         }
-        at = end + SEPARATOR.len();
-    }
-    best.unwrap_or(name)
+        best.unwrap_or(name)
+    })
 }
 
-/// The modules of every file read so far, to tell a full name's module from
-/// the dots inside the name.
-fn known_modules() -> &'static std::sync::Mutex<HashSet<String>> {
-    static MODULES: OnceLock<std::sync::Mutex<HashSet<String>>> = OnceLock::new();
-    MODULES.get_or_init(Default::default)
+thread_local! {
+    static SOURCE_MODULES: std::cell::RefCell<HashSet<String>> = Default::default();
+}
+
+fn with_known_modules<R>(f: impl FnOnce(&HashSet<String>) -> R) -> R {
+    SOURCE_MODULES.with(|modules| f(&modules.borrow()))
 }
 
 fn register_modules(modules: &[String]) {
-    let mut known = known_modules().lock().unwrap_or_else(|e| e.into_inner());
-    known.extend(modules.iter().cloned());
+    SOURCE_MODULES.with(|known| *known.borrow_mut() = modules.iter().cloned().collect());
 }
 
 /// The types the language itself has and no file declares. They are named
@@ -179,6 +250,13 @@ fn inductive_sort(s: &Stmt) -> Option<&str> {
     }
 }
 
+/// The language's type (`Never`, `Text`) that `s` declares, when `s` is in
+/// the file of `std` with the module `module`: that declaration is the type,
+/// as the prelude names it. A tote's copy of the file declares its own.
+pub fn std_language_type<'a>(module: &str, s: &'a Stmt) -> Option<&'a str> {
+    language_type(s).filter(|_| is_std(module) || module.starts_with(PRELUDE_MODULE))
+}
+
 /// The language's type `s` declares as the standard library does, the
 /// `inductive` the proofs see of it, wherever its file is read from.
 fn language_type(s: &Stmt) -> Option<&str> {
@@ -196,7 +274,7 @@ pub fn prelude_names() -> &'static HashSet<String> {
     NAMES.get_or_init(|| {
         let mut names: HashSet<String> = BUILTIN_TYPES.iter().map(|n| n.to_string()).collect();
         for text in [crate::nibstd::PRELUDE, crate::nibstd::KERNEL] {
-            if let Ok(program) = parse_program_as_written(text) {
+            if let Ok(program) = super::program::prelude_as_written(text) {
                 for s in &program.stmts {
                     declared(s, &mut |n| {
                         names.insert(n.to_string());
@@ -207,15 +285,6 @@ pub fn prelude_names() -> &'static HashSet<String> {
         names
     })
 }
-
-/// The files of `std/prelude/` that are not core: a file sees their
-/// declarations only when it imports `std::prelude::<file>`. The kernel's
-/// prelude and the other files of `std/prelude/` (`Std`, `Text`, `Num`: what
-/// literals, tuples, lists and `perform show` produce or need) are core, seen
-/// without an import.
-pub const NONCORE_PRELUDE: &[&str] = &[
-    "Affine", "Classes", "Macro", "Ord", "Os", "Par", "Secret", "Shared",
-];
 
 fn prelude_file_module(file: &str) -> String {
     format!("{PRELUDE_MODULE}{SEPARATOR}{file}")
@@ -239,7 +308,7 @@ fn prelude_text_names(text: &str, public_only: bool) -> (HashSet<String>, HashSe
     }
     let mut decls = HashSet::new();
     let mut mods = HashSet::new();
-    if let Ok(program) = super::program::parse_program_unresolved_at(text, 0) {
+    if let Ok(program) = super::program::prelude_unresolved(text) {
         for s in &program.stmts {
             // A declaration without `pub` is the file's own: no file that
             // imports it sees the name, so it meets no name of theirs.
@@ -276,7 +345,7 @@ pub fn hidden_prelude() -> &'static HashMap<String, Vec<String>> {
             .chain(
                 crate::nibstd::PRELUDE_FILES
                     .iter()
-                    .filter(|(path, _)| !NONCORE_PRELUDE.contains(&prelude_stem(path)))
+                    .filter(|(path, _)| crate::nibstd::is_core_prelude_file(path))
                     .map(|(_, text)| *text),
             );
         for text in core_texts {
@@ -288,7 +357,7 @@ pub fn hidden_prelude() -> &'static HashMap<String, Vec<String>> {
         let mut mod_names: Vec<(String, String)> = Vec::new();
         for (path, text) in crate::nibstd::PRELUDE_FILES {
             let stem = prelude_stem(path);
-            if !NONCORE_PRELUDE.contains(&stem) {
+            if crate::nibstd::is_core_prelude_file(path) {
                 continue;
             }
             let (d, m) = prelude_text_names(text, true);
@@ -317,7 +386,7 @@ pub fn hidden_prelude() -> &'static HashMap<String, Vec<String>> {
 }
 
 /// The names the core files of the library's prelude (`Std`, `Text`, `Num`, the files not in
-/// [`NONCORE_PRELUDE`]) declare and the kernel's prelude does not, each with the files that
+/// [`crate::nibstd::CORE_PRELUDE_FILES`]) declare and the kernel's prelude does not, each with the files that
 /// do: what a file of a tote without the prelude (`package { prelude = false }`) sees only by
 /// importing `std::prelude::<file>`. The language's types and sorts are not among them.
 pub fn core_prelude() -> &'static HashMap<String, Vec<String>> {
@@ -339,7 +408,7 @@ pub fn core_prelude() -> &'static HashMap<String, Vec<String>> {
         let mut core: HashMap<String, Vec<String>> = HashMap::new();
         for (path, text) in crate::nibstd::PRELUDE_FILES {
             let stem = prelude_stem(path);
-            if NONCORE_PRELUDE.contains(&stem) {
+            if !crate::nibstd::is_core_prelude_file(path) {
                 continue;
             }
             let (d, m) = prelude_text_names(text, true);
@@ -365,7 +434,10 @@ fn prelude_item(n: &str) -> String {
     if n.starts_with(EFFECT) {
         return b.to_string();
     }
-    if let Some((ty, _)) = prelude_ctors().iter().find(|(ty, cs)| *ty != b && cs.contains_key(b)) {
+    if let Some((ty, _)) = prelude_ctors()
+        .iter()
+        .find(|(ty, cs)| *ty != b && cs.contains_key(b))
+    {
         return ty.clone();
     }
     b.split(SEPARATOR).next().unwrap_or(b).to_string()
@@ -387,7 +459,7 @@ fn prelude_fns() -> &'static Vec<String> {
             .cloned()
             .collect();
         for text in crate::nibstd::KERNEL_MODULES {
-            if let Ok(program) = super::program::parse_program_unresolved_at(text, 0) {
+            if let Ok(program) = super::program::prelude_unresolved(text) {
                 fns.extend(super::modules::declared(&program.stmts));
             }
         }
@@ -400,7 +472,7 @@ fn prelude_ctors() -> &'static HashMap<String, HashMap<String, String>> {
     CTORS.get_or_init(|| {
         let mut out = HashMap::new();
         for text in [crate::nibstd::PRELUDE, crate::nibstd::KERNEL] {
-            if let Ok(program) = parse_program_as_written(text) {
+            if let Ok(program) = super::program::prelude_as_written(text) {
                 for s in &program.stmts {
                     ctors_of(s, &mut |ty, c| {
                         out.entry(ty.to_string())
@@ -422,7 +494,7 @@ fn prelude_fields() -> &'static HashMap<String, Vec<Option<Shape>>> {
         // A name constructors of several types have (`Mk`) says no type here.
         let mut shared = HashSet::new();
         for text in [crate::nibstd::PRELUDE, crate::nibstd::KERNEL] {
-            if let Ok(program) = parse_program_as_written(text) {
+            if let Ok(program) = super::program::prelude_as_written(text) {
                 for s in &program.stmts {
                     field_types(
                         s,
@@ -456,9 +528,9 @@ fn ctors_of(s: &Stmt, out: &mut dyn FnMut(&str, &str)) {
 /// The head of a written type (`T` of `T(A)`), when it is a name.
 fn type_head(t: &SurfaceTerm) -> Option<String> {
     match &*t.kind {
-        TermKind::Var(h) => Some(h.clone()),
+        TermKind::Var(h) => Some(h.to_string()),
         TermKind::App { function, .. } => match &*function.kind {
-            TermKind::Var(h) => Some(h.clone()),
+            TermKind::Var(h) => Some(h.to_string()),
             _ => None,
         },
         _ => None,
@@ -500,8 +572,8 @@ impl Shape {
     /// after this pass.
     fn of_field(
         t: &SurfaceTerm,
-        params: &[String],
-        bound: &[String],
+        params: &[super::Name],
+        bound: &[super::Name],
         named: &dyn Fn(&str) -> String,
     ) -> Option<Shape> {
         let (head, args) = match &*t.kind {
@@ -538,9 +610,9 @@ fn field_types(
 ) {
     match s {
         Stmt::Inductive(d) => {
-            let params: Vec<String> = d.params.iter().map(|(n, _)| n.clone()).collect();
+            let params: Vec<super::Name> = d.params.iter().map(|(n, _)| n.clone()).collect();
             for c in &d.constructors {
-                let mut bound: Vec<String> = Vec::new();
+                let mut bound: Vec<super::Name> = Vec::new();
                 let mut fields = Vec::new();
                 for (k, (n, t)) in c.params.iter().enumerate() {
                     if k >= c.implicit {
@@ -572,15 +644,15 @@ fn field_types(
 /// its explicit parameters, each with the name it binds and the type it is
 /// written with (none where that type is a generic of the declaration).
 fn arg_types(s: &Stmt, out: &mut dyn FnMut(&str, bool, &str, Vec<(String, Option<SurfaceTerm>)>)) {
-    let generics = |gs: &[String]| -> Vec<(String, Option<SurfaceTerm>)> {
-        gs.iter().map(|g| (g.clone(), None)).collect()
+    let generics = |gs: &[super::Name]| -> Vec<(String, Option<SurfaceTerm>)> {
+        gs.iter().map(|g| (g.to_string(), None)).collect()
     };
     match s {
         Stmt::Fn(f) => {
             let params = f
                 .params
                 .iter()
-                .cloned()
+                .map(ToString::to_string)
                 .zip(f.param_types.iter().cloned())
                 .collect();
             out(
@@ -594,7 +666,7 @@ fn arg_types(s: &Stmt, out: &mut dyn FnMut(&str, bool, &str, Vec<(String, Option
             let params: Vec<(String, Option<SurfaceTerm>)> = d
                 .params
                 .iter()
-                .map(|(n, t)| (n.clone(), Some(t.clone())))
+                .map(|(n, t)| (n.to_string(), Some(t.clone())))
                 .collect();
             let (implicit, explicit) = params.split_at(d.implicit.min(params.len()));
             out(
@@ -605,13 +677,16 @@ fn arg_types(s: &Stmt, out: &mut dyn FnMut(&str, bool, &str, Vec<(String, Option
             );
         }
         Stmt::Inductive(d) => {
-            let family: Vec<(String, Option<SurfaceTerm>)> =
-                d.params.iter().map(|(n, _)| (n.clone(), None)).collect();
+            let family: Vec<(String, Option<SurfaceTerm>)> = d
+                .params
+                .iter()
+                .map(|(n, _)| (n.to_string(), None))
+                .collect();
             for c in &d.constructors {
                 let params: Vec<(String, Option<SurfaceTerm>)> = c
                     .params
                     .iter()
-                    .map(|(n, t)| (n.clone(), Some(t.clone())))
+                    .map(|(n, t)| (n.to_string(), Some(t.clone())))
                     .collect();
                 let (implicit, explicit) = params.split_at(c.implicit.min(params.len()));
                 let mut bound = family.clone();
@@ -821,7 +896,7 @@ pub fn files(
     files: &mut [Vec<Stmt>],
     modules: &[String],
     imports: Option<&[Vec<usize>]>,
-) -> Vec<(String, Span)> {
+) -> Vec<(Message, Span)> {
     files_with_totes(files, modules, imports, None)
 }
 
@@ -834,7 +909,7 @@ pub fn files_with_totes(
     modules: &[String],
     imports: Option<&[Vec<usize>]>,
     below: Option<&[HashSet<usize>]>,
-) -> Vec<(String, Span)> {
+) -> Vec<(Message, Span)> {
     files_seeing(files, modules, imports, below).0
 }
 
@@ -846,9 +921,18 @@ pub fn files_seeing(
     modules: &[String],
     imports: Option<&[Vec<usize>]>,
     below: Option<&[HashSet<usize>]>,
-) -> (Vec<(String, Span)>, Vec<HashMap<String, String>>) {
-    let (errors, seeing, _) =
-        qualify(files, modules, imports, below, false, None, None, &mut Vec::new());
+) -> (Vec<(Message, Span)>, Vec<HashMap<String, String>>) {
+    let (errors, seeing, _) = qualify(
+        files,
+        modules,
+        imports,
+        below,
+        false,
+        None,
+        None,
+        &mut Vec::new(),
+        &mut Vec::new(),
+    );
     (errors, seeing)
 }
 
@@ -865,11 +949,21 @@ pub fn files_before_macros(
     below: Option<&[HashSet<usize>]>,
     spell: Option<Spell>,
 ) -> (
-    Vec<(String, Span)>,
+    Vec<(Message, Span)>,
     Vec<HashMap<String, String>>,
     Vec<MissingImport>,
 ) {
-    qualify(files, modules, imports, below, true, spell, None, &mut Vec::new())
+    qualify(
+        files,
+        modules,
+        imports,
+        below,
+        true,
+        spell,
+        None,
+        &mut Vec::new(),
+        &mut Vec::new(),
+    )
 }
 
 /// [`files_before_macros`], with `lists[i]` the imports of the file `i`: an import with a list
@@ -885,7 +979,7 @@ pub fn files_before_macros_listed(
     bare: &[bool],
     quoted: &Quoted,
 ) -> (
-    Vec<(String, Span)>,
+    Vec<(Message, Span)>,
     Vec<HashMap<String, String>>,
     Vec<MissingImport>,
 ) {
@@ -898,13 +992,12 @@ pub fn files_before_macros_listed(
         spell,
         Some((lists, bare, quoted)),
         &mut Vec::new(),
+        &mut Vec::new(),
     )
 }
 
-/// [`files_with_totes`] on the output of the macros. A name an expansion wrote carries the
-/// file of its macro or syntax ([`SurfaceTerm::origin`]) and means what it means there: the
-/// file of the call need not import the file that declares it, if that file does; every
-/// other occurrence is held to the imports of the file it is written in.
+/// [`files_with_totes`] on macro output. Resolved references retain their
+/// declaration identities; source spellings obey the imports of this file.
 /// Also gives the names one import would make seen ([`MissingImport`]).
 pub fn files_after_macros(
     files: &mut [Vec<Stmt>],
@@ -912,15 +1005,65 @@ pub fn files_after_macros(
     imports: Option<&[Vec<usize>]>,
     below: Option<&[HashSet<usize>]>,
     spell: Option<Spell>,
-) -> (Vec<(String, Span)>, Vec<MissingImport>) {
-    let (errors, _, missing) =
-        qualify(files, modules, imports, below, false, spell, None, &mut Vec::new());
+) -> (Vec<(Message, Span)>, Vec<MissingImport>) {
+    let (errors, _, missing) = qualify(
+        files,
+        modules,
+        imports,
+        below,
+        false,
+        spell,
+        None,
+        &mut Vec::new(),
+        &mut Vec::new(),
+    );
     (errors, missing)
 }
 
-/// The names the quotes of each file write, as the pass before the macros reads them: the pass
-/// after them holds the file's import lists to them too.
-pub type Quoted = std::cell::RefCell<Vec<Vec<(String, Span)>>>;
+/// Source references captured before macro expansion. Import lists are checked
+/// against these uses without resolving the expanded references again.
+pub type Quoted = std::cell::RefCell<Vec<Vec<SourceUse>>>;
+
+#[derive(Clone, Debug)]
+pub struct SourceUse {
+    path: String,
+    written: String,
+    span: Span,
+    /// A name read after expansion: it keeps a listed name used, but asks for no
+    /// name to be listed (the source's own uses do).
+    keeps_only: bool,
+}
+
+/// Adds to `quoted` the macro calls a macro's output makes (`CALLED` and the macro's name):
+/// the file, the name, and where. They are expanded away before the pass after expansion
+/// reads the file, so it does not see them.
+pub fn quote_written(quoted: &Quoted, written: impl IntoIterator<Item = (usize, String, Span)>) {
+    let mut quoted = quoted.borrow_mut();
+    for (file, name, span) in written {
+        if quoted.len() <= file {
+            quoted.resize(file + 1, Vec::new());
+        }
+        let uses = &mut quoted[file];
+        if !uses.iter().any(|u| u.span == span) {
+            uses.push(SourceUse {
+                path: name.clone(),
+                written: name,
+                span,
+                keeps_only: true,
+            });
+        }
+    }
+}
+impl SourceUse {
+    pub fn new(path: String, written: String, span: Span) -> Self {
+        Self {
+            path,
+            written,
+            span,
+            keeps_only: false,
+        }
+    }
+}
 
 /// The title of the edit that writes an import's list of the names the file uses through it;
 /// `tauto lint --fix` applies the edits with it.
@@ -959,12 +1102,15 @@ pub fn files_after_macros_listed(
     bare: &[bool],
     quoted: &Quoted,
 ) -> (
-    Vec<(String, Span)>,
+    Vec<(Message, Span)>,
+    Vec<HashMap<String, String>>,
     Vec<MissingImport>,
     Vec<(Span, super::Fix)>,
+    Vec<(Message, Span)>,
 ) {
     let mut fixes = Vec::new();
-    let (errors, _, missing) = qualify(
+    let mut warnings = Vec::new();
+    let (errors, seeing, missing) = qualify(
         files,
         modules,
         imports,
@@ -973,8 +1119,9 @@ pub fn files_after_macros_listed(
         spell,
         Some((lists, bare, quoted)),
         &mut fixes,
+        &mut warnings,
     );
-    (errors, missing, fixes)
+    (errors, seeing, missing, fixes, warnings)
 }
 
 /// Whether `module` is a file of the prelude (`std::prelude::Os`) that declares `item`: the
@@ -1013,29 +1160,54 @@ fn check_import_lists(
     ctor_type: &[HashMap<String, String>],
     language: &HashSet<String>,
     lists: &[ImportList],
-    used: &[(String, Span)],
-    errors: &mut Vec<(String, Span)>,
+    used: &[SourceUse],
+    errors: &mut Vec<(Message, Span)>,
+    warnings: &mut Vec<(Message, Span)>,
     fixes: &mut Vec<(Span, super::Fix)>,
 ) {
+    let public_source_item = |file: usize, item: &str| {
+        let full = format!("{}{SEPARATOR}{item}", modules[file]);
+        files[file].iter().any(|statement| {
+            if matches!(statement.vis(), Some(super::program::Vis::Private)) {
+                return false;
+            }
+            let mut found = false;
+            declared(statement, &mut |name| {
+                found |= !private[file].contains(name)
+                    && (bare(name) == full
+                        || bare(name)
+                            .strip_prefix(&full)
+                            .is_some_and(|tail| tail.starts_with(SEPARATOR)));
+            });
+            found
+        })
+    };
+    let keeps_only: HashSet<Span> = used
+        .iter()
+        .filter(|u| u.keeps_only)
+        .map(|u| u.span)
+        .collect();
     // The item, the name as read and where it is used, by the imported file.
     let mut by_file: HashMap<usize, Vec<(String, String, Span)>> = HashMap::new();
-    for (n, span) in used {
+    for usage in used {
+        let n = &usage.path;
+        let span = &usage.span;
         // A macro or a syntax the file calls: the file it reaches that declares it.
         if let Some(called) = n.strip_prefix(CALLED) {
             let declares = |j: usize| {
                 files[j].iter().any(|s| match s {
                     Stmt::Macro { name, .. } | Stmt::Syntax { name, .. } => name == called,
                     _ => false,
-                })
-                    || owners.get(called).is_some_and(|o| o.contains(&j) && !private[j].contains(called))
+                }) || owners
+                    .get(called)
+                    .is_some_and(|o| o.contains(&j) && !private[j].contains(called))
+                    || public_source_item(j, called)
             };
             // The file's own macro is its own.
             let own = files[i].iter().any(|s| {
                 matches!(s, Stmt::Macro { name, .. } | Stmt::Syntax { name, .. } if name == called)
             }) || owners.get(called).is_some_and(|o| o.contains(&i));
-            if !own
-                && let Some(j) = reach[i].iter().copied().find(|&j| declares(j))
-            {
+            if !own && let Some(j) = reach[i].iter().copied().find(|&j| declares(j)) {
                 by_file
                     .entry(j)
                     .or_default()
@@ -1045,6 +1217,21 @@ fn check_import_lists(
         }
         let effect = n.starts_with(EFFECT);
         let b = bare(n);
+        // Source uses captured before expansion can name a constructor that a
+        // syntax declaration subsequently creates. Its owning type determines
+        // the import item even after the constructor carries a qualified ID.
+        if !effect && !b.contains(SEPARATOR) && !owners.contains_key(n.as_str()) {
+            let mut candidates = reach[i]
+                .iter()
+                .filter_map(|&j| ctor_type[j].get(b).map(|owner| (j, owner)));
+            if let (Some((j, owner)), None) = (candidates.next(), candidates.next()) {
+                by_file
+                    .entry(j)
+                    .or_default()
+                    .push((owner.clone(), usage.written.clone(), *span));
+                continue;
+            }
+        }
         // A full name: the file whose module it starts with, the longest one.
         let by_module = reach[i]
             .iter()
@@ -1062,16 +1249,15 @@ fn check_import_lists(
                 let Some(o) = owners.get(n.as_str()) else {
                     // A name of the prelude the file sees only through the import of its
                     // file (`std::prelude::Os`) is held to that import.
-                    let files_of = hidden_prelude().get(n.as_str()).or_else(|| {
-                        bare_file
-                            .then(core_prelude)
-                            .and_then(|c| c.get(n.as_str()))
-                    });
+                    let files_of = hidden_prelude()
+                        .get(n.as_str())
+                        .or_else(|| bare_file.then(core_prelude).and_then(|c| c.get(n.as_str())));
                     let from = files_of
                         .and_then(|fs| {
-                            reach[i].iter().copied().find(|&j| {
-                                fs.iter().any(|f| modules[j] == prelude_file_module(f))
-                            })
+                            reach[i]
+                                .iter()
+                                .copied()
+                                .find(|&j| fs.iter().any(|f| modules[j] == prelude_file_module(f)))
                         })
                         // A type of the language a file it reaches declares (`Text` of
                         // `std::Text`).
@@ -1081,10 +1267,11 @@ fn check_import_lists(
                             })
                         });
                     if let Some(j) = from {
-                        by_file
-                            .entry(j)
-                            .or_default()
-                            .push((prelude_item(n), b.to_string(), *span));
+                        by_file.entry(j).or_default().push((
+                            prelude_item(n),
+                            usage.written.clone(),
+                            *span,
+                        ));
                     }
                     continue;
                 };
@@ -1112,15 +1299,15 @@ fn check_import_lists(
         by_file
             .entry(j)
             .or_default()
-            .push((item, b.to_string(), *span));
+            .push((item, usage.written.clone(), *span));
     }
     // What the imported file declares for other files, by the item a list names it with, and
     // its macros and syntaxes, which this pass does not see used.
     let exported = |j: usize, item: &str| {
-        let public = |k: &str| {
-            owners.get(k).is_some_and(|o| o.contains(&j)) && !private[j].contains(k)
-        };
+        let public =
+            |k: &str| owners.get(k).is_some_and(|o| o.contains(&j)) && !private[j].contains(k);
         public(item)
+            || public_source_item(j, item)
             || public(&format!("{EFFECT}{item}"))
             || owners.iter().any(|(k, o)| {
                 o.contains(&j)
@@ -1145,18 +1332,18 @@ fn check_import_lists(
         };
         let used_here = by_file.get(&j).map(Vec::as_slice).unwrap_or(&[]);
         let mut wanted: Vec<String> = used_here.iter().map(|(item, _, _)| item.clone()).collect();
-        let mut found: Vec<(String, Span)> = Vec::new();
+        let mut found: Vec<(Message, Span)> = Vec::new();
+        let mut unused: Vec<(Message, Span)> = Vec::new();
         if let Some(names) = &import.names {
             for (item, name, span) in used_here {
-                if !names.iter().any(|(l, _)| l == item) {
+                if !keeps_only.contains(span) && !names.iter().any(|(l, _)| l == item) {
                     found.push((
                         msg!(
                             "surface-import-not-listed",
                             name = name.as_str(),
                             item = item.as_str(),
                             spelling = import.spelling.as_str()
-                        )
-                        .to_string(),
+                        ),
                         *span,
                     ));
                 }
@@ -1171,18 +1358,18 @@ fn check_import_lists(
                             "surface-import-listed-unknown",
                             name = l.as_str(),
                             spelling = import.spelling.as_str()
-                        )
-                        .to_string(),
+                        ),
                         *span,
                     ));
                 } else if !used_here.iter().any(|(item, _, _)| item == l) {
-                    found.push((
+                    // A name listed but not used changes nothing the file means: a warning.
+                    // The standard library keeps its lists exact, so there it is an error.
+                    unused.push((
                         msg!(
                             "surface-import-listed-unused",
                             name = l.as_str(),
                             spelling = import.spelling.as_str()
-                        )
-                        .to_string(),
+                        ),
                         *span,
                     ));
                 }
@@ -1209,9 +1396,19 @@ fn check_import_lists(
             };
             // The edit is the fix of the import and of each error its list has.
             fixes.push((import.span, fix.clone()));
-            fixes.extend(found.iter().map(|(_, at)| (*at, fix.clone())));
+            fixes.extend(
+                found
+                    .iter()
+                    .chain(&unused)
+                    .map(|(_, at)| (*at, fix.clone())),
+            );
         }
         errors.extend(found);
+        if is_std(&modules[i]) {
+            errors.extend(unused);
+        } else {
+            warnings.extend(unused);
+        }
     }
 }
 
@@ -1236,8 +1433,9 @@ fn qualify(
     spell: Option<Spell>,
     lists: Option<(&[Vec<ImportList>], &[bool], &Quoted)>,
     fixes: &mut Vec<(Span, super::Fix)>,
+    warnings: &mut Vec<(Message, Span)>,
 ) -> (
-    Vec<(String, Span)>,
+    Vec<(Message, Span)>,
     Vec<HashMap<String, String>>,
     Vec<MissingImport>,
 ) {
@@ -1274,7 +1472,7 @@ fn qualify(
     // means the sort, whatever else the importer reads.
     prelude.extend(SORTS.iter().map(|n| n.to_string()));
     let mut owners: HashMap<String, Vec<usize>> = HashMap::new();
-    let mut written: Vec<String> = Vec::new();
+    let mut written: Vec<(usize, String)> = Vec::new();
     // The language's types as the standard library declares them: they are
     // the prelude's, by their full names too.
     let mut language: Vec<String> = Vec::new();
@@ -1299,7 +1497,7 @@ fn qualify(
                     return;
                 }
                 if is_full(n, modules) {
-                    written.push(n.to_string());
+                    written.push((i, n.to_string()));
                     return;
                 }
                 if ty.is_some_and(|t| {
@@ -1321,6 +1519,24 @@ fn qualify(
     let reach = reaches(modules, imports);
     // A file the program reads only because a file importing this one
     // reads it too: what this file's names mean does not depend on it.
+    // Whether `j` imports `i`, directly or through other files: `j` is one of
+    // the importers of `i`.
+    let imports_through = |j: usize, i: usize| {
+        let mut seen = vec![false; reach.len()];
+        let mut stack = vec![j];
+        while let Some(k) = stack.pop() {
+            if std::mem::replace(&mut seen[k], true) {
+                continue;
+            }
+            for &m in &reach[k] {
+                if m == i {
+                    return true;
+                }
+                stack.push(m);
+            }
+        }
+        false
+    };
     let hidden = |i: usize, j: usize| {
         imports.is_some()
             && i != j
@@ -1362,6 +1578,11 @@ fn qualify(
             let mut types: HashMap<String, Vec<String>> = HashMap::new();
             for s in stmts {
                 ctors_of(s, &mut |ty, c| {
+                    let c = c
+                        .strip_prefix(ty)
+                        .and_then(|rest| rest.strip_prefix(SEPARATOR))
+                        .filter(|leaf| !leaf.contains(SEPARATOR))
+                        .unwrap_or(c);
                     if c == ty || c.contains(SEPARATOR) || shared[i].contains_key(c) {
                         return;
                     }
@@ -1467,12 +1688,19 @@ fn qualify(
         flattened.extend(record_bases(files));
         return (flattened, vec![HashMap::new(); files.len()], Vec::new());
     }
+    // Renaming depends on declarations and import reachability, which stay
+    // fixed while each file's reference environment is built.
+    let renamed: HashSet<&str> = owners
+        .iter()
+        .filter(|(name, from)| renamed(name, from))
+        .map(|(name, _)| name.as_str())
+        .collect();
     let mut by_full: HashMap<String, String> = HashMap::new();
     for (n, o) in &owners {
         for &i in o {
             let mark = if n.starts_with(EFFECT) { EFFECT } else { "" };
             for f in fulls(i, n) {
-                let to = if renamed(n, o) {
+                let to = if renamed.contains(n.as_str()) {
                     f.clone()
                 } else {
                     bare(n).to_string()
@@ -1488,8 +1716,8 @@ fn qualify(
             bare(n).to_string(),
         );
     }
-    for n in written {
-        by_full.insert(n.clone(), bare(&n).to_string());
+    for (_, n) in &written {
+        by_full.insert(n.clone(), bare(n).to_string());
     }
     let language_full: HashSet<String> = language.iter().cloned().collect();
     for n in language {
@@ -1497,12 +1725,20 @@ fn qualify(
         by_full.insert(n, to);
     }
     let after = |i: usize, n: &str| match owners.get(n) {
-        Some(o) if renamed(n, o) => full(i, n),
+        Some(_) if renamed.contains(n) => full(i, n),
         _ => n.to_string(),
     };
+    // The functions and theorems of modules (`M::f`): those of a module written in the file
+    // and those already flattened to their full names, as the modules are before this pass. A
+    // reference to one is the declaration's own name, even when a type named `M` is renamed
+    // because another file has a constructor of that name.
     let module_fns: HashSet<String> = files
         .iter()
-        .flat_map(|stmts| super::modules::declared(stmts))
+        .flat_map(|stmts| {
+            let mut names = super::modules::declared(stmts);
+            names.extend(super::modules::declared_flat(stmts));
+            names
+        })
         .collect();
     let mut ctors = prelude_ctors().clone();
     // The constructors without fields, by those names: a bare name in a
@@ -1594,8 +1830,7 @@ fn qualify(
         .enumerate()
         .map(|(j, stmts)| models_in(j, stmts, modules))
         .collect();
-    // What each file's names mean, every file's first: a name a macro wrote is
-    // read as the file of its macro reads it ([`SurfaceTerm::origin`]).
+    // Source meanings for each file's import environment.
     // What each file's imports with lists bring of each file, by the items of the lists; a
     // file imported without a list at least once brings everything (no entry).
     let brings: Vec<HashMap<usize, HashSet<String>>> = (0..files.len())
@@ -1644,13 +1879,18 @@ fn qualify(
     // non-core prelude name the file imports and declares too), the
     // declaration is still the file's own.
     let mut all_declares: Vec<HashMap<String, String>> = Vec::new();
+    let mut all_prelude_files: Vec<HashMap<String, String>> = Vec::new();
     for i in 0..files.len() {
         let mut names: HashMap<String, Meaning> = HashMap::new();
         let mut declares: HashMap<String, String> = HashMap::new();
+        // The names the file sees both from the prelude file it imports
+        // and from a declaration of its own or of its imports, with that
+        // prelude file.
+        let mut prelude_files: HashMap<String, String> = HashMap::new();
         let mut unseen: HashSet<String> = HashSet::new();
         let mut plain: HashMap<String, String> = HashMap::new();
         for (n, all) in &owners {
-            if not_imported(i, n, all) {
+            if not_imported(i, n, all) || (n.starts_with(EFFECT) && unreached(i, n, all)) {
                 names.insert(
                     n.clone(),
                     Meaning::NotImported(
@@ -1661,7 +1901,7 @@ fn qualify(
                 );
                 continue;
             }
-            if !renamed(n, all) {
+            if !renamed.contains(n.as_str()) {
                 // A name that keeps its short name is still the declaration
                 // of the one file this one sees that declares it: a macro of
                 // this file that writes it means that one wherever it is
@@ -1754,7 +1994,8 @@ fn qualify(
                             .filter(|&j| {
                                 (same_tote(&modules[i], &modules[j])
                                     && !is_std(&modules[j])
-                                    && !reach.iter().any(|r| r.contains(&i) && r.contains(&j)))
+                                    && !reach.iter().any(|r| r.contains(&i) && r.contains(&j))
+                                    && !imports_through(j, i))
                                     || below.is_some_and(|b| b[i].contains(&j))
                             })
                             .collect()
@@ -1834,11 +2075,40 @@ fn qualify(
             };
             names.insert(n.clone(), meaning);
         }
+        for (name, effect_owners) in owners.iter().filter(|(name, _)| name.starts_with(EFFECT)) {
+            for &owner in effect_owners {
+                if imports.is_some() && owner != i && !reach[i].contains(&owner) {
+                    for full in fulls(owner, name) {
+                        names.insert(
+                            format!("{EFFECT}{full}"),
+                            Meaning::NotImported(
+                                modules[owner].clone(),
+                                spelling(spell, modules, i, owner),
+                                true,
+                            ),
+                        );
+                    }
+                }
+            }
+        }
         // A prelude file that is not core is seen through its import only
         // (`import std::prelude::Os`): a name only it declares, written
         // without the import, is not visible; with the import, a file's own
         // or imported declaration of the same name is ambiguous with it.
         if imports.is_some() {
+            // A preceding binding pass may have given a constructor its owner's
+            // qualified name. Its source alias remains visible with that owner.
+            let mut visible_constructors = HashSet::new();
+            for j in std::iter::once(i).chain(reach[i].iter().copied()) {
+                for statement in &files[j] {
+                    ctors_of(statement, &mut |family, constructor| {
+                        if j == i || (!private_to(i, j, family) && !unlisted(i, j, short(family))) {
+                            visible_constructors
+                                .insert(constructor.rsplit(SEPARATOR).next().unwrap().to_string());
+                        }
+                    });
+                }
+            }
             // What the file declares itself, a module by its name: its own, whatever the
             // prelude file it does not import declares by that name.
             let own: HashSet<&str> = owners
@@ -1878,18 +2148,13 @@ fn qualify(
                     (None, false)
                         if owners.get(n).is_some_and(|all| {
                             all.iter().any(|&j| {
-                                reach[i].contains(&j)
-                                    && !private_to(i, j, n)
-                                    && !unlisted(i, j, n)
+                                reach[i].contains(&j) && !private_to(i, j, n) && !unlisted(i, j, n)
                             })
                         }) => {}
                     // A constructor the file sees by that name (`I64` of a type `Width`)
                     // is read as that constructor, as it is where the prelude file is
                     // imported.
-                    (None, false)
-                        if std::iter::once(i)
-                            .chain(reach[i].iter().copied())
-                            .any(|j| ctor_type[j].contains_key(n.as_str())) => {}
+                    (None, false) if visible_constructors.contains(n.as_str()) => {}
                     (None, false) => {
                         names.insert(
                             n.clone(),
@@ -1900,14 +2165,16 @@ fn qualify(
                             ),
                         );
                     }
-                    (Some(Meaning::To(to)), true) if !to.starts_with("std::") => {
+                    (Some(Meaning::To(to)), true) if !is_library_name(to) => {
                         let both = vec![std::mem::take(to), prelude_full];
                         names.insert(n.clone(), Meaning::Ambiguous(both));
+                        prelude_files.insert(n.clone(), prelude_file_module(&files[0]));
                     }
                     (Some(Meaning::Ambiguous(all)), true)
-                        if !all.iter().any(|a| a.starts_with("std::")) =>
+                        if !all.iter().any(|a| is_library_name(a)) =>
                     {
                         all.push(prelude_full);
+                        prelude_files.insert(n.clone(), prelude_file_module(&files[0]));
                     }
                     _ => {}
                 }
@@ -1917,16 +2184,15 @@ fn qualify(
         all_unseen.push(unseen);
         all_plain.push(plain);
         all_declares.push(declares);
+        all_prelude_files.push(prelude_files);
     }
     // The global names each file writes, as read, when its import lists are checked.
-    let used: Vec<std::cell::RefCell<Vec<(String, Span)>>> =
+    let used: Vec<std::cell::RefCell<Vec<SourceUse>>> =
         (0..files.len()).map(|_| Default::default()).collect();
     for (i, stmts) in files.iter_mut().enumerate() {
         let names = &all_names[i];
         let plain = std::mem::take(&mut all_plain[i]);
         let r = Renamer {
-            origins: &all_names,
-            origin: Default::default(),
             names,
             by_full: &by_full,
             module_fns: &module_fns,
@@ -1943,21 +2209,42 @@ fn qualify(
             seen: None,
             missing: Some((&missing, i)),
             declares: Some(&all_declares[i]),
+            prelude_files: Some(&all_prelude_files[i]),
             keep_prelude,
-            here: i,
             used: lists.map(|_| &used[i]),
             quoting: Default::default(),
         };
         for s in stmts.iter_mut() {
             r.top(s);
         }
+        let library = crate::bindings::library_bindings();
+        let implicit = library
+            .bindings()
+            .filter(|(name, _)| {
+                let item = prelude_item(name);
+                !names.contains_key(*name)
+                    && !names.contains_key(&item)
+                    && !hidden_prelude().contains_key(*name)
+                    && !hidden_prelude().contains_key(&item)
+                    && (!bare_at(i)
+                        || (!core_prelude().contains_key(*name)
+                            && !core_prelude().contains_key(&item)))
+            })
+            .map(|(name, _)| (name.to_string(), name.to_string()));
         seeing.push(
-            names
-                .iter()
-                .filter_map(|(n, m)| match m {
-                    Meaning::To(to) => Some((n.clone(), to.clone())),
-                    Meaning::Ambiguous(_) | Meaning::NotImported(..) => None,
-                })
+            implicit
+                .chain(names.iter().flat_map(|(n, m)| {
+                    match m {
+                        Meaning::To(to) => vec![(n.clone(), to.clone()), (to.clone(), to.clone())],
+                        // A shared short spelling hides neither declaration's
+                        // full path from the file's reference environment.
+                        Meaning::Ambiguous(all) => all
+                            .iter()
+                            .map(|full| (full.clone(), full.clone()))
+                            .collect(),
+                        Meaning::NotImported(..) => Vec::new(),
+                    }
+                }))
                 // A module function of the prelude that no file this one
                 // reaches models (`Text::of_nat` without `std::Text`) is the
                 // builtin: a macro of the file that writes it means that,
@@ -1967,18 +2254,34 @@ fn qualify(
                         .iter()
                         .filter(|_| keep_prelude && imports.is_some())
                         .filter(|n| {
+                            !matches!(
+                                names.get(*n),
+                                Some(Meaning::NotImported(..) | Meaning::Ambiguous(_))
+                            )
+                        })
+                        .filter(|n| {
                             !std::iter::once(&i)
                                 .chain(&reach[i])
                                 .any(|&j| modelled[j].contains(*n))
                         })
                         .map(|n| (n.clone(), format!("{PRELUDE_MODULE}{SEPARATOR}{n}"))),
                 )
+                .chain(written.iter().filter_map(|(owner, name)| {
+                    let local = bare(name)
+                        .strip_prefix(&format!("{}{SEPARATOR}", modules[*owner]))
+                        .unwrap_or(bare(name));
+                    (*owner == i
+                        || (reach[i].contains(owner)
+                            && !private_to(i, *owner, name)
+                            && !unlisted(i, *owner, local)))
+                    .then(|| (name.clone(), name.clone()))
+                }))
                 .chain(plain)
                 .collect(),
         );
     }
-    // Before the macros, only the names the quotes write are kept: the macros turn a quote into
-    // the syntax it builds, and its names are read where the macro is expanded.
+    // Capture source uses before expansion. A generated reference belongs to the
+    // macro definition's imports; it does not add an import use at the call site.
     if let Some(quoted) = quoted {
         let mut quoted = quoted.borrow_mut();
         quoted.resize(files.len(), Vec::new());
@@ -2006,6 +2309,7 @@ fn qualify(
                 file_lists,
                 &used[i].borrow(),
                 &mut errors,
+                warnings,
                 fixes,
             );
         }
@@ -2026,7 +2330,7 @@ const RECORD_BASE: &str = "base@record";
 /// the passes that run a program get a literal they already read. Returns
 /// the literals whose name is not a struct's, and those whose fields are all
 /// written, where `..b` would be read for nothing.
-pub fn record_bases(files: &mut [Vec<Stmt>]) -> Vec<(String, Span)> {
+pub fn record_bases(files: &mut [Vec<Stmt>]) -> Vec<(Message, Span)> {
     // A struct a module declares is also named with its module, `M::P`.
     fn structs(stmts: &[Stmt], module: &str, out: &mut HashMap<String, Vec<String>>) {
         for s in stmts {
@@ -2038,7 +2342,7 @@ pub fn record_bases(files: &mut [Vec<Stmt>]) -> Vec<(String, Span)> {
                         if !module.is_empty() {
                             out.insert(format!("{module}::{}", d.name), names.clone());
                         }
-                        out.insert(d.name.clone(), names);
+                        out.insert(d.name.to_string(), names);
                     }
                 }
                 Stmt::Mutual { items, .. } => structs(items, module, out),
@@ -2131,6 +2435,9 @@ pub fn record_bases(files: &mut [Vec<Stmt>]) -> Vec<(String, Span)> {
         }
     }
     errors
+        .into_iter()
+        .map(|(t, s): (String, Span)| (t.into(), s))
+        .collect()
 }
 
 /// A file may not declare a name its imports already declare, directly or
@@ -2146,7 +2453,7 @@ fn redeclared(
     reach: &[HashSet<usize>],
     private: &[HashSet<String>],
     ctors: &[HashSet<String>],
-) -> Vec<(String, Span)> {
+) -> Vec<(Message, Span)> {
     let mut out = Vec::new();
     for (i, stmts) in files.iter().enumerate() {
         for s in stmts {
@@ -2190,7 +2497,9 @@ fn redeclared(
             }
         }
     }
-    out
+    out.into_iter()
+        .map(|(t, s): (String, Span)| (t.into(), s))
+        .collect()
 }
 
 fn stmt_span(s: &Stmt) -> Span {
@@ -2215,7 +2524,7 @@ fn stmt_span(s: &Stmt) -> Span {
 /// builtin's machine word (`u64`, `nat`) is the model's number (`U64`,
 /// `Nat`); anything else (an `Option` added or dropped, `i64` for
 /// `Ordering`) is a different function and takes a name of its own. Returns each model that differs.
-pub fn std_models(files: &[Vec<Stmt>], modules: &[String]) -> Vec<(String, Span)> {
+pub fn std_models(files: &[Vec<Stmt>], modules: &[String]) -> Vec<(Message, Span)> {
     fn last(name: &str) -> &str {
         name.rsplit_once(SEPARATOR).map_or(name, |(_, n)| n)
     }
@@ -2274,7 +2583,7 @@ pub fn std_models(files: &[Vec<Stmt>], modules: &[String]) -> Vec<(String, Span)
     static BUILTINS: OnceLock<HashMap<String, (Vec<String>, String)>> = OnceLock::new();
     let builtins = BUILTINS.get_or_init(|| {
         let mut builtins = HashMap::new();
-        if let Ok(program) = parse_program_as_written(crate::nibstd::PRELUDE) {
+        if let Ok(program) = super::program::prelude_as_written(crate::nibstd::PRELUDE) {
             let mut found = Vec::new();
             program.stmts.iter().for_each(|s| fns(s, "", &mut found));
             for (name, f) in found {
@@ -2313,6 +2622,9 @@ pub fn std_models(files: &[Vec<Stmt>], modules: &[String]) -> Vec<(String, Span)
         }
     }
     errors
+        .into_iter()
+        .map(|(t, s): (String, Span)| (t.into(), s))
+        .collect()
 }
 
 /// The `extern` functions of a tote are its own: a file of another tote may
@@ -2322,7 +2634,7 @@ pub fn std_models(files: &[Vec<Stmt>], modules: &[String]) -> Vec<(String, Span)
 /// program read without a manifest), whose externs anyone may call. Runs on
 /// the output of `files`, after the macros, so a macro of the tote cannot
 /// hand its extern to another tote either. Returns each call from outside.
-pub fn sealed_externs(files: &[Vec<Stmt>], totes: &[Option<String>]) -> Vec<(String, Span)> {
+pub fn sealed_externs(files: &[Vec<Stmt>], totes: &[Option<String>]) -> Vec<(Message, Span)> {
     fn externs(s: &Stmt, out: &mut dyn FnMut(&str)) {
         match s {
             Stmt::Extern { fns, .. } => fns.iter().for_each(|f| out(&f.name)),
@@ -2347,8 +2659,6 @@ pub fn sealed_externs(files: &[Vec<Stmt>], totes: &[Option<String>]) -> Vec<(Str
     let errors = std::cell::RefCell::new(Vec::new());
     for (stmts, tote) in files.iter().zip(totes) {
         let r = Renamer {
-            origins: &[],
-            origin: Default::default(),
             names: &names,
             by_full: &by_full,
             module_fns: &module_fns,
@@ -2365,8 +2675,8 @@ pub fn sealed_externs(files: &[Vec<Stmt>], totes: &[Option<String>]) -> Vec<(Str
             seen: None,
             missing: None,
             declares: None,
+            prelude_files: None,
             keep_prelude: false,
-            here: 0,
             used: None,
             quoting: Default::default(),
         };
@@ -2388,6 +2698,9 @@ pub struct Seen {
     /// (`T::rec`), with its type.
     ctors: HashMap<String, (usize, Vis, String)>,
     effects: HashMap<String, (usize, Vis)>,
+    /// Each class by its last name segment, with every file that declares
+    /// one of that name.
+    classes: HashMap<String, Vec<(usize, Vis)>>,
     /// Each field name, with every type that has it: a field of a struct or
     /// an enum, or a parameter of an inductive type's constructor.
     fields: HashMap<String, Vec<(usize, Vis, String)>>,
@@ -2416,19 +2729,27 @@ impl Seen {
         match s {
             Stmt::Fn(f) => insert(&mut self.names, &f.name, f.vis),
             Stmt::Theorem(d) | Stmt::Def(d) => insert(&mut self.names, &d.name, d.vis),
-            Stmt::Class(c) => insert(&mut self.names, &c.name, c.vis),
+            Stmt::Class(c) => {
+                insert(&mut self.names, &c.name, c.vis);
+                self.classes
+                    .entry(last_segment(&c.name).to_string())
+                    .or_default()
+                    .push((file, c.vis));
+            }
             Stmt::Struct(d) | Stmt::Enum(d) => {
                 insert(&mut self.names, &d.name, d.vis);
                 for c in &d.constructors {
-                    self.ctors
-                        .entry(c.name.clone())
-                        .or_insert((file, d.vis, d.name.clone()));
+                    self.ctors.entry(c.name.to_string()).or_insert((
+                        file,
+                        d.vis,
+                        d.name.to_string(),
+                    ));
                     for (f, _) in &c.fields {
                         let Some(f) = f else { continue };
-                        self.fields.entry(f.clone()).or_default().push((
+                        self.fields.entry(f.to_string()).or_default().push((
                             file,
                             d.vis,
-                            d.name.clone(),
+                            d.name.to_string(),
                         ));
                     }
                 }
@@ -2436,30 +2757,36 @@ impl Seen {
             Stmt::Inductive(d) => {
                 insert(&mut self.names, &d.name, d.vis);
                 for c in &d.constructors {
-                    self.ctors
-                        .entry(c.name.clone())
-                        .or_insert((file, d.vis, d.name.clone()));
+                    self.ctors.entry(c.name.to_string()).or_insert((
+                        file,
+                        d.vis,
+                        d.name.to_string(),
+                    ));
                     // `x.f` reads a constructor's parameter `f` as a field.
                     for (f, _) in &c.params {
-                        self.fields.entry(f.clone()).or_default().push((
+                        self.fields.entry(f.to_string()).or_default().push((
                             file,
                             d.vis,
-                            d.name.clone(),
+                            d.name.to_string(),
                         ));
                     }
                 }
                 for g in GENERATED {
                     let n = format!("{}{g}", d.name);
                     if TAKES_APART.contains(g) {
-                        self.ctors.entry(n).or_insert((file, d.vis, d.name.clone()));
+                        self.ctors
+                            .entry(n)
+                            .or_insert((file, d.vis, d.name.to_string()));
                     } else {
                         insert(&mut self.names, &n, d.vis);
                     }
                 }
             }
-            Stmt::Effect(e) if e.set.is_none() => {
+            Stmt::Effect(e) => {
                 insert(&mut self.names, &format!("{EFFECT}{}", e.name), e.vis);
-                self.effects.entry(e.name.clone()).or_insert((file, e.vis));
+                self.effects
+                    .entry(e.name.to_string())
+                    .or_insert((file, e.vis));
             }
             Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => {
                 items.iter().for_each(|i| self.add(i, file))
@@ -2480,11 +2807,12 @@ fn prelude_seen() -> &'static Seen {
             names: HashMap::new(),
             ctors: HashMap::new(),
             effects: HashMap::new(),
+            classes: HashMap::new(),
             fields: HashMap::new(),
             modules: Vec::new(),
         };
         for text in [crate::nibstd::PRELUDE, crate::nibstd::KERNEL] {
-            if let Ok(program) = parse_program_as_written(text) {
+            if let Ok(program) = super::program::prelude_as_written(text) {
                 for s in &program.stmts {
                     seen.add(s, PRELUDE_FILE);
                 }
@@ -2505,18 +2833,46 @@ fn prelude_seen() -> &'static Seen {
 /// the same rule. Runs on the output of `files`, after the macros, so what a
 /// macro writes into another file is held to that file. Returns each use
 /// that is not allowed.
-pub fn sealed_visibility(files: &[Vec<Stmt>], modules: &[String]) -> Vec<(String, Span)> {
+pub fn sealed_visibility(files: &[Vec<Stmt>], modules: &[String]) -> Vec<(Message, Span)> {
+    visibility(files, modules, false)
+}
+
+/// Checks source aliases before expansion replaces their uses with member effects.
+pub fn effect_set_visibility(files: &[Vec<Stmt>], modules: &[String]) -> Vec<(Message, Span)> {
+    visibility(files, modules, true)
+}
+
+fn visibility(files: &[Vec<Stmt>], modules: &[String], aliases_only: bool) -> Vec<(Message, Span)> {
     let prelude = prelude_seen();
     let mut seen = Seen {
         names: HashMap::new(),
-        ctors: prelude.ctors.clone(),
-        effects: prelude.effects.clone(),
-        fields: prelude.fields.clone(),
+        ctors: if aliases_only {
+            HashMap::new()
+        } else {
+            prelude.ctors.clone()
+        },
+        effects: if aliases_only {
+            HashMap::new()
+        } else {
+            prelude.effects.clone()
+        },
+        classes: if aliases_only {
+            HashMap::new()
+        } else {
+            prelude.classes.clone()
+        },
+        fields: if aliases_only {
+            HashMap::new()
+        } else {
+            prelude.fields.clone()
+        },
         modules: modules.to_vec(),
     };
     for (i, stmts) in files.iter().enumerate() {
         for s in stmts {
-            seen.add(s, i);
+            if !aliases_only || matches!(s, Stmt::Effect(e) if e.set.is_some()) {
+                seen.add(s, i);
+            }
         }
     }
     // A name the prelude declares stays the prelude's, wherever else it is declared.
@@ -2528,19 +2884,17 @@ pub fn sealed_visibility(files: &[Vec<Stmt>], modules: &[String]) -> Vec<(String
     let errors = std::cell::RefCell::new(Vec::new());
     // A `pub` written before what declares nothing that it opens.
     for s in files.iter().flatten() {
-        if let Stmt::Other(what, span) = s
+        if !aliases_only
+            && let Stmt::Other(what, span) = s
             && what.ends_with(NOT_A_DECLARATION)
         {
-            errors.borrow_mut().push((
-                msg!("surface-pub-before-statement", what = what).to_string(),
-                *span,
-            ));
+            errors
+                .borrow_mut()
+                .push((msg!("surface-pub-before-statement", what = what), *span));
         }
     }
     for (i, stmts) in files.iter().enumerate() {
         let r = Renamer {
-            origins: &[],
-            origin: Default::default(),
             names: &names,
             by_full: &by_full,
             module_fns: &module_fns,
@@ -2557,8 +2911,8 @@ pub fn sealed_visibility(files: &[Vec<Stmt>], modules: &[String]) -> Vec<(String
             seen: Some((&seen, i)),
             missing: None,
             declares: None,
+            prelude_files: None,
             keep_prelude: false,
-            here: i,
             used: None,
             quoting: Default::default(),
         };
@@ -2578,6 +2932,7 @@ fn private_names(stmts: &[Stmt]) -> HashSet<String> {
         names: HashMap::new(),
         ctors: HashMap::new(),
         effects: HashMap::new(),
+        classes: HashMap::new(),
         fields: HashMap::new(),
         modules: Vec::new(),
     };
@@ -2595,7 +2950,7 @@ fn pattern_names(stmts: &[Stmt]) -> HashSet<String> {
     fn of(p: &Pattern, out: &mut HashSet<String>) {
         match p {
             Pattern::Bind(n) => {
-                out.insert(n.clone());
+                out.insert(n.to_string());
             }
             Pattern::Ctor { args, .. } => args.iter().for_each(|a| of(a, out)),
             Pattern::Record { fields, .. } => fields.iter().for_each(|(_, a)| of(a, out)),
@@ -2630,7 +2985,7 @@ fn var_names(stmts: &[Stmt]) -> HashSet<String> {
         let mut s = s.clone();
         super::walk::stmt(&mut s, &mut |t| {
             if let TermKind::Var(n) = &*t.kind {
-                out.insert(n.clone());
+                out.insert(n.to_string());
             }
         });
     }
@@ -2686,13 +3041,13 @@ fn ctors_with_fields(s: &Stmt, out: &mut HashSet<String>) {
             d.constructors
                 .iter()
                 .filter(|c| !c.fields.is_empty())
-                .map(|c| c.name.clone()),
+                .map(|c| c.name.to_string()),
         ),
         Stmt::Inductive(d) => out.extend(
             d.constructors
                 .iter()
                 .filter(|c| c.params.len() > c.implicit)
-                .map(|c| c.name.clone()),
+                .map(|c| c.name.to_string()),
         ),
         Stmt::Mutual { items, .. } => items.iter().for_each(|i| ctors_with_fields(i, out)),
         Stmt::Attributed { stmt, .. } => ctors_with_fields(stmt, out),
@@ -2720,11 +3075,7 @@ enum Meaning {
 }
 
 struct Renamer<'a> {
-    /// What the names of each file mean, by file: a name an expansion wrote means what it
-    /// means in the file of its macro or syntax ([`SurfaceTerm::origin`]).
-    origins: &'a [HashMap<String, Meaning>],
-    /// The file of the macro that wrote the name being read, if a macro wrote it.
-    origin: std::cell::Cell<Option<usize>>,
+    /// What the source spellings in this file mean.
     names: &'a HashMap<String, Meaning>,
     by_full: &'a HashMap<String, String>,
     /// The functions of the modules of the program, by their full names
@@ -2749,7 +3100,7 @@ struct Renamer<'a> {
     /// The pattern variables of the arm being read whose type the matched
     /// value's type gives.
     typed: std::cell::RefCell<Vec<(String, Shape)>>,
-    errors: &'a std::cell::RefCell<Vec<(String, Span)>>,
+    errors: &'a std::cell::RefCell<Vec<(Message, Span)>>,
     sealed: Option<(&'a HashMap<String, String>, Option<&'a str>)>,
     seen: Option<(&'a Seen, usize)>,
     /// Where the names one import would make seen are written, and the file being read.
@@ -2758,27 +3109,43 @@ struct Renamer<'a> {
     /// The full names the file's own declarations take, by their short
     /// names; `None` where this walk renames no declaration.
     declares: Option<&'a HashMap<String, String>>,
+    /// The prelude file (`std::prelude::Par`) the file imports that makes a
+    /// name ambiguous with the file's own or imported declaration of it.
+    prelude_files: Option<&'a HashMap<String, String>>,
     /// Whether a full name of the prelude is kept as written
     /// (`files_before_macros`).
     keep_prelude: bool,
-    /// The file being read.
-    here: usize,
     /// Where the global names this file writes itself are kept, as read,
     /// when its import lists are checked ([`check_import_lists`]).
-    used: Option<&'a std::cell::RefCell<Vec<(String, Span)>>>,
+    used: Option<&'a std::cell::RefCell<Vec<SourceUse>>>,
     /// How many quotes the name being read is in.
     quoting: std::cell::Cell<u32>,
 }
 
 impl Renamer<'_> {
-    /// Keeps `n`, a global name as read, for the import lists: a name an
-    /// expansion wrote counts for the file of its macro, not this one.
+    /// Records a name this file's scope binds: what removing the import would leave
+    /// unbound. The pass before expansion reads what the file writes; the pass after it
+    /// reads what is still unbound then, the names the file wrote in a literal that a
+    /// macro put into its output. A name a macro made is bound in the macro definition's
+    /// scope when it is made, so neither pass reads it.
     fn record(&self, n: &str, span: Span) {
-        if let Some(used) = self.used
-            && self.origin.get().is_none_or(|f| f == self.here)
-            && (!self.keep_prelude || self.quoting.get() > 0)
-        {
-            used.borrow_mut().push((n.to_string(), span));
+        if let Some(used) = self.used {
+            // A source constructor may acquire its owner's qualified display
+            // when it is bound. Keep its source path before that happens.
+            let mut paths = self
+                .by_full
+                .iter()
+                .filter(|(full, target)| target.as_str() == n && !full.starts_with(PRELUDE_MODULE));
+            let path = match (paths.next(), paths.next()) {
+                (Some((full, _)), None) => full.as_str(),
+                _ => n,
+            };
+            used.borrow_mut().push(SourceUse {
+                path: path.to_string(),
+                written: n.to_string(),
+                span,
+                keeps_only: false,
+            });
         }
     }
 
@@ -2813,9 +3180,13 @@ impl Renamer<'_> {
     fn record_call(&self, n: &str, span: Span) {
         if let Some(used) = self.used
             && self.keep_prelude
-            && self.origin.get().is_none_or(|f| f == self.here)
         {
-            used.borrow_mut().push((format!("{CALLED}{n}"), span));
+            used.borrow_mut().push(SourceUse {
+                path: format!("{CALLED}{n}"),
+                written: n.to_string(),
+                span,
+                keeps_only: false,
+            });
         }
     }
 
@@ -2825,10 +3196,10 @@ impl Renamer<'_> {
         self.locals.borrow_mut().truncate(depth);
     }
 
-    fn bind<'b>(&self, names: impl IntoIterator<Item = &'b String>) {
+    fn bind<'b, N: AsRef<str> + 'b>(&self, names: impl IntoIterator<Item = &'b N>) {
         self.locals
             .borrow_mut()
-            .extend(names.into_iter().map(|n| (n.clone(), None)));
+            .extend(names.into_iter().map(|n| (n.as_ref().to_string(), None)));
     }
 
     /// The type a written type term names, read already: its head, unless
@@ -2837,7 +3208,7 @@ impl Renamer<'_> {
         // A type under a module is written `m.T`.
         fn head(t: &SurfaceTerm) -> Option<String> {
             match &*t.kind {
-                TermKind::Var(h) => Some(h.clone()),
+                TermKind::Var(h) => Some(h.to_string()),
                 TermKind::Field { base, name } => Some(format!("{}{SEPARATOR}{name}", head(base)?)),
                 _ => None,
             }
@@ -2889,13 +3260,18 @@ impl Renamer<'_> {
     /// a type: the prelude's. A constructor's value is never a type, so the
     /// kernel would reject the constructor there (`False` of an `enum Token
     /// { True, False }` in a proposition).
-    fn sort_wanted(&self, ty: &str, n: &str) -> Option<String> {
+    fn sort_wanted(&self, ty: &str, n: &str) -> Option<super::Name> {
         if !matches!(ty, "Prop" | "Type") || n.contains(SEPARATOR) || self.is_local(n) {
             return None;
         }
         let Some(Meaning::To(means)) = self.names.get(n) else {
             return None;
         };
+        // A native struct names its type as well as its value constructor.
+        // In type position its own family takes precedence over the prelude.
+        if self.ctors.contains_key(means) {
+            return None;
+        }
         let is_ctor = self
             .ctors
             .values()
@@ -2903,9 +3279,12 @@ impl Renamer<'_> {
         if !is_ctor {
             return None;
         }
-        self.by_full
-            .get(&format!("{PRELUDE_MODULE}{SEPARATOR}{n}"))
+        let full = format!("{PRELUDE_MODULE}{SEPARATOR}{n}");
+        self.by_full.get(&full)?;
+        crate::bindings::library_bindings()
+            .get(&full)
             .cloned()
+            .map(super::Name::Global)
     }
 
     fn bind_typed(&self, name: &str, ty: &SurfaceTerm) {
@@ -2946,7 +3325,12 @@ impl Renamer<'_> {
             return None;
         };
         let locals = self.locals.borrow();
-        locals.iter().rev().find(|(l, _)| l == n)?.1.clone()
+        locals
+            .iter()
+            .rev()
+            .find(|(l, _)| n.spelling() == Some(l.as_str()))?
+            .1
+            .clone()
     }
 
     fn effect(&self, n: &mut String, span: Span) {
@@ -2978,6 +3362,7 @@ impl Renamer<'_> {
         self.see(&format!("{EFFECT}{n}"), span);
         let mut key = format!("{EFFECT}{n}");
         if n.contains(SEPARATOR) {
+            self.meaning(&mut key, span);
             self.record(&key, span);
             if let Some(to) = self.by_full.get(&key) {
                 *n = to.clone();
@@ -3019,6 +3404,10 @@ impl Renamer<'_> {
                     }
                     return;
                 }
+                if to != ty && !self.module_fns.contains(n.as_str()) {
+                    *n = format!("{to}{SEPARATOR}{ctor}");
+                    return;
+                }
             }
         }
         self.meaning(n, span);
@@ -3044,35 +3433,39 @@ impl Renamer<'_> {
     }
 
     fn meaning(&self, n: &mut String, span: Span) {
-        // A name an expansion wrote means what it means in the file of its macro or
-        // syntax, which may import what this file does not. What that file does not
-        // see is read here, as this file reads it.
-        let names = match self.origin.get().and_then(|f| self.origins.get(f)) {
-            Some(there) => match there.get(n.as_str()) {
-                Some(Meaning::NotImported(..)) => self.names,
-                _ => there,
-            },
-            None => self.names,
-        };
+        let names = self.names;
         match names.get(n.as_str()) {
             Some(Meaning::To(to)) => *n = to.clone(),
-            Some(Meaning::Ambiguous(all)) => self.errors.borrow_mut().push((
-                msg!(
+            Some(Meaning::Ambiguous(all)) => {
+                let message = if self.ctors_of_one_file(all) {
                     // Constructors of several types of one file: the type
                     // says which.
-                    if self.ctors_of_one_file(all) {
-                        "surface-ambiguous-constructor"
-                    } else if all.iter().any(|a| a.starts_with(PRELUDE_MODULE)) {
-                        "surface-ambiguous-prelude"
-                    } else {
-                        "surface-ambiguous"
-                    },
-                    name = bare(n),
-                    names = names_and(all)
-                )
-                .to_string(),
-                span,
-            )),
+                    msg!(
+                        "surface-ambiguous-constructor",
+                        name = bare(n),
+                        names = names_and(all)
+                    )
+                } else if let Some(module) = self.prelude_files.and_then(|p| p.get(n.as_str())) {
+                    // The file imports both: importing the other file again
+                    // does not say which, but bringing only what the file
+                    // uses from the prelude file does.
+                    msg!(
+                        "surface-ambiguous-imported-prelude",
+                        name = bare(n),
+                        names = names_and(all),
+                        module = module
+                    )
+                } else if all.iter().any(|a| a.starts_with(PRELUDE_MODULE)) {
+                    msg!(
+                        "surface-ambiguous-prelude",
+                        name = bare(n),
+                        names = names_and(all)
+                    )
+                } else {
+                    msg!("surface-ambiguous", name = bare(n), names = names_and(all))
+                };
+                self.errors.borrow_mut().push((message, span));
+            }
             Some(Meaning::NotImported(module, spelling, one)) => {
                 self.errors.borrow_mut().push((
                 format!(
@@ -3080,7 +3473,7 @@ impl Renamer<'_> {
                     bare(n),
                     module = written(module),
                     spelling = spelling
-                ),
+                ).into(),
                 span,
                 ));
                 if let (true, Some((missing, file))) = (*one, self.missing) {
@@ -3103,7 +3496,7 @@ impl Renamer<'_> {
             && file != here
         {
             self.errors.borrow_mut().push((
-                msg!("surface-private", name = short(n), file = seen.file(file)).to_string(),
+                msg!("surface-private", name = short(n), file = seen.file(file)),
                 span,
             ));
         }
@@ -3125,8 +3518,7 @@ impl Renamer<'_> {
                 name = short(n),
                 ty = short(ty),
                 file = seen.file(file)
-            )
-            .to_string(),
+            ),
             span,
         ));
     }
@@ -3172,7 +3564,7 @@ impl Renamer<'_> {
         self.errors.borrow_mut().push((
             format!(
                 "`{n}` alone in this pattern binds a new variable, which matches every value, but `{n}` is a constructor of {of}, which this file does not import: import the file that declares it to match the constructor, or to bind the value write a name that is not a constructor, like `{binder}`"
-            ),
+            ).into(),
             span,
         ));
     }
@@ -3213,8 +3605,7 @@ impl Renamer<'_> {
                 field = f,
                 ty = short(&ty),
                 file = seen.file(file)
-            )
-            .to_string(),
+            ),
             span,
         ));
     }
@@ -3235,9 +3626,66 @@ impl Renamer<'_> {
                     "surface-sealed-effect",
                     name = short(op),
                     file = seen.file(file)
-                )
-                .to_string(),
+                ),
                 span,
+            ));
+        }
+    }
+
+    /// `sealed_visibility`: an instance of the class `class` outside the
+    /// file that declares it, which lets other files write instances only
+    /// with `pub(open)`.
+    fn see_instance(&self, class: &str, span: Span) {
+        let Some((seen, here)) = self.seen else {
+            return;
+        };
+        let Some(decls) = seen.classes.get(last_segment(class)) else {
+            return;
+        };
+        if decls
+            .iter()
+            .any(|&(file, vis)| file == here || vis == Vis::Open)
+        {
+            return;
+        }
+        if let Some(&(file, Vis::Pub)) = decls.first() {
+            self.errors.borrow_mut().push((
+                msg!(
+                    "surface-sealed-class",
+                    name = short(class),
+                    file = seen.file(file)
+                ),
+                span,
+            ));
+        }
+    }
+
+    /// `sealed_visibility`: a `pub` function whose `where` names a class
+    /// its own file declares without `pub`, which no other file could meet.
+    fn see_where(&self, f: &super::program::FnDecl) {
+        let Some((seen, here)) = self.seen else {
+            return;
+        };
+        if f.vis == Vis::Private {
+            return;
+        }
+        for c in &f.where_ {
+            let Some(decls) = seen.classes.get(last_segment(&c.class)) else {
+                continue;
+            };
+            if decls
+                .iter()
+                .any(|&(file, vis)| file != here || vis != Vis::Private)
+            {
+                continue;
+            }
+            self.errors.borrow_mut().push((
+                msg!(
+                    "surface-private-class-bound",
+                    name = short(&c.class),
+                    function = short(&f.name)
+                ),
+                c.span,
             ));
         }
     }
@@ -3249,7 +3697,7 @@ impl Renamer<'_> {
             && here != Some(tote.as_str())
         {
             self.errors.borrow_mut().push((
-                msg!("surface-sealed-extern", name = short(n), tote = tote).to_string(),
+                msg!("surface-sealed-extern", name = short(n), tote = tote),
                 span,
             ));
         }
@@ -3276,12 +3724,17 @@ impl Renamer<'_> {
 
     fn top(&self, s: &mut Stmt) {
         match s {
-            Stmt::Fn(f) => self.rename_decl(&mut f.name),
-            Stmt::Extern { fns, .. } => fns.iter_mut().for_each(|f| self.rename_decl(&mut f.name)),
+            Stmt::Fn(f) => (f.name).edit_spelling(|spelling| self.rename_decl(spelling)),
+            Stmt::Extern { fns, .. } => fns
+                .iter_mut()
+                .for_each(|f| (f.name).edit_spelling(|spelling| self.rename_decl(spelling))),
             Stmt::Struct(d) | Stmt::Enum(d) => {
                 let same: Vec<bool> = d.constructors.iter().map(|c| c.name == d.name).collect();
-                self.rename_decl(&mut d.name);
+                (d.name).edit_spelling(|spelling| self.rename_decl(spelling));
                 for (c, same) in d.constructors.iter_mut().zip(same) {
+                    if c.name.is_resolved() {
+                        continue;
+                    }
                     if same {
                         c.name = d.name.clone();
                         continue;
@@ -3290,29 +3743,34 @@ impl Renamer<'_> {
                     match self.names.get(c.name.as_str()) {
                         Some(Meaning::Ambiguous(_)) => {
                             if let Some(to) = self.ctor_of(&d.name, &c.name) {
-                                c.name = to.clone();
+                                c.name = crate::identity::Name::Spelled(to.clone());
                             }
                         }
-                        _ => self.rename_decl(&mut c.name),
+                        _ => (c.name).edit_spelling(|spelling| self.rename_decl(spelling)),
                     }
                 }
             }
             Stmt::Effect(e) => {
-                let mut key = format!("{EFFECT}{}", e.name);
-                self.rename_decl(&mut key);
-                e.name = bare(&key).to_string();
+                e.name.edit_spelling(|name| {
+                    let mut key = format!("{EFFECT}{name}");
+                    self.rename_decl(&mut key);
+                    *name = bare(&key).to_string();
+                });
             }
             Stmt::Inductive(d) => {
-                self.rename_decl(&mut d.name);
+                (d.name).edit_spelling(|spelling| self.rename_decl(spelling));
                 for c in d.constructors.iter_mut() {
+                    if c.name.is_resolved() {
+                        continue;
+                    }
                     // A name other types of the file share is this type's.
                     match self.names.get(c.name.as_str()) {
                         Some(Meaning::Ambiguous(_)) => {
                             if let Some(to) = self.ctor_of(&d.name, &c.name) {
-                                c.name = to.clone();
+                                c.name = crate::identity::Name::Spelled(to.clone());
                             }
                         }
-                        _ => self.rename_decl(&mut c.name),
+                        _ => (c.name).edit_spelling(|spelling| self.rename_decl(spelling)),
                     }
                 }
                 // The list after the sort names what is made for the type, so
@@ -3322,9 +3780,13 @@ impl Renamer<'_> {
                     .iter_mut()
                     .for_each(|(_, n)| self.rename_decl(n));
             }
-            Stmt::Theorem(d) | Stmt::Def(d) => self.rename_decl(&mut d.name),
-            Stmt::Class(c) => self.rename_decl(&mut c.name),
-            Stmt::Let { name, .. } | Stmt::Var { name, .. } => self.rename_decl(name),
+            Stmt::Theorem(d) | Stmt::Def(d) => {
+                (d.name).edit_spelling(|spelling| self.rename_decl(spelling))
+            }
+            Stmt::Class(c) => (c.name).edit_spelling(|spelling| self.rename_decl(spelling)),
+            Stmt::Let { name, .. } | Stmt::Var { name, .. } => {
+                name.edit_spelling(|spelling| self.rename_decl(spelling))
+            }
             Stmt::Mutual { items, .. } => items.iter_mut().for_each(|i| self.top(i)),
             Stmt::Attributed { stmt, .. } => self.top(stmt),
             // The function of `macro fn` is the one declared beside it, under
@@ -3354,7 +3816,10 @@ impl Renamer<'_> {
                     None => self.bind([&*name]),
                 }
             }
-            Stmt::Fn(f) => self.scoped(|| self.function(f)),
+            Stmt::Fn(f) => {
+                self.see_where(f);
+                self.scoped(|| self.function(f))
+            }
             Stmt::Extern { fns, .. } => {
                 for f in fns {
                     self.scoped(|| self.function(f));
@@ -3407,19 +3872,34 @@ impl Renamer<'_> {
                 }
             }),
             Stmt::Class(c) => self.scoped(|| {
-                self.bind([&c.param]);
+                for (name, ty) in &mut c.parameters {
+                    self.term(ty);
+                    self.bind([&*name]);
+                }
                 for m in &mut c.methods {
                     self.scoped(|| self.function(m));
                 }
                 self.record_laws(&c.laws);
             }),
             Stmt::Instance(inst) => self.scoped(|| {
-                self.global(&mut inst.class, inst.span);
-                self.bind(&inst.generics);
+                self.see_instance(short(&inst.class), inst.span);
+                (inst.class).edit_spelling(|spelling| self.global(spelling, inst.span));
+                for (index, name) in inst.generics.iter().enumerate() {
+                    if let Some(ty) = inst.generic_types.get_mut(index) {
+                        self.term(ty);
+                    }
+                    self.bind([name]);
+                }
                 self.term(&mut inst.head);
+                for arg in &mut inst.arguments {
+                    self.term(arg);
+                }
                 for c in &mut inst.where_ {
-                    self.global(&mut c.class, c.span);
+                    (c.class).edit_spelling(|spelling| self.global(spelling, c.span));
                     self.term(&mut c.ty);
+                    for arg in &mut c.arguments {
+                        self.term(arg);
+                    }
                 }
                 for m in &mut inst.methods {
                     self.scoped(|| self.function(m));
@@ -3430,7 +3910,11 @@ impl Renamer<'_> {
                 items.iter_mut().for_each(|i| self.stmt(i))
             }
             Stmt::Attributed {
-                name, arg, stmt, span, ..
+                name,
+                arg,
+                stmt,
+                span,
+                ..
             } => {
                 self.record_call(name, *span);
                 self.term(arg);
@@ -3468,10 +3952,20 @@ impl Renamer<'_> {
     }
 
     fn function(&self, f: &mut super::program::FnDecl) {
-        self.bind(&f.generics);
+        for (i, name) in f.generics.iter().enumerate() {
+            if let Some(ty) = f.generic_types.get_mut(i) {
+                self.term(ty);
+                self.bind_typed(name, ty);
+            } else {
+                self.bind([name]);
+            }
+        }
         for c in &mut f.where_ {
-            self.global(&mut c.class, c.span);
+            (c.class).edit_spelling(|spelling| self.global(spelling, c.span));
             self.term(&mut c.ty);
+            for arg in &mut c.arguments {
+                self.term(arg);
+            }
         }
         // Each parameter is bound from the next one's type on: a later
         // parameter's type, and the result, may name it (`h: Eq(T, x, x)`).
@@ -3491,7 +3985,9 @@ impl Renamer<'_> {
             self.term(r);
         }
         if let Some(effects) = &mut f.effects {
-            effects.iter_mut().for_each(|e| self.effect(e, f.span));
+            effects
+                .iter_mut()
+                .for_each(|e| e.edit_spelling(|spelling| self.effect(spelling, f.span)));
         }
         if let Some(d) = &mut f.decreasing_by {
             self.term(d);
@@ -3509,27 +4005,30 @@ impl Renamer<'_> {
     fn pattern(&self, p: &mut Pattern, span: Span, bound: &mut Vec<String>, of: Option<&Shape>) {
         let shape = of;
         let of = shape.and_then(Shape::head);
-        // The matched type is under a module a macro has yet to make (`m.T` of a `syntax!`): the
-        // constructor is read once it is declared.
+        // A constructor of a pending module type retains its owner's path
+        // until expansion declares that type.
         if let Some(ty) = of
             && ty.contains(SEPARATOR)
             && !self.ctors.contains_key(ty)
             && let Pattern::Ctor { name: n, args } = &mut *p
             && !n.contains(SEPARATOR)
+            && !n.starts_with('$')
             && self
                 .names
                 .get(n.as_str())
                 .is_none_or(|m| !matches!(m, Meaning::NotImported(..)))
             && self.pending_module_type(ty)
         {
+            n.edit_spelling(|spelling| *spelling = format!("{ty}{SEPARATOR}{spelling}"));
             args.iter_mut()
                 .for_each(|a| self.pattern(a, span, bound, None));
             return;
         }
         if let Some(ty) = of
-            && let Pattern::Bind(n)
-            | Pattern::Ctor { name: n, .. }
-            | Pattern::Record { name: n, .. } = &mut *p
+            && let Some(n) = (match &mut *p {
+                Pattern::Ctor { name, .. } | Pattern::Record { name, .. } => name.spelling_mut(),
+                _ => None,
+            })
             && !n.contains(SEPARATOR)
         {
             if let Some(c) = self.ctor_of(ty, n) {
@@ -3560,9 +4059,11 @@ impl Renamer<'_> {
                                 _ => self.pattern(a, span, bound, field),
                             }
                             if let (Some(shape), Pattern::Bind(n)) = (field, &*a)
-                                && bound[before..].contains(n)
+                                && bound[before..]
+                                    .iter()
+                                    .any(|b| n.spelling() == Some(b.as_str()))
                             {
-                                self.typed.borrow_mut().push((n.clone(), shape.clone()));
+                                self.typed.borrow_mut().push((n.to_string(), shape.clone()));
                             }
                         }
                     }
@@ -3584,8 +4085,7 @@ impl Renamer<'_> {
                         name = &*n,
                         ty = short(ty),
                         names = names_and(all)
-                    )
-                    .to_string(),
+                    ),
                     span,
                 ));
                 return;
@@ -3595,24 +4095,51 @@ impl Renamer<'_> {
             // A bare name is a constructor when one has it; a name only a
             // function or a theorem has is bound here, whatever declares it.
             Pattern::Bind(n) => {
-                if self
-                    .seen
-                    .is_some_and(|(seen, _)| seen.ctors.contains_key(n.as_str()))
+                if let Some(ty) = of
+                    && self.ctors.contains_key(ty)
+                    && self.ctor_of(ty, n).is_none()
+                    && let Some(Meaning::Ambiguous(all)) = self.names.get(n.as_str())
+                    && all.iter().all(|candidate| {
+                        self.ctors
+                            .values()
+                            .any(|constructors| constructors.values().any(|name| name == candidate))
+                    })
                 {
-                    self.see_ctor(n, span);
+                    self.errors.borrow_mut().push((
+                        msg!(
+                            "surface-not-a-constructor-of",
+                            name = n.to_string(),
+                            ty = short(ty),
+                            names = names_and(all)
+                        ),
+                        span,
+                    ));
+                    return;
                 }
-                let is_ctor =
-                    |f: &String| self.ctors.values().any(|cs| cs.values().any(|v| v == f));
-                let ctor = match self.names.get(n.as_str()) {
-                    Some(Meaning::To(to)) => is_ctor(to),
-                    Some(Meaning::Ambiguous(all)) => all.iter().any(is_ctor),
-                    // A constructor of a file not imported does not take the name.
-                    Some(Meaning::NotImported(..)) | None => false,
-                };
-                if ctor || n.contains(SEPARATOR) {
-                    self.global(n, span);
+
+                let visible_constructor = of.and_then(|ty| self.ctor_of(ty, n)).or_else(|| {
+                    match self.names.get(n.as_str()) {
+                        Some(Meaning::To(full)) => Some(full),
+                        _ => None,
+                    }
+                });
+                if let Some(constructor) = visible_constructor {
+                    self.see_ctor(constructor, span);
+                    if self
+                        .ctors
+                        .values()
+                        .any(|constructors| constructors.values().any(|name| name == constructor))
+                    {
+                        self.record(constructor, span);
+                    }
+                }
+                if n.contains(SEPARATOR) {
+                    n.edit_spelling(|spelling| self.global(spelling, span));
                 } else {
-                    bound.push(n.clone());
+                    // A bare pattern's occurrences share its pending binding.
+                    // The type checker decides between its constructor candidates
+                    // and the local reference reserved for this occurrence.
+                    bound.push(n.to_string());
                 }
             }
             Pattern::Ctor { name, args } => {
@@ -3631,7 +4158,7 @@ impl Renamer<'_> {
                     Some(Meaning::Ambiguous(all)) if all.iter().all(is_ctor)
                 );
                 if !shared && !label {
-                    self.global(name, span);
+                    (name).edit_spelling(|spelling| self.global(spelling, span));
                 }
                 args.iter_mut()
                     .for_each(|a| self.pattern(a, span, bound, None));
@@ -3639,9 +4166,9 @@ impl Renamer<'_> {
             Pattern::Record { name, fields } => {
                 // `C<n: m>(…)`: the record of the implicit arguments named has
                 // an internal name, not a declaration's.
-                if name != crate::IMPLICITS {
+                if name.spelling() != Some(crate::IMPLICITS) {
                     self.see_ctor(name, span);
-                    self.global(name, span);
+                    (name).edit_spelling(|spelling| self.global(spelling, span));
                 }
                 fields
                     .iter_mut()
@@ -3663,7 +4190,7 @@ impl Renamer<'_> {
     fn full_name(&self, t: &SurfaceTerm) -> Option<String> {
         fn dotted<'t>(t: &'t SurfaceTerm, out: &mut Vec<&'t str>) -> bool {
             match &*t.kind {
-                TermKind::Var(n) => {
+                TermKind::Var(crate::identity::Name::Spelled(n)) => {
                     out.extend(n.split(SEPARATOR));
                     true
                 }
@@ -3708,11 +4235,9 @@ impl Renamer<'_> {
     /// one type of that module has a constructor of that name.
     fn module_ctor(&self, full: &str) -> Option<String> {
         let (module, ctor) = full.rsplit_once(SEPARATOR)?;
-        let known = known_modules().lock().unwrap_or_else(|e| e.into_inner());
-        if !known.contains(module) {
+        if !with_known_modules(|known| known.contains(module)) {
             return None;
         }
-        drop(known);
         let mut found = self.by_full.iter().filter(|(k, _)| {
             k.strip_prefix(module)
                 .and_then(|r| r.strip_prefix(SEPARATOR))
@@ -3732,7 +4257,7 @@ impl Renamer<'_> {
     fn module_fn(&self, t: &SurfaceTerm) -> bool {
         fn dotted(t: &SurfaceTerm, out: &mut Vec<String>) -> bool {
             match &*t.kind {
-                TermKind::Var(n) => {
+                TermKind::Var(crate::identity::Name::Spelled(n)) => {
                     out.extend(n.split(SEPARATOR).map(str::to_string));
                     true
                 }
@@ -3761,15 +4286,22 @@ impl Renamer<'_> {
     /// constructor written there by its short name is then read as that
     /// type's (`ctor_wanted`).
     fn term_of(&self, t: &mut SurfaceTerm, of: Option<&str>) {
-        // The name the term itself writes is read where its macro is written; the terms
-        // inside it, each where its own name was written.
-        let outer = self.origin.replace(t.origin());
         self.term_here(t, of);
-        self.origin.set(outer);
     }
 
     fn term_here(&self, t: &mut SurfaceTerm, of: Option<&str>) {
+        if matches!(&*t.kind, TermKind::Var(n) if n.is_resolved()) {
+            return;
+        }
         let span = t.span;
+        if let TermKind::Var(crate::identity::Name::Spelled(written)) = &*t.kind
+            && let Some(reference) = crate::bindings::library_by_full_name(written).cloned()
+        {
+            let mut checked = written.clone();
+            self.name(&mut checked, span);
+            t.kind = Arc::new(TermKind::Var(crate::identity::Name::Global(reference)));
+            return;
+        }
         // `.` takes a field only: a declaration's name after it is written with `::`.
         // (A function of a module written `M::f` is reported where the modules are read.)
         if matches!(&*t.kind, TermKind::Field { .. })
@@ -3777,7 +4309,7 @@ impl Renamer<'_> {
             && self.full_name(t).is_some()
         {
             self.errors.borrow_mut().push((
-                msg!("surface-dot-names-a-declaration", name = dotted_text(t)).to_string(),
+                msg!("surface-dot-names-a-declaration", name = dotted_text(t)),
                 span,
             ));
         }
@@ -3787,17 +4319,19 @@ impl Renamer<'_> {
         }
         // A full name written with `::`: `std::Text::text`, `Shape::Circle`.
         if let Some(full) = self.full_name(t) {
-            t.kind = Arc::new(TermKind::Var(full));
+            t.kind = Arc::new(TermKind::Var(crate::identity::Name::Spelled(full)));
         }
         match Arc::make_mut(&mut t.kind) {
-            TermKind::Var(n) => match of
-                .and_then(|ty| self.ctor_wanted(ty, n).or_else(|| self.sort_wanted(ty, n)))
-            {
+            TermKind::Var(n) => match of.and_then(|ty| {
+                self.ctor_wanted(ty, n)
+                    .map(super::Name::from)
+                    .or_else(|| self.sort_wanted(ty, n))
+            }) {
                 Some(c) => {
                     self.record(&c, span);
                     *n = c
                 }
-                None => self.name(n, span),
+                None => n.edit_spelling(|spelling| self.name(spelling, span)),
             },
             TermKind::App {
                 function,
@@ -3806,7 +4340,7 @@ impl Renamer<'_> {
                 self.term_of(function, of);
                 // Each argument is read with the type its parameter is written with.
                 let wanted = match &*function.kind {
-                    TermKind::Var(f) => self.args.get(f).cloned(),
+                    TermKind::Var(f) => self.args.get(f.as_str()).cloned(),
                     _ => None,
                 };
                 for (k, a) in arguments.iter_mut().enumerate() {
@@ -3834,16 +4368,25 @@ impl Renamer<'_> {
                     }
                 }
             }),
+            TermKind::Record { name, fields, .. } if name.spelling() == Some(crate::IMPLICITS) => {
+                fields.iter_mut().for_each(|(_, v)| self.term(v));
+            }
             TermKind::Record { name, fields, base } => {
+                (name).edit_spelling(|spelling| self.global(spelling, span));
                 self.see_ctor(name, span);
-                self.global(name, span);
+                if let Some((seen, here)) = self.seen
+                    && let Some((file, vis, family)) = seen.ctors.get(&format!("{name}::Mk"))
+                    && family == name.as_str()
+                {
+                    self.see_inside(*file, *vis, here, name, family, span);
+                }
                 fields.iter_mut().for_each(|(_, v)| self.term(v));
                 if let Some(b) = base {
                     self.term(b);
                 }
             }
             TermKind::Perform { effect, args } => {
-                self.effect(effect, span);
+                (effect).edit_spelling(|spelling| self.effect(spelling, span));
                 args.iter_mut().for_each(|a| self.term(a));
             }
             TermKind::Pi {
@@ -3858,7 +4401,9 @@ impl Renamer<'_> {
                     }
                 }
                 if let Some(effects) = effects {
-                    effects.iter_mut().for_each(|e| self.effect(e, span));
+                    effects
+                        .iter_mut()
+                        .for_each(|e| e.edit_spelling(|spelling| self.effect(spelling, span)));
                 }
                 self.term(result);
             }),
@@ -3910,14 +4455,14 @@ impl Renamer<'_> {
                             body,
                         } => {
                             self.see_arm(effect, body.span);
-                            self.effect(effect, body.span);
+                            (effect).edit_spelling(|spelling| self.effect(spelling, body.span));
                             self.bind(&instance.forall);
                             instance.args.iter_mut().for_each(|a| self.term(a));
                             let mut bound = Vec::new();
                             for p in patterns {
                                 self.pattern(p, body.span, &mut bound, None);
                             }
-                            bound.extend(cont.iter().cloned());
+                            bound.extend(cont.iter().map(ToString::to_string));
                             self.bind(&bound);
                             if let Some(g) = guard {
                                 self.term(g);
@@ -3956,11 +4501,11 @@ impl Renamer<'_> {
                         // called.
                         if of.is_none()
                             && let Pattern::Bind(n) = &a.pattern
-                            && bound.contains(n)
+                            && bound.iter().any(|b| b == n.as_str())
                         {
                             self.binds_a_ctor_name(n, a.body.span);
                         }
-                        bound.extend(binder.iter().cloned());
+                        bound.extend(binder.iter().map(ToString::to_string));
                         self.bind(&bound);
                         self.bind_pattern_types();
                         if let Some(g) = &mut a.guard {
@@ -4010,7 +4555,7 @@ impl Renamer<'_> {
 
 fn is_path(t: &SurfaceTerm) -> bool {
     match &*t.kind {
-        TermKind::Var(n) => n.contains(SEPARATOR),
+        TermKind::Var(n) => n.spelling().is_some_and(|s| s.contains(SEPARATOR)),
         TermKind::Field { .. } => true,
         _ => false,
     }
@@ -4019,7 +4564,7 @@ fn is_path(t: &SurfaceTerm) -> bool {
 /// Fields over a name, written with `::` as the name of a declaration is (`M::f` of `M::f`).
 fn dotted_text(t: &SurfaceTerm) -> String {
     match &*t.kind {
-        TermKind::Var(n) => n.clone(),
+        TermKind::Var(n) => n.to_string(),
         TermKind::Field { base, name } => format!("{}{SEPARATOR}{name}", dotted_text(base)),
         _ => String::new(),
     }
@@ -4035,24 +4580,13 @@ fn names_and(all: &[String]) -> Message {
     })
 }
 
-/// Whether `n` names the prelude's `base`: by its short name, which the prelude's own
-/// files and the checker's sugar read it by, or by its full name.
-fn names_prelude(n: &str, base: &str) -> bool {
-    n == base
-        || n.strip_prefix(PRELUDE_MODULE)
-            .and_then(|r| r.strip_prefix(SEPARATOR))
-            == Some(base)
-}
-
-/// The members of the product type of `items`, in the order written: a member that is itself a
-/// product `A × B` gives its members, and a member `Unit` gives none, so `(A × B) × C` is
-/// `A × B × C` and `A × Unit` is `A`. A `Pair(A, B)` written by its name is the inductive
+/// The members of the product type of `items`, in the order written: a member `Unit` is a
+/// member as any other, so `A × Unit` is not `A`. A member that is itself a product stays one member, so
+/// `(A × B) × C` is not `A × B × C`: it is what `T × C` is at `T := A × B`. A `Pair(A, B)` written by its name is the inductive
 /// type `Pair`, one member: `Pair(A, B) × C` has the two members `Pair(A, B)` and `C`.
 pub fn product_type_members(items: &[SurfaceTerm]) -> Vec<SurfaceTerm> {
     fn go(t: &SurfaceTerm, out: &mut Vec<SurfaceTerm>) {
         match &*t.kind {
-            TermKind::Product(items) => items.iter().for_each(|i| go(i, out)),
-            TermKind::Var(n) if names_prelude(n, "Unit") => {}
             _ => out.push(t.clone()),
         }
     }
@@ -4061,88 +4595,15 @@ pub fn product_type_members(items: &[SurfaceTerm]) -> Vec<SurfaceTerm> {
     out
 }
 
-fn is_unit_value(t: &SurfaceTerm) -> bool {
-    match &*t.kind {
-        TermKind::App {
-            function,
-            arguments,
-        } => arguments.is_empty() && matches!(&*function.kind, TermKind::Var(f) if f == "Tuple"),
-        TermKind::Var(n) => names_prelude(n, "Star"),
-        _ => false,
-    }
-}
-
-/// `#(…)` with its members put as its type's: a member that is itself a written `#(…)`
-/// gives its members and a member `#()` gives none, in the order written. So
-/// `#(#(a, b), c)` is `#(a, b, c)`, `#(a, #())` is `a`, and `#(#(), #())` is `#()`. Only `#(…)` is a product: a `Pair { fst, snd }`
-/// written by its name is the inductive `Pair`, one member, and is left as it is.
-/// `None` where nothing changes.
-pub fn flatten_pair_value(t: &SurfaceTerm) -> Option<SurfaceTerm> {
-    fn spread(t: &SurfaceTerm, out: &mut Vec<SurfaceTerm>, changed: &mut bool) {
-        match &*t.kind {
-            TermKind::Tuple(items) => {
-                *changed = true;
-                items.iter().for_each(|i| spread(i, out, changed));
-            }
-            _ if is_unit_value(t) => *changed = true,
-            _ => out.push(t.clone()),
-        }
-    }
-    let TermKind::Tuple(items) = &*t.kind else {
-        return None;
-    };
-    let mut members = Vec::new();
-    let mut changed = false;
-    items
-        .iter()
-        .for_each(|i| spread(i, &mut members, &mut changed));
-    if !changed {
-        return None;
-    }
-    let span = t.span;
-    Some(match members.len() {
-        0 => SurfaceTerm::app("Tuple", Vec::new(), span),
-        1 => members.pop().expect("one"),
-        _ => SurfaceTerm::new(TermKind::Tuple(members), span),
-    })
+/// `#(…)` with its members put as its type's. Every member, `#()` too, stays one member in the
+/// order written, so a `#(…)` is already as its type puts it: `None`, nothing changes.
+pub fn flatten_pair_value(_t: &SurfaceTerm) -> Option<SurfaceTerm> {
+    None
 }
 
 /// The pattern `#(…)` with its members put as its type's, as [`flatten_pair_value`] puts a
-/// value: `#(p, #())` is `p`, `#(#(p, q), r)` is `#(p, q, r)`. A `Pair { fst, snd }` pattern written by its name matches the inductive
-/// `Pair` and is left as it is. `None` where nothing changes.
-pub fn flatten_pair_pattern(p: &Pattern) -> Option<Pattern> {
-    fn unit(p: &Pattern) -> bool {
-        matches!(p, Pattern::Ctor { name, args } if args.is_empty() && names_prelude(name, "Star"))
-    }
-    // `#(…)` as written: a member that is `#(…)` gives its members, one that is `#()` none.
-    if let Pattern::Tuple(items) = p {
-        fn spread(p: &Pattern, out: &mut Vec<Pattern>, changed: &mut bool) {
-            match p {
-                Pattern::Tuple(items) => {
-                    *changed = true;
-                    items.iter().for_each(|q| spread(q, out, changed));
-                }
-                q if unit(q) => *changed = true,
-                q => out.push(q.clone()),
-            }
-        }
-        let mut members = Vec::new();
-        let mut changed = false;
-        items
-            .iter()
-            .for_each(|q| spread(q, &mut members, &mut changed));
-        if !changed {
-            return None;
-        }
-        return Some(match members.len() {
-            0 => Pattern::Ctor {
-                name: format!("{PRELUDE_MODULE}{SEPARATOR}Star"),
-                args: Vec::new(),
-            },
-            1 => members.pop().expect("one"),
-            _ => Pattern::Tuple(members),
-        });
-    }
+/// value: every member stays, so `None`.
+pub fn flatten_pair_pattern(_p: &Pattern) -> Option<Pattern> {
     None
 }
 
@@ -4183,7 +4644,10 @@ fn sort_pair_value(t: &mut SurfaceTerm) {
 /// `#(a, b, c)` as the record of the prelude's `Pair` that the checker elaborates:
 /// `Pair { fst: a, snd: Pair { fst: b, snd: c } }`, `pair` naming the `Pair`. The
 /// members are left as they are; anything but a tuple is `t` itself.
-pub fn tuple_as_pairs(t: &SurfaceTerm, pair: &str) -> SurfaceTerm {
+pub fn tuple_as_pairs<N: ?Sized>(t: &SurfaceTerm, pair: &N) -> SurfaceTerm
+where
+    for<'a> crate::identity::Name: From<&'a N>,
+{
     if let Some(flat) = flatten_pair_value(t) {
         return tuple_as_pairs(&flat, pair);
     }
@@ -4192,14 +4656,14 @@ pub fn tuple_as_pairs(t: &SurfaceTerm, pair: &str) -> SurfaceTerm {
     };
     let mut items = items.clone();
     let Some(last) = items.pop() else {
-        return SurfaceTerm::app("Tuple", Vec::new(), t.span);
+        return SurfaceTerm::unit(t.span);
     };
     let span = t.span;
     items.into_iter().rev().fold(last, |snd, fst| {
         let cell = Span::new(fst.span.start, span.end);
         SurfaceTerm::new(
             TermKind::Record {
-                name: pair.to_string(),
+                name: crate::identity::Name::from(pair),
                 fields: vec![("fst".into(), fst), ("snd".into(), snd)],
                 base: None,
             },
@@ -4220,7 +4684,7 @@ pub fn tuple_as_products(t: &SurfaceTerm) -> SurfaceTerm {
     };
     let mut items = items.clone();
     let Some(last) = items.pop() else {
-        return SurfaceTerm::app("Tuple", Vec::new(), t.span);
+        return SurfaceTerm::unit(t.span);
     };
     let span = t.span;
     items.into_iter().rev().fold(last, |snd, fst| {
@@ -4232,7 +4696,10 @@ pub fn tuple_as_products(t: &SurfaceTerm) -> SurfaceTerm {
 /// The pattern `#(p, q, r)` as the record of the prelude's `Pair` that the checker
 /// elaborates: `Pair { fst: p, snd: Pair { fst: q, snd: r } }`, `pair` naming the
 /// `Pair`, in every member too. Any other pattern is `p` with its own members put so.
-pub fn tuple_pattern_as_pairs(p: &Pattern, pair: &str) -> Pattern {
+pub fn tuple_pattern_as_pairs<N: ?Sized>(p: &Pattern, pair: &N) -> Pattern
+where
+    for<'a> crate::identity::Name: From<&'a N>,
+{
     if let Some(flat) = flatten_pair_pattern(p) {
         return tuple_pattern_as_pairs(&flat, pair);
     }
@@ -4244,7 +4711,7 @@ pub fn tuple_pattern_as_pairs(p: &Pattern, pair: &str) -> Pattern {
                 .collect();
             let Some(last) = items.pop() else {
                 return Pattern::Ctor {
-                    name: format!("{PRELUDE_MODULE}{SEPARATOR}Star"),
+                    name: format!("{PRELUDE_MODULE}{SEPARATOR}Star").into(),
                     args: Vec::new(),
                 };
             };
@@ -4252,7 +4719,7 @@ pub fn tuple_pattern_as_pairs(p: &Pattern, pair: &str) -> Pattern {
                 .into_iter()
                 .rev()
                 .fold(last, |snd, fst| Pattern::Record {
-                    name: pair.to_string(),
+                    name: crate::identity::Name::from(pair),
                     fields: vec![("fst".into(), fst), ("snd".into(), snd)],
                 })
         }
@@ -4305,7 +4772,7 @@ pub fn lower_tuples(s: &mut Stmt, pair: &str) {
         })
     };
     super::walk::roots(s, &mut *term);
-    let mut laws = |laws: &mut [super::program::LawDecl]| {
+    let laws = |laws: &mut [super::program::LawDecl]| {
         for l in laws {
             for (_, t) in &mut l.theorem.params {
                 term(t);
@@ -4368,10 +4835,18 @@ pub fn sort_labelled_tuples(stmts: &mut [Stmt]) {
 /// The prelude read as its own files, before any module is known: a name the reader writes with
 /// the prelude's module (`std::prelude::Star` of the pattern `#()`) is the prelude's short
 /// name, and a product type `A × B` is `Pair(A, B)`, in a law too. An instance whose head is a
-/// product, `instance Ord(A × B)`, keeps its products and `#(…)` as written: it is the
-/// instance for the product `Prod`, not for the `Pair` written by its name.
-pub fn lower_prelude_sugar(stmts: &mut [Stmt]) {
-    lower_prelude(stmts, true)
+/// product, `instance Ord(A × B)`, is the instance for `Pair`, and the kernel, which still reads
+/// a program's `A × B` as its own product type, gets the instance a second time with its
+/// products kept as written.
+pub fn lower_prelude_sugar(stmts: &mut Vec<Stmt>) {
+    let mut products: Vec<Stmt> = stmts
+        .iter()
+        .filter(|s| matches!(s, Stmt::Instance(i) if matches!(&*i.head.kind, TermKind::Product(_))))
+        .cloned()
+        .collect();
+    lower_prelude(stmts, true);
+    lower_prelude(&mut products, false);
+    stmts.extend(products);
 }
 
 /// The prelude's names read as [`lower_prelude_sugar`] reads them, its products kept as
@@ -4408,11 +4883,11 @@ fn lower_prelude(stmts: &mut [Stmt], products: bool) {
         match p {
             Pattern::Tuple(items) => items.iter_mut().for_each(pattern),
             Pattern::Ctor { name: n, args } => {
-                name(n);
+                (n).edit_spelling(|spelling| name(spelling));
                 args.iter_mut().for_each(pattern);
             }
             Pattern::Record { name: n, fields } => {
-                name(n);
+                (n).edit_spelling(|spelling| name(spelling));
                 fields.iter_mut().for_each(|(_, a)| pattern(a));
             }
             _ => {}
@@ -4455,7 +4930,7 @@ fn lower_prelude(stmts: &mut [Stmt], products: bool) {
                 return;
             }
             match Arc::make_mut(&mut t.kind) {
-                TermKind::Var(n) => name(n),
+                TermKind::Var(n) => n.edit_spelling(|spelling| name(spelling)),
                 TermKind::Match { arms, .. } => {
                     arms.iter_mut().for_each(|a| pattern(&mut a.pattern))
                 }
@@ -4485,12 +4960,7 @@ fn lower_prelude(stmts: &mut [Stmt], products: bool) {
         }
     }
     for s in stmts {
-        // An instance for the product `A × B` keeps its products and `#(…)` as written:
-        // its head is the product, not the `Pair` written by its name, and the checker
-        // reads them as it reads a program's (`Prod`, `prod_mk`).
-        let product_instance =
-            matches!(s, Stmt::Instance(i) if matches!(&*i.head.kind, TermKind::Product(_)));
-        LOWER_PRODUCTS.with(|p| p.set(products && !product_instance));
+        LOWER_PRODUCTS.with(|p| p.set(products));
         super::walk::roots(s, &mut |t| term(t));
         lower_nested(s, &mut |s| match s {
             Stmt::Instance(i) => {
@@ -4521,7 +4991,8 @@ fn runtime_module_fns() -> &'static HashSet<String> {
     static NAMES: OnceLock<HashSet<String>> = OnceLock::new();
     NAMES.get_or_init(|| {
         let of = |text: &str| -> HashSet<String> {
-            parse_program_as_written(text)
+            super::program::prelude_as_written(text)
+                .as_ref()
                 .map(|p| {
                     let mut names = super::modules::declared(&p.stmts);
                     names.extend(super::modules::declared_flat(&p.stmts));
@@ -4602,7 +5073,7 @@ pub fn split_models(
         for s in stmts.iter_mut() {
             super::walk::stmt(s, &mut |t| {
                 if let TermKind::Var(n) = &*t.kind {
-                    uses[i].insert(n.clone());
+                    uses[i].insert(n.to_string());
                 }
             });
         }
@@ -4629,10 +5100,10 @@ pub fn split_models(
         }
         for s in stmts.iter_mut() {
             super::walk::stmt(s, &mut |t| {
-                if let TermKind::Var(n) = &*t.kind
-                    && let Some(to) = here.get(n)
+                if let TermKind::Var(crate::identity::Name::Spelled(n)) = &*t.kind
+                    && let Some(to) = here.get(n.as_str())
                 {
-                    t.kind = Arc::new(TermKind::Var(to.clone()));
+                    t.kind = Arc::new(TermKind::Var(crate::identity::Name::Spelled(to.clone())));
                 }
             });
         }
@@ -4654,23 +5125,66 @@ pub fn rename_models(stmts: &mut [Stmt], models: &[Model]) {
     for s in stmts.iter_mut() {
         match s {
             Stmt::Fn(f) => {
-                if let Some(full) = to.get(f.name.as_str()) {
-                    f.name = full.to_string();
+                if !f.name.is_resolved()
+                    && let Some(full) = to.get(f.name.as_str())
+                {
+                    f.name = crate::identity::Name::Spelled(full.to_string());
                 }
             }
             Stmt::Theorem(t) | Stmt::Def(t) => {
-                if let Some(full) = to.get(t.name.as_str()) {
-                    t.name = full.to_string();
+                if !t.name.is_resolved()
+                    && let Some(full) = to.get(t.name.as_str())
+                {
+                    t.name = crate::identity::Name::Spelled(full.to_string());
                 }
             }
             _ => {}
         }
         super::walk::stmt(s, &mut |t| {
-            if let TermKind::Var(n) = &*t.kind
+            if let TermKind::Var(crate::identity::Name::Spelled(n)) = &*t.kind
                 && let Some(full) = to.get(n.as_str())
             {
-                t.kind = Arc::new(TermKind::Var(full.to_string()));
+                t.kind = Arc::new(TermKind::Var(crate::identity::Name::Spelled(
+                    full.to_string(),
+                )));
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod source_spelling_tests {
+    use super::*;
+    use crate::identity::DeclRef;
+
+    #[test]
+    fn a_bound_source_spelling_does_not_depend_on_other_programs() {
+        let reference = DeclRef::fresh("file::math::Record");
+        reference.set_source_offset("file::".len());
+        let bound = Name::Global(reference.clone());
+        register_modules(&["file".into()]);
+        assert_eq!(short(&bound), "math::Record");
+        register_modules(&["file::math".into()]);
+        assert_eq!(short(&bound), "math::Record");
+        assert_eq!(reference.source_display(), "math::Record");
+        assert_eq!(
+            reference.constructor(0, "Mk").source_display(),
+            "math::Record::Mk"
+        );
+        assert_eq!(reference.display(), "file::math::Record");
+    }
+
+    #[test]
+    fn unresolved_modules_are_local_to_the_reading_thread() {
+        register_modules(&["file".into()]);
+        std::thread::spawn(|| {
+            register_modules(&["file::math".into()]);
+            assert_eq!(short("file::math::Record"), "Record");
+        })
+        .join()
+        .unwrap();
+        assert_eq!(short("file::math::Record"), "math::Record");
+        register_modules(&["other".into()]);
+        assert_eq!(short("file::math::Record"), "file::math::Record");
     }
 }

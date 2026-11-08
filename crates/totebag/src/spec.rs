@@ -29,7 +29,7 @@ impl GitSource {
         check_ref(&self.reference)?;
         check_dir(&self.dir)?;
         if let Some(p) = &self.project {
-            crate::index::strict::sha256(p)?;
+            crate::index::strict::sha256(p).map_err(|e| e.to_string())?;
         }
         Ok(())
     }

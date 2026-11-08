@@ -131,7 +131,7 @@ pub fn run_after_data_result(
   own: Ordmap(Text, Bool),
   m: Mut1(Unit, Checker)
 ): Mut1(Unit, Checker) {
-  match m: Mut1(Unit, Checker) { mut1(v, next) => run_after_datas(next, prelude, program, own) }
+  ⊢ Mut1(Unit, Checker) from match m { mut1(v, next) => run_after_datas(next, prelude, program, own) }
 }
 pub theorem run_after_data_result_ready(
   prelude: List(SurfaceStmt),
@@ -140,7 +140,7 @@ pub theorem run_after_data_result_ready(
   m: Mut1(Unit, Checker),
   ready: CkReady(ck_st(m))
 ): CkReady(ck_st(run_after_data_result(prelude, program, own, m))) {
-  match m: CkReady(ck_st(run_after_data_result(prelude, program, own, m))) {
+  ⊢ CkReady(ck_st(run_after_data_result(prelude, program, own, m))) from match m {
     mut1(v, next) => run_frame_ready(
       next,
       run_after_datas(next, prelude, program, own),
@@ -154,7 +154,7 @@ pub fn run_after_builtins(
   program: List(SurfaceStmt),
   m: Mut1(Unit, Checker)
 ): Mut1(Unit, Checker) {
-  match m: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match m {
     mut1(v, next) => run_after_data_result(
       prelude,
       program,
@@ -170,7 +170,7 @@ pub theorem run_after_builtins_ready(
   ordered: CkOrdered(ck_st(m)),
   decls: CkDatasOrdered(ck_st(m))
 ): CkReady(ck_st(run_after_builtins(prelude, program, m))) {
-  match m: CkReady(ck_st(run_after_builtins(prelude, program, m))) {
+  ⊢ CkReady(ck_st(run_after_builtins(prelude, program, m))) from match m {
     mut1(v, next) => run_after_data_result_ready(
       prelude,
       program,
@@ -263,7 +263,7 @@ pub theorem ck_module_errors_frame(
   es: List(TypeError),
   c: Checker
 ): CkReadFrame(c, ck_module_errors(es, c)) {
-  match es: CkReadFrame(c, ck_module_errors(es, c)) {
+  ⊢ CkReadFrame(c, ck_module_errors(es, c)) from match es {
     Nil => Refl
     Cons(e, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
@@ -277,13 +277,13 @@ pub def RunReportSummary(
   m: Mut1(TypeReport, Checker)
 ): Prop := SummaryOk(finish_report_datas(ck_val(m)))
 pub fn run_finish_known(m: Mut1(Unit, Checker)): Mut1(TypeReport, Checker) {
-  match m: Mut1(TypeReport, Checker) { mut1(v, next) => ck_rewrap1(ck_finish(next)) }
+  ⊢ Mut1(TypeReport, Checker) from match m { mut1(v, next) => ck_rewrap1(ck_finish(next)) }
 }
 pub theorem run_finish_known_summary(
   m: Mut1(Unit, Checker),
   ready: CkReady(ck_st(m))
 ): RunReportSummary(run_finish_known(m)) {
-  match m: RunReportSummary(run_finish_known(m)) {
+  ⊢ RunReportSummary(run_finish_known(m)) from match m {
     mut1(v, next) => Eq::subst(
       RunReportSummary,
       Eq::sym(ck_rewrap1_id(ck_finish(next))),
@@ -292,20 +292,20 @@ pub theorem run_finish_known_summary(
   }
 }
 pub fn run_constructor_after(m: Mut1(Unit, Checker)): Mut1(Unit, Checker) {
-  match m: Mut1(Unit, Checker) { mut1(value, next) => ck_resolve_constructor_uses(next) }
+  ⊢ Mut1(Unit, Checker) from match m { mut1(value, next) => ck_resolve_constructor_uses(next) }
 }
 
 pub theorem run_constructor_after_frame(
   m: Mut1(Unit, Checker),
   ordered: CkOrdered(ck_st(m))
 ): ConstructorFrame(ck_st(m), run_constructor_after(m)) {
-  match m: ConstructorFrame(ck_st(m), run_constructor_after(m)) {
+  ⊢ ConstructorFrame(ck_st(m), run_constructor_after(m)) from match m {
     mut1(value, next) => ck_resolve_constructor_uses_frame(next, ordered)
   }
 }
 
 pub fn run_finish_after(m: Mut1(Unit, Checker)): Mut1(TypeReport, Checker) {
-  match m: Mut1(TypeReport, Checker) { mut1(value, next) => ck_rewrap1(ck_finalize(next)) }
+  ⊢ Mut1(TypeReport, Checker) from match m { mut1(value, next) => ck_rewrap1(ck_finalize(next)) }
 }
 
 pub theorem run_finalize_unf(
@@ -315,7 +315,7 @@ pub theorem run_finalize_unf(
 pub theorem run_finish_after_split(
   m: Mut1(Unit, Checker)
 ): run_finish_after(m) = run_finish_known(run_constructor_after(m)) {
-  match m: run_finish_after(m) = run_finish_known(run_constructor_after(m)) {
+  ⊢ run_finish_after(m) = run_finish_known(run_constructor_after(m)) from match m {
     mut1(value, next) => Eq::trans(ck_rewrap1_id(ck_finalize(next)), run_finalize_unf(next))
   }
 }
@@ -346,10 +346,10 @@ pub fn run_after_module_errors(
   program: List(SurfaceStmt),
   m: Mut1(Unit, Checker)
 ): Mut1(TypeReport, Checker) {
-  match m: Mut1(
+  ⊢ Mut1(
     TypeReport,
     Checker
-  ) { mut1(v, next) => run_finish_after(ck_run(next, prelude, program)) }
+  ) from match m { mut1(v, next) => run_finish_after(ck_run(next, prelude, program)) }
 }
 pub theorem run_after_module_errors_summary(
   prelude: List(SurfaceStmt),
@@ -358,7 +358,7 @@ pub theorem run_after_module_errors_summary(
   ordered: CkOrdered(ck_st(m)),
   decls: CkDatasOrdered(ck_st(m))
 ): RunReportSummary(run_after_module_errors(prelude, program, m)) {
-  match m: RunReportSummary(run_after_module_errors(prelude, program, m)) {
+  ⊢ RunReportSummary(run_after_module_errors(prelude, program, m)) from match m {
     mut1(v, next) => run_finish_after_summary(
       ck_run(next, prelude, program),
       ck_run_ready(next, prelude, program, ordered, decls)
@@ -370,7 +370,12 @@ pub theorem run_types_unf(
   prelude: List(SurfaceStmt),
   program: List(SurfaceStmt),
   errors: List(TypeError)
-): ck_types_run(c, prelude, program, errors) = run_after_module_errors(prelude, program, ck_module_errors(errors, c)) { Refl }
+): ck_types_run(
+  c,
+  prelude,
+  program,
+  errors
+) = run_after_module_errors(prelude, program, ck_module_errors(errors, c)) { Refl }
 pub theorem ck_types_run_summary_ok(
   c: Checker,
   prelude: List(SurfaceStmt),
@@ -402,7 +407,9 @@ pub theorem types_check_summary_ok(
   errors: List(TypeError)
 ): SummaryOk(finish_report_datas(types_check(prelude, program, errors))) {
   ck_types_run_summary_ok(
-    checker_new(Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))),
+    checker_new(
+      Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))
+    ),
     prelude,
     program,
     errors,

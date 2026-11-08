@@ -38,6 +38,8 @@ fn mentions(e: &Expr, out: &mut Live) {
         },
         ExprKind::Closure(c) => {
             out.extend(c.clones.iter().map(|l| l.id));
+            out.extend(c.refs.iter().map(|reference| reference.outer.id));
+            out.extend(c.owned_refs.iter().map(|local| local.id));
         }
         ExprKind::Handle(h) => {
             out.extend(h.captures.iter().map(|l| l.id));
@@ -77,7 +79,8 @@ fn live_in(e: &mut Expr, live: &mut Live, mutate: bool) {
         | ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::Bool(_)
-        | ExprKind::Text(_) => {}
+        | ExprKind::Text(_)
+        | ExprKind::Declaration(_) => {}
         ExprKind::FnValue { .. } => {}
         ExprKind::Read { local, how } => {
             if mutate
@@ -118,7 +121,6 @@ fn live_in(e: &mut Expr, live: &mut Live, mutate: bool) {
         | ExprKind::FnCast(a) => live_in(a, live, mutate),
         ExprKind::Inject { value, .. }
         | ExprKind::Remap { value, .. }
-        | ExprKind::Member { value, .. }
         | ExprKind::Deref { value, .. } => live_in(value, live, mutate),
         ExprKind::And(a, b) | ExprKind::Or(a, b) => {
             // `b` may not run.
@@ -130,11 +132,6 @@ fn live_in(e: &mut Expr, live: &mut Live, mutate: bool) {
         ExprKind::Ctor { fields, .. } => {
             for (_, f) in fields.iter_mut().rev() {
                 live_in(f, live, mutate);
-            }
-        }
-        ExprKind::Product { members, .. } => {
-            for m in members.iter_mut().rev() {
-                live_in(m, live, mutate);
             }
         }
         ExprKind::Field { base, .. } => live_in(base, live, mutate),

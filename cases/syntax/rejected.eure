@@ -2,7 +2,7 @@
 
 @ cases.let-without-a-name
 parses = false
-source = "let = 1"
+source = "let := 1"
 
 @ cases.unclosed-paren
 parses = false
@@ -22,7 +22,7 @@ source = "x := := 1"
 
 @ cases.unterminated-text
 parses = false
-source = "let t = \"abc"
+source = "let t := \"abc"
 
 @ cases.two-operators
 parses = false
@@ -32,7 +32,7 @@ source = "1 + * 2"
 description = "handle takes a block and then with { arms }; the form handle e { arms } is not read"
 parses = false
 source = ```nib
-effect ask: () -> i64
+effect ask(): i64
 handle 1 + 1 {
   ask() => 1
 }
@@ -41,7 +41,7 @@ handle 1 + 1 {
 @ cases.a-handle-block-with-arms-but-no-with-is-rejected
 parses = false
 source = ```nib
-effect ask: () -> i64
+effect ask(): i64
 handle { 1 } {
   ask() => 2
 }
@@ -49,32 +49,32 @@ handle { 1 } {
 
 @ cases.no-unit-suffix
 parses = false
-source = "let a = 3'km"
+source = "let a := 3'km"
 
 @ cases.no-percent
 parses = false
-source = "let a = 5%"
+source = "let a := 5%"
 
 @ cases.no-holes-or-try
 parses = false
-source = "let a = try { f()? }"
+source = "let a := try { f()? }"
 
 @ cases.no-text-concatenation-operator
 parses = false
-source = "let a = \"x\" & \"y\""
+source = "let a := \"x\" & \"y\""
 
 @ cases.equality-is-written-one-way
 description = "`==` and `!=`; neither `=` nor `<>` compares"
 parses = false
-source = "let a = if x = 1 { 0 } else { x <> 2 }"
+source = "let a := if x = 1 { 0 } else { x <> 2 }"
 
 @ cases.no-indexing
 parses = false
-source = "let a = xs[0]"
+source = "let a := xs[0]"
 
 @ cases.no-power-operator
 parses = false
-source = "let a = 2 ^ 3"
+source = "let a := 2 ^ 3"
 
 @ cases.no-for-loop
 parses = false
@@ -82,12 +82,12 @@ source = "for x in xs { }"
 
 @ cases.no-rest-or-default-parameters
 parses = false
-source = "fn f(x: i64 = 1, ...xs: i64) -> i64 { x }"
+source = "fn f(x: i64 = 1, ...xs: i64): i64 { x }"
 
 @ cases.a-type-is-applied-as-a-call
 description = "`Option(i64)`, never `Option<i64>`"
 parses = false
-source = "fn f(x: Option<i64>) -> i64 { 0 }"
+source = "fn f(x: Option<i64>): i64 { 0 }"
 
 @ cases.a-struct-without-braces
 parses = false
@@ -95,29 +95,187 @@ source = "affine struct File"
 
 @ cases.a-kind-on-a-function
 parses = false
-source = "affine fn f() -> i64 { 1 }"
+source = "affine fn f(): i64 { 1 }"
 
 @ cases.resume-and-direct-together
 parses = false
-source = "effect log: (t: Text) -> () resume 1 direct"
+source = "effect log(t: Text): Unit resume 1 direct"
 
 @ cases.direct-before-the-result
 parses = false
-source = "effect log: (t: Text) direct -> ()"
+source = "effect log: (t: Text) direct -> Unit"
 
 @ cases.extern-names-no-language
 description = "The rust path goes in Tauto.eure"
 parses = false
 source = ```nib
 extern "rust" {
-  fn f(x: i64) -> i64
+  fn f(x: i64): i64
 }
 ```
 
 @ cases.unknown-escape-in-a-double-quoted-text
 parses = false
-source = "let a = \"\\q\""
+source = "let a := \"\\q\""
 
 @ cases.an-unclosed-single-quoted-text
 parses = false
-source = "let a = 'abc"
+source = "let a := 'abc"
+
+@ cases.a-result-type-follows-a-colon
+description = "`fn f(): i64`, never `fn f() -> i64`"
+parses = false
+source = "fn f() -> i64 { 0 }"
+
+@ cases.an-effect-result-type-follows-a-colon
+description = "`effect ask(): i64`, never `effect ask: () -> i64`"
+entry = "main.taut"
+files."main.taut" = "effect ask: () -> i64"
+load_error = "an effect operation is written `effect ask(question: Text): i64`"
+
+@ cases.a-type-declares-its-parameters-in-parentheses
+description = "`enum Option(A: Type)`, never `enum Option<A>`"
+parses = false
+source = "enum Option<A> { None, Some(A) }"
+
+@ cases.a-type-parameter-has-a-kind
+description = "`struct Box(A: Type)`, never `struct Box(A)`"
+parses = false
+source = "struct Box(A) { value: A }"
+
+@ cases.a-class-declares-its-parameter-in-parentheses
+description = "`class Ord(A: Linear)`, never `class Ord<A: Linear>`"
+parses = false
+source = ```tauto
+class Ord<A: Linear> {
+  fn compare(&a: A, &b: A): Ordering
+}
+```
+
+@ cases.a-row-variable-is-declared-with-a-bang
+description = "`<!e: <=1>`, never `<e: <=1>`"
+parses = false
+source = ```nib
+fn with_file<A, e: <=1>(path: Text, &body: (&f: File) -> A ! e): A ! e { body(&f) }
+```
+
+@ cases.a-row-parameter-of-a-type-is-declared-with-a-bang
+description = "`struct Handlers(!e: <=1)`, never `struct Handlers(e: <=1)`"
+parses = false
+source = ```nib
+struct Handlers(e: <=1>) { on_key: (k: i64) -> i64 ! e }
+```
+
+@ cases.a-kind-is-not-a-lowercase-word
+description = "`<A: Linear>`, never `<A: linear>`"
+parses = false
+source = ```nib
+fn f<A: linear>(x: A): A { x }
+```
+
+@ cases.negation-is-not-an-operator
+description = "`not(b)`, never `!b`; `!` is for macros and effect rows"
+parses = false
+source = "fn f(b: Bool): Bool { !b }"
+
+@ cases.a-struct-literal-in-a-condition-needs-parentheses
+description = "a struct literal in an `if` condition is written in parentheses, `(p == (Point { x: 1 }))`"
+parses = false
+source = "fn f(): i64 { if p == Point { x: 1 } { 1 } else { 2 } }"
+
+@ cases.as-does-not-name-an-equation
+description = "`match e eqn h`, never `match e as h`"
+parses = false
+source = ```nib
+theorem t(): P {
+  match f(n) as e: G {
+    Zero => p
+  }
+}
+```
+
+@ cases.a-chain-of-equations-is-rejected
+description = "`=` does not chain: `a = b = c` is a syntax error"
+entry = "main.taut"
+files."main.taut" = ```tauto
+theorem t(a: Nat, b: Nat, c: Nat): a = b = c { ?h }
+```
+diagnostics = [{ name => "t", message => "`=` after a chain" }]
+
+@ cases.an-equation-in-an-expression-does-not-chain
+entry = "main.taut"
+files."main.taut" = ```tauto
+theorem t(a: Nat, b: Nat, c: Nat): And(a = b, f(a = b = c)) { ?h }
+```
+diagnostics = [{ name => "t", message => "`=` after a chain" }]
+
+@ cases.let-binds-with-the-assign-sign
+description = "`let x = e` is rejected: a binding is `let x := e`"
+parses = false
+source = "let x = 1"
+
+@ cases.bare-forall-is-a-name
+description = "`forall` is no keyword: the quantifier is `∀` or `\\forall`"
+parses = false
+source = ```tauto
+theorem t(): forall n: Nat. n = n { ?h }
+```
+
+@ cases.an-unknown-escape-is-rejected
+parses = false
+source = "theorem t(): \\implies { ?h }"
+
+@ cases.a-kind-is-not-a-name
+parses = false
+source = "let copy := 1"
+
+@ cases.a-reserved-word-is-not-a-name
+parses = false
+source = "let where := 1"
+
+@ cases.direct-is-not-a-name
+parses = false
+source = "let direct := 1"
+
+@ cases.mut-is-not-a-name
+parses = false
+source = "let mut := 2"
+
+@ cases.resume-is-not-a-name
+parses = false
+source = "let resume := 2"
+
+@ cases.from-is-reserved
+parses = false
+source = "let from := 2"
+
+@ cases.a-space-between-a-macro-name-and-its-bang
+parses = false
+source = "let b := m !(x)"
+
+@ cases.a-call-takes-no-type-arguments
+description = "`f<T>(x)` is not a call with type arguments: `<…>` is inferred, and the diagnostic says to write `f(x)`"
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn f<E>(n: Nat): Nat { n }
+theorem t(): f<Nat>(Zero) = Zero { ?h }
+```
+diagnostics = [{ name => "t", message => "`f<T>(x)` reads as the comparisons `f < T > (x)`: a call does not take type arguments, as `<…>` declares implicit arguments, which are inferred from the explicit ones; write the call without them (`f(x)`)" }]
+
+// Implicit arguments written by name come first, and a value is a postfix expression.
+
+@ cases.named-implicits-after-the-explicit-arguments
+parses = false
+source = "fn t(): Nat { f(h, <x: a>) }"
+
+@ cases.two-named-implicit-groups
+parses = false
+source = "fn t(): Nat { f(<x: a>, <y: b>, h) }"
+
+@ cases.a-named-implicit-value-with-an-operation
+parses = false
+source = "fn t(): Nat { f(<x: a + b>, h) }"
+
+@ cases.a-named-implicit-value-with-a-comparison
+parses = false
+source = "fn t(): Nat { f(<x: a > b>, h) }"

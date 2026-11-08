@@ -98,7 +98,7 @@ fn context(f: &FnInst, args: &[Ty]) -> Result<Context, BorrowReason> {
 impl Gen<'_> {
     /// The type closure must have only generated, immutable clone operations.
     /// A host lifetime assertion does not make an opaque clone a read.
-    fn borrow_type(&self, t: &Ty, seen: &mut BTreeSet<Ty>) -> bool {
+    pub(crate) fn borrow_type(&self, t: &Ty, seen: &mut BTreeSet<Ty>) -> bool {
         if scalar(t) || matches!(t, Ty::Text) {
             return true;
         }
@@ -312,7 +312,8 @@ impl Gen<'_> {
                         if !self.pkg.fns.iter().any(|f| {
                             f.rust_name == name || f.rust_name == format!("{name}_budget_sync")
                         }) && !self.pkg.datas.iter().any(|d| {
-                            Self::data_name(&d.name).to_string() == format!("{name}_budget_sync")
+                            Self::data_name(self.pkg, &d.name).to_string()
+                                == format!("{name}_budget_sync")
                         }) && !self
                             .borrowed_budget
                             .functions
@@ -355,7 +356,7 @@ impl Gen<'_> {
             Ok(Some((name, args, parameters))) => {
                 self.borrowed_budget.diagnostics.push(BorrowDiagnostic {
                     instance: inst,
-                    function: f.source.clone(),
+                    function: f.source.to_string(),
                     span: c.span,
                     type_arguments: key.1,
                     borrowed_parameters: parameters.into_iter().collect(),
@@ -367,7 +368,7 @@ impl Gen<'_> {
             Err(reason) => {
                 self.borrowed_budget.diagnostics.push(BorrowDiagnostic {
                     instance: inst,
-                    function: f.source.clone(),
+                    function: f.source.to_string(),
                     span: c.span,
                     type_arguments: key.1,
                     borrowed_parameters: Vec::new(),
@@ -421,7 +422,8 @@ impl Gen<'_> {
                         .values()
                         .any(|v| v.function.rust_name == name)
                     && !self.pkg.datas.iter().any(|d| {
-                        Self::data_name(&d.name).to_string() == format!("{name}_budget_sync")
+                        Self::data_name(self.pkg, &d.name).to_string()
+                            == format!("{name}_budget_sync")
                     })
                 {
                     function.rust_name = name;
@@ -648,14 +650,13 @@ impl Reads<'_, '_, '_> {
             ExprKind::Block(b) => self.block(b)?,
             ExprKind::Ctor { .. }
             | ExprKind::Text(_)
+            | ExprKind::Declaration(_)
             | ExprKind::FnValue { .. }
             | ExprKind::Closure(_)
             | ExprKind::Perform(_)
             | ExprKind::Handle(_)
             | ExprKind::Inject { .. }
             | ExprKind::Remap { .. }
-            | ExprKind::Product { .. }
-            | ExprKind::Member { .. }
             | ExprKind::Ref(_)
             | ExprKind::RefMut(_)
             | ExprKind::TempRef(_)

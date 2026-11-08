@@ -11,7 +11,7 @@ pub(open) inductive Mem(A: Type, a: A): (List(A)) -> Prop {
 }
 
 pub fn append(A: Type, xs: List(A), ys: List(A)): List(A) {
-  match xs: List(A) {
+  ⊢ List(A) from match xs {
     Nil => ys
     Cons(h, t) => Cons(h, append(A, t, ys))
   }
@@ -26,9 +26,10 @@ module Sub {
     e => m => m
   }
 
-  pub theorem trans<A: Type, a: List(
-    A
-  ), b: List(A), c: List(A)>(h1: Sub(A, a, b), h2: Sub(A, b, c)): Sub(A, a, c) {
+  pub theorem trans<A: Type, a: List(A), b: List(A), c: List(A)>(
+    h1: Sub(A, a, b),
+    h2: Sub(A, b, c)
+  ): Sub(A, a, c) {
     e => m => h2(e, h1(e, m))
   }
 }
@@ -56,17 +57,26 @@ module Equiv {
 
 module Mem {
   // The pure row is a subrow of everything: there is no member of nil.
-  pub theorem nil<A: Type, e: A>(C: Prop, m: Mem(A, e, Nil(A))): C {
-    match m: C {
+  pub theorem nil<A: Type, e: A>(C: Prop, m: Mem(A, e, Nil(<A: A>))): C {
+    ⊢ C from match m {
     }
   }
 
-  pub theorem append_left<A: Type, e: A, xs: List(
-    A
-  )>(ys: List(A), m: Mem(A, e, xs)): Mem(A, e, append(A, xs, ys)) {
-    match m: Mem(A, e, append(A, xs, ys)) {
-      MemHere(t) => MemHere(A, e, append(A, t, ys))
-      MemThere(b, t, m2) => MemThere(b, append(A, t, ys), append_left(ys, m2))
+  pub theorem append_left<A: Type, e: A, xs: List(A)>(
+    ys: List(A),
+    m: Mem(A, e, xs)
+  ): Mem(A, e, append(A, xs, ys)) {
+    ⊢ Mem(A, e, append(A, xs, ys)) from match m {
+      MemHere(t) => ⊢ Mem(
+        A,
+        e,
+        append(A, List::Cons(<A: A>, e, t), ys)
+      ) from MemHere(<A: A, a: e>, append(A, t, ys))
+      MemThere(b, t, m2) => ⊢ Mem(
+        A,
+        e,
+        append(A, List::Cons(<A: A>, b, t), ys)
+      ) from MemThere(b, append(A, t, ys), append_left(ys, m2))
     }
   }
 
@@ -75,7 +85,7 @@ module Mem {
     ys: List(A),
     m: Mem(A, e, ys)
   ): Mem(A, e, append(A, xs, ys)) {
-    match xs: Mem(A, e, append(A, xs, ys)) {
+    ⊢ Mem(A, e, append(A, xs, ys)) from match xs {
       Nil => m
       Cons(h, t) => MemThere(h, append(A, t, ys), append_right(t, ys, m))
     }
@@ -90,21 +100,21 @@ module Mem {
     ys: List(A),
     m: Mem(A, e, append(A, xs, ys))
   ): Mem(A, e, xs) ∨ Mem(A, e, ys) {
-    match xs: Mem(A, e, xs) ∨ Mem(A, e, ys) {
+    ⊢ Mem(A, e, xs) ∨ Mem(A, e, ys) from match xs {
       Nil => OrInr(m)
-      Cons(h, t) => match m: Mem(A, e, Cons(A, h, t)) ∨ Mem(A, e, ys) {
-        MemHere(t2) => OrInl(MemHere(A, e, t))
-        MemThere(b, t2, m2) => Or::elim(
-          append_inv(A, e, t, ys, m2),
-          r => OrInl(MemThere(h, t, r)),
-          r => OrInr(r)
-        )
+      Cons(h, t) => ⊢ Mem(A, e, Cons(<A: A>, h, t)) ∨ Mem(A, e, ys) from match m {
+        MemHere(t2) => ⊢ (
+          (Mem(A, e, List::Cons(<A: A>, e, t))) ∨ (Mem(A, e, ys))
+        ) from OrInl(MemHere(<A: A, a: e>, t))
+        MemThere(b, t2, m2) => ⊢ (
+          (Mem(A, e, List::Cons(<A: A>, h, t))) ∨ (Mem(A, e, ys))
+        ) from Or::elim(append_inv(A, e, t, ys, m2), r => OrInl(MemThere(h, t, r)), r => OrInr(r))
       }
     }
   }
 }
 
-pub theorem nil_sub<A: Type>(r: List(A)): Sub(A, Nil(A), r) {
+pub theorem nil_sub<A: Type>(r: List(A)): Sub(A, Nil(<A: A>), r) {
   e => m => Mem::nil(Mem(A, e, r), m)
 }
 
@@ -143,9 +153,10 @@ pub theorem append_idem<A: Type>(a: List(A)): Equiv(A, append(A, a, a), a) {
   )
 }
 
-pub theorem append_sub<A: Type, a: List(
-  A
-), b: List(A), c: List(A)>(h1: Sub(A, a, c), h2: Sub(A, b, c)): Sub(A, append(A, a, b), c) {
+pub theorem append_sub<A: Type, a: List(A), b: List(A), c: List(A)>(
+  h1: Sub(A, a, c),
+  h2: Sub(A, b, c)
+): Sub(A, append(A, a, b), c) {
   e => m => Or::elim(Mem::append_inv(A, e, a, b, m), r => h1(e, r), r => h2(e, r))
 }
 

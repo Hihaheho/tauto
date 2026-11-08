@@ -7,6 +7,7 @@ import "../../vm/src/mval.taut"
 
 pub theorem e_value_compiles(v: CVal): e_value(v) = c_value(v) {
   match v {
+    CvDeclaration(slot) => Refl
     CvUnit => Refl
     CvInt(i) => Refl
     CvFloat(x) => Refl
@@ -56,7 +57,7 @@ pub theorem e_lookup_bound(
   env: List(Pair(Nat, EBinding))
 ): e_lookup(Cons(Pair { fst: id, snd: b }, env), id) = Some(b) {
   Eq::congr(
-    (same: Bool) => match same: Option(EBinding) { true => Some(b), false => e_lookup(env, id) },
+    (same: Bool) => ⊢ Option(EBinding) from match same { true => Some(b), false => e_lookup(env, id) },
     Nat::eq_refl(id)
   )
 }
@@ -70,7 +71,7 @@ pub theorem e_read_bound(
   b: EBinding,
   found: e_lookup(env, id) = Some(b)
 ): e_read(ctors, cx, env, id, deref) = ErValue(e_deref(ctors, cx, deref, e_binding(cx, b)), cx) {
-  Eq::congr((entry: Option(EBinding)) => match entry: EResult(MVal) {
+  Eq::congr((entry: Option(EBinding)) => ⊢ EResult(MVal) from match entry {
     None => ErError("internal: an unbound local")
     Some(bound) => ErValue(e_deref(ctors, cx, deref, e_binding(cx, bound)), cx)
   }, found)
@@ -111,7 +112,7 @@ MstepNext(Mstate(k, slots, Cons(e_value(v), stack), frames, cx)) {
 pub fn e_unbox(ctors: List(MCtor), cx: MCx, boxed: Bool, value: MVal): MVal {
   match boxed {
     false => value
-    true => match value: MVal {
+    true => ⊢ MVal from match value {
       MvRef(cell, path) => m_at_ref(ctors, cx_cell(cx, cell), path)
       _ => value
     }
@@ -119,14 +120,14 @@ pub fn e_unbox(ctors: List(MCtor), cx: MCx, boxed: Bool, value: MVal): MVal {
 }
 
 pub fn e_read_code(boxed: Bool, deref: Bool, slot: Nat, k: MCode): MCode {
-  let after: MCode := match deref: MCode { false => k, true => McOp(MoDeref, k) }
-  McLoad(slot, match boxed: MCode { false => after, true => McOp(MoUnbox, after) })
+  let after: MCode := ⊢ MCode from match deref { false => k, true => McOp(MoDeref, k) }
+  McLoad(slot, ⊢ MCode from match boxed { false => after, true => McOp(MoUnbox, after) })
 }
 
 pub fn e_read_steps(boxed: Bool, deref: Bool): Nat {
   match boxed {
-    false => match deref: Nat { false => 1, true => 2 }
-    true => match deref: Nat { false => 2, true => 3 }
+    false => ⊢ Nat from match deref { false => 1, true => 2 }
+    true => ⊢ Nat from match deref { false => 2, true => 3 }
   }
 }
 
@@ -141,7 +142,7 @@ pub theorem e_compile_read(
   resolved: c_slot(cs, id) = Pair { fst: slot, snd: cs2 }
 ): c_expr(Succ(fuel), CRead(id, deref), k, cs) =
 Cr(e_read_code(c_is_boxed(cs2, id), deref, slot, k), cs2) {
-  Eq::congr((allocation: Pair(Nat, CSt)) => match allocation: CR {
+  Eq::congr((allocation: Pair(Nat, CSt)) => ⊢ CR from match allocation {
     Pair { fst: position, snd: state } => Cr(e_read_code(c_is_boxed(state, id), deref, position, k), state)
   }, resolved)
 }
@@ -157,9 +158,9 @@ pub theorem e_unbox_run(
   cx: MCx
 ): mrun(
   p,
-  (match deref: Nat { false => 1, true => 2 }),
+  (⊢ Nat from match deref { false => 1, true => 2 }),
   Mstate(
-    McOp(MoUnbox, match deref: MCode { false => k, true => McOp(MoDeref, k) }),
+    McOp(MoUnbox, ⊢ MCode from match deref { false => k, true => McOp(MoDeref, k) }),
     slots,
     Cons(v, stack),
     frames,
@@ -176,7 +177,7 @@ MstepNext(
   )
 ) {
   match deref {
-    false => match v: mrun(p, 1, Mstate(McOp(MoUnbox, k), slots, Cons(v, stack), frames, cx)) =
+    false => ⊢ mrun(p, 1, Mstate(McOp(MoUnbox, k), slots, Cons(v, stack), frames, cx)) =
     MstepNext(
       Mstate(
         k,
@@ -185,11 +186,11 @@ MstepNext(
         frames,
         cx
       )
-    ) {
+    ) from match v {
       MvRef(cell, path) => Refl
       _ => Refl
     }
-    true => match v: mrun(
+    true => ⊢ mrun(
       p,
       2,
       Mstate(McOp(MoUnbox, McOp(MoDeref, k)), slots, Cons(v, stack), frames, cx)
@@ -202,7 +203,7 @@ MstepNext(
         frames,
         cx
       )
-    ) {
+    ) from match v {
       MvRef(cell, path) => Refl
       _ => Refl
     }
@@ -237,7 +238,7 @@ MstepNext(
   )
 ) {
   match boxed {
-    false => match deref: mrun(
+    false => ⊢ mrun(
       p,
       e_read_steps(false, deref),
       Mstate(e_read_code(false, deref, slot, k), slots, stack, frames, cx)
@@ -258,8 +259,8 @@ MstepNext(
         frames,
         cx
       )
-    ) { false => Refl, true => Refl }
-    true => match deref: mrun(
+    ) from match deref { false => Refl, true => Refl }
+    true => ⊢ mrun(
       p,
       e_read_steps(true, deref),
       Mstate(e_read_code(true, deref, slot, k), slots, stack, frames, cx)
@@ -275,7 +276,7 @@ MstepNext(
         frames,
         cx
       )
-    ) {
+    ) from match deref {
       false => e_unbox_run(p, false, m_nth_or_unit(slots, slot), k, slots, stack, frames, cx)
       true => e_unbox_run(p, true, m_nth_or_unit(slots, slot), k, slots, stack, frames, cx)
     }

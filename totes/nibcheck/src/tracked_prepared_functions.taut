@@ -20,7 +20,7 @@ pub fn prepared_body_finish(
   program: List(SurfaceStmt),
   prepared: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)
 ): Mut1(TypeReport, Checker) {
-  match prepared: Mut1(TypeReport, Checker) {
+  ⊢ Mut1(TypeReport, Checker) from match prepared {
     mut1(schemes, state) => ck_finish(ck_st(names_function_body(state, program, schemes)))
   }
 }
@@ -34,10 +34,10 @@ pub theorem prepared_body_finish_registered(
   stable_functions(ck_st(prepared_body_finish(program, prepared))),
   ck_val(prepared)
 ) {
-  match prepared: RegisteredSignatures(
+  ⊢ RegisteredSignatures(
     stable_functions(ck_st(prepared_body_finish(program, prepared))),
     ck_val(prepared)
-  ) {
+  ) from match prepared {
     mut1(schemes, state) => body_finish_registered_signatures(
       state,
       program,
@@ -54,7 +54,7 @@ pub theorem prepared_body_finish_input_clean(
   ordered: CkOrdered(ck_st(prepared)),
   clean: DiagnosticReportClean(prepared_body_finish(program, prepared))
 ): DiagnosticClean(ck_st(prepared)) {
-  match prepared: DiagnosticClean(ck_st(prepared)) {
+  ⊢ DiagnosticClean(ck_st(prepared)) from match prepared {
     mut1(schemes, state) => And::right(
       names_function_body_checked(state, program, schemes, ordered)
     )(ck_finish_input_clean(ck_st(names_function_body(state, program, schemes)), clean))

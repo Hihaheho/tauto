@@ -15,7 +15,7 @@ pub(open) inductive Re: Type {
 }
 
 pub fn re_nullable(r: Re): Bool {
-  match r: Bool {
+  ⊢ Bool from match r {
     REmpty => false
     REps => true
     RChr(c) => false
@@ -27,17 +27,17 @@ pub fn re_nullable(r: Re): Bool {
 
 // `r` when `a` matches the empty string, else nothing: what is left when a first part that can be empty is skipped.
 pub fn re_if_nullable(a: Re, r: Re): Re {
-  match re_nullable(a): Re {
+  ⊢ Re from match re_nullable(a) {
     false => REmpty
     true => r
   }
 }
 
 pub fn re_deriv(c: Nat, r: Re): Re {
-  match r: Re {
+  ⊢ Re from match r {
     REmpty => REmpty
     REps => REmpty
-    RChr(d) => match Nat::eq(c, d): Re {
+    RChr(d) => ⊢ Re from match Nat::eq(c, d) {
       false => REmpty
       true => REps
     }
@@ -48,7 +48,7 @@ pub fn re_deriv(c: Nat, r: Re): Re {
 }
 
 pub fn re_match(w: List(Nat), r: Re): Bool {
-  match w: Bool {
+  ⊢ Bool from match w {
     Nil => re_nullable(r)
     Cons(c, rest) => re_match(rest, re_deriv(c, r))
   }

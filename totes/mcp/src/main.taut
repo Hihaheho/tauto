@@ -1,0 +1,128 @@
+import std::Base
+import std::prelude::Os
+import std::prelude::Shared
+import std::List
+import std::Text
+import std::Data
+import json::json
+import "../src/jsonrpc.taut"
+import "../src/mcp.taut"
+
+fn main(): Unit ! {stdin, stdout, stderr, stdout_flush, fs_read, proc_run} {
+  let initial_state: McpState := mcp_state_new()
+  server_loop(initial_state)
+}
+
+fn server_loop(state: McpState): Unit ! {stdin, stdout, stderr, stdout_flush, fs_read, proc_run} {
+  match perform stdin() {
+    None => Unit
+    Some(line) => {
+      handle_line(state, line)
+    }
+  }
+}
+
+fn handle_line(
+  state: McpState,
+  line: Text
+): Unit ! {stdin, stdout, stderr, stdout_flush, fs_read, proc_run} {
+  match Text::eq(line, "") {
+    true => server_loop(state)
+    false => match json_parse(line) {
+      Err(e) => {
+        send_parse_error()
+      }
+      Ok(json_val) => match parse_rpc_request(json_val) {
+        Err(rpc_err) => {
+          send_invalid_request()
+        }
+        Ok(rpc_req) => {
+          process_request(state, rpc_req)
+        }
+      }
+    }
+  }
+}
+
+fn send_parse_error(): Unit ! {stdout, stdout_flush, stderr, stdin, fs_read, proc_run} {
+  let error_response: Json := make_rpc_error_response(RpcIdNull, ParseError, None)
+  let response_text: Text := json_text(error_response)
+  perform stdout(response_text)
+  perform stdout_flush()
+  server_loop(mcp_state_new())
+}
+
+fn send_invalid_request(): Unit ! {stdout, stdout_flush, stderr, stdin, fs_read, proc_run} {
+  let error_response: Json := make_rpc_error_response(RpcIdNull, InvalidRequest, None)
+  let response_text: Text := json_text(error_response)
+  perform stdout(response_text)
+  perform stdout_flush()
+  server_loop(mcp_state_new())
+}
+
+fn process_request(
+  state: McpState,
+  req: RpcRequest
+): Unit ! {stdout, stdout_flush, stderr, stdin, fs_read, proc_run} {
+  match req.id {
+    None => {
+      handle_notification(state, req)
+    }
+    Some(req_id) => {
+      handle_request_with_id(state, req, req_id)
+    }
+  }
+}
+
+fn handle_notification(
+  state: McpState,
+  req: RpcRequest
+): Unit ! {stdout, stdout_flush, stderr, stdin, fs_read, proc_run} {
+  match Text::eq(req.method, "initialized") {
+    true => {
+      server_loop(state)
+    }
+    false => match Text::eq(req.method, "notifications/cancelled") {
+      true => {
+        server_loop(state)
+      }
+      false => {
+        server_loop(state)
+      }
+    }
+  }
+}
+
+fn handle_request_with_id(
+  state: McpState,
+  req: RpcRequest,
+  req_id: RpcId
+): Unit ! {stdout, stdout_flush, stderr, stdin, fs_read, proc_run} {
+  match handle_mcp_request(state, req) {
+    Err(mcp_err) => {
+      let rpc_err: RpcError := mcp_error_to_rpc_error(mcp_err)
+      let error_response: Json := make_rpc_error_response(req_id, rpc_err, None)
+      let response_text: Text := json_text(error_response)
+      perform stdout(response_text)
+      perform stdout_flush()
+      server_loop(state)
+    }
+    Ok(#(new_state, result_json)) => {
+      let success_response: Json := make_rpc_response(req_id, result_json)
+      let response_text: Text := json_text(success_response)
+      perform stdout(response_text)
+      perform stdout_flush()
+      match Text::eq(req.method, "initialize") {
+        true => {
+          send_initialized_notification()
+        }
+        false => Unit
+      }
+      server_loop(new_state)
+    }
+  }
+}
+
+fn send_initialized_notification(): Unit ! {stdout, stdout_flush} {
+  Unit
+}

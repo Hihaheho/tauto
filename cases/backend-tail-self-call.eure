@@ -1,0 +1,154 @@
+// Deep proof-language recursion must not retain discarded tail-call frames.
+@ cases.pure-tail-count
+backends = ["rust", "javascript"]
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn count(n: Nat, done: Nat): Nat {
+    ⊢ Nat from match n { Zero => done, Succ(rest) => count(rest, done + 1) }
+}
+perform show("count", count(60000, 0))
+```
+rust_shows = ["count = 60000"]
+
+@ cases.pure-non-tail-count
+backends = ["rust", "javascript"]
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn count(n: Nat): Nat {
+    ⊢ Nat from match n { Zero => 1, Succ(rest) => 2 * count(rest) }
+}
+perform show("count", count(5))
+```
+rust_shows = ["count = 32"]
+
+// A function that adds a constant to its own result, as `List::length`
+// does, is compiled with an accumulator: the call becomes a jump, and the
+// depth does not depend on the stack.
+@ cases.accumulated-count
+backends = ["rust", "javascript"]
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn count(n: Nat): Nat {
+    ⊢ Nat from match n { Zero => 0, Succ(rest) => 1 + count(rest) }
+}
+fn ones(n: Nat, acc: List(Nat)): List(Nat) {
+    ⊢ List(Nat) from match n { Zero => acc, Succ(k) => ones(k, Cons(1, acc)) }
+}
+fn stop(n: Nat): Nat {
+    ⊢ Nat from match n { Zero => 7, Succ(rest) => stop(rest) + 2 }
+}
+perform show("count", count(60000))
+perform show("length", List::length(ones(200000, Nil)))
+perform show("stop", stop(3))
+```
+rust_shows = ["count = 60000", "length = 200000", "stop = 13"]
+
+// A self call in tail position is a jump back to the start of the body, so
+// the depth does not depend on the stack: this counts past what the default
+// stack holds as frames.
+@ cases.machine-tail-count
+backends = ["rust"]
+source = ```tauto
+fn count(n: u64, done: u64): u64 {
+    if n == 0 { done } else { count(n - 1, done + 1) }
+}
+perform show("count", count(50000000, 0))
+```
+rust_shows = ["count = 50000000"]
+
+// A borrowed parameter that is passed on unchanged stays as it is, and the
+// reader advances one element per call, around the vector, past what the
+// default stack holds as frames.
+@ cases.borrowed-tail-reader
+backends = ["rust"]
+source = ```tauto
+fn sum_from(&v: Vec(u64), i: u64, left: u64, acc: u64): u64 {
+    if left == 0 {
+        acc
+    } else {
+        let &x := Vec::index(&v, i)
+        let next := if i + 1 == Vec::len(&v) { 0 } else { i + 1 }
+        sum_from(&v, next, left - 1, acc + x)
+    }
+}
+var v: Vec(u64) := Vec::new()
+Vec::push(&mut v, 1)
+Vec::push(&mut v, 2)
+// Vec::index performs out_of_bounds, so the program answers it.
+perform show("sum", handle { sum_from(&v, 0, 40000000, 0) } with { out_of_bounds() => 0 })
+```
+rust_shows = ["sum = 60000000"]
+
+// A parameter passed on unchanged is also given to another argument of the
+// same call. The next pass reads it again, so that argument takes a clone of
+// it, a function or a list alike, rather than moving it out.
+@ cases.passed-on-also-moved
+backends = ["rust", "javascript"]
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn apply(f: (Nat) -> Nat, xs: List(Nat), acc: Nat): Nat {
+    ⊢ Nat from match xs { Nil => acc, Cons(x, rest) => acc + f(x) }
+}
+fn run(f: (Nat) -> Nat, xs: List(Nat), n: Nat, acc: Nat): Nat {
+    ⊢ Nat from match n { Zero => acc, Succ(k) => run(f, xs, k, apply(f, xs, acc)) }
+}
+perform show("run", run(x => x + 1, Cons(2, Nil), 5, 0))
+```
+rust_shows = ["run = 15"]
+
+// A parameter passed on unchanged is read again inside a call nested in
+// another argument, by a function that is not public. That read also takes a
+// clone, so the next pass still has the parameter.
+@ cases.passed-on-moved-in-nested-call
+backends = ["rust", "javascript"]
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn first(xs: List(Nat), d: Nat): Nat {
+    ⊢ Nat from match xs { Nil => d, Cons(x, rest) => x }
+}
+fn wrap(n: Nat, xs: List(Nat), d: Nat, out: List(Nat)): List(Nat) {
+    ⊢ List(Nat) from match n { Zero => out, Succ(k) => Cons(first(xs, d), out) }
+}
+fn collect(k: Nat, xs: List(Nat), p: Nat, done: List(List(Nat))): List(List(Nat)) {
+    ⊢ List(List(Nat)) from match k {
+        Zero => done
+        Succ(k2) => collect(
+            k2,
+            xs,
+            p + 1 + first(xs, p) * 3,
+            Cons(wrap(first(xs, p), xs, p + 1, Nil), done)
+        )
+    }
+}
+fn count(l: List(List(Nat)), acc: Nat): Nat {
+    ⊢ Nat from match l { Nil => acc, Cons(x, rest) => count(rest, acc + 1) }
+}
+perform show("collect", count(collect(4, Cons(2, Nil), 0, Nil), 0))
+```
+rust_shows = ["collect = 4"]
+
+// A function that can suspend is a future, and every future between a
+// suspension and its handler is polled again when it resumes. A self call in
+// tail position is a jump here too, so a recursion that suspends at each step
+// does not take time that grows with the square of its depth.
+@ cases.suspending-tail-count
+backends = ["rust"]
+source = ```tauto
+effect tick(): Unit resume 1
+fn count(n: u64, done: u64): u64 ! {tick} {
+    if n == 0 { done } else {
+        perform tick()
+        count(n - 1, done + 1)
+    }
+}
+var ticks: u64 := 0
+let n := handle { count(1000000, 0) } with { tick(), k => { ticks := ticks + 1; k(#()) } }
+perform show("count", n)
+perform show("ticks", ticks)
+```
+rust_shows = ["count = 1000000", "ticks = 1000000"]

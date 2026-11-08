@@ -1,0 +1,1449 @@
+@ cases.navigation_scopes
+source = ```tauto
+fn twice(n: i64): i64 { n + n }
+fn main(): i64 {
+  let n := 3
+  let m := twice(n)
+  let k := match Some(m) {
+    Some(n) => n + 1
+    None => 0
+  }
+  let add := (n: i64) => n + k
+  add(m)
+}
+```
+parses = true
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.navigate_a_function_is_renamed_in_the_files_that_import_it
+source = ```tauto
+fn unrelated(): i64 { 1 }
+```
+parses = true
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.navigate_a_tote_s_other_files_are_not_edited_blindly
+source = ```tauto
+fn double(x: i64): i64 { x + x }
+```
+parses = true
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.navigation_proofs
+source = ```tauto
+inductive Even(n: Nat): Prop {
+  EvenZero: Even(0)
+  EvenSs<m: Nat>(h: Even(m)): Even(Succ(Succ(m)))
+}
+theorem even_two(): Even(2) { EvenSs(EvenZero) }
+theorem keep<P: Prop>(p: P): P { p }
+```
+parses = true
+
+@ cases.navigate_fields_enums_and_modules
+source = ```tauto
+struct Point { x: i64, y: i64 }
+enum Shape { Dot(Point), Empty }
+fn area(s: Shape): i64 {
+  match s {
+    Shape::Dot(p) => p.x + p.y
+    Empty => 0
+  }
+}
+fn origin(): Point { Point { x: 0, y: 0 } }
+```
+parses = true
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.navigate_a_name_in_a_syntax_literal_or_quote_stops_a_rename
+source = ```tauto
+fn helper(x: i64): i64 { x }
+fn make(): SynExpr { quote { helper(1) } }
+fn user(): i64 { helper(2) }
+```
+parses = true
+
+@ cases.navigate_a_filled_in_name_in_quote_is_a_use_of_the_local
+source = ```tauto
+fn make(a: SynIdent): SynExpr { quote { let tmp := $a } }
+```
+parses = true
+
+@ cases.lemma_search_explicit_scope_filters_before_limit_and_preserves_order
+source = ```tauto
+theorem t<A: Prop>(a: A, b: A): A { ?h }
+```
+checks."t" = "incomplete: ?h"
+holes = [{ "declaration" => "t", "name" => "h", "goal" => "A", "context" => ["A: Prop", "a: A", "b: A"] }]
+
+@ cases.lemma_search_wrong_type_is_not_a_candidate_or_a_checked_term
+source = ```tauto
+theorem t<A: Prop>(a: A, n: Nat): A { ?h }
+```
+checks."t" = "incomplete: ?h"
+holes = [{ "declaration" => "t", "name" => "h", "goal" => "A", "context" => ["A: Prop", "a: A", "n: Nat"] }]
+
+@ cases.lemma_search_accepted_partial_edits_are_not_verified_proofs
+source = ```tauto
+theorem t<A: Prop, B: Prop>(a: A, b: B): And(A, B) { ?h }
+```
+checks."t" = "incomplete: ?h"
+holes = [{ "declaration" => "t", "name" => "h", "goal" => "And(A, B)", "context" => ["A: Prop", "B: Prop", "a: A", "b: B"] }]
+
+@ cases.lemma_search_transitively_used_axioms_remain_visible
+source = ```tauto
+axiom assumed(): Zero = Zero
+theorem alias(): Zero = Zero { assumed() }
+theorem t(): Zero = Zero { ?h }
+```
+checks."assumed" = "axioms: assumed"
+checks."alias" = "axioms: assumed"
+checks."t" = "incomplete: ?h"
+holes = [{ "declaration" => "t", "name" => "h", "goal" => "Zero = Zero", "context" => [] }]
+
+@ cases.lemma_search_only_loaded_imports_are_searchable_and_sources_are_unchanged
+source = ```tauto
+pub theorem identity(): Zero = Zero { Refl(Nat, Zero) }
+```
+checks."identity" = "ok"
+
+@ cases.lemma_search_only_loaded_imports_are_searchable_and_sources_are_unchanged_2
+source = ```tauto
+pub theorem outside(): Zero = Zero { Refl(Nat, Zero) }
+```
+checks."outside" = "ok"
+
+@ cases.lemma_search_checked_target_does_not_hide_failures_elsewhere_in_file
+source = ```tauto
+theorem t<A: Prop>(a: A): A { ?h }
+theorem broken(): False { Zero }
+```
+checks."t" = "incomplete: ?h"
+checks."broken" = "error: type mismatch: expected `False`, found `Nat`"
+holes = [{ "declaration" => "t", "name" => "h", "goal" => "A", "context" => ["A: Prop", "a: A"] }]
+diagnostics = [{ "name" => "broken", "message" => "type mismatch: expected `False`, found `Nat`", "span" => "«Zero»" }]
+
+@ cases.lemma_search_checked_target_does_not_hide_other_holes
+source = ```tauto
+theorem t<A: Prop>(a: A): A { ?h }
+theorem unfinished<A: Prop>(a: A): A { ?other }
+```
+checks."t" = "incomplete: ?h"
+checks."unfinished" = "incomplete: ?other"
+holes = [{ "declaration" => "t", "name" => "h", "goal" => "A", "context" => ["A: Prop", "a: A"] }, { "declaration" => "unfinished", "name" => "other", "goal" => "A", "context" => ["A: Prop", "a: A"] }]
+
+@ cases.lemma_search_imported_transitive_axioms_are_not_an_implicit_whitelist
+source = ```tauto
+pub axiom assumed(): Zero = Zero
+pub theorem alias(): Zero = Zero { assumed() }
+```
+checks."assumed" = "axioms: assumed"
+checks."alias" = "axioms: assumed"
+
+@ cases.incremental_library
+source = ```tauto
+theorem and_swap(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
+  AndIntro(B, A, And::right(A, B, p), And::left(A, B, p))
+}
+
+theorem compose(A: Prop, B: Prop, C: Prop, f: (A) -> B, g: (B) -> C): (A) -> C {
+  a => g(f(a))
+}
+
+theorem id_proof(A: Prop, a: A): A {
+  a
+}
+```
+checks."and_swap" = "ok"
+checks."compose" = "ok"
+checks."id_proof" = "ok"
+
+@ cases.incremental_a_statement_that_only_moved_is_not_checked_again_and_its_places_follow
+source = ```tauto
+theorem wrong(): 2 + 2 = 5 {
+  Refl(Nat, 4)
+}
+```
+checks."wrong" = "error: type mismatch: expected `2 + 2 = 5`, found `4 = 4`\n  differing part: expected `5`, found `4`"
+diagnostics = [{ "name" => "wrong", "message" => "type mismatch: expected `2 + 2 = 5`, found `4 = 4`\n  differing part: expected `5`, found `4`", "span" => "«Refl(Nat, 4)»" }]
+
+@ cases.incremental_holes
+source = ```tauto
+theorem first(A: Prop, a: A): A {
+  ?one
+}
+
+theorem second(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
+  AndIntro(B, A, ?right, ?left)
+}
+
+theorem third(A: Prop, a: A): A {
+  a
+}
+```
+checks."first" = "incomplete: ?one"
+checks."second" = "incomplete: ?right, ?left"
+checks."third" = "ok"
+holes = [{ "declaration" => "first", "name" => "one", "goal" => "A", "context" => ["A: Prop", "a: A"] }, { "declaration" => "second", "name" => "right", "goal" => "B", "context" => ["A: Prop", "B: Prop", "p: And(A, B)"] }, { "declaration" => "second", "name" => "left", "goal" => "A", "context" => ["A: Prop", "B: Prop", "p: And(A, B)"] }]
+
+@ cases.incremental_universe_template_edits_invalidate_nonzero_instances
+source = ```tauto
+theorem uid<u: Level, A: Type(u)>(x: A): A { x }
+theorem use_uid(): Type { uid(1, Type, Nat) }
+```
+checks."uid" = "ok"
+checks."uid@1" = "ok"
+checks."use_uid" = "ok"
+
+@ cases.incremental_inductive_template_edits_invalidate_nonzero_instances
+source = ```tauto
+inductive UBox(u: Level, A: Type(u)): Type(u) { Ub(value: A): UBox(u, A) }
+theorem use_box(A: Type1, x: UBox(1, A)): UBox(1, A) { x }
+```
+checks."UBox" = "ok"
+checks."UBox@1" = "ok"
+checks."use_box" = "ok"
+
+@ cases.assist_swap_hole
+source = ```tauto
+theorem swap<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
+  ?top
+}
+```
+checks."swap" = "incomplete: ?top"
+holes = [{ "declaration" => "swap", "name" => "top", "goal" => "And(B, A)", "context" => ["A: Prop", "B: Prop", "p: And(A, B)"] }]
+
+@ cases.assist_a_hypothesis_that_is_the_goal_comes_first
+source = ```tauto
+theorem t<A: Prop>(a: A): A {
+  ?h
+}
+```
+checks."t" = "incomplete: ?h"
+holes = [{ "declaration" => "t", "name" => "h", "goal" => "A", "context" => ["A: Prop", "a: A"] }]
+
+@ cases.assist_expand_by_match_writes_an_arm_for_each_constructor
+source = ```tauto
+theorem t(n: Nat, m: Nat): n + m = m + n {
+  ?whole
+}
+```
+checks."t" = "incomplete: ?whole"
+holes = [{ "declaration" => "t", "name" => "whole", "goal" => "n + m = m + n", "context" => ["n: Nat", "m: Nat"] }]
+
+@ cases.assist_expand_by_intro_binds_the_argument
+source = ```tauto
+theorem t<A: Prop, B: Prop>(): (A) -> (B) -> A {
+  ?f
+}
+```
+checks."t" = "incomplete: ?f"
+
+@ cases.assist_a_match_before_other_arguments_keeps_its_holes
+source = ```tauto
+theorem add_comm(n: Nat, m: Nat): n + m = m + n {
+  match n {
+    Zero => ?base
+    Succ(k) => ?step
+  }
+}
+```
+checks."add_comm" = "incomplete: ?base, ?step"
+
+@ cases.assist_a_mismatch_points_at_the_argument_and_has_its_parts
+source = ```tauto
+theorem swap<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
+  AndIntro(And::right(p), And::right(p))
+}
+```
+checks."swap" = "error: type mismatch: expected `A`, found `B`\n  argument 2 of `And::AndIntro`, which the expected type `And(B, A)` of the call fixes"
+diagnostics = [{ "name" => "swap", "message" => "type mismatch: expected `A`, found `B`\n  argument 2 of `And::AndIntro`, which the expected type `And(B, A)` of the call fixes", "span" => " «And::right(p)»" }]
+
+@ cases.assist_a_plain_mismatch_has_expected_found_and_the_differing_part
+source = ```tauto
+theorem wrong(): Eq(Nat, 3, 4) { Refl(Nat, 3) }
+```
+checks."wrong" = "error: type mismatch: expected `3 = 4`, found `3 = 3`\n  differing part: expected `4`, found `3`"
+diagnostics = [{ "name" => "wrong", "message" => "type mismatch: expected `3 = 4`, found `3 = 3`\n  differing part: expected `4`, found `3`", "span" => "{ «Refl(Nat, 3)» }" }]
+
+@ cases.assist_closing_a_hole_leaves_the_names_of_the_others
+source = ```tauto
+theorem swap<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
+  AndIntro(?l, ?r)
+}
+```
+checks."swap" = "incomplete: ?l, ?r"
+holes = [{ "declaration" => "swap", "name" => "l", "goal" => "B", "context" => ["A: Prop", "B: Prop", "p: And(A, B)"] }, { "declaration" => "swap", "name" => "r", "goal" => "A", "context" => ["A: Prop", "B: Prop", "p: And(A, B)"] }]
+
+@ cases.navigation_imports
+files."lib.nib" = ```nib
+pub fn double(x: i64): i64 { x + x }
+```
+files."main.nib" = ```nib
+import "lib.nib"
+fn main(): i64 { double(2) }
+```
+files."other.nib" = ```nib
+import "lib.nib"
+pub fn twice(): i64 { double(3) + double(4) }
+```
+entry = "main.nib"
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.navigation_unloaded_file
+files."unloaded.nib" = ```nib
+fn g(): i64 { double(1) }
+```
+entry = "unloaded.nib"
+types = "error: double is not defined"
+
+@ cases.search_imported_hole
+files."main.taut" = ```tauto
+import "lemmas.taut"
+theorem t(): Zero = Zero { ?h }
+```
+files."lemmas.taut" = ```tauto
+pub theorem identity(): Zero = Zero { Refl(Nat, Zero) }
+```
+entry = "main.taut"
+checks."t" = "incomplete: ?h"
+checks."identity" = "ok"
+
+@ cases.search_imported_axiom
+files."main.taut" = ```tauto
+import "lemmas.taut"
+theorem t(): Zero = Zero { ?h }
+```
+files."lemmas.taut" = ```tauto
+pub axiom assumed(): Zero = Zero
+pub theorem alias(): Zero = Zero { assumed() }
+```
+entry = "main.taut"
+checks."assumed" = "axioms: assumed"
+checks."alias" = "axioms: assumed"
+checks."t" = "incomplete: ?h"
+
+@ cases.missing_import
+files."main.taut" = ```tauto
+import "nowhere.taut"
+```
+entry = "main.taut"
+load_error = "nowhere.taut"
+
+@ cases.incremental_main
+files."lib.taut" = ```tauto
+pub theorem and_swap(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
+  AndIntro(B, A, And::right(A, B, p), And::left(A, B, p))
+}
+
+pub theorem compose(A: Prop, B: Prop, C: Prop, f: (A) -> B, g: (B) -> C): (A) -> C {
+  a => g(f(a))
+}
+
+pub theorem id_proof(A: Prop, a: A): A {
+  a
+}
+```
+files."main.taut" = ```tauto
+import "lib.taut"
+
+theorem swap_twice(A: Prop, B: Prop, p: A ∧ B): A ∧ B {
+  and_swap(B, A, and_swap(A, B, p))
+}
+
+theorem uses_id(A: Prop, a: A): A {
+  id_proof(A, a)
+}
+
+// nothing here
+
+theorem last_one(A: Prop, a: A): A {
+  id_proof(A, id_proof(A, a))
+}
+```
+entry = "main.taut"
+checks_all = "ok"
+
+@ cases.incremental_holes_with_fourth
+source = ```tauto
+theorem first(A: Prop, a: A): A {
+  ?one
+}
+
+theorem second(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
+  AndIntro(B, A, ?right, ?left)
+}
+
+theorem third(A: Prop, a: A): A {
+  a
+}
+
+theorem fourth(A: Prop, a: A): A {
+  a
+}
+```
+checks."first" = "incomplete: ?one"
+checks."second" = "incomplete: ?right, ?left"
+checks."third" = "ok"
+checks."fourth" = "ok"
+
+@ cases.incremental_bad_syntax
+files."lib.taut" = ```tauto
+pub theorem and_swap(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
+  AndIntro(B, A, And::right(A, B, p), And::left(A, B, p))
+}
+
+pub theorem compose(A: Prop, B: Prop, C: Prop, f: (A) -> B, g: (B) -> C): (A) -> C {
+  a => g(f(a))
+}
+
+pub theorem id_proof(A: Prop, a: A): A {
+  a
+}
+```
+files."main.taut" = ```tauto
+import "lib.taut"
+
+theorem swap_twice(A: Prop, B: Prop, p: A ∧ B): A ∧ B {
+  and_swap(B, A, and_swap(A, B, p))
+}
+
+theorem uses_id(A: Prop, a: A): A {
+  id_proof(A, a)
+}
+
+// nothing here
+
+theorem last_one(A: Prop, a: A): A {
+  id_proof(A, id_proof(A, a))
+}
+
+theorem (((
+```
+entry = "main.taut"
+parses = false
+
+@ cases.universe_mutation_53
+source = ```tauto
+theorem uid<u: Level, A: Type(0)>(x: A): A { x }
+theorem use_uid(): Type { uid(1, Type, Nat) }
+```
+checks."uid" = "ok"
+checks."uid@1" = "ok"
+checks."use_uid" = "error: type mismatch: expected `Type`, found `Type1`"
+diagnostics = [{ "name" => "use_uid", "message" => "type mismatch: expected `Type`, found `Type1`", "span" => " «Type»," }]
+
+@ cases.universe_mutation_54
+source = ```tauto
+inductive UBox(u: Level, A: Type(0)): Type(u) { Ub(value: A): UBox(u, A) }
+theorem use_box(A: Type1, x: UBox(1, A)): UBox(1, A) { x }
+```
+checks."UBox" = "ok"
+checks."UBox@1" = "ok"
+checks."use_box" = "error: type mismatch: expected `Type`, found `Type1`"
+diagnostics = [{ "name" => "use_box", "message" => "type mismatch: expected `Type`, found `Type1`", "span" => ", «A»))" }]
+
+@ cases.editor_tokens
+files."math.nib" = ````nib
+syntax!(math, ```par
+%start Eqn
+%title "math"
+%%
+Eqn: Sum Equals Sum;
+Sum: Term { Plus Term };
+Term: Num | Paren;
+Paren: LParen Sum RParen;
+Num: /[0-9]+/;
+Equals: '=';
+Plus: '+';
+LParen: '(';
+RParen: ')';
+```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
+  fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+````
+files."main.nib" = ```nib
+import "math.nib"
+theorem t(): math!(`1 + 2 = 3`) { Refl(Nat, 3) }
+```
+entry = "main.nib"
+editor_tokens = ["2:21 number 1", "2:23 operator +", "2:25 number 2", "2:27 operator =", "2:29 number 3"]
+checks."t" = "error: type mismatch"
+
+@ cases.editor_tokens_in_quote
+files."math.nib" = ````nib
+import std::prelude::Macro
+
+pub fn math_end(ts: List(SynTok), at: u64): u64 {
+  match ts {
+    Nil => at
+    Cons(t, rest) => math_end(rest, t.end)
+  }
+}
+
+pub fn math_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "enumMember" }, math_tokens(rest))
+      } else {
+        if t.kind == "Plus" {
+          Cons(SynHighlight { start: t.start, end: math_end(rest, t.end), kind: "string" }, Nil)
+        } else {
+          math_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(math, ```par
+%start Eqn
+%title "math"
+%%
+Eqn: Sum Equals Sum;
+Sum: Term { Plus Term };
+Term: Num | Paren;
+Paren: LParen Sum RParen;
+Num: /[0-9]+/;
+Equals: '=';
+Plus: '+';
+LParen: '(';
+RParen: ')';
+```, with(tokens: math_tokens)) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
+  fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+````
+files."main.nib" = ````nib
+import "math.nib"
+import std::prelude::Macro
+pub macro fn twin(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { math`1 + 2 = 3` } }
+````
+entry = "main.nib"
+editor_tokens = ["3:78 enumMember 1", "3:80 string + 2 = 3"]
+checks."twin" = "skipped"
+
+@ cases.editor_tokens_in_unused_function
+files."math.nib" = ````nib
+import std::prelude::Macro
+
+pub fn math_end(ts: List(SynTok), at: u64): u64 {
+  match ts {
+    Nil => at
+    Cons(t, rest) => math_end(rest, t.end)
+  }
+}
+
+pub fn math_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "enumMember" }, math_tokens(rest))
+      } else {
+        if t.kind == "Plus" {
+          Cons(SynHighlight { start: t.start, end: math_end(rest, t.end), kind: "string" }, Nil)
+        } else {
+          math_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(math, ```par
+%start Eqn
+%title "math"
+%%
+Eqn: Sum Equals Sum;
+Sum: Term { Plus Term };
+Term: Num | Paren;
+Paren: LParen Sum RParen;
+Num: /[0-9]+/;
+Equals: '=';
+Plus: '+';
+LParen: '(';
+RParen: ')';
+```, with(tokens: math_tokens)) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
+  fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+````
+files."main.nib" = ````nib
+import "math.nib"
+fn unused(): math::Eqn { math`1 + 2 = 3` }
+````
+entry = "main.nib"
+editor_tokens = ["2:31 enumMember 1", "2:33 string + 2 = 3"]
+types = "ok"
+checks."unused" = "skipped"
+
+@ cases.editor_tokens_with_check_error
+files."math.nib" = ````nib
+import std::prelude::Macro
+
+pub fn math_end(ts: List(SynTok), at: u64): u64 {
+  match ts {
+    Nil => at
+    Cons(t, rest) => math_end(rest, t.end)
+  }
+}
+
+pub fn math_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "enumMember" }, math_tokens(rest))
+      } else {
+        if t.kind == "Plus" {
+          Cons(SynHighlight { start: t.start, end: math_end(rest, t.end), kind: "string" }, Nil)
+        } else {
+          math_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(math, ```par
+%start Eqn
+%title "math"
+%%
+Eqn: Sum Equals Sum;
+Sum: Term { Plus Term };
+Term: Num | Paren;
+Paren: LParen Sum RParen;
+Num: /[0-9]+/;
+Equals: '=';
+Plus: '+';
+LParen: '(';
+RParen: ')';
+```, with(tokens: math_tokens)) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
+  fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+````
+files."main.nib" = ````nib
+import "math.nib"
+fn bad(): Nat { math`1 + 2 = 3` }
+````
+entry = "main.nib"
+editor_tokens = ["2:22 enumMember 1", "2:24 string + 2 = 3"]
+types = "error: the result of `bad`"
+
+@ cases.editor_tokens_in_comment_fence
+files."math.nib" = ````nib
+pub fn math_end(ts: List(SynTok), at: u64): u64 {
+  match ts {
+    Nil => at
+    Cons(t, rest) => math_end(rest, t.end)
+  }
+}
+
+pub fn math_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "enumMember" }, math_tokens(rest))
+      } else {
+        if t.kind == "Plus" {
+          Cons(SynHighlight { start: t.start, end: math_end(rest, t.end), kind: "string" }, Nil)
+        } else {
+          math_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(math, ```par
+%start Eqn
+%title "math"
+%%
+Eqn: Sum Equals Sum;
+Sum: Term { Plus Term };
+Term: Num | Paren;
+Paren: LParen Sum RParen;
+Num: /[0-9]+/;
+Equals: '=';
+Plus: '+';
+LParen: '(';
+RParen: ')';
+```, with(tokens: math_tokens)) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
+  fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+````
+files."main.nib" = ````nib
+import "math.nib"
+/// ```math
+/// 1 + 2 = 3
+/// ```
+fn documented(): Nat { 0 }
+
+//! ```math
+//! 1 +
+//! 2 = 3
+//! ```
+fn split(): Nat { 0 }
+````
+entry = "main.nib"
+editor_tokens = ["3:5 enumMember 1", "3:7 string + 2 = 3", "8:5 enumMember 1", "8:7 string +", "9:5 string 2 = 3"]
+checks."documented" = "ok"
+
+@ cases.editor_tokens_over_lines
+files."math.nib" = ````nib
+import std::prelude::Macro
+
+pub fn math_end(ts: List(SynTok), at: u64): u64 {
+  match ts {
+    Nil => at
+    Cons(t, rest) => math_end(rest, t.end)
+  }
+}
+
+pub fn math_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "enumMember" }, math_tokens(rest))
+      } else {
+        if t.kind == "Plus" {
+          Cons(SynHighlight { start: t.start, end: math_end(rest, t.end), kind: "string" }, Nil)
+        } else {
+          math_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(math, ```par
+%start Eqn
+%title "math"
+%%
+Eqn: Sum Equals Sum;
+Sum: Term { Plus Term };
+Term: Num | Paren;
+Paren: LParen Sum RParen;
+Num: /[0-9]+/;
+Equals: '=';
+Plus: '+';
+LParen: '(';
+RParen: ')';
+```, with(tokens: math_tokens)) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
+  fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+````
+files."main.nib" = ````nib
+import "math.nib"
+fn lines(): math::Eqn {
+  ```math
+  1 +
+  2 = 3
+  ```
+}
+````
+entry = "main.nib"
+editor_tokens = ["4:3 enumMember 1", "4:5 string +", "5:1 string   2 = 3"]
+types = "ok"
+checks."lines" = "skipped"
+
+@ cases.editor_expansion_diagnostic
+files."math.nib" = ````nib
+syntax!(math, ```par
+%start Eqn
+%title "math"
+%%
+Eqn: Sum Equals Sum;
+Sum: Term { Plus Term };
+Term: Num | Paren;
+Paren: LParen Sum RParen;
+Num: /[0-9]+/;
+Equals: '=';
+Plus: '+';
+LParen: '(';
+RParen: ')';
+```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
+  fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { not_declared } }
+````
+files."main.nib" = ```nib
+import "math.nib"
+theorem t(): Nat { math!(`1 = 1`) }
+```
+entry = "main.nib"
+checks."t" = "error: `not_declared` is not defined"
+
+@ cases.editor_completion
+files."math.nib" = ````nib
+syntax!(math, ```par
+%start Eqn
+%title "math"
+%%
+Eqn: Sum Equals Sum;
+Sum: Term { Plus Term };
+Term: Num | Paren;
+Paren: LParen Sum RParen;
+Num: /[0-9]+/;
+Equals: '=';
+Plus: '+';
+LParen: '(';
+RParen: ')';
+```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
+  fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+````
+files."main.nib" = ```nib
+import "math.nib"
+theorem t(): math!(`1 + `) { Refl(Nat, 3) }
+```
+entry = "main.nib"
+macro_error = "macro.syntax_error"
+
+@ cases.navigation_macro_origin
+files."lib.nib" = ````nib
+syntax!(swp, ```par
+%start Pair
+%%
+Pair: Name Name;
+Name: /[\p{L}_][\p{L}\p{N}_]*/;
+```) => struct Pair, fn parse
+pub macro fn mk(p: swp::Pair): List(SynStmt) {
+  let a := Syn::ident(p.name)
+  quote stmts {
+    fn $a(): i64 { 1 }
+  }
+}
+````
+files."main.nib" = ```nib
+import "lib.nib"
+mk!(`produced unused`) => fn produced
+fn user(): i64 { produced() }
+```
+entry = "main.nib"
+checks."produced" = "skipped"
+checks."user" = "skipped"
+
+@ cases.assist_rewrite_step
+checks."t" = "incomplete: ?h"
+source = ```tauto
+theorem t(k: Nat, a: Nat): Nat::add(Succ(k), a) = Succ(Nat::add(k, a)) {
+  ?h
+}
+```
+imports = [path`../std/Nat.taut`, path`../std/Tactic.taut`]
+
+@ cases.candidate_wrong_hypothesis
+source = ```tauto
+theorem t<A: Prop>(a: A, n: Nat): A { n }
+```
+checks."t" = "error: type mismatch: expected `A`, found `Nat`"
+diagnostics = [{ "name" => "t", "message" => "type mismatch: expected `A`, found `Nat`", "span" => " «n» " }]
+
+@ cases.candidate_unknown_name
+source = ```tauto
+theorem t<A: Prop>(a: A, n: Nat): A { not_declared }
+```
+checks."t" = "error: `not_declared` is not defined"
+diagnostics = [{ "name" => "t", "message" => "`not_declared` is not defined", "span" => "«not_declared»" }]
+
+@ cases.candidate_matching_hypothesis
+source = ```tauto
+theorem t<A: Prop>(a: A, n: Nat): A { a }
+```
+checks."t" = "ok"
+
+@ cases.candidate_partial_conjunction
+source = ```tauto
+theorem t<A: Prop, B: Prop>(a: A, b: B): And(A, B) { AndIntro(?left, ?right) }
+```
+checks."t" = "incomplete: ?left, ?right"
+holes = [{ "declaration" => "t", "name" => "left", "goal" => "A", "context" => ["A: Prop", "B: Prop", "a: A", "b: B"] }, { "declaration" => "t", "name" => "right", "goal" => "B", "context" => ["A: Prop", "B: Prop", "a: A", "b: B"] }]
+
+@ cases.candidate_transitive_axiom
+source = ```tauto
+axiom assumed(): Zero = Zero
+theorem alias(): Zero = Zero { assumed() }
+theorem t(): Zero = Zero { alias() }
+```
+checks."assumed" = "axioms: assumed"
+checks."alias" = "axioms: assumed"
+checks."t" = "axioms: assumed"
+
+@ cases.candidate_checked_with_other_failure
+source = ```tauto
+theorem t<A: Prop>(a: A): A { a }
+theorem broken(): False { Zero }
+```
+checks."t" = "ok"
+checks."broken" = "error: type mismatch: expected `False`, found `Nat`"
+diagnostics = [{ "name" => "broken", "message" => "type mismatch: expected `False`, found `Nat`", "span" => "«Zero»" }]
+
+@ cases.candidate_checked_with_other_hole
+source = ```tauto
+theorem t<A: Prop>(a: A): A { a }
+theorem unfinished<A: Prop>(a: A): A { ?other }
+```
+checks."t" = "ok"
+checks."unfinished" = "incomplete: ?other"
+holes = [{ "declaration" => "unfinished", "name" => "other", "goal" => "A", "context" => ["A: Prop", "a: A"] }]
+
+@ cases.candidate_suggested_conjunction
+source = ```tauto
+theorem swap<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
+  AndIntro(?top_a, ?top_b)
+}
+```
+checks."swap" = "incomplete: ?top_a, ?top_b"
+holes = [{ "declaration" => "swap", "name" => "top_a", "goal" => "B", "context" => ["A: Prop", "B: Prop", "p: And(A, B)"] }, { "declaration" => "swap", "name" => "top_b", "goal" => "A", "context" => ["A: Prop", "B: Prop", "p: And(A, B)"] }]
+
+@ cases.candidate_closes_only_named_hole
+source = ```tauto
+theorem swap<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
+  AndIntro(And::right(p), ?r)
+}
+```
+checks."swap" = "incomplete: ?r"
+holes = [{ "declaration" => "swap", "name" => "r", "goal" => "A", "context" => ["A: Prop", "B: Prop", "p: And(A, B)"] }]
+
+@ cases.incremental_wrong_candidate
+source = ```tauto
+theorem first(A: Prop, a: A): A {
+  ?one
+}
+
+theorem second(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
+  AndIntro(B, A, p, ?left)
+}
+
+theorem third(A: Prop, a: A): A {
+  a
+}
+```
+checks."first" = "incomplete: ?one"
+checks."second" = "error: type mismatch: expected `B`, found `And(A, B)`"
+checks."third" = "ok"
+holes = [{ "declaration" => "first", "name" => "one", "goal" => "A", "context" => ["A: Prop", "a: A"] }]
+diagnostics = [{ "name" => "second", "message" => "type mismatch: expected `B`, found `And(A, B)`", "span" => " «p»," }]
+
+@ cases.incremental_matching_candidate
+source = ```tauto
+theorem first(A: Prop, a: A): A {
+  ?one
+}
+
+theorem second(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
+  AndIntro(B, A, And::right(A, B, p), ?left)
+}
+
+theorem third(A: Prop, a: A): A {
+  a
+}
+```
+checks."first" = "incomplete: ?one"
+checks."second" = "incomplete: ?left"
+checks."third" = "ok"
+holes = [{ "declaration" => "first", "name" => "one", "goal" => "A", "context" => ["A: Prop", "a: A"] }, { "declaration" => "second", "name" => "left", "goal" => "A", "context" => ["A: Prop", "B: Prop", "p: And(A, B)"] }]
+
+@ cases.incremental_filled_candidate
+source = ```tauto
+theorem first(A: Prop, a: A): A {
+  a
+}
+
+theorem second(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
+  AndIntro(B, A, ?right, ?left)
+}
+
+theorem third(A: Prop, a: A): A {
+  a
+}
+```
+checks."first" = "ok"
+checks."second" = "incomplete: ?right, ?left"
+checks."third" = "ok"
+holes = [{ "declaration" => "second", "name" => "right", "goal" => "B", "context" => ["A: Prop", "B: Prop", "p: And(A, B)"] }, { "declaration" => "second", "name" => "left", "goal" => "A", "context" => ["A: Prop", "B: Prop", "p: And(A, B)"] }]
+
+@ cases.incremental_unknown_candidate
+source = ```tauto
+theorem first(A: Prop, a: A): A {
+  a_name_that_is_nothing
+}
+
+theorem second(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
+  AndIntro(B, A, ?right, ?left)
+}
+
+theorem third(A: Prop, a: A): A {
+  a
+}
+```
+checks."first" = "error: `a_name_that_is_nothing` is not defined"
+checks."second" = "incomplete: ?right, ?left"
+checks."third" = "ok"
+holes = [{ "declaration" => "second", "name" => "right", "goal" => "B", "context" => ["A: Prop", "B: Prop", "p: And(A, B)"] }, { "declaration" => "second", "name" => "left", "goal" => "A", "context" => ["A: Prop", "B: Prop", "p: And(A, B)"] }]
+diagnostics = [{ "name" => "first", "message" => "`a_name_that_is_nothing` is not defined", "span" => "«a_name_that_is_nothing»" }]
+
+@ cases.incremental_changed_statement
+files."lib.taut" = ```tauto
+pub theorem and_swap(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
+  AndIntro(B, A, And::right(A, B, p), And::left(A, B, p))
+}
+
+pub theorem compose(A: Prop, B: Prop, C: Prop, f: (A) -> B, g: (B) -> C): (A) -> C {
+  a => g(f(a))
+}
+
+pub theorem id_proof(A: Prop, a: A): A {
+  a
+}
+```
+files."main.taut" = ```tauto
+import "lib.taut"
+
+theorem swap_twice(A: Prop, B: Prop, p: A ∧ B): A ∧ B {
+  and_swap(B, A, and_swap(A, B, p))
+}
+
+theorem uses_id(A: Prop, a: A): B {
+  id_proof(A, a)
+}
+
+// nothing here
+
+theorem last_one(A: Prop, a: A): A {
+  id_proof(A, id_proof(A, a))
+}
+```
+entry = "main.taut"
+checks."and_swap" = "ok"
+checks."compose" = "ok"
+checks."id_proof" = "ok"
+checks."swap_twice" = "ok"
+checks."uses_id" = "error: `B` is not defined"
+checks."last_one" = "ok"
+diagnostics = [{ "name" => "uses_id", "message" => "`B` is not defined", "span" => ": «B» " }]
+
+@ cases.incremental_changed_import
+files."lib.taut" = ```tauto
+pub theorem and_swap(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
+  AndIntro(B, A, And::right(A, B, p), And::left(A, B, p))
+}
+
+pub theorem compose(A: Prop, B: Prop, C: Prop, f: (A) -> B, g: (B) -> C): (A) -> C {
+  a => g(f(a))
+}
+
+pub theorem id_proof(A: Prop, a: A, extra: A): A {
+  a
+}
+```
+files."main.taut" = ```tauto
+import "lib.taut"
+
+theorem swap_twice(A: Prop, B: Prop, p: A ∧ B): A ∧ B {
+  and_swap(B, A, and_swap(A, B, p))
+}
+
+theorem uses_id(A: Prop, a: A): A {
+  id_proof(A, a)
+}
+
+// nothing here
+
+theorem last_one(A: Prop, a: A): A {
+  id_proof(A, id_proof(A, a))
+}
+```
+entry = "main.taut"
+checks."and_swap" = "ok"
+checks."compose" = "ok"
+checks."id_proof" = "ok"
+checks."swap_twice" = "ok"
+checks."uses_id" = "error: type mismatch: expected `A`, found `(A) -> A`"
+checks."last_one" = "error: type mismatch: expected `A`, found `(A) -> A`"
+diagnostics = [{ "name" => "uses_id", "message" => "type mismatch: expected `A`, found `(A) -> A`", "span" => " «id_proof(A, a)»\n" }, { "name" => "last_one", "message" => "type mismatch: expected `A`, found `(A) -> A`", "span" => " «id_proof(A, a)»)" }]
+
+@ cases.incremental_changed_proof
+files."lib.taut" = ```tauto
+pub theorem and_swap(A: Prop, B: Prop, p: A ∧ B): B ∧ A {
+  AndIntro(B, A, And::right(A, B, p), And::left(A, B, p))
+}
+
+pub theorem compose(A: Prop, B: Prop, C: Prop, f: (A) -> B, g: (B) -> C): (A) -> C {
+  a => g(f(a))
+}
+
+pub theorem id_proof(A: Prop, a: A): A {
+  a
+}
+```
+files."main.taut" = ```tauto
+import "lib.taut"
+
+theorem swap_twice(A: Prop, B: Prop, p: A ∧ B): A ∧ B {
+  and_swap(B, A, and_swap(A, B, p))
+}
+
+theorem uses_id(A: Prop, a: A): A {
+  And::left(A, A, AndIntro(A, A, a, a))
+}
+
+// nothing here
+
+theorem last_one(A: Prop, a: A): A {
+  id_proof(A, id_proof(A, a))
+}
+```
+entry = "main.taut"
+checks."and_swap" = "ok"
+checks."compose" = "ok"
+checks."id_proof" = "ok"
+checks."swap_twice" = "ok"
+checks."uses_id" = "ok"
+checks."last_one" = "ok"
+
+@ cases.unit_type_is_written_unit
+source = ```tauto
+fn f(x: Unit): Unit { #() }
+```
+checks."f" = "ok"
+
+@ cases.unit_value_in_the_place_of_a_type_is_rejected
+source = ```tauto
+fn f(x: #()): Unit { x }
+```
+checks."f" = "error: `#()` is the unit value, not a type; write the unit type as `Unit`"
+diagnostics = [{ "name" => "f", "message" => "`#()` is the unit value, not a type; write the unit type as `Unit`", "span" => "x: «#()»" }]
+
+@ cases.editor_tokens_comment_fence_rules
+files."math.nib" = ````nib
+pub fn math_end(ts: List(SynTok), at: u64): u64 {
+  match ts {
+    Nil => at
+    Cons(t, rest) => math_end(rest, t.end)
+  }
+}
+
+pub fn math_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "enumMember" }, math_tokens(rest))
+      } else {
+        if t.kind == "Plus" {
+          Cons(SynHighlight { start: t.start, end: math_end(rest, t.end), kind: "string" }, Nil)
+        } else {
+          math_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(math, ```par
+%start Eqn
+%title "math"
+%%
+Eqn: Sum Equals Sum;
+Sum: Term { Plus Term };
+Term: Num | Paren;
+Paren: LParen Sum RParen;
+Num: /[0-9]+/;
+Equals: '=';
+Plus: '+';
+LParen: '(';
+RParen: ')';
+```, with(tokens: math_tokens)) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
+  fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+````
+files."main.nib" = ````nib
+import "math.nib"
+// ```math
+// 1 + 2 = 3
+// ```
+fn a(): Nat { 0 }
+
+/*
+ * ```math
+ * 4 + 5 = 9
+ * ```
+ */
+fn b(): Nat { 0 }
+
+// ```math
+// 7 + 8 = 15
+fn unclosed(): Nat { 0 }
+
+fn s(): Text { "
+// ```math
+// 1 + 1 = 2
+// ```
+" }
+
+// a `1 + 1 = 2` is not a fence
+fn c(): Nat { 0 }
+
+/// ```math
+// 1 + 1 = 2
+/// ```
+fn mismatched(): Nat { 0 }
+````
+entry = "main.nib"
+editor_tokens = ["3:4 enumMember 1", "3:6 string + 2 = 3", "9:4 enumMember 4", "9:6 string + 5 = 9"]
+
+@ cases.editor_tokens_comment_fence_tabs_and_crlf
+files."math.nib" = ````nib
+pub fn math_end(ts: List(SynTok), at: u64): u64 {
+  match ts {
+    Nil => at
+    Cons(t, rest) => math_end(rest, t.end)
+  }
+}
+
+pub fn math_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "enumMember" }, math_tokens(rest))
+      } else {
+        if t.kind == "Plus" {
+          Cons(SynHighlight { start: t.start, end: math_end(rest, t.end), kind: "string" }, Nil)
+        } else {
+          math_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(math, ```par
+%start Eqn
+%title "math"
+%%
+Eqn: Sum Equals Sum;
+Sum: Term { Plus Term };
+Term: Num | Paren;
+Paren: LParen Sum RParen;
+Num: /[0-9]+/;
+Equals: '=';
+Plus: '+';
+LParen: '(';
+RParen: ')';
+```, with(tokens: math_tokens)) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
+  fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+````
+files."main.nib" = "import \"math.nib\"\r\n/// ```math\r\n/// 1 + 2 = 3\r\n/// ```\r\nfn a(): Nat { 0 }\r\n\t// ```math\r\n\t// 4 + 5 = 9\r\n\t// ```\r\nfn b(): Nat { 0 }\r\n"
+entry = "main.nib"
+editor_tokens = ["3:5 enumMember 1", "3:7 string + 2 = 3"]
+
+// A syntax that registers `fmt` and `tokens`: the literal is coloured by the function, in the
+// file that imports the declaring file.
+@ cases.editor_tokens_with_fmt_and_tokens
+files."math.nib" = ````nib
+pub fn math_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => if t.kind == "Num" {
+      Cons(SynHighlight { start: t.start, end: t.end, kind: "enumMember" }, math_tokens(rest))
+    } else { math_tokens(rest) }
+  }
+}
+
+pub fn math_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} { None }
+
+syntax!(math, ```par
+{{par:math}}```, with(fmt: math_fmt, tokens: math_tokens)) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
+  enum Term, fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+````
+files."main.nib" = ````nib
+import "math.nib"
+theorem t(): math!(`1 + 2 = 3`) { Refl(Nat, 3) }
+````
+entry = "main.nib"
+editor_tokens = ["2:21 enumMember 1", "2:25 enumMember 2", "2:29 enumMember 3"]
+checks."t" = "error: type mismatch"
+
+// A syntax named with a raw identifier (`view` is a keyword).
+@ cases.editor_tokens_raw_identifier_name
+files."view.nib" = ````nib
+pub fn view_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => if t.kind == "Num" {
+      Cons(SynHighlight { start: t.start, end: t.end, kind: "enumMember" }, view_tokens(rest))
+    } else { view_tokens(rest) }
+  }
+}
+
+pub fn view_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} { None }
+
+syntax!(r#view, ```par
+{{par:math}}```, with(fmt: view_fmt, tokens: view_tokens)) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
+  enum Term, fn parse
+macro fn r#view(e: view::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+````
+files."main.nib" = ````nib
+import "view.nib"
+theorem t(): view!(`1 + 2 = 3`) { Refl(Nat, 3) }
+````
+entry = "main.nib"
+editor_tokens = ["2:21 enumMember 1", "2:25 enumMember 2", "2:29 enumMember 3"]
+checks."t" = "error: type mismatch"
+
+// A declaration of the declaring file that does not check does not stop the function.
+@ cases.editor_tokens_with_error_in_declaring_file
+files."math.nib" = ````nib
+pub fn math_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => if t.kind == "Num" {
+      Cons(SynHighlight { start: t.start, end: t.end, kind: "enumMember" }, math_tokens(rest))
+    } else { math_tokens(rest) }
+  }
+}
+
+pub fn broken(): Nat { Missing }
+
+syntax!(math, ```par
+{{par:math}}```, with(tokens: math_tokens)) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
+  enum Term, fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+````
+files."main.nib" = ````nib
+import "math.nib"
+theorem t(): math!(`1 + 2 = 3`) { Refl(Nat, 3) }
+````
+entry = "main.nib"
+editor_tokens = ["2:21 enumMember 1", "2:25 enumMember 2", "2:29 enumMember 3"]
+
+// `$x` and `${f(x)}` are tauto in a syntax with no `with`: the delimiters are operators, the name
+// a variable, and the expression's tokens its own.
+@ cases.editor_tokens_interpolation_without_with
+files."math.nib" = ````nib
+syntax!(math, ```par
+{{par:math}}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
+  enum Term, fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+````
+files."main.nib" = ````nib
+import "math.nib"
+fn f(a: Nat, b: Nat): Nat { a }
+fn t(x: Nat): math::Eqn { math`1 + $x = ${f(x, 2)}` }
+````
+entry = "main.nib"
+editor_tokens = ["3:32 number 1", "3:34 operator +", "3:36 operator $", "3:37 parameter x", "3:39 operator =", "3:41 operator ${", "3:43 function f", "3:44 operator (", "3:45 parameter x", "3:46 operator ,", "3:48 number 2", "3:49 operator )", "3:50 operator }"]
+
+// The same under `with(tokens: …)`: the function colours the numbers and does not reach the
+// interpolations.
+@ cases.editor_tokens_interpolation_with_tokens
+files."math.nib" = ````nib
+pub fn math_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => Cons(SynHighlight { start: t.start, end: t.end, kind: "string" }, math_tokens(rest))
+  }
+}
+
+syntax!(math, ```par
+{{par:math}}```, with(tokens: math_tokens)) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
+  enum Term, fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+````
+files."main.nib" = ````nib
+import "math.nib"
+fn f(a: Nat, b: Nat): Nat { a }
+fn t(x: Nat): math::Eqn { math`1 + $x = ${f(x, 2)}` }
+````
+entry = "main.nib"
+editor_tokens = ["3:32 string 1", "3:34 string +", "3:36 operator $", "3:37 parameter x", "3:39 string =", "3:41 operator ${", "3:43 function f", "3:44 operator (", "3:45 parameter x", "3:46 operator ,", "3:48 number 2", "3:49 operator )", "3:50 operator }"]
+
+// And under `with(fmt: …, tokens: …)`.
+@ cases.editor_tokens_interpolation_with_fmt_and_tokens
+files."math.nib" = ````nib
+pub fn math_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => Cons(SynHighlight { start: t.start, end: t.end, kind: "string" }, math_tokens(rest))
+  }
+}
+
+pub fn math_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} { None }
+
+syntax!(math, ```par
+{{par:math}}```, with(fmt: math_fmt, tokens: math_tokens)) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
+  enum Term, fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+````
+files."main.nib" = ````nib
+import "math.nib"
+fn f(a: Nat, b: Nat): Nat { a }
+fn t(x: Nat): math::Eqn { math`1 + $x = ${f(x, 2)}` }
+````
+entry = "main.nib"
+editor_tokens = ["3:32 string 1", "3:34 string +", "3:36 operator $", "3:37 parameter x", "3:39 string =", "3:41 operator ${", "3:43 function f", "3:44 operator (", "3:45 parameter x", "3:46 operator ,", "3:48 number 2", "3:49 operator )", "3:50 operator }"]
+
+// A registered function that does not check is not used: the literal is coloured by the names of
+// the terminals, with a warning that says why.
+@ cases.editor_tokens_function_not_used_warns
+files."math.nib" = ````nib
+pub fn math_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} { Missing }
+
+syntax!(math, ```par
+{{par:math}}```, with(tokens: math_tokens)) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
+  enum Term, fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+````
+files."main.nib" = ````nib
+import "math.nib"
+theorem t(): math!(`1 + 2 = 3`) { Refl(Nat, 3) }
+````
+entry = "main.nib"
+editor_tokens = ["2:21 number 1", "2:23 operator +", "2:25 number 2", "2:27 operator =", "2:29 number 3"]
+editor_token_warnings = ["`math_tokens`"]
+
+@ cases.editor_tokens_grammar
+description = "The grammar of a `syntax` and a fenced block of par in a comment are coloured by the words the table generators read: directives, non-terminals, terminals, comments, types after `:`, members after `@` and scanner modes."
+files."math.nib" = ````nib
+syntax!(math, ```par
+%start Eqn
+%title "math"
+%%
+Eqn: Sum Equals Sum;
+Sum: Term { Plus Term };
+Term: Num | Paren;
+Paren: LParen Sum RParen;
+Num: /[0-9]+/;
+Equals: '=';
+Plus: '+';
+LParen: '(';
+RParen: ')';
+```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1, enum Term,
+  fn parse
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} { quote { Eq(Nat, 1, 1) } }
+// ```par
+// %scanner Str { %auto_newline_off }
+// %%
+// /* start */ A: B@b: Text <Str>"x" ;
+// ```
+fn documented(): Nat { 0 }
+````
+entry = "math.nib"
+editor_tokens = ["2:1 keyword %start", "2:8 type Eqn", "3:1 keyword %title", "3:8 string \"math\"", "4:1 keyword %%", "5:1 type Eqn", "5:4 operator :", "5:6 type Sum", "5:10 type Equals", "5:17 type Sum", "5:20 operator ;", "6:1 type Sum", "6:4 operator :", "6:6 type Term", "6:11 operator {", "6:13 type Plus", "6:18 type Term", "6:23 operator }", "6:24 operator ;", "7:1 type Term", "7:5 operator :", "7:7 type Num", "7:11 operator |", "7:13 type Paren", "7:18 operator ;", "8:1 type Paren", "8:6 operator :", "8:8 type LParen", "8:15 type Sum", "8:19 type RParen", "8:25 operator ;", "9:1 type Num", "9:4 operator :", "9:6 regexp /[0-9]+/", "9:14 operator ;", "10:1 type Equals", "10:7 operator :", "10:9 string '='", "10:12 operator ;", "11:1 type Plus", "11:5 operator :", "11:7 string '+'", "11:10 operator ;", "12:1 type LParen", "12:7 operator :", "12:9 string '('", "12:12 operator ;", "13:1 type RParen", "13:7 operator :", "13:9 string ')'", "13:12 operator ;", "18:4 keyword %scanner", "18:13 namespace Str", "18:17 operator {", "18:19 keyword %auto_newline_off", "18:37 operator }", "19:4 keyword %%", "20:4 comment /* start */", "20:16 type A", "20:17 operator :", "20:19 type B", "20:20 operator @", "20:21 property b", "20:22 operator :", "20:24 class Text", "20:29 operator <", "20:30 namespace Str", "20:33 operator >", "20:34 string \"x\"", "20:38 operator ;"]

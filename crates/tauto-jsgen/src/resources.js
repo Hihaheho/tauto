@@ -10,6 +10,8 @@ function dropValue(value) {
         }
         const v=action.value;
         if(v==null||sharedData.has(v))continue;
+        const retained=retainedGraphs.get(v);
+        if(retained){if(--retained.owners===0)pending.push({array:v.fields,index:v.fields.length-1});continue;}
         if(typeof v.release==='function'){v.release();continue;}
         if(v.ref||v.shared)continue;
         // Each entry is an owner, even if two entries have the same identity.

@@ -12,12 +12,14 @@ pub(open) inductive Refined(A: Type, P: (A) -> Prop): Type {
 }
 
 module Refined {
-  pub theorem ext<A: Type, P: (
-    A
-  ) -> Prop>(s: Refined(A, P), t: Refined(A, P), e: s.val = t.val): s = t {
-    match s: s = t {
-      Mk(a, p) => match t: Refined::Mk(a, p) = t {
-        Mk(b, q) => match e: Refined::Mk(a, p) = Refined::Mk(b, q) {
+  pub theorem ext<A: Type, P: (A) -> Prop>(
+    s: Refined(A, P),
+    t: Refined(A, P),
+    e: s.val = t.val
+  ): s = t {
+    ⊢ s = t from match s {
+      Mk(a, p) => ⊢ Refined::Mk(a, p) = t from match t {
+        Mk(b, q) => ⊢ Refined::Mk(a, p) = Refined::Mk(b, q) from match e {
           Refl => Refl
         }
       }
@@ -29,7 +31,7 @@ module Refined {
 // written in the program is `Refl`: `refined(4, Refl)` when `p(4)` computes
 // to `true`.
 pub fn refine_by<A>(p: (A) -> Bool, x: A): Option(Refined(A, y => p(y) = true)) {
-  match p(x) eqn h: Option(Refined(A, y => p(y) = true)) {
+  ⊢ Option(Refined(A, y => p(y) = true)) from match p(x) eqn h {
     true => ⊢ Option(Refined(A, y => p(y) = true)) from Some(Refined::Mk(x, h))
     false => ⊢ Option(Refined(A, y => p(y) = true)) from None
   }

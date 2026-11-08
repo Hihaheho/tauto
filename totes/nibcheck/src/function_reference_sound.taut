@@ -23,7 +23,7 @@ pub theorem local_find_choice_absent(
   missing: local_find_choice(head, rest, name, same) = None,
   ih: ∀ absent: env_find(rest, name) = None. LocalAbsent(name, rest)
 ): LocalAbsent(name, Cons(head, rest)) {
-  match same: LocalAbsent(name, Cons(head, rest)) {
+  ⊢ LocalAbsent(name, Cons(head, rest)) from match same {
     true => False::elim(ck_none_ne_some(head, Eq::sym(missing)))
     false => LocalAbsentCons(
       head,
@@ -37,7 +37,7 @@ pub theorem env_find_absent(
   name: Text,
   missing: env_find(env, name) = None
 ): LocalAbsent(name, env) {
-  match env: LocalAbsent(name, env) {
+  ⊢ LocalAbsent(name, env) from match env {
     Nil => LocalAbsentNil
     Cons(head, rest) => local_find_choice_absent(
       head,
@@ -79,7 +79,12 @@ pub theorem ck_instantiate_monomorphic(
   declared: Ty,
   ctors: List(Pair(Text, Kind)),
   span: TySpan
-): ck_instantiate_scheme(c, name, SchemeMk(Nil, declared, Nil, ctors), span) = mut1(ty_substitute(declared, Ordmap::empty()), c) { Refl }
+): ck_instantiate_scheme(
+  c,
+  name,
+  SchemeMk(Nil, declared, Nil, ctors),
+  span
+) = mut1(ty_substitute(declared, Ordmap::empty()), c) { Refl }
 pub theorem ck_lookup_monomorphic_value(
   c: Checker,
   name: Text,
@@ -88,7 +93,11 @@ pub theorem ck_lookup_monomorphic_value(
   declared: Ty,
   ctors: List(Pair(Text, Kind)),
   missing: env_find(env, name) = None,
-  found: Ordmap::get(leaf_functions(c), name, Ordmap::compare_text) = Some(SchemeMk(Nil, declared, Nil, ctors))
+  found: Ordmap::get(
+    leaf_functions(c),
+    name,
+    Ordmap::compare_text
+  ) = Some(SchemeMk(Nil, declared, Nil, ctors))
 ): ck_lookup(c, name, env, span) = mut1(ty_substitute(declared, Ordmap::empty()), c) {
   Eq::trans(
     ck_lookup_function_value(
@@ -112,7 +121,11 @@ pub theorem ck_lookup_monomorphic_sound(
   declared: Ty,
   ctors: List(Pair(Text, Kind)),
   missing: env_find(env, name) = None,
-  found: Ordmap::get(leaf_functions(c), name, Ordmap::compare_text) = Some(SchemeMk(Nil, declared, Nil, ctors))
+  found: Ordmap::get(
+    leaf_functions(c),
+    name,
+    Ordmap::compare_text
+  ) = Some(SchemeMk(Nil, declared, Nil, ctors))
 ): MonomorphicFunctionTyping(
   ck_subst_of(c),
   env,

@@ -28,10 +28,10 @@ pub theorem literal_records_bind<A: Type, B: Type>(
   first: LiteralRecordsFrame(c, m),
   tail: ∀ value: A. ∀ next: Checker. LiteralRecordsFrame(next, k(value, next))
 ): LiteralRecordsFrame(c, frame_bind(A, B, k, m)) {
-  match m: LiteralRecordsFrame(
+  ⊢ LiteralRecordsFrame(
     c,
     frame_bind(A, B, k, m)
-  ) { mut1(value, next) => Eq::trans(tail(value, next), first) }
+  ) from match m { mut1(value, next) => Eq::trans(tail(value, next), first) }
 }
 pub theorem literal_records_rewrap<A: Type>(
   c: Checker,
@@ -48,7 +48,7 @@ pub theorem literal_default_records(
   c: Checker,
   t: Ty
 ): LiteralRecordsFrame(c, finish_default(c, t)) {
-  match t: LiteralRecordsFrame(c, finish_default(c, t)) {
+  ⊢ LiteralRecordsFrame(c, finish_default(c, t)) from match t {
     TyInt(w) => Refl
     TyBool => Refl
     TyText => Refl
@@ -83,7 +83,7 @@ pub theorem ck_default_ints_records(
   vs: List(Pair(Nat, Bool)),
   c: Checker
 ): LiteralRecordsFrame(c, ck_default_ints(vs, c)) {
-  match vs: LiteralRecordsFrame(c, ck_default_ints(vs, c)) {
+  ⊢ LiteralRecordsFrame(c, ck_default_ints(vs, c)) from match vs {
     Nil => Refl
     Cons(v, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => LiteralRecordsFrame(c, m),
@@ -124,7 +124,7 @@ pub theorem literal_finish_default_records(
   first: LiteralRecordsFrame(c, m),
   clean: DiagnosticReportClean(diagnostic_finish_default_result(m))
 ): LiteralRecordsFrame(c, diagnostic_finish_default_result(m)) {
-  match m: LiteralRecordsFrame(c, diagnostic_finish_default_result(m)) {
+  ⊢ LiteralRecordsFrame(c, diagnostic_finish_default_result(m)) from match m {
     mut1(value, next) => Eq::trans(
       literal_after_defaults_records(
         next,
@@ -219,7 +219,7 @@ pub theorem natural_discharge(
   typed: NaturalTyping(ck_subst_of(c), KeptOk(ck_kept_of(c)), term, ty),
   final: FinalDiagnostics0(c)
 ): NaturalTypingIn(ck_subst_of(c), term, ty) {
-  match typed: NaturalTypingIn(ck_subst_of(c), term, ty) {
+  ⊢ NaturalTypingIn(ck_subst_of(c), term, ty) from match typed {
     NaturalTyped(value, magnitude, width, start, end, given, parsed, within, equal) => NaturalTyped(
       value,
       magnitude,

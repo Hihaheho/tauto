@@ -77,7 +77,7 @@ pub theorem argument_terms_allocation(
   expected: TypeListAllocated(ck_next_of(c), Cons(p, more)),
   args: List(SurfaceTerm)
 ): AllocationAdvance(c, argument_terms(a, rest, c, p, more, args)) {
-  match args: AllocationAdvance(c, argument_terms(a, rest, c, p, more, args)) {
+  ⊢ AllocationAdvance(c, argument_terms(a, rest, c, p, more, args)) from match args {
     Nil => allocation_advance_return(c, Star, state)
     Cons(at, tail) => allocation_advance_bind(
       Unit,
@@ -137,7 +137,7 @@ pub theorem argument_params_allocation(
   ps: List(Ty),
   expected: TypeListAllocated(ck_next_of(c), ps)
 ): AllocationAdvance(c, argument_params(a, rest, c, args, ps)) {
-  match ps: AllocationAdvance(c, argument_params(a, rest, c, args, ps)) {
+  ⊢ AllocationAdvance(c, argument_params(a, rest, c, args, ps)) from match ps {
     Nil => allocation_advance_return(c, Star, state)
     Cons(p, more) => argument_terms_allocation(
       a,
@@ -164,7 +164,7 @@ pub theorem ck_expect_args_allocation(
   actual: TypeListAllocated(ck_next_of(c), tys),
   expected: TypeListAllocated(ck_next_of(c), ps)
 ): AllocationAdvance(c, ck_expect_args(tys, c, ps, args)) {
-  match tys: AllocationAdvance(c, ck_expect_args(tys, c, ps, args)) {
+  ⊢ AllocationAdvance(c, ck_expect_args(tys, c, ps, args)) from match tys {
     Nil => allocation_advance_return(c, Star, state)
     Cons(a, rest) => Eq::subst(
       (result: Mut1(Unit, Checker)) => AllocationAdvance(c, result),

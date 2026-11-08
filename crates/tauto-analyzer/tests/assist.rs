@@ -45,7 +45,7 @@ fn the_library_lists_constants_with_their_types() {
     let report = check_report(&path, None).unwrap();
     let json = report.library_json().render();
     assert!(
-        json.contains("\"name\":\"AndIntro\",\"kind\":\"constructor\""),
+        json.contains("\"name\":\"And::AndIntro\",\"kind\":\"constructor\""),
         "{json}"
     );
     assert!(
@@ -71,12 +71,15 @@ fn suggest_lists_what_fits_and_each_is_accepted_by_try() {
     let found = suggest(&report, &hole, 50);
     let intro = found
         .iter()
-        .find(|s| s.name == "AndIntro")
+        .find(|s| s.name.as_str() == "AndIntro")
         .expect("AndIntro fits And(B, A)");
     assert_eq!(intro.term, "AndIntro(?top_a, ?top_b)");
     assert_eq!(intro.args.len(), 2);
     assert_eq!(describe(&intro.args[0].ty), "B");
-    assert!(!found.iter().any(|s| s.name == "swap"), "not itself");
+    assert!(
+        !found.iter().any(|s| s.name.as_str() == "swap"),
+        "not itself"
+    );
     // What was suggested is a term `try` can check, premises left as holes.
     let attempt = try_fill(&path, "top", &intro.term).unwrap();
     assert!(attempt.accepted);
@@ -106,7 +109,10 @@ fn an_unknown_nothing_fixes_is_marked_not_guessed() {
     let report = check_report(&path, None).unwrap();
     let hole = report.holes().remove(0);
     let found = suggest(&report, &hole, 200);
-    let left = found.iter().find(|s| s.name == "And::left").unwrap();
+    let left = found
+        .iter()
+        .find(|s| s.name.as_str() == "And::left")
+        .unwrap();
     assert_eq!(left.args[0].unresolved_metas, vec!["?B".to_string()]);
     assert!(left.generic);
 }
@@ -196,7 +202,7 @@ fn a_mismatch_points_at_the_argument_and_has_its_parts() {
     assert!(json.contains("\"expected\":\"A\""), "{json}");
     assert!(json.contains("\"found\":\"B\""), "{json}");
     assert!(
-        json.contains("\"argument\":{\"callee\":\"AndIntro\",\"index\":1}"),
+        json.contains("\"argument\":{\"callee\":\"And::AndIntro\",\"index\":1}"),
         "{json}"
     );
 }

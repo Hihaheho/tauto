@@ -1,0 +1,40 @@
+import std::prelude::Macro
+
+
+pub fn add(n: Nat, m: Nat): Nat {
+  match n {
+    Zero => m
+    Succ(k) => Succ(add(k, m))
+  }
+}
+
+pub fn nat_bin(op: Text, l: SynExpr, r: SynExpr, e: SynExpr): SynExpr ! {macro_error, Div} {
+  let a := nat(l)
+  let b := nat(r)
+  if op == "==" { quote { Eq(Nat, $a, $b) } } else {
+    if op == "+" { quote { add($a, $b) } } else { e }
+  }
+}
+
+pub fn nat_app(f: SynExpr, args: List(SynExpr), e: SynExpr): SynExpr ! {macro_error, Div} {
+  match f {
+    ExVar(op) => match args {
+      Cons(l, rest) => match rest {
+        Cons(r, more) => match more {
+          Nil => nat_bin(op.name, l, r, e)
+          _ => e
+        }
+        Nil => e
+      }
+      Nil => e
+    }
+    _ => e
+  }
+}
+
+pub macro fn nat(e: SynExpr): SynExpr ! {macro_error, Div} {
+  match e {
+    ExApp(f, args, _) => nat_app(f, args, e)
+    _ => e
+  }
+}

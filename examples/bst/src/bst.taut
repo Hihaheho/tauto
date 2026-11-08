@@ -12,9 +12,9 @@ pub(open) inductive Tree(A: Type): Type {
 }
 
 pub fn tree_insert<A>(x: A, t: Tree(A)): Tree(A) where Ord(A) {
-  match t: Tree(A) {
+  ⊢ Tree(A) from match t {
     Leaf => MkNode(Leaf, x, Leaf)
-    MkNode(l, k, r) => match Ord::compare(x, k): Tree(A) {
+    MkNode(l, k, r) => ⊢ Tree(A) from match Ord::compare(x, k) {
       Less => MkNode(tree_insert(x, l), k, r)
       Equal => MkNode(l, k, r)
       Greater => MkNode(l, k, tree_insert(x, r))
@@ -23,9 +23,9 @@ pub fn tree_insert<A>(x: A, t: Tree(A)): Tree(A) where Ord(A) {
 }
 
 pub fn tree_member<A>(x: A, t: Tree(A)): Bool where Ord(A) {
-  match t: Bool {
+  ⊢ Bool from match t {
     Leaf => false
-    MkNode(l, k, r) => match Ord::compare(x, k): Bool {
+    MkNode(l, k, r) => ⊢ Bool from match Ord::compare(x, k) {
       Less => tree_member(x, l)
       Equal => true
       Greater => tree_member(x, r)
@@ -34,16 +34,16 @@ pub fn tree_member<A>(x: A, t: Tree(A)): Bool where Ord(A) {
 }
 
 pub fn tree_min<A>(l: Tree(A), k: A): A {
-  match l: A {
+  ⊢ A from match l {
     Leaf => k
     MkNode(ll, lk, lr) => tree_min(ll, lk)
   }
 }
 
 pub fn tree_remove_min<A>(t: Tree(A)): Tree(A) {
-  match t: Tree(A) {
+  ⊢ Tree(A) from match t {
     Leaf => Leaf
-    MkNode(l, k, r) => match l: Tree(A) {
+    MkNode(l, k, r) => ⊢ Tree(A) from match l {
       Leaf => r
       MkNode(ll, lk, lr) => MkNode(tree_remove_min(l), k, r)
     }
@@ -52,16 +52,16 @@ pub fn tree_remove_min<A>(t: Tree(A)): Tree(A) {
 
 // The two subtrees of a deleted node as one tree: the smallest key of the right one goes to the root.
 pub fn tree_join<A>(l: Tree(A), r: Tree(A)): Tree(A) {
-  match r: Tree(A) {
+  ⊢ Tree(A) from match r {
     Leaf => l
     MkNode(rl, rk, rr) => MkNode(l, tree_min(rl, rk), tree_remove_min(MkNode(rl, rk, rr)))
   }
 }
 
 pub fn tree_delete<A>(x: A, t: Tree(A)): Tree(A) where Ord(A) {
-  match t: Tree(A) {
+  ⊢ Tree(A) from match t {
     Leaf => Leaf
-    MkNode(l, k, r) => match Ord::compare(x, k): Tree(A) {
+    MkNode(l, k, r) => ⊢ Tree(A) from match Ord::compare(x, k) {
       Less => MkNode(tree_delete(x, l), k, r)
       Equal => tree_join(l, r)
       Greater => MkNode(l, k, tree_delete(x, r))

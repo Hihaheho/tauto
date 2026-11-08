@@ -34,7 +34,7 @@ pub theorem call_unborrowed(
   result: Ty,
   inner: CallAt(c, ty_unborrowed(function), args, result)
 ): CallAt(c, function, args, result) {
-  match function: CallAt(c, function, args, result) {
+  ⊢ CallAt(c, function, args, result) from match function {
     TyInt(w) => inner
     TyBool => inner
     TyText => inner
@@ -105,14 +105,17 @@ pub theorem call_arity_sound(
   ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(application_fn_arity(c, term, arguments, args, ps, not(same))))
 ): ArgumentsResult(c, args, ps, application_fn_arity(c, term, arguments, args, ps, not(same))) {
-  match same: ArgumentsResult(
+  ⊢ ArgumentsResult(
     c,
     args,
     ps,
     application_fn_arity(c, term, arguments, args, ps, not(same))
-  ) {
+  ) from match same {
     true => {
-      let length: Nat::eq(list_len(args), list_len(ps)) = true := Eq::subst(
+      let length: Nat::eq(
+        list_len(args),
+        list_len(ps)
+      ) = true := Eq::subst(
         (n: Nat) => Nat::eq(list_len(args), n) = true,
         Eq::sym(Nat::eq_sound(list_len(ps), list_len(args), comparison)),
         Nat::eq_refl(list_len(args))
@@ -191,7 +194,7 @@ pub theorem call_return_clean(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(call_return_result(result, m)))
 ): DiagnosticClean(ck_st(m)) {
-  match m: DiagnosticClean(ck_st(m)) { mut1(value, state) => clean }
+  ⊢ DiagnosticClean(ck_st(m)) from match m { mut1(value, state) => clean }
 }
 pub theorem call_return_sound(
   c: Checker,
@@ -204,7 +207,7 @@ pub theorem call_return_sound(
   m: Mut1(Unit, Checker),
   h: ArgumentsResult(c, args, ps, m)
 ): CallResult(c, function, args, call_return_result(result, m)) {
-  match m: CallResult(c, function, args, call_return_result(result, m)) {
+  ⊢ CallResult(c, function, args, call_return_result(result, m)) from match m {
     mut1(value, state) => AndIntro(
       And::left(h),
       call_resolved_shape(
@@ -281,7 +284,15 @@ pub theorem call_function_unf(
   result: Ty,
   kind: Kind,
   shape: ty_unborrowed(ck_resolve(c, f)) = TyFn(ps, result, kind)
-): ck_app_result(c, term, function, arguments, f, None, args) = application_fn_known(c, term, arguments, args, ps, result, None) {
+): ck_app_result(
+  c,
+  term,
+  function,
+  arguments,
+  f,
+  None,
+  args
+) = application_fn_known(c, term, arguments, args, ps, result, None) {
   Eq::trans(
     application_fn_unf(c, term, function, arguments, f, None, args),
     Eq::congr(

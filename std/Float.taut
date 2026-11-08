@@ -69,14 +69,14 @@ module Float {
   // `Float::e_of` give `m` and `e`. The offset 4000 keeps every exponent below
   // a whole number (the smallest, of a subnormal, is `2926 - 4000`).
   pub fn m_of(n: Nat): Nat {
-    match expo_of(n) == 0: Nat {
+    ⊢ Nat from match expo_of(n) == 0 {
       true => frac_of(n)
       false => frac_of(n) + 4503599627370496
     }
   }
 
   pub fn e_of(n: Nat): Nat {
-    match expo_of(n) == 0: Nat {
+    ⊢ Nat from match expo_of(n) == 0 {
       true => 2926
       false => expo_of(n) + 2925
     }
@@ -96,9 +96,9 @@ module Float {
 
   // The number of binary digits of `n`, counting down from `fuel`.
   pub fn bitlen(fuel: Nat, n: Nat): Nat {
-    match fuel: Nat {
+    ⊢ Nat from match fuel {
       Zero => 0
-      Succ(j) => match n == 0: Nat {
+      Succ(j) => ⊢ Nat from match n == 0 {
         true => 0
         false => Succ(bitlen(j, Nat::div_nz(n, 2, Nat::ne_zero(2, Refl))))
       }
@@ -113,8 +113,8 @@ module Float {
   // for every NaN. Every function below reads a `Float` through this one, so
   // none of them sees which NaN it is.
   pub fn raw(x: Float): Nat {
-    match x: Nat {
-      Mk(b) => match nan_of(U64::val(b)): Nat {
+    ⊢ Nat from match x {
+      Mk(b) => ⊢ Nat from match nan_of(U64::val(b)) {
         true => nan_raw()
         false => U64::val(b)
       }
@@ -126,7 +126,7 @@ module Float {
   // exponent field less one, and `m` adds the hidden bit, so one sum writes
   // a normal, a subnormal and a carry out of rounding alike.
   pub fn encode(s: Nat, m: Nat, t: Nat): Nat {
-    match (t - 2926) * 4503599627370496 + m < 9218868437227405312: Nat {
+    ⊢ Nat from match (t - 2926) * 4503599627370496 + m < 9218868437227405312 {
       true => zero_raw(s) + ((t - 2926) * 4503599627370496 + m)
       false => inf_raw(s)
     }
@@ -135,7 +135,7 @@ module Float {
   // `m * 2^(t - k - 4000)` with `k` binary digits dropped from `m`, rounded
   // to the nearest, ties to even.
   pub fn round_shift(s: Nat, m: Nat, t: Nat, k: Nat): Nat {
-    match k < 125: Nat {
+    ⊢ Nat from match k < 125 {
       false => zero_raw(s)
       true => round_at(
         s,
@@ -164,12 +164,9 @@ module Float {
 
   // 1 to round up: above the half, or at the half of an odd `q`.
   pub fn round_up(above: Bool, tie_odd: Bool): Nat {
-    match above: Nat {
+    ⊢ Nat from match above {
       true => 1
-      false => match tie_odd: Nat {
-        true => 1
-        false => 0
-      }
+      false => ⊢ Nat from match tie_odd { true => 1, false => 0 }
     }
   }
 
@@ -178,14 +175,14 @@ module Float {
   // `m` with a last digit of 1 standing for the part below, and at least two
   // digits more than the result keeps, so that the rounding is the same.
   pub fn pack(s: Nat, m: Nat, e: Nat): Nat {
-    match m == 0: Nat {
+    ⊢ Nat from match m == 0 {
       true => zero_raw(s)
-      false => pack_at(s, m, e, Nat::max(e + len(m) - 53, 2926))
+      false => pack_at(s, m, e, Nat::max(e + Float::len(m) - 53, 2926))
     }
   }
 
   pub fn pack_at(s: Nat, m: Nat, e: Nat, t: Nat): Nat {
-    match t <= e: Nat {
+    ⊢ Nat from match t <= e {
       true => encode(s, m * Nat::pow2(e - t), t)
       false => round_shift(s, m, t, t - e)
     }
@@ -195,7 +192,7 @@ module Float {
   // the other is far below, it only decides which way to round: it is replaced
   // by 1 (or 0 for a zero) in the place 62 digits below `a`'s.
   pub fn add_ordered(sa: Nat, ma: Nat, ea: Nat, sb: Nat, mb: Nat, eb: Nat): Nat {
-    match ea - eb <= 60: Nat {
+    ⊢ Nat from match ea - eb <= 60 {
       true => combine(sa, ma * Nat::pow2(ea - eb), sb, mb, eb)
       false => combine(sa, ma * 4611686018427387904, sb, Nat::min(mb, 1), ea - 62)
     }
@@ -204,11 +201,11 @@ module Float {
   // `±a ± b`, both scaled by `2^(e - 4000)`. An exact zero is `+0` unless
   // both are negative.
   pub fn combine(sa: Nat, a: Nat, sb: Nat, b: Nat, e: Nat): Nat {
-    match sa == sb: Nat {
+    ⊢ Nat from match sa == sb {
       true => pack(sa, a + b, e)
-      false => match b < a: Nat {
+      false => ⊢ Nat from match b < a {
         true => pack(sa, a - b, e)
-        false => match a < b: Nat {
+        false => ⊢ Nat from match a < b {
           true => pack(sb, b - a, e)
           false => 0
         }
@@ -217,16 +214,16 @@ module Float {
   }
 
   pub fn add_raw(a: Nat, b: Nat): Nat {
-    match nan_of(a) || nan_of(b): Nat {
+    ⊢ Nat from match nan_of(a) || nan_of(b) {
       true => nan_raw()
-      false => match inf_of(a): Nat {
-        true => match inf_of(b) && not(sign_of(a) == sign_of(b)): Nat {
+      false => ⊢ Nat from match inf_of(a) {
+        true => ⊢ Nat from match inf_of(b) && not(sign_of(a) == sign_of(b)) {
           true => nan_raw()
           false => a
         }
-        false => match inf_of(b): Nat {
+        false => ⊢ Nat from match inf_of(b) {
           true => b
-          false => match e_of(b) <= e_of(a): Nat {
+          false => ⊢ Nat from match e_of(b) <= e_of(a) {
             true => add_ordered(sign_of(a), m_of(a), e_of(a), sign_of(b), m_of(b), e_of(b))
             false => add_ordered(sign_of(b), m_of(b), e_of(b), sign_of(a), m_of(a), e_of(a))
           }
@@ -236,9 +233,9 @@ module Float {
   }
 
   pub fn neg_raw(a: Nat): Nat {
-    match nan_of(a): Nat {
+    ⊢ Nat from match nan_of(a) {
       true => nan_raw()
-      false => match sign_of(a) == 0: Nat {
+      false => ⊢ Nat from match sign_of(a) == 0 {
         true => a + 9223372036854775808
         false => a - 9223372036854775808
       }
@@ -254,10 +251,10 @@ module Float {
   }
 
   pub fn mul_raw(a: Nat, b: Nat): Nat {
-    match nan_of(a) || nan_of(b): Nat {
+    ⊢ Nat from match nan_of(a) || nan_of(b) {
       true => nan_raw()
-      false => match inf_of(a) || inf_of(b): Nat {
-        true => match is_zero_raw(a) || is_zero_raw(b): Nat {
+      false => ⊢ Nat from match inf_of(a) || inf_of(b) {
+        true => ⊢ Nat from match is_zero_raw(a) || is_zero_raw(b) {
           true => nan_raw()
           false => inf_raw(xor(a, b))
         }
@@ -268,21 +265,21 @@ module Float {
 
   // `m` moved up to 53 digits, and the exponent down by as much.
   pub fn norm_m(m: Nat): Nat {
-    m * Nat::pow2(53 - len(m))
+    m * Nat::pow2(53 - Float::len(m))
   }
 
   pub fn norm_e(m: Nat, e: Nat): Nat {
-    e - (53 - len(m))
+    e - (53 - Float::len(m))
   }
 
   // `a / b` of two finite ones, `b` not zero: 62 digits of the quotient, and
   // a last one for a remainder. A `nb` of 0 (never passed) gives NaN.
   pub fn div_finite(s: Nat, na: Nat, ea: Nat, nb: Nat, eb: Nat): Nat {
-    match nb == 0 eqn h: Nat {
+    ⊢ Nat from match nb == 0 eqn h {
       true => nan_raw()
       false => pack(
         s,
-        2 * Nat::div_nz(na * 4611686018427387904, nb, Nat::ne_zero(nb, h)) + (match Nat::rem_nz(na * 4611686018427387904, nb, Nat::ne_zero(nb, h)) == 0: Nat {
+        2 * Nat::div_nz(na * 4611686018427387904, nb, Nat::ne_zero(nb, h)) + (⊢ Nat from match Nat::rem_nz(na * 4611686018427387904, nb, Nat::ne_zero(nb, h)) == 0 {
           true => 0
           false => 1
         }),
@@ -293,14 +290,14 @@ module Float {
 
   // `a / b`. A zero `b` gives NaN here; `Float::div` does not take one.
   pub fn div_raw(a: Nat, b: Nat): Nat {
-    match nan_of(a) || nan_of(b) || is_zero_raw(b): Nat {
+    ⊢ Nat from match nan_of(a) || nan_of(b) || is_zero_raw(b) {
       true => nan_raw()
-      false => match inf_of(a): Nat {
-        true => match inf_of(b): Nat {
+      false => ⊢ Nat from match inf_of(a) {
+        true => ⊢ Nat from match inf_of(b) {
           true => nan_raw()
           false => inf_raw(xor(a, b))
         }
-        false => match inf_of(b): Nat {
+        false => ⊢ Nat from match inf_of(b) {
           true => zero_raw(xor(a, b))
           false => div_finite(
             xor(a, b),
@@ -317,9 +314,9 @@ module Float {
   // The largest `r` with `r * r <= n`, for `n < 2^120`: one binary digit at a
   // time from `2^(fuel - 1)` down.
   pub fn isqrt(fuel: Nat, n: Nat, r: Nat): Nat {
-    match fuel: Nat {
+    ⊢ Nat from match fuel {
       Zero => r
-      Succ(j) => match (r + Nat::pow2(j)) * (r + Nat::pow2(j)) <= n: Nat {
+      Succ(j) => ⊢ Nat from match (r + Nat::pow2(j)) * (r + Nat::pow2(j)) <= n {
         true => isqrt(j, n, r + Nat::pow2(j))
         false => isqrt(j, n, r)
       }
@@ -339,7 +336,7 @@ module Float {
   pub fn sqrt_root(n: Nat, r: Nat, e: Nat): Nat {
     pack(
       0,
-      2 * r + (match r * r == n: Nat {
+      2 * r + (⊢ Nat from match r * r == n {
         true => 0
         false => 1
       }),
@@ -348,14 +345,14 @@ module Float {
   }
 
   pub fn sqrt_raw(a: Nat): Nat {
-    match nan_of(a) || is_zero_raw(a): Nat {
-      true => match nan_of(a): Nat {
+    ⊢ Nat from match nan_of(a) || is_zero_raw(a) {
+      true => ⊢ Nat from match nan_of(a) {
         true => nan_raw()
         false => a
       }
-      false => match sign_of(a) == 1: Nat {
+      false => ⊢ Nat from match sign_of(a) == 1 {
         true => nan_raw()
-        false => match inf_of(a): Nat {
+        false => ⊢ Nat from match inf_of(a) {
           true => a
           false => sqrt_at(
             norm_m(m_of(a)),
@@ -370,7 +367,7 @@ module Float {
   // Where a `Float` that is not NaN lies on the line: `2^63` for both zeros,
   // above for positive ones, below for negative ones.
   pub fn place(a: Nat): Nat {
-    match sign_of(a) == 0: Nat {
+    ⊢ Nat from match sign_of(a) == 0 {
       true => 9223372036854775808 + mag_of(a)
       false => 9223372036854775808 - mag_of(a)
     }
@@ -379,14 +376,14 @@ module Float {
   // How a fraction is dropped: 0 towards zero, 1 down, 2 up, 3 to the nearest
   // with halves away from zero.
   pub fn whole_raw(how: Nat, a: Nat): Nat {
-    match nan_of(a) || inf_of(a): Nat {
-      true => match nan_of(a): Nat {
+    ⊢ Nat from match nan_of(a) || inf_of(a) {
+      true => ⊢ Nat from match nan_of(a) {
         true => nan_raw()
         false => a
       }
-      false => match 4000 <= e_of(a): Nat {
+      false => ⊢ Nat from match 4000 <= e_of(a) {
         true => a
-        false => match 4000 - e_of(a) < 54: Nat {
+        false => ⊢ Nat from match 4000 - e_of(a) < 54 {
           true => whole_at(
             how,
             sign_of(a),
@@ -407,15 +404,15 @@ module Float {
   }
 
   pub fn whole_up(how: Nat, s: Nat, q: Nat, r: Nat, p: Nat): Nat {
-    match r == 0: Nat {
+    ⊢ Nat from match r == 0 {
       true => q
-      false => match how == 0: Nat {
+      false => ⊢ Nat from match how == 0 {
         true => q
-        false => match how == 1: Nat {
+        false => ⊢ Nat from match how == 1 {
           true => q + s
-          false => match how == 2: Nat {
+          false => ⊢ Nat from match how == 2 {
             true => q + (1 - s)
-            false => match Nat::div_nz(p, 2, Nat::ne_zero(2, Refl)) <= r: Nat {
+            false => ⊢ Nat from match Nat::div_nz(p, 2, Nat::ne_zero(2, Refl)) <= r {
               true => Succ(q)
               false => q
             }
@@ -467,7 +464,7 @@ module Float {
 
   // Mapped: `Some(a / b)`, or `None` when `b` is zero.
   pub fn checked_div(a: Float, b: Float): Option(Float) {
-    match is_zero(b): Option(Float) {
+    ⊢ Option(Float) from match is_zero(b) {
       true => None
       false => Some(of_raw(div_raw(raw(a), raw(b))))
     }
@@ -485,7 +482,7 @@ module Float {
 
   // Mapped: `a == b`: false when either is NaN, true for `0.0 == -0.0`.
   pub fn eq(a: Float, b: Float): Bool {
-    match is_nan(a) || is_nan(b): Bool {
+    ⊢ Bool from match is_nan(a) || is_nan(b) {
       true => false
       false => place(raw(a)) == place(raw(b))
     }
@@ -493,7 +490,7 @@ module Float {
 
   // Mapped: `a < b`: false when either is NaN.
   pub fn lt(a: Float, b: Float): Bool {
-    match is_nan(a) || is_nan(b): Bool {
+    ⊢ Bool from match is_nan(a) || is_nan(b) {
       true => false
       false => place(raw(a)) < place(raw(b))
     }
@@ -501,7 +498,7 @@ module Float {
 
   // Mapped: `a <= b`: false when either is NaN.
   pub fn le(a: Float, b: Float): Bool {
-    match is_nan(a) || is_nan(b): Bool {
+    ⊢ Bool from match is_nan(a) || is_nan(b) {
       true => false
       false => place(raw(a)) <= place(raw(b))
     }
@@ -509,7 +506,7 @@ module Float {
 
   // Mapped: `|x|`.
   pub fn abs(x: Float): Float {
-    match is_nan(x): Float {
+    ⊢ Float from match is_nan(x) {
       true => of_raw(nan_raw())
       false => of_raw(mag_of(raw(x)))
     }
@@ -543,7 +540,7 @@ module Float {
 
   // Mapped: the nearest `Float` to `n`, ties to even.
   pub fn of_i64(n: I64): Float {
-    match I64::val(n): Float {
+    ⊢ Float from match I64::val(n) {
       IntOfNat(k) => of_raw(pack(0, k, 4000))
       IntNegSucc(k) => of_raw(pack(1, Succ(k), 4000))
     }
@@ -552,12 +549,12 @@ module Float {
   // The integer part of a finite `x` with sign `s`, `m` and `e`, as an `Int`;
   // `None` when it is at `2^64` or beyond.
   pub fn int_part(s: Nat, m: Nat, e: Nat): Option(Int) {
-    match 4000 <= e: Option(Int) {
-      true => match e - 4000 < 64: Option(Int) {
+    ⊢ Option(Int) from match 4000 <= e {
+      true => ⊢ Option(Int) from match e - 4000 < 64 {
         true => Some(signed(s, m * Nat::pow2(e - 4000)))
         false => None
       }
-      false => match 4000 - e < 54: Option(Int) {
+      false => ⊢ Option(Int) from match 4000 - e < 54 {
         true => Some(signed(s, Nat::div_nz(m, Nat::pow2(4000 - e), Nat::pow2_ne_zero(4000 - e))))
         false => Some(IntOfNat(0))
       }
@@ -565,7 +562,7 @@ module Float {
   }
 
   pub fn signed(s: Nat, k: Nat): Int {
-    match s == 0: Int {
+    ⊢ Int from match s == 0 {
       true => IntOfNat(k)
       false => Int::neg(IntOfNat(k))
     }
@@ -598,13 +595,13 @@ module I64 {
   // Mapped: the integer part of `x`, towards zero, or `None` for NaN, an
   // infinity or a part outside `i64`.
   pub fn of_float_checked(x: Float): Option(I64) {
-    match Float::is_nan(x) || Float::is_infinite(x): Option(I64) {
+    ⊢ Option(I64) from match Float::is_nan(x) || Float::is_infinite(x) {
       true => None
-      false => match Float::int_part(
+      false => ⊢ Option(I64) from match Float::int_part(
         Float::sign_of(Float::raw(x)),
         Float::m_of(Float::raw(x)),
         Float::e_of(Float::raw(x))
-      ): Option(I64) {
+      ) {
         None => None
         Some(v) => of_int(v)
       }

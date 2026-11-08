@@ -18,7 +18,7 @@ pub theorem record_missing_name_frame_errors(
   span: TySpan,
   fieldname: Option(Text)
 ): CkErrorFrame(c, record_missing_name(c, name, seen, span, fieldname)) {
-  match fieldname: CkErrorFrame(c, record_missing_name(c, name, seen, span, fieldname)) {
+  ⊢ CkErrorFrame(c, record_missing_name(c, name, seen, span, fieldname)) from match fieldname {
     None => (clean_errors => clean_errors)
     Some(n) => frame_error_if_ok_errors(
       c,
@@ -70,7 +70,7 @@ pub theorem ck_record_missing_frame_errors(
   seen: List(Text),
   span: TySpan
 ): CkErrorFrame(c, ck_record_missing(fs, c, name, seen, span)) {
-  match fs: CkErrorFrame(c, ck_record_missing(fs, c, name, seen, span)) {
+  ⊢ CkErrorFrame(c, ck_record_missing(fs, c, name, seen, span)) from match fs {
     Nil => (clean_errors => clean_errors)
     Cons(f, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkErrorFrame(c, z),
@@ -104,7 +104,7 @@ pub theorem record_stmt_label_frame_errors(
   end: Nat,
   label: Bool
 ): CkErrorFrame(c, record_stmt_label(c, what, start, end, label)) {
-  match label: CkErrorFrame(c, record_stmt_label(c, what, start, end, label)) {
+  ⊢ CkErrorFrame(c, record_stmt_label(c, what, start, end, label)) from match label {
     true => (clean_errors => clean_errors)
     false => error_frame_rewrap(
       c,
@@ -118,7 +118,7 @@ pub theorem ck_stmt_other_frame_errors(
   c: Checker,
   s: SurfaceStmt
 ): CkErrorFrame(c, ck_stmt_other(c, s)) {
-  match s: CkErrorFrame(c, ck_stmt_other(c, s)) {
+  ⊢ CkErrorFrame(c, ck_stmt_other(c, s)) from match s {
     StLet(pat_name, pat_ty, pat_value, pat_borrow, pat_mutable) => (clean_errors => clean_errors)
     StVar(pat_name, pat_ty, pat_value, pat_borrow) => (clean_errors => clean_errors)
     StModule(pat_name, pat_stmts, pat_start, pat_end) => (clean_errors => clean_errors)

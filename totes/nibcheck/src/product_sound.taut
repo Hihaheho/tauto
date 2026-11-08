@@ -9,7 +9,7 @@ import "ty.taut"
 
 // A product leaf is any type but a product or `()`.
 pub fn ty_pplain(t: Ty): Bool {
-  match t: Bool {
+  ⊢ Bool from match t {
     TyProduct(ts) => false
     TyUnit => false
     _ => true
@@ -28,7 +28,7 @@ pub(open) inductive PLeaves(t: Ty): (List(Ty)) -> Prop {
 // The members of a type read as a product: a product's own list, none for
 // `()`, the type itself otherwise.
 pub fn ty_pmembers(u: Ty): List(Ty) {
-  match u: List(Ty) {
+  ⊢ List(Ty) from match u {
     TyProduct(ys) => ys
     TyUnit => Nil
     _ => Cons(u, Nil)
@@ -44,7 +44,7 @@ pub theorem snoc_mem(
   w: Ty,
   m: Mem(Ty, e, List::append(ms, Cons(w, Nil(Ty))))
 ): Or(e = w, Mem(Ty, e, ms)) {
-  match ms: Or(e = w, Mem(Ty, e, ms)) {
+  ⊢ Or(e = w, Mem(Ty, e, ms)) from match ms {
     Nil => Or::elim(
       mem_cons_inv(w, Nil(Ty), m),
       q => OrInl(q),
@@ -69,7 +69,7 @@ pub theorem snoc_keep(
   w: Ty,
   m: Mem(Ty, e, ms)
 ): Mem(Ty, e, List::append(ms, Cons(w, Nil(Ty)))) {
-  match ms: Mem(Ty, e, List::append(ms, Cons(w, Nil(Ty)))) {
+  ⊢ Mem(Ty, e, List::append(ms, Cons(w, Nil(Ty)))) from match ms {
     Nil => Mem::nil(Mem(Ty, e, Cons(w, Nil(Ty))), m)
     Cons(h, rest) => Or::elim(
       mem_cons_inv(h, rest, m),
@@ -81,7 +81,7 @@ pub theorem snoc_keep(
 
 // `w` is a member after appending it.
 pub theorem snoc_has(w: Ty, ms: List(Ty)): Mem(Ty, w, List::append(ms, Cons(w, Nil(Ty)))) {
-  match ms: Mem(Ty, w, List::append(ms, Cons(w, Nil(Ty)))) {
+  ⊢ Mem(Ty, w, List::append(ms, Cons(w, Nil(Ty)))) from match ms {
     Nil => MemHere(Ty, w, Nil(Ty))
     Cons(h, rest) => MemThere(Ty, w, h, List::append(rest, Cons(w, Nil(Ty))), snoc_has(w, rest))
   }
@@ -105,7 +105,7 @@ mutual {
     ms: List(Ty),
     m: Mem(Ty, e, product_members_add(ts, ms))
   ): Or(PLeaves(e, ts), Mem(Ty, e, ms)) {
-    match ts: Or(PLeaves(e, ts), Mem(Ty, e, ms)) {
+    ⊢ Or(PLeaves(e, ts), Mem(Ty, e, ms)) from match ts {
       Nil => OrInr(m)
       Cons(x, rest) => Or::elim(
         padd_mem(e, rest, product_members_add_one(x, x, ms), m),
@@ -124,7 +124,7 @@ mutual {
     ms: List(Ty),
     k: Mem(Ty, e, product_members_add_one(x, w, ms))
   ): Or(PLeaves(e, Cons(x, rest)), Mem(Ty, e, ms)) {
-    match x: Or(PLeaves(e, Cons(x, rest)), Mem(Ty, e, ms)) {
+    ⊢ Or(PLeaves(e, Cons(x, rest)), Mem(Ty, e, ms)) from match x {
       TyProduct(inner) => Or::elim(
         padd_mem(e, inner, ms, k),
         l => OrInl(PlvIn(e, inner, rest, l)),
@@ -154,7 +154,7 @@ mutual {
     ms: List(Ty),
     m: Mem(Ty, e, ms)
   ): Mem(Ty, e, product_members_add(ts, ms)) {
-    match ts: Mem(Ty, e, product_members_add(ts, ms)) {
+    ⊢ Mem(Ty, e, product_members_add(ts, ms)) from match ts {
       Nil => m
       Cons(x, rest) => padd_keep(
         e,
@@ -172,7 +172,7 @@ mutual {
     ms: List(Ty),
     m: Mem(Ty, e, ms)
   ): Mem(Ty, e, product_members_add_one(x, w, ms)) {
-    match x: Mem(Ty, e, product_members_add_one(x, w, ms)) {
+    ⊢ Mem(Ty, e, product_members_add_one(x, w, ms)) from match x {
       TyProduct(inner) => padd_keep(e, inner, ms, m)
       TyUnit => m
       _ => snoc_keep(e, ms, w, m)
@@ -187,7 +187,7 @@ pub theorem pone_has(
   ms: List(Ty),
   p: PPlain(x)
 ): Mem(Ty, w, product_members_add_one(x, w, ms)) {
-  match x: Mem(Ty, w, product_members_add_one(x, w, ms)) {
+  ⊢ Mem(Ty, w, product_members_add_one(x, w, ms)) from match x {
     TyProduct(inner) => False::elim(false_ne_true(p))
     TyUnit => False::elim(false_ne_true(p))
     _ => snoc_has(w, ms)
@@ -198,7 +198,7 @@ pub theorem pone_has(
 pub theorem padd_has<e: Ty, ts: List(
   Ty
 )>(l: PLeaves(e, ts), ms: List(Ty)): Mem(Ty, e, product_members_add(ts, ms)) {
-  match l: Mem(Ty, e, product_members_add(ts, ms)) {
+  ⊢ Mem(Ty, e, product_members_add(ts, ms)) from match l {
     PlvHere(rest, p) => padd_keep(e, rest, product_members_add_one(e, e, ms), pone_has(e, e, ms, p))
     PlvIn(ys, rest, l2) => padd_keep(e, rest, product_members_add(ys, ms), padd_has(l2, ms))
     PlvThere(y, rest, l2) => padd_has(l2, product_members_add_one(y, y, ms))
@@ -206,7 +206,7 @@ pub theorem padd_has<e: Ty, ts: List(
 }
 
 pub theorem pleaves_plain(e: Ty, ts: List(Ty), l: PLeaves(e, ts)): PPlain(e) {
-  match l: PPlain(e) {
+  ⊢ PPlain(e) from match l {
     PlvHere(rest, p) => p
     PlvIn(ys, rest, l2) => pleaves_plain(e, ys, l2)
     PlvThere(y, rest, l2) => pleaves_plain(e, rest, l2)
@@ -222,7 +222,7 @@ pub theorem padded_plain(ts: List(Ty)): AllPPlain(product_members_add(ts, Nil(Ty
 }
 
 pub theorem pplain_members(x: Ty, p: PPlain(x)): Eq(List(Ty), ty_pmembers(x), Cons(x, Nil(Ty))) {
-  match x: Eq(List(Ty), ty_pmembers(x), Cons(x, Nil(Ty))) {
+  ⊢ Eq(List(Ty), ty_pmembers(x), Cons(x, Nil(Ty))) from match x {
     TyProduct(ys) => False::elim(false_ne_true(p))
     TyUnit => False::elim(false_ne_true(p))
     _ => Refl
@@ -234,13 +234,13 @@ pub theorem pmembers_of(
   ms: List(Ty),
   ap: AllPPlain(ms)
 ): Eq(List(Ty), ty_pmembers(ty_product_of(ms)), ms) {
-  match ms: Eq(List(Ty), ty_pmembers(ty_product_of(ms)), ms) {
+  ⊢ Eq(List(Ty), ty_pmembers(ty_product_of(ms)), ms) from match ms {
     Nil => Refl
-    Cons(only, rest) => match rest: Eq(
+    Cons(only, rest) => ⊢ Eq(
       List(Ty),
       ty_pmembers(ty_product_of(Cons(only, rest))),
       Cons(only, rest)
-    ) {
+    ) from match rest {
       Nil => pplain_members(only, ap(only, MemHere(Ty, only, Nil(Ty))))
       Cons(second, more) => Refl
     }

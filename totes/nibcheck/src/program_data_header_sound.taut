@@ -40,7 +40,7 @@ pub theorem header_after_prefix(
   ),
   d
 ) {
-  match m: DataHeaderMatches(
+  ⊢ DataHeaderMatches(
     ck_datas_of(
       ck_st(
         frame_bind(
@@ -52,7 +52,7 @@ pub theorem header_after_prefix(
       )
     ),
     d
-  ) {
+  ) from match m {
     mut1(v, next) => {
       let expected: Option(
         Data
@@ -111,7 +111,10 @@ pub theorem header_enum(
   Eq::subst(
     (m: Mut1(Unit, Checker)) => DataHeaderMatches(ck_datas_of(ck_st(m)), d),
     Eq::sym(
-      Eq::trans(registration_program_StEnum_unf(d, c), ck_rewrap1_id(ck_declare_data(c, d, false, false)))
+      Eq::trans(
+        registration_program_StEnum_unf(d, c),
+        ck_rewrap1_id(ck_declare_data(c, d, false, false))
+      )
     ),
     ck_declare_data_header(c, d, false, false, ordered)
   )
@@ -193,7 +196,7 @@ pub theorem header_cons(
   ),
   d
 ) {
-  match h: DataHeaderMatches(
+  ⊢ DataHeaderMatches(
     ck_datas_of(
       ck_st(
         frame_bind(
@@ -205,7 +208,7 @@ pub theorem header_cons(
       )
     ),
     d
-  ) {
+  ) from match h {
     DeclaresDataStruct(decl, tail) => header_after_prefix(
       tail,
       decl,
@@ -255,8 +258,8 @@ pub theorem ck_program_data_headers(
   declared: DeclaresData(ss, d),
   fresh: UniqueDataNames(types_data_decls(ss))
 ): DataHeaderMatches(ck_datas_of(ck_st(ck_program_data(ss, c))), d) {
-  match ss: DataHeaderMatches(ck_datas_of(ck_st(ck_program_data(ss, c))), d) {
-    Nil => match declared: DataHeaderMatches(ck_datas_of(ck_st(ck_program_data(Nil, c))), d) {
+  ⊢ DataHeaderMatches(ck_datas_of(ck_st(ck_program_data(ss, c))), d) from match ss {
+    Nil => ⊢ DataHeaderMatches(ck_datas_of(ck_st(ck_program_data(Nil, c))), d) from match declared {
     }
     Cons(s, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => DataHeaderMatches(ck_datas_of(ck_st(m)), d),
@@ -309,7 +312,7 @@ pub theorem registration_finish_after_header(
   ordered: CkDatasOrdered(ck_st(m)),
   present: DataHeaderMatches(ck_datas_of(ck_st(m)), d)
 ): DataHeaderMatches(ck_datas_of(ck_st(registration_finish_after(program, m))), d) {
-  match m: DataHeaderMatches(ck_datas_of(ck_st(registration_finish_after(program, m))), d) {
+  ⊢ DataHeaderMatches(ck_datas_of(ck_st(registration_finish_after(program, m))), d) from match m {
     mut1(ignored, next) => Eq::subst(
       (z: Mut1(Unit, Checker)) => DataHeaderMatches(ck_datas_of(ck_st(z)), d),
       Eq::sym(ck_rewrap1_id(ck_finish_datas(next, program))),
@@ -326,7 +329,7 @@ pub theorem registration_program_after_header(
   declared: DeclaresData(program, d),
   fresh: UniqueDataNames(types_data_decls(program))
 ): DataHeaderMatches(ck_datas_of(ck_st(registration_program_after(program, m))), d) {
-  match m: DataHeaderMatches(ck_datas_of(ck_st(registration_program_after(program, m))), d) {
+  ⊢ DataHeaderMatches(ck_datas_of(ck_st(registration_program_after(program, m))), d) from match m {
     mut1(ignored, next) => registration_finish_after_header(
       program,
       d,

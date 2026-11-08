@@ -1,0 +1,182 @@
+// Cancellation requests persist; the receiver decides when to return.
+
+@ cases.the-selfhost-cycle-checker-models-signal-primitives
+source = path`../../totes/nibcheck/src/cycle_signal.taut`
+checks."totes/nibcheck/src/cycle_signal.taut::cy_signal_fresh_flatten" = "ok"
+checks."totes/nibcheck/src/cycle_signal.taut::cy_signal_raise_flatten" = "ok"
+checks."totes/nibcheck/src/cycle_signal.taut::cy_signal_is_raised_flatten" = "ok"
+checks."totes/nibcheck/src/cycle_signal.taut::cy_signal_either_flatten" = "ok"
+checks."totes/nibcheck/src/cycle_signal.taut::cy_signal_listen_flatten" = "ok"
+
+@ cases.request-is-visible-to-existing-and-later-tokens
+source = ```nib
+import std::prelude::Par
+
+let source := Cancellation::new()
+let token := Cancellation::token(source)
+perform show("before", CancelToken::is_requested(token))
+Cancellation::request(source)
+Cancellation::request(source)
+perform show("after", CancelToken::is_requested(token))
+perform show("later", CancelToken::is_requested(Cancellation::token(source)))
+perform wait(CancelToken::signal(token))
+```
+shows = ["before = false", "after = true", "later = true"]
+backends = ["rust", "javascript", "vm"]
+
+@ cases.either-observes-both-inputs-and-nested-choices
+source = ```nib
+import std::prelude::Par
+
+let left := Cancellation::new()
+let right := Cancellation::new()
+let a := CancelToken::signal(Cancellation::token(left))
+let b := CancelToken::signal(Cancellation::token(right))
+let choice := Signal::either(a, b)
+let nested := Signal::either(choice, choice)
+perform show("before", Signal::is_raised(nested))
+Cancellation::request(right)
+perform wait(nested)
+perform show("right", Signal::is_raised(choice))
+perform show("left", Signal::is_raised(a))
+perform show("duplicate", Signal::is_raised(Signal::either(b, b)))
+```
+shows = ["before = false", "right = true", "left = false", "duplicate = true"]
+backends = ["rust", "javascript", "vm"]
+
+@ cases.a-waiting-task-cleans-up-before-join-returns
+source = path`../../examples/cancellation.taut`
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["before = 0", "outcome = Err(Cancelled)", "cleaned = 1"]
+javascript_shows = ["before = 0", "outcome = Err(Cancelled)", "cleaned = 1"]
+
+@ cases.ready-input-completes-without-a-cancellation-request
+source = ```nib
+import std::prelude::Par
+import std::prelude::Std
+
+// The ticket must be consumed on both the normal and cancellation paths.
+linear struct Ticket {}
+fn release(ticket: Ticket, cleaned: Atomic): Unit {
+  match ticket { Ticket {} => Atomic::store(cleaned, 1) }
+}
+
+fn work(cancel: CancelToken, input: Signal, cleaned: Atomic, started: Channel(Unit)): Result(u64, Cancelled) ! {wait} {
+  let ticket := Ticket {}
+  Channel::send(started, #())
+  perform wait(Signal::either(input, CancelToken::signal(cancel)))
+  if CancelToken::is_requested(cancel) {
+    release(ticket, cleaned)
+    Err(Cancelled)
+  } else {
+    release(ticket, cleaned)
+    Ok(42)
+  }
+}
+
+let cancellation := Cancellation::new()
+let input := Cancellation::new()
+let token := Cancellation::token(cancellation)
+let ready := CancelToken::signal(Cancellation::token(input))
+let cleaned := Atomic::new(0)
+let started: Channel(Unit) := Channel::new(1)
+Cancellation::request(input)
+let task := perform spawn(() => work(token, ready, cleaned, started))
+let outcome := Task::join(task)
+perform show("outcome", outcome)
+perform show("cleaned", Atomic::load(cleaned))
+```
+shows = ["outcome = Ok(42)", "cleaned = 1"]
+backends = ["rust", "javascript", "vm"]
+
+@ cases.a-token-signal-is-not-a-source-capability
+source = ```nib
+import std::prelude::Par
+
+let cancellation := Cancellation::new()
+let token := Cancellation::token(cancellation)
+Signal::raise(CancelToken::signal(token))
+```
+types = "error: "
+
+@ cases.a-user-type-can-have-the-source-capability-spelling
+source = ```nib
+import std::prelude::Par
+
+struct CancelSource { value: u64 }
+let own := CancelSource { value: 7 }
+let cancellation := Cancellation::new()
+Cancellation::request(cancellation)
+perform show("own", own.value)
+perform show("requested", CancelToken::is_requested(Cancellation::token(cancellation)))
+```
+shows = ["own = 7", "requested = true"]
+backends = ["rust", "javascript", "vm"]
+
+@ cases.requests-do-not-propagate-between-sources
+source = ```nib
+import std::prelude::Par
+
+let first := Cancellation::new()
+let second := Cancellation::new()
+let a := Cancellation::token(first)
+let b := Cancellation::token(second)
+let choice := Signal::either(CancelToken::signal(a), CancelToken::signal(b))
+Cancellation::request(first)
+perform wait(choice)
+perform show("first", CancelToken::is_requested(a))
+perform show("second", CancelToken::is_requested(b))
+perform show("choice", Signal::is_raised(choice))
+```
+shows = ["first = true", "second = false", "choice = true"]
+backends = ["rust", "javascript", "vm"]
+
+@ cases.request-before-spawn-still-runs-the-task-and-its-cleanup
+source = ```nib
+import std::prelude::Par
+import std::prelude::Std
+
+linear struct Ticket {}
+fn work(cancel: CancelToken, cleaned: Atomic): Result(u64, Cancelled) ! {wait} {
+  let ticket := Ticket {}
+  perform wait(CancelToken::signal(cancel))
+  match ticket { Ticket {} => Atomic::store(cleaned, 1) }
+  Err(Cancelled)
+}
+
+let cancellation := Cancellation::new()
+let cleaned := Atomic::new(0)
+Cancellation::request(cancellation)
+let token := Cancellation::token(cancellation)
+let task := perform spawn(() => work(token, cleaned))
+let outcome := Task::join(task)
+let cancelled := match outcome {
+  Ok(value) => false
+  Err(reason) => true
+}
+perform show("cancelled", cancelled)
+perform show("cleaned", Atomic::load(cleaned))
+```
+shows = ["cancelled = true", "cleaned = 1"]
+backends = ["rust", "javascript", "vm"]
+
+// A request to end the run from outside (Ctrl-C, SIGTERM) raises the token of
+// `shutdown_token`; until one comes it is not requested, and a fresh token
+// stands apart from the earlier one and from the program's own cancellations.
+@ cases.shutdown-token-is-not-requested-without-a-request-from-outside
+source = ```nib
+import std::prelude::Par
+import std::prelude::Os
+
+let token := perform shutdown_token()
+let again := perform shutdown_token()
+let own := Cancellation::new()
+Cancellation::request(own)
+perform show("token", CancelToken::is_requested(token))
+perform show("again", CancelToken::is_requested(again))
+let either := Signal::either(CancelToken::signal(token), CancelToken::signal(Cancellation::token(own)))
+perform wait(either)
+perform show("either", Signal::is_raised(either))
+```
+shows = ["token = false", "again = false", "either = true"]
+backends = ["rust", "javascript", "vm"]

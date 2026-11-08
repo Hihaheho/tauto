@@ -3,10 +3,10 @@
 
 @ cases.return-from-a-handle-that-resumes-twice
 source = ```nib
-effect choose: () -> Bool resume ω
-fn pick() -> i64 {
-  let r = handle {
-    let b = perform choose()
+effect choose(): Bool resume ω
+fn pick(): i64 {
+  let r := handle {
+    let b := perform choose()
     if b {
       return 100
     }
@@ -22,10 +22,10 @@ shows = ["p = 100"]
 
 @ cases.the-second-resume-returns
 source = ```nib
-effect choose: () -> Bool resume ω
-fn pick() -> i64 {
-  let r = handle {
-    let b = perform choose()
+effect choose(): Bool resume ω
+fn pick(): i64 {
+  let r := handle {
+    let b := perform choose()
     if b {
       2
     } else {
@@ -33,7 +33,7 @@ fn pick() -> i64 {
     }
   } with {
     choose(), k => {
-      let a = k(true)
+      let a := k(true)
       perform show("a", a)
       a + k(false)
     }
@@ -46,10 +46,10 @@ shows = ["a = 2", "p = 7"]
 
 @ cases.no-return-taken
 source = ```nib
-effect choose: () -> Bool resume ω
-fn pick(n: i64) -> i64 {
-  let r = handle {
-    let b = perform choose()
+effect choose(): Bool resume ω
+fn pick(n: i64): i64 {
+  let r := handle {
+    let b := perform choose()
     if n > 5 {
       return 0 - 1
     }
@@ -66,12 +66,12 @@ shows = ["a = 1030", "b = -1"]
 
 @ cases.return-from-a-while-in-the-body
 source = ```nib
-effect pick: () -> i64 resume ω
-fn first_big() -> i64 {
-  let r = handle {
-    var i = 0
+effect pick(): i64 resume ω
+fn first_big(): i64 {
+  let r := handle {
+    var i := 0
     while i < 5 {
-      let x = perform pick()
+      let x := perform pick()
       if x + i > 3 {
         return x + i
       }
@@ -89,11 +89,11 @@ shows = ["v = 4"]
 
 @ cases.return-in-a-function-that-suspends
 source = ```nib
-effect choose: () -> Bool resume ω
-effect ask: () -> i64
-fn pick() -> i64 ! {ask} {
-  let r = handle {
-    let b = perform choose()
+effect choose(): Bool resume ω
+effect ask(): i64
+fn pick(): i64 ! {ask} {
+  let r := handle {
+    let b := perform choose()
     if b {
       return perform ask() + 1
     }
@@ -103,7 +103,7 @@ fn pick() -> i64 ! {ask} {
   }
   r + 1000
 }
-let v = handle { pick() } with {
+let v := handle { pick() } with {
   ask(), k => k(41)
 }
 perform show("v", v)
@@ -112,11 +112,11 @@ shows = ["v = 42"]
 
 @ cases.return-in-a-function-that-aborts
 source = ```nib
-effect choose: () -> Bool resume ω
-effect fail: () -> Never resume 0
-fn pick() -> i64 ! {fail} {
-  let r = handle {
-    let b = perform choose()
+effect choose(): Bool resume ω
+effect fail(): Never resume 0
+fn pick(): i64 ! {fail} {
+  let r := handle {
+    let b := perform choose()
     if b {
       return 5
     }
@@ -130,7 +130,7 @@ fn pick() -> i64 ! {fail} {
   }
   r + 1000
 }
-let v = handle { pick() } with {
+let v := handle { pick() } with {
   fail() => 0 - 1
 }
 perform show("v", v)
@@ -139,13 +139,13 @@ shows = ["v = 5"]
 
 @ cases.a-budget-in-a-handle-that-resumes-twice
 source = ```nib
-effect choose: () -> Bool resume ω
-fn spin() -> i64 {
+effect choose(): Bool resume ω
+fn spin(): i64 {
   while true { }
   0
 }
-let d = handle {
-  let b = perform choose()
+let d := handle {
+  let b := perform choose()
   budget(steps: 50) {
     if b {
       spin()
@@ -164,16 +164,16 @@ rust_shows = ["d = 4"]
 
 @ cases.more-steps-resume-the-body-in-m
 source = ```nib
-effect choose: () -> Bool resume ω
-fn count(n: i64) -> i64 {
-  var i = 0
+effect choose(): Bool resume ω
+fn count(n: i64): i64 {
+  var i := 0
   while i < n {
     i := i + 1
   }
   i
 }
-let d = handle {
-  let b = perform choose()
+let d := handle {
+  let b := perform choose()
   budget(steps: 50) {
     if b {
       count(100)
@@ -192,17 +192,17 @@ rust_shows = ["d = 110"]
 
 @ cases.a-budget-body-that-resumes-twice
 source = ```nib
-effect choose: () -> Bool resume ω
-fn count(n: i64) -> i64 {
-  var i = 0
+effect choose(): Bool resume ω
+fn count(n: i64): i64 {
+  var i := 0
   while i < n {
     i := i + 1
   }
   i
 }
-let d = handle {
+let d := handle {
   budget(steps: 1000) {
-    let b = perform choose()
+    let b := perform choose()
     if b {
       count(3)
     } else {
@@ -220,16 +220,16 @@ rust_shows = ["d = 7"]
 
 @ cases.unbounded-in-m
 source = ```nib
-effect choose: () -> Bool resume ω
-fn count(n: i64) -> i64 {
-  var i = 0
+effect choose(): Bool resume ω
+fn count(n: i64): i64 {
+  var i := 0
   while i < n {
     i := i + 1
   }
   i
 }
-let d = handle {
-  let b = perform choose()
+let d := handle {
+  let b := perform choose()
   budget(steps: 5) {
     count(if b { 30 } else { 20 })
   }
@@ -244,10 +244,10 @@ rust_shows = ["d = 50"]
 
 @ cases.return-from-inside-a-budget-in-m
 source = ```nib
-effect choose: () -> Bool resume ω
-fn pick() -> i64 {
-  let r = handle {
-    let b = perform choose()
+effect choose(): Bool resume ω
+fn pick(): i64 {
+  let r := handle {
+    let b := perform choose()
     budget(steps: 100) {
       if b {
         return 9
@@ -267,13 +267,13 @@ rust_shows = ["p = 9"]
 
 @ cases.nested-budgets-in-m
 source = ```nib
-effect choose: () -> Bool resume ω
-fn spin() -> i64 {
+effect choose(): Bool resume ω
+fn spin(): i64 {
   while true { }
   0
 }
-let d = handle {
-  let b = perform choose()
+let d := handle {
+  let b := perform choose()
   budget(steps: 1000) {
     budget(steps: 20) {
       if b {
@@ -291,3 +291,149 @@ perform show("d", d)
 ```
 shows = ["d = 103"]
 rust_shows = ["d = 103"]
+
+// Cells are shared between resumptions (`semantics.md`「Cells across
+// resumptions」): a write made in one resumption is seen by the next one,
+// also for a `var` made inside the captured part of the body.
+@ cases.resumptions-share-a-var-made-before-the-handle
+source = ```nib
+effect choose(): Bool resume ω
+var n := 0
+let r := handle {
+  let b := perform choose()
+  n := n + 1
+  if b { n * 10 } else { n }
+} with {
+  choose(), k => k(true) + k(false)
+}
+perform show("r", r)
+perform show("n", n)
+```
+shows = ["r = 12", "n = 2"]
+rust_shows = ["r = 12", "n = 2"]
+javascript_shows = ["r = 12", "n = 2"]
+
+@ cases.resumptions-share-a-var-made-in-the-body
+source = ```nib
+effect choose(): Bool resume ω
+let r := handle {
+  var n := 0
+  let b := perform choose()
+  n := n + 1
+  if b { n * 10 } else { n }
+} with {
+  choose(), k => k(true) + k(false)
+}
+perform show("r", r)
+```
+shows = ["r = 12"]
+rust_shows = ["r = 12"]
+javascript_shows = ["r = 12"]
+
+
+// A loop in the body of a budget, before a handle whose body runs out of its
+// own budget, all in the arm of an outer one: the round of the loop captures
+// the names in scope, and the budget's target is not one of them, since it is
+// moved into the frame where the budget starts.
+@ cases.a-loop-in-a-budget-in-an-exceeded-arm
+source = ```nib
+fn spin(): i64 {
+  while true { }
+  0
+}
+fn count(n: i64): i64 {
+  var i := 0
+  var s := 0
+  while i < n {
+    i := i + 1
+    s := s + i
+  }
+  s
+}
+perform show("d", handle { budget(steps: 3) { spin() } } with {
+  exceeded(info), k => k(handle { budget(steps: 2) { count(30) + (handle { budget(steps: 155) { spin() } } with {
+    exceeded(info), k => k(5)
+  }) } } with {
+    exceeded(info), k => info.unbounded()
+  })
+})
+```
+shows = ["d = 470"]
+rust_shows = ["d = 470"]
+@ cases.a-nested-budget-runs-out-inside-an-outer-one
+source = ```nib
+fn spin(): i64 {
+  while true {
+  }
+  0
+}
+fn f1(): i64 {
+  handle {
+    budget(steps: 100) {
+      spin()
+    }
+  } with {
+    exceeded(info), k => k(1)
+  }
+}
+perform show("v", handle {
+  budget(steps: 1000000) {
+    f1()
+  }
+} with {
+  exceeded(info), k => k(0)
+})
+```
+shows = ["v = 1"]
+
+@ cases.an-outer-budget-runs-out-inside-a-nested-one
+source = ```nib
+fn spin(): i64 {
+  while true {
+  }
+  0
+}
+fn f1(): i64 {
+  handle {
+    budget(steps: 100) {
+      spin()
+    }
+  } with {
+    exceeded(info), k => k(1)
+  }
+}
+perform show("v", handle {
+  budget(steps: 10) {
+    f1()
+  }
+} with {
+  exceeded(info), k => info.unbounded()
+})
+```
+shows = ["v = 1"]
+
+@ cases.an-outer-budget-stops-a-nested-one
+source = ```nib
+fn spin(): i64 {
+  while true {
+  }
+  0
+}
+fn f1(): i64 {
+  handle {
+    budget(steps: 100000) {
+      spin()
+    }
+  } with {
+    exceeded(info), k => k(1)
+  }
+}
+perform show("v", handle {
+  budget(steps: 10) {
+    f1()
+  }
+} with {
+  exceeded(info), k => k(2)
+})
+```
+shows = ["v = 2"]

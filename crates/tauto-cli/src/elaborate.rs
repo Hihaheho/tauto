@@ -34,16 +34,16 @@ pub fn command(args: &[String]) -> ExitCode {
         }
     };
     let own = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let names: Vec<&str> = entries
+    let names: Vec<&tauto::surface::Name> = entries
         .iter()
         .filter(|e| e.file == own)
-        .map(|e| e.entry.name.as_str())
-        .filter(|n| only.is_none_or(|o| o == *n))
+        .map(|e| &e.entry.name)
+        .filter(|n| only.is_none_or(|o| o == n.as_str()))
         .collect();
     // A body is elaborated once per declaration; the last one is the one kept.
     let shown: Vec<_> = names
         .iter()
-        .filter_map(|n| terms.iter().rev().find(|(t, _)| t == n))
+        .filter_map(|n| terms.iter().rev().find(|(t, _)| t == *n))
         .collect();
     if let Some(name) = only
         && shown.is_empty()
@@ -61,7 +61,7 @@ pub fn command(args: &[String]) -> ExitCode {
     if json {
         let items = shown.iter().map(|(name, term)| {
             Json::Obj(vec![
-                ("name", Json::Str(name.clone())),
+                ("name", Json::Str(name.to_string())),
                 ("term", Json::Str(describe(term))),
                 ("tree", term_json(term)),
             ])

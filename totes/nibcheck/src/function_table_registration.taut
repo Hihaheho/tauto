@@ -38,7 +38,7 @@ pub theorem fnt_step_bind<A: Type, B: Type>(
   head: CkFnsStep(c, m),
   tail: ∀ value: A. ∀ next: Checker. CkFnsStep(next, k(value, next))
 ): CkFnsStep(c, frame_bind(k, m)) {
-  match m: CkFnsStep(c, frame_bind(k, m)) {
+  ⊢ CkFnsStep(c, frame_bind(k, m)) from match m {
     mut1(value, next) => ordered => tail(value, next, head(ordered))
   }
 }
@@ -104,8 +104,14 @@ pub theorem signature_after_lookup(
   source: SurfaceFn,
   m: Mut1(Scheme, Checker),
   ordered: CkFnsOrdered(ck_st(m))
-): fnt_lookup(ck_st(signature_store_after(source, m)), signature_name(source)) = Some(ck_val(signature_store_after(source, m))) {
-  match m: fnt_lookup(ck_st(signature_store_after(source, m)), signature_name(source)) = Some(ck_val(signature_store_after(source, m))) {
+): fnt_lookup(
+  ck_st(signature_store_after(source, m)),
+  signature_name(source)
+) = Some(ck_val(signature_store_after(source, m))) {
+  ⊢ fnt_lookup(
+    ck_st(signature_store_after(source, m)),
+    signature_name(source)
+  ) = Some(ck_val(signature_store_after(source, m))) from match m {
     mut1(scheme, next) => signature_store_lookup(next, source, scheme, ordered)
   }
 }
@@ -113,9 +119,15 @@ pub theorem ck_add_fn_lookup(
   c: Checker,
   source: SurfaceFn,
   ordered: CkFnsOrdered(c)
-): fnt_lookup(ck_st(ck_add_fn(c, source)), signature_name(source)) = Some(ck_val(ck_add_fn(c, source))) {
+): fnt_lookup(
+  ck_st(ck_add_fn(c, source)),
+  signature_name(source)
+) = Some(ck_val(ck_add_fn(c, source))) {
   Eq::subst(
-    (result: Mut1(Scheme, Checker)) => fnt_lookup(ck_st(result), signature_name(source)) = Some(ck_val(result)),
+    (result: Mut1(Scheme, Checker)) => fnt_lookup(
+      ck_st(result),
+      signature_name(source)
+    ) = Some(ck_val(result)),
     Eq::sym(signature_add_unf(c, source)),
     signature_after_lookup(
       source,
@@ -136,12 +148,16 @@ pub theorem fnt_insert_other_at(
   ordered: Ordmap::ordered(table, Ordmap::compare_text),
   apart: FnNameApart(query, source),
   comparison: Ordmap::compare_text(query, source) = ordering
-): Ordmap::get(Ordmap::insert(table, source, scheme, Ordmap::compare_text), query, Ordmap::compare_text) = Ordmap::get(table, query, Ordmap::compare_text) {
-  match ordering: Ordmap::get(
-      Ordmap::insert(table, source, scheme, Ordmap::compare_text),
-      query,
-      Ordmap::compare_text
-    ) = Ordmap::get(table, query, Ordmap::compare_text) {
+): Ordmap::get(
+  Ordmap::insert(table, source, scheme, Ordmap::compare_text),
+  query,
+  Ordmap::compare_text
+) = Ordmap::get(table, query, Ordmap::compare_text) {
+  ⊢ Ordmap::get(
+    Ordmap::insert(table, source, scheme, Ordmap::compare_text),
+    query,
+    Ordmap::compare_text
+  ) = Ordmap::get(table, query, Ordmap::compare_text) from match ordering {
     Less => Ordmap::get_insert_other(
       Ordmap::compare_text,
       Ordmap::compare_text_law(),
@@ -170,10 +186,7 @@ pub theorem fnt_insert_other_at(
   }
 }
 pub def CkFnPreserved<A: Type>(name: Text, c: Checker, m: Mut1(A, Checker)): Prop :=
-And(
-  CkFnsStep(c, m),
-  ∀ ordered: CkFnsOrdered(c). fnt_lookup(ck_st(m), name) = fnt_lookup(c, name)
-)
+And(CkFnsStep(c, m), ∀ ordered: CkFnsOrdered(c). fnt_lookup(ck_st(m), name) = fnt_lookup(c, name))
 
 pub theorem fnt_preserved_read<A: Type>(
   name: Text,
@@ -216,7 +229,7 @@ pub theorem fnt_preserved_bind<A: Type, B: Type>(
   head: CkFnPreserved(name, c, m),
   tail: ∀ value: A. ∀ next: Checker. CkFnPreserved(name, next, k(value, next))
 ): CkFnPreserved(name, c, frame_bind(k, m)) {
-  match m: CkFnPreserved(name, c, frame_bind(k, m)) {
+  ⊢ CkFnPreserved(name, c, frame_bind(k, m)) from match m {
     mut1(value, next) => AndIntro(
       ordered => (And::left(tail(value, next)))((And::left(head))(ordered)),
       ordered => Eq::trans(
@@ -283,7 +296,7 @@ pub theorem fnt_step_return_after<A: Type, B: Type>(
   m: Mut1(A, Checker),
   step: CkFnsStep(c, m)
 ): CkFnsStep(c, frame_return(A, B, value, m)) {
-  match m: CkFnsStep(c, frame_return(A, B, value, m)) {
+  ⊢ CkFnsStep(c, frame_return(A, B, value, m)) from match m {
     mut1(ignored, next) => step
   }
 }

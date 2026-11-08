@@ -23,6 +23,7 @@
 //!   than once, and parameters that take new values would be one place shared
 //!   by every resumption.
 
+use crate::Name;
 use std::collections::BTreeSet;
 
 use crate::{
@@ -259,7 +260,7 @@ pub fn passed_on(p: &Local, a: &Expr) -> bool {
         ExprKind::Ref(place) | ExprKind::RefMut(place) => {
             place.local.id == p.id
                 && place.path.is_empty()
-                && matches!(p.repr, Repr::Ref | Repr::RefMut)
+                && matches!(p.repr, Repr::Ref | Repr::RefMut | Repr::FnRef)
         }
         _ => false,
     }
@@ -321,7 +322,6 @@ fn has_ref(pkg: &Package, t: &Ty) -> bool {
             has_ref(pkg, a)
         }
         Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => has_ref(pkg, a) || has_ref(pkg, b),
-        Ty::Product(ms) => ms.iter().any(|(_, m)| has_ref(pkg, m)),
         Ty::Data(n, args) => {
             pkg.datas.iter().any(|d| d.name == *n && d.view) || args.iter().any(|a| has_ref(pkg, a))
         }
@@ -341,7 +341,6 @@ fn has_fn(t: &Ty) -> bool {
         | Ty::Info(a)
         | Ty::BudgetAnswer(a) => has_fn(a),
         Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => has_fn(a) || has_fn(b),
-        Ty::Product(ms) => ms.iter().any(|(_, m)| has_fn(m)),
         Ty::Data(_, args) => args.iter().any(has_fn),
         _ => false,
     }
@@ -358,7 +357,7 @@ fn holds_host_value(pkg: &Package, f: &FnInst) -> bool {
 
 /// Whether a type holds a value of an `extern` type, or a `MutexGuard`. `seen` holds the data
 /// types already found to hold none, or being looked into.
-pub(crate) fn holds_host(pkg: &Package, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
+pub(crate) fn holds_host(pkg: &Package, t: &Ty, seen: &mut BTreeSet<Name>) -> bool {
     match t {
         Ty::Vec(a)
         | Ty::Array(a)
@@ -372,9 +371,10 @@ pub(crate) fn holds_host(pkg: &Package, t: &Ty, seen: &mut BTreeSet<String>) -> 
         Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
             holds_host(pkg, a, seen) || holds_host(pkg, b, seen)
         }
-        Ty::Product(ms) => ms.iter().any(|(_, m)| holds_host(pkg, m, seen)),
         // A mutex guard gives its lock back when it is dropped.
-        Ty::Std(n, args) => n == "MutexGuard" || args.iter().any(|a| holds_host(pkg, a, seen)),
+        Ty::Std(n, args) => {
+            *n == crate::StdType::MutexGuard || args.iter().any(|a| holds_host(pkg, a, seen))
+        }
         Ty::Union(id) => pkg
             .unions
             .iter()

@@ -4,12 +4,20 @@
 
 use tauto_rt::permissions::Permissions;
 
+use crate::value::Value;
+
 pub trait Host {
     fn show(&mut self, name: &str, value: &str);
     fn stdout(&mut self, text: &str);
     fn stderr(&mut self, text: &str);
     fn args(&self) -> Vec<String>;
     fn permissions(&mut self) -> &mut Permissions;
+    /// Calls extern function `index` of the program (`Program::externs`).
+    /// A host that binds none answers that it has none.
+    fn call_extern(&mut self, index: u32, args: Vec<Value>) -> Result<Value, String> {
+        let _ = (index, args);
+        Err("the machine has no host binding for this extern function".into())
+    }
 }
 
 /// The process's: what the program writes goes to its standard streams.

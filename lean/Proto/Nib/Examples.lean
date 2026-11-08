@@ -679,7 +679,7 @@ example (A : Ty) (ρ : Row) : ¬ HasType askSig [] [] (.int .i32 2147483648) A �
 example : Fault (.app (.prim (.arith .add .i32) .unit []) [.int .i32 2147483647, .int .i32 1]) :=
   ⟨[], _, rfl, .arith (by decide), by simp⟩
 
-/-! ## `Text`, `Decimal` and `Float` -/
+/-! ## `Text`, `Decimal`, `Float` and `Float32` -/
 
 /-- `decimal(1) / decimal(4)` is a `Decimal`, and is exactly `0.25`. -/
 example : HasType askSig [] [] (.app (.prim (.decArith .div) .unit []) [.dec 1, .dec 4]) .decimal [] := by
@@ -708,6 +708,19 @@ example (a b : Float) :
   have h := HasType.app (sg := askSig) (S := []) (Γ := []) (f := .prim (.floatArith .mul) .unit [])
     (args := [.flt a, .flt b]) (ρf := []) (ρa := [] ++ ([] ++ []))
     (HasType.prim trivial) (.cons .flt (.cons .flt .nil))
+  simpa [Prim.ty] using h
+
+/-- `Float32` is the same: `/` by zero is a run-time error, and arithmetic is a
+`Float32`. -/
+example (a b : Float32) (hb : (b == 0) = true) :
+    Fault (.app (.prim (.float32Arith .div) .unit []) [.flt32 a, .flt32 b]) :=
+  ⟨[], _, rfl, .flt32 (by simp [FOp.flt32, hb]), by simp⟩
+
+example (a b : Float32) :
+    HasType askSig [] [] (.app (.prim (.float32Arith .add) .unit []) [.flt32 a, .flt32 b]) .float32 [] := by
+  have h := HasType.app (sg := askSig) (S := []) (Γ := []) (f := .prim (.float32Arith .add) .unit [])
+    (args := [.flt32 a, .flt32 b]) (ρf := []) (ρa := [] ++ ([] ++ []))
+    (HasType.prim trivial) (.cons .flt32 (.cons .flt32 .nil))
   simpa [Prim.ty] using h
 
 /-- Two `Text`s are joined by a function, not an operator; there is no

@@ -230,7 +230,11 @@ fn path_name(name: &str) -> Result<(), String> {
 const STD_DIR: &str = "<std>";
 
 fn resolve(from: &str, import: &str, module: bool) -> Result<String, String> {
-    if let Some(module) = import.strip_prefix("std::").filter(|_| module) {
+    if let (tauto::surface::qualify::STD_ROOT, Some(rest)) =
+        tauto::surface::qualify::module_root(import)
+        && module
+    {
+        let module = rest;
         let module = module.replace("::", "/");
         let path = format!("{STD_DIR}/{module}.taut");
         path_name(&path)?;
@@ -499,18 +503,23 @@ fn recheck(entry: &str, sources: &BTreeMap<String, Source>) -> Result<Report, St
         flatten(&program.stmts, &mut flat);
         for stmt in flat {
             match stmt {
-                Stmt::Theorem(t) if t.body.is_none() => report.explicit_axioms.push(t.name.clone()),
+                Stmt::Theorem(t) if t.body.is_none() => {
+                    report.explicit_axioms.push(t.name.to_string())
+                }
                 Stmt::Extern { fns, instances, .. } => {
                     if !instances.is_empty() {
                         return Err(crate::i18n::t!("trust-extern-instances"));
                     }
                     for f in fns {
-                        report.extern_functions.push(f.name.clone());
+                        report.extern_functions.push(f.name.to_string());
                         report.function_effect_rows.push(FunctionEffects {
                             source: file.clone(),
-                            name: f.name.clone(),
+                            name: f.name.to_string(),
                             external: true,
-                            written: f.effects.clone(),
+                            written: f
+                                .effects
+                                .as_ref()
+                                .map(|row| row.iter().map(ToString::to_string).collect()),
                         });
                     }
                     report
@@ -518,7 +527,7 @@ fn recheck(entry: &str, sources: &BTreeMap<String, Source>) -> Result<Report, St
                         .push(format!("{file}: extern signatures and implementations"));
                 }
                 Stmt::Effect(e) => {
-                    report.declared_effects.push(e.name.clone());
+                    report.declared_effects.push(e.name.to_string());
                     report
                         .unchecked_statements
                         .push(format!("{file}: effect {}", short(&e.name, &modules)));
@@ -526,7 +535,7 @@ fn recheck(entry: &str, sources: &BTreeMap<String, Source>) -> Result<Report, St
                 Stmt::Fn(f) => {
                     // A secret made public in code that may run: the backends
                     // keep the rest of a secret's uses in constant time.
-                    if tauto::direct::mentions(&f.body, "expose") {
+                    if tauto::direct::mentions(&f.body, &tauto::surface::Name::from("expose")) {
                         report.unchecked_statements.push(format!(
                             "{file}: {} makes a secret public (expose)",
                             short(&f.name, &modules)
@@ -534,9 +543,12 @@ fn recheck(entry: &str, sources: &BTreeMap<String, Source>) -> Result<Report, St
                     }
                     report.function_effect_rows.push(FunctionEffects {
                         source: file.clone(),
-                        name: f.name.clone(),
+                        name: f.name.to_string(),
                         external: false,
-                        written: f.effects.clone(),
+                        written: f
+                            .effects
+                            .as_ref()
+                            .map(|row| row.iter().map(ToString::to_string).collect()),
                     });
                 }
                 _ => {}
@@ -546,11 +558,11 @@ fn recheck(entry: &str, sources: &BTreeMap<String, Source>) -> Result<Report, St
         for entry in kernel.declare_program(&program) {
             let (status, axioms, reason) = match entry.verdict {
                 Verdict::Checked { axioms } => {
-                    if !report.explicit_axioms.contains(&entry.name) {
+                    if !report.explicit_axioms.contains(&entry.name.to_string()) {
                         used.extend(axioms.iter().cloned());
                     }
                     (
-                        if report.explicit_axioms.contains(&entry.name) {
+                        if report.explicit_axioms.contains(&entry.name.to_string()) {
                             "assumed"
                         } else {
                             "checked"
@@ -564,7 +576,7 @@ fn recheck(entry: &str, sources: &BTreeMap<String, Source>) -> Result<Report, St
                     return Err(crate::i18n::t!(
                         "trust-declaration-failed",
                         file = &file,
-                        name = &entry.name,
+                        name = entry.name.to_string(),
                         error = d.to_string()
                     ));
                 }
@@ -572,16 +584,16 @@ fn recheck(entry: &str, sources: &BTreeMap<String, Source>) -> Result<Report, St
                     return Err(crate::i18n::t!(
                         "trust-incomplete-proof",
                         file = &file,
-                        name = &entry.name
+                        name = entry.name.to_string()
                     ));
                 }
             };
             report.declarations.push(Declaration {
                 source: file.clone(),
-                name: entry.name,
+                name: entry.name.to_string(),
                 status: status.into(),
-                axioms,
-                reason,
+                axioms: axioms.into_iter().map(|n| n.to_string()).collect(),
+                reason: reason.map(|r| r.to_string()),
             });
         }
     }
@@ -624,7 +636,7 @@ fn order_sources(
     }
     let source = sources
         .get(name)
-        .ok_or_else(|| crate::i18n::t!("trust-missing-source", name = name))?;
+        .ok_or_else(|| crate::i18n::t!("trust-missing-source", name = name.to_string()))?;
     let program = parse(&source.text)?;
     active.insert(name.into());
     for (import, module) in imports(&program) {
@@ -667,7 +679,7 @@ fn load_closed(
     let loaded = tauto::program::load_with_source(&root.join(entry), &|path: &Path| {
         given.get(path).map(|text| Ok(text.to_string()))
     })
-    .map_err(|e| crate::i18n::t!("trust-load-failed", error = e))?;
+    .map_err(|e| crate::i18n::t!("trust-load-failed", error = e.to_string()))?;
     if let Some((error, _)) = loaded.program.errors.first() {
         return Err(crate::i18n::t!("trust-load-failed", error = error.clone()));
     }

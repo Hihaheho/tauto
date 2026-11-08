@@ -1,0 +1,92 @@
+@ cases.checked-rules-and-safety
+source = path`../../examples/stack-check/proof/examples.taut`
+diagnostics = []
+checks."examples/stack-check/proof/examples.taut::empty_dup_rejected" = "ok"
+checks."examples/stack-check/proof/examples.taut::missing_condition_rejected" = "ok"
+checks."examples/stack-check/proof/examples.taut::numeric_condition_rejected" = "ok"
+checks."examples/stack-check/proof/examples.taut::first_instruction_rejected" = "ok"
+checks."examples/stack-check/proof/examples.taut::deep_branch_mismatch_rejected" = "ok"
+checks."examples/stack-check/proof/examples.taut::branch_depth_mismatch_rejected" = "ok"
+checks."examples/stack-check/proof/examples.taut::sum_checked" = "ok"
+checks."examples/stack-check/proof/examples.taut::sum_runs" = "ok"
+checks."examples/stack-check/proof/examples.taut::preserves_tail" = "ok"
+checks."examples/stack-check/proof/examples.taut::branch_checked" = "ok"
+checks."examples/stack-check/proof/examples.taut::true_branch_runs" = "ok"
+checks."examples/stack-check/proof/examples.taut::false_branch_runs" = "ok"
+checks."examples/stack-check/proof/examples.taut::bool_dup_runs" = "ok"
+checks."examples/stack-check/proof/examples.taut::halt_runs" = "ok"
+checks."examples/stack-check/proof/examples.taut::underflow_rejected" = "ok"
+checks."examples/stack-check/proof/examples.taut::wrong_kind_rejected" = "ok"
+checks."examples/stack-check/proof/examples.taut::branch_mismatch_rejected" = "ok"
+checks."examples/stack-check/proof/examples.taut::hidden_error_rejected" = "ok"
+checks."examples/stack-check/proof/examples.taut::hidden_error_run_is_safe" = "ok"
+checks."examples/stack-check/proof/examples.taut::hidden_error_is_not_executed" = "ok"
+checks."examples/stack-check/proof/examples.taut::hidden_error_untypable" = "ok"
+checks."examples/stack-check/proof/examples.taut::underflow_untypable" = "ok"
+checks."examples/stack-check/proof/examples.taut::mismatch_untypable" = "ok"
+checks."examples/stack-check/proof/safety.taut::StackHas" = "ok"
+checks."examples/stack-check/proof/safety.taut::ResultHas" = "ok"
+checks."examples/stack-check/proof/safety.taut::stack_typed" = "ok"
+checks."examples/stack-check/proof/safety.taut::op_safe" = "ok"
+checks."examples/stack-check/proof/safety.taut::chain_safe" = "ok"
+checks."examples/stack-check/proof/safety.taut::branch_safe" = "ok"
+checks."examples/stack-check/proof/safety.taut::run_safe" = "ok"
+checks."examples/stack-check/proof/safety.taut::run_never_stuck" = "ok"
+checks."examples/stack-check/proof/safety.taut::output_unique" = "ok"
+checks."examples/stack-check/proof/safety.taut::checker_contract" = "ok"
+checks."examples/stack-check/proof/safety.taut::rejected_refutes" = "ok"
+checks."examples/stack-check/proof/safety.taut::execute_decision_safe" = "ok"
+checks."examples/stack-check/proof/safety.taut::checked_run_safe" = "ok"
+checks."examples/stack-check/src/machine.taut::Shape" = "ok"
+checks."examples/stack-check/src/machine.taut::Stack" = "ok"
+checks."examples/stack-check/src/machine.taut::shape" = "ok"
+checks."examples/stack-check/src/machine.taut::Op" = "ok"
+checks."examples/stack-check/src/machine.taut::Code" = "ok"
+checks."examples/stack-check/src/machine.taut::run_op" = "ok"
+checks."examples/stack-check/src/machine.taut::chain" = "ok"
+checks."examples/stack-check/src/machine.taut::run" = "ok"
+checks."examples/stack-check/src/programs.taut::sum_program" = "ok"
+checks."examples/stack-check/src/programs.taut::branch_program" = "ok"
+checks."examples/stack-check/src/programs.taut::underflow_program" = "ok"
+checks."examples/stack-check/src/programs.taut::wrong_kind_program" = "ok"
+checks."examples/stack-check/src/programs.taut::mismatched_branches" = "ok"
+checks."examples/stack-check/src/programs.taut::hidden_error_program" = "ok"
+checks."examples/stack-check/src/typing.taut::ShapeDecision" = "ok"
+checks."examples/stack-check/src/typing.taut::shape_dec" = "ok"
+checks."examples/stack-check/src/typing.taut::OpTyping" = "ok"
+checks."examples/stack-check/src/typing.taut::Typing" = "ok"
+checks."examples/stack-check/src/typing.taut::decision_output" = "ok"
+checks."examples/stack-check/src/typing.taut::output_shape" = "ok"
+checks."examples/stack-check/src/typing.taut::execute_decision" = "ok"
+checks."examples/stack-check/src/typing.taut::check_and_run" = "ok"
+checks."examples/stack-check/src/typing.taut::OpCheck" = "ok"
+checks."examples/stack-check/src/typing.taut::check_op" = "ok"
+checks."examples/stack-check/src/typing.taut::CodeCheck" = "ok"
+checks."examples/stack-check/src/typing.taut::check_code" = "ok"
+
+@ cases.checked-execution
+tote = path`../../examples/stack-check`
+backends = ["rust", "javascript"]
+shows = [
+  "2 + 3: output shape = Some(NumOn(Empty))",
+  "2 + 3: result = Some(Number(5, EmptyStack))",
+  "branch true, then double = Some(Number(28, EmptyStack))",
+  "branch false, then double = Some(Number(42, EmptyStack))",
+  "preserved input tail = Some(Number(5, Boolean(false, EmptyStack)))",
+  "duplicate a boolean = Some(Boolean(false, Boolean(false, EmptyStack)))",
+  "underflow: rejected = None",
+  "wrong operand: rejected = None",
+  "different branch types: rejected = None",
+  "hidden error: unchecked run = Some(Number(7, EmptyStack))",
+  "hidden error: rejected = None",
+  "hidden error: checked run = None",
+]
+
+@ cases.cannot-forge-addition
+imports = [path`../../examples/stack-check/src/typing.taut`]
+source = ```tauto
+theorem forged_add(): Typing(Exec(Add), Empty, NumOn(Empty)) {
+  TExec(Add, NumOn(NumOn(Empty)), NumOn(Empty), TAdd(Empty))
+}
+```
+checks.forged_add = "error: type mismatch"

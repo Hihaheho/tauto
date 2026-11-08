@@ -65,14 +65,14 @@ pub theorem e_branch_more_step(
   e_branch(Succ(f), ctors, env, value, then, otherwise, cx),
   e_branch(Succ(Succ(f)), ctors, env, value, then, otherwise, cx)
 ) {
-  match m_get(
+  ⊢ e_refines(
+    e_branch(Succ(f), ctors, env, value, then, otherwise, cx),
+    e_branch(Succ(Succ(f)), ctors, env, value, then, otherwise, cx)
+  ) from match m_get(
     ctors,
     cx,
     value
-  ) eqn got: e_refines(
-    e_branch(Succ(f), ctors, env, value, then, otherwise, cx),
-    e_branch(Succ(Succ(f)), ctors, env, value, then, otherwise, cx)
-  ) {
+  ) eqn got {
     MvBool(go) => ⊢ e_refines(
       e_eval(f, ctors, env, e_choose(go, then, otherwise), cx),
       e_eval(Succ(f), ctors, env, e_choose(go, then, otherwise), cx)
@@ -95,10 +95,10 @@ mutual {
   ): e_refines(e_eval(fuel, ctors, env, e, cx), e_eval(Succ(fuel), ctors, env, e, cx)) {
     match fuel {
       Zero => Trivial
-      Succ(f) => match e: e_refines(
+      Succ(f) => ⊢ e_refines(
         e_eval(Succ(f), ctors, env, e, cx),
         e_eval(Succ(Succ(f)), ctors, env, e, cx)
-      ) {
+      ) from match e {
         CPure(v) => Refl
         CRead(id, deref) => e_refines_refl(e_read(ctors, cx, env, id, deref))
         MkCPrim(op, args) => e_bind_refines(
@@ -143,7 +143,7 @@ mutual {
         CCall(callee, args, ticked) => Refl
         CTail(inst, args) => Refl
         CBuiltin(name, args) => Refl
-        CDefine(id, is_shared, init) => Refl
+        CDefine(id, is_shared, drop, init) => Refl
         CAssign(id, path, through, value) => Refl
         CWhile(cond, body, ticked) => Refl
         CReturn(value) => Refl
@@ -193,10 +193,10 @@ mutual {
   ): e_refines(e_args(fuel, ctors, env, es, cx), e_args(Succ(fuel), ctors, env, es, cx)) {
     match fuel {
       Zero => Trivial
-      Succ(f) => match es: e_refines(
+      Succ(f) => ⊢ e_refines(
         e_args(Succ(f), ctors, env, es, cx),
         e_args(Succ(Succ(f)), ctors, env, es, cx)
-      ) {
+      ) from match es {
         Nil => Refl
         Cons(e, rest) => e_bind_refines(
           e_eval(f, ctors, env, e, cx),
@@ -232,15 +232,15 @@ mutual {
   ): e_refines(e_sequence(fuel, ctors, env, es, cx), e_sequence(Succ(fuel), ctors, env, es, cx)) {
     match fuel {
       Zero => Trivial
-      Succ(f) => match es: e_refines(
+      Succ(f) => ⊢ e_refines(
         e_sequence(Succ(f), ctors, env, es, cx),
         e_sequence(Succ(Succ(f)), ctors, env, es, cx)
-      ) {
+      ) from match es {
         Nil => Refl
-        Cons(e, rest) => match rest: e_refines(
+        Cons(e, rest) => ⊢ e_refines(
           e_sequence(Succ(f), ctors, env, Cons(e, rest), cx),
           e_sequence(Succ(Succ(f)), ctors, env, Cons(e, rest), cx)
-        ) {
+        ) from match rest {
           Nil => e_eval_more(f, ctors, env, e, cx)
           Cons(next, more) => e_bind_refines(
             e_eval(f, ctors, env, e, cx),

@@ -15,20 +15,14 @@ pub theorem fnt_registered_prefix(
   table: Ordmap(Text, Scheme),
   registered: RegisteredSignatures(table, List::append(prefix, suffix))
 ): RegisteredSignatures(table, prefix) {
-  match prefix: RegisteredSignatures(table, prefix) {
+  ⊢ RegisteredSignatures(table, prefix) from match prefix {
     Nil => RegisteredSignaturesNil
-    Cons(entry, rest) => match entry: RegisteredSignatures(table, Cons(entry, rest)) {
-      Pair {fst: source, snd: scheme} => match registered: RegisteredSignatures(
+    Cons(entry, rest) => ⊢ RegisteredSignatures(table, Cons(entry, rest)) from match entry {
+      Pair {fst: source, snd: scheme} => ⊢ RegisteredSignatures(
         table,
         Cons(Pair {fst: source, snd: scheme}, rest)
-      ) {
-        RegisteredSignaturesCons(
-          stored_source,
-          stored_scheme,
-          stored_rest,
-          found,
-          tail
-        ) => RegisteredSignaturesCons(
+      ) from match registered {
+        RegisteredSignaturesCons(stored_source, stored_scheme, stored_rest, found, tail) => RegisteredSignaturesCons(
           source,
           scheme,
           rest,
@@ -48,14 +42,8 @@ pub theorem prepared_source_registered<env: Datas, program: List(
   table: Ordmap(Text, Scheme),
   registered: RegisteredSignatures(table, schemes)
 ): SourceFunctionsRegistered(env, program) {
-  match prepared: SourceFunctionsRegistered(env, program) {
-    Mk(
-      own,
-      generated,
-      combined,
-      sources,
-      derived
-    ) => SourceFunctionsRegistered::Mk(
+  ⊢ SourceFunctionsRegistered(env, program) from match prepared {
+    Mk(own, generated, combined, sources, derived) => SourceFunctionsRegistered::Mk(
       table,
       own,
       sources,

@@ -1,0 +1,1406 @@
+description = "`tauto fmt` lays out the bodies of syntax literals with the `fmt` function their syntax registers, in a function that is never used, in a macro's quote and in the fenced blocks of comments, and leaves a literal whose syntax registers none."
+
+@ cases.literals-and-comment-fences-are-laid-out-wherever-they-are-written
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+import std::prelude::Shared
+
+pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
+
+pub fn layout_sep(glue: Bool): Text {
+  if glue { "" } else { " " }
+}
+
+// Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => {
+      if layout_white(t) {
+        layout_go(rest, glue)
+      } else {
+        if t.kind == "Comma" {
+          concat(",", layout_go(rest, false))
+        } else {
+          if t.kind == "LineComment" {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, true)))
+          } else {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, false)))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+  Some(layout_go(ts, true))
+}
+
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "number" }, layout_tokens(rest))
+      } else {
+        if t.kind == "Word" {
+          Cons(SynHighlight { start: t.start, end: t.end, kind: "function" }, layout_tokens(rest))
+        } else {
+          layout_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(layout, ```par
+{{par:layout}}```, with(fmt: layout_fmt, tokens: layout_tokens)) => struct Doc, struct Doc_Rep1,
+  enum Item, fn parse
+
+pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHighlight) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, outline_append(rest, b))
+  }
+}
+
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
+  }
+}
+
+// A number is a number and a word a type, by the node the grammar reads it as.
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+  match c {
+    CstTok(t) => Nil
+    CstNode(name, children, start, end) => {
+      if name == "Num" {
+        Cons(SynHighlight { start: start, end: end, kind: "number" }, Nil)
+      } else {
+        if name == "Word" {
+          Cons(SynHighlight { start: start, end: end, kind: "type" }, Nil)
+        } else {
+          outline_each(children)
+        }
+      }
+    }
+  }
+}
+
+syntax!(outline, ```par
+{{par:outline}}```, with(tokens: outline_marks)) => struct Doc, struct Doc_Rep1, enum Item,
+  fn parse
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+import std::prelude::Macro
+
+// Nothing uses it, and it does not check.
+fn broken(): Nat {
+  let d := layout`a ,b`
+  true
+}
+
+pub macro fn m(e: layout::Doc): SynExpr ! {macro_error, Div} {
+  quote { f(layout`x ,  y`) }
+}
+
+/// ```layout
+/// p ,q ,  r,
+///
+/// 1 ,2
+/// ```
+fn documented(): Nat { 0 }
+
+/*
+ * ```layout
+ * s ,t
+ * ```
+ */
+fn blocked(): Nat { 0 }
+
+fn other(): outline::Doc {
+  outline`a ,  1`
+}
+````
+entry = "main.taut"
+format_literals = ````tauto
+import "lib.taut"
+import std::prelude::Macro
+
+// Nothing uses it, and it does not check.
+fn broken(): Nat {
+  let d := layout`a, b`
+  true
+}
+
+pub macro fn m(e: layout::Doc): SynExpr ! {macro_error, Div} {
+  quote { f(layout`x, y`) }
+}
+
+/// ```layout
+/// p, q, r, 1, 2
+/// ```
+fn documented(): Nat { 0 }
+
+/*
+ * ```layout
+ * s, t
+ * ```
+ */
+fn blocked(): Nat { 0 }
+
+fn other(): outline::Doc {
+  outline`a ,  1`
+}
+````
+
+@ cases.indented-block-literal-keeps-its-closing-indentation
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+
+pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
+
+pub fn layout_sep(glue: Bool): Text {
+  if glue { "" } else { " " }
+}
+
+// Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => {
+      if layout_white(t) {
+        layout_go(rest, glue)
+      } else {
+        if t.kind == "Comma" {
+          concat(",", layout_go(rest, false))
+        } else {
+          if t.kind == "LineComment" {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, true)))
+          } else {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, false)))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+  Some(layout_go(ts, true))
+}
+
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "number" }, layout_tokens(rest))
+      } else {
+        if t.kind == "Word" {
+          Cons(SynHighlight { start: t.start, end: t.end, kind: "function" }, layout_tokens(rest))
+        } else {
+          layout_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(layout, ```par
+{{par:layout}}```, with(fmt: layout_fmt, tokens: layout_tokens)) => struct Doc, struct Doc_Rep1,
+  enum Item, fn parse
+
+pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHighlight) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, outline_append(rest, b))
+  }
+}
+
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
+  }
+}
+
+// A number is a number and a word a type, by the node the grammar reads it as.
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+  match c {
+    CstTok(t) => Nil
+    CstNode(name, children, start, end) => {
+      if name == "Num" {
+        Cons(SynHighlight { start: start, end: end, kind: "number" }, Nil)
+      } else {
+        if name == "Word" {
+          Cons(SynHighlight { start: start, end: end, kind: "type" }, Nil)
+        } else {
+          outline_each(children)
+        }
+      }
+    }
+  }
+}
+
+syntax!(outline, ```par
+{{par:outline}}```, with(tokens: outline_marks)) => struct Doc, struct Doc_Rep1, enum Item,
+  fn parse
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+
+fn f(): Nat {
+  let d := ```layout
+    a ,b
+      ,  c
+
+    ,d
+    ```
+  0
+}
+````
+entry = "main.taut"
+format_literals = ````tauto
+import "lib.taut"
+
+fn f(): Nat {
+  let d := ```layout
+    a, b, c, d
+    ```
+  0
+}
+````
+
+@ cases.block-literal-with-a-shallower-closing-fence
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+
+pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
+
+pub fn layout_sep(glue: Bool): Text {
+  if glue { "" } else { " " }
+}
+
+// Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => {
+      if layout_white(t) {
+        layout_go(rest, glue)
+      } else {
+        if t.kind == "Comma" {
+          concat(",", layout_go(rest, false))
+        } else {
+          if t.kind == "LineComment" {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, true)))
+          } else {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, false)))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+  Some(layout_go(ts, true))
+}
+
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "number" }, layout_tokens(rest))
+      } else {
+        if t.kind == "Word" {
+          Cons(SynHighlight { start: t.start, end: t.end, kind: "function" }, layout_tokens(rest))
+        } else {
+          layout_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(layout, ```par
+{{par:layout}}```, with(fmt: layout_fmt, tokens: layout_tokens)) => struct Doc, struct Doc_Rep1,
+  enum Item, fn parse
+
+pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHighlight) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, outline_append(rest, b))
+  }
+}
+
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
+  }
+}
+
+// A number is a number and a word a type, by the node the grammar reads it as.
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+  match c {
+    CstTok(t) => Nil
+    CstNode(name, children, start, end) => {
+      if name == "Num" {
+        Cons(SynHighlight { start: start, end: end, kind: "number" }, Nil)
+      } else {
+        if name == "Word" {
+          Cons(SynHighlight { start: start, end: end, kind: "type" }, Nil)
+        } else {
+          outline_each(children)
+        }
+      }
+    }
+  }
+}
+
+syntax!(outline, ```par
+{{par:outline}}```, with(tokens: outline_marks)) => struct Doc, struct Doc_Rep1, enum Item,
+  fn parse
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+
+fn f(): Nat {
+  let d := ```layout
+    a ,b
+    ,c
+  ```
+  0
+}
+````
+entry = "main.taut"
+format_literals = ````tauto
+import "lib.taut"
+
+fn f(): Nat {
+  let d := ```layout
+  a, b, c
+  ```
+  0
+}
+````
+
+@ cases.block-literal-with-a-line-shallower-than-its-closing-fence
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+
+pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
+
+pub fn layout_sep(glue: Bool): Text {
+  if glue { "" } else { " " }
+}
+
+// Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => {
+      if layout_white(t) {
+        layout_go(rest, glue)
+      } else {
+        if t.kind == "Comma" {
+          concat(",", layout_go(rest, false))
+        } else {
+          if t.kind == "LineComment" {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, true)))
+          } else {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, false)))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+  Some(layout_go(ts, true))
+}
+
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "number" }, layout_tokens(rest))
+      } else {
+        if t.kind == "Word" {
+          Cons(SynHighlight { start: t.start, end: t.end, kind: "function" }, layout_tokens(rest))
+        } else {
+          layout_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(layout, ```par
+{{par:layout}}```, with(fmt: layout_fmt, tokens: layout_tokens)) => struct Doc, struct Doc_Rep1,
+  enum Item, fn parse
+
+pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHighlight) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, outline_append(rest, b))
+  }
+}
+
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
+  }
+}
+
+// A number is a number and a word a type, by the node the grammar reads it as.
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+  match c {
+    CstTok(t) => Nil
+    CstNode(name, children, start, end) => {
+      if name == "Num" {
+        Cons(SynHighlight { start: start, end: end, kind: "number" }, Nil)
+      } else {
+        if name == "Word" {
+          Cons(SynHighlight { start: start, end: end, kind: "type" }, Nil)
+        } else {
+          outline_each(children)
+        }
+      }
+    }
+  }
+}
+
+syntax!(outline, ```par
+{{par:outline}}```, with(tokens: outline_marks)) => struct Doc, struct Doc_Rep1, enum Item,
+  fn parse
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+
+fn f(): Nat {
+  let d := ```layout
+  a ,b
+    ```
+  0
+}
+````
+entry = "main.taut"
+format_literals = ````tauto
+import "lib.taut"
+
+fn f(): Nat {
+  let d := ```layout
+  a ,b
+    ```
+  0
+}
+````
+format_literals_warnings = ["macro.block_indent"]
+
+@ cases.block-literal-closed-before-a-parenthesis
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+
+pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
+
+pub fn layout_sep(glue: Bool): Text {
+  if glue { "" } else { " " }
+}
+
+// Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => {
+      if layout_white(t) {
+        layout_go(rest, glue)
+      } else {
+        if t.kind == "Comma" {
+          concat(",", layout_go(rest, false))
+        } else {
+          if t.kind == "LineComment" {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, true)))
+          } else {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, false)))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+  Some(layout_go(ts, true))
+}
+
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "number" }, layout_tokens(rest))
+      } else {
+        if t.kind == "Word" {
+          Cons(SynHighlight { start: t.start, end: t.end, kind: "function" }, layout_tokens(rest))
+        } else {
+          layout_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(layout, ```par
+{{par:layout}}```, with(fmt: layout_fmt, tokens: layout_tokens)) => struct Doc, struct Doc_Rep1,
+  enum Item, fn parse
+
+pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHighlight) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, outline_append(rest, b))
+  }
+}
+
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
+  }
+}
+
+// A number is a number and a word a type, by the node the grammar reads it as.
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+  match c {
+    CstTok(t) => Nil
+    CstNode(name, children, start, end) => {
+      if name == "Num" {
+        Cons(SynHighlight { start: start, end: end, kind: "number" }, Nil)
+      } else {
+        if name == "Word" {
+          Cons(SynHighlight { start: start, end: end, kind: "type" }, Nil)
+        } else {
+          outline_each(children)
+        }
+      }
+    }
+  }
+}
+
+syntax!(outline, ```par
+{{par:outline}}```, with(tokens: outline_marks)) => struct Doc, struct Doc_Rep1, enum Item,
+  fn parse
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+
+fn f(): Nat {
+  g(```layout
+    a ,b
+    ```)
+}
+````
+entry = "main.taut"
+format_literals = ````tauto
+import "lib.taut"
+
+fn f(): Nat {
+  g(```layout
+    a, b
+    ```)
+}
+````
+
+@ cases.delimited-literal-holding-a-lone-backtick
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+
+pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
+
+pub fn layout_sep(glue: Bool): Text {
+  if glue { "" } else { " " }
+}
+
+// Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => {
+      if layout_white(t) {
+        layout_go(rest, glue)
+      } else {
+        if t.kind == "Comma" {
+          concat(",", layout_go(rest, false))
+        } else {
+          if t.kind == "LineComment" {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, true)))
+          } else {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, false)))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+  Some(layout_go(ts, true))
+}
+
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "number" }, layout_tokens(rest))
+      } else {
+        if t.kind == "Word" {
+          Cons(SynHighlight { start: t.start, end: t.end, kind: "function" }, layout_tokens(rest))
+        } else {
+          layout_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(layout, ```par
+{{par:layout}}```, with(fmt: layout_fmt, tokens: layout_tokens)) => struct Doc, struct Doc_Rep1,
+  enum Item, fn parse
+
+pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHighlight) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, outline_append(rest, b))
+  }
+}
+
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
+  }
+}
+
+// A number is a number and a word a type, by the node the grammar reads it as.
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+  match c {
+    CstTok(t) => Nil
+    CstNode(name, children, start, end) => {
+      if name == "Num" {
+        Cons(SynHighlight { start: start, end: end, kind: "number" }, Nil)
+      } else {
+        if name == "Word" {
+          Cons(SynHighlight { start: start, end: end, kind: "type" }, Nil)
+        } else {
+          outline_each(children)
+        }
+      }
+    }
+  }
+}
+
+syntax!(outline, ```par
+{{par:outline}}```, with(tokens: outline_marks)) => struct Doc, struct Doc_Rep1, enum Item,
+  fn parse
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+
+fn f(): Nat {
+  let d := layout<`a ,b // it`s
+  ,c`>
+  0
+}
+````
+entry = "main.taut"
+format_literals = ````tauto
+import "lib.taut"
+
+fn f(): Nat {
+  let d := layout<`a, b // it`s
+, c`>
+  0
+}
+````
+
+@ cases.line-comment-fences-of-three-kinds
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+
+pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
+
+pub fn layout_sep(glue: Bool): Text {
+  if glue { "" } else { " " }
+}
+
+// Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => {
+      if layout_white(t) {
+        layout_go(rest, glue)
+      } else {
+        if t.kind == "Comma" {
+          concat(",", layout_go(rest, false))
+        } else {
+          if t.kind == "LineComment" {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, true)))
+          } else {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, false)))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+  Some(layout_go(ts, true))
+}
+
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "number" }, layout_tokens(rest))
+      } else {
+        if t.kind == "Word" {
+          Cons(SynHighlight { start: t.start, end: t.end, kind: "function" }, layout_tokens(rest))
+        } else {
+          layout_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(layout, ```par
+{{par:layout}}```, with(fmt: layout_fmt, tokens: layout_tokens)) => struct Doc, struct Doc_Rep1,
+  enum Item, fn parse
+
+pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHighlight) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, outline_append(rest, b))
+  }
+}
+
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
+  }
+}
+
+// A number is a number and a word a type, by the node the grammar reads it as.
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+  match c {
+    CstTok(t) => Nil
+    CstNode(name, children, start, end) => {
+      if name == "Num" {
+        Cons(SynHighlight { start: start, end: end, kind: "number" }, Nil)
+      } else {
+        if name == "Word" {
+          Cons(SynHighlight { start: start, end: end, kind: "type" }, Nil)
+        } else {
+          outline_each(children)
+        }
+      }
+    }
+  }
+}
+
+syntax!(outline, ```par
+{{par:outline}}```, with(tokens: outline_marks)) => struct Doc, struct Doc_Rep1, enum Item,
+  fn parse
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+
+//! ```layout
+//! a ,b
+//! ```
+fn m(): Nat { 0 }
+
+// ```layout
+// c ,d
+//
+// ,e
+// ```
+fn n(): Nat { 0 }
+````
+entry = "main.taut"
+format_literals = ````tauto
+import "lib.taut"
+
+//! ```layout
+//! a, b
+//! ```
+fn m(): Nat { 0 }
+
+// ```layout
+// c, d, e
+// ```
+fn n(): Nat { 0 }
+````
+
+@ cases.an-unclosed-comment-fence-is-reported
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+
+pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
+
+pub fn layout_sep(glue: Bool): Text {
+  if glue { "" } else { " " }
+}
+
+// Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => {
+      if layout_white(t) {
+        layout_go(rest, glue)
+      } else {
+        if t.kind == "Comma" {
+          concat(",", layout_go(rest, false))
+        } else {
+          if t.kind == "LineComment" {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, true)))
+          } else {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, false)))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+  Some(layout_go(ts, true))
+}
+
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "number" }, layout_tokens(rest))
+      } else {
+        if t.kind == "Word" {
+          Cons(SynHighlight { start: t.start, end: t.end, kind: "function" }, layout_tokens(rest))
+        } else {
+          layout_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(layout, ```par
+{{par:layout}}```, with(fmt: layout_fmt, tokens: layout_tokens)) => struct Doc, struct Doc_Rep1,
+  enum Item, fn parse
+
+pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHighlight) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, outline_append(rest, b))
+  }
+}
+
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
+  }
+}
+
+// A number is a number and a word a type, by the node the grammar reads it as.
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+  match c {
+    CstTok(t) => Nil
+    CstNode(name, children, start, end) => {
+      if name == "Num" {
+        Cons(SynHighlight { start: start, end: end, kind: "number" }, Nil)
+      } else {
+        if name == "Word" {
+          Cons(SynHighlight { start: start, end: end, kind: "type" }, Nil)
+        } else {
+          outline_each(children)
+        }
+      }
+    }
+  }
+}
+
+syntax!(outline, ```par
+{{par:outline}}```, with(tokens: outline_marks)) => struct Doc, struct Doc_Rep1, enum Item,
+  fn parse
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+
+/// ```layout
+/// a ,b
+fn u(): Nat { 0 }
+````
+entry = "main.taut"
+format_literals = ````tauto
+import "lib.taut"
+
+/// ```layout
+/// a ,b
+fn u(): Nat { 0 }
+````
+format_literals_warnings = ["not closed"]
+
+@ cases.text-that-only-looks-like-a-fence-or-a-literal-is-left
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+
+pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
+
+pub fn layout_sep(glue: Bool): Text {
+  if glue { "" } else { " " }
+}
+
+// Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => {
+      if layout_white(t) {
+        layout_go(rest, glue)
+      } else {
+        if t.kind == "Comma" {
+          concat(",", layout_go(rest, false))
+        } else {
+          if t.kind == "LineComment" {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, true)))
+          } else {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, false)))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+  Some(layout_go(ts, true))
+}
+
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "number" }, layout_tokens(rest))
+      } else {
+        if t.kind == "Word" {
+          Cons(SynHighlight { start: t.start, end: t.end, kind: "function" }, layout_tokens(rest))
+        } else {
+          layout_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(layout, ```par
+{{par:layout}}```, with(fmt: layout_fmt, tokens: layout_tokens)) => struct Doc, struct Doc_Rep1,
+  enum Item, fn parse
+
+pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHighlight) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, outline_append(rest, b))
+  }
+}
+
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
+  }
+}
+
+// A number is a number and a word a type, by the node the grammar reads it as.
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+  match c {
+    CstTok(t) => Nil
+    CstNode(name, children, start, end) => {
+      if name == "Num" {
+        Cons(SynHighlight { start: start, end: end, kind: "number" }, Nil)
+      } else {
+        if name == "Word" {
+          Cons(SynHighlight { start: start, end: end, kind: "type" }, Nil)
+        } else {
+          outline_each(children)
+        }
+      }
+    }
+  }
+}
+
+syntax!(outline, ```par
+{{par:outline}}```, with(tokens: outline_marks)) => struct Doc, struct Doc_Rep1, enum Item,
+  fn parse
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+
+fn s(): Text { "
+// ```layout
+// a ,b
+// ```
+" }
+
+// a literal layout`a ,b` and a `x` in a comment
+fn c(): Nat { 0 }
+````
+entry = "main.taut"
+format_literals = ````tauto
+import "lib.taut"
+
+fn s(): Text { "
+// ```layout
+// a ,b
+// ```
+" }
+
+// a literal layout`a ,b` and a `x` in a comment
+fn c(): Nat { 0 }
+````
+
+@ cases.a-syntax-whose-tables-are-missing-is-reported
+files."lib.taut" = ````tauto
+pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
+
+pub fn layout_sep(glue: Bool): Text {
+  if glue { "" } else { " " }
+}
+
+// Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => {
+      if layout_white(t) {
+        layout_go(rest, glue)
+      } else {
+        if t.kind == "Comma" {
+          concat(",", layout_go(rest, false))
+        } else {
+          if t.kind == "LineComment" {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, true)))
+          } else {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, false)))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+  Some(layout_go(ts, true))
+}
+
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "number" }, layout_tokens(rest))
+      } else {
+        if t.kind == "Word" {
+          Cons(SynHighlight { start: t.start, end: t.end, kind: "function" }, layout_tokens(rest))
+        } else {
+          layout_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(layout, ```par
+{{par:layout}}```, with(fmt: layout_fmt, tokens: layout_tokens)) => struct Doc, struct Doc_Rep1,
+  enum Item, fn parse
+
+pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHighlight) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, outline_append(rest, b))
+  }
+}
+
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
+  }
+}
+
+// A number is a number and a word a type, by the node the grammar reads it as.
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+  match c {
+    CstTok(t) => Nil
+    CstNode(name, children, start, end) => {
+      if name == "Num" {
+        Cons(SynHighlight { start: start, end: end, kind: "number" }, Nil)
+      } else {
+        if name == "Word" {
+          Cons(SynHighlight { start: start, end: end, kind: "type" }, Nil)
+        } else {
+          outline_each(children)
+        }
+      }
+    }
+  }
+}
+
+syntax!(outline, ```par
+{{par:outline}}```, with(tokens: outline_marks)) => struct Doc, struct Doc_Rep1, enum Item,
+  fn parse
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+
+syntax!(ghost, ```par
+%start Doc
+%%
+Doc: Word;
+Word: /[a-z]+/;
+```, with(fmt: layout_fmt)) => fn parse
+
+fn g(): Nat {
+  let d := ghost`a ,b`
+  0
+}
+````
+entry = "main.taut"
+format_literals = ````tauto
+import "lib.taut"
+
+syntax!(ghost, ```par
+%start Doc
+%%
+Doc: Word;
+Word: /[a-z]+/;
+```, with(fmt: layout_fmt)) => fn parse
+
+fn g(): Nat {
+  let d := ghost`a ,b`
+  0
+}
+````
+format_literals_warnings = ["tables of this syntax are missing"]
+
+@ cases.line-ends-of-a-file-are-kept
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+
+pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
+
+pub fn layout_sep(glue: Bool): Text {
+  if glue { "" } else { " " }
+}
+
+// Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => {
+      if layout_white(t) {
+        layout_go(rest, glue)
+      } else {
+        if t.kind == "Comma" {
+          concat(",", layout_go(rest, false))
+        } else {
+          if t.kind == "LineComment" {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, true)))
+          } else {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, false)))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+  Some(layout_go(ts, true))
+}
+
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "number" }, layout_tokens(rest))
+      } else {
+        if t.kind == "Word" {
+          Cons(SynHighlight { start: t.start, end: t.end, kind: "function" }, layout_tokens(rest))
+        } else {
+          layout_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(layout, ```par
+{{par:layout}}```, with(fmt: layout_fmt, tokens: layout_tokens)) => struct Doc, struct Doc_Rep1,
+  enum Item, fn parse
+
+pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHighlight) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, outline_append(rest, b))
+  }
+}
+
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
+  }
+}
+
+// A number is a number and a word a type, by the node the grammar reads it as.
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+  match c {
+    CstTok(t) => Nil
+    CstNode(name, children, start, end) => {
+      if name == "Num" {
+        Cons(SynHighlight { start: start, end: end, kind: "number" }, Nil)
+      } else {
+        if name == "Word" {
+          Cons(SynHighlight { start: start, end: end, kind: "type" }, Nil)
+        } else {
+          outline_each(children)
+        }
+      }
+    }
+  }
+}
+
+syntax!(outline, ```par
+{{par:outline}}```, with(tokens: outline_marks)) => struct Doc, struct Doc_Rep1, enum Item,
+  fn parse
+````
+files."main.taut" = "import \"lib.taut\"\r\n\r\nfn f(): Nat {\r\n  let d := ```layout\r\n    a ,b\r\n    ,c\r\n    ```\r\n  0\r\n}\r\n\r\n/// ```layout\r\n/// p ,q\r\n/// ```\r\nfn g(): Nat { 0 }\r\n"
+entry = "main.taut"
+format_literals = "import \"lib.taut\"\r\n\r\nfn f(): Nat {\r\n  let d := ```layout\r\n    a, b, c\r\n    ```\r\n  0\r\n}\r\n\r\n/// ```layout\r\n/// p, q\r\n/// ```\r\nfn g(): Nat { 0 }\r\n"
+
+@ cases.a-fence-prefix-with-a-tab-is-not-a-fence
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+
+pub fn layout_white(t: SynTok): Bool { t.kind == "Newline" || t.kind == "Whitespace" }
+
+pub fn layout_sep(glue: Bool): Text {
+  if glue { "" } else { " " }
+}
+
+// Items on a line, a space after each comma; a line comment (which holds its newline) ends the line.
+pub fn layout_go(ts: List(SynTok), glue: Bool): Text ! {Div} {
+  match ts {
+    Nil => ""
+    Cons(t, rest) => {
+      if layout_white(t) {
+        layout_go(rest, glue)
+      } else {
+        if t.kind == "Comma" {
+          concat(",", layout_go(rest, false))
+        } else {
+          if t.kind == "LineComment" {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, true)))
+          } else {
+            concat(layout_sep(glue), concat(t.text, layout_go(rest, false)))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn layout_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+  Some(layout_go(ts, true))
+}
+
+pub fn layout_tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+  match ts {
+    Nil => Nil
+    Cons(t, rest) => {
+      if t.kind == "Num" {
+        Cons(SynHighlight { start: t.start, end: t.end, kind: "number" }, layout_tokens(rest))
+      } else {
+        if t.kind == "Word" {
+          Cons(SynHighlight { start: t.start, end: t.end, kind: "function" }, layout_tokens(rest))
+        } else {
+          layout_tokens(rest)
+        }
+      }
+    }
+  }
+}
+
+syntax!(layout, ```par
+{{par:layout}}```, with(fmt: layout_fmt, tokens: layout_tokens)) => struct Doc, struct Doc_Rep1,
+  enum Item, fn parse
+
+pub fn outline_append(a: List(SynHighlight), b: List(SynHighlight)): List(SynHighlight) {
+  match a {
+    Nil => b
+    Cons(x, rest) => Cons(x, outline_append(rest, b))
+  }
+}
+
+pub fn outline_each(cs: List(SynCst)): List(SynHighlight) ! {Div} {
+  match cs {
+    Nil => Nil
+    Cons(c, rest) => outline_append(outline_marks(c), outline_each(rest))
+  }
+}
+
+// A number is a number and a word a type, by the node the grammar reads it as.
+pub fn outline_marks(c: SynCst): List(SynHighlight) ! {Div} {
+  match c {
+    CstTok(t) => Nil
+    CstNode(name, children, start, end) => {
+      if name == "Num" {
+        Cons(SynHighlight { start: start, end: end, kind: "number" }, Nil)
+      } else {
+        if name == "Word" {
+          Cons(SynHighlight { start: start, end: end, kind: "type" }, Nil)
+        } else {
+          outline_each(children)
+        }
+      }
+    }
+  }
+}
+
+syntax!(outline, ```par
+{{par:outline}}```, with(tokens: outline_marks)) => struct Doc, struct Doc_Rep1, enum Item,
+  fn parse
+````
+files."main.taut" = "import \"lib.taut\"\n\n\t/// ```layout\n\t/// a ,b\n\t/// ```\nfn t(): Nat { 0 }\n\n/// ```layout\n///\ta ,b\n/// ```\nfn u(): Nat { 0 }\n"
+entry = "main.taut"
+format_literals = "import \"lib.taut\"\n\n\t/// ```layout\n\t/// a ,b\n\t/// ```\nfn t(): Nat { 0 }\n\n/// ```layout\n///\ta ,b\n/// ```\nfn u(): Nat { 0 }\n"
+format_literals_warnings = ["not closed"]

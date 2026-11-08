@@ -99,6 +99,21 @@ pub const PRELUDE_FILES: &[(&str, &str)] = &[
     ),
 ];
 
+/// The files of [`PRELUDE_FILES`] that are core: seen by every file without an
+/// import. They are the files whose declarations literals, tuples, lists and
+/// `perform show` produce or need (`docs/design/visibility.md`「prelude」); the other
+/// files of `std/prelude/` are seen by importing `std::prelude::<file>`.
+pub const CORE_PRELUDE_FILES: &[&str] = &[
+    "std/prelude/Std.taut",
+    "std/prelude/Text.taut",
+    "std/prelude/Num.taut",
+];
+
+/// Whether the file at `path` of [`PRELUDE_FILES`] is core.
+pub fn is_core_prelude_file(path: &str) -> bool {
+    CORE_PRELUDE_FILES.contains(&path)
+}
+
 /// An error of reading prelude text whose spans start at `base`, with its
 /// ` at byte N` written as the place in the file it is in
 /// (` at std/prelude/Ord.taut:412:20`): a byte past `PRELUDE_BASE` names
@@ -148,6 +163,13 @@ mod tests {
             joined.trim_end_matches('\n'),
             PRELUDE.trim_end_matches('\n')
         );
+    }
+
+    #[test]
+    fn core_prelude_files_are_prelude_files() {
+        for core in CORE_PRELUDE_FILES {
+            assert!(PRELUDE_FILES.iter().any(|(path, _)| path == core), "{core}");
+        }
     }
 
     #[test]

@@ -15,9 +15,9 @@ pub fn generate_declarations(pkg: &Package) -> R<String> {
 pub fn generate_declarations_with(pkg: &Package, options: &crate::Options) -> R<String> {
     let host = |ty: &Ty| match ty {
         Ty::Ref(inner) | Ty::RefMut(inner) => {
-            matches!(&**inner, Ty::Data(n, a) if a.is_empty() && options.host_types.contains(n))
+            matches!(&**inner, Ty::Data(n, a) if a.is_empty() && options.host_types.contains(n.as_str()))
         }
-        Ty::Data(n, a) => a.is_empty() && options.host_types.contains(n),
+        Ty::Data(n, a) => a.is_empty() && options.host_types.contains(n.as_str()),
         _ => false,
     };
     let mut g = Declarations {
@@ -129,7 +129,11 @@ pub fn generate_declarations_with(pkg: &Package, options: &crate::Options) -> R<
         }
         let data = &pkg.datas[index];
         if data.ctors.is_empty() {
-            return Err(msg!("jsgen-declarations-opaque-data", name = &data.name).to_string());
+            return Err(msg!(
+                "jsgen-declarations-opaque-data",
+                name = data.name.to_string()
+            )
+            .to_string());
         }
         let scope: BTreeMap<_, _> = data
             .generics
@@ -163,8 +167,8 @@ pub fn generate_declarations_with(pkg: &Package, options: &crate::Options) -> R<
                     .map(|f| f.name.as_ref().map(|n| quote(n)).unwrap_or("null".into()))
                     .collect::<Vec<_>>();
                 Ok(constructor(
-                    &data.name,
-                    &ctor.name,
+                    &crate::owner_symbol(pkg, &data.name),
+                    crate::constructor_symbol(pkg, &ctor.name),
                     &names,
                     &fields,
                     data.is_struct,
@@ -201,12 +205,17 @@ export interface RunOptions {
   os_write_file?: (path: string, text: string) => void | PromiseLike<void>;
   os_read_bytes?: (path: string) => Uint8Array | PromiseLike<Uint8Array>;
   os_write_bytes?: (path: string, bytes: Uint8Array) => void | PromiseLike<void>;
+  /** The file `path` under the directory `root`, never leaving it: `path` is names joined by `/` (no `.` or `..`), and no component may be a link. */
+  os_read_under?: (root: string, path: string) => string | PromiseLike<string>;
+  os_read_bytes_under?: (root: string, path: string) => Uint8Array | PromiseLike<Uint8Array>;
   /** Makes a directory and its missing parents; one already there is fine. */
   os_create_dir?: (path: string) => void | PromiseLike<void>;
   os_list_dir?: (path: string) => string[] | PromiseLike<string[]>;
   /** Removes a file, or a directory and all it holds. */
   os_remove?: (path: string) => void | PromiseLike<void>;
   os_stat?: (path: string) => { kind: 'file' | 'dir' | 'other'; size: number; modified_ms: number } | null | PromiseLike<{ kind: 'file' | 'dir' | 'other'; size: number; modified_ms: number } | null>;
+  os_read_link?: (path: string) => string | null | PromiseLike<string | null>;
+  os_write_new?: (path: string, contents: string) => void | PromiseLike<void>;
   os_move_path?: (from: string, to: string) => void | PromiseLike<void>;
   os_copy_file?: (from: string, to: string) => void | PromiseLike<void>;
   os_canonicalize?: (path: string) => string | PromiseLike<string>;
@@ -228,6 +237,8 @@ export interface RunOptions {
   os_read_line?: () => string | null;
   /** Up to `max` bytes of standard input as soon as any arrive; none at its end. */
   os_read_stdin?: (max: number) => Uint8Array;
+  /** Calls `raise` when the run is asked to end from outside (SIGINT, SIGTERM); never where there is no such request. */
+  os_on_shutdown?: (raise: () => void) => void;
   /** Writes out what `os_print` and `os_eprint` were given. */
   os_flush?: () => void;
   /** What the standard effects may ask of the host; a kind left out is denied. */
@@ -334,13 +345,6 @@ impl Declarations<'_> {
                     false
                 )
             ),
-            Ty::Product(ms) => format!(
-                "{{ kind: \"Product\"; fields: readonly [{}] }}",
-                ms.iter()
-                    .map(|(_, m)| self.ty(m, scope))
-                    .collect::<R<Vec<_>>>()?
-                    .join(", ")
-            ),
             Ty::Pair(a, b) => constructor(
                 "Pair",
                 "Pair",
@@ -355,12 +359,14 @@ impl Declarations<'_> {
                     .iter()
                     .position(|d| d.name == *name)
                     .ok_or_else(|| {
-                        msg!("jsgen-declarations-unknown-data", name = name).to_string()
+                        msg!("jsgen-declarations-unknown-data", name = name.to_string()).to_string()
                     })?;
                 if self.pkg.datas[index].generics.len() != args.len() {
-                    return Err(
-                        msg!("jsgen-declarations-type-argument-count", name = name).to_string()
-                    );
+                    return Err(msg!(
+                        "jsgen-declarations-type-argument-count",
+                        name = name.to_string()
+                    )
+                    .to_string());
                 }
                 self.pending.insert(index);
                 let args = args
@@ -403,7 +409,11 @@ impl Declarations<'_> {
                 }
             }
             Ty::Param(name) => scope.get(name).cloned().ok_or_else(|| {
-                msg!("jsgen-declarations-unbound-parameter", name = name).to_string()
+                msg!(
+                    "jsgen-declarations-unbound-parameter",
+                    name = name.to_string()
+                )
+                .to_string()
             })?,
             Ty::Ref(t) => format!("Borrow<{}>", self.ty(t, scope)?),
             Ty::RefMut(t) => format!("MutableBorrow<{}>", self.ty(t, scope)?),
@@ -415,7 +425,9 @@ impl Declarations<'_> {
             ),
             Ty::Fn(_) => return Err(msg!("jsgen-declarations-function").to_string()),
             Ty::Std(name, _) => {
-                return Err(msg!("jsgen-declarations-standard-type", name = name).to_string());
+                return Err(
+                    msg!("jsgen-declarations-standard-type", name = name.to_string()).to_string(),
+                );
             }
             Ty::SharedVar(true, _) | Ty::SharedVar(false, _) | Ty::Infer => {
                 return Err(
@@ -468,7 +480,13 @@ mod tests {
     fn empty_program_has_only_the_actual_runtime_export() {
         let text = generate_declarations(&Package::default()).unwrap();
         assert!(text.contains("run(show?: (text: string) => void, externs?: Externs, options?: RunOptions): Promise<null>"));
-        assert!(!text.contains("any"));
+        assert!(
+            !text
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("/**"))
+                .flat_map(|line| line.split(|c: char| !c.is_alphanumeric() && c != '_'))
+                .any(|word| word == "any")
+        );
     }
 
     #[test]
@@ -571,7 +589,7 @@ mod tests {
         tauto_messages::install();
         for ty in [
             Ty::Infer,
-            Ty::Std("OpaqueHost".into(), vec![]),
+            Ty::Std(tauto_nir::StdType::OpaqueHost, vec![]),
             Ty::Fn(Box::new(tauto_nir::FnTy {
                 params: vec![],
                 ret: Ty::Unit,

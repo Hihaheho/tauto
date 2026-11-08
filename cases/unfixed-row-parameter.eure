@@ -1,0 +1,49 @@
+// A value whose type carries a row parameter that nothing fixes,
+// `App { answers: Nil }` for `App(e)`, holds no function that performs
+// anything. Every row instantiates the parameter, so a call that runs the
+// value takes the least one, the empty row: neither the top level nor a
+// function whose row is written has an effect left to handle.
+
+@ cases.unfixed-row-parameter-is-the-empty-row
+backends = ["rust", "javascript"]
+source = ```tauto
+struct Answer(!e) { run: (arg: i64) -> i64 ! {Div} ∪ e }
+struct App(!e) { name: Text, answers: List(Answer(e)) }
+
+fn answer<!e>(l: List(Answer(e)), arg: i64): i64 ! {Div} ∪ e {
+  match l {
+    Nil => 0
+    Cons(a, rest) => (a.run)(arg)
+  }
+}
+
+fn run_app<!e>(app: App(e)): i64 ! {Div} ∪ e { answer(app.answers, 1) }
+
+fn quiet(): i64 ! {Div} { run_app(App { name: "q", answers: Nil }) }
+
+perform show("q", quiet())
+perform show("t", run_app(App { name: "t", answers: Nil }))
+perform show("n", answer(Nil, 4))
+```
+rows = "ok"
+shows = ["q = 0", "t = 0", "n = 0"]
+
+// A function the value holds fixes the parameter: what it performs is still
+// the caller's to handle.
+@ cases.fixed-row-parameter-is-still-handled
+source = ```tauto
+effect log(m: Text): Unit resume 1
+struct Answer(!e) { run: (arg: i64) -> i64 ! {Div} ∪ e }
+fn answer<!e>(l: List(Answer(e)), arg: i64): i64 ! {Div} ∪ e {
+  match l {
+    Nil => 0
+    Cons(a, rest) => (a.run)(arg)
+  }
+}
+let a := Answer { run: (n: i64) => {
+  perform log("x")
+  n
+} }
+perform show("r", answer(Cons(a, Nil), 4))
+```
+rows = "error: unhandled effect log at the top level"

@@ -14,10 +14,10 @@ pub theorem empty_data_ctor_step(
   tail: ∀ h: ctors_have_fields(rest) = false. EmptyDataConstructors(rest),
   clean: ctors_have_fields(Cons(k, rest)) = false
 ): EmptyDataConstructors(Cons(k, rest)) {
-  match k: EmptyDataConstructors(Cons(k, rest)) {
-    SurfaceDataCtorMk(name, fields) => match fields: EmptyDataConstructors(
+  ⊢ EmptyDataConstructors(Cons(k, rest)) from match k {
+    SurfaceDataCtorMk(name, fields) => ⊢ EmptyDataConstructors(
       Cons(SurfaceDataCtorMk(name, fields), rest)
-    ) {
+    ) from match fields {
       Nil => EmptyDataConstructorsCons(name, rest, tail(clean))
       Cons(first, more) => False::elim(true_ne_false(clean))
     }
@@ -27,7 +27,7 @@ pub theorem ctors_have_fields_sound(
   cs: List(SurfaceDataCtor),
   clean: ctors_have_fields(cs) = false
 ): EmptyDataConstructors(cs) {
-  match cs: EmptyDataConstructors(cs) {
+  ⊢ EmptyDataConstructors(cs) from match cs {
     Nil => EmptyDataConstructorsNil
     Cons(k, rest) => empty_data_ctor_step(k, rest, h => ctors_have_fields_sound(rest, h), clean)
   }
@@ -37,15 +37,18 @@ pub theorem data_view_shape_checked(
   is_struct: Bool,
   r#view: Bool,
   equal: surface_data_is_view(source) = r#view,
-  allowed: Bool::and(r#view, Bool::or(not(is_struct), ctors_have_fields(registration_ctors(source)))) = false
+  allowed: Bool::and(
+    r#view,
+    Bool::or(not(is_struct), ctors_have_fields(registration_ctors(source)))
+  ) = false
 ): DataViewShape(surface_data_is_view(source), is_struct, registration_ctors(source)) {
-  match r#view: DataViewShape(surface_data_is_view(source), is_struct, registration_ctors(source)) {
+  ⊢ DataViewShape(surface_data_is_view(source), is_struct, registration_ctors(source)) from match r#view {
     false => DataViewOrdinary(equal)
-    true => match is_struct: DataViewShape(
+    true => ⊢ DataViewShape(
       surface_data_is_view(source),
       is_struct,
       registration_ctors(source)
-    ) {
+    ) from match is_struct {
       false => False::elim(true_ne_false(allowed))
       true => DataViewOpaque(
         equal,

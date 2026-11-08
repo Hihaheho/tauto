@@ -1,0 +1,21 @@
+description = "Attribute macros preserve the types of implicit value parameters."
+
+@ cases.attribute-preserves-term-generic
+extract = true
+entry = "main.taut"
+files."keep.taut" = ````tauto
+import std::Base
+import std::prelude::Macro
+pub macro fn keep(e: SynExpr, s: SynStmt): List(SynStmt) { Cons(s, Nil) }
+````
+files."main.taut" = ````tauto
+import "keep.taut"
+@keep!(0) => replace fn remember
+fn remember<n: Nat>(): Nat { n }
+theorem preserved(): remember(7) = 7 { Refl }
+perform show("remember", remember(7))
+````
+shows = ["remember = 7"]
+backends = ["rust", "javascript"]
+rust_shows = ["remember = 7"]
+javascript_shows = ["remember = 7"]

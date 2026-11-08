@@ -1,6 +1,8 @@
 # Macro expansion (`tauto-macro`). The error code (`macro.unknown`) is
 # written before the message, outside it.
 
+# An error with its code before it: `macro.unknown: …`.
+macro-coded = { $code }: { $message }
 macro-reserved = { $name } は読み込みが処理する `{ $name }!` である。マクロはこの名前を取れない
 macro-duplicate = マクロ { $name } が二度宣言されている
 macro-dollar-outside-quote = $ は quote の中にだけ書く
@@ -90,6 +92,8 @@ macro-elab-unknown-op = { $op } は検査器の操作ではない
 # Steps of a proof.
 macro-step-mutual = step は `mutual` ブロックの中に書かない
 macro-step-fragment = step は定理、`def`、カーネルの言語の関数の中に書く
+macro-step-nested = tactic の出力に step は書けない（腕ごとに穴を一つ持つ項を作る）
+macro-step-typed-argument = 型付きマクロの引数の中の step を展開した後、引数が見つからない
 macro-step-library = このファイルより前のファイルにエラーがあるため、タクティクは実行されない ({ $problem })
 macro-step-context = step を除いた宣言が検査を通らない: { $message }
 macro-step-no-goal = step の場所にゴールがない
@@ -107,3 +111,16 @@ macro-step-not-checked = 検査されていない
 macro-step-not-tactic = マクロ { $name } はタクティクではない。その関数は ProofStep を取って SynExpr を作るものではない
 macro-step-write-before = step の始まりのゴールを書くこと: `by t!(…): G {"{"} … {"}"}`
 macro-step-arm-before = アームのゴールはそれを証明する step のゴールである。`: …` は書かない
+
+# A text that is not of a syntax (`macro.syntax_error`).
+
+macro-syntax-not-a-token = { $syntax } の中: この文字列は構文のトークンではない
+macro-syntax-expected-found = { $syntax } の中: { $expected } が来るはずだが、{ $found } がある
+macro-syntax-expected-end = { $syntax } の中: { $expected } が来るはずだが、テキストが終わった
+macro-syntax-limit = { $syntax } の中: { $detail }
+macro-syntax-schema = { $detail }
+macro-syntax-tables = { $syntax } の中: 表が読めない: { $detail }
+macro-syntax-embedded = 埋め込んだ式の中: { $detail }
+macro-syntax-terminal = { $name }
+macro-syntax-or = { $first } か { $rest }
+macro-syntax-something-else = 別のもの

@@ -19,7 +19,7 @@ import "../../surface/src/surface.taut"
 pub theorem header_metadata_ignores(
   o: Option(Data)
 ): data_header_option(data_metadata_option(o)) = data_header_option(o) {
-  match o: data_header_option(data_metadata_option(o)) = data_header_option(o) {
+  ⊢ data_header_option(data_metadata_option(o)) = data_header_option(o) from match o {
     None => Refl
     Some(data) => Refl
   }
@@ -29,7 +29,9 @@ pub theorem header_lookup_metadata(
   b: Ordmap(Text, Data),
   n: Text,
   same: data_metadata_lookup(a, n) = data_metadata_lookup(b, n)
-): data_header_option(Ordmap::get(a, n, Ordmap::compare_text)) = data_header_option(Ordmap::get(b, n, Ordmap::compare_text)) {
+): data_header_option(
+  Ordmap::get(a, n, Ordmap::compare_text)
+) = data_header_option(Ordmap::get(b, n, Ordmap::compare_text)) {
   Eq::trans(
     Eq::sym(header_metadata_ignores(Ordmap::get(a, n, Ordmap::compare_text))),
     Eq::trans(
@@ -48,7 +50,7 @@ pub theorem registration_bind_header<A: Type, B: Type>(
     CkDatasOrdered(next)
   ) -> DataHeaderMatches(ck_datas_of(ck_st(k(v, next))), d)
 ): DataHeaderMatches(ck_datas_of(ck_st(frame_bind(k, m))), d) {
-  match m: DataHeaderMatches(ck_datas_of(ck_st(frame_bind(k, m))), d) {
+  ⊢ DataHeaderMatches(ck_datas_of(ck_st(frame_bind(k, m))), d) from match m {
     mut1(v, next) => hk(v, next, hm)
   }
 }
@@ -218,7 +220,7 @@ pub theorem header_registered_entry(
   present: DataPresent(summary_decls(env), registration_name(source)),
   header: DataHeaderMatches(env, source)
 ): SourceDataEntry(env, source) {
-  match present: SourceDataEntry(env, source) {
+  ⊢ SourceDataEntry(env, source) from match present {
     Mk(data, found) => SourceDataEntry::Mk(
       data,
       found,

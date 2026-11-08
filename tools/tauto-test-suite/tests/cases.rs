@@ -1,30 +1,37 @@
 //! Runs every case file under the repository's `cases/`, one line per file,
-//! after Eure's test-suite. `cargo test -p tauto-test-suite --test cases --
-//! <filter>` runs only the cases whose `category/file/case` contains the
-//! filter.
-//!
-//! Each case's status is compared with `cases/coverage/eval.tsv`, as the
-//! backend runners do with theirs; see `tauto_test_suite::coverage`.
+//! after Eure's test-suite. Each file is one test (`category/file`), so
+//! `cargo nextest` runs the files side by side; `cargo test -p
+//! tauto-test-suite --test cases -- <filter>` runs only the cases whose
+//! `category/file/case` contains the filter.
 
 use std::path::Path;
 use std::process::ExitCode;
 
-use tauto_test_suite::{FileReport, Outcome, coverage, run_all_with};
+use tauto_test_suite::{FileReport, Filter, Harness, Outcome, run_all_with};
 
 fn main() -> ExitCode {
     tauto_test_suite::with_deep_stack(run)
 }
 
 fn run() -> ExitCode {
-    let Some(args) = tauto_test_suite::harness_args("cases") else {
-        return ExitCode::SUCCESS;
-    };
-    let filter = args.into_iter().next();
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = crate_dir.join("../../cases");
+    // One test for each case file, so that the runner can run them side by side.
+    let (positional, exact) = match tauto_test_suite::harness_tests(|| {
+        tauto_test_suite::case_file_names(&root).unwrap_or_default()
+    }) {
+        Harness::Listed => return ExitCode::SUCCESS,
+        Harness::Run { positional, exact } => (positional, exact),
+    };
+    let filter = positional.first().map(|f| {
+        if exact {
+            Filter::File(f)
+        } else {
+            Filter::Contains(f)
+        }
+    });
     let (mut passed, mut total, mut todo, mut failed) = (0, 0, 0, 0);
-    let mut got = std::collections::BTreeMap::new();
-    let reports = match run_all_with(&root, filter.as_deref(), |file: &FileReport| {
+    let reports = match run_all_with(&root, filter, |file: &FileReport| {
         let ok = file
             .results
             .iter()
@@ -55,20 +62,8 @@ fn run() -> ExitCode {
         if let Some(e) = &file.error {
             failed += 1;
             println!("  file: {e}");
-            got.insert(file.name.clone(), coverage::status("fail", e));
         }
         for (case, outcome) in &file.results {
-            let status = match outcome {
-                Outcome::Passed => "pass".to_string(),
-                Outcome::Todo => "todo: unimplemented".into(),
-                Outcome::Failed(why) => coverage::status("fail", why),
-                Outcome::UnexpectedPass => "fail: passes now; take `unimplemented` off".into(),
-                // Not an evaluator case; the backend records hold it.
-                Outcome::BackendOnly => String::new(),
-            };
-            if !status.is_empty() {
-                got.insert(format!("{}/{case}", file.name), status);
-            }
             match outcome {
                 Outcome::Failed(why) => {
                     failed += 1;
@@ -93,8 +88,9 @@ fn run() -> ExitCode {
         total - todo,
         reports.len()
     );
-    let recorded = coverage::report(&root, "eval", filter.as_deref(), &got);
-    if !recorded || failed > 0 || total == 0 || passed == 0 {
+    // One file may hold only cases that do not run yet; the whole suite may not.
+    let none_passed = passed == 0 && !matches!(filter, Some(Filter::File(_)));
+    if failed > 0 || total == 0 || none_passed {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS

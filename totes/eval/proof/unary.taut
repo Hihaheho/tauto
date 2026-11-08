@@ -116,24 +116,19 @@ pub theorem e_unary_expr_run<n: Nat, e: Cps>(
       1,
       Mstate(e_code(c_expr(fuel, CPure(v), k, cs)), slots, stack, frames, cx),
       Mstate(k, slots, Cons(value, stack), frames, final)
-    ) from match fuel: ERuns(
-      p,
-      1,
-      Mstate(e_code(c_expr(fuel, CPure(v), k, cs)), slots, stack, frames, cx),
-      Mstate(k, slots, Cons(value, stack), frames, final)
-    ) {
-      Zero => match done: ERuns(
+    ) from match fuel {
+      Zero => ⊢ ERuns(
         p,
         1,
         Mstate(e_code(c_expr(Zero, CPure(v), k, cs)), slots, stack, frames, cx),
         Mstate(k, slots, Cons(value, stack), frames, final)
-      ) {}
-      Succ(f) => match done: ERuns(
+      ) from match done {}
+      Succ(f) => ⊢ ERuns(
         p,
         1,
         Mstate(e_code(c_expr(Succ(f), CPure(v), k, cs)), slots, stack, frames, cx),
         Mstate(k, slots, Cons(value, stack), frames, final)
-      ) {
+      ) from match done {
         Refl => ⊢ ERuns(
           p,
           1,
@@ -147,18 +142,13 @@ pub theorem e_unary_expr_run<n: Nat, e: Cps>(
       Succ(count),
       Mstate(e_code(c_expr(fuel, CMap(inner_expr, op), k, cs)), slots, stack, frames, cx),
       Mstate(k, slots, Cons(value, stack), frames, final)
-    ) from match fuel: ERuns(
-      p,
-      Succ(count),
-      Mstate(e_code(c_expr(fuel, CMap(inner_expr, op), k, cs)), slots, stack, frames, cx),
-      Mstate(k, slots, Cons(value, stack), frames, final)
-    ) {
-      Zero => match done: ERuns(
+    ) from match fuel {
+      Zero => ⊢ ERuns(
         p,
         Succ(count),
         Mstate(e_code(c_expr(Zero, CMap(inner_expr, op), k, cs)), slots, stack, frames, cx),
         Mstate(k, slots, Cons(value, stack), frames, final)
-      ) {}
+      ) from match done {}
       Succ(f) => {
         let stages: EBindValue(
           MVal,
@@ -174,12 +164,12 @@ pub theorem e_unary_expr_run<n: Nat, e: Cps>(
           final,
           done
         )
-        match stages: ERuns(
+        ⊢ ERuns(
           p,
           Succ(count),
           Mstate(e_code(c_expr(f, inner_expr, McOp(c_unary(op), k), cs)), slots, stack, frames, cx),
           Mstate(k, slots, Cons(value, stack), frames, final)
-        ) {
+        ) from match stages {
           Ebv(v, heap, first, second) => e_runs_snoc(
             e_unary_expr_run(
               inner,

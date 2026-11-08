@@ -9,9 +9,9 @@ pub(open) inductive AlgebraInteger: Type {
 }
 
 pub fn integer_pos(x: AlgebraInteger): Nat {
-  match x: Nat { Mk(p, n) => p } }
+  ⊢ Nat from match x { Mk(p, n) => p } }
 pub fn integer_neg_part(x: AlgebraInteger): Nat {
-  match x: Nat { Mk(p, n) => n } }
+  ⊢ Nat from match x { Mk(p, n) => n } }
 
 pub def IntegerEq(x: AlgebraInteger, y: AlgebraInteger): Prop :=
 Nat::add(integer_pos(x), integer_neg_part(y)) = Nat::add(integer_pos(y), integer_neg_part(x))
@@ -43,13 +43,8 @@ pub theorem integer_eq_sym(
   h: IntegerEq(x, y)
 ): IntegerEq(y, x) { Eq::sym(h) }
 
-pub theorem integer_nat_cancel(
-  a: Nat,
-  b: Nat,
-  c: Nat,
-  h: Nat::add(a, c) = Nat::add(b, c)
-): a = b {
-  match c: a = b {
+pub theorem integer_nat_cancel(a: Nat, b: Nat, c: Nat, h: Nat::add(a, c) = Nat::add(b, c)): a = b {
+  ⊢ a = b from match c {
     Zero => h
     Succ(k) => integer_nat_cancel(a, b, k, Eq::congr(Nat::pred, h))
   }
@@ -80,9 +75,15 @@ pub theorem integer_eq_trans(
   let e: Nat := integer_pos(z);
   let f: Nat := integer_neg_part(z);
   let first: Nat::add(Nat::add(a, f), d) = Nat::add(Nat::add(a, d), f) := Nat::add_swap(a, f, d);
-  let second: Nat::add(Nat::add(a, d), f) = Nat::add(Nat::add(c, b), f) := Eq::congr((t: Nat) => Nat::add(t, f), h);
+  let second: Nat::add(
+    Nat::add(a, d),
+    f
+  ) = Nat::add(Nat::add(c, b), f) := Eq::congr((t: Nat) => Nat::add(t, f), h);
   let third: Nat::add(Nat::add(c, b), f) = Nat::add(Nat::add(c, f), b) := Nat::add_swap(c, b, f);
-  let fourth: Nat::add(Nat::add(c, f), b) = Nat::add(Nat::add(e, d), b) := Eq::congr((t: Nat) => Nat::add(t, b), k);
+  let fourth: Nat::add(
+    Nat::add(c, f),
+    b
+  ) = Nat::add(Nat::add(e, d), b) := Eq::congr((t: Nat) => Nat::add(t, b), k);
   let fifth: Nat::add(Nat::add(e, d), b) = Nat::add(Nat::add(e, b), d) := Nat::add_swap(e, d, b);
   integer_nat_cancel(
     Nat::add(a, f),
@@ -171,13 +172,15 @@ pub theorem integer_add_assoc(
 ): IntegerEq(integer_add(integer_add(x, y), z), integer_add(x, integer_add(y, z))) {
   by nat_norm!(
     #()
-  ): (Nat::add(
+  ): (
+    Nat::add(
       Nat::add(Nat::add(integer_pos(x), integer_pos(y)), integer_pos(z)),
       Nat::add(integer_neg_part(x), Nat::add(integer_neg_part(y), integer_neg_part(z)))
     ) = Nat::add(
       Nat::add(integer_pos(x), Nat::add(integer_pos(y), integer_pos(z))),
       Nat::add(Nat::add(integer_neg_part(x), integer_neg_part(y)), integer_neg_part(z))
-    )) {}
+    )
+  ) {}
 }
 
 pub theorem integer_add_comm(
@@ -186,19 +189,26 @@ pub theorem integer_add_comm(
 ): IntegerEq(integer_add(x, y), integer_add(y, x)) {
   by nat_norm!(
     #()
-  ): (Nat::add(
+  ): (
+    Nat::add(
       Nat::add(integer_pos(x), integer_pos(y)),
       Nat::add(integer_neg_part(y), integer_neg_part(x))
     ) = Nat::add(
       Nat::add(integer_pos(y), integer_pos(x)),
       Nat::add(integer_neg_part(x), integer_neg_part(y))
-    )) {}
+    )
+  ) {}
 }
 
 pub theorem integer_add_zero(x: AlgebraInteger): IntegerEq(integer_add(x, integer_zero), x) {
   by nat_norm!(
     #()
-  ): (Nat::add(Nat::add(integer_pos(x), Zero), integer_neg_part(x)) = Nat::add(integer_pos(x), Nat::add(integer_neg_part(x), Zero))) {}
+  ): (
+    Nat::add(
+      Nat::add(integer_pos(x), Zero),
+      integer_neg_part(x)
+    ) = Nat::add(integer_pos(x), Nat::add(integer_neg_part(x), Zero))
+  ) {}
 }
 
 pub theorem integer_add_neg(
@@ -206,13 +216,20 @@ pub theorem integer_add_neg(
 ): IntegerEq(integer_add(x, integer_neg(x)), integer_zero) {
   by nat_norm!(
     #()
-  ): (Nat::add(Nat::add(integer_pos(x), integer_neg_part(x)), Zero) = Nat::add(Zero, Nat::add(integer_neg_part(x), integer_pos(x)))) {}
+  ): (
+    Nat::add(
+      Nat::add(integer_pos(x), integer_neg_part(x)),
+      Zero
+    ) = Nat::add(Zero, Nat::add(integer_neg_part(x), integer_pos(x)))
+  ) {}
 }
 
 pub theorem integer_neg_neg(x: AlgebraInteger): IntegerEq(integer_neg(integer_neg(x)), x) {
   by nat_norm!(
     #()
-  ): (Nat::add(integer_pos(x), integer_neg_part(x)) = Nat::add(integer_pos(x), integer_neg_part(x))) {}
+  ): (
+    Nat::add(integer_pos(x), integer_neg_part(x)) = Nat::add(integer_pos(x), integer_neg_part(x))
+  ) {}
 }
 
 pub theorem integer_mul_comm(
@@ -221,7 +238,8 @@ pub theorem integer_mul_comm(
 ): IntegerEq(integer_mul(x, y), integer_mul(y, x)) {
   by nat_norm!(
     #()
-  ): (Nat::add(
+  ): (
+    Nat::add(
       Nat::add(
         Nat::mul(integer_pos(x), integer_pos(y)),
         Nat::mul(integer_neg_part(x), integer_neg_part(y))
@@ -239,7 +257,8 @@ pub theorem integer_mul_comm(
         Nat::mul(integer_neg_part(x), integer_pos(y)),
         Nat::mul(integer_pos(x), integer_neg_part(y))
       )
-    )) {}
+    )
+  ) {}
 }
 
 pub theorem integer_mul_assoc(
@@ -249,7 +268,8 @@ pub theorem integer_mul_assoc(
 ): IntegerEq(integer_mul(integer_mul(x, y), z), integer_mul(x, integer_mul(y, z))) {
   by nat_norm!(
     #()
-  ): (Nat::add(
+  ): (
+    Nat::add(
       Nat::add(
         Nat::mul(
           Nat::add(
@@ -315,19 +335,22 @@ pub theorem integer_mul_assoc(
           integer_neg_part(z)
         )
       )
-    )) {}
+    )
+  ) {}
 }
 
 pub theorem integer_mul_one(x: AlgebraInteger): IntegerEq(integer_mul(x, integer_one), x) {
   by nat_norm!(
     #()
-  ): (Nat::add(
+  ): (
+    Nat::add(
       Nat::add(Nat::mul(integer_pos(x), Succ(Zero)), Nat::mul(integer_neg_part(x), Zero)),
       integer_neg_part(x)
     ) = Nat::add(
       integer_pos(x),
       Nat::add(Nat::mul(integer_neg_part(x), Succ(Zero)), Nat::mul(integer_pos(x), Zero))
-    )) {}
+    )
+  ) {}
 }
 
 pub theorem integer_mul_zero(
@@ -335,7 +358,15 @@ pub theorem integer_mul_zero(
 ): IntegerEq(integer_mul(x, integer_zero), integer_zero) {
   by nat_norm!(
     #()
-  ): (Nat::add(Nat::add(Nat::mul(integer_pos(x), Zero), Nat::mul(integer_neg_part(x), Zero)), Zero) = Nat::add(Zero, Nat::add(Nat::mul(integer_neg_part(x), Zero), Nat::mul(integer_pos(x), Zero)))) {}
+  ): (
+    Nat::add(
+      Nat::add(Nat::mul(integer_pos(x), Zero), Nat::mul(integer_neg_part(x), Zero)),
+      Zero
+    ) = Nat::add(
+      Zero,
+      Nat::add(Nat::mul(integer_neg_part(x), Zero), Nat::mul(integer_pos(x), Zero))
+    )
+  ) {}
 }
 
 pub theorem integer_mul_add(
@@ -345,7 +376,8 @@ pub theorem integer_mul_add(
 ): IntegerEq(integer_mul(x, integer_add(y, z)), integer_add(integer_mul(x, y), integer_mul(x, z))) {
   by nat_norm!(
     #()
-  ): (Nat::add(
+  ): (
+    Nat::add(
       Nat::add(
         Nat::mul(integer_pos(x), Nat::add(integer_pos(y), integer_pos(z))),
         Nat::mul(integer_neg_part(x), Nat::add(integer_neg_part(y), integer_neg_part(z)))
@@ -375,7 +407,8 @@ pub theorem integer_mul_add(
         Nat::mul(integer_neg_part(x), Nat::add(integer_pos(y), integer_pos(z))),
         Nat::mul(integer_pos(x), Nat::add(integer_neg_part(y), integer_neg_part(z)))
       )
-    )) {}
+    )
+  ) {}
 }
 
 pub theorem integer_mul_respects(
@@ -438,7 +471,12 @@ pub theorem integer_of_nat_mul(
 ): IntegerEq(integer_of_nat(Nat::mul(a, b)), integer_mul(integer_of_nat(a), integer_of_nat(b))) {
   by nat_norm!(
     #()
-  ): (Nat::add(Nat::mul(a, b), Nat::add(Nat::mul(Zero, b), Nat::mul(a, Zero))) = Nat::add(Nat::mul(a, b), Nat::mul(Zero, Zero))) {}
+  ): (
+    Nat::add(
+      Nat::mul(a, b),
+      Nat::add(Nat::mul(Zero, b), Nat::mul(a, Zero))
+    ) = Nat::add(Nat::mul(a, b), Nat::mul(Zero, Zero))
+  ) {}
 }
 
 pub theorem integer_shift(
@@ -449,16 +487,18 @@ pub theorem integer_shift(
   Eq::trans(Nat::add_swap(p, k, n), Nat::add_assoc(p, n, k))
 }
 
-pub theorem integer_zero_representatives(n: Nat): IntegerEq(AlgebraInteger::Mk(n, n), integer_zero) {
+pub theorem integer_zero_representatives(
+  n: Nat
+): IntegerEq(AlgebraInteger::Mk(n, n), integer_zero) {
   Eq::sym(Nat::add_zero_left(n))
 }
 
 pub theorem integer_setoid(): AlgebraSetoid(AlgebraInteger, IntegerEq) {
-  AlgebraSetoid::Mk(AlgebraInteger, IntegerEq, integer_eq_refl, integer_eq_sym, integer_eq_trans)
+  AlgebraSetoid::Mk(<A: AlgebraInteger, related: IntegerEq>, integer_eq_refl, integer_eq_sym, integer_eq_trans)
 }
 
 pub theorem integer_nat_zero_ne_succ(n: Nat, h: Zero = Succ(n)): False {
-  match h: False {
+  ⊢ False from match h {
   }
 }
 
@@ -477,8 +517,8 @@ pub theorem integer_nat_mul_cancel(
   n: Nat,
   h: Nat::mul(a, Succ(n)) = Nat::mul(b, Succ(n))
 ): a = b {
-  match a: a = b {
-    Zero => match b: Zero = b {
+  ⊢ a = b from match a {
+    Zero => ⊢ Zero = b from match b {
       Zero => Refl
       Succ(k) => False::elim(
         integer_nat_zero_ne_succ(
@@ -487,7 +527,7 @@ pub theorem integer_nat_mul_cancel(
         )
       )
     }
-    Succ(j) => match b: Succ(j) = b {
+    Succ(j) => ⊢ Succ(j) = b from match b {
       Zero => False::elim(
         integer_nat_zero_ne_succ(
           Nat::add(Nat::mul(Succ(j), n), j),
@@ -527,7 +567,10 @@ pub theorem integer_scale_cancel(
     n,
     Eq::trans(
       Nat::mul_add_distrib_right(integer_pos(x), integer_neg_part(y), Succ(n)),
-      Eq::trans(h, Eq::sym(Nat::mul_add_distrib_right(integer_pos(y), integer_neg_part(x), Succ(n))))
+      Eq::trans(
+        h,
+        Eq::sym(Nat::mul_add_distrib_right(integer_pos(y), integer_neg_part(x), Succ(n)))
+      )
     )
   )
 }
@@ -539,7 +582,15 @@ pub theorem integer_scale_swap(
 ): IntegerEq(integer_scale(integer_scale(x, n), m), integer_scale(integer_scale(x, m), n)) {
   by nat_norm!(
     #()
-  ): (Nat::add(Nat::mul(Nat::mul(integer_pos(x), n), m), Nat::mul(Nat::mul(integer_neg_part(x), m), n)) = Nat::add(Nat::mul(Nat::mul(integer_pos(x), m), n), Nat::mul(Nat::mul(integer_neg_part(x), n), m))) {}
+  ): (
+    Nat::add(
+      Nat::mul(Nat::mul(integer_pos(x), n), m),
+      Nat::mul(Nat::mul(integer_neg_part(x), m), n)
+    ) = Nat::add(
+      Nat::mul(Nat::mul(integer_pos(x), m), n),
+      Nat::mul(Nat::mul(integer_neg_part(x), n), m)
+    )
+  ) {}
 }
 
 // A constructive sign view. The payload is a magnitude and an equation,
@@ -551,24 +602,23 @@ pub(open) inductive IntegerSign(p: Nat, n: Nat): Type {
 }
 
 pub fn integer_sign(p: Nat, n: Nat): IntegerSign(p, n) {
-  match p: IntegerSign(p, n) {
-    Zero => match n: IntegerSign(Zero, n) {
-      Zero => IntegerSignZero(Zero, Zero, Refl)
-      Succ(k) => IntegerSignNegative(Zero, Succ(k), k, Eq::sym(Eq::congr(Succ, Nat::add_zero_left(k))))
+  ⊢ IntegerSign(p, n) from match p {
+    Zero => ⊢ IntegerSign(Zero, n) from match n {
+      Zero => IntegerSignZero(<p: Zero, n: Zero>, Refl)
+      Succ(k) => IntegerSignNegative(<p: Zero, n: Succ(k)>,
+        k,
+        Eq::sym(Eq::congr(Succ, Nat::add_zero_left(k)))
+      )
     }
-    Succ(j) => match n: IntegerSign(Succ(j), n) {
-      Zero => IntegerSignPositive(Succ(j), Zero, j, Eq::sym(Eq::congr(Succ, Nat::add_zero_left(j))))
-      Succ(k) => match integer_sign(j, k): IntegerSign(Succ(j), Succ(k)) {
-        IntegerSignZero(h) => IntegerSignZero(Succ(j), Succ(k), Eq::congr(Succ, h))
-        IntegerSignPositive(m, h) => IntegerSignPositive(
-          Succ(j),
-          Succ(k),
+    Succ(j) => ⊢ IntegerSign(Succ(j), n) from match n {
+      Zero => IntegerSignPositive(<p: Succ(j), n: Zero>, j, Eq::sym(Eq::congr(Succ, Nat::add_zero_left(j))))
+      Succ(k) => ⊢ IntegerSign(Succ(j), Succ(k)) from match integer_sign(j, k) {
+        IntegerSignZero(h) => IntegerSignZero(<p: Succ(j), n: Succ(k)>, Eq::congr(Succ, h))
+        IntegerSignPositive(m, h) => IntegerSignPositive(<p: Succ(j), n: Succ(k)>,
           m,
           Eq::trans(Eq::congr(Succ, h), Eq::sym(Nat::add_succ_left(k, Succ(m))))
         )
-        IntegerSignNegative(m, h) => IntegerSignNegative(
-          Succ(j),
-          Succ(k),
+        IntegerSignNegative(m, h) => IntegerSignNegative(<p: Succ(j), n: Succ(k)>,
           m,
           Eq::trans(Eq::congr(Succ, h), Eq::sym(Nat::add_succ_left(j, Succ(m))))
         )
@@ -586,5 +636,10 @@ pub theorem integer_scale_zero(n: Nat): IntegerEq(integer_scale(integer_zero, n)
 pub theorem integer_scale_one(x: AlgebraInteger): IntegerEq(integer_scale(x, Succ(Zero)), x) {
   by nat_norm!(
     #()
-  ): (Nat::add(Nat::mul(integer_pos(x), Succ(Zero)), integer_neg_part(x)) = Nat::add(integer_pos(x), Nat::mul(integer_neg_part(x), Succ(Zero)))) {}
+  ): (
+    Nat::add(
+      Nat::mul(integer_pos(x), Succ(Zero)),
+      integer_neg_part(x)
+    ) = Nat::add(integer_pos(x), Nat::mul(integer_neg_part(x), Succ(Zero)))
+  ) {}
 }

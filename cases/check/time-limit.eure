@@ -1,0 +1,104 @@
+// Checking a file has a time limit (`check` in `Tauto.eure`, `docs/design/check-time.md`):
+// a file past its limit is an error, a file in `check.slow` has its own limit, and a
+// `check.slow` entry must name an existing file and a limit above the one of every file.
+
+@ cases.bundled-rational-laws-use-the-distribution-check-policy
+entry = "input/src/main.taut"
+files."input/Tauto.eure" = ```eure
+package { name = "rat-laws-timeout-repro" version = "0.1.0" }
+```
+files."input/src/main.taut" = ```tauto
+import std::RatLaws
+```
+checks."Rat::le_add_raw" = "ok"
+checks."Rat::mul_raw_nonneg" = "ok"
+
+@ cases.a-file-past-the-time-limit-is-an-error
+entry = "input/main.taut"
+files."input/Tauto.eure" = ```eure
+package { name = "input" }
+check { time-limit = 0.000000001 }
+```
+files."input/main.taut" = ```tauto
+theorem two(): 1 + 1 = 2 {
+  Refl
+}
+```
+
+checks_all = "error: took more than"
+
+@ cases.a-file-in-slow-has-its-own-limit
+entry = "input/main.taut"
+files."input/Tauto.eure" = ```eure
+package { name = "input" }
+check {
+  time-limit = 0.000000001
+  slow { "main.taut" = 60 }
+}
+```
+files."input/main.taut" = ```tauto
+theorem two(): 1 + 1 = 2 {
+  Refl
+}
+```
+
+checks_all = "ok"
+
+@ cases.a-slow-entry-for-a-missing-file-is-an-error
+entry = "input/main.taut"
+files."input/Tauto.eure" = ```eure
+package { name = "input" }
+check { slow { "nowhere.taut" = 60 } }
+```
+files."input/main.taut" = ```tauto
+theorem two(): 1 + 1 = 2 {
+  Refl
+}
+```
+
+load_error = "check.slow: nowhere.taut is not a file"
+
+@ cases.a-slow-limit-not-above-the-default-is-an-error
+entry = "input/main.taut"
+files."input/Tauto.eure" = ```eure
+package { name = "input" }
+check { slow { "main.taut" = 5 } }
+```
+files."input/main.taut" = ```tauto
+theorem two(): 1 + 1 = 2 {
+  Refl
+}
+```
+
+load_error = "check.slow: the limit of main.taut is 5s"
+
+@ cases.an-unknown-check-key-is-an-error
+entry = "input/main.taut"
+files."input/Tauto.eure" = ```eure
+package { name = "input" }
+check { limit = 5 }
+```
+files."input/main.taut" = ```tauto
+theorem two(): 1 + 1 = 2 {
+  Refl
+}
+```
+
+load_error = "unknown check key limit"
+
+@ cases.a-macro-step-past-the-time-limit-is-an-error-in-the-expansion
+imports = [path`../../std/Tactic.taut`]
+entry = "input/main.taut"
+files."input/Tauto.eure" = ```eure
+package { name = "input" }
+check { time-limit = 0.000000001 }
+```
+files."input/main.taut" = ```tauto
+theorem t(a: Nat, b: Nat, h: a = b): Nat::add(a, Zero) = Nat::add(b, Zero) {
+  by rewrite!(h): Nat::add(a, Zero) = Nat::add(b, Zero) {
+    ⊢ Nat::add(b, Zero) = Nat::add(b, Zero) from Refl
+  }
+}
+```
+
+checks."input/main.taut::macro#1" = "error: took more than"

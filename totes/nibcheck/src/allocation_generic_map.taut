@@ -13,7 +13,11 @@ import "unify_sound.taut"
 pub def GenericMapAllocated(
   limit: Nat,
   map: Ordmap(Text, Ty)
-): Prop := ∀ name: Text. ∀ value: Ty. ∀ found: Ordmap::get(map, name, Ordmap::compare_text) = Some(value). TypeAllocated(limit, value)
+): Prop := ∀ name: Text. ∀ value: Ty. ∀ found: Ordmap::get(
+  map,
+  name,
+  Ordmap::compare_text
+) = Some(value). TypeAllocated(limit, value)
 pub theorem generic_map_remove_allocated(
   limit: Nat,
   map: Ordmap(Text, Ty),
@@ -59,10 +63,10 @@ pub theorem generic_map_remove_allocated(
           ),
           Eq::subst(
             (key: Text) => Ordmap::get(
-                Ordmap::remove(map, removed, Ordmap::compare_text),
-                key,
-                Ordmap::compare_text
-              ) = Some(value),
+              Ordmap::remove(map, removed, Ordmap::compare_text),
+              key,
+              Ordmap::compare_text
+            ) = Some(value),
             Ordmap::compare_text_eq(name, removed, equal),
             found
           )
@@ -101,27 +105,33 @@ pub theorem generic_map_without_allocated(
   Ordmap::ordered(ty_map_without(gs, map), Ordmap::compare_text),
   GenericMapAllocated(limit, ty_map_without(gs, map))
 ) {
-  match gs: And(
+  ⊢ And(
     Ordmap::ordered(ty_map_without(gs, map), Ordmap::compare_text),
     GenericMapAllocated(limit, ty_map_without(gs, map))
-  ) {
+  ) from match gs {
     Nil => AndIntro(ordered, values)
-    Cons(generic, rest) => match generic: And(
+    Cons(generic, rest) => ⊢ And(
       Ordmap::ordered(ty_map_without(Cons(generic, rest), map), Ordmap::compare_text),
       GenericMapAllocated(limit, ty_map_without(Cons(generic, rest), map))
-    ) {
+    ) from match generic {
       Pair { fst: name, snd: kind } => generic_map_without_allocated(
         rest,
         limit,
         Ordmap::remove(map, name, Ordmap::compare_text),
-        Ordmap::remove_ordered(Ordmap::compare_text, Ordmap::compare_text_law(), map, name, ordered),
+        Ordmap::remove_ordered(
+          Ordmap::compare_text,
+          Ordmap::compare_text_law(),
+          map,
+          name,
+          ordered
+        ),
         generic_map_remove_allocated(limit, map, name, ordered, values)
       )
     }
   }
 }
 pub fn allocation_substitute_choice(fallback: Ty, found: Option(Ty)): Ty {
-  match found: Ty { None => fallback
+  ⊢ Ty from match found { None => fallback
     Some(value) => value }
 }
 pub theorem allocation_substitute_choice_ok(
@@ -134,7 +144,7 @@ pub theorem allocation_substitute_choice_ok(
   found: Option(Ty),
   equal: Ordmap::get(map, name, Ordmap::compare_text) = found
 ): TypeAllocated(limit, allocation_substitute_choice(fallback, found)) {
-  match found: TypeAllocated(limit, allocation_substitute_choice(fallback, found)) {
+  ⊢ TypeAllocated(limit, allocation_substitute_choice(fallback, found)) from match found {
     None => allocated
     Some(value) => values(name, value, equal)
   }
@@ -210,10 +220,10 @@ pub theorem generic_map_insert_allocated(
           ),
           Eq::subst(
             (at: Text) => Ordmap::get(
-                Ordmap::insert(subst, key, value, Ordmap::compare_text),
-                at,
-                Ordmap::compare_text
-              ) = Some(result),
+              Ordmap::insert(subst, key, value, Ordmap::compare_text),
+              at,
+              Ordmap::compare_text
+            ) = Some(result),
             Ordmap::compare_text_eq(index, key, equal),
             found
           )

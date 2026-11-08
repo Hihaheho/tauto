@@ -1,0 +1,46 @@
+// `extern { type T }`: a type the host provides. It reads as a struct
+// without fields, and only extern functions make its values.
+
+@ cases.an-extern-type-is-declared-in-an-extern-block
+description = "The extern block keeps its types when it is formatted, and the functions in it name them."
+parses = true
+source = ```tauto
+extern {
+  affine type Tally
+  type Mark
+  fn tally_new(n: i64): Tally
+  fn tally_get(&t: Tally): i64
+  fn mark(): Mark
+}
+fn tally(n: i64): i64 {
+  let t := tally_new(n)
+  tally_get(&t)
+}
+```
+format = ```
+extern {
+  affine type Tally
+  type Mark
+  fn tally_new(n: i64): Tally
+  fn tally_get(&t: Tally): i64
+  fn mark(): Mark
+}
+fn tally(n: i64): i64 {
+  let t := tally_new(n)
+  tally_get(&t)
+}
+```
+
+@ cases.a-program-cannot-make-a-value-of-an-extern-type
+description = "Only extern functions make a value of an extern type, on every backend."
+backends = ["rust", "javascript"]
+source = ```tauto
+extern {
+  affine type Tally
+  fn tally_get(&t: Tally): i64
+}
+let t := Tally {}
+perform show("n", tally_get(&t))
+```
+compile_errors.rust = "build: Tally is an extern type; only extern functions make its values"
+compile_errors.javascript = "build: Tally is an extern type; only extern functions make its values"

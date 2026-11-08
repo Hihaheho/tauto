@@ -71,7 +71,7 @@ pub fn summary_replace(c: Checker, d: Datas): Checker {
 }
 
 pub fn summary_mark_k(d: Datas, n: Text, o: Option(Data)): Datas {
-  match o: Datas {
+  ⊢ Datas from match o {
     None => d
     Some(data) => datas_with_decls(
       d,
@@ -96,7 +96,7 @@ pub theorem summary_mark_ordered_k(
   o: Option(Data),
   ordered: SummaryOrdered(d)
 ): SummaryOrdered(summary_mark_k(d, n, o)) {
-  match o: SummaryOrdered(summary_mark_k(d, n, o)) {
+  ⊢ SummaryOrdered(summary_mark_k(d, n, o)) from match o {
     None => ordered
     Some(data) => Ordmap::insert_ordered(
       Ordmap::compare_text,
@@ -125,19 +125,19 @@ pub theorem summary_mark_step(
   e: Pair(Text, Data),
   rest: List(Pair(Text, Data)),
   c: Checker
-): ck_mark_recursive(Cons(e, rest), c) = ck_rewrap1(
-    ck_mark_recursive(
-      rest,
-      summary_replace(c, datas_mark_recursive(ck_datas_of(c), summary_key(e)))
-    )
-  ) { Refl }
+): ck_mark_recursive(
+  Cons(e, rest),
+  c
+) = ck_rewrap1(
+  ck_mark_recursive(rest, summary_replace(c, datas_mark_recursive(ck_datas_of(c), summary_key(e))))
+) { Refl }
 
 pub theorem ck_mark_summary_ordered(
   es: List(Pair(Text, Data)),
   c: Checker,
   ordered: SummaryOrdered(ck_datas_of(c))
 ): SummaryOrdered(ck_datas_of(ck_st(ck_mark_recursive(es, c)))) {
-  match es: SummaryOrdered(ck_datas_of(ck_st(ck_mark_recursive(es, c)))) {
+  ⊢ SummaryOrdered(ck_datas_of(ck_st(ck_mark_recursive(es, c)))) from match es {
     Nil => ordered
     Cons(e, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => SummaryOrdered(ck_datas_of(ck_st(z))),
@@ -162,7 +162,7 @@ pub theorem ck_mark_summary_ordered(
 }
 
 pub fn summary_finish_decl_k(c: Checker, d: SurfaceData, o: Option(Text)): Mut1(Unit, Checker) {
-  match o: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match o {
     None => mut1(Star, c)
     Some(m) => ck_rewrap1(ck_error(c, m, TySpan { start: d.start, end: d.end }))
   }
@@ -178,7 +178,7 @@ pub theorem summary_finish_decl_k_same(
   d: SurfaceData,
   o: Option(Text)
 ): ck_datas_of(ck_st(summary_finish_decl_k(c, d, o))) = ck_datas_of(c) {
-  match o: ck_datas_of(ck_st(summary_finish_decl_k(c, d, o))) = ck_datas_of(c) {
+  ⊢ ck_datas_of(ck_st(summary_finish_decl_k(c, d, o))) = ck_datas_of(c) from match o {
     None => Refl
     Some(m) => Refl
   }
@@ -198,7 +198,7 @@ pub theorem ck_finish_stmt_datas(
   c: Checker,
   s: SurfaceStmt
 ): ck_datas_of(ck_st(ck_finish_stmt(c, s))) = ck_datas_of(c) {
-  match s: ck_datas_of(ck_st(ck_finish_stmt(c, s))) = ck_datas_of(c) {
+  ⊢ ck_datas_of(ck_st(ck_finish_stmt(c, s))) = ck_datas_of(c) from match s {
     StLet(n, ty, v, b, m) => Refl
     StVar(n, ty, v, b) => Refl
     StModule(n, ss, start, end) => Refl
@@ -242,7 +242,7 @@ pub fn summary_finish_stmts_k(
   rest: List(SurfaceStmt),
   m: Mut1(Unit, Checker)
 ): Mut1(Unit, Checker) {
-  match m: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match m {
     mut1(v, next) => ck_rewrap1(ck_finish_stmts(rest, next))
   }
 }
@@ -258,7 +258,7 @@ pub theorem summary_finish_stmts_k_same(
   m: Mut1(Unit, Checker),
   ih: ∀ c: Checker. ck_datas_of(ck_st(ck_finish_stmts(rest, c))) = ck_datas_of(c)
 ): ck_datas_of(ck_st(summary_finish_stmts_k(rest, m))) = ck_datas_of(ck_st(m)) {
-  match m: ck_datas_of(ck_st(summary_finish_stmts_k(rest, m))) = ck_datas_of(ck_st(m)) {
+  ⊢ ck_datas_of(ck_st(summary_finish_stmts_k(rest, m))) = ck_datas_of(ck_st(m)) from match m {
     mut1(v, next) => Eq::trans(
       Eq::congr(
         (z: Mut1(Unit, Checker)) => ck_datas_of(ck_st(z)),
@@ -273,7 +273,7 @@ pub theorem ck_finish_stmts_datas(
   ss: List(SurfaceStmt),
   c: Checker
 ): ck_datas_of(ck_st(ck_finish_stmts(ss, c))) = ck_datas_of(c) {
-  match ss: ck_datas_of(ck_st(ck_finish_stmts(ss, c))) = ck_datas_of(c) {
+  ⊢ ck_datas_of(ck_st(ck_finish_stmts(ss, c))) = ck_datas_of(c) from match ss {
     Nil => Refl
     Cons(s, rest) => Eq::trans(
       Eq::congr(
@@ -296,7 +296,7 @@ pub fn summary_finish_datas_k(
   program: List(SurfaceStmt),
   m: Mut1(Unit, Checker)
 ): Mut1(Unit, Checker) {
-  match m: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match m {
     mut1(v, next) => ck_rewrap1(
       ck_finish_stmts(program, summary_replace(next, datas_summarize(ck_datas_of(next))))
     )
@@ -306,17 +306,20 @@ pub fn summary_finish_datas_k(
 pub theorem summary_finish_datas_unf(
   c: Checker,
   program: List(SurfaceStmt)
-): ck_finish_datas(c, program) = summary_finish_datas_k(
-    program,
-    ck_mark_recursive(Ordmap::entries(summary_decls(ck_datas_of(c))), c)
-  ) { Refl }
+): ck_finish_datas(
+  c,
+  program
+) = summary_finish_datas_k(
+  program,
+  ck_mark_recursive(Ordmap::entries(summary_decls(ck_datas_of(c))), c)
+) { Refl }
 
 pub theorem summary_finish_datas_k_ok(
   program: List(SurfaceStmt),
   m: Mut1(Unit, Checker),
   ordered: SummaryOrdered(ck_datas_of(ck_st(m)))
 ): CkSummaryOk(ck_st(summary_finish_datas_k(program, m))) {
-  match m: CkSummaryOk(ck_st(summary_finish_datas_k(program, m))) {
+  ⊢ CkSummaryOk(ck_st(summary_finish_datas_k(program, m))) from match m {
     mut1(v, next) => Eq::subst(
       SummaryOk,
       Eq::sym(

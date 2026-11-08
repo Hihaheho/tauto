@@ -1,0 +1,661 @@
+import "elaborate.taut"
+import "nested.taut"
+import "../../surface/src/surface.taut"
+import "../../kernel/src/data.taut"
+import "../../kernel/src/kernel.taut"
+import "../../kernel/src/check.taut"
+import "../../kernel/src/term.taut"
+import std::List
+import std::Text
+import std::Base
+
+// A `mutual` block of functions, compiled as the host compiles an aligned
+// group: every function matches on the same parameter of the same family, so
+// one eliminator computes all of their values at once, as nested
+// `BelowPair`s, and each function is its component of that tuple. A call of
+// any function of the group on a recursive field is that field's induction
+// hypothesis, projected to the function's component.
+
+// A function of the block, as it is read: its parameters and their types,
+// its result type, the parameter its body matches on, and the arms.
+pub(open) inductive ElabGroupFn: Type {
+  Mk(
+    name: Text,
+    params: List(Text),
+    types: List(SurfaceTerm),
+    result: SurfaceTerm,
+    scrutinee: Text,
+    arms: List(SurfaceArm)
+  ): ElabGroupFn
+}
+
+pub(open) inductive ElabTele: Type {
+  Mk(atoms: List(Nat), domains: List(KernelTerm), env: List(ElabBinding)): ElabTele
+}
+
+pub fn elab_group_types(tys: List(Option(SurfaceTerm))): Option(List(SurfaceTerm)) {
+  ⊢ Option(List(SurfaceTerm)) from match tys {
+    Nil => Some(Nil)
+    Cons(t, rest) => ⊢ Option(List(SurfaceTerm)) from match t {
+      None => None
+      Some(ty) => ⊢ Option(List(SurfaceTerm)) from match elab_group_types(rest) {
+        None => None
+        Some(more) => Some(Cons(ty, more))
+      }
+    }
+  }
+}
+
+pub fn elab_group_by_value(bs: List(Option(Bool))): Bool {
+  ⊢ Bool from match bs {
+    Nil => true
+    Cons(b, rest) => ⊢ Bool from match b {
+      None => elab_group_by_value(rest)
+      Some(m) => false
+    }
+  }
+}
+
+pub fn elab_plain_match(t: SurfaceTerm): Option(Pair(Text, List(SurfaceArm))) {
+  ⊢ Option(Pair(Text, List(SurfaceArm))) from match t.kind {
+    SkMatch(scrutinee, motive, arms, binder) => ⊢ Option(Pair(Text, List(SurfaceArm))) from match motive {
+      Some(m) => None
+      None => ⊢ Option(Pair(Text, List(SurfaceArm))) from match binder {
+        Some(b) => None
+        None => ⊢ Option(Pair(Text, List(SurfaceArm))) from match scrutinee.kind {
+          SkVar(x) => Some(Pair { fst: x, snd: arms })
+          _ => None
+        }
+      }
+    }
+    _ => None
+  }
+}
+
+// The match a body is: `match x { … }`, or a block of only that.
+pub fn elab_body_match(t: SurfaceTerm): Option(Pair(Text, List(SurfaceArm))) {
+  ⊢ Option(Pair(Text, List(SurfaceArm))) from match t.kind {
+    SkMatch(scrutinee, motive, arms, binder) => ⊢ Option(Pair(Text, List(SurfaceArm))) from match motive {
+      Some(m) => None
+      None => ⊢ Option(Pair(Text, List(SurfaceArm))) from match binder {
+        Some(b) => None
+        None => ⊢ Option(Pair(Text, List(SurfaceArm))) from match scrutinee.kind {
+          SkVar(x) => Some(Pair { fst: x, snd: arms })
+          _ => None
+        }
+      }
+    }
+    SkBlock(stmts) => ⊢ Option(Pair(Text, List(SurfaceArm))) from match stmts {
+      Cons(s, rest) => ⊢ Option(Pair(Text, List(SurfaceArm))) from match rest {
+        Nil => ⊢ Option(Pair(Text, List(SurfaceArm))) from match s {
+          StExpr(e) => elab_plain_match(e)
+          _ => None
+        }
+        _ => None
+      }
+      Nil => None
+    }
+    _ => None
+  }
+}
+
+pub fn elab_group_fn(f: SurfaceFn): Option(ElabGroupFn) {
+  if List::length(f.generics) != 0 || List::length(f.wheres) != 0 || elab_group_by_value(f.borrows) == false {
+    None
+  } else {
+    ⊢ Option(ElabGroupFn) from match f.effects {
+      Some(es) => None
+      None => ⊢ Option(ElabGroupFn) from match f.result {
+        None => None
+        Some(result) => ⊢ Option(ElabGroupFn) from match elab_group_types(f.param_types) {
+          None => None
+          Some(tys) => ⊢ Option(ElabGroupFn) from match elab_body_match(f.body) {
+            None => None
+            Some(m) => Some(ElabGroupFn::Mk(f.name, f.params, tys, result, m.fst, m.snd))
+          }
+        }
+      }
+    }
+  }
+}
+
+// A `mutual` block of functions only, each a match on a parameter.
+pub fn elab_group_fns(stmts: List(SurfaceStmt)): Option(List(ElabGroupFn)) {
+  ⊢ Option(List(ElabGroupFn)) from match stmts {
+    Nil => Some(Nil)
+    Cons(s, rest) => ⊢ Option(List(ElabGroupFn)) from match s {
+      StFn(f) => ⊢ Option(List(ElabGroupFn)) from match elab_group_fn(f) {
+        None => None
+        Some(g) => ⊢ Option(List(ElabGroupFn)) from match elab_group_fns(rest) {
+          None => None
+          Some(gs) => Some(Cons(g, gs))
+        }
+      }
+      _ => None
+    }
+  }
+}
+
+pub fn elab_text_position(xs: List(Text), x: Text, at: Nat): Option(Nat) {
+  ⊢ Option(Nat) from match xs {
+    Nil => None
+    Cons(y, rest) => if y == x { Some(at) } else { elab_text_position(rest, x, at + 1) }
+  }
+}
+
+pub fn elab_nth_nat(xs: List(Nat), at: Nat): Option(Nat) {
+  ⊢ Option(Nat) from match xs {
+    Nil => None
+    Cons(x, rest) => ⊢ Option(Nat) from match at {
+      Zero => Some(x)
+      Succ(m) => elab_nth_nat(rest, m)
+    }
+  }
+}
+
+pub fn elab_nth_term(xs: List(KernelTerm), at: Nat): Option(KernelTerm) {
+  ⊢ Option(KernelTerm) from match xs {
+    Nil => None
+    Cons(x, rest) => ⊢ Option(KernelTerm) from match at {
+      Zero => Some(x)
+      Succ(m) => elab_nth_term(rest, m)
+    }
+  }
+}
+
+// `(A₁, (A₂, … Aₖ))` as nested `BelowPair`s, and a value of it.
+pub fn elab_tuple_ty(ts: List(KernelTerm)): KernelTerm {
+  ⊢ KernelTerm from match ts {
+    Nil => KernelConst("Unit")
+    Cons(t, rest) => ⊢ KernelTerm from match rest {
+      Nil => t
+      _ => elab_apps(KernelConst("BelowPair"), Cons(t, Cons(elab_tuple_ty(rest), Nil)))
+    }
+  }
+}
+
+pub fn elab_tuple(ts: List(KernelTerm), vs: List(KernelTerm)): KernelTerm {
+  ⊢ KernelTerm from match ts {
+    Nil => KernelConst("Unit::Star")
+    Cons(t, rest) => ⊢ KernelTerm from match vs {
+      Nil => KernelConst("Unit::Star")
+      Cons(v, more) => ⊢ KernelTerm from match rest {
+        Nil => v
+        _ => elab_apps(KernelConst("BelowPair::Mk"), Cons(t, Cons(elab_tuple_ty(rest), Cons(v, Cons(elab_tuple(rest, more), Nil)))))
+      }
+    }
+  }
+}
+
+// Component `at` of a value of `elab_tuple_ty(ts)`.
+pub fn elab_component(ts: List(KernelTerm), at: Nat, p: KernelTerm): KernelTerm {
+  ⊢ KernelTerm from match ts {
+    Nil => p
+    Cons(t, rest) => ⊢ KernelTerm from match rest {
+      Nil => p
+      _ => ⊢ KernelTerm from match at {
+        Zero => elab_half(t, elab_tuple_ty(rest), p, true)
+        Succ(m) => elab_component(rest, m, elab_half(t, elab_tuple_ty(rest), p, false))
+      }
+    }
+  }
+}
+
+// Each result type with the matched parameter replaced by `v`.
+pub fn elab_results_at(rs: List(KernelTerm), x: Nat, v: KernelTerm): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match rs {
+    Nil => Nil
+    Cons(r, rest) => Cons(kernel_inst(kernel_abstract_at(r, 0, x), v), elab_results_at(rest, x, v))
+  }
+}
+
+pub fn elab_pis_over(atoms: List(Nat), domains: List(KernelTerm), body: KernelTerm): KernelTerm {
+  ⊢ KernelTerm from match atoms {
+    Nil => body
+    Cons(a, rest) => ⊢ KernelTerm from match domains {
+      Nil => body
+      Cons(d, more) => kernel_pi_over(a, d, elab_pis_over(rest, more, body))
+    }
+  }
+}
+
+// The first function's parameters, each a fresh atom at its elaborated type.
+pub fn elab_tele(
+  k: Nat,
+  &mut core: KernelCore,
+  names: List(Text),
+  tys: List(SurfaceTerm),
+  env: List(ElabBinding)
+): ElabResult(ElabTele) {
+  ⊢ ElabResult(ElabTele) from match names {
+    Nil => ElabOk(ElabTele::Mk(Nil, Nil, env))
+    Cons(n, rest) => ⊢ ElabResult(ElabTele) from match tys {
+      Nil => ElabErr("a parameter has no type")
+      Cons(t, more) => ⊢ ElabResult(ElabTele) from match elab_type(k, &mut core, env, t) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(d) => {
+          let atom := kernel_fresh(&mut core, d)
+          ⊢ ElabResult(ElabTele) from match elab_tele(k, &mut core, rest, more, Cons(ElabBinding::Mk(n, KernelFVar(atom), d), env)) {
+            ElabErr(e) => ElabErr(e)
+            ElabOk(tl) => ElabOk(ElabTele::Mk(Cons(atom, tl.atoms), Cons(d, tl.domains), tl.env))
+          }
+        }
+      }
+    }
+  }
+}
+
+// Another function's parameters, bound to the same atoms: each written type
+// must elaborate to the same term.
+pub fn elab_same_tele(
+  k: Nat,
+  &mut core: KernelCore,
+  names: List(Text),
+  tys: List(SurfaceTerm),
+  atoms: List(Nat),
+  domains: List(KernelTerm),
+  env: List(ElabBinding)
+): ElabResult(List(ElabBinding)) {
+  ⊢ ElabResult(List(ElabBinding)) from match names {
+    Nil => ElabOk(env)
+    Cons(n, rest) => ⊢ ElabResult(List(ElabBinding)) from match tys {
+      Nil => ElabErr("a parameter has no type")
+      Cons(t, more) => ⊢ ElabResult(List(ElabBinding)) from match atoms {
+        Nil => ElabErr("the functions of a mutual block must have the same parameters")
+        Cons(a, as) => ⊢ ElabResult(List(ElabBinding)) from match domains {
+          Nil => ElabErr("the functions of a mutual block must have the same parameters")
+          Cons(d, ds) => ⊢ ElabResult(List(ElabBinding)) from match elab_type(k, &mut core, env, t) {
+            ElabErr(e) => ElabErr(e)
+            ElabOk(written) => if kernel_term_eq(written, d) {
+              elab_same_tele(k, &mut core, rest, more, as, ds, Cons(ElabBinding::Mk(n, KernelFVar(a), d), env))
+            } else { ElabErr("the functions of a mutual block must have the same parameter types") }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Each function's environment of parameters, with the bindings that mark the
+// group's names as recursive calls.
+pub fn elab_group_envs(
+  k: Nat,
+  &mut core: KernelCore,
+  fns: List(ElabGroupFn),
+  tl: ElabTele,
+  marks: List(ElabBinding)
+): ElabResult(List(List(ElabBinding))) {
+  ⊢ ElabResult(List(List(ElabBinding))) from match fns {
+    Nil => ElabOk(Nil)
+    Cons(f, rest) => ⊢ ElabResult(List(List(ElabBinding))) from match elab_same_tele(k, &mut core, f.params, f.types, tl.atoms, tl.domains, marks) {
+      ElabErr(e) => ElabErr(e)
+      ElabOk(env) => ⊢ ElabResult(List(List(ElabBinding))) from match elab_group_envs(k, &mut core, rest, tl, marks) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(more) => ElabOk(Cons(env, more))
+      }
+    }
+  }
+}
+
+pub fn elab_group_marks(fns: List(ElabGroupFn)): List(ElabBinding) {
+  ⊢ List(ElabBinding) from match fns {
+    Nil => Nil
+    Cons(f, rest) => Cons(ElabBinding::Mk(Text::concat("#mutual ", f.name), KernelLit(0), KernelLit(0)), elab_group_marks(rest))
+  }
+}
+
+pub fn elab_group_results(
+  k: Nat,
+  &mut core: KernelCore,
+  fns: List(ElabGroupFn),
+  envs: List(List(ElabBinding))
+): ElabResult(List(KernelTerm)) {
+  ⊢ ElabResult(List(KernelTerm)) from match fns {
+    Nil => ElabOk(Nil)
+    Cons(f, rest) => ⊢ ElabResult(List(KernelTerm)) from match envs {
+      Nil => ElabErr("a function has no environment")
+      Cons(env, more) => ⊢ ElabResult(List(KernelTerm)) from match elab_type(k, &mut core, env, f.result) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(r) => ⊢ ElabResult(List(KernelTerm)) from match elab_group_results(k, &mut core, rest, more) {
+          ElabErr(e) => ElabErr(e)
+          ElabOk(rs) => ElabOk(Cons(r, rs))
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_group_positions(fns: List(ElabGroupFn), at: Nat): Bool {
+  ⊢ Bool from match fns {
+    Nil => true
+    Cons(f, rest) => ⊢ Bool from match elab_text_position(f.params, f.scrutinee, 0) {
+      None => false
+      Some(p) => p == at && elab_group_positions(rest, at)
+    }
+  }
+}
+
+pub fn elab_group_nest(k: Nat, core: KernelCore, fns: List(ElabGroupFn)): ElabResult(List(List(SurfaceArm))) {
+  ⊢ ElabResult(List(List(SurfaceArm))) from match fns {
+    Nil => ElabOk(Nil)
+    Cons(f, rest) => ⊢ ElabResult(List(List(SurfaceArm))) from match elab_nest_arms(k, core, f.arms) {
+      NestErr(e) => ElabErr(e)
+      NestOk(arms, fresh, used) => ⊢ ElabResult(List(List(SurfaceArm))) from match elab_group_nest(k, core, rest) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(more) => ElabOk(Cons(arms, more))
+      }
+    }
+  }
+}
+
+pub fn elab_group_arms_known(arms: List(List(SurfaceArm)), ctors: List(KernelCtorInfo), family: Text): Bool {
+  ⊢ Bool from match arms {
+    Nil => true
+    Cons(a, rest) => List::length(a) == List::length(ctors) && elab_arms_known(a, ctors, family) && elab_group_arms_known(rest, ctors, family)
+  }
+}
+
+// The constructor's fields as fresh atoms, walking its type.
+pub fn elab_group_fields(k: Nat, &mut core: KernelCore, cty: KernelTerm, n: Nat): Option(Pair(List(Nat), KernelTerm)) {
+  ⊢ Option(Pair(List(Nat), KernelTerm)) from match n {
+    Zero => Some(Pair { fst: Nil, snd: cty })
+    Succ(m) => ⊢ Option(Pair(List(Nat), KernelTerm)) from match kernel_as_pi(kernel_whnf(k, &mut core, cty, true, false)) {
+      None => None
+      Some(p) => {
+        let atom := kernel_fresh(&mut core, p.fst)
+        ⊢ Option(Pair(List(Nat), KernelTerm)) from match elab_group_fields(k, &mut core, kernel_inst(p.snd, KernelFVar(atom)), m) {
+          None => None
+          Some(more) => Some(Pair { fst: Cons(atom, more.fst), snd: more.snd })
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_nat_at(xs: List(Nat), at: Nat): Nat {
+  ⊢ Nat from match elab_nth_nat(xs, at) {
+    None => 0
+    Some(x) => x
+  }
+}
+
+// One binding per function of the group for a call on the recursive field
+// `f`: its induction hypothesis, projected to the function's component.
+pub fn elab_group_calls(
+  fns: List(ElabGroupFn),
+  at: Nat,
+  ids: List(Nat),
+  pos: Nat,
+  f: Nat,
+  rs_at: List(KernelTerm),
+  ih: Nat,
+  env: List(ElabBinding)
+): List(ElabBinding) {
+  ⊢ List(ElabBinding) from match fns {
+    Nil => env
+    Cons(g, rest) => {
+      let ty := ⊢ KernelTerm from match elab_nth_term(rs_at, at) {
+        Some(t) => t
+        None => KernelConst("Unit")
+      }
+      Cons(
+        ElabBinding::Mk(elab_rec_key(g.name, elab_set_nat(ids, pos, f)), elab_component(rs_at, at, KernelFVar(ih)), ty),
+        elab_group_calls(rest, at + 1, ids, pos, f, rs_at, ih, env)
+      )
+    }
+  }
+}
+
+// The induction hypotheses of the recursive fields, and the bindings of the
+// recursive calls on them.
+pub fn elab_group_hypotheses(
+  k: Nat,
+  &mut core: KernelCore,
+  fns: List(ElabGroupFn),
+  fields: List(Nat),
+  i: Nat,
+  c: KernelCtorInfo,
+  motive: KernelTerm,
+  rs: List(KernelTerm),
+  x: Nat,
+  ids: List(Nat),
+  pos: Nat,
+  calls: List(ElabBinding)
+): Pair(List(Nat), List(ElabBinding)) {
+  ⊢ Pair(List(Nat), List(ElabBinding)) from match fields {
+    Nil => Pair { fst: Nil, snd: calls }
+    Cons(f, rest) => if elab_is_recursive(c.recursive, i) {
+      let ih := kernel_fresh(&mut core, kernel_inst(motive, KernelFVar(f)))
+      let bound := elab_group_calls(fns, 0, ids, pos, f, elab_results_at(rs, x, KernelFVar(f)), ih, calls)
+      let more := elab_group_hypotheses(k, &mut core, fns, rest, i + 1, c, motive, rs, x, ids, pos, bound)
+      Pair { fst: Cons(ih, more.fst), snd: more.snd }
+    } else { elab_group_hypotheses(k, &mut core, fns, rest, i + 1, c, motive, rs, x, ids, pos, calls) }
+  }
+}
+
+pub fn elab_bind_fields(names: List(Option(Text)), atoms: List(Nat), env: List(ElabBinding), core: KernelCore): List(ElabBinding) {
+  ⊢ List(ElabBinding) from match names {
+    Nil => env
+    Cons(n, rest) => ⊢ List(ElabBinding) from match atoms {
+      Nil => env
+      Cons(a, more) => {
+        let ty := ⊢ KernelTerm from match kernel_local_get(core, a) {
+          Some(t) => t
+          None => KernelConst("Unit")
+        }
+        let named := ⊢ List(ElabBinding) from match n {
+          None => env
+          Some(x) => Cons(ElabBinding::Mk(x, KernelFVar(a), ty), env)
+        }
+        elab_bind_fields(rest, more, named, core)
+      }
+    }
+  }
+}
+
+pub fn elab_append_bindings(xs: List(ElabBinding), env: List(ElabBinding)): List(ElabBinding) {
+  ⊢ List(ElabBinding) from match xs {
+    Nil => env
+    Cons(x, rest) => Cons(x, elab_append_bindings(rest, env))
+  }
+}
+
+// Each function's arm for the constructor, at that function's goal.
+pub fn elab_group_bodies(
+  k: Nat,
+  &mut core: KernelCore,
+  arms: List(List(SurfaceArm)),
+  envs: List(List(ElabBinding)),
+  goals: List(KernelTerm),
+  ctors: List(KernelCtorInfo),
+  c: KernelCtorInfo,
+  family: Text,
+  fields: List(Nat),
+  calls: List(ElabBinding)
+): ElabResult(List(KernelTerm)) {
+  ⊢ ElabResult(List(KernelTerm)) from match arms {
+    Nil => ElabOk(Nil)
+    Cons(a, rest) => ⊢ ElabResult(List(KernelTerm)) from match envs {
+      Nil => ElabErr("a function has no environment")
+      Cons(env, more) => ⊢ ElabResult(List(KernelTerm)) from match goals {
+        Nil => ElabErr("a function has no result type")
+        Cons(goal, gs) => ⊢ ElabResult(List(KernelTerm)) from match elab_arm_of(a, ctors, c.name, family) {
+          None => ElabErr("a constructor has no arm")
+          Some(found) => ⊢ ElabResult(List(KernelTerm)) from match elab_bound_names(found.snd) {
+            None => ElabErr("constructor patterns bind variables or `_`")
+            Some(names) => if List::length(names) != c.nargs { ElabErr("a pattern has the wrong number of fields") } else {
+              let inner := elab_bind_fields(names, fields, elab_append_bindings(calls, env), core)
+              ⊢ ElabResult(List(KernelTerm)) from match elab_term(k, &mut core, inner, found.fst.body, Some(goal)) {
+                ElabErr(e) => ElabErr(e)
+                ElabOk(t) => ⊢ ElabResult(List(KernelTerm)) from match elab_group_bodies(k, &mut core, rest, more, gs, ctors, c, family, fields, calls) {
+                  ElabErr(e) => ElabErr(e)
+                  ElabOk(ts) => ElabOk(Cons(t.value, ts))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub(open) inductive ElabGroupMatch: Type {
+  Mk(
+    fns: List(ElabGroupFn),
+    arms: List(List(SurfaceArm)),
+    envs: List(List(ElabBinding)),
+    rs: List(KernelTerm),
+    family: Text,
+    params: List(KernelTerm),
+    x: Nat,
+    ids: List(Nat),
+    pos: Nat,
+    motive: KernelTerm
+  ): ElabGroupMatch
+}
+
+pub fn elab_aligned_minors(
+  k: Nat,
+  &mut core: KernelCore,
+  g: ElabGroupMatch,
+  all: List(KernelCtorInfo),
+  ctors: List(KernelCtorInfo)
+): ElabResult(List(KernelTerm)) {
+  ⊢ ElabResult(List(KernelTerm)) from match ctors {
+    Nil => ElabOk(Nil)
+    Cons(c, rest) => ⊢ ElabResult(List(KernelTerm)) from match kernel_global_get(core, c.name) {
+      None => ElabErr("unknown constructor")
+      Some(cg) => ⊢ ElabResult(List(KernelTerm)) from match elab_instantiate(k, cg.ty, g.params) {
+        None => ElabErr("cannot instantiate the constructor")
+        Some(cty) => ⊢ ElabResult(List(KernelTerm)) from match elab_group_fields(k, &mut core, cty, c.nargs) {
+          None => ElabErr("a constructor has fewer fields than its arity")
+          Some(fs) => {
+            let fields := fs.fst
+            let ihs := elab_group_hypotheses(k, &mut core, g.fns, fields, 0, c, g.motive, g.rs, g.x, g.ids, g.pos, Nil)
+            let value := elab_apps(KernelConst(c.name), List::append(g.params, elab_fvars(fields)))
+            let goals := elab_results_at(g.rs, g.x, value)
+            ⊢ ElabResult(List(KernelTerm)) from match elab_group_bodies(k, &mut core, g.arms, g.envs, goals, all, c, g.family, fields, ihs.snd) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(bodies) => ⊢ ElabResult(List(KernelTerm)) from match elab_aligned_minors(k, &mut core, g, all, rest) {
+                ElabErr(e) => ElabErr(e)
+                ElabOk(ms) => ElabOk(Cons(elab_lams(elab_tuple(goals, bodies), List::append(fields, ihs.fst)), ms))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_group_declarations(
+  fns: List(ElabGroupFn),
+  at: Nat,
+  rs: List(KernelTerm),
+  whole: KernelTerm,
+  tl: ElabTele
+): List(ElabDeclaration) {
+  ⊢ List(ElabDeclaration) from match fns {
+    Nil => Nil
+    Cons(f, rest) => {
+      let r := ⊢ KernelTerm from match elab_nth_term(rs, at) {
+        Some(t) => t
+        None => KernelConst("Unit")
+      }
+      Cons(
+        ElabDeclaration::Mk(f.name, elab_pis_over(tl.atoms, tl.domains, r), elab_lams(elab_component(rs, at, whole), tl.atoms), true),
+        elab_group_declarations(rest, at + 1, rs, whole, tl)
+      )
+    }
+  }
+}
+
+pub fn elab_declare_group(k: Nat, &mut core: KernelCore, ds: List(ElabDeclaration)): Bool {
+  ⊢ Bool from match ds {
+    Nil => true
+    Cons(d, rest) => ⊢ Bool from match kernel_execute(k, &mut core, KernelDeclare(d.name, d.ty, Some(d.value), true)) {
+      KernelAccepted => elab_declare_group(k, &mut core, rest)
+      _ => false
+    }
+  }
+}
+
+pub fn elab_group_inner(k: Nat, &mut core: KernelCore, fns: List(ElabGroupFn)): ElabResult(List(ElabDeclaration)) {
+  ⊢ ElabResult(List(ElabDeclaration)) from match fns {
+    Nil => ElabErr("an empty mutual block")
+    Cons(first, others) => ⊢ ElabResult(List(ElabDeclaration)) from match elab_text_position(first.params, first.scrutinee, 0) {
+      None => ElabErr("a function of a mutual block must match on one of its parameters")
+      Some(pos) => if elab_group_positions(fns, pos) == false {
+        ElabErr("the functions of a mutual block must match on the same parameter")
+      } else {
+        ⊢ ElabResult(List(ElabDeclaration)) from match elab_tele(k, &mut core, first.params, first.types, Nil) {
+          ElabErr(e) => ElabErr(e)
+          ElabOk(tl) => ⊢ ElabResult(List(ElabDeclaration)) from match elab_group_envs(k, &mut core, fns, tl, elab_group_marks(fns)) {
+            ElabErr(e) => ElabErr(e)
+            ElabOk(envs) => ⊢ ElabResult(List(ElabDeclaration)) from match elab_group_results(k, &mut core, fns, envs) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(rs) => {
+                let x := elab_nat_at(tl.atoms, pos)
+                let xty := ⊢ KernelTerm from match elab_nth_term(tl.domains, pos) {
+                  Some(t) => t
+                  None => KernelConst("Unit")
+                }
+                let spine := elab_spine(k, kernel_whnf(k, &mut core, xty, true, false), Nil)
+                ⊢ ElabResult(List(ElabDeclaration)) from match spine.fst {
+                  KernelConst(family) => ⊢ ElabResult(List(ElabDeclaration)) from match kernel_ind_get(core, family) {
+                    None => ElabErr("the matched value is not of an inductive type")
+                    Some(info) => if info.indices != 0 || List::length(info.group) != 1 {
+                      ElabErr("a mutual block of functions on an indexed or mutual family is unsupported")
+                    } else if elab_dependents(tl.env, Cons(x, Nil), Cons(x, Nil)) {
+                      ElabErr("a match whose variable other variables depend on is unsupported")
+                    } else {
+                      ⊢ ElabResult(List(ElabDeclaration)) from match elab_group_nest(k, core, fns) {
+                        ElabErr(e) => ElabErr(e)
+                        ElabOk(arms) => if elab_group_arms_known(arms, info.constructors, family) == false {
+                          ElabErr("a match needs exactly one plain arm per constructor")
+                        } else {
+                          let motive := kernel_abstract_at(elab_tuple_ty(rs), 0, x)
+                          let g := ElabGroupMatch::Mk(fns, arms, envs, rs, family, spine.snd, x, tl.atoms, pos, motive)
+                          ⊢ ElabResult(List(ElabDeclaration)) from match elab_aligned_minors(k, &mut core, g, info.constructors, info.constructors) {
+                            ElabErr(e) => ElabErr(e)
+                            ElabOk(minors) => {
+                              let whole := elab_apps(
+                                KernelConst(Text::concat(family, "::rec")),
+                                List::append(spine.snd, Cons(kernel_lam(motive), List::append(minors, Cons(KernelFVar(x), Nil))))
+                              )
+                              let ds := elab_group_declarations(fns, 0, rs, whole, tl)
+                              if elab_declare_group(k, &mut core, ds) { ElabOk(ds) } else {
+                                ElabErr("kernel rejected a function of the mutual block")
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                  _ => ElabErr("the matched value is not of an inductive type")
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_group_checked(k: Nat, &mut core: KernelCore, fns: List(ElabGroupFn)): ElabResult(List(ElabDeclaration)) {
+  let saved := kernel_snapshot(core)
+  let result := elab_group_inner(k, &mut core, fns)
+  if core.exhausted {
+    kernel_set_to(&mut core, saved)
+    ElabErr("elaboration exhausted")
+  } else {
+    ⊢ ElabResult(List(ElabDeclaration)) from match result {
+      ElabErr(e) => { kernel_set_to(&mut core, saved)
+        ElabErr(e) }
+      ElabOk(ds) => ElabOk(ds)
+    }
+  }
+}

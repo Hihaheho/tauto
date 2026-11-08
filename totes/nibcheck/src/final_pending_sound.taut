@@ -35,11 +35,11 @@ pub theorem final_structural_pending(
   structural: class_is_structural(finish_pending_class(p)) = true,
   final: FinalDiagnostics0(c)
 ): datas_structural(
-    ck_datas_of(c),
-    finish_pending_class(p),
-    ck_resolve(c, finish_pending_ty(p)),
-    finish_pending_assume(p)
-  ) = true {
+  ck_datas_of(c),
+  finish_pending_class(p),
+  ck_resolve(c, finish_pending_ty(p)),
+  finish_pending_assume(p)
+) = true {
   diagnostic_not_no(
     datas_structural(
       ck_datas_of(c),
@@ -66,12 +66,17 @@ pub theorem final_structural_function_impossible(
   final: FinalDiagnostics0(c)
 ): False {
   let accepted: datas_structural(
+    ck_datas_of(c),
+    finish_pending_class(p),
+    TyFn(params, result, kind),
+    finish_pending_assume(p)
+  ) = true := Eq::subst(
+    (ty: Ty) => datas_structural(
       ck_datas_of(c),
       finish_pending_class(p),
-      TyFn(params, result, kind),
+      ty,
       finish_pending_assume(p)
-    ) = true := Eq::subst(
-    (ty: Ty) => datas_structural(ck_datas_of(c), finish_pending_class(p), ty, finish_pending_assume(p)) = true,
+    ) = true,
     resolved,
     final_structural_pending(c, p, member, structural, final)
   )

@@ -23,7 +23,7 @@ pub fn inference_first_handler(
   env: List(Local),
   returned: Option(Pair(SurfacePattern, SurfaceTerm))
 ): Mut1(Ty, Checker) {
-  match returned: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match returned {
     None => mut1(b, c)
     Some(r) => inference_bind_scope(
       Unit,
@@ -52,7 +52,7 @@ pub theorem inference_first_handler_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_first_handler(j, c, b, env, returned)) {
-  match returned: CkRunFrame(c, inference_first_handler(j, c, b, env, returned)) {
+  ⊢ CkRunFrame(c, inference_first_handler(j, c, b, env, returned)) from match returned {
     None => run_frame_return(c, b, ordered)
     Some(r) => inference_bind_scope_frame(
       Unit,
@@ -121,7 +121,13 @@ pub theorem inference_unf_ck_handle_first_in(
   handlers: List(SurfaceHandler),
   b: Ty,
   env: List(Local)
-): ck_handle_first_in(Succ(j), c, handlers, b, env) = inference_step_ck_handle_first_in(j, c, handlers, b, env) { Refl }
+): ck_handle_first_in(
+  Succ(j),
+  c,
+  handlers,
+  b,
+  env
+) = inference_step_ck_handle_first_in(j, c, handlers, b, env) { Refl }
 
 pub fn inference_match_arms(
   j: Nat,
@@ -131,7 +137,7 @@ pub fn inference_match_arms(
   result: Option(Ty),
   arms: List(SurfaceArm)
 ): Mut1(Option(Ty), Checker) {
-  match arms: Mut1(Option(Ty), Checker) {
+  ⊢ Mut1(Option(Ty), Checker) from match arms {
     Nil => mut1(result, c)
     Cons(arm, rest) => inference_bind_scope(
       Unit,
@@ -176,7 +182,7 @@ pub theorem inference_match_arms_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_match_arms(j, c, s, env, result, arms)) {
-  match arms: CkRunFrame(c, inference_match_arms(j, c, s, env, result, arms)) {
+  ⊢ CkRunFrame(c, inference_match_arms(j, c, s, env, result, arms)) from match arms {
     Nil => run_frame_return(c, result, ordered)
     Cons(arm, rest) => inference_bind_scope_frame(
       Unit,
@@ -315,7 +321,28 @@ pub theorem inference_unf_ck_match_arms_in(
   s: Ty,
   env: List(Local),
   result: Option(Ty)
-): ck_match_arms_in(Succ(j), c, arms, s, env, result) = inference_step_ck_match_arms_in(j, c, arms, s, env, result) { match arms: ck_match_arms_in(Succ(j), c, arms, s, env, result) = inference_step_ck_match_arms_in(j, c, arms, s, env, result) {
+): ck_match_arms_in(
+  Succ(j),
+  c,
+  arms,
+  s,
+  env,
+  result
+) = inference_step_ck_match_arms_in(
+  j,
+  c,
+  arms,
+  s,
+  env,
+  result
+) { ⊢ ck_match_arms_in(
+  Succ(j),
+  c,
+  arms,
+  s,
+  env,
+  result
+) = inference_step_ck_match_arms_in(j, c, arms, s, env, result) from match arms {
     Nil => Refl
     Cons(arm, rest) => Refl
   } }
@@ -395,7 +422,7 @@ pub fn inference_record_ctor(
   span: TySpan,
   ctor: Option(Pair(Text, Nat))
 ): Mut1(Ty, Checker) {
-  match ctor: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match ctor {
     None => frame_bind(
       Unit,
       Ty,
@@ -432,7 +459,7 @@ pub theorem inference_record_ctor_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_record_ctor(j, c, name, fields, env, span, ctor)) {
-  match ctor: CkRunFrame(c, inference_record_ctor(j, c, name, fields, env, span, ctor)) {
+  ⊢ CkRunFrame(c, inference_record_ctor(j, c, name, fields, env, span, ctor)) from match ctor {
     None => run_frame_bind(
       Unit,
       Ty,
@@ -537,4 +564,11 @@ pub theorem inference_unf_ck_record_in(
   fields: List(SurfaceField),
   env: List(Local),
   span: TySpan
-): ck_record_in(Succ(j), c, name, fields, env, span) = inference_step_ck_record_in(j, c, name, fields, env, span) { Refl }
+): ck_record_in(
+  Succ(j),
+  c,
+  name,
+  fields,
+  env,
+  span
+) = inference_step_ck_record_in(j, c, name, fields, env, span) { Refl }

@@ -1,0 +1,36 @@
+description = "Rejected, exhausted and duplicate declarations restore the elaborator environment."
+imports = [
+  path`../totes/elaborator/src/elaborate.taut`,
+  path`../totes/elaborator/src/program.taut`,
+  path`../totes/kernel/src/data.taut`,
+  path`../totes/surface/src/surface.taut`,
+  path`../std/Base.taut`,
+]
+source = ```tauto
+fn rejected(r: ElabResult(ElabDeclaration)): Bool {
+  match r { ElabErr(e) => true
+    ElabOk(d) => false }
+}
+fn clean(c: KernelCore): Bool {
+  c.next == 0 && not(c.exhausted) && List::length(c.locals) == 0 && List::length(c.globals) == 4
+}
+let prop := surface_term_mk(SkVar("Prop"), 0, 0)
+let ty := surface_term_mk(SkVar("A"), 0, 0)
+let value := surface_term_mk(SkVar("a"), 0, 0)
+let params := Cons(SurfaceNamed {name: "A", ty: prop}, Cons(SurfaceNamed {name: "a", ty: ty}, Nil))
+let valid := SurfaceTheorem {name: "identity", implicit: 0, params: params, ty: ty, body: Some(value), start: 0, end: 0}
+let bad := SurfaceTheorem {name: "identity", implicit: 0, params: params, ty: ty, body: Some(prop), start: 0, end: 0}
+var core := kernel_new()
+let exhausted := rejected(elab_declaration_checked(0, &mut core, valid, false)) && clean(core)
+let mismatch := rejected(elab_declaration_checked(2000, &mut core, bad, false)) && clean(core)
+let accepted := match elab_declaration_checked(2000, &mut core, valid, false) {
+  ElabErr(e) => false
+  ElabOk(d) => kernel_closed(d.value) && kernel_closed(d.ty) && not(core.exhausted) && List::length(core.locals) == 0
+}
+let saved_next := core.next
+let duplicate := rejected(elab_declaration_checked(2000, &mut core, valid, false)) && core.next == saved_next && List::length(core.globals) == 5 && not(core.exhausted)
+perform show("transaction", exhausted && mismatch && accepted && duplicate)
+```
+extract = true
+shows = ["transaction = true"]
+backends = ["rust"]

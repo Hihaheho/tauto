@@ -1,0 +1,71 @@
+description = "A `let` whose value names a constructor or a variable that an arm of a later match also names: the arm still sees the `let`."
+
+@ cases.a_let_naming_a_nullary_constructor_reaches_every_arm
+source = ```tauto
+inductive Maybe: Type {
+  Nothing: Maybe
+  Just(n: Nat): Maybe
+}
+fn f(o: Maybe, g: (x: Maybe) -> Nat): Nat {
+  let c := g(Nothing)
+  ⊢ Nat from match o {
+    Just(b) => c
+    Nothing => c
+  }
+}
+theorem t(g: (x: Maybe) -> Nat): f(Nothing, g) = g(Nothing) {
+  Refl
+}
+```
+checks."f" = "checked"
+checks."t" = "checked"
+
+@ cases.a_let_naming_a_variable_an_arm_binds_keeps_the_outer_one
+source = ```tauto
+inductive Maybe: Type {
+  Nothing: Maybe
+  Just(n: Nat): Maybe
+}
+fn f(o: Maybe, b: Nat, g: (x: Nat) -> Nat): Nat {
+  let c := g(b)
+  ⊢ Nat from match o {
+    Just(b) => c
+    Nothing => c
+  }
+}
+theorem t(g: (x: Nat) -> Nat): f(Just(Succ(Zero)), Zero, g) = g(Zero) {
+  Refl
+}
+```
+checks."f" = "checked"
+checks."t" = "checked"
+
+@ cases.a_typed_let_chain_under_nested_matches
+source = ```tauto
+inductive Maybe: Type {
+  Nothing: Maybe
+  Just(n: Nat): Maybe
+}
+inductive Two: Type {
+  Mk(a: Nat, b: Nat): Two
+}
+fn first(p: Two): Nat {
+  ⊢ Nat from match p {
+    Mk(a, b) => a
+  }
+}
+fn f(w: Maybe, h: Maybe, g: (k: Maybe) -> Two): Nat {
+  ⊢ Nat from match w {
+    Just(a) => a
+    Nothing => {
+      let c: Two := g(Nothing)
+      let cw: Nat := first(c)
+      ⊢ Nat from match h {
+        Just(b) => cw
+        Nothing => first(c)
+      }
+    }
+  }
+}
+```
+checks."f" = "checked"

@@ -381,7 +381,7 @@ pub theorem inference_handler_arity_frame_checked(
     wrong
   )
 ) {
-  match wrong: CkCheckedFrame(
+  ⊢ CkCheckedFrame(
     c,
     inference_handler_arity(
       j,
@@ -400,7 +400,7 @@ pub theorem inference_handler_arity_frame_checked(
       pa,
       wrong
     )
-  ) {
+  ) from match wrong {
     true => checked_frame_read(
       c,
       ck_rewrap1(
@@ -544,7 +544,7 @@ pub theorem inference_handler_signature_frame_checked(
     signature
   )
 ) {
-  match signature: CkCheckedFrame(
+  ⊢ CkCheckedFrame(
     c,
     inference_handler_signature(
       j,
@@ -562,7 +562,7 @@ pub theorem inference_handler_signature_frame_checked(
       body,
       signature
     )
-  ) {
+  ) from match signature {
     None => checked_frame_return(c, Star, ordered)
     Some(pa) => inference_handler_arity_frame_checked(
       j,
@@ -680,10 +680,10 @@ pub theorem inference_budget_push_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_budget_push(j, c, body, handlers, env, budget_ty, answers)) {
-  match answers: CkCheckedFrame(
+  ⊢ CkCheckedFrame(
     c,
     inference_budget_push(j, c, body, handlers, env, budget_ty, answers)
-  ) {
+  ) from match answers {
     true => checked_frame_read(
       c,
       inference_set_exceeded(c, Cons(budget_ty, inference_exceeded(c))),
@@ -702,7 +702,7 @@ pub theorem inference_budget_pop_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_budget_pop(j, c, answers)) {
-  match answers: CkCheckedFrame(c, inference_budget_pop(j, c, answers)) {
+  ⊢ CkCheckedFrame(c, inference_budget_pop(j, c, answers)) from match answers {
     true => checked_frame_read(
       c,
       inference_set_exceeded(c, List::tail(inference_exceeded(c))),

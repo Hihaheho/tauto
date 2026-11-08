@@ -1,0 +1,192 @@
+// Differential cases: each named route compares the self-hosted component with its oracle, not only evaluator success.
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-001
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 ! {ask} { perform ask(1) }
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-002
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 ! {} { perform ask(1) }
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-003
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 { perform ask(1) }
+fn g(): i64 { f() + 1 }
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-004
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 { perform ask(1) }
+let r := handle { f() } with {
+  ask(q), k => k(q)
+  return v => v
+}
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-005
+source = ```tauto
+effect ask(q: i64): i64
+let r := perform ask(1)
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-006
+source = ```tauto
+fn spin(): i64 { while true { }
+ 0 }
+fn rec(n: i64): i64 { rec(n) }
+let d := handle { budget(steps: 10) { spin() } } with {
+  exceeded(i), k => 0
+  return v => v
+}
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-007
+source = ```tauto
+fn spin(): i64 { while true { }
+ 0 }
+let d := budget(steps: 10) { spin() }
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-008
+source = ```tauto
+fn spin(): i64 { while true { }
+ 0 }
+let d := handle { budget(steps: 10) { spin() } } with {
+  exceeded(i), k => i.unbounded()
+  return v => v
+}
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-009
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 ! {} {
+  let g := () => perform ask(1)
+  0
+}
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-010
+source = ```tauto
+effect ask(q: i64): i64
+fn f(): i64 ! {} {
+  let g := () => perform ask(1)
+  g()
+}
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-011
+source = ```tauto
+fn pick(): i64 { 1 }
+fn f(h: i64): i64 ! {} { let g := pick()
+  g() }
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-012
+source = ```tauto
+effect ask(q: i64): i64
+fn apply<!e>(g: () -> i64 ! e): i64 ! e { g() }
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-013
+source = ```tauto
+effect ask(q: i64): i64
+fn apply<!e>(g: () -> i64 ! e): i64 ! e {
+  perform ask(1)
+  g()
+}
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-014
+source = ```tauto
+effect ask(q: i64): i64
+fn apply<!e>(g: () -> i64 ! e): i64 ! e { g() }
+fn main(): i64 ! {} { apply(() => perform ask(1)) }
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-015
+source = ```tauto
+effect ask(q: i64): i64
+let r := handle { perform ask(1) } with {
+  ask(0), k => k(0)
+  return v => v
+}
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-016
+source = ```tauto
+effect many(): i64 resume ω
+fn apply<!e: <=1>(g: () -> i64 ! e): i64 ! e { g() }
+fn main(): i64 ! {many} { apply(() => perform many()) }
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-017
+source = ```tauto
+fn f(): i64 { (1)(2) }
+fn g(): i64 { ((x) => x)(2) }
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-018
+source = ```tauto
+fn f(x: i64): i64 { match x { 0 => 1
+ n => n } }
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-019
+source = ```tauto
+fn f(): i64 { let a := 1
+ var b := a
+ b := 2
+ return b }
+```
+differential = "rows"
+
+// rows_match_on_hard_cases
+@ cases.rows-match-on-hard-cases-020
+source = ```tauto
+fn f(
+```
+differential = "rows"

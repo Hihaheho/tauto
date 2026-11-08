@@ -1,0 +1,39 @@
+description = "A function's implicit telescope carries types, propositions and values."
+
+@ cases.a_predicate_generic_checks
+source = ```tauto
+inductive Sub(A: Type, P: (A) -> Prop): Type {
+  SubMk(val: A, ok: P(val)): Sub(A, P)
+}
+fn sub_val<A: Type, P: (A) -> Prop>(s: Sub(A, P)): A {
+  ⊢ A from match s {
+    SubMk(v, h) => v
+  }
+}
+```
+checks."sub_val" = "checked"
+
+@ cases.a_proposition_generic_checks
+source = ```tauto
+fn f<A: Prop>(a: A): A { a }
+```
+checks."f" = "checked"
+
+@ cases.the_predicate_as_an_ordinary_parameter_checks
+source = ```tauto
+inductive Sub(A: Type, P: (A) -> Prop): Type {
+  SubMk(val: A, ok: P(val)): Sub(A, P)
+}
+fn sub_val<A: Type>(P: (A) -> Prop, s: Sub(A, P)): A {
+  ⊢ A from match s {
+    SubMk(v, h) => v
+  }
+}
+```
+checks."sub_val" = "checked"
+
+@ cases.a_type_generic_and_a_kind_bound_check
+source = ```tauto
+fn id<A: Type, B: Shared>(a: A, b: B): A { a }
+```
+checks."id" = "checked"

@@ -4,12 +4,13 @@
 //! it. Nothing here decides anything; the kernel's verdicts are only laid out,
 //! as text or as JSON (`--json`).
 
+use crate::surface::Name;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use tauto_message::msg;
+use tauto_message::{Message, msg};
 
 use crate::check::{self, Diagnostic, FileEntry, HoleGoal, LibEntry, Verdict, describe, free_vars};
-use crate::surface::{Stmt, SurfaceTerm, TermKind, parse_program_at};
+use crate::surface::{Stmt, SurfaceTerm, TermKind};
 
 /// A JSON value; the output is small, so it is built by hand.
 pub enum Json {
@@ -74,8 +75,8 @@ impl Json {
     }
 }
 
-fn s(text: impl Into<String>) -> Json {
-    Json::Str(text.into())
+fn s(text: impl ToString) -> Json {
+    Json::Str(text.to_string())
 }
 
 /// A term as a tree: each node has a `kind` (`var`, `nat`, `text`, `bool`,
@@ -119,7 +120,10 @@ pub fn term_json(t: &SurfaceTerm) -> Json {
                 .map(|(n, d)| {
                     let mut f = Vec::new();
                     // An anonymous parameter is named `_'N` inside the kernel.
-                    if let Some(n) = n.as_ref().filter(|n| *n != "_" && !n.starts_with("_'")) {
+                    if let Some(n) = n
+                        .as_ref()
+                        .filter(|n| n.as_str() != "_" && !n.starts_with("_'"))
+                    {
                         f.push(("name", s(n)));
                     }
                     f.push(("type", term_json(d)));
@@ -203,6 +207,7 @@ pub struct Report {
     /// does not change the status.
     pub warnings: Vec<FileWarning>,
     sources: BTreeMap<PathBuf, String>,
+    source_names: crate::read::SourceNames,
 }
 
 /// One thing `tauto check` shows a person ([`Report::problems`]): its
@@ -240,10 +245,44 @@ fn dead_code(path: &Path, source: &str, runs_alone: bool) -> Vec<FileWarning> {
         .collect()
 }
 
+/// The file's own syntax error, as a problem at its place in the file, so that it is shown
+/// with the line it is on rather than as a bare `file:line:col: message`.
+fn syntax_report(path: &Path, text: Option<&str>) -> Option<Report> {
+    let own = match text {
+        Some(t) => t.to_string(),
+        None => std::fs::read_to_string(path).ok()?,
+    };
+    let error = tauto_parol::parse(&own).errors.into_iter().next()?;
+    let file = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let span = error
+        .span
+        .or_else(|| Some(tauto_parol::Span::new(own.len() as u32, own.len() as u32)));
+    let entry = FileEntry {
+        file: file.clone(),
+        entry: check::Entry {
+            name: "program".into(),
+            verdict: Verdict::Failed(Diagnostic::new(Message::text(error.message), span)),
+        },
+    };
+    Some(Report {
+        entries: vec![entry],
+        expansions: Vec::new(),
+        library: Vec::new(),
+        timings: Vec::new(),
+        warnings: Vec::new(),
+        sources: BTreeMap::from([(file, own)]),
+        source_names: Default::default(),
+    })
+}
+
 /// Checks `path` and what it imports; `text` stands for the content of `path`
 /// itself when it is given.
-pub fn check_report(path: &Path, text: Option<&str>) -> Result<Report, String> {
-    let (entries, expansions, library, timings) = check::check_file_timed(path, text)?;
+pub fn check_report(path: &Path, text: Option<&str>) -> Result<Report, Message> {
+    if let Some(report) = syntax_report(path, text) {
+        return Ok(report);
+    }
+    let (entries, expansions, library, timings, source_names) =
+        crate::read::check_file_timed_with_names(path, text)?;
     let mut sources = BTreeMap::new();
     // The file itself, even when it declares nothing the kernel checks.
     let own = match text {
@@ -285,13 +324,21 @@ pub fn check_report(path: &Path, text: Option<&str>) -> Result<Report, String> {
     {
         let own_file = |f: &Path| f == own_path;
         let (errors, arms) = if is_program(path) {
-            program_errors(path, crate::program::load_extracted(path), &own_file)
+            program_errors(path, crate::program::load_extracted_in(path), &own_file, false)
         } else if let Some((dir, main)) = tote_program(&own_path) {
-            let (errors, arms) = program_errors(&main, crate::program::load_tote(&dir), &own_file);
+            let main = main.unwrap_or_else(|| own_path.clone());
+            // A tote that does not load as a whole (a macro one of its examples
+            // uses does not check) says nothing of the errors in this file, so
+            // the file is read by itself then.
+            let loaded = crate::program::load_tote_in(&dir)
+                .or_else(|_| crate::program::load_extracted_in(&own_path));
+            let (errors, arms) = program_errors(&main, loaded, &own_file, false);
             let errors = errors.into_iter().filter(|e| e.file == own_path).collect();
             (errors, arms)
         } else {
-            (Vec::new(), Vec::new())
+            // A library file alone: what it declares is Nib all the same,
+            // and a function the kernel does not check is checked here.
+            program_errors(path, crate::program::load_extracted_in(path), &own_file, false)
         };
         entries.extend(errors);
         warnings.extend(arms);
@@ -304,6 +351,7 @@ pub fn check_report(path: &Path, text: Option<&str>) -> Result<Report, String> {
         timings,
         warnings,
         sources,
+        source_names,
     })
 }
 
@@ -351,7 +399,7 @@ fn is_program(path: &Path) -> bool {
     };
     crate::read::parse_program_unexpanded(&source).is_ok_and(|p| {
         p.stmts.iter().any(|s| match s {
-            Stmt::Fn(f) => f.name == "main",
+            Stmt::Fn(f) => f.name.spelling() == Some("main"),
             Stmt::Let { .. }
             | Stmt::Var { .. }
             | Stmt::Assign { .. }
@@ -364,7 +412,7 @@ fn is_program(path: &Path) -> bool {
 
 /// The tote `path` belongs to and the file its program starts from, when it
 /// has one.
-fn tote_program(path: &Path) -> Option<(PathBuf, PathBuf)> {
+fn tote_program(path: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
     if !crate::program::is_source_file(path) {
         return None;
     }
@@ -375,7 +423,7 @@ fn tote_program(path: &Path) -> Option<(PathBuf, PathBuf)> {
     let main = ["src/main.taut", "src/main.tauto"]
         .iter()
         .map(|name| dir.join(name))
-        .find(|p| p.is_file())?;
+        .find(|p| p.is_file());
     Some((dir.to_path_buf(), main))
 }
 
@@ -384,20 +432,39 @@ fn tote_program(path: &Path) -> Option<(PathBuf, PathBuf)> {
 /// the files `own` takes that no value reaches. A program that does not
 /// extract (one that uses axioms, say) gives none: what `run` says about it
 /// is not an error of its program.
+///
+/// A program that does not load is an error of the program when `entry` is the
+/// program the tote gives (`src/main.taut` or a command's main): `tauto run`
+/// stops at the same message, such as the type error of a `$` expression that
+/// a macro expands.
 fn program_errors(
     path: &Path,
-    loaded: Result<crate::program::Loaded, String>,
+    loaded: Result<crate::program::Loaded, Message>,
     own_file: &dyn Fn(&Path) -> bool,
+    entry: bool,
 ) -> (Vec<FileEntry>, Vec<FileWarning>) {
-    let Ok(loaded) = loaded else {
-        return (Vec::new(), Vec::new());
-    };
     let own = crate::program::canonical_path(path);
+    let loaded = match loaded {
+        Ok(loaded) => loaded,
+        Err(message) if entry || message.to_string().starts_with("native type function: ") => {
+            return (
+                vec![FileEntry {
+                    file: own,
+                    entry: check::Entry {
+                        name: "program".into(),
+                        verdict: Verdict::Failed(Diagnostic::new(message, None)),
+                    },
+                }],
+                Vec::new(),
+            );
+        }
+        Err(_) => return (Vec::new(), Vec::new()),
+    };
     let types = crate::types::check_program(&loaded.program);
     // A program whose types do not check reports those errors only: the
     // effects and uses read after them report what follows from them (the
     // method of a class whose instance the types did not find, say).
-    let errors: Vec<(String, u32)> = if !types.errors.is_empty() {
+    let errors: Vec<(tauto_message::Message, u32)> = if !types.errors.is_empty() {
         types
             .errors
             .iter()
@@ -410,7 +477,7 @@ fn program_errors(
         } else {
             rows.errors
                 .into_iter()
-                .map(|e| (e.message, e.span.start))
+                .map(|e| (e.message.into(), e.span.start))
                 .collect()
         }
     };
@@ -436,12 +503,23 @@ fn program_errors(
                 file,
                 warning: crate::deadcode::Warning {
                     code: "unreachable_arm",
-                    message: msg!("tauto-unreachable-arm").to_string(),
+                    message: msg!("tauto-unreachable-arm"),
                     span: tauto_parol::Span::new(start, start + (span.end - span.start)),
                 },
             })
         })
         .collect();
+    arms.extend(loaded.import_warnings.iter().filter_map(|(message, span)| {
+        let (file, start) = place(span.start)?;
+        own_file(&file).then(|| FileWarning {
+            file,
+            warning: crate::deadcode::Warning {
+                code: "unused_import_name",
+                message: message.clone(),
+                span: tauto_parol::Span::new(start, start + (span.end - span.start)),
+            },
+        })
+    }));
     arms.sort_by_key(|w| (w.file.clone(), w.warning.span.start));
     arms.dedup();
     let errors = errors
@@ -476,19 +554,25 @@ pub struct ToteReport {
 /// its `sources` and every other Tauto file in it, such as proofs and examples.
 /// A proof checked before with the same statement and dependencies is taken
 /// from the proof cache, so a dependency is checked again only when it changes.
-pub fn check_tote_report(dir: &Path) -> Result<ToteReport, String> {
+pub fn check_tote_report(dir: &Path) -> Result<ToteReport, Message> {
     let others = crate::program::package_other_files(dir)?;
     let mut roots: Vec<PathBuf> = crate::program::tote_inputs(dir)?
         .into_iter()
         .filter(|p| crate::program::is_source_file(p))
         .collect();
     roots.extend(others.iter().cloned());
-    let loaded = crate::program::load_roots(&roots)?;
-    let mut checked = crate::check::check_tote_files(&roots, true)?;
+    let input = crate::read::check_files_for_extraction(&roots, true, true)?;
+    let mut loaded = input.loaded;
+    loaded.per_file = input
+        .sources
+        .into_iter()
+        .map(|(_, statements)| statements)
+        .collect();
+    let mut checked = input.checked;
     // The functions that only run were taken out before the kernel saw
     // them; they still get a line, so that what was not proved is not
     // mistaken for what was.
-    let seen: BTreeSet<String> = checked
+    let seen: BTreeSet<Name> = checked
         .entries
         .iter()
         .map(|e| e.entry.name.clone())
@@ -502,7 +586,7 @@ pub fn check_tote_report(dir: &Path) -> Result<ToteReport, String> {
                     file: crate::program::canonical_path(&file.path),
                     entry: check::Entry {
                         name,
-                        verdict: Verdict::Skipped(msg!("tauto-skipped-runs").to_string()),
+                        verdict: Verdict::Skipped(msg!("tauto-skipped-runs")),
                     },
                 });
             }
@@ -532,14 +616,22 @@ pub fn check_tote_report(dir: &Path) -> Result<ToteReport, String> {
         .flat_map(|f| dead_code(&f.path, &f.text, false))
         .collect();
     warnings.extend(unchecked_builtins(&loaded, &checked.runtime, &own));
-    if let Some(main) = main
-        && checked
-            .entries
-            .iter()
-            .all(|e| !e.entry.failed() && !e.entry.incomplete())
+    // A library, a tote without a program, is read as Nib all the same: a
+    // function the kernel does not check (one written with `u64`) has its
+    // types checked here, as when a program depends on the library.
+    if checked
+        .entries
+        .iter()
+        .all(|e| !e.entry.failed() && !e.entry.incomplete())
+        && let Some(entry_main) = main.clone().or_else(|| own.iter().next().cloned())
     {
-        let (errors, arms) =
-            program_errors(&main, crate::program::load_tote(dir), &|f| own.contains(f));
+        // The program the tote gives fails here for what `tauto run` stops at when it loads.
+        let (errors, arms) = program_errors(
+            &entry_main,
+            crate::program::load_tote_in(dir),
+            &|f| own.contains(f),
+            main.is_some(),
+        );
         checked.entries.extend(errors);
         warnings.extend(arms);
     }
@@ -553,10 +645,12 @@ pub fn check_tote_report(dir: &Path) -> Result<ToteReport, String> {
             .iter()
             .all(|e| !e.entry.failed() && !e.entry.incomplete())
         {
-            let (errors, arms) =
-                program_errors(&main, crate::program::load_command(dir, dir, name), &|f| {
-                    own.contains(f)
-                });
+            let (errors, arms) = program_errors(
+                &main,
+                crate::program::load_command_in(dir, dir, name),
+                &|f| own.contains(f),
+                true,
+            );
             checked.entries.extend(errors);
             warnings.extend(arms);
         }
@@ -581,7 +675,7 @@ pub fn check_tote_report(dir: &Path) -> Result<ToteReport, String> {
 /// each chain; those that use it say so in their own verdicts.
 fn unchecked_builtins(
     loaded: &crate::program::Loaded,
-    runtime: &std::collections::HashSet<String>,
+    runtime: &std::collections::HashSet<Name>,
     own: &BTreeSet<PathBuf>,
 ) -> Vec<FileWarning> {
     let read: BTreeSet<&str> = loaded
@@ -622,13 +716,10 @@ fn unchecked_builtins(
             if !runtime.contains(&f.name) {
                 continue;
             }
-            let mut refs: Vec<String> = crate::lin::free_vars(&f.body).into_iter().collect();
+            let mut refs: Vec<Name> = crate::lin::free_vars(&f.body).into_iter().collect();
             refs.sort();
             let found = refs.iter().find_map(|n| {
-                if !runtime.contains(n)
-                    || f.params.contains(n)
-                    || crate::surface::qualify::short(n) != n.as_str()
-                {
+                if !crate::bindings::is_library(n, n.as_str()) || f.params.contains(n) {
                     return None;
                 }
                 let module = crate::stdlib::module_of(n)?;
@@ -644,11 +735,10 @@ fn unchecked_builtins(
                     code: "unchecked_builtin",
                     message: msg!(
                         "tauto-unchecked-builtin",
-                        name = &f.name,
+                        name = f.name.to_string(),
                         builtin = n.as_str(),
                         module = module
-                    )
-                    .to_string(),
+                    ),
                     span,
                 },
             });
@@ -657,7 +747,7 @@ fn unchecked_builtins(
     out
 }
 
-fn run_only_fns(stmts: &[Stmt], out: &mut Vec<String>) {
+fn run_only_fns(stmts: &[Stmt], out: &mut Vec<Name>) {
     for s in stmts {
         match s {
             Stmt::Fn(f) => out.push(f.name.clone()),
@@ -767,7 +857,55 @@ impl Report {
             timings: Vec::new(),
             warnings: Vec::new(),
             sources,
+            source_names: Default::default(),
         }
+    }
+
+    pub fn with_source_names(
+        mut self,
+        names: BTreeMap<PathBuf, tauto_surface::source_names::SourceNames>,
+    ) -> Self {
+        self.source_names = names;
+        self
+    }
+
+    pub fn source_name(&self, hole: &Hole, name: &Name) -> Result<String, Message> {
+        let names = self
+            .source_names
+            .get(&hole.file)
+            .ok_or_else(|| msg!("tauto-report-no-binding-environment"))?;
+        let locals: Vec<Name> = hole
+            .goal
+            .context
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+        Ok(names.name(name, &locals)?)
+    }
+
+    pub fn source_reference(&self, hole: &Hole, written: &str) -> Option<Name> {
+        let names = self.source_names.get(&hole.file)?;
+        let locals: Vec<_> = hole
+            .goal
+            .context
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+        names.reference(written, &locals)
+    }
+
+    pub fn source_term(&self, hole: &Hole, term: &SurfaceTerm) -> Result<String, Message> {
+        let names = self
+            .source_names
+            .get(&hole.file)
+            .ok_or_else(|| msg!("tauto-report-no-binding-environment"))?;
+        let locals: Vec<Name> = hole
+            .goal
+            .context
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+        Ok(names.term(term, &locals)?)
     }
 
     /// The constants a proof may use, when the checker that made the verdicts
@@ -854,7 +992,7 @@ impl Report {
                 for h in holes {
                     out.push(Hole {
                         file: e.file.clone(),
-                        declaration: e.entry.name.clone(),
+                        declaration: e.entry.name.to_string(),
                         goal: h.clone(),
                     });
                 }
@@ -936,7 +1074,7 @@ impl Report {
         ));
         // Unknowns of an implicit argument that nothing fixed: the goal is
         // not final until they are, and is never guessed.
-        let mut metas: Vec<String> = Vec::new();
+        let mut metas: Vec<Name> = Vec::new();
         for t in std::iter::once(&h.goal.goal).chain(h.goal.context.iter().map(|(_, t)| t)) {
             for v in free_vars(t) {
                 if v.starts_with('?') && !metas.contains(&v) {
@@ -1271,7 +1409,11 @@ impl Report {
             line.push_str(&msg!("tauto-summary-axioms-none").to_string());
         } else {
             let axioms: Vec<_> = axioms.into_iter().collect();
-            let list = axioms.join(", ");
+            let list = axioms
+                .iter()
+                .map(Name::as_str)
+                .collect::<Vec<_>>()
+                .join(", ");
             line.push_str(&msg!("tauto-summary-axioms", list = list.as_str()).to_string());
         }
         out.push_str(&line);
@@ -1285,9 +1427,8 @@ impl Report {
     /// that failed is left out when another failure is shown, since that one
     /// says what to fix.
     pub fn problems(&self) -> Vec<Problem<'_>> {
-        let cascades = |d: &Diagnostic| {
-            crate::said::ends_with(&d.message, &["kernel-uses-failed"]).is_some()
-        };
+        let cascades =
+            |d: &Diagnostic| crate::said::ends_with(&d.message, &["kernel-uses-failed"]).is_some();
         let root_shown = self.entries.iter().any(|e| match &e.entry.verdict {
             Verdict::Failed(d) => !cascades(d),
             _ => false,
@@ -1298,24 +1439,25 @@ impl Report {
             let source = self.source(&e.file);
             match &e.entry.verdict {
                 Verdict::Failed(d) if root_shown && cascades(d) => {}
-                Verdict::Failed(d) => out.push(Problem {
-                    severity: "error".into(),
-                    file: &e.file,
-                    source,
-                    span: d.span,
-                    message: d.message.to_string(),
+                Verdict::Failed(d) => {
                     // The whole program's errors belong to no declaration.
-                    label: if e.entry.name == "program" {
+                    let label = if e.entry.name.as_str() == "program" {
                         String::new()
                     } else {
                         format!("in `{name}`")
-                    },
-                    notes: d
-                        .fix
-                        .iter()
-                        .map(|f| format!("help: {}", f.title))
-                        .collect(),
-                }),
+                    };
+                    for d in std::iter::once(d).chain(&d.also) {
+                        out.push(Problem {
+                            severity: "error".into(),
+                            file: &e.file,
+                            source,
+                            span: d.span,
+                            message: d.message.to_string(),
+                            label: label.clone(),
+                            notes: d.fix.iter().map(|f| format!("help: {}", f.title)).collect(),
+                        });
+                    }
+                }
                 Verdict::Incomplete { holes, uses } => {
                     for h in holes {
                         out.push(Problem {
@@ -1349,7 +1491,7 @@ impl Report {
                 file: &w.file,
                 source: self.source(&w.file),
                 span: Some(w.warning.span),
-                message: w.warning.message.clone(),
+                message: w.warning.message.to_string(),
                 label: String::new(),
                 notes: Vec::new(),
             });
@@ -1398,7 +1540,11 @@ impl Report {
                 ));
             }
             Verdict::Checked { axioms } => {
-                let list = axioms.join(", ");
+                let list = axioms
+                    .iter()
+                    .map(Name::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 out.push_str(&format!(
                     "{} {} {}\n",
                     label(msg!("tauto-label-ok").to_string(), 8),
@@ -1469,7 +1615,7 @@ impl Report {
 }
 
 /// The hole named `name` in `path` itself (not in a file it imports).
-pub fn find_hole(report: &Report, path: &Path, name: &str) -> Result<Hole, String> {
+pub fn find_hole(report: &Report, path: &Path, name: &str) -> Result<Hole, Message> {
     // As the loader names files, so that a file only an editor holds (not on
     // disk) is found too.
     let root = crate::program::canonical_path(path);
@@ -1482,16 +1628,14 @@ pub fn find_hole(report: &Report, path: &Path, name: &str) -> Result<Hole, Strin
             "tauto-no-hole",
             name = name,
             path = path.display().to_string()
-        )
-        .to_string());
+        ));
     };
     if found.next().is_some() {
         return Err(msg!(
             "tauto-hole-many",
             name = name,
             path = path.display().to_string()
-        )
-        .to_string());
+        ));
     }
     Ok(hole)
 }
@@ -1508,7 +1652,7 @@ pub struct Attempt {
 
 /// The text of the file `hole` is in with `expr` in place of the hole, spliced
 /// as written.
-pub fn splice(report: &Report, hole: &Hole, expr: &str) -> Result<String, String> {
+pub fn splice(report: &Report, hole: &Hole, expr: &str) -> Result<String, Message> {
     let name = &hole.goal.name;
     if name.starts_with("law:") {
         return splice_law(report, hole, expr);
@@ -1516,14 +1660,14 @@ pub fn splice(report: &Report, hole: &Hole, expr: &str) -> Result<String, String
     let source = report.source(&hole.file);
     let (start, end) = (hole.goal.span.start as usize, hole.goal.span.end as usize);
     if source.get(start..end) != Some(&format!("?{name}")) {
-        return Err(msg!("tauto-hole-text-differs", name = name.as_str()).to_string());
+        return Err(msg!("tauto-hole-text-differs", name = name.as_str()));
     }
     Ok(format!("{}{}{}", &source[..start], expr, &source[end..]))
 }
 
 /// The declarations of `source`, the items of a `mutual` block among them.
 fn declarations(source: &str) -> Vec<Stmt> {
-    let Ok(program) = parse_program_at(source, 0) else {
+    let Ok(program) = crate::surface::parse_program_unresolved_at(source, 0) else {
         return Vec::new();
     };
     let mut out = Vec::new();
@@ -1559,7 +1703,7 @@ fn rename_ident(text: &str, from: &str, to: &str) -> String {
 /// `expr` is its proof: the law is written into the instance, with the
 /// statement of the class and `H` for its parameter (or, for a law written
 /// without a body, the body is added).
-fn splice_law(report: &Report, hole: &Hole, expr: &str) -> Result<String, String> {
+fn splice_law(report: &Report, hole: &Hole, expr: &str) -> Result<String, Message> {
     let name = &hole.goal.name;
     let source = report.source(&hole.file);
     let (start, end) = (hole.goal.span.start as usize, hole.goal.span.end as usize);
@@ -1572,13 +1716,17 @@ fn splice_law(report: &Report, hole: &Hole, expr: &str) -> Result<String, String
         .split('(')
         .next()
         .unwrap_or_default();
-    if at.starts_with("law") {
+    if at.starts_with("theorem") {
         return Ok(format!("{} {{ {expr} }}{}", &source[..end], &source[end..]));
     }
     let instance = declarations(source)
         .into_iter()
         .find_map(|s| match s {
-            Stmt::Instance(i) if i.span.start as usize == start && i.class == class => Some(i),
+            Stmt::Instance(i)
+                if i.span.start as usize == start && i.class.spelling() == Some(class) =>
+            {
+                Some(i)
+            }
             _ => None,
         })
         .ok_or_else(|| {
@@ -1593,7 +1741,7 @@ fn splice_law(report: &Report, hole: &Hole, expr: &str) -> Result<String, String
         .files()
         .find_map(|(_, text)| {
             declarations(text).into_iter().find_map(|s| match s {
-                Stmt::Class(c) if c.name == class => Some((c, text.to_string())),
+                Stmt::Class(c) if c.name.spelling() == Some(class) => Some((c, text.to_string())),
                 _ => None,
             })
         })
@@ -1601,7 +1749,7 @@ fn splice_law(report: &Report, hole: &Hole, expr: &str) -> Result<String, String
     let law_decl = decl
         .laws
         .iter()
-        .find(|l| l.name == law)
+        .find(|l| l.name.spelling() == Some(law))
         .ok_or_else(|| msg!("tauto-hole-no-law", class = class, law = law).to_string())?;
     let header = decl_source
         .get(law_decl.span.start as usize..law_decl.span.end as usize)
@@ -1622,24 +1770,26 @@ fn splice_law(report: &Report, hole: &Hole, expr: &str) -> Result<String, String
 /// the file as it is. The text of `expr` is spliced as written, so it is a
 /// term that reads as one wherever the hole stands (a call, a name, a
 /// `{ … }` block).
-pub fn try_fill(path: &Path, name: &str, expr: &str) -> Result<Attempt, String> {
+pub fn try_fill(path: &Path, name: &str, expr: &str) -> Result<Attempt, Message> {
     let before = check_report(path, None)?;
     let hole = find_hole(&before, path, name)?;
     let candidate = splice(&before, &hole, expr)?;
     let report = check_report(path, Some(&candidate))
-        .map_err(|e| msg!("tauto-fill-breaks", expr = expr, name = name, error = e).to_string())?;
+        .map_err(|e| msg!("tauto-fill-breaks", expr = expr, name = name, error = e))?;
     // Macro failures, including proof steps, are reported separately from
     // declarations in the file containing the call.
     let macro_failures = |r: &Report| {
         r.entries
             .iter()
-            .filter(|e| e.entry.name == "macro" && e.file == hole.file && e.entry.failed())
+            .filter(|e| {
+                e.entry.name.spelling() == Some("macro") && e.file == hole.file && e.entry.failed()
+            })
             .count()
     };
     let accepted = !report
         .entries
         .iter()
-        .any(|e| e.entry.name == hole.declaration && e.entry.failed())
+        .any(|e| e.entry.name.as_str() == hole.declaration && e.entry.failed())
         && macro_failures(&report) <= macro_failures(&before);
     let before_holes: Vec<Hole> = before
         .holes()

@@ -1,0 +1,70 @@
+@ cases.dependent-and-derived-equalities-track-the-assumption
+files."main.nib" = ```tauto
+import std::Quot
+
+// The codomain can vary with the input.
+theorem dependent_extensionality<A: Type, B: (A) -> Type>(
+  f: ∀ x: A. B(x),
+  g: ∀ x: A. B(x),
+  pointwise: ∀ x: A. f(x) = g(x)
+): f = g {
+  funext(A, B, f, g, pointwise)
+}
+
+theorem functions_equal(
+  f: (Nat) -> Nat,
+  g: (Nat) -> Nat,
+  pointwise: ∀ x: Nat. f(x) = g(x)
+): f = g {
+  funext_nondependent(Nat, Nat, f, g, pointwise)
+}
+
+// Merely importing the library does not give this theorem an axiom dependency.
+theorem identity_is_identity(n: Nat): n = n {
+  Refl(Nat, n)
+}
+```
+checks.dependent_extensionality = "axioms: Quot::sound"
+checks.functions_equal = "axioms: Quot::sound"
+checks.identity_is_identity = "ok"
+checks_all = "checked"
+
+@ cases.extensionality-is-not-in-the-prelude
+source = `theorem unavailable(): True { funext }`
+checks.unavailable = "error: "
+
+@ cases.a-wrong-pointwise-witness-is-rejected
+files."main.nib" = ```tauto
+import std::Quot
+
+theorem wrong(f: (Nat) -> Nat, g: (Nat) -> Nat,
+h: ∀ n: Nat. f(n) = f(n)): f = g {
+funext(Nat, n => Nat, f, g, h)
+}
+```
+checks.wrong = "error: "
+checks_all = "checked"
+
+@ cases.a-pointwise-hypothesis-does-not-change-conversion
+files."main.nib" = ```tauto
+import std::Quot
+
+theorem no_conversion(f: (Nat) -> Nat, g: (Nat) -> Nat,
+h: ∀ n: Nat. f(n) = g(n)): f(0) = g(0) {
+Refl(Nat, f(0))
+}
+```
+checks.no_conversion = "error: "
+checks_all = "checked"
+
+@ cases.higher-universes-are-not-silently-lowered
+files."main.nib" = ```tauto
+import std::Quot
+
+theorem too_large(f: (Type) -> Nat, g: (Type) -> Nat,
+h: ∀ A: Type. f(A) = g(A)): f = g {
+funext(Type, A => Nat, f, g, h)
+}
+```
+checks.too_large = "error: "
+checks_all = "checked"

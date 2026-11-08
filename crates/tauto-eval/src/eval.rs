@@ -40,6 +40,7 @@
 //!
 //! It implements Nib's semantics.
 
+use crate::surface::Name;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -50,7 +51,7 @@ use crate::rows::check_program_rows;
 use crate::surface::{
     BudgetLimit, FnDecl, Handler, MatchArm, Pattern, Program, Stmt, SurfaceTerm, TermKind,
 };
-use crate::types::{Datas, Kind, Quant, Ty, TypeReport, Width, check_program, prelude, site};
+use crate::types::{Datas, Kind, Quant, Ty, TypeReport, Width, check_program, site};
 use tauto_message::{Message, msg};
 use tauto_rt::nat::Nat;
 pub use tauto_rt::permissions::{Grant, Permissions};
@@ -59,6 +60,8 @@ pub const DEFAULT_BUDGET: u64 = 10_000_000;
 
 #[derive(Clone)]
 pub enum Value<'a> {
+    /// A declaration capability issued by the macro host.
+    Declaration(tauto_surface::identity::DeclRef),
     Int(i128),
     /// A `nat` past what an `Int` holds, or made by `nat`'s arithmetic. A
     /// literal of type `nat` is an `Int`; the two are compared as numbers.
@@ -79,7 +82,8 @@ pub enum Value<'a> {
     Builtin(&'a str),
     /// A function of a program's `extern` block: a signature only.
     Extern(&'a str),
-    Ctor(&'a str),
+    /// A constructor with fields, as a function.
+    Ctor(&'a Name),
     /// A stopped `budget` body, before a handler has it.
     Stopped(Rc<Stopped<'a>>),
     /// What an `exceeded` arm receives.
@@ -93,9 +97,6 @@ pub enum Value<'a> {
     Array(Rc<[Value<'a>]>),
     /// `Bytes`: shared and read-only; a slice shares the storage.
     Bytes(tauto_rt::stdlib::Bytes),
-    /// A product's members in the order written, each with its type as
-    /// `types.rs` writes it.
-    Product(Rc<[(Rc<str>, Value<'a>)]>),
     /// `&mut p`: the place `p` in a `var`'s cell.
     Ref(Place<'a>),
     /// What a `var` holds once the ownership check saw its value moved out.
@@ -121,12 +122,12 @@ pub struct Info<'a> {
 pub struct Captured<'a>(Rc<Vec<Frame<'a>>>);
 
 pub struct Closure<'a> {
-    params: &'a [String],
+    params: &'a [Name],
     body: &'a SurfaceTerm,
     env: Env<'a>,
     /// With the ownership check, the captured names whose values moved into
     /// the closure: it drops them when it is dropped, called or not.
-    owns: Vec<&'a str>,
+    owns: Vec<&'a Name>,
 }
 
 /// A value of a declared type: its constructor, and its fields in the
@@ -143,8 +144,10 @@ pub struct Data<'a> {
 
 /// What every value of one constructor has in common, held once.
 pub struct Shape {
-    ty: String,
-    ctor: String,
+    ty: Name,
+    ctor: Name,
+    display: String,
+    is_struct: bool,
     names: Vec<Option<String>>,
 }
 
@@ -174,6 +177,7 @@ pub struct Res<'a> {
 }
 
 enum ResKind<'a> {
+    Signal(tauto_rt::stdlib::Signal),
     Buf(RefCell<String>),
     Vec(RefCell<Vec<Value<'a>>>),
     Map(RefCell<Entries<'a>>),
@@ -283,7 +287,11 @@ impl<'a> Root<'a> {
                     .get(*i)
                     .map(|e| e.1.clone())
                     .expect("evaluator place: missing map entry"),
-                ResKind::Buf(_) | ResKind::Cell(..) | ResKind::Weak(_) | ResKind::Guard(..) => {
+                ResKind::Signal(_)
+                | ResKind::Buf(_)
+                | ResKind::Cell(..)
+                | ResKind::Weak(_)
+                | ResKind::Guard(..) => {
                     unreachable!("evaluator place: element root is not a container")
                 }
             },
@@ -308,7 +316,11 @@ impl<'a> Root<'a> {
                         .expect("evaluator place: missing map entry")
                         .1 = value;
                 }
-                ResKind::Buf(_) | ResKind::Cell(..) | ResKind::Weak(_) | ResKind::Guard(..) => {
+                ResKind::Signal(_)
+                | ResKind::Buf(_)
+                | ResKind::Cell(..)
+                | ResKind::Weak(_)
+                | ResKind::Guard(..) => {
                     unreachable!("evaluator place: element root is not a container")
                 }
             },
@@ -348,12 +360,6 @@ fn unalias<'a>(value: &Value<'a>, place: &Place<'a>) -> Value<'a> {
                 owns: false,
             })
         }
-        Value::Product(members) => Value::Product(
-            members
-                .iter()
-                .map(|(t, v)| (t.clone(), unalias(v, place)))
-                .collect(),
-        ),
         Value::Array(items) => Value::Array(items.iter().map(|v| unalias(v, place)).collect()),
         other => other.clone(),
     }
@@ -440,6 +446,7 @@ impl fmt::Display for Value<'_> {
             Ok(())
         };
         match self {
+            Value::Declaration(_) => write!(f, "<declaration reference>"),
             Value::Int(n) => write!(f, "{n}"),
             Value::Nat(n) => write!(f, "{n}"),
             Value::Float(x) => write!(f, "{x}"),
@@ -453,17 +460,29 @@ impl fmt::Display for Value<'_> {
             Value::Builtin(name) => write!(f, "<{name}>"),
             Value::Stopped(_) | Value::Info(_) => write!(f, "<budget info>"),
             Value::Resume(..) => write!(f, "<function>"),
-            Value::Data(d) if d.shape.ctor == SECRET => write!(f, "Secret"),
-            Value::Data(d)
-                if d.fields.is_empty()
-                    && d.shape.names.is_empty()
-                    && d.shape.ctor == d.shape.ty =>
-            {
-                write!(f, "{} {{}}", shown(&d.shape.ctor))
+            Value::Data(d) if d.shape.ctor == secret_reference() => write!(f, "Secret"),
+            // `#(a, b, c)`: the `Pair`s nested to the right, as the value was written.
+            Value::Data(d) if is_pair_name(&d.shape.ty) && d.fields.len() == 2 => {
+                write!(f, "#({}", d.fields[0])?;
+                let mut rest = deref(&d.fields[1]);
+                while let Value::Data(r) = &rest
+                    && is_pair_name(&r.shape.ty)
+                    && r.fields.len() == 2
+                {
+                    write!(f, ", {}", r.fields[0])?;
+                    let next = deref(&r.fields[1]);
+                    rest = next;
+                }
+                write!(f, ", {rest})")
             }
-            Value::Data(d) if d.fields.is_empty() => write!(f, "{}", shown(&d.shape.ctor)),
+            Value::Data(d)
+                if d.fields.is_empty() && d.shape.names.is_empty() && d.shape.is_struct =>
+            {
+                write!(f, "{} {{}}", &d.shape.display)
+            }
+            Value::Data(d) if d.fields.is_empty() => write!(f, "{}", &d.shape.display),
             Value::Data(d) if d.shape.names.iter().all(|n| n.is_some()) => {
-                write!(f, "{} {{ ", shown(&d.shape.ctor))?;
+                write!(f, "{} {{ ", &d.shape.display)?;
                 for (i, (n, v)) in d.shape.names.iter().zip(&d.fields).enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
@@ -473,24 +492,15 @@ impl fmt::Display for Value<'_> {
                 write!(f, " }}")
             }
             Value::Data(d) => {
-                write!(f, "{}(", shown(&d.shape.ctor))?;
+                write!(f, "{}(", &d.shape.display)?;
                 list(f, &d.fields)?;
                 write!(f, ")")
-            }
-            Value::Product(ms) => {
-                for (i, (_, v)) in ms.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " × ")?;
-                    }
-                    write!(f, "{v}")?;
-                }
-                Ok(())
             }
             Value::Res(r) => match &r.kind {
                 ResKind::Buf(b) => write!(f, "Buf({:?})", b.borrow()),
                 // As the backends show it: a `Mutex` hides what it holds.
                 ResKind::Cell(_, "Mutex") => write!(f, "Mutex"),
-                ResKind::Cell(_, "Signal") => write!(f, "Signal"),
+                ResKind::Signal(_) => write!(f, "Signal"),
                 ResKind::Cell(c, name) => write!(f, "{name}({})", c.borrow()),
                 ResKind::Weak(_) => write!(f, "Weak"),
                 ResKind::Guard(..) => write!(f, "MutexGuard"),
@@ -664,6 +674,7 @@ pub fn run_program_with_rows(
             // but for what `host_run` answers.
             let mut rows = check_program_rows(&wrapped);
             rows.host_effects.clear();
+            rows.host_waits = false;
             return run_program_with_rows(&wrapped, budget, options, &rows);
         }
     }
@@ -674,18 +685,22 @@ pub fn run_program_with_rows(
     if let Some(e) = crate::lin::check(program, &report, rows).first() {
         return Err(RunError::Use(e.to_string()));
     }
-    run_program(program, budget, &report.with_prelude(), options)
+    run_program(program, budget, &report.with_prelude_for(program), options)
 }
 
 /// What [`run_program_with_rows`] rejects in `program`, with its `rows`,
 /// before running anything: its type errors, or else its use errors, each
 /// as a message and the byte it is at. `tauto check` reports these, so that
 /// a program it accepts is not one `run` rejects.
-pub fn errors_before_run(program: &Program, rows: &crate::rows::RowReport) -> Vec<(String, u32)> {
+pub fn errors_before_run(
+    program: &Program,
+    rows: &crate::rows::RowReport,
+) -> Vec<(tauto_message::Message, u32)> {
     if !rows.host_effects.is_empty() {
         if let Some(wrapped) = crate::host::wrap(program) {
             let mut rows = check_program_rows(&wrapped);
             rows.host_effects.clear();
+            rows.host_waits = false;
             return errors_before_run(&wrapped, &rows);
         }
     }
@@ -699,7 +714,7 @@ pub fn errors_before_run(program: &Program, rows: &crate::rows::RowReport) -> Ve
     }
     crate::lin::check(program, &report, rows)
         .into_iter()
-        .map(|e| (e.message, e.span.start))
+        .map(|e| (e.message.into(), e.span.start))
         .collect()
 }
 
@@ -712,7 +727,7 @@ enum Slot<'a> {
 }
 
 struct EnvNode<'a> {
-    name: &'a str,
+    name: &'a Name,
     slot: Slot<'a>,
     next: Env<'a>,
     /// Unique among the nodes of a run, for the ownership check.
@@ -723,7 +738,7 @@ static NODES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::n
 
 type Env<'a> = Option<Rc<EnvNode<'a>>>;
 
-fn bind<'a>(env: &Env<'a>, name: &'a str, slot: Slot<'a>) -> Env<'a> {
+fn bind<'a>(env: &Env<'a>, name: &'a Name, slot: Slot<'a>) -> Env<'a> {
     Some(Rc::new(EnvNode {
         name,
         slot,
@@ -732,7 +747,7 @@ fn bind<'a>(env: &Env<'a>, name: &'a str, slot: Slot<'a>) -> Env<'a> {
     }))
 }
 
-fn lookup_node<'a>(env: &Env<'a>, name: &str) -> Option<Rc<EnvNode<'a>>> {
+fn lookup_node<'a>(env: &Env<'a>, name: &Name) -> Option<Rc<EnvNode<'a>>> {
     let mut at = env;
     while let Some(node) = at {
         if node.name == name {
@@ -747,11 +762,11 @@ fn lookup_node<'a>(env: &Env<'a>, name: &str) -> Option<Rc<EnvNode<'a>>> {
 /// (`docs/design/shared-levels.md`, 実行系の捕捉). Keeping the whole scope
 /// would hold storages the closure never names, which the cycle check does
 /// not see.
-fn captured_env<'a>(env: &Env<'a>, names: &[String]) -> Env<'a> {
+fn captured_env<'a>(env: &Env<'a>, names: &[Name]) -> Env<'a> {
     let mut out: Env<'a> = None;
-    let mut seen: Vec<&str> = Vec::new();
+    let mut seen: Vec<&Name> = Vec::new();
     for name in names {
-        if seen.contains(&name.as_str()) {
+        if seen.contains(&name) {
             continue;
         }
         seen.push(name);
@@ -762,7 +777,7 @@ fn captured_env<'a>(env: &Env<'a>, names: &[String]) -> Env<'a> {
     out
 }
 
-fn lookup<'a>(env: &Env<'a>, name: &str) -> Option<Slot<'a>> {
+fn lookup<'a>(env: &Env<'a>, name: &Name) -> Option<Slot<'a>> {
     lookup_node(env, name).map(|n| n.slot.clone())
 }
 
@@ -789,17 +804,19 @@ fn nodes_down_to<'a>(env: &Env<'a>, base: &Env<'a>) -> Vec<Rc<EnvNode<'a>>> {
 enum Ctrl<'a> {
     Eval(&'a SurfaceTerm, Env<'a>),
     Ret(Value<'a>),
-    Perform(String, Vec<Value<'a>>),
+    Perform(Name, Vec<Value<'a>>),
 }
 
 #[derive(Clone)]
 enum Frame<'a> {
     /// The callee is evaluated; next the arguments.
     AppFn {
+        at: crate::surface::TermId,
         args: &'a [SurfaceTerm],
         env: Env<'a>,
     },
     AppArg {
+        at: crate::surface::TermId,
         callee: Value<'a>,
         done: Vec<Value<'a>>,
         rest: &'a [SurfaceTerm],
@@ -867,20 +884,13 @@ enum Frame<'a> {
         owned: bool,
     },
     PerformArgs {
-        effect: &'a str,
+        effect: &'a Name,
         done: Vec<Value<'a>>,
         rest: &'a [SurfaceTerm],
         env: Env<'a>,
     },
     RecordArgs {
-        name: &'a str,
-        fields: &'a [(String, SurfaceTerm)],
-        done: Vec<Value<'a>>,
-        env: Env<'a>,
-    },
-    /// `Pair { fst, snd }` whose type is a product: its members as the product's.
-    PairArgs {
-        term: &'a SurfaceTerm,
+        name: &'a Name,
         fields: &'a [(String, SurfaceTerm)],
         done: Vec<Value<'a>>,
         env: Env<'a>,
@@ -915,12 +925,10 @@ enum Frame<'a> {
         done: Vec<Value<'a>>,
         env: Env<'a>,
     },
-    /// `(base: T)`: the base is evaluated; the member has type `key`.
-    Project {
-        key: Rc<str>,
-    },
-    /// A product taken to fewer members (`A × B <: A`).
+    /// A product taken to fewer members (`A × B <: A`): the type of the value, and the
+    /// type it is taken to.
     Fit {
+        from: &'a Ty,
         to: &'a Ty,
     },
 }
@@ -944,7 +952,6 @@ impl<'a> Frame<'a> {
             Frame::OpArg { done, env, .. }
             | Frame::PerformArgs { done, env, .. }
             | Frame::RecordArgs { done, env, .. }
-            | Frame::PairArgs { done, env, .. }
             | Frame::ProductArgs { done, env, .. } => (Some(env), done.iter().collect()),
             Frame::MatchGuard {
                 scrutinee, arm_env, ..
@@ -953,7 +960,6 @@ impl<'a> Frame<'a> {
             Frame::Budget { .. }
             | Frame::BorrowTemp
             | Frame::Field { .. }
-            | Frame::Project { .. }
             | Frame::Fit { .. } => (None, Vec::new()),
         }
     }
@@ -999,18 +1005,19 @@ struct Machine<'a> {
     /// The fields a function that returns `&mut A` gives back
     /// (`fn f(&mut s: S): &mut u64 { s.n }`): each is lent, not read.
     lent_fields: HashSet<*const SurfaceTerm>,
-    globals: HashMap<String, Value<'a>>,
+    globals: HashMap<Name, Value<'a>>,
     /// The `Shape` of each constructor made so far, shared by its values.
-    shapes: HashMap<String, Rc<Shape>>,
+    shapes: HashMap<Name, Rc<Shape>>,
     outputs: Vec<(String, String)>,
     tests: Vec<(String, Option<String>)>,
     report: &'a TypeReport,
     /// The locals whose type is a borrow, by where they are bound, and
     /// whether the borrow is `&mut`: every other local gets a plain slot.
-    borrow_locals: HashMap<crate::surface::TermId, Vec<(&'a str, bool)>>,
+    borrow_locals: HashMap<crate::surface::TermId, Vec<(&'a Name, bool)>>,
     /// The constructor a name or a record names where it is written, once
     /// resolved: the occurrence's type does not change while it runs.
-    ctor_keys: RefCell<HashMap<crate::surface::TermId, &'a str>>,
+    ctor_keys: RefCell<HashMap<crate::surface::TermId, &'a Name>>,
+    /// The dynamic ownership check is on.
     check: bool,
     probes: bool,
     /// The names (by their node) whose value was moved out.
@@ -1044,11 +1051,14 @@ struct HostState {
     /// The `macro_warn`s: message, byte, code.
     warnings: Vec<(String, u64, String)>,
     elab: Option<ElabFn>,
+    resolve_global: Option<ResolveGlobalFn>,
     /// What `syn_expand` answers: an expression and its expansion.
     expanded: Vec<(Node, Node)>,
 }
 
 /// What answers the `elab_*` operations: the operation and its arguments.
+pub type ResolveGlobalFn = Rc<dyn Fn(&str) -> Result<tauto_surface::identity::DeclRef, String>>;
+
 pub type ElabFn = Rc<dyn Fn(&str, &[Node]) -> Result<Node, String>>;
 
 fn run_program<'a>(
@@ -1072,14 +1082,11 @@ fn run_program<'a>(
     })
 }
 
-fn borrow_locals(report: &TypeReport) -> HashMap<crate::surface::TermId, Vec<(&str, bool)>> {
+fn borrow_locals(report: &TypeReport) -> HashMap<crate::surface::TermId, Vec<(&Name, bool)>> {
     let mut locals: HashMap<_, Vec<_>> = HashMap::new();
     for ((name, at), ty) in &report.locals {
         if let Ty::Borrow(_, mutable) = ty {
-            locals
-                .entry(*at)
-                .or_default()
-                .push((name.as_str(), *mutable));
+            locals.entry(*at).or_default().push((name, *mutable));
         }
     }
     locals
@@ -1126,7 +1133,7 @@ fn machine_for<'a>(
         exit: None,
         host: None,
     };
-    let lib: &'static Program = prelude();
+    let lib: &'static Program = crate::types::prelude_for(program);
     let closure = |f: &'a FnDecl| {
         Value::Closure(Rc::new(Closure {
             params: &f.params,
@@ -1168,6 +1175,7 @@ pub struct Host {
     pub warnings: Vec<(String, u64, String)>,
     /// Answers `elab_*`; none outside a typed macro.
     pub elab: Option<ElabFn>,
+    pub resolve_global: Option<ResolveGlobalFn>,
     pub expanded: Vec<(Node, Node)>,
 }
 
@@ -1184,6 +1192,7 @@ impl Host {
             max_allocations,
             warnings: Vec::new(),
             elab: None,
+            resolve_global: None,
             expanded: Vec::new(),
         }
     }
@@ -1198,6 +1207,22 @@ pub fn call_function(
     args: &[Node],
     host: &mut Host,
 ) -> Result<(Node, CallStats), RunError> {
+    let mut candidates = report.schemes.keys().filter(|n| n.as_str() == name);
+    let reference = candidates
+        .next()
+        .filter(|_| candidates.next().is_none())
+        .ok_or_else(|| RunError::Runtime(msg!("eval-is-not-defined", name = name).to_string()))?;
+    call_bound_function(program, report, reference, args, host)
+}
+
+/// Executes the same declaration reference retained by the caller's checker.
+pub fn call_bound_function(
+    program: &Program,
+    report: &TypeReport,
+    name: &Name,
+    args: &[Node],
+    host: &mut Host,
+) -> Result<(Node, CallStats), RunError> {
     let call = std::panic::AssertUnwindSafe(|| {
         let mut machine = machine_for(program, host.max_steps, report, RunOptions::default());
         machine.host = Some(HostState {
@@ -1205,16 +1230,17 @@ pub fn call_function(
             allocations: 0,
             warnings: Vec::new(),
             elab: host.elab.clone(),
+            resolve_global: host.resolve_global.clone(),
             expanded: host.expanded.clone(),
         });
         let callee = machine.globals.get(name).cloned().ok_or_else(|| {
-            RunError::Runtime(msg!("eval-is-not-defined", name = name).to_string())
+            RunError::Runtime(msg!("eval-is-not-defined", name = name.to_string()).to_string())
         })?;
         let mut values = Vec::new();
         for a in args {
             values.push(machine.node_value(a)?);
         }
-        let (ctrl, kont) = machine.apply(callee, values, None)?;
+        let (ctrl, kont) = machine.apply(callee, values, None, None)?;
         let value = machine.run(ctrl, kont)?;
         let node = machine.value_node(&value)?;
         let state = machine.host.take().expect("the host is set");
@@ -1256,7 +1282,7 @@ impl<'a> Machine<'a> {
     }
 
     /// The slot a name bound at `site` gets: a borrow's, when its type is one.
-    fn slot_for(&self, name: &str, at: crate::surface::TermId, value: Value<'a>) -> Slot<'a> {
+    fn slot_for(&self, name: &Name, at: crate::surface::TermId, value: Value<'a>) -> Slot<'a> {
         match self.borrow_local(name, at) {
             Some(_) => Slot::Borrow(value),
             None => Slot::Val(value),
@@ -1264,7 +1290,7 @@ impl<'a> Machine<'a> {
     }
 
     /// Whether the local `name` bound at `at` is a `&mut`, when it is a borrow.
-    fn borrow_local(&self, name: &str, at: crate::surface::TermId) -> Option<bool> {
+    fn borrow_local(&self, name: &Name, at: crate::surface::TermId) -> Option<bool> {
         let locals = self.borrow_locals.get(&at)?;
         locals
             .iter()
@@ -1287,7 +1313,7 @@ impl<'a> Machine<'a> {
     /// A value of constructor `ctor`: with the ownership check, a token
     /// when its type is affine or linear (`kind(T)`, from what the
     /// value holds).
-    fn make(&mut self, ctor: &str, fields: Vec<Value<'a>>) -> Result<Value<'a>, RunError> {
+    fn make(&mut self, ctor: &Name, fields: Vec<Value<'a>>) -> Result<Value<'a>, RunError> {
         self.allocated()?;
         self.alloc(1 + fields.len() as u64);
         let datas = self.datas();
@@ -1321,9 +1347,15 @@ impl<'a> Machine<'a> {
                 let s = Rc::new(Shape {
                     ty: decl.name.clone(),
                     ctor: constructor.name.clone(),
+                    display: if decl.is_struct {
+                        shown(&decl.name).to_string()
+                    } else {
+                        constructor.name.rsplit("::").next().unwrap().to_string()
+                    },
+                    is_struct: decl.is_struct,
                     names: constructor.fields.iter().map(|(n, _)| n.clone()).collect(),
                 });
-                self.shapes.insert(ctor.to_string(), s.clone());
+                self.shapes.insert(ctor.clone(), s.clone());
                 s
             }
         };
@@ -1346,14 +1378,59 @@ impl<'a> Machine<'a> {
                     Some(Value::Int(n)) => n as u64,
                     _ => 0,
                 };
-                (text(d.fields.first()), at, text(d.fields.get(3)))
+                let (message, code) = (text(d.fields.first()), text(d.fields.get(3)));
+                if code != "macro.syntax_error" {
+                    return (message, at, code);
+                }
+                // A syntax error is a message of the tools by its id and
+                // arguments, written here in the tool's language.
+                let args: Vec<(String, String)> = d
+                    .fields
+                    .get(4)
+                    .and_then(|l| self.list_items(l).ok())
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|a| match deref(a) {
+                        Value::Data(a) => Some((text(a.fields.first()), text(a.fields.get(1)))),
+                        _ => None,
+                    })
+                    .collect();
+                let message = tauto_surface::syntax::syntax_message(&message, &args).to_string();
+                (message, at, code)
             }
             _ => (String::new(), 0, String::new()),
         }
     }
 
+    /// Reads source schema input once; a reference never falls back to its display.
+    fn schema_constructor(&self, name: &Name) -> Result<Name, RunError> {
+        Ok(match name {
+            Name::Spelled(written) => {
+                let mut candidates = self
+                    .datas()
+                    .ctors
+                    .iter()
+                    .filter_map(|(key, (owner, index))| {
+                        let declaration = &self.datas().decls[owner];
+                        (key.as_str() == written
+                            || (declaration.is_struct && owner.as_str() == written))
+                            .then(|| declaration.constructors[*index].name.clone())
+                    })
+                    .collect::<Vec<_>>();
+                candidates.sort();
+                candidates.dedup();
+                if candidates.len() != 1 {
+                    return runtime(msg!("eval-is-not-a-constructor", ctor = written.clone()));
+                }
+                candidates.pop().expect("one constructor")
+            }
+            _ => name.clone(),
+        })
+    }
+
     fn node_value(&mut self, n: &Node) -> Result<Value<'a>, RunError> {
         Ok(match n {
+            Node::Declaration(reference) => Value::Declaration(reference.clone()),
             Node::Int(i) => Value::Int(i128::from(*i)),
             Node::Bool(b) => Value::Bool(*b),
             Node::Text(t) => Value::Text(Rc::from(t.as_str())),
@@ -1369,23 +1446,16 @@ impl<'a> Machine<'a> {
                 let v = self.node_value(v)?;
                 self.option(Some(v))?
             }
-            Node::Product(ms) => {
-                let mut vs = Vec::new();
-                for (k, m) in ms {
-                    vs.push((Rc::from(k.as_str()), self.node_value(m)?));
-                }
-                Value::Product(vs.into())
+            Node::Pair(pair) => {
+                let (fst, snd) = (self.node_value(&pair.0)?, self.node_value(&pair.1)?);
+                self.make(&tauto_surface::bindings::library_name("Pair::Mk"), vec![fst, snd])?
             }
             Node::Ctor(name, fields) => {
                 let mut vs = Vec::new();
                 for (_, f) in fields {
                     vs.push(self.node_value(f)?);
                 }
-                let key = if self.datas().decls.get(name).is_some_and(|d| d.is_struct) {
-                    format!("{name}::{name}")
-                } else {
-                    name.clone()
-                };
+                let key = self.schema_constructor(name.reference())?;
                 self.make(&key, vs)?
             }
             Node::Splice(_) | Node::SpliceList(_) => {
@@ -1396,44 +1466,61 @@ impl<'a> Machine<'a> {
 
     fn value_node(&self, v: &Value<'a>) -> Result<Node, RunError> {
         Ok(match deref(v) {
+            Value::Declaration(reference) => Node::Declaration(reference),
             Value::Int(i) => Node::Int(i64::try_from(i).map_err(|_| overflow())?),
             Value::Bool(b) => Node::Bool(b),
             Value::Text(t) => Node::Text(t.to_string()),
-            Value::Data(d) => match (d.shape.ty.as_str(), d.shape.ctor.as_str()) {
-                ("List", _) => {
+            Value::Data(d) => {
+                use tauto_surface::bindings::is_library;
+                if is_library(&d.shape.ty, "List") {
                     let mut items = Vec::new();
                     let mut at = Value::Data(d.clone());
-                    while let Value::Data(cell) = deref(&at)
-                        && cell.shape.ctor == "Cons"
-                    {
+                    loop {
+                        let Value::Data(cell) = deref(&at) else {
+                            return runtime(msg!("eval-is-not-syntax", other = at.to_string()));
+                        };
+                        if is_library(&cell.shape.ctor, "Nil") {
+                            break;
+                        }
+                        if !is_library(&cell.shape.ctor, "Cons") || cell.fields.len() != 2 {
+                            return runtime(msg!("eval-is-not-syntax", other = at.to_string()));
+                        }
                         items.push(self.value_node(&cell.fields[0])?);
                         at = cell.fields[1].clone();
                     }
                     Node::List(items)
-                }
-                ("Option", "None") => Node::none(),
-                ("Option", _) => Node::some(self.value_node(&d.fields[0])?),
-
-                (ty, ctor) => {
-                    let is_struct = self.datas().decls.get(ty).is_some_and(|x| x.is_struct);
-                    let name = if is_struct {
-                        ty.to_string()
-                    } else {
-                        format!("{ty}::{ctor}")
-                    };
+                } else if is_library(&d.shape.ty, "Pair") && d.fields.len() == 2 {
+                    Node::Pair(Box::new((
+                        self.value_node(&d.fields[0])?,
+                        self.value_node(&d.fields[1])?,
+                    )))
+                } else if is_library(&d.shape.ctor, "None") {
+                    Node::none()
+                } else if is_library(&d.shape.ctor, "Some") {
+                    Node::some(self.value_node(&d.fields[0])?)
+                } else {
                     let mut fields = Vec::new();
                     for (i, f) in d.fields.iter().enumerate() {
                         fields.push((d.shape.names.get(i).cloned().flatten(), self.value_node(f)?));
                     }
-                    Node::Ctor(name, fields)
+                    let schema = if self
+                        .datas()
+                        .decls
+                        .get(&d.shape.ty)
+                        .is_some_and(|declaration| declaration.is_struct)
+                    {
+                        d.shape.ty.to_string()
+                    } else {
+                        d.shape.ctor.to_string()
+                    };
+                    Node::Ctor(
+                        tauto_surface::macros::node::ConstructorRef::resolved(
+                            d.shape.ctor.clone(),
+                            schema,
+                        ),
+                        fields,
+                    )
                 }
-            },
-            Value::Product(ms) => {
-                let mut out = Vec::new();
-                for (k, m) in ms.iter() {
-                    out.push((k.to_string(), self.value_node(m)?));
-                }
-                Node::Product(out)
             }
             other => return runtime(msg!("eval-is-not-syntax", other = other.to_string())),
         })
@@ -1441,44 +1528,146 @@ impl<'a> Machine<'a> {
 
     /// `syn_parse`: the text read with the tables of the grammar `sha`, as the
     /// values the syntax's types describe (`Ok`), or why it is not of the syntax.
-    fn syn_parse(&mut self, syntax: &str, sha: &str, text: &str) -> Result<Value<'a>, RunError> {
+    fn syn_parse(
+        &mut self,
+        syntax: &str,
+        sha: &str,
+        text: &str,
+        result_type: Option<&Ty>,
+    ) -> Result<Value<'a>, RunError> {
         use crate::syntax::{SynOutcome, parse_text};
         match parse_text(syntax, sha, text) {
             SynOutcome::Parsed(tables, ast) => {
-                let v = self.syn_value(syntax, &tables, text, &ast)?;
-                self.make("Result::Ok", vec![v])
+                let Some(result_type) = result_type else {
+                    return runtime("runtime syntax parsing requires its checked result type");
+                };
+                let schema_names = tables
+                    .schema()
+                    .types
+                    .iter()
+                    .map(|ty| {
+                        let (tauto_syntax::TypeDef::Struct { name, .. }
+                        | tauto_syntax::TypeDef::Enum { name, .. }) = ty;
+                        tauto_syntax::type_name(syntax, name)
+                    })
+                    .collect::<Vec<_>>();
+                let mut pending = vec![result_type.clone()];
+                let mut seen = HashSet::new();
+                let mut reachable = HashMap::<String, Vec<Name>>::new();
+                while let Some(ty) = pending.pop() {
+                    match ty {
+                        Ty::Named(name, args) => {
+                            pending.extend(args);
+                            if !seen.insert(name.clone()) {
+                                continue;
+                            }
+                            let Some(data) = self.datas().decls.get(&name) else {
+                                continue;
+                            };
+                            for constructor in &data.constructors {
+                                pending.extend(constructor.fields.iter().map(|(_, ty)| ty.clone()));
+                            }
+                            for schema in &schema_names {
+                                if name.as_str() == schema || name.ends_with(&format!("::{schema}"))
+                                {
+                                    reachable
+                                        .entry(schema.clone())
+                                        .or_default()
+                                        .push(name.clone());
+                                }
+                            }
+                        }
+                        Ty::Fn(params, result, _) => {
+                            pending.extend(params);
+                            pending.push(*result);
+                        }
+                        Ty::Union(items) => pending.extend(items),
+                        Ty::Tagged(_, ty) | Ty::Info(ty) | Ty::Borrow(ty, _) | Ty::Poly(_, ty) => {
+                            pending.push(*ty)
+                        }
+                        Ty::App(head, argument) => pending.extend([*head, *argument]),
+                        _ => {}
+                    }
+                }
+                let constructors = tables.schema().types.iter().map(|ty| {
+                    use tauto_syntax::TypeDef;
+                    let (TypeDef::Struct { name, .. } | TypeDef::Enum { name, .. }) = ty;
+                    let schema = tauto_syntax::type_name(syntax, name);
+                    let owners = reachable.get(&schema).map(Vec::as_slice).unwrap_or_default();
+                    let [owner] = owners else {
+                        return runtime(format!("runtime syntax type `{schema}` is not uniquely reachable from its checked result"));
+                    };
+                    let data = &self.datas().decls[owner];
+                    let labels: Vec<&str> = match ty {
+                        TypeDef::Struct { .. } if data.is_struct => vec![""],
+                        TypeDef::Enum { ctors, .. } if !data.is_struct => ctors.iter().map(|ctor| ctor.name.as_str()).collect(),
+                        _ => return runtime(format!("runtime syntax type `{schema}` has the wrong declaration kind")),
+                    };
+                    labels.into_iter().map(|label| {
+                        let matches: Vec<_> = data.constructors.iter().filter(|ctor| {
+                            data.is_struct || ctor.name.rsplit("::").next() == Some(label)
+                        }).collect();
+                        match matches.as_slice() {
+                            [constructor] => Ok(constructor.name.clone()),
+                            _ => runtime(format!("runtime syntax constructor `{schema}::{label}` is not unique")),
+                        }
+                    }).collect::<Result<Vec<_>, RunError>>()
+                }).collect::<Result<Vec<_>, RunError>>()?;
+                let v = self.syn_value(&constructors, &tables, text, &ast)?;
+                self.make(
+                    &tauto_surface::bindings::library_name("Result::Ok"),
+                    vec![v],
+                )
             }
-            SynOutcome::Failed {
-                message,
-                at,
-                expected,
-            } => {
-                let expected: Vec<Value<'a>> = expected
+            SynOutcome::Failed(d) => {
+                let expected: Vec<Value<'a>> = d
+                    .expected
                     .iter()
                     .map(|e| Value::Text(Rc::from(e.as_str())))
                     .collect();
                 let expected = self.list(expected)?;
+                let args = d
+                    .args
+                    .iter()
+                    .map(|(n, v)| {
+                        self.make(
+                            &tauto_surface::bindings::library_name("SynArg::Mk"),
+                            vec![
+                                Value::Text(Rc::from(n.as_str())),
+                                Value::Text(Rc::from(v.as_str())),
+                            ],
+                        )
+                    })
+                    .collect::<Result<Vec<_>, RunError>>()?;
+                let args = self.list(args)?;
                 let diag = self.make(
-                    "SynDiag::SynDiag",
+                    &tauto_surface::bindings::library_name("SynDiag::Mk"),
                     vec![
-                        Value::Text(Rc::from(message.as_str())),
-                        Value::Int(at as i128),
+                        Value::Text(Rc::from(d.message.as_str())),
+                        Value::Int(d.at as i128),
                         expected,
                         Value::Text(Rc::from("macro.syntax_error")),
+                        args,
                     ],
                 )?;
-                self.make("Result::Err", vec![diag])
+                self.make(
+                    &tauto_surface::bindings::library_name("Result::Err"),
+                    vec![diag],
+                )
             }
         }
     }
 
     fn syn_span(&mut self, start: u32) -> Result<Value<'a>, RunError> {
-        self.make("SynSpan::SynSpan", vec![Value::Int(start as i128)])
+        self.make(
+            &tauto_surface::bindings::library_name("SynSpan::Mk"),
+            vec![Value::Int(start as i128)],
+        )
     }
 
     fn syn_value(
         &mut self,
-        syntax: &str,
+        constructors: &[Vec<Name>],
         tables: &tauto_syntax::Tables,
         text: &str,
         ast: &tauto_syntax::Ast,
@@ -1489,22 +1678,25 @@ impl<'a> Machine<'a> {
                 let s = text.get(t.start as usize..t.end as usize).unwrap_or("");
                 let span = self.syn_span(t.start)?;
                 let scopes = self.list(Vec::new())?;
-                let ctx = self.make("SynCtx::SynCtx", vec![scopes])?;
+                let ctx = self.make(
+                    &tauto_surface::bindings::library_name("SynCtx::Mk"),
+                    vec![scopes],
+                )?;
                 self.make(
-                    "SynToken::SynToken",
+                    &tauto_surface::bindings::library_name("SynToken::Mk"),
                     vec![Value::Text(Rc::from(s)), span, ctx],
                 )?
             }
             Ast::List(items) => {
                 let mut out = Vec::new();
                 for i in items {
-                    out.push(self.syn_value(syntax, tables, text, i)?);
+                    out.push(self.syn_value(constructors, tables, text, i)?);
                 }
                 self.list(out)?
             }
             Ast::Opt(None) => self.option(None)?,
             Ast::Opt(Some(v)) => {
-                let v = self.syn_value(syntax, tables, text, v)?;
+                let v = self.syn_value(constructors, tables, text, v)?;
                 self.option(Some(v))?
             }
             Ast::Node {
@@ -1516,25 +1708,23 @@ impl<'a> Machine<'a> {
                 let mut out = Vec::new();
                 let values = |this: &mut Self, out: &mut Vec<Value<'a>>| -> Result<(), RunError> {
                     for f in fields {
-                        out.push(this.syn_value(syntax, tables, text, f)?);
+                        out.push(this.syn_value(constructors, tables, text, f)?);
                     }
                     Ok(())
                 };
                 match &tables.schema().types[*ty as usize] {
-                    TypeDef::Struct { name, .. } => {
+                    TypeDef::Struct { .. } => {
                         out.push(self.syn_span(span.0)?);
                         values(self, &mut out)?;
-                        let ty = tauto_syntax::type_name(syntax, name);
-                        self.make(&format!("{ty}::{ty}"), out)?
+                        self.make(&constructors[*ty as usize][0], out)?
                     }
-                    TypeDef::Enum { name, ctors } => {
+                    TypeDef::Enum { ctors, .. } => {
                         let c = &ctors[*ctor as usize];
                         if matches!(c.payload, Payload::Record(_)) {
                             out.push(self.syn_span(span.0)?);
                         }
                         values(self, &mut out)?;
-                        let ty = tauto_syntax::type_name(syntax, name);
-                        self.make(&format!("{ty}::{}", c.name), out)?
+                        self.make(&constructors[*ty as usize][*ctor as usize], out)?
                     }
                 }
             }
@@ -1568,9 +1758,14 @@ impl<'a> Machine<'a> {
     }
 
     /// A `Signal`, raised or not: a shared slot, so it has no ownership token.
-    fn signal(&self, raised: bool) -> Value<'a> {
+    fn signal(&mut self, raised: bool) -> Value<'a> {
+        self.alloc(1);
         Value::Res(Rc::new(Res {
-            kind: ResKind::Cell(RefCell::new(Value::Bool(raised)), "Signal"),
+            kind: ResKind::Signal(if raised {
+                tauto_rt::stdlib::Signal::raised()
+            } else {
+                tauto_rt::stdlib::Signal::new()
+            }),
             token: None,
         }))
     }
@@ -1578,6 +1773,7 @@ impl<'a> Machine<'a> {
     fn resource(&mut self, kind: ResKind<'a>) -> Value<'a> {
         self.alloc(1);
         let name = match kind {
+            ResKind::Signal(_) => "Signal",
             ResKind::Buf(_) => "Buf",
             ResKind::Vec(_) => "Vec",
             ResKind::Map(_) => "HashMap",
@@ -1590,9 +1786,15 @@ impl<'a> Machine<'a> {
     }
 
     fn list(&mut self, items: Vec<Value<'a>>) -> Result<Value<'a>, RunError> {
-        let mut list = self.make("List::Nil", Vec::new())?;
+        let mut list = self.make(
+            &tauto_surface::bindings::library_name("List::Nil"),
+            Vec::new(),
+        )?;
         for item in items.into_iter().rev() {
-            list = self.make("List::Cons", vec![item, list])?;
+            list = self.make(
+                &tauto_surface::bindings::library_name("List::Cons"),
+                vec![item, list],
+            )?;
         }
         Ok(list)
     }
@@ -1604,9 +1806,9 @@ impl<'a> Machine<'a> {
             let Value::Data(d) = &at else {
                 return runtime(msg!("eval-a-list-was-expected"));
             };
-            match (d.shape.ctor.as_str(), d.fields.as_slice()) {
-                ("Nil", []) => return Ok(out),
-                ("Cons", [h, t]) => {
+            match d.fields.as_slice() {
+                [] if tauto_surface::bindings::is_library(&d.shape.ctor, "Nil") => return Ok(out),
+                [h, t] if tauto_surface::bindings::is_library(&d.shape.ctor, "Cons") => {
                     out.push(h.clone());
                     let t = t.clone();
                     at = t;
@@ -1619,8 +1821,14 @@ impl<'a> Machine<'a> {
     /// A host's `Result(List(Text), Text)`.
     fn unit_result(&mut self, r: Result<(), String>) -> Result<Value<'a>, RunError> {
         match r {
-            Ok(()) => self.make("Result::Ok", vec![Value::Unit]),
-            Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(e.as_str()))]),
+            Ok(()) => self.make(
+                &tauto_surface::bindings::library_name("Result::Ok"),
+                vec![Value::Unit],
+            ),
+            Err(e) => self.make(
+                &tauto_surface::bindings::library_name("Result::Err"),
+                vec![Value::Text(Rc::from(e.as_str()))],
+            ),
         }
     }
 
@@ -1632,10 +1840,13 @@ impl<'a> Machine<'a> {
             Ok(items) => {
                 let items = items.iter().map(|t| Value::Text(Rc::from(&**t))).collect();
                 let list = self.list(items)?;
-                self.make("Result::Ok", vec![list])
+                self.make(
+                    &tauto_surface::bindings::library_name("Result::Ok"),
+                    vec![list],
+                )
             }
             Err(e) => self.make(
-                "Result::Err",
+                &tauto_surface::bindings::library_name("Result::Err"),
                 vec![Value::Text(Rc::from(e.to_string().as_str()))],
             ),
         }
@@ -1650,9 +1861,11 @@ impl<'a> Machine<'a> {
     /// A deadline of the stream requests: an `Option(i64)`.
     fn deadline(&self, v: &Value<'a>) -> Result<Option<i64>, RunError> {
         match v {
-            Value::Data(d) => match (d.shape.ctor.as_str(), d.fields.as_slice()) {
-                ("None", []) => Ok(None),
-                ("Some", [Value::Int(ns)]) => Ok(Some(i64::try_from(*ns).unwrap_or(i64::MAX))),
+            Value::Data(d) => match d.fields.as_slice() {
+                [] if tauto_surface::bindings::is_library(&d.shape.ctor, "None") => Ok(None),
+                [Value::Int(ns)] if tauto_surface::bindings::is_library(&d.shape.ctor, "Some") => {
+                    Ok(Some(i64::try_from(*ns).unwrap_or(i64::MAX)))
+                }
                 _ => runtime(msg!("eval-an-option-i64-was-expected")),
             },
             _ => runtime(msg!("eval-an-option-i64-was-expected")),
@@ -1670,13 +1883,22 @@ impl<'a> Machine<'a> {
                 let items = items.iter().map(|t| Value::Text(Rc::from(&**t))).collect();
                 let list = self.list(items)?;
                 let some = self.option(Some(list))?;
-                self.make("Result::Ok", vec![some])
+                self.make(
+                    &tauto_surface::bindings::library_name("Result::Ok"),
+                    vec![some],
+                )
             }
             Ok(None) => {
                 let none = self.option(None)?;
-                self.make("Result::Ok", vec![none])
+                self.make(
+                    &tauto_surface::bindings::library_name("Result::Ok"),
+                    vec![none],
+                )
             }
-            Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(&*e))]),
+            Err(e) => self.make(
+                &tauto_surface::bindings::library_name("Result::Err"),
+                vec![Value::Text(Rc::from(&*e))],
+            ),
         }
     }
 
@@ -1777,10 +1999,19 @@ impl<'a> Machine<'a> {
             Ok((items, body)) => {
                 let items = items.iter().map(|t| Value::Text(Rc::from(&**t))).collect();
                 let list = self.list(items)?;
-                let pair = self.make("Pair::Pair", vec![Value::Bytes(body), list])?;
-                self.make("Result::Ok", vec![pair])
+                let pair = self.make(
+                    &tauto_surface::bindings::library_name("Pair::Mk"),
+                    vec![Value::Bytes(body), list],
+                )?;
+                self.make(
+                    &tauto_surface::bindings::library_name("Result::Ok"),
+                    vec![pair],
+                )
             }
-            Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(&*e))]),
+            Err(e) => self.make(
+                &tauto_surface::bindings::library_name("Result::Err"),
+                vec![Value::Text(Rc::from(&*e))],
+            ),
         }
     }
 
@@ -1793,15 +2024,27 @@ impl<'a> Machine<'a> {
             Ok(Some((items, peer))) => {
                 let items = items.iter().map(|t| Value::Text(Rc::from(&**t))).collect();
                 let list = self.list(items)?;
-                let pair = self.make("Pair::Pair", vec![Value::Bytes(peer.into()), list])?;
+                let pair = self.make(
+                    &tauto_surface::bindings::library_name("Pair::Mk"),
+                    vec![Value::Bytes(peer.into()), list],
+                )?;
                 let some = self.option(Some(pair))?;
-                self.make("Result::Ok", vec![some])
+                self.make(
+                    &tauto_surface::bindings::library_name("Result::Ok"),
+                    vec![some],
+                )
             }
             Ok(None) => {
                 let none = self.option(None)?;
-                self.make("Result::Ok", vec![none])
+                self.make(
+                    &tauto_surface::bindings::library_name("Result::Ok"),
+                    vec![none],
+                )
             }
-            Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(&*e))]),
+            Err(e) => self.make(
+                &tauto_surface::bindings::library_name("Result::Err"),
+                vec![Value::Text(Rc::from(&*e))],
+            ),
         }
     }
 
@@ -1844,8 +2087,14 @@ impl<'a> Machine<'a> {
 
     fn option(&mut self, v: Option<Value<'a>>) -> Result<Value<'a>, RunError> {
         match v {
-            Some(v) => self.make("Option::Some", vec![v]),
-            None => self.make("Option::None", Vec::new()),
+            Some(v) => self.make(
+                &tauto_surface::bindings::library_name("Option::Some"),
+                vec![v],
+            ),
+            None => self.make(
+                &tauto_surface::bindings::library_name("Option::None"),
+                Vec::new(),
+            ),
         }
     }
 
@@ -1867,7 +2116,7 @@ impl<'a> Machine<'a> {
                             ty = d.shape.ty.to_string()
                         ));
                     }
-                    self.drops.push(d.shape.ty.clone());
+                    self.drops.push(d.shape.ty.to_string());
                 }
                 for f in &d.fields {
                     self.drop_value(f)?;
@@ -1880,8 +2129,11 @@ impl<'a> Machine<'a> {
                     self.drops.push(name);
                 }
                 match &r.kind {
-                    ResKind::Buf(_) | ResKind::Cell(..) | ResKind::Weak(_) | ResKind::Guard(..) => {
-                    }
+                    ResKind::Signal(_)
+                    | ResKind::Buf(_)
+                    | ResKind::Cell(..)
+                    | ResKind::Weak(_)
+                    | ResKind::Guard(..) => {}
                     ResKind::Vec(items) => {
                         let items: Vec<Value<'a>> = items.borrow_mut().drain(..).collect();
                         for item in &items {
@@ -1992,7 +2244,7 @@ impl<'a> Machine<'a> {
             Stmt::Fn(f) => {
                 if !root {
                     note_lent_fields(f, &mut self.lent_fields);
-                    let free: Vec<String> = crate::lin::free_vars(&f.body)
+                    let free: Vec<Name> = crate::lin::free_vars(&f.body)
                         .into_iter()
                         .filter(|n| !f.params.contains(n))
                         .collect();
@@ -2084,13 +2336,18 @@ impl<'a> Machine<'a> {
                 // budget is written, and `k(v)` is the budget expression's value.
                 let stopped = Stopped { ctrl, frames };
                 kont = after;
-                ctrl = Ctrl::Perform("exceeded".into(), vec![Value::Stopped(Rc::new(stopped))]);
+                ctrl = Ctrl::Perform(
+                    tauto_surface::bindings::library_name("exceeded"),
+                    vec![Value::Stopped(Rc::new(stopped))],
+                );
                 continue;
             }
             match ctrl {
                 Ctrl::Eval(term, env) => {
-                    if let Some(to) = self.report.product_fits.get(&term.span) {
-                        kont = push(kont, Frame::Fit { to });
+                    if let Some(to) = self.report.product_fits.get(&term.span)
+                        && let Some(from) = self.report.term(term)
+                    {
+                        kont = push(kont, Frame::Fit { from, to });
                     }
                     let (c, k) = self.eval_term(term, env, kont)?;
                     ctrl = c;
@@ -2136,7 +2393,7 @@ impl<'a> Machine<'a> {
     fn name(
         &mut self,
         term: &'a SurfaceTerm,
-        name: &str,
+        name: &Name,
         env: &Env<'a>,
     ) -> Result<Value<'a>, RunError> {
         if let Some(node) = lookup_node(env, name) {
@@ -2165,12 +2422,20 @@ impl<'a> Machine<'a> {
         }
         match name {
             // `i32::MIN / -1` overflows an `i32` but not the `i64` it is held in.
-            "div" if self.report.widths.get(&term.id()) == Some(&Width::W32) => {
+            n if tauto_surface::bindings::is_library(&n, "div")
+                && self.report.widths.get(&term.id()) == Some(&Width::W32) =>
+            {
                 return Ok(Value::Builtin("div_i32"));
             }
-            "div" => return Ok(Value::Builtin("div")),
-            "mod" => return Ok(Value::Builtin("mod")),
-            "clone" => return Ok(Value::Builtin("clone")),
+            n if tauto_surface::bindings::is_library(&n, "div") => {
+                return Ok(Value::Builtin("div"));
+            }
+            n if tauto_surface::bindings::is_library(&n, "mod") => {
+                return Ok(Value::Builtin("mod"));
+            }
+            n if tauto_surface::bindings::is_library(&n, "clone") => {
+                return Ok(Value::Builtin("clone"));
+            }
             _ => {}
         }
         let datas = self.datas();
@@ -2256,7 +2521,7 @@ impl<'a> Machine<'a> {
     fn closure(
         &mut self,
         lam: &'a SurfaceTerm,
-        params: &'a [String],
+        params: &'a [Name],
         body: &'a SurfaceTerm,
         env: Env<'a>,
     ) -> Value<'a> {
@@ -2304,6 +2569,9 @@ impl<'a> Machine<'a> {
                 Some(x) => (Ctrl::Ret(Value::Float(x)), kont),
                 None => return runtime(msg!("eval-is-not-a-float", x = x.to_string())),
             },
+            TermKind::Declaration(reference) => {
+                (Ctrl::Ret(Value::Declaration(reference.clone())), kont)
+            }
             TermKind::Text(t) => (Ctrl::Ret(Value::Text(Rc::from(t.as_str()))), kont),
             TermKind::Bool(b) => (Ctrl::Ret(Value::Bool(*b)), kont),
             TermKind::Var(name) => (Ctrl::Ret(self.name(term, name, &env)?), kont),
@@ -2329,29 +2597,6 @@ impl<'a> Machine<'a> {
                 // enclosing statement.
                 None => (Ctrl::Eval(inner, env), push(kont, Frame::BorrowTemp)),
             },
-            TermKind::Record { name, fields, .. }
-                if is_pair_name(name)
-                    && fields.len() == 2
-                    // A product, or what a product with one member or none is
-                    // (`#(a, #())` is an `A`); a `Pair` the checker kept as a record is one.
-                    && matches!(
-                        self.report.term(term).map(|t| t.unborrowed()),
-                        Some(t) if !matches!(t, Ty::Named(n, _) if is_pair_name(n))
-                    ) =>
-            {
-                (
-                    Ctrl::Eval(&fields[0].1, env.clone()),
-                    push(
-                        kont,
-                        Frame::PairArgs {
-                            term,
-                            fields,
-                            done: Vec::new(),
-                            env,
-                        },
-                    ),
-                )
-            }
             TermKind::Record { name, fields, .. } => {
                 let name = self.ctor_key_at(term, name)?;
                 match fields.split_first() {
@@ -2377,16 +2622,19 @@ impl<'a> Machine<'a> {
                 if let TermKind::Var(name) = &*function.kind
                     && lookup(&env, name).is_none()
                 {
-                    if name == "Tuple" && arguments.is_empty() {
+                    if tauto_surface::bindings::is_library(&name, "Tuple") && arguments.is_empty() {
                         return Ok((Ctrl::Ret(Value::Unit), kont));
                     }
                     // `start()`: a nullary constructor's value, as `start`.
                     if arguments.is_empty() && self.datas().only_nullary(name) {
                         return Ok((Ctrl::Eval(function, env), kont));
                     }
-                    if (name == "&&" || name == "||") && arguments.len() == 2 {
+                    if (tauto_surface::bindings::is_library(&name, "&&")
+                        || tauto_surface::bindings::is_library(&name, "||"))
+                        && arguments.len() == 2
+                    {
                         let frame = Frame::Logic {
-                            and: name == "&&",
+                            and: tauto_surface::bindings::is_library(&name, "&&"),
                             rhs: &arguments[1],
                             env: env.clone(),
                         };
@@ -2419,6 +2667,7 @@ impl<'a> Machine<'a> {
                     push(
                         kont,
                         Frame::AppFn {
+                            at: term.id(),
                             args: arguments,
                             env,
                         },
@@ -2511,22 +2760,20 @@ impl<'a> Machine<'a> {
                 ),
                 None => (Ctrl::Ret(Value::Unit), kont),
             },
-            // `(e: T)`: one member of a product is read out of it; fewer members are
-            // taken where the checker recorded the fit (`product_fits`).
-            TermKind::Ascribe { term: base, .. } => {
-                let key: Rc<str> = match self.report.term(term) {
-                    Some(Ty::Product(_) | Ty::Union(_)) => {
-                        return Ok((Ctrl::Eval(base, env), kont));
+            // `(e: T)`: fewer members are taken where the checker recorded the fit
+            // (`product_fits`), as the base is evaluated or, a place, read where it is.
+            TermKind::Ascribe { term: base, .. } => match self.place_value(base, &env)? {
+                Some(v) => match self.report.product_fits.get(&base.span) {
+                    Some(to) => {
+                        let Some(from) = self.report.term(base) else {
+                            return runtime(msg!("eval-a-product-s-member-of-unknown"));
+                        };
+                        (Ctrl::Ret(self.fit(v, from, to)?), kont)
                     }
-                    Some(t) => Rc::from(t.unborrowed().to_string()),
-                    None => return runtime(msg!("eval-a-product-s-member-of-unknown")),
-                };
-                match self.place_value(base, &env)? {
-                    // A member of a place is read where it is, nothing moves.
-                    Some(v) => (Ctrl::Ret(project(v, &key)?), kont),
-                    None => (Ctrl::Eval(base, env), push(kont, Frame::Project { key })),
-                }
-            }
+                    None => (Ctrl::Ret(v), kont),
+                },
+                None => (Ctrl::Eval(base, env), kont),
+            },
             other => {
                 return runtime(msg!(
                     "eval-not-supported-yet",
@@ -2536,40 +2783,89 @@ impl<'a> Machine<'a> {
         })
     }
 
-    /// A product of the members' values: a member that is a product gives
-    /// its members, a `()` none; in the order written.
-    fn make_product(
-        &self,
-        term: &'a SurfaceTerm,
-        members: &'a [SurfaceTerm],
-        values: Vec<Value<'a>>,
-    ) -> Result<Value<'a>, RunError> {
-        let members: Vec<&SurfaceTerm> = members.iter().collect();
-        self.make_product_of(term, &members, values)
+    /// `#(a, b, c)`: the `Pair`s it nests to the right, `Pair(a, Pair(b, c))`.
+    fn make_product(&mut self, mut values: Vec<Value<'a>>) -> Result<Value<'a>, RunError> {
+        let Some(mut tail) = values.pop() else {
+            return Ok(Value::Unit);
+        };
+        while let Some(head) = values.pop() {
+            tail = self.make(
+                &tauto_surface::bindings::library_name("Pair::Mk"),
+                vec![head, tail],
+            )?;
+        }
+        Ok(tail)
     }
 
-    fn make_product_of(
-        &self,
-        term: &SurfaceTerm,
-        members: &[&SurfaceTerm],
-        values: Vec<Value<'a>>,
-    ) -> Result<Value<'a>, RunError> {
-        let mut entries: Vec<(Rc<str>, Value<'a>)> = Vec::new();
-        for (m, v) in members.iter().zip(values) {
-            match (v, self.report.term(m).map(|t| t.unborrowed())) {
-                (Value::Product(inner), _) => entries.extend(inner.iter().cloned()),
-                (_, Some(Ty::Unit)) => {}
-                (v, Some(t)) => entries.push((Rc::from(t.to_string()), v)),
-                (_, None) => return runtime(msg!("eval-a-product-s-member-of-unknown")),
+    /// The members of the product `v` of type `from`, each with its type: the first
+    /// field of the `Pair`s down the second.
+    fn product_values(&self, v: &Value<'a>, from: &Ty) -> Vec<(Ty, Value<'a>)> {
+        let mut out = Vec::new();
+        let (mut ty, mut at) = (from.unborrowed().clone(), deref(v).clone());
+        loop {
+            match (&ty, &at) {
+                (Ty::Named(n, args), Value::Data(d))
+                    if is_pair_name(n) && args.len() == 2 && d.fields.len() == 2 =>
+                {
+                    out.push((args[0].clone(), d.fields[0].clone()));
+                    let (next_ty, next) = (args[1].clone(), deref(&d.fields[1]).clone());
+                    (ty, at) = (next_ty, next);
+                }
+                _ => {
+                    out.push((ty, at));
+                    return out;
+                }
             }
         }
-        if !matches!(
-            self.report.term(term).map(|t| t.unborrowed()),
-            Some(Ty::Product(_))
-        ) {
-            return Ok(entries.pop().map_or(Value::Unit, |(_, v)| v));
+    }
+
+    /// A product of type `from` taken to the type `to`: the members `to` has, matched to
+    /// the members of `from` by their types, or the one member that is `to`.
+    fn fit(&mut self, v: Value<'a>, from: &Ty, to: &Ty) -> Result<Value<'a>, RunError> {
+        let have = self.product_values(&v, from);
+        if have.len() < 2 {
+            return Ok(v);
         }
-        Ok(Value::Product(entries.into()))
+        let want = self.product_types(to);
+        if want.len() == have.len()
+            && want
+                .iter()
+                .zip(&have)
+                .all(|(w, (h, _))| w.to_string() == h.to_string())
+        {
+            return Ok(v);
+        }
+        if matches!(to.unborrowed(), Ty::Unit) {
+            return Ok(Value::Unit);
+        }
+        let mut picked = Vec::new();
+        for w in &want {
+            let key = w.to_string();
+            match have.iter().find(|(h, _)| h.to_string() == key) {
+                Some((_, m)) => picked.push(m.clone()),
+                None => {
+                    return runtime(msg!(
+                        "eval-the-product-has-no-member-of",
+                        to = to.to_string()
+                    ));
+                }
+            }
+        }
+        self.make_product(picked)
+    }
+
+    fn product_types(&self, t: &Ty) -> Vec<Ty> {
+        let mut out = Vec::new();
+        let mut at = t.unborrowed();
+        while let Ty::Named(n, args) = at
+            && is_pair_name(n)
+            && args.len() == 2
+        {
+            out.push(args[0].clone());
+            at = args[1].unborrowed();
+        }
+        out.push(at.clone());
+        out
     }
 
     /// `v.name`: a struct's field, or `info.more` / `info.unbounded`.
@@ -2608,15 +2904,16 @@ impl<'a> Machine<'a> {
         kont: Kont<'a>,
     ) -> Result<(Ctrl<'a>, Kont<'a>), RunError> {
         Ok(match frame {
-            Frame::AppFn { args, env } => {
+            Frame::AppFn { at, args, env } => {
                 let callee = value;
                 match args.split_first() {
-                    None => return self.apply(callee, Vec::new(), kont),
+                    None => return self.apply(callee, Vec::new(), kont, Some(*at)),
                     Some((first, rest)) => (
                         Ctrl::Eval(first, env.clone()),
                         push(
                             kont,
                             Frame::AppArg {
+                                at: *at,
                                 callee,
                                 done: Vec::new(),
                                 rest,
@@ -2627,6 +2924,7 @@ impl<'a> Machine<'a> {
                 }
             }
             Frame::AppArg {
+                at,
                 callee,
                 done,
                 rest,
@@ -2635,12 +2933,13 @@ impl<'a> Machine<'a> {
                 let mut done = done.clone();
                 done.push(value);
                 match rest.split_first() {
-                    None => return self.apply(callee.clone(), done, kont),
+                    None => return self.apply(callee.clone(), done, kont, Some(*at)),
                     Some((first, rest)) => (
                         Ctrl::Eval(first, env.clone()),
                         push(
                             kont,
                             Frame::AppArg {
+                                at: *at,
                                 callee: callee.clone(),
                                 done,
                                 rest,
@@ -2674,33 +2973,6 @@ impl<'a> Machine<'a> {
                             },
                         ),
                     ),
-                }
-            }
-            Frame::PairArgs {
-                term,
-                fields,
-                done,
-                env,
-            } => {
-                let mut done = done.clone();
-                done.push(value);
-                match fields.get(done.len()) {
-                    Some((_, next)) => (
-                        Ctrl::Eval(next, env.clone()),
-                        push(
-                            kont,
-                            Frame::PairArgs {
-                                term,
-                                fields,
-                                done,
-                                env: env.clone(),
-                            },
-                        ),
-                    ),
-                    None => {
-                        let members: Vec<&SurfaceTerm> = fields.iter().map(|(_, t)| t).collect();
-                        (Ctrl::Ret(self.make_product_of(term, &members, done)?), kont)
-                    }
                 }
             }
             Frame::RecordArgs {
@@ -2961,7 +3233,7 @@ impl<'a> Machine<'a> {
                 let mut done = done.clone();
                 done.push(value);
                 match rest.split_first() {
-                    None => (Ctrl::Perform(effect.to_string(), done), kont),
+                    None => (Ctrl::Perform((*effect).clone(), done), kont),
                     Some((first, rest)) => (
                         Ctrl::Eval(first, env.clone()),
                         push(
@@ -3015,8 +3287,7 @@ impl<'a> Machine<'a> {
                 (Ctrl::Ret(value), kont)
             }
             Frame::Field { name } => (Ctrl::Ret(self.field(value, name)?), kont),
-            Frame::Project { key } => (Ctrl::Ret(project(value, &key)?), kont),
-            Frame::Fit { to } => (Ctrl::Ret(fit(value, to)?), kont),
+            Frame::Fit { from, to } => (Ctrl::Ret(self.fit(value, from, to)?), kont),
             Frame::ProductArgs {
                 term,
                 members,
@@ -3040,7 +3311,7 @@ impl<'a> Machine<'a> {
                     ),
                     None => {
                         self.alloc(1 + members.len() as u64);
-                        (Ctrl::Ret(self.make_product(term, members, done)?), kont)
+                        (Ctrl::Ret(self.make_product(done)?), kont)
                     }
                 }
             }
@@ -3134,48 +3405,8 @@ impl<'a> Machine<'a> {
                 }
                 Some(env)
             }
-            // `#(p₁, …, pₙ)` on a product: by labels, or by position.
-            (Pattern::Record { .. } | Pattern::Tuple(_), Value::Product(ms))
-                if is_tuple_pattern(pattern) =>
-            {
-                let pats = pair_pattern_members(pattern);
-                let labelled = pats.iter().all(|p| p.label().is_some());
-                // `#(x, y)` on `A × B` at `B := C × D`: the value is flat, and `y` is the
-                // product of the members after `x` (`A × B × C` is `A × (B × C)`).
-                if !labelled && pats.len() >= 2 && pats.len() < ms.len() {
-                    let n = pats.len() - 1;
-                    let mut env = env;
-                    for (p, (_, v)) in pats[..n].iter().zip(ms.iter()) {
-                        env = self.bind_pattern(p, v, env, at)?;
-                    }
-                    let rest = Value::Product(ms[n..].to_vec().into());
-                    return self.bind_pattern(&pats[n], &rest, env, at);
-                }
-                if pats.len() != ms.len() {
-                    return None;
-                }
-                let mut env = env;
-                for (i, p) in pats.iter().enumerate() {
-                    let v = if labelled {
-                        let (tag, _) = p.label()?;
-                        let prefix = format!("@{tag} ");
-                        &ms.iter().find(|(k, _)| k.starts_with(&prefix))?.1
-                    } else {
-                        &ms[i].1
-                    };
-                    env = self.bind_pattern(p, v, env, at)?;
-                }
-                Some(env)
-            }
-            // `#(p, #())` is `p`, and `#(#(), #())` is `#()`, on a value that is no product.
-            (Pattern::Record { .. } | Pattern::Tuple(_), _)
-                if is_tuple_pattern(pattern) && pair_pattern_members(pattern).len() < 2 =>
-            {
-                match pair_pattern_members(pattern).as_slice() {
-                    [one] => self.bind_pattern(one, original, env, at),
-                    _ => Some(env),
-                }
-            }
+            // `#()` takes the one value of `Unit`.
+            (Pattern::Ctor { args, .. }, Value::Unit) if args.is_empty() => Some(env),
             // `#(p, q, …)` on a `Pair` the checker kept as a record: `p` on its
             // first field and `#(q, …)` on the second.
             (Pattern::Tuple(items), Value::Data(_)) => {
@@ -3265,7 +3496,7 @@ impl<'a> Machine<'a> {
     }
 
     /// [`Self::ctor_key`] of `name` written at `term`, as its type gives it.
-    fn ctor_key_at(&self, term: &SurfaceTerm, name: &str) -> Result<&'a str, RunError> {
+    fn ctor_key_at(&self, term: &SurfaceTerm, name: &Name) -> Result<&'a Name, RunError> {
         if let Some(key) = self.ctor_keys.borrow().get(&term.id()) {
             return Ok(key);
         }
@@ -3274,23 +3505,19 @@ impl<'a> Machine<'a> {
         Ok(key)
     }
 
-    fn ctor_key(&self, name: &str, expected: Option<&Ty>) -> Result<&'a str, RunError> {
+    fn ctor_key(&self, name: &Name, expected: Option<&Ty>) -> Result<&'a Name, RunError> {
         let datas = self.datas();
         let (d, c) = match datas.resolve_ctor(name, expected) {
             Ok(c) => c,
             Err(e) => return runtime(e),
         };
         let decl = &datas.decls[d];
-        let key = format!("{}::{}", d, decl.constructors[*c].name);
-        match datas.ctors.get_key_value(&key) {
-            Some((key, _)) => Ok(key.as_str()),
-            None => runtime(msg!("eval-is-not-a-constructor", ctor = name.to_string())),
-        }
+        Ok(&decl.constructors[*c].name)
     }
 
     // A name only one type has resolves without the value's type, which is
     // then not built.
-    fn is_nullary(&self, name: &str, data: &Data<'_>) -> bool {
+    fn is_nullary(&self, name: &Name, data: &Data<'_>) -> bool {
         let datas = self.datas();
         if datas.ctors.contains_key(name) {
             return datas.nullary(name, None);
@@ -3298,7 +3525,7 @@ impl<'a> Machine<'a> {
         datas.nullary(name, Some(&Ty::Named(data.shape.ty.clone(), Vec::new())))
     }
 
-    fn matches_ctor(&self, name: &str, data: &Data<'_>) -> bool {
+    fn matches_ctor(&self, name: &Name, data: &Data<'_>) -> bool {
         let datas = self.datas();
         let resolved = if datas.ctors.contains_key(name) {
             datas.resolve_ctor(name, None)
@@ -3394,6 +3621,7 @@ impl<'a> Machine<'a> {
         callee: Value<'a>,
         args: Vec<Value<'a>>,
         kont: Kont<'a>,
+        at: Option<crate::surface::TermId>,
     ) -> Result<(Ctrl<'a>, Kont<'a>), RunError> {
         self.count_call()?;
         match deref(&callee) {
@@ -3432,7 +3660,7 @@ impl<'a> Machine<'a> {
                 Ok((Ctrl::Ret(arg.clone()), kont))
             }
             Value::Ctor(name) => Ok((Ctrl::Ret(self.make(name, args)?), kont)),
-            Value::Builtin(name) => self.builtin(name, args, kont),
+            Value::Builtin(name) => self.builtin(name, args, kont, at),
             Value::Extern(name) => match (&*name.to_string(), args.as_slice()) {
                 ("Probe::new", [Value::Text(probe)]) if self.probes => {
                     self.alloc(1);
@@ -3476,6 +3704,7 @@ impl<'a> Machine<'a> {
         name: &str,
         args: Vec<Value<'a>>,
         kont: Kont<'a>,
+        at: Option<crate::surface::TermId>,
     ) -> Result<(Ctrl<'a>, Kont<'a>), RunError> {
         let ret = |v: Value<'a>, kont: Kont<'a>| Ok((Ctrl::Ret(v), kont));
         // The host answers no standard effect: the builtins that answer one are
@@ -3486,12 +3715,51 @@ impl<'a> Machine<'a> {
         }
         let plain: Vec<Value<'a>> = args.iter().map(deref).collect();
         match (name, plain.as_slice()) {
+            ("Syn::same_declaration", [Value::Declaration(a), Value::Declaration(b)]) => {
+                ret(Value::Bool(a == b), kont)
+            }
+            ("Syn::eliminator", [Value::Declaration(d)]) => ret(
+                Value::Declaration(d.generated(tauto_surface::identity::Generation::Induction)),
+                kont,
+            ),
+            ("Syn::global", [Value::Text(spelling)]) => {
+                let resolve = self
+                    .host
+                    .as_ref()
+                    .and_then(|host| host.resolve_global.clone())
+                    .ok_or_else(|| {
+                        RunError::Runtime(
+                            "Syn::global requires a macro definition environment".into(),
+                        )
+                    })?;
+                let reference = resolve(spelling).map_err(RunError::Runtime)?;
+                let payload = self.make(
+                    &tauto_surface::bindings::library_name("Some"),
+                    vec![Value::Declaration(reference)],
+                )?;
+                let scopes = self.make(&tauto_surface::bindings::library_name("Nil"), vec![])?;
+                let ctx = self.make(
+                    &tauto_surface::bindings::library_name("SynCtx::Mk"),
+                    vec![scopes],
+                )?;
+                let span = self.syn_span(0)?;
+                let value = self.make(
+                    &tauto_surface::bindings::library_name("SynIdent::Mk"),
+                    vec![Value::Text(spelling.clone()), ctx, span, payload],
+                )?;
+                ret(value, kont)
+            }
             ("Syn::expr_of", [Value::Data(d)]) => {
-                let v = match d.shape.ty.as_str() {
-                    "SynExpr" => plain[0].clone(),
-                    "SynIdent" => self.make("SynExpr::ExVar", vec![plain[0].clone()])?,
+                let v = match &d.shape.ty {
+                    ty if tauto_surface::bindings::is_library(ty, "SynExpr") => plain[0].clone(),
+                    ty if tauto_surface::bindings::is_library(ty, "SynIdent") => self.make(
+                        &tauto_surface::bindings::library_name("SynExpr::ExVar"),
+                        vec![plain[0].clone()],
+                    )?,
                     // The term of a typed `Judgement`.
-                    "Judgement" => d.fields[0].clone(),
+                    ty if tauto_surface::bindings::is_library(ty, "Judgement") => {
+                        d.fields[0].clone()
+                    }
                     other => {
                         return runtime(msg!(
                             "eval-is-not-filled-in-as-an",
@@ -3662,9 +3930,39 @@ impl<'a> Machine<'a> {
                 *c.borrow_mut() = v.clone();
                 ret(Value::Unit, kont)
             }
-            // The evaluator runs each spawned body to its end at its `spawn`,
-            // so a task's result is there and a mutex's line never forms: a
-            // place in it is handed the content at once, or never.
+            ("Signal::listen", [s]) => ret(s.clone(), kont),
+            ("Signal::fresh", []) => ret(self.signal(false), kont),
+            ("Signal::raise", [Value::Res(r)]) => {
+                let ResKind::Signal(s) = &r.kind else {
+                    return runtime("expected a Signal");
+                };
+                s.raise();
+                ret(Value::Unit, kont)
+            }
+            ("Signal::is_raised", [Value::Res(r)]) => {
+                let ResKind::Signal(s) = &r.kind else {
+                    return runtime("expected a Signal");
+                };
+                tauto_rt::shutdown::poll();
+                ret(Value::Bool(s.is_raised()), kont)
+            }
+            ("Signal::either", [Value::Res(a), Value::Res(b)]) => {
+                let (ResKind::Signal(a), ResKind::Signal(b)) = (&a.kind, &b.kind) else {
+                    return runtime("expected Signals");
+                };
+                self.alloc(1 + a.source_count() as u64 + b.source_count() as u64);
+                ret(
+                    Value::Res(Rc::new(Res {
+                        kind: ResKind::Signal(tauto_rt::stdlib::Signal::either(
+                            a.clone(),
+                            b.clone(),
+                        )),
+                        token: None,
+                    })),
+                    kont,
+                )
+            }
+            // Spawn runs synchronously here, so the task's result is ready.
             ("Pending::signal", [_]) => ret(self.signal(true), kont),
             ("Mutex::claim", [Value::Res(r)]) => {
                 let ResKind::Cell(c, _) = &r.kind else {
@@ -3782,7 +4080,13 @@ impl<'a> Machine<'a> {
                         items.borrow_mut().swap(i, j);
                         ret(Value::Unit, kont)
                     }
-                    _ => Ok((Ctrl::Perform("out_of_bounds".into(), Vec::new()), kont)),
+                    _ => Ok((
+                        Ctrl::Perform(
+                            tauto_surface::bindings::library_name("out_of_bounds"),
+                            Vec::new(),
+                        ),
+                        kont,
+                    )),
                 }
             }
             ("Vec::as_slice" | "Vec::as_mut_slice", [v @ Value::Res(_)]) => ret(v.clone(), kont),
@@ -3801,7 +4105,13 @@ impl<'a> Machine<'a> {
                     .and_then(|i| items.borrow().get(i).cloned());
                 match item {
                     Some(v) => ret(v, kont),
-                    None => Ok((Ctrl::Perform("out_of_bounds".into(), Vec::new()), kont)),
+                    None => Ok((
+                        Ctrl::Perform(
+                            tauto_surface::bindings::library_name("out_of_bounds"),
+                            Vec::new(),
+                        ),
+                        kont,
+                    )),
                 }
             }
             ("Vec::clear" | "Vec::truncate", [Value::Res(r), rest @ ..]) => {
@@ -3957,7 +4267,10 @@ impl<'a> Machine<'a> {
                 };
                 match found {
                     Some(v) => ret(v, kont),
-                    None => Ok((Ctrl::Perform("missing".into(), Vec::new()), kont)),
+                    None => Ok((
+                        Ctrl::Perform(tauto_surface::bindings::library_name("missing"), Vec::new()),
+                        kont,
+                    )),
                 }
             }
             ("HashMap::insert", [Value::Res(r), k, _]) => {
@@ -3979,7 +4292,10 @@ impl<'a> Machine<'a> {
                 self.consume(m);
                 let mut pairs = Vec::new();
                 for (k, v) in entries {
-                    pairs.push(self.make("Pair::Pair", vec![k, v])?);
+                    pairs.push(self.make(
+                        &tauto_surface::bindings::library_name("Pair::Mk"),
+                        vec![k, v],
+                    )?);
                 }
                 let v = self.resource(ResKind::Vec(RefCell::new(pairs)));
                 ret(v, kont)
@@ -4030,14 +4346,13 @@ impl<'a> Machine<'a> {
                 | "U64::rotl" | "U64::rotr",
                 [Value::Int(a), Value::Int(b)],
             ) => {
-                // The evaluator holds a `u64` in an `i64`: a result past
-                // `i64::MAX` is too large here, as for the other `u64`s.
                 let (a, b) = (*a as u64, *b as u64);
-                let wide = name.starts_with("u64");
+                let (module, operation) = name.split_once("::").expect("a word operation");
+                let wide = module == "U64";
                 let bits = if wide { 64 } else { 32 };
                 let mask = if wide { u64::MAX } else { u32::MAX as u64 };
                 let s = (b % bits) as u32;
-                let out = match name.split_once('_').map_or("", |(_, op)| op) {
+                let out = match operation {
                     "and" => a & b,
                     "or" => a | b,
                     "xor" => a ^ b,
@@ -4046,7 +4361,8 @@ impl<'a> Machine<'a> {
                     "rotl" if wide => a.rotate_left(s),
                     "rotr" if wide => a.rotate_right(s),
                     "rotl" => (a as u32).rotate_left(s) as u64,
-                    _ => (a as u32).rotate_right(s) as u64,
+                    "rotr" => (a as u32).rotate_right(s) as u64,
+                    _ => unreachable!("a recognized word operation"),
                 };
                 ret(Value::Int(i128::from(out)), kont)
             }
@@ -4113,16 +4429,18 @@ impl<'a> Machine<'a> {
                 ret(list, kont)
             }
             ("Syn::parse", [Value::Text(syntax), Value::Text(sha), Value::Text(text)]) => {
-                let result = self.syn_parse(syntax, sha, text)?;
+                let result_type = at.and_then(|at| self.report.terms.get(&at)).cloned();
+                let result = self.syn_parse(syntax, sha, text, result_type.as_ref())?;
                 ret(result, kont)
             }
             ("Os::read_file", [Value::Text(path)]) => {
                 let result = match std::fs::read_to_string(&**path) {
-                    Ok(text) => {
-                        self.make("Result::Ok", vec![Value::Text(Rc::from(text.as_str()))])?
-                    }
+                    Ok(text) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Ok"),
+                        vec![Value::Text(Rc::from(text.as_str()))],
+                    )?,
                     Err(e) => self.make(
-                        "Result::Err",
+                        &tauto_surface::bindings::library_name("Result::Err"),
                         vec![Value::Text(Rc::from(e.to_string().as_str()))],
                     )?,
                 };
@@ -4130,9 +4448,12 @@ impl<'a> Machine<'a> {
             }
             ("Os::write_file", [Value::Text(path), Value::Text(contents)]) => {
                 let result = match std::fs::write(&**path, contents.as_bytes()) {
-                    Ok(()) => self.make("Result::Ok", vec![Value::Unit])?,
+                    Ok(()) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Ok"),
+                        vec![Value::Unit],
+                    )?,
                     Err(e) => self.make(
-                        "Result::Err",
+                        &tauto_surface::bindings::library_name("Result::Err"),
                         vec![Value::Text(Rc::from(e.to_string().as_str()))],
                     )?,
                 };
@@ -4140,9 +4461,45 @@ impl<'a> Machine<'a> {
             }
             ("Os::read_bytes", [Value::Text(path)]) => {
                 let result = match std::fs::read(&**path) {
-                    Ok(bytes) => self.make("Result::Ok", vec![Value::Bytes(bytes.into())])?,
+                    Ok(bytes) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Ok"),
+                        vec![Value::Bytes(bytes.into())],
+                    )?,
                     Err(e) => self.make(
-                        "Result::Err",
+                        &tauto_surface::bindings::library_name("Result::Err"),
+                        vec![Value::Text(Rc::from(e.to_string().as_str()))],
+                    )?,
+                };
+                ret(result, kont)
+            }
+            ("Os::read_under", [Value::Text(root), Value::Text(path)]) => {
+                let result = match tauto_rt::stdlib::os_read_under(
+                    tauto_rt::Text::from(&**root),
+                    tauto_rt::Text::from(&**path),
+                ) {
+                    Ok(t) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Ok"),
+                        vec![Value::Text(Rc::from(&*t))],
+                    )?,
+                    Err(e) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Err"),
+                        vec![Value::Text(Rc::from(&*e))],
+                    )?,
+                };
+                ret(result, kont)
+            }
+            ("Os::read_bytes_under", [Value::Text(root), Value::Text(path)]) => {
+                let result = match tauto_rt::host::Host::read_bytes_under(
+                    &tauto_rt::host::System,
+                    root,
+                    path,
+                ) {
+                    Ok(bytes) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Ok"),
+                        vec![Value::Bytes(bytes.into())],
+                    )?,
+                    Err(e) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Err"),
                         vec![Value::Text(Rc::from(e.to_string().as_str()))],
                     )?,
                 };
@@ -4150,9 +4507,12 @@ impl<'a> Machine<'a> {
             }
             ("Os::create_dir", [Value::Text(path)]) => {
                 let result = match std::fs::create_dir_all(&**path) {
-                    Ok(()) => self.make("Result::Ok", vec![Value::Unit])?,
+                    Ok(()) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Ok"),
+                        vec![Value::Unit],
+                    )?,
                     Err(e) => self.make(
-                        "Result::Err",
+                        &tauto_surface::bindings::library_name("Result::Err"),
                         vec![Value::Text(Rc::from(e.to_string().as_str()))],
                     )?,
                 };
@@ -4168,46 +4528,80 @@ impl<'a> Machine<'a> {
                 let v = self.text_list_result(result)?;
                 ret(v, kont)
             }
+            ("Os::read_link", [Value::Text(path)]) => {
+                let result = tauto_rt::stdlib::os_read_link_vec(tauto_rt::Text::from(&**path));
+                let v = self.text_list_result(result)?;
+                ret(v, kont)
+            }
+            ("Os::write_new", [Value::Text(path), Value::Text(contents)]) => {
+                let result = tauto_rt::host::Host::create_new(
+                    &tauto_rt::host::System,
+                    path,
+                    contents.as_bytes(),
+                )
+                .map_err(|e| e.to_string());
+                let v = self.unit_result(result)?;
+                ret(v, kont)
+            }
             ("Os::move_path", [Value::Text(from), Value::Text(to)]) => {
-                let result = tauto_rt::host::Host::rename(&tauto_rt::host::System, from, to);
+                let result = tauto_rt::host::Host::rename(&tauto_rt::host::System, from, to)
+                    .map_err(|e| e.to_string());
                 let v = self.unit_result(result)?;
                 ret(v, kont)
             }
             ("Os::copy_file", [Value::Text(from), Value::Text(to)]) => {
-                let result = tauto_rt::host::Host::copy(&tauto_rt::host::System, from, to);
+                let result = tauto_rt::host::Host::copy(&tauto_rt::host::System, from, to)
+                    .map_err(|e| e.to_string());
                 let v = self.unit_result(result)?;
                 ret(v, kont)
             }
             ("Os::canonicalize", [Value::Text(path)]) => {
                 let result = match tauto_rt::host::Host::canonicalize(&tauto_rt::host::System, path)
                 {
-                    Ok(p) => self.make("Result::Ok", vec![Value::Text(Rc::from(p.as_str()))])?,
-                    Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(e.as_str()))])?,
+                    Ok(p) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Ok"),
+                        vec![Value::Text(Rc::from(p.as_str()))],
+                    )?,
+                    Err(e) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Err"),
+                        vec![Value::Text(Rc::from(e.to_string().as_str()))],
+                    )?,
                 };
                 ret(result, kont)
             }
             ("Os::remove", [Value::Text(path)]) => {
                 let result = match tauto_rt::host::Host::remove(&tauto_rt::host::System, path) {
-                    Ok(()) => self.make("Result::Ok", vec![Value::Unit])?,
-                    Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(e.as_str()))])?,
+                    Ok(()) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Ok"),
+                        vec![Value::Unit],
+                    )?,
+                    Err(e) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Err"),
+                        vec![Value::Text(Rc::from(e.to_string().as_str()))],
+                    )?,
                 };
                 ret(result, kont)
             }
             // The run may read and write under the directory, as under one
             // the user picked (`Permissions::choose`).
             ("Os::temp_dir", []) => {
-                let made =
-                    tauto_rt::host::Host::temp_dir(&tauto_rt::host::System).and_then(|dir| {
+                let made = tauto_rt::host::Host::temp_dir(&tauto_rt::host::System)
+                    .map_err(|e| e.to_string())
+                    .and_then(|dir| {
                         self.permissions.choose("read", &dir, true);
                         self.permissions
                             .choose("write", &dir, true)
                             .ok_or_else(|| format!("{dir}: cannot be resolved"))
                     });
                 let result = match made {
-                    Ok(dir) => {
-                        self.make("Result::Ok", vec![Value::Text(Rc::from(dir.as_str()))])?
-                    }
-                    Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(e.as_str()))])?,
+                    Ok(dir) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Ok"),
+                        vec![Value::Text(Rc::from(dir.as_str()))],
+                    )?,
+                    Err(e) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Err"),
+                        vec![Value::Text(Rc::from(e.to_string().as_str()))],
+                    )?,
                 };
                 ret(result, kont)
             }
@@ -4272,23 +4666,41 @@ impl<'a> Machine<'a> {
                 let v = match read {
                     Ok(bytes) => {
                         let bytes = self.option(bytes.map(|b| Value::Bytes(b.into())))?;
-                        self.make("Result::Ok", vec![bytes])?
+                        self.make(
+                            &tauto_surface::bindings::library_name("Result::Ok"),
+                            vec![bytes],
+                        )?
                     }
-                    Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(&*e))])?,
+                    Err(e) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Err"),
+                        vec![Value::Text(Rc::from(&*e))],
+                    )?,
                 };
                 ret(v, kont)
             }
             ("Os::child_write", [Value::Int(id), Value::Bytes(bytes)]) => {
                 let v = match tauto_rt::child::os_child_write(*id as u64, bytes.clone().into()) {
-                    Ok(()) => self.make("Result::Ok", vec![Value::Unit])?,
-                    Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(&*e))])?,
+                    Ok(()) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Ok"),
+                        vec![Value::Unit],
+                    )?,
+                    Err(e) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Err"),
+                        vec![Value::Text(Rc::from(&*e))],
+                    )?,
                 };
                 ret(v, kont)
             }
             ("Os::child_close_stdin", [Value::Int(id)]) => {
                 let v = match tauto_rt::child::os_child_close_stdin(*id as u64) {
-                    Ok(()) => self.make("Result::Ok", vec![Value::Unit])?,
-                    Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(&*e))])?,
+                    Ok(()) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Ok"),
+                        vec![Value::Unit],
+                    )?,
+                    Err(e) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Err"),
+                        vec![Value::Text(Rc::from(&*e))],
+                    )?,
                 };
                 ret(v, kont)
             }
@@ -4307,9 +4719,12 @@ impl<'a> Machine<'a> {
             }
             ("Os::write_bytes", [Value::Text(path), Value::Bytes(bytes)]) => {
                 let result = match std::fs::write(&**path, &**bytes) {
-                    Ok(()) => self.make("Result::Ok", vec![Value::Unit])?,
+                    Ok(()) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Ok"),
+                        vec![Value::Unit],
+                    )?,
                     Err(e) => self.make(
-                        "Result::Err",
+                        &tauto_surface::bindings::library_name("Result::Err"),
                         vec![Value::Text(Rc::from(e.to_string().as_str()))],
                     )?,
                 };
@@ -4323,6 +4738,13 @@ impl<'a> Machine<'a> {
             ("Os::read_stdin", [Value::Int(max)]) => {
                 let bytes = tauto_rt::stdlib::os_read_stdin(*max as u64);
                 ret(Value::Bytes(bytes.to_vec().into()), kont)
+            }
+            ("Os::on_shutdown", [Value::Res(r)]) => {
+                let ResKind::Signal(s) = &r.kind else {
+                    return runtime("expected a Signal");
+                };
+                tauto_rt::shutdown::register(s.clone());
+                ret(Value::Unit, kont)
             }
             ("Os::flush", []) => {
                 if self.streaming {
@@ -4350,7 +4772,7 @@ impl<'a> Machine<'a> {
                 std::thread::sleep(std::time::Duration::from_millis((*ms).max(0) as u64));
                 ret(Value::Unit, kont)
             }
-            ("Os::offload", [f]) => self.apply(f.clone(), Vec::new(), kont),
+            ("Os::offload", [f]) => self.apply(f.clone(), Vec::new(), kont, None),
             // A `u64` is held as its bits in an `i64`, as the literals are.
             ("Os::secure_random", [Value::Int(n)]) => {
                 let result = match u64::try_from(*n)
@@ -4362,9 +4784,12 @@ impl<'a> Machine<'a> {
                             .secure_random(n)
                             .map_err(tauto_rt::Text::from)
                     }) {
-                    Ok(bytes) => self.make("Result::Ok", vec![Value::Bytes(bytes.into())])?,
+                    Ok(bytes) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Ok"),
+                        vec![Value::Bytes(bytes.into())],
+                    )?,
                     Err(e) => self.make(
-                        "Result::Err",
+                        &tauto_surface::bindings::library_name("Result::Err"),
                         vec![Value::Text(Rc::from(e.to_string().as_str()))],
                     )?,
                 };
@@ -4420,9 +4845,15 @@ impl<'a> Machine<'a> {
                 let v = match read {
                     Ok(bytes) => {
                         let bytes = self.option(bytes.map(Value::Bytes))?;
-                        self.make("Result::Ok", vec![bytes])?
+                        self.make(
+                            &tauto_surface::bindings::library_name("Result::Ok"),
+                            vec![bytes],
+                        )?
                     }
-                    Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(&*e))])?,
+                    Err(e) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Err"),
+                        vec![Value::Text(Rc::from(&*e))],
+                    )?,
                 };
                 ret(v, kont)
             }
@@ -4435,16 +4866,28 @@ impl<'a> Machine<'a> {
                 let v = match wrote {
                     Ok(done) => {
                         let done = self.option(done.map(|()| Value::Unit))?;
-                        self.make("Result::Ok", vec![done])?
+                        self.make(
+                            &tauto_surface::bindings::library_name("Result::Ok"),
+                            vec![done],
+                        )?
                     }
-                    Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(&*e))])?,
+                    Err(e) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Err"),
+                        vec![Value::Text(Rc::from(&*e))],
+                    )?,
                 };
                 ret(v, kont)
             }
             ("Os::tcp_shutdown", [Value::Int(stream), Value::Int(how)]) => {
                 let v = match tauto_rt::tcp::os_tcp_shutdown(*stream as u64, *how as u64) {
-                    Ok(()) => self.make("Result::Ok", vec![Value::Unit])?,
-                    Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(&*e))])?,
+                    Ok(()) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Ok"),
+                        vec![Value::Unit],
+                    )?,
+                    Err(e) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Err"),
+                        vec![Value::Text(Rc::from(&*e))],
+                    )?,
                 };
                 ret(v, kont)
             }
@@ -4522,9 +4965,15 @@ impl<'a> Machine<'a> {
                 let v = match read {
                     Ok(bytes) => {
                         let bytes = self.option(bytes.map(Value::Bytes))?;
-                        self.make("Result::Ok", vec![bytes])?
+                        self.make(
+                            &tauto_surface::bindings::library_name("Result::Ok"),
+                            vec![bytes],
+                        )?
                     }
-                    Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(&*e))])?,
+                    Err(e) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Err"),
+                        vec![Value::Text(Rc::from(&*e))],
+                    )?,
                 };
                 ret(v, kont)
             }
@@ -4538,16 +4987,28 @@ impl<'a> Machine<'a> {
                 let v = match wrote {
                     Ok(done) => {
                         let done = self.option(done.map(|()| Value::Unit))?;
-                        self.make("Result::Ok", vec![done])?
+                        self.make(
+                            &tauto_surface::bindings::library_name("Result::Ok"),
+                            vec![done],
+                        )?
                     }
-                    Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(&*e))])?,
+                    Err(e) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Err"),
+                        vec![Value::Text(Rc::from(&*e))],
+                    )?,
                 };
                 ret(v, kont)
             }
             ("Os::tls_shutdown", [Value::Int(stream), Value::Int(how)]) => {
                 let v = match tauto_rt::tls_host::os_tls_shutdown(*stream as u64, *how as u64) {
-                    Ok(()) => self.make("Result::Ok", vec![Value::Unit])?,
-                    Err(e) => self.make("Result::Err", vec![Value::Text(Rc::from(&*e))])?,
+                    Ok(()) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Ok"),
+                        vec![Value::Unit],
+                    )?,
+                    Err(e) => self.make(
+                        &tauto_surface::bindings::library_name("Result::Err"),
+                        vec![Value::Text(Rc::from(&*e))],
+                    )?,
                 };
                 ret(v, kont)
             }
@@ -4674,7 +5135,10 @@ impl<'a> Machine<'a> {
                         }
                         ResKind::Map(RefCell::new(Entries::of(copies)))
                     }
-                    ResKind::Cell(..) | ResKind::Weak(_) | ResKind::Guard(..) => unreachable!(),
+                    ResKind::Signal(_)
+                    | ResKind::Cell(..)
+                    | ResKind::Weak(_)
+                    | ResKind::Guard(..) => unreachable!(),
                 };
                 self.resource(kind)
             }
@@ -4686,7 +5150,7 @@ impl<'a> Machine<'a> {
     /// frames up to it as the continuation, and runs the arm outside it.
     fn perform(
         &mut self,
-        effect: &str,
+        effect: &Name,
         args: Vec<Value<'a>>,
         kont: Kont<'a>,
     ) -> Result<(Ctrl<'a>, Kont<'a>), RunError> {
@@ -4770,10 +5234,22 @@ impl<'a> Machine<'a> {
             }
             at = node.next.clone();
         }
+        let host_name = match effect.as_global() {
+            Some(mut reference) => {
+                while let Some(origin) = reference.origin() {
+                    reference = origin;
+                }
+                reference.display()
+            }
+            None => effect.as_str(),
+        };
+        if !tauto_surface::bindings::is_library_instance(effect, host_name) {
+            return runtime(tauto_rt::messages::nothing_handles(effect));
+        }
         if self.host.is_some() {
-            if let ("macro_error" | "macro_warn", [diag]) = (effect, args.as_slice()) {
+            if let ("macro_error" | "macro_warn", [diag]) = (host_name, args.as_slice()) {
                 let (message, at, code) = self.diag_parts(diag);
-                if effect == "macro_error" {
+                if tauto_surface::bindings::is_library(&effect, "macro_error") {
                     return Err(RunError::MacroError(message, at, code));
                 }
                 if let Some(h) = &mut self.host {
@@ -4785,10 +5261,11 @@ impl<'a> Machine<'a> {
         }
         // The host answers `wait`: it runs each spawned task to its end at its
         // `spawn`, so a signal not raised is one no task can raise.
-        if let ("wait", [Value::Res(r)]) = (effect, args.as_slice())
-            && let ResKind::Cell(c, "Signal") = &r.kind
+        if let ("wait", [Value::Res(r)]) = (host_name, args.as_slice())
+            && let ResKind::Signal(s) = &r.kind
         {
-            if !matches!(*c.borrow(), Value::Bool(true)) {
+            // A request to end the run may still raise it.
+            if !s.is_raised() && !tauto_rt::shutdown::block_until(s) {
                 return runtime(msg!(
                     "eval-deadlock",
                     deadlock = tauto_rt::messages::DEADLOCK.to_string()
@@ -4798,14 +5275,15 @@ impl<'a> Machine<'a> {
         }
         // The host answers `spawn`: it runs the body to its end at the
         // `spawn`, apart from the handlers around it, and gives the task.
-        if let ("spawn", [body]) = (effect, args.as_slice()) {
+        if let ("spawn", [body]) = (host_name, args.as_slice()) {
             let body = body.clone();
-            let (ctrl, kont) = self.apply(body, Vec::new(), None)?;
+            let (ctrl, kont) = self.apply(body, Vec::new(), None, None)?;
             let v = self.run(ctrl, kont)?;
-            let ctor = self.ctor_key("Task", None)?;
+            let ctor = self.ctor_key(&tauto_surface::bindings::library_name("Task::Mk"), None)?;
             return Ok((Ctrl::Ret(self.make(ctor, vec![v])?), start));
         }
-        if let ("show", [Value::Text(name), value]) = (effect, args.as_slice()) {
+        // The host answers `show`.
+        if let ("show", [Value::Text(name), value]) = (host_name, args.as_slice()) {
             if self.streaming {
                 println!("{name} = {value}");
                 return Ok((Ctrl::Ret(Value::Unit), start));
@@ -4814,11 +5292,11 @@ impl<'a> Machine<'a> {
             return Ok((Ctrl::Ret(Value::Unit), start));
         }
         // The host runs a test's body to its end; its error fails only that test.
-        if let ("test", [Value::Text(name), body]) = (effect, args.as_slice()) {
+        if let ("test", [Value::Text(name), body]) = (host_name, args.as_slice()) {
             let (name, body) = (name.to_string(), body.clone());
             self.in_test += 1;
             let result = self
-                .apply(body, Vec::new(), None)
+                .apply(body, Vec::new(), None, None)
                 .and_then(|(ctrl, kont)| self.run(ctrl, kont));
             self.in_test -= 1;
             let error = match result {
@@ -4829,7 +5307,8 @@ impl<'a> Machine<'a> {
             self.tests.push((name, error));
             return Ok((Ctrl::Ret(Value::Unit), start));
         }
-        if let ("fail" | "fail@Text", [Value::Text(why)]) = (effect, args.as_slice()) {
+        if let ("fail", [Value::Text(why)]) = (host_name, args.as_slice()) {
+            // The host answers a test's `fail`: the test fails with its message.
             if self.in_test > 0 {
                 return runtime(why.to_string());
             }
@@ -4956,7 +5435,7 @@ fn holds_token(v: &Value<'_>) -> bool {
 /// The type of an affine or linear value a value holds.
 fn owner(v: &Value<'_>) -> Option<String> {
     match v {
-        Value::Data(d) if d.token.is_some() => Some(d.shape.ty.clone()),
+        Value::Data(d) if d.token.is_some() => Some(d.shape.ty.to_string()),
         Value::Data(d) if !d.owns => None,
         Value::Data(d) => d.fields.iter().find_map(owner),
         Value::Closure(c) => c.owns.iter().find_map(|name| match lookup(&c.env, name) {
@@ -4970,6 +5449,7 @@ fn owner(v: &Value<'_>) -> Option<String> {
             ResKind::Cell(_, name) => (*name).into(),
             ResKind::Weak(_) => "Weak".into(),
             ResKind::Guard(..) => "MutexGuard".into(),
+            ResKind::Signal(_) => unreachable!("signals do not have ownership tokens"),
         }),
         _ => None,
     }
@@ -5148,12 +5628,22 @@ fn key_hash(v: &Value<'_>) -> u64 {
 /// `Secret(A)` of `std/prelude/Secret.taut`: a value no program reads but
 /// through the secret operations. It shows as `Secret`, as the backends show it.
 const SECRET: &str = "Secret@";
+fn secret_reference() -> Name {
+    static REFERENCE: std::sync::OnceLock<tauto_surface::identity::DeclRef> =
+        std::sync::OnceLock::new();
+    REFERENCE
+        .get_or_init(|| tauto_surface::identity::DeclRef::fresh(SECRET))
+        .clone()
+        .into()
+}
 
 fn secret(v: Value<'_>) -> Value<'_> {
     data(Data {
         shape: Rc::new(Shape {
-            ty: SECRET.into(),
-            ctor: SECRET.into(),
+            ty: secret_reference(),
+            ctor: secret_reference(),
+            display: SECRET.into(),
+            is_struct: false,
             names: vec![None],
         }),
         fields: vec![v],
@@ -5165,7 +5655,7 @@ fn secret(v: Value<'_>) -> Value<'_> {
 /// A secret's content; a public argument (a shift's amount) as it is.
 fn revealed<'v, 'a>(v: &'v Value<'a>) -> Result<&'v Value<'a>, RunError> {
     match v {
-        Value::Data(d) if d.shape.ctor == SECRET => Ok(&d.fields[0]),
+        Value::Data(d) if d.shape.ctor == secret_reference() => Ok(&d.fields[0]),
         v => Ok(v),
     }
 }
@@ -5271,6 +5761,7 @@ fn equal(a: &Value<'_>, b: &Value<'_>) -> Result<bool, RunError> {
         (Value::Float32(a), Value::Float32(b)) => a == b,
         (Value::Text(a), Value::Text(b)) => a == b,
         (Value::Bytes(a), Value::Bytes(b)) => a == b,
+        (Value::Declaration(a), Value::Declaration(b)) => a == b,
         (Value::Unit, Value::Unit) => true,
         (Value::Data(a), Value::Data(b)) => {
             if a.shape.ty != b.shape.ty
@@ -5305,11 +5796,81 @@ mod tests {
     use super::*;
 
     #[test]
+    fn syntax_constructor_transport_does_not_rebind_equal_display_names() {
+        use crate::types::{Data as TypeData, DataCtor};
+        use tauto_surface::identity::DeclRef;
+        let program = Program {
+            stmts: vec![],
+            errors: vec![],
+        };
+        let mut report = TypeReport::default();
+        let first: Name = DeclRef::fresh("same").into();
+        let second: Name = DeclRef::fresh("same").into();
+        for name in [&first, &second] {
+            report.datas.decls.insert(
+                name.clone(),
+                TypeData {
+                    name: name.clone(),
+                    declared: Some(Kind::Copy),
+                    generics: vec![],
+                    constructors: vec![DataCtor {
+                        name: name.clone(),
+                        fields: vec![],
+                    }],
+                    is_struct: false,
+                    recursive: false,
+                    base: Kind::Copy,
+                    holds: vec![],
+                    builtin: false,
+                    view: false,
+                },
+            );
+            report.datas.ctors.insert(name.clone(), (name.clone(), 0));
+        }
+        let mut machine = machine_for(&program, 100, &report, RunOptions::default());
+        for name in [&first, &second] {
+            let node = Node::Ctor(name.clone().into(), vec![]);
+            let value = machine.node_value(&node).expect("bound constructor");
+            assert_eq!(machine.value_node(&value).expect("syntax"), node);
+        }
+        let foreign = Node::Ctor(Name::Global(DeclRef::fresh("same")).into(), vec![]);
+        assert!(machine.node_value(&foreign).is_err());
+        assert!(machine.node_value(&Node::ctor("same", vec![])).is_err());
+    }
+
+    #[test]
+    fn declaration_values_preserve_identity_through_syntax_conversion() {
+        let program = Program {
+            stmts: Vec::new(),
+            errors: Vec::new(),
+        };
+        let report = TypeReport::default();
+        let mut machine = machine_for(&program, 100, &report, RunOptions::default());
+        let first = tauto_surface::identity::DeclRef::fresh("same");
+        let second = tauto_surface::identity::DeclRef::fresh("same");
+        let first_node = Node::Declaration(first.clone());
+        let second_node = Node::Declaration(second.clone());
+        assert_ne!(first_node, second_node);
+        for node in [first_node, second_node] {
+            let value = machine.node_value(&node).expect("declaration value");
+            assert_eq!(machine.value_node(&value).expect("syntax value"), node);
+        }
+        let text = machine.node_value(&Node::text("same")).expect("text value");
+        let integer = machine
+            .node_value(&Node::Int(first.id().index() as i64))
+            .expect("integer value");
+        assert!(!matches!(text, Value::Declaration(_)));
+        assert!(!matches!(integer, Value::Declaration(_)));
+    }
+
+    #[test]
     fn field_places_update_their_shared_root() {
         let root = Rc::new(RefCell::new(data(Data {
             shape: Rc::new(Shape {
                 ty: "Pair".into(),
                 ctor: "Pair".into(),
+                display: "Pair".into(),
+                is_struct: true,
                 names: vec![None, None],
             }),
             fields: vec![Value::Int(1), Value::Int(2)],
@@ -5356,58 +5917,6 @@ mod tests {
     }
 }
 
-/// The member of a product whose type is `key`; a value that is not a
-/// product is its only member.
-fn project<'a>(v: Value<'a>, key: &str) -> Result<Value<'a>, RunError> {
-    match deref(&v) {
-        Value::Product(ms) => match ms.iter().find(|(k, _)| &**k == key) {
-            Some((_, m)) => Ok(m.clone()),
-            None => runtime(msg!(
-                "eval-the-product-has-no-member",
-                key = key.to_string()
-            )),
-        },
-        _ => Ok(v),
-    }
-}
-
-/// A product taken to the type `to`: the members `to` has, or the one
-/// member that is `to`.
-fn fit<'a>(v: Value<'a>, to: &Ty) -> Result<Value<'a>, RunError> {
-    let Value::Product(ms) = deref(&v) else {
-        return Ok(v);
-    };
-    match to.unborrowed() {
-        Ty::Product(ts) => {
-            // Members of one type stay where they are: a product of the same type is not rearranged.
-            if ts.len() == ms.len()
-                && ts
-                    .iter()
-                    .zip(ms.iter())
-                    .all(|(t, (k, _))| **k == *t.to_string())
-            {
-                return Ok(v);
-            }
-            let keep: Vec<(Rc<str>, Value<'a>)> = ts
-                .iter()
-                .map(|t| {
-                    let key = t.to_string();
-                    ms.iter().find(|(k, _)| **k == *key).cloned().ok_or(())
-                })
-                .collect::<Result<_, ()>>()
-                .or_else(|()| {
-                    runtime(msg!(
-                        "eval-the-product-has-no-member-of",
-                        to = to.to_string()
-                    ))
-                })?;
-            Ok(Value::Product(keep.into()))
-        }
-        Ty::Unit => Ok(Value::Unit),
-        t => project(v, &t.to_string()),
-    }
-}
-
 /// The names of function values that a call calls, or lends to one of its
 /// borrowed parameters.
 fn called_functions(program: &Program, report: &TypeReport) -> HashSet<crate::surface::TermId> {
@@ -5440,7 +5949,7 @@ fn called_functions(program: &Program, report: &TypeReport) -> HashSet<crate::su
 }
 
 /// A constructor by the name written, not by its full name `m::C`.
-fn shown(ctor: &str) -> &str {
+fn shown(ctor: &Name) -> &str {
     crate::surface::qualify::short(ctor)
 }
 
@@ -5477,44 +5986,8 @@ fn note_lent_fields(f: &FnDecl, out: &mut HashSet<*const SurfaceTerm>) {
 }
 
 /// Whether `n` names the prelude's `Pair`, which `#(a, b)` is read to.
-fn is_pair_name(n: &str) -> bool {
-    n == "Pair" || n.ends_with("::Pair")
-}
-
-/// Whether `p` is `#(…)`: a product's pattern, or the `Pair { fst, snd }` it is read to.
-fn is_tuple_pattern(p: &Pattern) -> bool {
-    match p {
-        Pattern::Tuple(_) => true,
-        Pattern::Record { name, fields } => {
-            is_pair_name(name) && fields.len() == 2 && fields[0].0 == "fst" && fields[1].0 == "snd"
-        }
-        _ => false,
-    }
-}
-
-/// The members of `#(p₁, …, pₙ)`, read from `Pair { fst, snd }` nested to the right: a member
-/// that is itself `#(…)` gives its members and a member `#()` gives none, as the value's do.
-fn pair_pattern_members(p: &Pattern) -> Vec<&Pattern> {
-    fn go<'p>(p: &'p Pattern, out: &mut Vec<&'p Pattern>) {
-        match p {
-            Pattern::Record { name, fields }
-                if is_pair_name(name)
-                    && fields.len() == 2
-                    && fields[0].0 == "fst"
-                    && fields[1].0 == "snd" =>
-            {
-                go(&fields[0].1, out);
-                go(&fields[1].1, out);
-            }
-            Pattern::Tuple(items) => items.iter().for_each(|q| go(q, out)),
-            Pattern::Ctor { name, args }
-                if args.is_empty() && (name == "Star" || name.ends_with("::Star")) => {}
-            other => out.push(other),
-        }
-    }
-    let mut out = Vec::new();
-    go(p, &mut out);
-    out
+fn is_pair_name(n: &Name) -> bool {
+    tauto_surface::bindings::is_library(n, "Pair")
 }
 
 /// A guard that is dropped gives the mutex its content back, so the next

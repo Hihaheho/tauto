@@ -1,10 +1,11 @@
 //! Source spellings for structurally identical terms in the same proof context.
 use crate::check::Kernel;
 use crate::program::Loaded;
+use crate::surface::Name;
 use crate::surface::{SurfaceTerm as T, TermKind, TheoremDecl, walk};
 use std::collections::HashMap;
 
-type Context = Vec<(String, T)>;
+type Context = Vec<(Name, T)>;
 
 #[derive(Default)]
 pub(super) struct Notation {
@@ -13,7 +14,6 @@ pub(super) struct Notation {
 struct Entry {
     term: T,
     context: Context,
-    occurrence: crate::surface::TermId,
     text: String,
 }
 
@@ -24,7 +24,7 @@ fn structure(t: &T) -> T {
     walk::term(&mut t, &mut |t| t.span = Default::default());
     t
 }
-fn context(ctx: &[(String, T)]) -> Context {
+fn context(ctx: &[(Name, T)]) -> Context {
     ctx.iter().map(|(n, t)| (n.clone(), structure(t))).collect()
 }
 
@@ -114,12 +114,11 @@ impl Notation {
         out
     }
 
-    fn collect(&mut self, t: &T, ctx: &[(String, T)], roots: &HashMap<u32, String>) {
+    fn collect(&mut self, t: &T, ctx: &[(Name, T)], roots: &HashMap<u32, String>) {
         if let Some(text) = roots.get(&t.span.start) {
             self.entries.push(Entry {
                 term: structure(t),
                 context: context(ctx),
-                occurrence: t.id(),
                 text: text.clone(),
             });
             // Elaboration may give generated children the root's span too.
@@ -136,7 +135,7 @@ impl Notation {
 
     // A lambda without parameter types cannot establish the identities of its
     // bindings. Its judgments are printed separately with their typed context.
-    fn children(t: &T, ctx: &[(String, T)], f: &mut impl FnMut(&T, &[(String, T)])) {
+    fn children(t: &T, ctx: &[(Name, T)], f: &mut impl FnMut(&T, &[(Name, T)])) {
         match &*t.kind {
             TermKind::Pi { params, result, .. } => {
                 let mut ctx = ctx.to_vec();
@@ -174,27 +173,36 @@ impl Notation {
         }
     }
 
-    fn spelling(&self, t: &T, ctx: &[(String, T)]) -> Option<String> {
+    fn spelling(&self, t: &T, ctx: &[(Name, T)]) -> Option<String> {
         let ctx = context(ctx);
         let term = structure(t);
+        let mut has_global = false;
+        walk::term(&mut term.clone(), &mut |t| {
+            has_global |= matches!(&*t.kind, TermKind::Var(Name::Global(_)));
+        });
         let matches: Vec<_> = self
             .entries
             .iter()
             .filter(|e| {
-                e.term == term
-                    && ctx.starts_with(&e.context)
+                super::same_term(&e.term, &term)
+                    && ctx.len() >= e.context.len()
+                    // Source aliases of globals are not recorded. Under extra
+                    // binders only expressions of the recorded locals are reused.
+                    && (ctx.len() == e.context.len() || !has_global)
+                    && super::Scopes::same(&ctx[..e.context.len()], &e.context)
+                    && ctx
+                        .iter()
+                        .zip(&e.context)
+                        .all(|((a, _), (b, _))| a.as_str() == b.as_str())
+                    && crate::surface::print::print_term(&e.term)
+                        == crate::surface::print::print_term(&term)
                     && e.context
                         .iter()
                         .enumerate()
-                        .all(|(i, (n, _))| !ctx[i + 1..].iter().any(|(other, _)| other == n))
+                        .all(|(i, (n, _))| !ctx[i + 1..].iter().any(|(other, _)| other.as_str() == n.as_str()))
             })
             .collect();
-        let own: Vec<_> = matches
-            .iter()
-            .copied()
-            .filter(|e| e.occurrence == t.id())
-            .collect();
-        let choices = if own.is_empty() { &matches } else { &own };
+        let choices = &matches;
         let first = choices.first()?;
         choices
             .iter()
@@ -202,7 +210,7 @@ impl Notation {
             .then(|| first.text.clone())
     }
 
-    pub(super) fn show(&self, t: &T, ctx: &[(String, T)], equations: bool) -> String {
+    pub(super) fn show(&self, t: &T, ctx: &[(Name, T)], equations: bool) -> String {
         if self.entries.is_empty() {
             return crate::surface::print::print_term(&if equations {
                 Kernel::eqs_written(t)
@@ -213,21 +221,58 @@ impl Notation {
         let mut selected = HashMap::new();
         fn select(
             n: &Notation,
-            t: &T,
-            ctx: &[(String, T)],
+            t: &mut T,
+            ctx: &[(Name, T)],
             selected: &mut HashMap<crate::surface::TermId, String>,
         ) {
+            // Printing positions have separate identities even when the recorded
+            // terms share an occurrence across transformations or scopes.
+            *t = T::new((*t.kind).clone(), t.span);
             if let Some(text) = n.spelling(t, ctx) {
                 selected.insert(t.id(), text);
                 return;
             }
-            Notation::children(t, ctx, &mut |c, ctx| select(n, c, ctx, selected));
+            match std::sync::Arc::make_mut(&mut t.kind) {
+                TermKind::Pi { params, result, .. } => {
+                    let mut ctx = ctx.to_vec();
+                    for (name, ty) in params {
+                        select(n, ty, &ctx, selected);
+                        if let Some(name) = name {
+                            ctx.push((name.clone(), ty.clone()));
+                        }
+                    }
+                    select(n, result, &ctx, selected);
+                }
+                TermKind::Lam {
+                    params,
+                    types,
+                    body,
+                } => {
+                    let mut ctx = ctx.to_vec();
+                    for (i, name) in params.iter().enumerate() {
+                        let Some(Some(ty)) = types.get_mut(i) else {
+                            return;
+                        };
+                        select(n, ty, &ctx, selected);
+                        ctx.push((name.clone(), ty.clone()));
+                    }
+                    select(n, body, &ctx, selected);
+                }
+                TermKind::Exists { .. }
+                | TermKind::Match { .. }
+                | TermKind::Block(..)
+                | TermKind::Handle { .. }
+                | TermKind::Quote { .. }
+                | TermKind::Step(..) => {}
+                _ => walk::children(t, &mut |child| select(n, child, ctx, selected)),
+            }
         }
-        select(self, t, ctx, &mut selected);
+        let mut t = t.clone();
+        select(self, &mut t, ctx, &mut selected);
         let t = if equations {
-            Kernel::eqs_written(t)
+            Kernel::eqs_written(&t)
         } else {
-            t.clone()
+            t
         };
         crate::surface::print::print_term_with(&t, &|t| selected.get(&t.id()).cloned())
     }

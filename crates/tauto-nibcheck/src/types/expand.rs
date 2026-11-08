@@ -4,42 +4,42 @@
 //! each of its methods. What follows sees no class, and checks the result
 //! as it checks any program.
 
+use crate::surface::Name;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 use tauto_parol::Span;
 
-use super::classes::{instance_fn, replace};
-use super::{Ev, Kind, STRUCTURAL, TypeError, TypeReport, check_program_in, prelude_source};
+use super::classes::{instance_fn, member_fn, replace};
+use super::{Ev, Kind, STRUCTURAL, TypeError, TypeReport, check_program_in, prelude_source_for};
 use crate::surface::walk;
 use crate::surface::{
     ClassDecl, Constraint, FnDecl, InstanceDecl, Program, Stmt, SurfaceTerm, TermId, TermKind,
 };
 
 /// The classes and the constrained functions of the prelude.
-fn prelude_names() -> &'static (HashSet<String>, HashSet<String>) {
-    static NAMES: OnceLock<(HashSet<String>, HashSet<String>)> = OnceLock::new();
-    NAMES.get_or_init(|| {
-        let (mut classes, mut fns) = (HashSet::new(), HashSet::new());
-        for s in &prelude_source().stmts {
-            match s {
-                Stmt::Class(c) => {
-                    classes.insert(c.name.clone());
-                }
-                Stmt::Fn(f) if constrained(&f.where_) => {
-                    fns.insert(f.name.clone());
-                }
-                Stmt::Extern { fns: es, .. } => {
-                    for f in es.iter().filter(|f| constrained(&f.where_)) {
-                        fns.insert(f.name.clone());
-                    }
-                }
-                _ => {}
+fn prelude_names(program: &Program) -> (HashSet<Name>, HashSet<Name>, HashSet<Name>) {
+    let (mut classes, mut fns, mut methods) = (HashSet::new(), HashSet::new(), HashSet::new());
+    for s in &prelude_source_for(program).stmts {
+        match s {
+            Stmt::Class(c) => {
+                classes.insert(c.name.clone());
+                methods.extend(c.methods.iter().map(|m| member_fn(c, &m.name)));
             }
+            Stmt::Fn(f) if constrained(&f.where_) => {
+                fns.insert(f.name.clone());
+            }
+            Stmt::Extern { fns: es, .. } => {
+                fns.extend(
+                    es.iter()
+                        .filter(|f| constrained(&f.where_))
+                        .map(|f| f.name.clone()),
+                );
+            }
+            _ => {}
         }
-        (classes, fns)
-    })
+    }
+    (classes, fns, methods)
 }
 
 fn constrained(where_: &[Constraint]) -> bool {
@@ -51,7 +51,7 @@ fn constrained(where_: &[Constraint]) -> bool {
 /// Whether the program declares a class, an instance or a constraint
 /// (`Some(true)`), or only looks to use the std's (`Some(false)`).
 fn needs_expansion(program: &Program) -> Option<bool> {
-    let (classes, fns) = prelude_names();
+    let (classes, fns, methods) = prelude_names(program);
     let mut found = false;
     let own: HashSet<&str> = program
         .stmts
@@ -72,13 +72,8 @@ fn needs_expansion(program: &Program) -> Option<bool> {
         walk::stmt(&mut s, &mut |t| match &*t.kind {
             TermKind::Var(n) if fns.contains(n) && !own.contains(n.as_str()) => found = true,
             // `C::m`, a method of a class of the prelude, is one name.
-            TermKind::Var(n)
-                if n.rsplit_once("::")
-                    .is_some_and(|(c, _)| classes.contains(c)) =>
-            {
-                found = true
-            }
-            TermKind::Field { base, .. } if matches!(&*base.kind, TermKind::Var(c) if classes.contains(c)) => {
+            TermKind::Var(n) if methods.contains(n) => found = true,
+            TermKind::Field { base, .. } if matches!(&*base.kind, TermKind::Var(c) if classes.contains(&Name::from(c))) => {
                 found = true
             }
             _ => {}
@@ -101,7 +96,7 @@ pub fn expansion_errors(program: &Program) -> Vec<TypeError> {
     if needs_expansion(program).is_none() {
         return Vec::new();
     }
-    check_program_in(program, prelude_source()).errors
+    check_program_in(program, prelude_source_for(program)).errors
 }
 
 /// What kept `program`'s indexed effects from expanding: a row of the
@@ -112,7 +107,7 @@ pub fn index_expansion_errors(program: &Program) -> Vec<TypeError> {
     if super::indices::indexed_effects(program).is_empty() {
         return Vec::new();
     }
-    check_program_in(program, super::prelude()).errors
+    check_program_in(program, super::prelude_for(program)).errors
 }
 
 /// `program` with its classes, instances and constraints expanded. A program
@@ -147,20 +142,20 @@ fn expand(program: &mut Program, per_file: &mut [Vec<Stmt>], synthetic: u32, rep
     let Some(declared) = needs_expansion(program) else {
         return;
     };
-    let report = check_program_in(program, prelude_source());
+    let report = check_program_in(program, prelude_source_for(program));
     if !report.errors.is_empty() {
         // A name the program binds itself (a parameter called `join`) looks
         // like a use of the std's; that it checks as it is settles it.
         if !report_errors
             || !declared
-                && check_program_in(program, super::prelude())
+                && check_program_in(program, super::prelude_for(program))
                     .errors
                     .is_empty()
         {
             return;
         }
         let found = report.errors.iter().map(|e| (e.message.clone(), e.span));
-        program.errors = std::iter::once((UNEXPANDED.to_string(), Span::new(0, 0)))
+        program.errors = std::iter::once((UNEXPANDED.into(), Span::new(0, 0)))
             .chain(found)
             .collect();
         return;
@@ -171,6 +166,7 @@ fn expand(program: &mut Program, per_file: &mut [Vec<Stmt>], synthetic: u32, rep
         origin: None,
         count: 0,
         spans: HashMap::new(),
+        dictionaries: HashMap::new(),
     };
     program.stmts = e.stmts(std::mem::take(&mut program.stmts));
     for file in per_file {
@@ -180,6 +176,7 @@ fn expand(program: &mut Program, per_file: &mut [Vec<Stmt>], synthetic: u32, rep
 
 struct Expander<'a> {
     report: &'a TypeReport,
+    dictionaries: HashMap<(Name, Name), Name>,
     next: u32,
     /// The occurrence the terms being made stand for, and their order.
     /// The program and per-file clones receive the same generated identities.
@@ -188,13 +185,14 @@ struct Expander<'a> {
     spans: HashMap<((TermId, bool), usize), SurfaceTerm>,
 }
 
-fn head_name(head: &SurfaceTerm) -> String {
+fn head_name(head: &SurfaceTerm, resolved: bool) -> Name {
     match &*head.kind {
         TermKind::Var(n) => n.clone(),
-        TermKind::App { function, .. } => head_name(function),
-        // An instance for the product `A × B` is keyed by `Prod`.
-        TermKind::Product(_) => "Prod".to_string(),
-        _ => String::new(),
+        TermKind::App { function, .. } => head_name(function, resolved),
+        // An instance for the product `A × B` is the one for `Pair`.
+        TermKind::Product(_) if resolved => tauto_surface::bindings::library_name("Pair"),
+        TermKind::Product(_) => Name::from("Pair"),
+        _ => Name::default(),
     }
 }
 
@@ -229,11 +227,11 @@ impl Expander<'_> {
         term
     }
 
-    fn var(&mut self, name: impl Into<String>) -> SurfaceTerm {
+    fn var(&mut self, name: impl Into<Name>) -> SurfaceTerm {
         self.term(TermKind::Var(name.into()))
     }
 
-    fn class(&self, name: &str) -> Option<&ClassDecl> {
+    fn class(&self, name: &Name) -> Option<&ClassDecl> {
         self.report.classes.get(name)
     }
 
@@ -261,7 +259,11 @@ impl Expander<'_> {
     /// generics, asking for what the instance's `where` asks.
     fn instance_method(&mut self, i: &InstanceDecl, m: &FnDecl) -> FnDecl {
         let mut f = m.clone();
-        f.name = instance_fn(&i.class, &m.name, &head_name(&i.head));
+        let class = self.class(&i.class).expect("checked class");
+        // The product `A × B` is named as the rest of the program is: by reference once the
+        // program's names are resolved.
+        let resolved = member_fn(class, &m.name).as_global().is_some();
+        f.name = instance_fn(class, &m.name, &head_name(&i.head, resolved));
         f.span = m.span;
         f.bounds.resize(f.generics.len(), None);
         let mut bounds = i.bounds.clone();
@@ -276,6 +278,21 @@ impl Expander<'_> {
 
     /// A function that asks for a class takes the class's methods, after its
     /// own parameters; its body is expanded.
+    fn dictionary_parameter(
+        &mut self,
+        class: &ClassDecl,
+        method: &FnDecl,
+        parameter: &Name,
+    ) -> Name {
+        let member = member_fn(class, &method.name);
+        self.dictionaries
+            .entry((member.clone(), parameter.clone()))
+            .or_insert_with(|| {
+                tauto_surface::identity::LocalRef::fresh(format!("{member}@{parameter}")).into()
+            })
+            .clone()
+    }
+
     fn fn_decl(&mut self, f: &mut FnDecl) {
         let mut added = Vec::new();
         for c in &f.where_ {
@@ -285,7 +302,7 @@ impl Expander<'_> {
             };
             for m in &class.methods {
                 added.push((
-                    format!("{}::{}@{g}", class.name, m.name),
+                    self.dictionary_parameter(&class, m, g),
                     class.clone(),
                     m.clone(),
                     c.ty.clone(),
@@ -296,7 +313,7 @@ impl Expander<'_> {
         self.count = 0;
         for (name, class, m, with) in added {
             let ty = self.method_type(&class, &m, &with);
-            f.params.push(name);
+            f.params.push(name.into());
             f.param_types.push(Some(ty));
             f.borrows.push(None);
         }
@@ -312,11 +329,11 @@ impl Expander<'_> {
             let kind = match m.bounds.get(n).cloned().flatten() {
                 None => "affine".to_string(),
                 Some(b) => match Kind::parse(&b) {
-                    Some(_) => b,
+                    Some(_) => b.to_string(),
                     None => continue,
                 },
             };
-            let kind = self.term(TermKind::Var(kind));
+            let kind = self.term(TermKind::Var(kind.into()));
             params.push((Some(g.clone()), kind));
         }
         for (n, t) in m.param_types.iter().enumerate() {
@@ -358,15 +375,18 @@ impl Expander<'_> {
 
     /// `C::m`, the method of a class. A static reference reads as one name
     /// (`Var("Ord::compare")`); a function `C::m` of a module `C` is not one.
-    fn method_use<'t>(&self, t: &'t SurfaceTerm) -> Option<(&'t str, &'t str)> {
+    fn method_use(&self, t: &SurfaceTerm) -> Option<(Name, String)> {
         match &*t.kind {
             TermKind::Field { base, name } => match &*base.kind {
-                TermKind::Var(c) => Some((c, name)),
+                TermKind::Var(c) if self.class(c).is_some() => Some((c.clone(), name.clone())),
                 _ => None,
             },
-            TermKind::Var(n) => n.rsplit_once("::").filter(|(c, m)| {
-                self.class(c)
-                    .is_some_and(|class| class.methods.iter().any(|f| f.name == *m))
+            TermKind::Var(reference) => self.report.classes.values().find_map(|class| {
+                class
+                    .methods
+                    .iter()
+                    .find(|method| member_fn(class, &method.name) == *reference)
+                    .map(|method| (class.name.clone(), method.name.to_string()))
             }),
             _ => None,
         }
@@ -456,9 +476,22 @@ impl Expander<'_> {
     ) -> (SurfaceTerm, Vec<SurfaceTerm>) {
         if let Some((class, method)) = self.method_use(function) {
             return match evs.first() {
-                Some(Ev::Assume(_, g)) => (self.var(format!("{class}::{method}@{g}")), Vec::new()),
+                Some(Ev::Assume(_, g)) => {
+                    let descriptor = self.class(&class).expect("checked class").clone();
+                    let method = descriptor
+                        .methods
+                        .iter()
+                        .find(|m| m.name.as_str() == method)
+                        .expect("checked method");
+                    let parameter = self.dictionary_parameter(&descriptor, method, g.reference());
+                    (self.var(parameter), Vec::new())
+                }
                 Some(Ev::Inst(_, head, _, subs)) => {
-                    let callee = self.var(instance_fn(class, method, head));
+                    let callee = self.var(instance_fn(
+                        self.class(&class).expect("checked class"),
+                        &method,
+                        head,
+                    ));
                     (callee, self.dictionaries(subs))
                 }
                 _ => (function.clone(), Vec::new()),
@@ -488,9 +521,12 @@ impl Expander<'_> {
 
     fn method_value(&mut self, class: &ClassDecl, m: &FnDecl, ev: &Ev) -> SurfaceTerm {
         match ev {
-            Ev::Assume(_, g) => self.var(format!("{}::{}@{g}", class.name, m.name)),
+            Ev::Assume(_, g) => {
+                let parameter = self.dictionary_parameter(class, m, g.reference());
+                self.var(parameter)
+            }
             Ev::Inst(_, head, _, subs) => {
-                let name = instance_fn(&class.name, &m.name, head);
+                let name = instance_fn(class, &m.name, head);
                 let extra = self.dictionaries(subs);
                 if extra.is_empty() {
                     return self.var(name);
@@ -519,7 +555,7 @@ impl Expander<'_> {
         body: SurfaceTerm,
     ) -> SurfaceTerm {
         let lam = self.term(TermKind::Lam {
-            params,
+            params: params.into_iter().map(Name::from).collect(),
             body: Box::new(body),
             types: Vec::new(),
         });
@@ -537,10 +573,10 @@ impl Expander<'_> {
     /// class, as a value.
     fn value_form(&mut self, t: &SurfaceTerm, evs: &[Ev]) -> SurfaceTerm {
         if let Some((class, method)) = self.method_use(t) {
-            let found = self.class(class).cloned();
+            let found = self.class(&class).cloned();
             let method = found
                 .as_ref()
-                .and_then(|c| c.methods.iter().find(|m| m.name == method));
+                .and_then(|c| c.methods.iter().find(|m| m.name.as_str() == method));
             if let (Some(c), Some(m), Some(ev)) = (found.as_ref(), method, evs.first()) {
                 let m = m.clone();
                 return self.method_value(c, &m, ev);

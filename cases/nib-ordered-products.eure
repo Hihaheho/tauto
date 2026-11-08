@@ -1,0 +1,128 @@
+description = "A Nib product is written by position: its members stand in the order written, and a closed product is rearranged by the types of its members only where a type is expected."
+
+@ cases.products-in-another-order-are-other-types
+source = ```tauto
+fn f(o: Option(i64 × Bool)): Option(Bool × i64) { o }
+```
+types = "error: Option(i64 × Bool) does not fit Option(Bool × i64)"
+
+@ cases.a-product-type-keeps-the-order-written
+source = ```tauto
+let p := #(1, true)
+```
+types = "ok"
+inferred_types.p = "i64 × Bool"
+
+@ cases.a-pattern-binds-by-the-written-position
+source = ```tauto
+fn first(p: i64 × Bool): i64 {
+  match p {
+    #(x, y) => x
+  }
+}
+fn second(p: i64 × Bool): Bool {
+  match p {
+    #(x, y) => y
+  }
+}
+perform show("first", first(#(1, true)))
+perform show("second", second(#(1, true)))
+```
+types = "ok"
+shows = ["first = 1", "second = true"]
+backends = ["rust", "javascript", "vm"]
+
+@ cases.members-of-one-type-are-bound-by-position
+source = ```tauto
+fn sub(p: i64 × i64): i64 {
+  match p {
+    #(a, b) => a - b
+  }
+}
+perform show("sub", sub(#(5, 2)))
+```
+types = "ok"
+shows = ["sub = 3"]
+backends = ["rust", "javascript", "vm"]
+
+@ cases.a-closed-product-is-rearranged-at-an-argument
+source = ```tauto
+fn take(p: Bool × i64): i64 {
+  match p {
+    #(b, n) => n
+  }
+}
+fn give(p: i64 × Bool): i64 { take(p) }
+perform show("give", give(#(7, true)))
+```
+types = "ok"
+shows = ["give = 7"]
+backends = ["rust", "javascript", "vm"]
+
+@ cases.a-closed-product-is-rearranged-at-a-result
+source = ```tauto
+fn swap(p: i64 × Bool): Bool × i64 { p }
+fn flag(p: Bool × i64): Bool {
+  match p {
+    #(b, n) => b
+  }
+}
+perform show("flag", flag(swap(#(7, true))))
+```
+types = "ok"
+shows = ["flag = true"]
+backends = ["rust", "javascript", "vm"]
+
+@ cases.a-generic-product-is-rearranged-by-exact-types
+source = ```tauto
+fn sw<K, V>(p: K × V): V × K { p }
+```
+types = "ok"
+
+// Members of exactly the type asked for are taken even when the type mentions parameters.
+@ cases.members-with-parameters-are-taken-by-type
+source = ```tauto
+fn pick<V, E>(r: Option(List(V)) × Result(V, E)): Result(V, E) { (r: Result(V, E)) }
+fn first<V, E>(r: Option(List(V)) × Result(V, E)): Option(List(V)) { (r: Option(List(V))) }
+```
+types = "ok"
+
+@ cases.members-of-one-parameterised-type-still-clash
+source = ```tauto
+fn f<V>(p: V × V): V { (p: V) }
+```
+types = "error: two members of a product have the type V"
+
+@ cases.members-of-one-type-are-not-rearranged
+source = ```tauto
+fn f(p: i64 × i64 × Bool): Bool × i64 × i64 { p }
+```
+types = "error: two members of a product have the type i64"
+
+// `A × B × C` is `A × (B × C)`: a generic product whose last member is a generic takes a longer
+// product, the last generic standing for the product of the rest, and gives one back.
+@ cases.the-last-generic-of-a-product-takes-the-rest
+source = ```tauto
+fn rest<A: Copy, B>(p: A × B): B {
+  match p {
+    #(a, b) => b
+  }
+}
+fn first<A, B: Copy>(p: A × B): A {
+  match p {
+    #(a, b) => a
+  }
+}
+fn pair<A, B>(a: A, b: B): A × B { #(a, b) }
+let r: i64 × Bool := rest(#(1, 2, true))
+perform show("rest", r)
+perform show("first", first(#(7, true, 3)))
+let p: i64 × i64 × Bool := pair(1, #(2, true))
+match p {
+  #(x, y, z) => perform show("middle", y)
+}
+```
+types = "ok"
+inferred_types.r = "i64 × Bool"
+shows = ["rest = #(2, true)", "first = 7", "middle = 2"]
+backends = ["rust", "javascript"]

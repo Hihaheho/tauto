@@ -1,0 +1,74 @@
+description = "A recursive call inside a λ given as an argument, in the arm of a match applied to a hypothesis, and a recursive call that changes a parameter a hypothesis depends on."
+
+@ cases.a-recursive-call-in-a-lambda-argument-of-or-elim
+files."main.tauto" = ```tauto
+import std::Base
+import std::List
+theorem bool_or_true(a: Bool, b: Bool, e: Bool::or(a, b) = true): Or(a = true, b = true) {
+  (⊢ (Bool::or(a, b) = true) -> Or(a = true, b = true) from match a {
+    false => k => OrInr(k)
+    true => k => OrInl(Refl)
+  })(e)
+}
+inductive Mem(A: Type): (A, List(A)) -> Prop {
+  MemHere(x: A, t: List(A)): Mem(A, x, Cons(x, t))
+  MemThere(x: A, y: A, t: List(A), m: Mem(A, x, t)): Mem(A, x, Cons(y, t))
+}
+inductive AnyIn(A: Type, p: (A) -> Bool, l: List(A)): Prop {
+  Mk(y: A, m: Mem(A, y, l), hy: p(y) = true): AnyIn(A, p, l)
+}
+theorem any_mem<A>(p: (A) -> Bool, l: List(A), h: List::any(p, l) = true): AnyIn(A, p, l) {
+  (⊢ (List::any(p, l) = true) -> AnyIn(A, p, l) from match l {
+    Nil => (e: false = true) => False::elim(false_ne_true(e))
+    Cons(x, t) => (e: Bool::or(p(x), List::any(p, t)) = true) => Or::elim(
+      bool_or_true(p(x), List::any(p, t), e),
+      (hx: p(x) = true) => AnyIn::Mk(x, MemHere(x, t), hx),
+      (ht: List::any(p, t) = true) => ⊢ AnyIn(A, p, Cons(x, t)) from match any_mem(p, t, ht) {
+        Mk(y, m, hy) => AnyIn::Mk(y, MemThere(y, x, t, m), hy)
+      }
+    )
+  })(h)
+}
+```
+checks.Mem = "checked"
+checks.AnyIn = "checked"
+checks.bool_or_true = "checked"
+checks.any_mem = "checked"
+entry = "main.tauto"
+
+@ cases.a-recursion-changes-a-parameter-a-generalized-hypothesis-mentions
+files."main.tauto" = ```tauto
+import std::Base
+
+// The match generalizes `a` (the call changes it) and `h` (its type mentions
+// `a` and `l`), so it unfolds to `List::rec` with its implicit `A` written out
+// and two arguments past its parameters.
+fn chain<A>(a: A, l: List(A)): Prop {
+  ⊢ Prop from match l {
+    Nil => True
+    Cons(x, t) => And(True, chain(x, t))
+  }
+}
+
+theorem chain_true<A: Type>(l: List(A), a: A, h: chain(a, l)): True {
+  ⊢ True from match l {
+    Nil => Trivial
+    Cons(x, t) => chain_true(t, x, And::right(h))
+  }
+}
+```
+entry = "main.tauto"
+checks.chain = "checked"
+checks.chain_true = "checked"
+
+@ cases.implicit-arguments-written-out-then-an-argument-past-them
+files."main.tauto" = ```tauto
+import std::Base
+
+fn pick<A>(x: A): (A) -> A { (y: A) => y }
+
+fn use_pick(n: Nat): Nat { pick(Nat, 1, n) }
+```
+entry = "main.tauto"
+checks.pick = "checked"
+checks.use_pick = "checked"

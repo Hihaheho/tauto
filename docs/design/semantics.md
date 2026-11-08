@@ -76,7 +76,7 @@ environment, and a continuation that is a persistent list of frames.
 
 * Values: integers, booleans, text, unit, closures `⟨ps, body, env⟩`, and
   captured continuations.
-* `var x = e` makes a mutable cell; `x := e` writes it. Closures share cells.
+* `var x := e` makes a mutable cell; `x := e` writes it. Closures share cells.
 * A call evaluates the callee, then the arguments left to right, then runs
   the body with the parameters bound.
 * `return` unwinds to the nearest function frame.
@@ -97,11 +97,74 @@ environment, and a continuation that is a persistent list of frames.
   continuation and returns `v` into them. A continuation is a cloned frame
   list, so it can be resumed any number of times (multi-shot) when the
   operation is declared `resume ω`; otherwise at most once (see
-  "Ownership" below). Cells are shared between resumptions.
+  "Ownership" below). Cells are shared between resumptions ("Cells across
+  resumptions").
 * When the body returns a value `v`, `return v => r` runs `r`; without a
   `return` arm the handle's value is `v`.
 * An effect nobody handles is a run-time error here; the checker is meant to
   rule it out through rows.
+
+### Effects indexed by type
+
+A row and an arm write which instance of a generic operation they mean;
+neither leaves it out. `res(Pos)` in a row and `res<Pos>()` in an arm name
+one instance; `∀ A. res(A)` in a row and `∀ A. res<A>()` in an arm name every
+instance, each type argument bound in order. An arm for every instance must
+work for every choice: it reads `A` as a type no other is equal to. An
+operation without generics writes neither.
+
+When some row writes an effect with type arguments (`! {res(Pos), res(Vel)}`,
+or `fail(E)` in the prelude), or an arm answers one instance of it, each
+instance is an effect of its own: `res(Pos)` and `res(Vel)` are two names,
+and a handler of one never sees a `perform` of the other.
+
+This is a rewriting before the checks (`crates/tauto-nibcheck/src/types/indices.rs`),
+after the types are known and before anything else reads the program:
+
+* `∀ A. res(A)` is read as the effect `res` with every instance, as an
+  effect no row indexes is;
+* each `perform` and each arm of such an effect is renamed after the type
+  arguments it was checked with (`res@Pos`, a name a program cannot write),
+  and the instance is declared without generics;
+* the rows that write type arguments are renamed the same way;
+* a function whose own generic is an index (`fn with_res<C, …>(…, &body: () -> T ! {res(C)} ∪ e)`)
+  is copied for each type a call gives it.
+
+A `perform`'s type arguments are what its uses fix, else the instance of the
+same effect in the row around it; an arm's are the ones it writes
+(`res<C>(), k => k(c)` in `with_res`), else what the handled value's type fixes.
+An effect may be indexed by a row (`effect cur<!e>()`, `cur(!{out})`): the argument
+is a row, and a call instantiates a declared row variable the way it instantiates
+a type variable, by unification (`row-parameters.md`, "呼び出しでの具体化").
+The index is decided from the types, the row around the call, or the arguments' rows, and two
+candidates in the row around are an error. A `perform` whose arguments are
+not known there (a `catch` whose body fails two ways and whose result is not
+written) is an error. The rows, the types, the machine and every backend then
+see effects matched by name, as above: no rule is added. An effect only
+written for every instance keeps one name, and its arms work for every
+choice of its type arguments.
+
+### Cells across resumptions
+
+This is part of the language, not a choice of the machine: every
+implementation and backend must agree on it.
+
+* A continuation captures **frames and environments**, never the values of
+  cells. A `var` cell has one identity for the whole run; every resumption of
+  every copy of `k` reads and writes that same cell, also when the `var` was
+  made inside the captured part of the body.
+* So a write made while one resumption runs is seen by every resumption that
+  runs after it, and by the code after the `handle`. Resumptions run in the
+  order the arm calls them; nothing is rolled back when a resumption returns.
+* A backend whose own values are immutable (no shared mutable cells) must
+  model the cells as a store that it passes along in run order, not copy them
+  into each continuation. Copying them gives different results and is wrong.
+
+The Lean core states the same: a `var` cell lives in the store of the state,
+not in the term, and `k` closes over the term only; the steps that capture
+and resume `k` leave the store as it is (`lean/Proto/Nib/Safety.lean`). The
+`resumptions-share-*` cases in `cases/eval/m_tier.eure` check it on the
+evaluator and on each backend.
 
 ## Budget and `Div`
 
@@ -120,12 +183,52 @@ arm receives `info` and `k : T -> …`:
 What counts as one step is up to the implementation, and two
 implementations need not agree; a body that does not stop must reach
 `exceeded` for every `n`, and the steps of a nested budget count towards the
-budgets around it. A host's limit outside any budget stops the run with
-`Interrupted`, which is not an effect.
+budgets around it.
+
+Each budget keeps its own count. When a step leaves more than one budget run
+out, the innermost of them performs `exceeded` first; `info.more(m)` and
+`info.unbounded()` give steps to that budget only, and a budget nested in it
+goes on with the count it had. So an outer budget that runs out while a
+nested one is running can stop the nested one with `k(v)`, or let it go on
+to run out itself. A function that runs a budget can be stopped by a budget
+around its call even when its own row has no `Div`. A host's limit outside any budget stops the run with
+`Interrupted`, which is not an effect; the run's `--allow-div` lifts it
+(`host-effects.md`). The evaluator counts every step of its machine
+for a `budget` and for a macro's limit, but only calls and loop rounds for
+the host's limit, as the Rust and JavaScript backends do: a run that does not
+stop calls or loops without end, so the same limit stops the same programs
+on each.
 
 `Div` is the effect of a computation that may not terminate or keeps a
 continuation alive; `budget` removes it from the row and adds `Exceeded(T)`
 (`Proto/Nib/Typing.lean`, `Prim.ty`).
+
+### Memory budgets
+
+`budget(memory: n) { body }` is the same, counting the **cells** the body
+allocates instead of steps: one for a constructor's value, a struct, a
+closure or a product, and one more for each of its fields or members; text
+and a `Buf` one, and one more for each 8 bytes; one for each element put in
+a `Vec` and two for each new entry of a `HashMap`. The count is cumulative:
+what the body frees is not given back. When it passes `n`, `exceeded(info)`
+is performed at the budget expression as for steps, and `info.more(m)` gives
+the body `m` more cells. `budget(steps: a, memory: b) { body }` is two
+budgets, the one written first outside; whichever runs out performs
+`exceeded`.
+
+Cells are not bytes. Like a step, what counts as a cell is up to the
+implementation, and implementations need not agree to the cell; a body that
+allocates without end must reach `exceeded` for every `n`. The evaluator
+checks the count at every step. The Rust and JavaScript backends count the
+values made by code under a budget (constructors, closures and products) and
+check the count where they count steps, at calls and loop rounds that may
+not stop: a body that allocates without end calls or loops without end.
+Values made by code a backend runs outside the budget tier (a function
+without `Div`) and by `extern` functions are not counted there.
+
+A memory budget does not stop a body that runs without allocating, so it
+does not remove `Div` from the row; it adds `Exceeded(T)` as a steps budget
+does. The Lean model (`Proto/Nib`) has only steps budgets.
 
 ### What has `Div`
 
@@ -142,7 +245,7 @@ recur. Five rules see them (`Proto/Nib/Div.lean`):
 3. **Operations**: the operations are in a well-founded order (Nib's is the
    order of declaration). A function in an operation's parameters or result
    that performs the operation itself or a later one has `Div` in its row.
-   `effect Fix: () -> (() -> i64 ! {Fix})` is rejected;
+   `effect Fix(): (() -> i64 ! {Fix})` is rejected;
    `() -> (() -> i64 ! {Fix, Div})` is fine.
 4. **`struct` and `enum`**: a function in the fields of `D` that takes a `D`
    in a parameter or in an effect of its row has `Div` in its row, also when
@@ -174,6 +277,14 @@ places.
   continuation of an operation that resumes at most once is resumed twice.
   A program the static check accepts never stops so; every `shows` case in
   `cases/` runs both ways and must show the same.
+  The check belongs to the evaluator alone, which runs the surface program
+  and decides each move from the types at run time. The bytecode machine
+  runs NIR, whose lowering only restates which use moves or copies as the
+  static check (`lin.rs`) decided it, and it may drop a frame's values at a
+  different time (`tauto_nir::tail`). A check there would test the static
+  check against its own decisions, so it could not catch the errors this
+  check exists to catch. `tauto run --check-ownership` therefore runs on the
+  evaluator when no `--backend` is named.
 
 The prelude (`std/prelude/Std.taut`, `Shared.taut`, `Affine.taut`) is loaded
 before the program. Its `extern` functions (`Buf`, `Vec`,
@@ -183,10 +294,14 @@ program's `extern` function is the error "extern is not runnable".
 ## Output
 
 A program's results are observed through an operation the host declares
-everywhere, `effect show<A>: (name: Text, value: A) -> ()`. A
+everywhere, `effect show<A>(name: Text, value: A): ()`. A
 `perform show("x", v)` that no handler answers is answered by the host: it
 records the name and the value's display and resumes with `()`. What a run
 shows is the list of those records, in order.
+
+The standard effects of `std/prelude/Os.taut` (`stdout`, `fs_read`, `net`, …)
+are answered by the host the same way when no handler answers them, within the
+permissions the run is given (`host-effects.md`).
 
 ## Proved (`lean/Proto/Core.lean`, no `sorry`)
 
@@ -300,7 +415,7 @@ The proof rests on three assumptions about the declarations:
 * `DefsOk`: generic functions have their declared types.
 
 `Proto/Nib/Examples.lean` has a declaration with two effects, two generic
-functions, a `struct Point` and an `enum Option<T>` that meets all three (`askSig_builtins`, `askSig_sigOk`,
+functions, a `struct Point` and an `enum Option(T: Type)` that meets all three (`askSig_builtins`, `askSig_sigOk`,
 `askSig_defsOk`), so the theorems are not about an empty set of programs.
 It also meets the rules for `Div` (`askSig_divOk`).
 
@@ -349,7 +464,7 @@ Without the rules of "What has `Div`", five loops are typed without `Div`
 * a function kept in a `var` that calls what the `var` holds;
 * a definition that calls itself;
 * an effect whose operation answers a function that performs it again
-  (`effect Fix: () -> (() -> i64 ! {Fix})`), resumed by its arm;
+  (`effect Fix(): (() -> i64 ! {Fix})`), resumed by its arm;
 * an `enum` holding functions on itself (`enum D { D(D -> i64) }`),
   applied to itself;
 * a function made in a budget and given out of it, that runs a budget again.
@@ -399,11 +514,11 @@ without `Div` between, and over `G`'s type variables that is a function in
 `G`'s fields taking a `G`, which rule 4 rejects. So a chain of uses with
 infinitely many the other way does not exist, and the level of a part is
 how far such chains go below it (compared without ordinals: for
-`struct X<T> { h: T -> i64 }` and `struct D<T> { f: T -> i64, g:
-D<X<T>> }`, `D<i64>` is above `X<i64>`, `X<X<i64>>`, ...).
+`struct X(T: Type) { h: T -> i64 }` and `struct D(T: Type) { f: T -> i64, g:
+D(X(T)) }`, `D(i64)` is above `X(i64)`, `X(X(i64))`, ...).
 `Stream { head: i64, tail: () -> Stream }` (`streamSig_halts`) and
-`enum List<T> { Nil, Cons(T, List<T>) }` (`listSig_halts`) are such cases;
-`askSig`, with the generic `Option<T>`, has levels by size
+`enum List(T: Type) { Nil, Cons(T, List(T)) }` (`listSig_halts`) are such cases;
+`askSig`, with the generic `Option(T: Type)`, has levels by size
 (`askSig_halts`).
 
 With `budget_bounded`, a budget's own steps are bounded by its count, and

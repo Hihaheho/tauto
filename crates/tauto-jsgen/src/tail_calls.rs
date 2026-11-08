@@ -79,7 +79,7 @@ impl<'a> Checker<'a> {
     fn ctor(&self, ctor: &CtorRef) -> bool {
         !ctor.linear
             && match &ctor.data {
-                DataRef::Option | DataRef::Result | DataRef::Pair | DataRef::Product => true,
+                DataRef::Option | DataRef::Result | DataRef::Pair => true,
                 DataRef::Gen(name) => self.pkg.datas.iter().any(|d| {
                     d.name == *name
                         && !d.ctors.is_empty()
@@ -122,7 +122,8 @@ impl<'a> Checker<'a> {
             | ExprKind::Int(_)
             | ExprKind::Float(_)
             | ExprKind::Bool(_)
-            | ExprKind::Text(_) => true,
+            | ExprKind::Text(_)
+            | ExprKind::Declaration(_) => true,
             ExprKind::Read { local, .. } => self.repr(local),
             ExprKind::Call(call) => {
                 call.tick == Tick::None
@@ -145,8 +146,7 @@ impl<'a> Checker<'a> {
             ExprKind::Ctor { ctor, fields } => {
                 self.ctor(ctor) && fields.iter().all(|(_, value)| self.expr(value))
             }
-            ExprKind::Field { base, .. } | ExprKind::Member { value: base, .. } => self.expr(base),
-            ExprKind::Product { members, .. } => members.iter().all(|m| self.expr(m)),
+            ExprKind::Field { base, .. } => self.expr(base),
             ExprKind::Match(m) => {
                 (self.helper || !m.by_ref)
                     && self.expr(&m.scrut)
@@ -188,7 +188,7 @@ fn safe_type(
     pkg: &Package,
     ty: &Ty,
     params: &BTreeSet<String>,
-    active: &mut BTreeSet<String>,
+    active: &mut BTreeSet<Name>,
     borrowed: bool,
     fuel: usize,
 ) -> bool {
@@ -205,9 +205,6 @@ fn safe_type(
             safe_type(pkg, a, params, active, borrowed, fuel - 1)
                 && safe_type(pkg, b, params, active, borrowed, fuel - 1)
         }
-        Ty::Product(ms) => ms
-            .iter()
-            .all(|(_, m)| safe_type(pkg, m, params, active, borrowed, fuel - 1)),
         Ty::Ref(value) if borrowed => safe_type(pkg, value, params, active, borrowed, fuel - 1),
         Ty::Data(name, args) => {
             let Some(data) = pkg.datas.iter().find(|d| d.name == *name) else {
@@ -355,7 +352,7 @@ mod tests {
     fn function(id: InstId, body: Expr) -> FnInst {
         FnInst {
             id,
-            source: format!("f{id}"),
+            source: format!("f{id}").into(),
             rust_name: format!("f{id}"),
             tier: Tier::S,
             generics: vec![],
@@ -511,7 +508,7 @@ mod tests {
             Ty::Param("A".into()),
             Ty::Infer,
             Ty::Data("Missing".into(), vec![]),
-            Ty::Std("Ref".into(), vec![Ty::Text]),
+            Ty::Std(tauto_nir::StdType::Ref, vec![Ty::Text]),
             Ty::Buf,
             Ty::Vec(Box::new(Ty::Text)),
             Ty::Ref(Box::new(Ty::Text)),

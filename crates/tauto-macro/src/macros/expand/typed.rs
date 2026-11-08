@@ -15,6 +15,8 @@ struct Site {
     name: String,
     call: Span,
     arg: SurfaceTerm,
+    /// A placed macro: checked as a hole, given what is written unchecked.
+    placed: bool,
 }
 
 struct Checked {
@@ -29,10 +31,10 @@ impl Expander<'_> {
         let TermKind::MacroCall { name: marked, arg } = &*t.kind else {
             return false;
         };
-        if matches!(&*arg.kind, TermKind::SyntaxLit(_)) {
-            return false;
-        }
         let (name, _) = split(marked);
+        if matches!(&*arg.kind, TermKind::SyntaxLit(_)) {
+            return self.placed_macro(name);
+        }
         self.typed_macro(name)
     }
 
@@ -51,36 +53,229 @@ impl Expander<'_> {
         let Some(lib) = self.lib.as_ref() else {
             return false;
         };
-        let typed = match lib.report.schemes.get(&function).map(|s| &s.ty) {
-            Some(Ty::Fn(params, _, _)) => matches!(
-                params.as_slice(),
-                [p] if matches!(p.unborrowed(), Ty::Named(n, _) if n == "Judgement")
-            ),
+        let typed = match lib.function(&function).map(|(_, s)| &s.ty) {
+            // A typed macro takes a `Judgement`; a placed one takes it and what is written.
+            Some(Ty::Fn(params, _, _)) => match params.as_slice() {
+                [p] | [p, _] => {
+                    matches!(p.unborrowed(), Ty::Named(n, _) if tauto_surface::bindings::is_library(&n, "Judgement"))
+                }
+                _ => false,
+            },
             _ => false,
         };
         self.typed_macros.insert(name.to_string(), typed);
         typed
     }
 
-    pub(super) fn typed_pass(&mut self, stmts: Vec<Stmt>) -> Vec<Stmt> {
+    /// Whether `t` calls a tactic: a macro whose function takes a `ProofStep`. A tactic runs
+    /// only as a step (`by t!(…): G { … }`); a call of one anywhere else is what a macro reads
+    /// to make a step, so it waits for that macro.
+    pub(super) fn is_tactic(&mut self, t: &SurfaceTerm) -> bool {
+        let TermKind::MacroCall { name: marked, arg } = &*t.kind else {
+            return false;
+        };
+        if matches!(&*arg.kind, TermKind::SyntaxLit(_)) {
+            return false;
+        }
+        let name = split(marked).0;
+        let Some(reg) = self.macros.get(name) else {
+            return false;
+        };
+        if reg.file >= self.file {
+            return false;
+        }
+        let function = reg.function.clone();
+        self.library_holding(&function);
+        let Some(lib) = self.lib.as_ref() else {
+            return false;
+        };
+        matches!(lib.function(&function).map(|(_, s)| &s.ty), Some(Ty::Fn(params, _, _))
+            if matches!(params.as_slice(), [p] if matches!(p.unborrowed(), Ty::Named(n, _) if tauto_surface::bindings::is_library(&n, "ProofStep"))))
+    }
+
+    /// Whether the macro's function takes the goal of its place and what is written, unchecked.
+    pub(super) fn placed_macro(&mut self, name: &str) -> bool {
+        if !self.typed_macro(name) {
+            return false;
+        }
+        let function = self.macros[name].function.clone();
+        let Some(lib) = self.lib.as_ref() else {
+            return false;
+        };
+        matches!(lib.function(&function).map(|(_, s)| &s.ty), Some(Ty::Fn(params, _, _)) if params.len() == 2)
+    }
+
+    pub(super) fn typed_pass(&mut self, mut stmts: Vec<Stmt>) -> Vec<Stmt> {
         if self.macros.is_empty() {
             return stmts;
+        }
+        // The names the file wrote in a literal a macro read (`${lem(n)}` in
+        // `proof!`), still as written, by where. A name a macro makes is bound in
+        // the macro's file already.
+        let literals: Vec<Span> = self
+            .syntaxes
+            .uses
+            .borrow()
+            .iter()
+            .map(|u| u.lit.span)
+            .collect();
+        // A node of an expansion stands where it was written; one a macro made
+        // stands at the call, outside the literal.
+        let spans = &self.spans;
+        let in_literal = |at: Span| {
+            let at = spans
+                .origin(at.start)
+                .map_or(at.start, |(written, _)| written);
+            literals.iter().any(|l| l.start <= at && at < l.end)
+        };
+        let mut written: Vec<HashMap<Span, String>> = Vec::new();
+        for s in &mut stmts {
+            let mut here = HashMap::new();
+            walk::stmt(s, &mut |t| {
+                if let TermKind::Var(crate::surface::Name::Spelled(spelling)) = &*t.kind
+                    && in_literal(t.span)
+                {
+                    here.insert(t.span, spelling.clone());
+                }
+            });
+            written.push(here);
+        }
+        // Embedded syntax is still source syntax here. Bind it in the caller's
+        // file environment before the typed checker retains its references.
+        self.bind_outside_placed(&mut stmts);
+        for (s, here) in stmts.iter_mut().zip(&written) {
+            if here.is_empty() {
+                continue;
+            }
+            // Inside `module M`, a short name means `M`'s declaration where
+            // there is one, as it does outside the literal.
+            // Only a `module`: the namespace of a type (`Tm` of `Tm::check`) is a
+            // declaration itself, and a module is not.
+            let is_module = |m: &str| self.bindings.source_reference(m).is_none();
+            let module = declared_module(s);
+            let bindings = &self.bindings;
+            let mut found = Vec::new();
+            walk::stmt(s, &mut |t| {
+                let Some(spelling) = here.get(&t.span) else {
+                    return;
+                };
+                let TermKind::Var(name) = &*t.kind else {
+                    return;
+                };
+                if !matches!(name, crate::surface::Name::Global(_)) {
+                    return;
+                }
+                let mut name = name.clone();
+                if let Some(module) = &module
+                    && !spelling.contains("::")
+                {
+                    let mut prefix = module.as_str();
+                    loop {
+                        if is_module(prefix)
+                            && let Some(inner) =
+                                bindings.source_reference(&format!("{prefix}::{spelling}"))
+                            && inner.as_global().is_some()
+                        {
+                            name = inner;
+                            t.kind = std::sync::Arc::new(TermKind::Var(name.clone()));
+                            break;
+                        }
+                        match prefix.rsplit_once("::") {
+                            Some((outer, _)) => prefix = outer,
+                            None => break,
+                        }
+                    }
+                }
+                found.push((name, spelling.clone(), t.span));
+            });
+            let file = self.file;
+            self.written
+                .extend(found.into_iter().map(|(n, w, at)| (file, n, w, at)));
         }
         let names: Vec<String> = self.macros.keys().cloned().collect();
         let typed: HashSet<String> = names.into_iter().filter(|n| self.typed_macro(n)).collect();
         if typed.is_empty() {
             return stmts;
         }
+        self.typed_items(stmts, &[], &[], &typed)
+    }
+
+    /// `stmts` in the modules `path`, innermost last, after the declarations `outer`.
+    fn typed_items(
+        &mut self,
+        stmts: Vec<Stmt>,
+        path: &[(String, tauto_parol::Span)],
+        outer: &[Stmt],
+        typed: &HashSet<String>,
+    ) -> Vec<Stmt> {
         let mut out: Vec<Stmt> = Vec::new();
-        for s in stmts {
+        let all = stmts;
+        for (i, s) in all.iter().cloned().enumerate() {
             let mut probe = s.clone();
             let mut any = false;
-            walk::stmt(&mut probe, &mut |t| any |= is_site(t, &typed));
-            if any {
-                let done = self.typed_decl(s, &out, &typed);
-                out.push(done);
-            } else {
+            walk::stmt(&mut probe, &mut |t| any |= is_site(t, typed));
+            if !any {
                 out.push(s);
+                continue;
+            }
+            let mut before = outer.to_vec();
+            before.extend(super::step::wrap(path, out.clone()));
+            match s {
+                Stmt::Module { name, items, span } => {
+                    let mut inner = path.to_vec();
+                    inner.push((name.clone(), span));
+                    let items = self.typed_items(items, &inner, &before, typed);
+                    out.push(Stmt::Module { name, items, span });
+                }
+                s if path.is_empty() => {
+                    // A declaration of a module already written out keeps the
+                    // module in its name.
+                    self.elab_module = kernel_decl(&s)
+                        .map(|d| d.name.to_string())
+                        .and_then(|n| n.rsplit_once("::").map(|(m, _)| m.to_string()))
+                        .map(|m| m.split("::").map(str::to_string).collect())
+                        .unwrap_or_default();
+                    let mut s = s;
+                    let names = self.module_names();
+                    walk::stmt(&mut s, &mut |t| super::elab::module_resolved(t, &names));
+                    // The file's check declares a helper written further on
+                    // before its first use, so the macro's check does too.
+                    let later: Vec<Stmt> = all[i + 1..]
+                        .iter()
+                        .map(|l| {
+                            let mut l = l.clone();
+                            walk::stmt(&mut l, &mut |t| {
+                                if is_site(t, typed)
+                                    && let TermKind::MacroCall { arg, .. } = &*t.kind
+                                {
+                                    *t = (**arg).clone();
+                                }
+                            });
+                            l
+                        })
+                        .collect();
+                    let later = self.checker.used_later(&s, &later);
+                    let mut before = before;
+                    before.extend(later);
+                    let done = self.typed_decl(s, &before, typed);
+                    self.elab_module.clear();
+                    out.push(done);
+                }
+                s => {
+                    // The declaration is checked with its names written out,
+                    // and keeps its own name, which the module still gives it.
+                    let mut all: Vec<Stmt> = self.done.clone();
+                    all.extend(before.iter().cloned());
+                    all.extend(super::step::wrap(path, vec![s]));
+                    let flat = crate::surface::modules::resolve_in_prelude(all)
+                        .0
+                        .pop()
+                        .expect("the declaration");
+                    self.elab_module = path.iter().map(|(n, _)| n.clone()).collect();
+                    let done = self.typed_decl(flat, &before, typed);
+                    self.elab_module.clear();
+                    out.push(done);
+                }
             }
         }
         out
@@ -95,7 +290,8 @@ impl Expander<'_> {
         };
         all.extend(before.iter().cloned());
         all.push(d.clone());
-        let (stmts, errors) = crate::surface::modules::resolve_in_prelude(all);
+        let (mut stmts, errors) = crate::surface::modules::resolve_in_prelude(all);
+        self.bindings.clone().statements(&mut stmts);
         let program = Program { stmts, errors };
         let report = check_program(&program);
         let rows = check_program_rows(&program);
@@ -131,26 +327,47 @@ impl Expander<'_> {
         {
             let mut all: Vec<Stmt> = self.done.clone();
             all.extend(before.iter().cloned());
+            all.extend(signature_only(&d));
             self.elab_prefix = crate::surface::modules::resolve_in_prelude(all).0;
         }
+        let placed_names: HashSet<String> = typed
+            .iter()
+            .filter(|n| self.placed_macro(n))
+            .cloned()
+            .collect();
         let mut sites: Vec<Site> = Vec::new();
         let mut plain = d.clone();
         walk::stmt(&mut plain, &mut |t| {
             if is_site(t, typed)
                 && let TermKind::MacroCall { name, arg } = &*t.kind
             {
+                let placed = placed_names.contains(split(name).0);
+                let hole = SurfaceTerm::new(TermKind::Hole(placed_hole(sites.len())), t.span);
                 sites.push(Site {
                     name: split(name).0.to_string(),
                     call: t.span,
                     arg: (**arg).clone(),
+                    placed,
                 });
-                let arg = (**arg).clone();
-                *t = arg;
+                *t = if placed { hole } else { (**arg).clone() };
             }
         });
+        // A call a macro made calls its macro as one written in the file: the
+        // file's import of the macro is used.
+        for s in &sites {
+            if self.spans.origin(s.call.start).is_some() {
+                self.written.push((
+                    self.file,
+                    crate::surface::Name::from(s.name.as_str()),
+                    format!("{}{}", crate::surface::qualify::CALLED, s.name),
+                    s.call,
+                ));
+            }
+        }
         // A typed macro call is rejected if its argument contains another typed call.
         let mut nested = false;
-        for s in &sites {
+        // What a placed macro is given is data: the calls in it are not expanded with it.
+        for s in sites.iter().filter(|s| !s.placed) {
             let mut arg = s.arg.clone();
             walk::term(&mut arg, &mut |t| nested |= is_site(t, typed));
         }
@@ -159,6 +376,69 @@ impl Expander<'_> {
             self.error("macro.nested_typed", msg!("macro-nested-typed"), at);
             return plain;
         }
+        // The steps of the declaration, those in the arguments too, run first,
+        // with the arguments where they are: a step's goal is the type at its
+        // place in the argument the macro is given.
+        let (d, plain) = if super::step::has_step(&plain) {
+            let errors = self.errors.len();
+            let ids: Vec<_> = sites.iter().map(|s| s.arg.id()).collect();
+            let expanded = self.step_decl(plain, before);
+            {
+                let mut all: Vec<Stmt> = self.done.clone();
+                all.extend(before.iter().cloned());
+                all.extend(signature_only(&d));
+                self.elab_prefix = crate::surface::modules::resolve_in_prelude(all).0;
+            }
+            if self.errors.len() > errors {
+                return expanded;
+            }
+            // What a placed macro is given is data, and stays as it is; its place is a hole.
+            let mut args: Vec<Option<SurfaceTerm>> = sites
+                .iter()
+                .map(|s| s.placed.then(|| s.arg.clone()))
+                .collect();
+            let mut probe = expanded.clone();
+            walk::stmt(&mut probe, &mut |t| {
+                if let Some(k) = ids
+                    .iter()
+                    .zip(&sites)
+                    .position(|(id, s)| !s.placed && *id == t.id())
+                {
+                    args[k].get_or_insert_with(|| t.clone());
+                }
+            });
+            let Some(args) = args.into_iter().collect::<Option<Vec<_>>>() else {
+                self.error(
+                    "step.fragment",
+                    msg!("macro-step-typed-argument"),
+                    sites[0].call,
+                );
+                return expanded;
+            };
+            for (site, arg) in sites.iter_mut().zip(&args) {
+                site.arg = arg.clone();
+            }
+            let mut next = d;
+            let mut k = 0usize;
+            walk::stmt(&mut next, &mut |t| {
+                if is_site(t, typed)
+                    && k < args.len()
+                    && let TermKind::MacroCall { name, .. } = &*t.kind
+                {
+                    *t = SurfaceTerm::new(
+                        TermKind::MacroCall {
+                            name: name.clone(),
+                            arg: Box::new(args[k].clone()),
+                        },
+                        t.span,
+                    );
+                    k += 1;
+                }
+            });
+            (next, expanded)
+        } else {
+            (d, plain)
+        };
         if matches!(d, Stmt::Theorem(_) | Stmt::Def(_)) {
             return self.typed_kernel(d, before, sites, plain, typed);
         }
@@ -209,9 +489,7 @@ impl Expander<'_> {
                 .chain(before.iter())
                 .chain(std::iter::once(&next)),
         );
-        let mut resolved = scope::resolve_seeing(vec![next], &ctors, &|scopes, name| {
-            self.macro_sees(scopes, name)
-        });
+        let mut resolved = scope::resolve(vec![next], &ctors);
         let next = resolved.pop().expect("one statement");
         let second = self.check(before, &next);
         if let Some(e) = second.report.errors.first() {
@@ -233,7 +511,7 @@ impl Expander<'_> {
         if let (Stmt::Fn(a), Stmt::Fn(b)) = (&plain, &next)
             && a.effects.is_none()
         {
-            let row_of = |c: &Checked, n: &str| {
+            let row_of = |c: &Checked, n: &crate::surface::Name| {
                 c.rows
                     .functions
                     .iter()
@@ -243,7 +521,7 @@ impl Expander<'_> {
             if row_of(&first, &a.name) != row_of(&second, &b.name) {
                 self.error(
                     "macro.signature_changed",
-                    msg!("macro-signature-changed", name = &a.name),
+                    msg!("macro-signature-changed", name = a.name.to_string()),
                     sites[0].call,
                 );
                 return plain;
@@ -280,7 +558,8 @@ impl Expander<'_> {
     ) -> Stmt {
         let mut all: Vec<Stmt> = self.done.clone();
         all.extend(before.iter().cloned());
-        let (prefix, _) = crate::surface::modules::resolve_in_prelude(all);
+        let (mut prefix, _) = crate::surface::modules::resolve_in_prelude(all);
+        self.bindings.clone().statements(&mut prefix);
         let checker = self.checker.clone();
         let verdict = |decl: &Stmt| -> Option<Verdict> {
             checker
@@ -290,26 +569,50 @@ impl Expander<'_> {
                 .last()
                 .map(|e| e.verdict)
         };
-        if !matches!(verdict(&plain), Some(Verdict::Checked { .. })) || !self.lib_ok() {
+        // A placed macro is checked as a hole, so the plain declaration is incomplete.
+        let first = verdict(&plain);
+        let holes = match &first {
+            Some(Verdict::Incomplete { holes, .. }) => holes.clone(),
+            _ => Vec::new(),
+        };
+        let placed_any = sites.iter().any(|s| s.placed);
+        let checked = matches!(first, Some(Verdict::Checked { .. }))
+            || (placed_any && matches!(first, Some(Verdict::Incomplete { .. })));
+        if !checked || !self.lib_ok() {
+            // A declaration a placed macro's output made reports why it does not check.
+            if placed_any && let Some(Verdict::Failed(e)) = &first {
+                self.error(
+                    "macro.output_ill_typed",
+                    msg!("macro-output-rejected", message = e.message.clone()),
+                    sites[0].call,
+                );
+            }
             return plain;
         }
         let mut outputs: Vec<SurfaceTerm> = Vec::new();
         let mut made: Vec<Expansion> = Vec::new();
-        for site in sites.iter() {
+        for (index, site) in sites.iter().enumerate() {
             let Some(decl) = kernel_decl(&plain) else {
                 return plain;
             };
-            let found = self
-                .checker
-                .goal_of(&prefix, &decl, &site.arg)
-                .map(|(context, goal)| crate::macros::checker::HoleGoal {
-                    name: "macro_probe".into(),
-                    span: site.arg.span,
-                    goal,
-                    context,
-                    statement: None,
-                    params: Vec::new(),
-                });
+            let found = if site.placed {
+                holes
+                    .iter()
+                    .find(|h| h.name == placed_hole(index))
+                    .cloned()
+                    .ok_or_else(|| "the place of the macro has no goal".to_string())
+            } else {
+                self.checker
+                    .goal_of(&prefix, &decl, &site.arg)
+                    .map(|(context, goal)| crate::macros::checker::HoleGoal {
+                        name: "macro_probe".into(),
+                        span: site.arg.span,
+                        goal,
+                        context,
+                        statement: None,
+                        params: Vec::new(),
+                    })
+            };
             let goal = match found {
                 Ok(g) => g,
                 Err(m) => {
@@ -323,7 +626,8 @@ impl Expander<'_> {
             };
             let id = (self.expansions.len() + made.len()) as u32 + 1;
             match self.run_kernel(site, id, &goal) {
-                Some((term, proof, exp)) => {
+                Some((mut term, proof, exp)) => {
+                    super::elab::module_resolved(&mut term, &self.module_names());
                     if let Some(proof) = proof {
                         // The proof is for the kernel: `Eq(A, e, term)`.
                         let statement = SurfaceTerm::app(
@@ -343,11 +647,9 @@ impl Expander<'_> {
                             span: site.call,
                         });
                         let ctors = ctor_names(self.done.iter().chain(before.iter()));
-                        let lemma = scope::resolve_seeing(vec![lemma], &ctors, &|scopes, name| {
-                            self.macro_sees(scopes, name)
-                        })
-                        .pop()
-                        .expect("one statement");
+                        let lemma = scope::resolve(vec![lemma], &ctors)
+                            .pop()
+                            .expect("one statement");
                         match verdict(&lemma) {
                             Some(Verdict::Checked { .. }) => {}
                             Some(Verdict::Failed(e)) => {
@@ -388,11 +690,46 @@ impl Expander<'_> {
                 .chain(before.iter())
                 .chain(std::iter::once(&next)),
         );
-        let next = scope::resolve_seeing(vec![next], &ctors, &|scopes, name| {
-            self.macro_sees(scopes, name)
-        })
-        .pop()
-        .expect("one statement");
+        let next = scope::resolve(vec![next], &ctors)
+            .pop()
+            .expect("one statement");
+        if self.has_site(&next, typed) {
+            self.expansions.extend(made);
+            self.file_expanded = true;
+            self.typed_rounds += 1;
+            if self.typed_rounds > self.opts.depth {
+                self.error(
+                    "macro.depth_exceeded",
+                    msg!(
+                        "macro-depth-exceeded",
+                        depth = self.opts.depth,
+                        chain = String::new()
+                    ),
+                    sites[0].call,
+                );
+                return next;
+            }
+            // The output's binders are bound as the declaration's are, so the next
+            // round's places see the same variables the declaration binds.
+            let mut next = next;
+            self.bind_outside_placed(std::slice::from_mut(&mut next));
+            return self.typed_decl(next, before, typed);
+        }
+        // A step the output made, with no place left around it, is expanded as a
+        // written step is; a round with places left expands its steps first
+        // (`typed_decl`). Either way the kernel checks what the tactic made.
+        let next = if super::step::has_step(&next) {
+            self.expansions.extend(std::mem::take(&mut made));
+            self.file_expanded = true;
+            let errors = self.errors.len();
+            let next = self.step_decl(next, before);
+            if self.errors.len() > errors {
+                return next;
+            }
+            next
+        } else {
+            next
+        };
         match verdict(&next) {
             Some(Verdict::Checked { .. }) => {}
             Some(Verdict::Failed(e)) if is_type_mismatch(&e.message) => {
@@ -401,7 +738,7 @@ impl Expander<'_> {
                     msg!("macro-dependent-use", message = e.message.clone()),
                     sites[0].call,
                 );
-                return plain;
+                return if placed_any { next } else { plain };
             }
             Some(Verdict::Failed(e)) => {
                 self.error(
@@ -409,7 +746,7 @@ impl Expander<'_> {
                     msg!("macro-output-rejected", message = e.message.clone()),
                     sites[0].call,
                 );
-                return plain;
+                return if placed_any { next } else { plain };
             }
             _ => {
                 self.error(
@@ -417,7 +754,7 @@ impl Expander<'_> {
                     msg!("macro-output-rejected-plain"),
                     sites[0].call,
                 );
-                return plain;
+                return if placed_any { next } else { plain };
             }
         }
         self.expansions.extend(made);
@@ -425,15 +762,111 @@ impl Expander<'_> {
         next
     }
 
+    /// The declarations of the enclosing modules by their names there, inner
+    /// modules winning.
+    pub(super) fn module_names(&self) -> HashMap<String, tauto_surface::identity::DeclRef> {
+        let mut names = HashMap::new();
+        let declarations = self.bindings.declarations();
+        for depth in 1..=self.elab_module.len() {
+            let module = format!("{}::", self.elab_module[..depth].join("::"));
+            for (_, reference) in declarations.bindings() {
+                if let Some(short) = reference.display().strip_prefix(&module) {
+                    // A name the file already gives a declaration keeps it.
+                    if self.bindings.source_reference(short).is_some() {
+                        continue;
+                    }
+                    names.insert(short.to_string(), reference.clone());
+                }
+            }
+        }
+        names
+    }
+
+    /// Binds the names of `stmts` in the file's environment, but not in what a
+    /// placed macro is given: that is data the macro reads, and a name in it
+    /// stays as written for the place the macro's output takes.
+    fn bind_outside_placed(&mut self, stmts: &mut [Stmt]) {
+        let names: Vec<String> = self.macros.keys().cloned().collect();
+        let placed: HashSet<String> = names.into_iter().filter(|n| self.placed_macro(n)).collect();
+        let mut held: Vec<SurfaceTerm> = Vec::new();
+        for s in stmts.iter_mut() {
+            walk::stmt(s, &mut |t| {
+                if let TermKind::MacroCall { name, arg } = &*t.kind
+                    && placed.contains(split(name).0)
+                {
+                    held.push((**arg).clone());
+                    let hole = SurfaceTerm::new(TermKind::Hole(HELD.into()), arg.span);
+                    *t = t.with_kind(
+                        TermKind::MacroCall {
+                            name: name.clone(),
+                            arg: Box::new(hole),
+                        },
+                        t.span,
+                    );
+                }
+            });
+        }
+        self.file_bindings().statements(stmts);
+        let mut held = held.into_iter();
+        for s in stmts.iter_mut() {
+            walk::stmt(s, &mut |t| {
+                if let TermKind::MacroCall { name, arg } = &*t.kind
+                    && matches!(&*arg.kind, TermKind::Hole(h) if h == HELD)
+                    && let Some(given) = held.next()
+                {
+                    *t = t.with_kind(
+                        TermKind::MacroCall {
+                            name: name.clone(),
+                            arg: Box::new(given),
+                        },
+                        t.span,
+                    );
+                }
+            });
+        }
+    }
+
+    fn has_site(&self, s: &Stmt, typed: &HashSet<String>) -> bool {
+        let mut probe = s.clone();
+        let mut any = false;
+        walk::stmt(&mut probe, &mut |t| any |= is_site(t, typed));
+        any
+    }
+
     /// What answers the `elab_*` of a macro run for the expansion `id`.
-    pub(super) fn elab_for(&self, id: u32) -> crate::eval::ElabFn {
+    pub(super) fn elab_for(
+        &self,
+        id: u32,
+        atoms: &HashMap<crate::surface::Name, u64>,
+    ) -> crate::eval::ElabFn {
+        let mut prefix = crate::surface::modules::resolve_in_prelude(self.elab_prefix.clone()).0;
+        let mut bindings = self.bindings.clone();
+        bindings.statements(&mut prefix);
+        // Syntax read by the macro names a declaration of an enclosing module
+        // as the module's own items do: inner modules first.
+        let module_names = self.module_names();
+        let mut metadata = kernel_prelude().to_vec();
+        metadata.extend(prelude().stmts.clone());
+        tauto_surface::resolve::Resolver::new(
+            tauto_surface::bindings::library_definition_bindings(),
+        )
+        .statements(&mut metadata);
+        metadata.extend(prefix.iter().cloned());
         let env = super::elab::ElabEnv {
+            bindings,
             checker: self.checker.clone(),
-            prefix: self.elab_prefix.clone(),
+            atoms: std::cell::RefCell::new(
+                atoms
+                    .iter()
+                    .map(|(name, atom)| (*atom, name.clone()))
+                    .collect(),
+            ),
+            prefix,
+            module_names,
             scope: u64::from(id),
             ctors: ctor_names(self.done.iter().chain(self.elab_prefix.iter())),
-            families: ctor_families(self.done.iter().chain(self.elab_prefix.iter())),
-            arities: ctor_arities(self.done.iter().chain(self.elab_prefix.iter())),
+            families: ctor_families(metadata.iter()),
+            arities: ctor_arities(metadata.iter()),
         };
         std::rc::Rc::new(move |op, args| env.call(op, args))
     }
@@ -445,10 +878,19 @@ impl Expander<'_> {
         goal: &crate::macros::checker::HoleGoal,
     ) -> Option<(SurfaceTerm, Option<SurfaceTerm>, Expansion)> {
         let info = self.registration(&site.name, site.call)?;
-        let mut atoms: HashMap<String, u64> = HashMap::new();
+        let mut atoms: HashMap<crate::surface::Name, u64> = HashMap::new();
         for (i, (name, _)) in goal.context.iter().enumerate() {
             atoms.insert(name.clone(), i as u64 + 1);
         }
+        // What the macro makes of an atom is the variable as the declaration binds
+        // it: a variable the checker copied (a `match` that generalizes, a hole
+        // checked again) is named after the one it was copied from.
+        let rooted: HashMap<u64, crate::surface::Name> = goal
+            .context
+            .iter()
+            .enumerate()
+            .map(|(i, (name, _))| (i as u64 + 1, root_name(name)))
+            .collect();
         let table = RefCell::new(SpanTable::default());
         let lift = crate::macros::syn::Lift {
             scopes: &[u64::from(id)],
@@ -469,7 +911,14 @@ impl Expander<'_> {
                     ],
                 ));
             }
-            let term = lift.expr(&site.arg)?;
+            let term = if site.placed {
+                lift.expr(&SurfaceTerm::new(
+                    TermKind::Hole("placed".into()),
+                    site.call,
+                ))?
+            } else {
+                lift.expr(&site.arg)?
+            };
             let ty = lift.expr(&goal.goal)?;
             let code = Node::Ctor(
                 "Judgement".into(),
@@ -499,11 +948,75 @@ impl Expander<'_> {
                 return None;
             }
         };
-        let lib = self.lib.as_ref().expect("the library is built");
+        let mut args = vec![code];
+        if site.placed {
+            let written = match (&*site.arg.kind, &info.input) {
+                (TermKind::SyntaxLit(lit), super::Input::Syntax(s)) => {
+                    match self.syntaxes.read(s, lit, site.call, &[u64::from(id)]) {
+                        Ok(n) => n,
+                        Err((m, at)) => {
+                            self.errors.push((m, at));
+                            return None;
+                        }
+                    }
+                }
+                (_, super::Input::Expr) => {
+                    let lift = crate::macros::syn::Lift {
+                        scopes: &[u64::from(id)],
+                        quote: false,
+                        atoms: None,
+                        spans: None,
+                        reflip: Some(u64::from(id)),
+                    };
+                    match lift.expr(&site.arg) {
+                        Ok(n) => n,
+                        Err(m) => {
+                            self.error("macro.argument", m, site.call);
+                            return None;
+                        }
+                    }
+                }
+                _ => {
+                    self.error(
+                        "macro.argument",
+                        msg!("macro-argument-literal", name = &site.name),
+                        site.call,
+                    );
+                    return None;
+                }
+            };
+            args.push(written);
+        }
         let function = self.macros[&site.name].function.clone();
         let mut host = Host::new(self.opts.call_steps, self.opts.allocations);
-        host.elab = Some(self.elab_for(id));
-        let ran = call_function(&lib.program, &lib.report, &function, &[code], &mut host);
+        host.resolve_global = Some(self.global_resolver(&site.name));
+        host.elab = Some(self.elab_for(id, &atoms));
+        // A macro that asks `syn_expand` is run again with the answer, as `call` runs it.
+        let ran = loop {
+            let lib = self.lib.as_ref().expect("the library is built");
+            let ran =
+                call_bound_function(&lib.program, &lib.report, &info.function, &args, &mut host);
+            let Err(RunError::NeedExpand(asked)) = ran else {
+                break ran;
+            };
+            if host.expanded.len() >= self.opts.depth * 4 {
+                self.error(
+                    "macro.depth_exceeded",
+                    msg!(
+                        "macro-expand-exceeded",
+                        name = &site.name,
+                        count = self.opts.depth * 4
+                    ),
+                    site.call,
+                );
+                return None;
+            }
+            let errors = self.errors.len();
+            match self.expand_node(&asked, id, site.call) {
+                Some(a) if self.errors.len() == errors => host.expanded.push((asked, a)),
+                _ => return None,
+            }
+        };
         let (out, stats) = match ran {
             Ok(r) => r,
             Err(e) => {
@@ -511,7 +1024,7 @@ impl Expander<'_> {
                 return None;
             }
         };
-        let names: HashMap<u64, String> = atoms.iter().map(|(n, a)| (*a, n.clone())).collect();
+        let names = rooted;
         let mut captures = Vec::new();
         let lowered = {
             let spans = &mut self.spans;
@@ -553,7 +1066,7 @@ impl Expander<'_> {
         let exp = Expansion {
             id,
             macro_name: site.name.clone(),
-            function,
+            function: function.to_string(),
             kind: "typed",
             parent: None,
             call: site.call,
@@ -563,6 +1076,7 @@ impl Expander<'_> {
             steps: stats.steps,
             allocations: stats.allocations,
             captures,
+            input_tree: None,
             input: format!(
                 "{} |- {} : {}",
                 goal.context
@@ -605,7 +1119,7 @@ impl Expander<'_> {
             );
             return false;
         };
-        let Ok(ty) = crate::surface::parse_expr_at(&ty.to_string(), 0) else {
+        let Ok(ty) = type_term(ty) else {
             self.error(
                 "macro.proof_rejected",
                 msg!("macro-proof-type-unwritable"),
@@ -613,7 +1127,7 @@ impl Expander<'_> {
             );
             return false;
         };
-        let params: Vec<(String, SurfaceTerm)> = f
+        let params: Vec<(crate::surface::Name, SurfaceTerm)> = f
             .params
             .iter()
             .zip(&f.param_types)
@@ -632,13 +1146,12 @@ impl Expander<'_> {
         });
         let mut all: Vec<Stmt> = self.done.clone();
         all.extend(before.iter().cloned());
-        let (prefix, _) = crate::surface::modules::resolve_in_prelude(all);
+        let (mut prefix, _) = crate::surface::modules::resolve_in_prelude(all);
+        self.bindings.clone().statements(&mut prefix);
         let ctors = ctor_names(self.done.iter().chain(before.iter()));
-        let lemma = scope::resolve_seeing(vec![lemma], &ctors, &|scopes, name| {
-            self.macro_sees(scopes, name)
-        })
-        .pop()
-        .expect("one statement");
+        let lemma = scope::resolve(vec![lemma], &ctors)
+            .pop()
+            .expect("one statement");
         match self
             .checker
             .check_in(&prefix, &lemma)
@@ -731,15 +1244,22 @@ impl Expander<'_> {
         let lib = self.lib.as_ref().expect("the library is built");
         let function = self.macros[&site.name].function.clone();
         let mut host = Host::new(self.opts.call_steps, self.opts.allocations);
-        host.elab = Some(self.elab_for(id));
-        let ran = call_function(&lib.program, &lib.report, &function, &[code], &mut host);
+        host.resolve_global = Some(self.global_resolver(&site.name));
+        host.elab = Some(self.elab_for(id, &atoms));
+        let ran = call_bound_function(
+            &lib.program,
+            &lib.report,
+            &info.function,
+            &[code],
+            &mut host,
+        );
         for (m, at, code) in std::mem::take(&mut host.warnings) {
             let span = if at > 0 {
                 Span::new(at as u32, at as u32 + 1)
             } else {
                 site.call
             };
-            self.warnings.push((format!("{code}: {m}"), span));
+            self.warnings.push((format!("{code}: {m}").into(), span));
         }
         let (out, stats) = match ran {
             Ok(r) => r,
@@ -761,7 +1281,8 @@ impl Expander<'_> {
             );
             return None;
         }
-        let names: HashMap<u64, String> = atoms.iter().map(|(n, a)| (*a, n.clone())).collect();
+        let names: HashMap<u64, crate::surface::Name> =
+            atoms.iter().map(|(n, a)| (*a, n.clone())).collect();
         let mut captures = Vec::new();
         let lowered = {
             let spans = &mut self.spans;
@@ -804,7 +1325,7 @@ impl Expander<'_> {
         let exp = Expansion {
             id,
             macro_name: site.name.clone(),
-            function,
+            function: function.to_string(),
             kind: "typed",
             parent: None,
             call: site.call,
@@ -814,6 +1335,7 @@ impl Expander<'_> {
             steps: stats.steps,
             allocations: stats.allocations,
             captures,
+            input_tree: None,
             input: judgement,
             output: crate::surface::print::print_term(&term),
         };
@@ -828,8 +1350,9 @@ impl Expander<'_> {
         // checker records a type for: it is a term of `Type`.
         let universe = Ty::Named("Type".into(), Vec::new());
         let ty = c.report.terms.get(&key).unwrap_or(&universe);
-        let locals: HashSet<&String> = c.report.locals.keys().map(|(n, _)| n).collect();
-        let mut atoms: HashMap<String, u64> = HashMap::new();
+        let locals: HashSet<&crate::surface::Name> =
+            c.report.locals.keys().map(|(n, _)| n).collect();
+        let mut atoms: HashMap<crate::surface::Name, u64> = HashMap::new();
         let mut binders = Vec::new();
         for name in lin::free_vars(arg) {
             if locals.contains(&name) && !c.report.schemes.contains_key(&name) {
@@ -846,8 +1369,9 @@ impl Expander<'_> {
                         found = Some(ty.clone());
                     }
                 });
-                let ty =
-                    found.ok_or_else(|| msg!("macro-code-no-type", name = &name).to_string())?;
+                let ty = found.ok_or_else(|| {
+                    msg!("macro-code-no-type", name = name.to_string()).to_string()
+                })?;
                 binders.push(Node::Ctor(
                     "Judgement::Binder".into(),
                     vec![
@@ -923,14 +1447,21 @@ impl Expander<'_> {
             spans: Some(&table),
             reflip: None,
         };
-        let term = lift.expr(arg)?;
+        let mut selected = arg.clone();
+        let mut selection_error = None;
+        walk::term(&mut selected, &mut |term| {
+            if let Err(error) = c.report.resolve_selection_at(term) {
+                selection_error.get_or_insert(error);
+            }
+        });
+        if let Some(error) = selection_error {
+            return Err(error.to_string());
+        }
+        let term = lift.expr(&selected)?;
         let mut tys = Vec::new();
         for (id, occurrence) in table.borrow().terms.iter() {
             if let Some(t) = c.report.terms.get(occurrence) {
-                tys.push(Node::product(vec![
-                    (None, "SynExpr", type_node(t)?),
-                    (None, "u64", Node::Int(*id as i64)),
-                ]));
+                tys.push(Node::product(vec![type_node(t)?, Node::Int(*id as i64)]));
             }
         }
         let mut row = Row::new();
@@ -940,7 +1471,7 @@ impl Expander<'_> {
                 row.extend(r.iter().cloned());
             }
         });
-        let row: Vec<String> = row.into_iter().collect();
+        let row: Vec<String> = row.into_iter().map(|n| n.to_string()).collect();
         let st = |n: &str, f: Vec<(&str, Node)>| {
             Node::Ctor(
                 n.into(),
@@ -972,7 +1503,7 @@ impl Expander<'_> {
             ],
         );
         let ctx: Vec<String> = {
-            let mut v: Vec<(&String, &u64)> = atoms.iter().collect();
+            let mut v: Vec<(&crate::surface::Name, &u64)> = atoms.iter().collect();
             v.sort_by_key(|(_, n)| **n);
             v.iter().map(|(name, n)| format!("{name}#{n}")).collect()
         };
@@ -987,27 +1518,114 @@ impl Expander<'_> {
     }
 }
 
-type CodeOf = (Node, HashMap<String, u64>, Vec<String>, String);
+/// The `Judgement` of an argument, the atoms of its context, its effects and its judgement.
+type CodeOf = (
+    Node,
+    HashMap<crate::surface::Name, u64>,
+    Vec<String>,
+    String,
+);
 
 fn is_site(t: &SurfaceTerm, typed: &HashSet<String>) -> bool {
     matches!(&*t.kind, TermKind::MacroCall { name, arg }
         if typed.contains(split(name).0) && !matches!(&*arg.kind, TermKind::SyntaxLit(_)))
 }
 
-/// A type as the syntax of a type: what the checker shows, read again.
+/// The type's structural syntax, retaining every nominal and parameter reference.
+fn type_term(ty: &Ty) -> Result<SurfaceTerm, String> {
+    let span = Span::new(0, 0);
+    let make = |kind| SurfaceTerm::new(kind, span);
+    let apply = |function: SurfaceTerm, arguments: Vec<SurfaceTerm>| {
+        if arguments.is_empty() {
+            function
+        } else {
+            make(TermKind::App {
+                function: Box::new(function),
+                arguments,
+            })
+        }
+    };
+    let parts = |types: &[Ty]| types.iter().map(type_term).collect::<Result<Vec<_>, _>>();
+    Ok(match ty {
+        Ty::Named(name, arguments) => apply(SurfaceTerm::var(name, span), parts(arguments)?),
+        Ty::Param(parameter, _) => SurfaceTerm::var(parameter.reference(), span),
+        Ty::App(head, argument) => apply(type_term(head)?, vec![type_term(argument)?]),
+        Ty::Union(types) => make(TermKind::Union(parts(types)?)),
+        Ty::Tagged(tags, inner) => {
+            let mut term = type_term(inner)?;
+            for tag in tags.iter().rev() {
+                term = make(TermKind::Tagged {
+                    tag: tag.clone(),
+                    term: Box::new(term),
+                });
+            }
+            term
+        }
+        Ty::Borrow(inner, mutable) => make(TermKind::Borrow {
+            mutable: *mutable,
+            term: Box::new(type_term(inner)?),
+        }),
+        Ty::Info(inner) => apply(
+            SurfaceTerm::var(&tauto_surface::bindings::library_name("Info"), span),
+            vec![type_term(inner)?],
+        ),
+        Ty::Fn(parameters, result, kind) => {
+            let term = make(TermKind::Pi {
+                params: parts(parameters)?
+                    .into_iter()
+                    .map(|ty| (None, ty))
+                    .collect(),
+                result: Box::new(type_term(result)?),
+                effects: None,
+            });
+            if matches!(
+                kind,
+                crate::types::Kind::Affine | crate::types::Kind::Linear
+            ) {
+                make(TermKind::FnKind {
+                    kind: kind.to_string(),
+                    ty: Box::new(term),
+                })
+            } else {
+                term
+            }
+        }
+        Ty::Var(_) | Ty::Poly(..) => {
+            return Err("the type has no closed surface representation".into());
+        }
+        Ty::Int(_)
+        | Ty::Bool
+        | Ty::Text
+        | Ty::Unit
+        | Ty::Never
+        | Ty::Decimal
+        | Ty::Float
+        | Ty::Float32 => SurfaceTerm::var(
+            &tauto_surface::bindings::library_name(&ty.to_string()),
+            span,
+        ),
+    })
+}
+
 fn type_node(ty: &Ty) -> Result<Node, String> {
-    let text = ty.to_string();
-    let lift = crate::macros::syn::Lift {
+    crate::macros::syn::Lift {
         scopes: &[],
         quote: false,
         atoms: None,
         spans: None,
         reflip: None,
-    };
-    match crate::surface::parse_expr_at(&text, 0) {
-        Ok(term) => lift.expr(&term),
-        Err(_) => lift.expr(&SurfaceTerm::var(&text, Span::new(0, 0))),
     }
+    .expr(&type_term(ty)?)
+}
+
+/// The declaration `d` without its body, for what a macro in its body
+/// elaborates: a call of the declaration itself (its induction hypothesis
+/// once the body is checked) has the type the declaration states.
+fn signature_only(d: &Stmt) -> Option<Stmt> {
+    let mut t = kernel_decl(d)?;
+    t.body = None;
+    t.decreasing_by = None;
+    Some(Stmt::Theorem(t))
 }
 
 /// A theorem, a definition, or a function of the kernel's language, as the
@@ -1049,4 +1667,61 @@ fn is_type_mismatch(message: &Message) -> bool {
             tauto_message::Value::Message(m) => is_type_mismatch(m),
             _ => false,
         })
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn type_syntax_keeps_distinct_declarations_with_the_same_display() {
+        let first = crate::surface::Name::Global(tauto_surface::identity::DeclRef::fresh("T"));
+        let second = crate::surface::Name::Global(tauto_surface::identity::DeclRef::fresh("T"));
+        let first_node = type_node(&Ty::Named(first.clone(), vec![])).unwrap();
+        let second_node = type_node(&Ty::Named(second.clone(), vec![])).unwrap();
+        assert_ne!(first_node, second_node);
+        assert!(
+            matches!(&*type_term(&Ty::Named(first.clone(), vec![])).unwrap().kind, TermKind::Var(name) if name == &first)
+        );
+        assert!(
+            matches!(&*type_term(&Ty::Named(second.clone(), vec![])).unwrap().kind, TermKind::Var(name) if name == &second)
+        );
+    }
+}
+
+/// The module a declaration is in, from its full name (`M` of `M::t`).
+fn declared_module(s: &Stmt) -> Option<String> {
+    let name = match s {
+        Stmt::Fn(f) => &f.name,
+        Stmt::Theorem(d) | Stmt::Def(d) => &d.name,
+        Stmt::Attributed { stmt, .. } => return declared_module(stmt),
+        _ => return None,
+    };
+    let text = match name.as_global() {
+        Some(reference) => reference.display().to_string(),
+        None => name.spelling()?.to_string(),
+    };
+    text.rsplit_once("::").map(|(module, _)| module.to_string())
+}
+
+/// The hole a placed macro's call is checked as.
+fn placed_hole(index: usize) -> String {
+    format!("placed'{index}")
+}
+
+/// Stands for what a placed macro is given while the file's names are bound.
+const HELD: &str = "placed'held";
+
+/// The variable a copied local was made from, through every copy.
+fn root_name(name: &crate::surface::Name) -> crate::surface::Name {
+    match name {
+        crate::surface::Name::Local(reference) => {
+            let mut at = reference;
+            while let Some(origin) = at.origin() {
+                at = origin;
+            }
+            crate::surface::Name::Local(at.clone())
+        }
+        other => other.clone(),
+    }
 }

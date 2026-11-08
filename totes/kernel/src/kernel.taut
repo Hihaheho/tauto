@@ -2,6 +2,7 @@ import "inductive.taut"
 import "check.taut"
 import "data.taut"
 import "term.taut"
+import std::Map
 
 pub fn kernel_declare(
   k: Nat,
@@ -12,23 +13,23 @@ pub fn kernel_declare(
   transparent: Bool
 ): Bool {
   if kernel_fresh_name(c, name) && kernel_term_valid(ty, 0) {
-    match kernel_infer_sort(k, &mut c, ty): Bool {
+    ⊢ Bool from match kernel_infer_sort(k, &mut c, ty) {
       None => false
       Some(s) => {
         // A constant of the quotient has no value, the type the kernel
         // gives it, and comes after the constants it mentions.
-        let quotient := match kernel_quot_type(name): Bool {
+        let quotient := ⊢ Bool from match kernel_quot_type(name) {
           None => false
           Some(want) => true
         }
-        let fits := match kernel_quot_type(name): Bool {
+        let fits := ⊢ Bool from match kernel_quot_type(name) {
           None => true
-          Some(want) => match value: Bool {
+          Some(want) => ⊢ Bool from match value {
             None => kernel_term_eq(ty, want) && kernel_all_in(kernel_quot_needs(name), c.quotient)
             Some(v) => false
           }
         }
-        let good := match value: Bool {
+        let good := ⊢ Bool from match value {
           None => true
           Some(v) => kernel_term_valid(v, 0) && kernel_check(k, &mut c, v, ty)
         }
@@ -44,7 +45,7 @@ pub fn kernel_declare(
 }
 
 pub fn kernel_command(k: Nat, &mut c: KernelCore, command: KernelCommand): Bool {
-  match command: Bool {
+  ⊢ Bool from match command {
     KernelDeclare(name, ty, value, transparent) => kernel_declare(
       k,
       &mut c,
@@ -54,7 +55,7 @@ pub fn kernel_command(k: Nat, &mut c: KernelCore, command: KernelCommand): Bool 
       transparent
     )
     KernelConstant(name, value) => if kernel_fresh_name(c, name) && kernel_term_valid(value, 0) {
-      match kernel_infer(k, &mut c, value): Bool {
+      ⊢ Bool from match kernel_infer(k, &mut c, value) {
         None => false
         Some(ty) => {
           kernel_put_global(&mut c, name, ty, Some(value))
@@ -62,12 +63,13 @@ pub fn kernel_command(k: Nat, &mut c: KernelCore, command: KernelCommand): Bool 
         }
       }
     } else { false }
-    KernelSetValue(name, value) => match kernel_global_get(c.globals, name): Bool {
+    KernelSetValue(name, value) => ⊢ Bool from match kernel_global_get(c, name) {
       None => false
       Some(g) => if not(
         kernel_text_in(c.quotient, name)
       ) && kernel_term_valid(value, 0) && kernel_check(k, &mut c, value, g.ty) {
         kernel_put_global(&mut c, name, g.ty, Some(value))
+        kernel_set_to(&mut c.defs, Ordmap::empty())
         true
       } else { false }
     }
@@ -85,13 +87,8 @@ pub fn kernel_command(k: Nat, &mut c: KernelCore, command: KernelCommand): Bool 
     ) && kernel_term_valid(ty, 0) && kernel_check(k, &mut c, value, ty)
     KernelConvert(left, right) => kernel_conv(k, &mut c, left, right)
     KernelForget(name) => {
-      kernel_set_to(
-        &mut c.globals,
-        kernel_list_filter_KernelGlobal_Bool(
-          (g: KernelGlobal) => not(kernel_global_named(g, name)),
-          c.globals
-        )
-      )
+      kernel_set_to(&mut c.globals, Ordmap::remove(c.globals, name, kernel_text_cmp))
+      kernel_set_to(&mut c.defs, Ordmap::empty())
       kernel_set_to(&mut c.quotient, kernel_text_without(c.quotient, name))
       true
     }
@@ -99,7 +96,7 @@ pub fn kernel_command(k: Nat, &mut c: KernelCore, command: KernelCommand): Bool 
 }
 
 fn kernel_text_without(xs: List(Text), name: Text): List(Text) {
-  match xs: List(Text) {
+  ⊢ List(Text) from match xs {
     Nil => Nil
     Cons(x, rest) => if x == name { kernel_text_without(rest, name) } else {
       Cons(x, kernel_text_without(rest, name))
@@ -114,28 +111,39 @@ pub fn kernel_snapshot(&c: KernelCore): KernelCore {
     c.inductives,
     c.constructors,
     c.eliminators,
+    c.targets,
+    c.defs,
     c.locals,
     c.next,
     c.exhausted,
-    c.quotient
+    c.quotient,
+    c.unfolded,
+    c.binders,
+    c.whnfs,
+    c.conv_fail,
+    c.conv_depth
   )
 }
 
 pub fn kernel_execute(k: Nat, &mut c: KernelCore, command: KernelCommand): KernelVerdict {
   let saved := kernel_snapshot(&c)
   kernel_set_to(&mut c.exhausted, false)
+  kernel_set_to(&mut c.whnfs, Ordmap::empty())
   let good := kernel_command(k, &mut c, command)
   let exhausted := c.exhausted
   if exhausted {
     c := saved
     KernelExhausted
+  } else if good {
+    kernel_set_to(&mut c.locals, Ordmap::empty())
+    kernel_set_to(&mut c.unfolded, Nil)
+    kernel_set_to(&mut c.binders, 0)
+    kernel_set_to(&mut c.whnfs, Ordmap::empty())
+    kernel_set_to(&mut c.conv_fail, Ordmap::empty())
+    kernel_set_to(&mut c.conv_depth, 0)
+    KernelAccepted
   } else {
-    if good {
-      kernel_set_to(&mut c.locals, Nil)
-      KernelAccepted
-    } else {
-      c := saved
-      KernelRejected
-    }
+    c := saved
+    KernelRejected
   }
 }

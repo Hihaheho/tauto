@@ -1,0 +1,940 @@
+import "../../surface/src/surface.taut"
+import "../../text/src/text.taut"
+import std::Text
+import std::Base
+
+// A structural key of the surface AST. Positions and occurrence identities
+// are omitted; the surface reader already unwraps expression-only blocks.
+pub fn fmt_key_text(value: Text): Text {
+  Text::concat_all([Text::of_nat(Text::len(value)), ":", value])
+}
+
+pub fn fmt_key_bool(value: Bool): Text {
+  ⊢ Text from match value {
+    true => "true"
+    false => "false"
+  }
+}
+
+pub fn fmt_key_parts(parts: List(Option(Text))): Option(Text) {
+  ⊢ Option(Text) from match parts {
+    Nil => Some("")
+    Cons(part, rest) => ⊢ Option(Text) from match part {
+      None => None
+      Some(text) => ⊢ Option(Text) from match fmt_key_parts(rest) {
+        None => None
+        Some(tail) => Some(Text::concat(text, tail))
+      }
+    }
+  }
+}
+
+mutual {
+  pub fn fmt_key_SurfaceTerm(fuel: Nat, node: SurfaceTerm): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceTermIndexedMk(kind, start, end, occurrence) => fmt_key_parts(
+          [Some("SurfaceTermIndexedMk"), fmt_key_SurfaceKind(remaining, kind)]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceKind(fuel: Nat, node: SurfaceKind): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SkVar(name) => fmt_key_parts([Some("SkVar"), Some(fmt_key_text(name))])
+        SkNat(digits) => fmt_key_parts([Some("SkNat"), Some(fmt_key_text(digits))])
+        SkFloat(digits) => fmt_key_parts([Some("SkFloat"), Some(fmt_key_text(digits))])
+        SkRow(effects) => fmt_key_parts([Some("SkRow"), fmt_key_List_Text(remaining, effects)])
+        SkText(value) => fmt_key_parts([Some("SkText"), Some(fmt_key_text(value))])
+        SkBool(value) => fmt_key_parts([Some("SkBool"), Some(fmt_key_bool(value))])
+        SkApp(head, args) => fmt_key_parts(
+          [
+            Some("SkApp"),
+            fmt_key_SurfaceTerm(remaining, head),
+            fmt_key_List_SurfaceTerm(remaining, args)
+          ]
+        )
+        SkPi(params, result, effects) => fmt_key_parts(
+          [
+            Some("SkPi"),
+            fmt_key_List_SurfaceParam(remaining, params),
+            fmt_key_SurfaceTerm(remaining, result),
+            fmt_key_Option_List_Text(remaining, effects)
+          ]
+        )
+        SkExists(binder, domain, body) => fmt_key_parts(
+          [
+            Some("SkExists"),
+            Some(fmt_key_text(binder)),
+            fmt_key_SurfaceTerm(remaining, domain),
+            fmt_key_SurfaceTerm(remaining, body)
+          ]
+        )
+        SkLam(params, body) => fmt_key_parts(
+          [
+            Some("SkLam"),
+            fmt_key_List_Text(remaining, params),
+            fmt_key_SurfaceTerm(remaining, body)
+          ]
+        )
+        SkUnion(parts) => fmt_key_parts(
+          [Some("SkUnion"), fmt_key_List_SurfaceTerm(remaining, parts)]
+        )
+        SkProduct(members) => fmt_key_parts(
+          [Some("SkProduct"), fmt_key_List_SurfaceTerm(remaining, members)]
+        )
+        SkTagged(tag, value) => fmt_key_parts(
+          [Some("SkTagged"), Some(fmt_key_text(tag)), fmt_key_SurfaceTerm(remaining, value)]
+        )
+        SkIf(cond, then, otherwise) => fmt_key_parts(
+          [
+            Some("SkIf"),
+            fmt_key_SurfaceTerm(remaining, cond),
+            fmt_key_SurfaceTerm(remaining, then),
+            fmt_key_Option_SurfaceTerm(remaining, otherwise)
+          ]
+        )
+        SkField(value, name) => fmt_key_parts(
+          [Some("SkField"), fmt_key_SurfaceTerm(remaining, value), Some(fmt_key_text(name))]
+        )
+        SkProject(value, ty) => fmt_key_parts(
+          [
+            Some("SkProject"),
+            fmt_key_SurfaceTerm(remaining, value),
+            fmt_key_SurfaceTerm(remaining, ty)
+          ]
+        )
+        SkBlock(stmts) => fmt_key_parts(
+          [Some("SkBlock"), fmt_key_List_SurfaceStmt(remaining, stmts)]
+        )
+        SkPerform(op, args) => fmt_key_parts(
+          [Some("SkPerform"), Some(fmt_key_text(op)), fmt_key_List_SurfaceTerm(remaining, args)]
+        )
+        SkHandle(body, handlers) => fmt_key_parts(
+          [
+            Some("SkHandle"),
+            fmt_key_SurfaceTerm(remaining, body),
+            fmt_key_List_SurfaceHandler(remaining, handlers)
+          ]
+        )
+        SkBudget(memory, amount, body) => fmt_key_parts(
+          [
+            Some("SkBudget"),
+            Some(fmt_key_bool(memory)),
+            fmt_key_SurfaceTerm(remaining, amount),
+            fmt_key_SurfaceTerm(remaining, body)
+          ]
+        )
+        SkMatch(scrutinee, motive, arms, binder) => fmt_key_parts(
+          [
+            Some("SkMatch"),
+            fmt_key_SurfaceTerm(remaining, scrutinee),
+            fmt_key_Option_SurfaceTerm(remaining, motive),
+            fmt_key_List_SurfaceArm(remaining, arms),
+            fmt_key_Option_Text(remaining, binder)
+          ]
+        )
+        SkHole(name) => fmt_key_parts([Some("SkHole"), Some(fmt_key_text(name))])
+        SkRecord(name, fields) => fmt_key_parts(
+          [Some("SkRecord"), Some(fmt_key_text(name)), fmt_key_List_SurfaceField(remaining, fields)]
+        )
+        SkBorrow(mutable, value) => fmt_key_parts(
+          [Some("SkBorrow"), Some(fmt_key_bool(mutable)), fmt_key_SurfaceTerm(remaining, value)]
+        )
+        SkFnKind(kind, ty) => fmt_key_parts(
+          [Some("SkFnKind"), Some(fmt_key_text(kind)), fmt_key_SurfaceTerm(remaining, ty)]
+        )
+        SkBorrowLam(borrows, lam) => fmt_key_parts(
+          [
+            Some("SkBorrowLam"),
+            fmt_key_List_Option_Bool(remaining, borrows),
+            fmt_key_SurfaceTerm(remaining, lam)
+          ]
+        )
+        SkOther(what) => fmt_key_parts([Some("SkOther"), Some(fmt_key_text(what))])
+        SkMacroCall(name, arg) => fmt_key_parts(
+          [Some("SkMacroCall"), Some(fmt_key_text(name)), fmt_key_SurfaceTerm(remaining, arg)]
+        )
+        SkQuote(stmts_form, stmts) => fmt_key_parts(
+          [
+            Some("SkQuote"),
+            Some(fmt_key_bool(stmts_form)),
+            fmt_key_List_SurfaceStmt(remaining, stmts)
+          ]
+        )
+        SkSplice(value) => fmt_key_parts([Some("SkSplice"), fmt_key_SurfaceTerm(remaining, value)])
+        SkSyntaxLit(name, body) => fmt_key_parts(
+          [Some("SkSyntaxLit"), fmt_key_Option_Text(remaining, name), Some(fmt_key_text(body))]
+        )
+        SkStep(tactic, arg, call_start, call_end, before, arms) => fmt_key_parts(
+          [
+            Some("SkStep"),
+            Some(fmt_key_text(tactic)),
+            fmt_key_SurfaceTerm(remaining, arg),
+            fmt_key_Option_SurfaceTerm(remaining, before),
+            fmt_key_List_SurfaceStepArm(remaining, arms)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceStepArm(fuel: Nat, node: SurfaceStepArm): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceStepArmMk(binders, goal, body, start, end) => fmt_key_parts(
+          [
+            Some("SurfaceStepArmMk"),
+            fmt_key_List_SurfaceField(remaining, binders),
+            fmt_key_SurfaceTerm(remaining, goal),
+            fmt_key_SurfaceTerm(remaining, body)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceParam(fuel: Nat, node: SurfaceParam): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceParamMk(name, ty) => fmt_key_parts(
+          [
+            Some("SurfaceParamMk"),
+            fmt_key_Option_Text(remaining, name),
+            fmt_key_SurfaceTerm(remaining, ty)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceField(fuel: Nat, node: SurfaceField): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceFieldMk(name, value) => fmt_key_parts(
+          [Some("SurfaceFieldMk"), Some(fmt_key_text(name)), fmt_key_SurfaceTerm(remaining, value)]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceNamed(fuel: Nat, node: SurfaceNamed): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceNamedMk(name, ty) => fmt_key_parts(
+          [Some("SurfaceNamedMk"), Some(fmt_key_text(name)), fmt_key_SurfaceTerm(remaining, ty)]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfacePattern(fuel: Nat, node: SurfacePattern): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        PtWild => fmt_key_parts([Some("PtWild")])
+        PtBind(name) => fmt_key_parts([Some("PtBind"), Some(fmt_key_text(name))])
+        PtInt(negative, magnitude) => fmt_key_parts(
+          [Some("PtInt"), Some(fmt_key_bool(negative)), Some(Text::of_nat(magnitude))]
+        )
+        PtBool(value) => fmt_key_parts([Some("PtBool"), Some(fmt_key_bool(value))])
+        PtText(value) => fmt_key_parts([Some("PtText"), Some(fmt_key_text(value))])
+        PtCtor(name, args) => fmt_key_parts(
+          [Some("PtCtor"), Some(fmt_key_text(name)), fmt_key_List_SurfacePattern(remaining, args)]
+        )
+        PtRecord(name, fields) => fmt_key_parts(
+          [
+            Some("PtRecord"),
+            Some(fmt_key_text(name)),
+            fmt_key_List_SurfacePatternField(remaining, fields)
+          ]
+        )
+        PtOther(what) => fmt_key_parts([Some("PtOther"), Some(fmt_key_text(what))])
+      }
+    }
+  }
+  pub fn fmt_key_SurfacePatternField(fuel: Nat, node: SurfacePatternField): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfacePatternFieldMk(name, pattern) => fmt_key_parts(
+          [
+            Some("SurfacePatternFieldMk"),
+            Some(fmt_key_text(name)),
+            fmt_key_SurfacePattern(remaining, pattern)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceArm(fuel: Nat, node: SurfaceArm): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceArmMk(pattern, guard, goal, body) => fmt_key_parts(
+          [
+            Some("SurfaceArmMk"),
+            fmt_key_SurfacePattern(remaining, pattern),
+            fmt_key_Option_SurfaceTerm(remaining, guard),
+            fmt_key_Option_SurfaceTerm(remaining, goal),
+            fmt_key_SurfaceTerm(remaining, body)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceHandler(fuel: Nat, node: SurfaceHandler): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        HdReturn(pattern, body) => fmt_key_parts(
+          [
+            Some("HdReturn"),
+            fmt_key_SurfacePattern(remaining, pattern),
+            fmt_key_SurfaceTerm(remaining, body)
+          ]
+        )
+        HdOperation(op, Binds, types, patterns, r#resume, guard, body) => fmt_key_parts(
+          [
+            Some("HdOperation"),
+            Some(fmt_key_text(op)),
+            fmt_key_List_Text(remaining, Binds),
+            fmt_key_List_SurfaceTerm(remaining, types),
+            fmt_key_List_SurfacePattern(remaining, patterns),
+            fmt_key_Option_Text(remaining, r#resume),
+            fmt_key_Option_SurfaceTerm(remaining, guard),
+            fmt_key_SurfaceTerm(remaining, body)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceStmt(fuel: Nat, node: SurfaceStmt): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        StLet(name, ty, value, borrow, mutable) => fmt_key_parts(
+          [
+            Some("StLet"),
+            Some(fmt_key_text(name)),
+            fmt_key_Option_SurfaceTerm(remaining, ty),
+            fmt_key_SurfaceTerm(remaining, value),
+            Some(fmt_key_bool(borrow)),
+            Some(fmt_key_bool(mutable))
+          ]
+        )
+        StVar(name, ty, value, borrow) => fmt_key_parts(
+          [
+            Some("StVar"),
+            Some(fmt_key_text(name)),
+            fmt_key_Option_SurfaceTerm(remaining, ty),
+            fmt_key_SurfaceTerm(remaining, value),
+            Some(fmt_key_bool(borrow))
+          ]
+        )
+        StModule(name, stmts, start, end) => fmt_key_parts(
+          [Some("StModule"), Some(fmt_key_text(name)), fmt_key_List_SurfaceStmt(remaining, stmts)]
+        )
+        StAssign(name, place, value) => fmt_key_parts(
+          [
+            Some("StAssign"),
+            Some(fmt_key_text(name)),
+            fmt_key_Option_SurfaceTerm(remaining, place),
+            fmt_key_SurfaceTerm(remaining, value)
+          ]
+        )
+        StCalled(generates, call) => fmt_key_parts(
+          [
+            Some("StCalled"),
+            fmt_key_List_Text(remaining, generates),
+            fmt_key_SurfaceTerm(remaining, call)
+          ]
+        )
+        StFn(f) => fmt_key_parts([Some("StFn"), fmt_key_SurfaceFn(remaining, f)])
+        StTheorem(t) => fmt_key_parts([Some("StTheorem"), fmt_key_SurfaceTheorem(remaining, t)])
+        StDef(t) => fmt_key_parts([Some("StDef"), fmt_key_SurfaceTheorem(remaining, t)])
+        StMutual(stmts, start, end) => fmt_key_parts(
+          [Some("StMutual"), fmt_key_List_SurfaceStmt(remaining, stmts)]
+        )
+        StImport(path, start, end) => fmt_key_parts([Some("StImport"), Some(fmt_key_text(path))])
+        StInductive(i) => fmt_key_parts(
+          [Some("StInductive"), fmt_key_SurfaceInductive(remaining, i)]
+        )
+        StEffect(e) => fmt_key_parts([Some("StEffect"), fmt_key_SurfaceEffect(remaining, e)])
+        StStruct(d) => fmt_key_parts([Some("StStruct"), fmt_key_SurfaceData(remaining, d)])
+        StEnum(d) => fmt_key_parts([Some("StEnum"), fmt_key_SurfaceData(remaining, d)])
+        StExtern(abi, fns, start, end) => fmt_key_parts(
+          [Some("StExtern"), Some(fmt_key_text(abi)), fmt_key_List_SurfaceFn(remaining, fns)]
+        )
+        StClass(c) => fmt_key_parts([Some("StClass"), fmt_key_SurfaceClass(remaining, c)])
+        StInstance(i) => fmt_key_parts([Some("StInstance"), fmt_key_SurfaceInstance(remaining, i)])
+        StWhile(cond, body) => fmt_key_parts(
+          [
+            Some("StWhile"),
+            fmt_key_SurfaceTerm(remaining, cond),
+            fmt_key_SurfaceTerm(remaining, body)
+          ]
+        )
+        StReturn(value) => fmt_key_parts(
+          [Some("StReturn"), fmt_key_Option_SurfaceTerm(remaining, value)]
+        )
+        StExpr(value) => fmt_key_parts([Some("StExpr"), fmt_key_SurfaceTerm(remaining, value)])
+        StOther(what, start, end) => fmt_key_parts([Some("StOther"), Some(fmt_key_text(what))])
+        StMacro(name, function, start, end) => fmt_key_parts(
+          [Some("StMacro"), Some(fmt_key_text(name)), Some(fmt_key_text(function))]
+        )
+        StSyntax(name, grammar, start, end) => fmt_key_parts(
+          [Some("StSyntax"), Some(fmt_key_text(name)), Some(fmt_key_text(grammar))]
+        )
+        StAttributed(name, arg, generates, stmt) => fmt_key_parts(
+          [
+            Some("StAttributed"),
+            Some(fmt_key_text(name)),
+            fmt_key_SurfaceTerm(remaining, arg),
+            fmt_key_List_Text(remaining, generates),
+            fmt_key_SurfaceStmt(remaining, stmt)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceFn(fuel: Nat, node: SurfaceFn): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceFnMk(name, generics, bounds, params, borrows, param_types, result, effects, wheres, start, end, body, generic_types) => fmt_key_parts(
+          [
+            Some("SurfaceFnMk"),
+            Some(fmt_key_text(name)),
+            fmt_key_List_Text(remaining, generics),
+            fmt_key_List_Option_Text(remaining, bounds),
+            fmt_key_List_Text(remaining, params),
+            fmt_key_List_Option_Bool(remaining, borrows),
+            fmt_key_List_Option_SurfaceTerm(remaining, param_types),
+            fmt_key_Option_SurfaceTerm(remaining, result),
+            fmt_key_Option_List_Text(remaining, effects),
+            fmt_key_List_SurfaceConstraint(remaining, wheres),
+            fmt_key_SurfaceTerm(remaining, body),
+            fmt_key_List_SurfaceTerm(remaining, generic_types)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceConstraint(fuel: Nat, node: SurfaceConstraint): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceConstraintMk(r#class, ty, start, end, arguments) => fmt_key_parts(
+          [
+            Some("SurfaceConstraintMk"),
+            Some(fmt_key_text(r#class)),
+            fmt_key_SurfaceTerm(remaining, ty),
+            fmt_key_List_SurfaceTerm(remaining, arguments)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceLaw(fuel: Nat, node: SurfaceLaw): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceLawMk(name, start, end) => fmt_key_parts(
+          [Some("SurfaceLawMk"), Some(fmt_key_text(name))]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceClass(fuel: Nat, node: SurfaceClass): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceClassMk(name, param, arity, bound, methods, laws, start, end, parameters) => fmt_key_parts(
+          [
+            Some("SurfaceClassMk"),
+            Some(fmt_key_text(name)),
+            Some(fmt_key_text(param)),
+            Some(Text::of_nat(arity)),
+            fmt_key_Option_Text(remaining, bound),
+            fmt_key_List_SurfaceFn(remaining, methods),
+            fmt_key_List_SurfaceLaw(remaining, laws),
+            fmt_key_List_SurfaceNamed(remaining, parameters)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceInstance(fuel: Nat, node: SurfaceInstance): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceInstanceMk(generics, bounds, r#class, head, wheres, methods, laws, start, end, generic_types, arguments) => fmt_key_parts(
+          [
+            Some("SurfaceInstanceMk"),
+            fmt_key_List_Text(remaining, generics),
+            fmt_key_List_Option_Text(remaining, bounds),
+            Some(fmt_key_text(r#class)),
+            fmt_key_SurfaceTerm(remaining, head),
+            fmt_key_List_SurfaceConstraint(remaining, wheres),
+            fmt_key_List_SurfaceFn(remaining, methods),
+            fmt_key_List_SurfaceLaw(remaining, laws),
+            fmt_key_List_SurfaceTerm(remaining, generic_types),
+            fmt_key_List_SurfaceTerm(remaining, arguments)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceTheorem(fuel: Nat, node: SurfaceTheorem): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceTheoremMk(name, implicit, params, ty, body, start, end) => fmt_key_parts(
+          [
+            Some("SurfaceTheoremMk"),
+            Some(fmt_key_text(name)),
+            Some(Text::of_nat(implicit)),
+            fmt_key_List_SurfaceNamed(remaining, params),
+            fmt_key_SurfaceTerm(remaining, ty),
+            fmt_key_Option_SurfaceTerm(remaining, body)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceCtor(fuel: Nat, node: SurfaceCtor): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceCtorMk(name, implicit, params, result) => fmt_key_parts(
+          [
+            Some("SurfaceCtorMk"),
+            Some(fmt_key_text(name)),
+            Some(Text::of_nat(implicit)),
+            fmt_key_List_SurfaceNamed(remaining, params),
+            fmt_key_SurfaceTerm(remaining, result)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceInductive(fuel: Nat, node: SurfaceInductive): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceInductiveMk(name, params, sort, constructors, start, end) => fmt_key_parts(
+          [
+            Some("SurfaceInductiveMk"),
+            Some(fmt_key_text(name)),
+            fmt_key_List_SurfaceNamed(remaining, params),
+            fmt_key_SurfaceTerm(remaining, sort),
+            fmt_key_List_SurfaceCtor(remaining, constructors)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceEffect(fuel: Nat, node: SurfaceEffect): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceEffectMk(name, generics, params, result, r#resume, start, end, set) => fmt_key_parts(
+          [
+            Some("SurfaceEffectMk"),
+            Some(fmt_key_text(name)),
+            fmt_key_List_Text(remaining, generics),
+            fmt_key_List_Option_SurfaceTerm(remaining, params),
+            fmt_key_Option_SurfaceTerm(remaining, result),
+            fmt_key_Option_Text(remaining, r#resume),
+            fmt_key_Option_List_Text(remaining, set)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceDataField(fuel: Nat, node: SurfaceDataField): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceDataFieldMk(name, ty) => fmt_key_parts(
+          [
+            Some("SurfaceDataFieldMk"),
+            fmt_key_Option_Text(remaining, name),
+            fmt_key_SurfaceTerm(remaining, ty)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceDataCtor(fuel: Nat, node: SurfaceDataCtor): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceDataCtorMk(name, fields) => fmt_key_parts(
+          [
+            Some("SurfaceDataCtorMk"),
+            Some(fmt_key_text(name)),
+            fmt_key_List_SurfaceDataField(remaining, fields)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_SurfaceData(fuel: Nat, node: SurfaceData): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match node {
+        SurfaceDataMk(kind, name, generics, constructors, start, end) => fmt_key_parts(
+          [
+            Some("SurfaceDataMk"),
+            fmt_key_Option_Text(remaining, kind),
+            Some(fmt_key_text(name)),
+            fmt_key_List_Text(remaining, generics),
+            fmt_key_List_SurfaceDataCtor(remaining, constructors)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_Option_Bool(fuel: Nat, values: List(Option(Bool))): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_Option_Bool(remaining, item),
+            fmt_key_List_Option_Bool(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_Option_SurfaceTerm(
+    fuel: Nat,
+    values: List(Option(SurfaceTerm))
+  ): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_Option_SurfaceTerm(remaining, item),
+            fmt_key_List_Option_SurfaceTerm(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_Option_Text(fuel: Nat, values: List(Option(Text))): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_Option_Text(remaining, item),
+            fmt_key_List_Option_Text(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_SurfaceArm(fuel: Nat, values: List(SurfaceArm)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_SurfaceArm(remaining, item),
+            fmt_key_List_SurfaceArm(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_SurfaceConstraint(fuel: Nat, values: List(SurfaceConstraint)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_SurfaceConstraint(remaining, item),
+            fmt_key_List_SurfaceConstraint(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_SurfaceCtor(fuel: Nat, values: List(SurfaceCtor)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_SurfaceCtor(remaining, item),
+            fmt_key_List_SurfaceCtor(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_SurfaceDataCtor(fuel: Nat, values: List(SurfaceDataCtor)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_SurfaceDataCtor(remaining, item),
+            fmt_key_List_SurfaceDataCtor(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_SurfaceDataField(fuel: Nat, values: List(SurfaceDataField)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_SurfaceDataField(remaining, item),
+            fmt_key_List_SurfaceDataField(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_SurfaceField(fuel: Nat, values: List(SurfaceField)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_SurfaceField(remaining, item),
+            fmt_key_List_SurfaceField(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_SurfaceFn(fuel: Nat, values: List(SurfaceFn)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_SurfaceFn(remaining, item),
+            fmt_key_List_SurfaceFn(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_SurfaceHandler(fuel: Nat, values: List(SurfaceHandler)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_SurfaceHandler(remaining, item),
+            fmt_key_List_SurfaceHandler(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_SurfaceLaw(fuel: Nat, values: List(SurfaceLaw)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_SurfaceLaw(remaining, item),
+            fmt_key_List_SurfaceLaw(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_SurfaceNamed(fuel: Nat, values: List(SurfaceNamed)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_SurfaceNamed(remaining, item),
+            fmt_key_List_SurfaceNamed(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_SurfaceParam(fuel: Nat, values: List(SurfaceParam)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_SurfaceParam(remaining, item),
+            fmt_key_List_SurfaceParam(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_SurfacePattern(fuel: Nat, values: List(SurfacePattern)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_SurfacePattern(remaining, item),
+            fmt_key_List_SurfacePattern(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_SurfacePatternField(
+    fuel: Nat,
+    values: List(SurfacePatternField)
+  ): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_SurfacePatternField(remaining, item),
+            fmt_key_List_SurfacePatternField(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_SurfaceStepArm(fuel: Nat, values: List(SurfaceStepArm)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_SurfaceStepArm(remaining, item),
+            fmt_key_List_SurfaceStepArm(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_SurfaceStmt(fuel: Nat, values: List(SurfaceStmt)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_SurfaceStmt(remaining, item),
+            fmt_key_List_SurfaceStmt(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_SurfaceTerm(fuel: Nat, values: List(SurfaceTerm)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [
+            Some("Cons"),
+            fmt_key_SurfaceTerm(remaining, item),
+            fmt_key_List_SurfaceTerm(remaining, rest)
+          ]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_List_Text(fuel: Nat, values: List(Text)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        Nil => Some("Nil")
+        Cons(item, rest) => fmt_key_parts(
+          [Some("Cons"), Some(fmt_key_text(item)), fmt_key_List_Text(remaining, rest)]
+        )
+      }
+    }
+  }
+  pub fn fmt_key_Option_Bool(fuel: Nat, values: Option(Bool)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        None => Some("None")
+        Some(item) => fmt_key_parts([Some("Some"), Some(fmt_key_bool(item))])
+      }
+    }
+  }
+  pub fn fmt_key_Option_List_Text(fuel: Nat, values: Option(List(Text))): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        None => Some("None")
+        Some(item) => fmt_key_parts([Some("Some"), fmt_key_List_Text(remaining, item)])
+      }
+    }
+  }
+  pub fn fmt_key_Option_SurfaceTerm(fuel: Nat, values: Option(SurfaceTerm)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        None => Some("None")
+        Some(item) => fmt_key_parts([Some("Some"), fmt_key_SurfaceTerm(remaining, item)])
+      }
+    }
+  }
+  pub fn fmt_key_Option_Text(fuel: Nat, values: Option(Text)): Option(Text) {
+    ⊢ Option(Text) from match fuel {
+      Zero => None
+      Succ(remaining) => ⊢ Option(Text) from match values {
+        None => Some("None")
+        Some(item) => fmt_key_parts([Some("Some"), Some(fmt_key_text(item))])
+      }
+    }
+  }
+}

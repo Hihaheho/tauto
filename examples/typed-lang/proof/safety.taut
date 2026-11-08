@@ -17,10 +17,10 @@ pub(open) inductive ResultHas: (Option(Val), Ty) -> Prop {
 pub theorem add_safe<x: Option(
   Val
 ), y: Option(Val)>(hx: ResultHas(x, TNat), hy: ResultHas(y, TNat)): ResultHas(add_val(x, y), TNat) {
-  match hx: ResultHas(add_val(x, y), TNat) {
-    Returned(vx, tx, hvx) => match hvx: ResultHas(add_val(Some(vx), y), TNat) {
-      HNat(nx) => match hy: ResultHas(add_val(Some(VNat(nx)), y), TNat) {
-        Returned(vy, ty, hvy) => match hvy: ResultHas(add_val(Some(VNat(nx)), Some(vy)), TNat) {
+  ⊢ ResultHas(add_val(x, y), TNat) from match hx {
+    Returned(vx, tx, hvx) => ⊢ ResultHas(add_val(Some(vx), y), TNat) from match hvx {
+      HNat(nx) => ⊢ ResultHas(add_val(Some(VNat(nx)), y), TNat) from match hy {
+        Returned(vy, ty, hvy) => ⊢ ResultHas(add_val(Some(VNat(nx)), Some(vy)), TNat) from match hvy {
           HNat(ny) => Returned(HNat)
         }
       }
@@ -31,10 +31,10 @@ pub theorem add_safe<x: Option(
 pub theorem eq_safe<x: Option(
   Val
 ), y: Option(Val)>(hx: ResultHas(x, TNat), hy: ResultHas(y, TNat)): ResultHas(eq_val(x, y), TBool) {
-  match hx: ResultHas(eq_val(x, y), TBool) {
-    Returned(vx, tx, hvx) => match hvx: ResultHas(eq_val(Some(vx), y), TBool) {
-      HNat(nx) => match hy: ResultHas(eq_val(Some(VNat(nx)), y), TBool) {
-        Returned(vy, ty, hvy) => match hvy: ResultHas(eq_val(Some(VNat(nx)), Some(vy)), TBool) {
+  ⊢ ResultHas(eq_val(x, y), TBool) from match hx {
+    Returned(vx, tx, hvx) => ⊢ ResultHas(eq_val(Some(vx), y), TBool) from match hvx {
+      HNat(nx) => ⊢ ResultHas(eq_val(Some(VNat(nx)), y), TBool) from match hy {
+        Returned(vy, ty, hvy) => ⊢ ResultHas(eq_val(Some(VNat(nx)), Some(vy)), TBool) from match hvy {
           HNat(ny) => Returned(HBool)
         }
       }
@@ -53,9 +53,9 @@ pub theorem if_safe<c: Option(
   ht: ResultHas(t, ty),
   he: ResultHas(e, ty)
 ): ResultHas(if_val(c, t, e), ty) {
-  match hc: ResultHas(if_val(c, t, e), ty) {
-    Returned(vc, tc, hvc) => match hvc: ResultHas(if_val(Some(vc), t, e), ty) {
-      HBool(b) => match b: ResultHas(if_val(Some(VBool(b)), t, e), ty) {
+  ⊢ ResultHas(if_val(c, t, e), ty) from match hc {
+    Returned(vc, tc, hvc) => ⊢ ResultHas(if_val(Some(vc), t, e), ty) from match hvc {
+      HBool(b) => ⊢ ResultHas(if_val(Some(VBool(b)), t, e), ty) from match b {
         true => ht
         false => he
       }
@@ -65,7 +65,7 @@ pub theorem if_safe<c: Option(
 
 // 型安全性: 型が付いた式を評価すると、必ず値が返り、その値は付いた型を持つ。
 pub theorem eval_safe<t: Term, ty: Ty>(h: HasTy(t, ty)): ResultHas(eval(t), ty) {
-  match h: ResultHas(eval(t), ty) {
+  ⊢ ResultHas(eval(t), ty) from match h {
     TyNum(n) => Returned(HNat)
     TyBool(b) => Returned(HBool)
     TyAdd(a, b, ha, hb) => add_safe(eval_safe(ha), eval_safe(hb))
@@ -78,7 +78,7 @@ pub theorem eval_never_stuck<t: Term, ty: Ty>(
   h: HasTy(t, ty),
   stuck: Eq(Option(Val), eval(t), None)
 ): False {
-  match Eq::subst((r: Option(Val)) => ResultHas(r, ty), stuck, eval_safe(h)): False {}
+  ⊢ False from match Eq::subst((r: Option(Val)) => ResultHas(r, ty), stuck, eval_safe(h)) {}
 }
 
 // 検査器の健全性: 検査器が `Some(ty)` と答えたなら、`t : ty` が成り立つ。
@@ -86,11 +86,11 @@ pub theorem decision_sound<t: Term, ty: Ty>(
   d: Check(t),
   said: Eq(Option(Ty), decision_ty(t, d), Some(ty))
 ): HasTy(t, ty) {
-  match d: HasTy(t, ty) {
-    Accepted(out, derivation, unique) => match said: HasTy(t, ty) {
+  ⊢ HasTy(t, ty) from match d {
+    Accepted(out, derivation, unique) => ⊢ HasTy(t, ty) from match said {
       Refl => derivation
     }
-    Rejected(refute) => match said: HasTy(t, ty) {}
+    Rejected(refute) => ⊢ HasTy(t, ty) from match said {}
   }
 }
 
@@ -105,7 +105,7 @@ pub theorem decision_complete<t: Term, ty: Ty>(
   d: Check(t),
   h: HasTy(t, ty)
 ): Eq(Option(Ty), decision_ty(t, d), Some(ty)) {
-  match d: Eq(Option(Ty), decision_ty(t, d), Some(ty)) {
+  ⊢ Eq(Option(Ty), decision_ty(t, d), Some(ty)) from match d {
     Accepted(out, derivation, unique) => Eq::congr(Some, Eq::sym(unique(ty, h)))
     Rejected(refute) => False::elim(refute(ty, h))
   }
@@ -119,7 +119,7 @@ pub theorem check_complete<t: Term, ty: Ty>(
 
 // 型付けは一意。`mode!` が作った一意性から取り出す。
 pub theorem typing_unique<t: Term, a: Ty, b: Ty>(ha: HasTy(t, a), hb: HasTy(t, b)): Eq(Ty, a, b) {
-  match check(t): Eq(Ty, a, b) {
+  ⊢ Eq(Ty, a, b) from match check(t) {
     Accepted(out, derivation, unique) => Eq::trans(unique(a, ha), Eq::sym(unique(b, hb)))
     Rejected(refute) => False::elim(refute(a, ha))
   }

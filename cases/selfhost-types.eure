@@ -1,0 +1,657 @@
+// Differential cases: each named route compares the self-hosted component with its oracle, not only evaluator success.
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-001
+source = ```tauto
+let a := 1 + 2
+let b: i32 := 1 + 2
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-002
+source = ```tauto
+fn identity(x) { x }
+identity == identity
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-003
+source = ```tauto
+let identity := (x) => x
+identity == identity
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-004
+source = ```tauto
+let values := Vec::new()
+values == values
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-005
+source = ```tauto
+let values := HashMap::new()
+values == values
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-006
+source = ```tauto
+struct Holder(A: Shared) { f: (A) -> A }
+let holder := Holder { f: (x) => x }
+holder == holder
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-007
+source = ```tauto
+extern { fn bad(&x): Slice(i32) }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-008
+source = ```tauto
+extern { fn first(&x)
+fn second(): Slice(i32) }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-009
+source = ```tauto
+fn f(a: i32, b: i64): i64 { a + b }
+let a: i32 := 3000000000
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-010
+source = ```tauto
+let a := 7 / 2
+let b := div(7, 2)
+let c := mod(7, 2)
+let d := decimal(1) / decimal(2)
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-011
+source = ```tauto
+fn f(a, b) { a / b }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-012
+source = ```tauto
+effect ask(): i64
+let c := handle { perform ask() } with {
+  ask(), k => "none"
+  return v => v
+}
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-013
+source = ```tauto
+let d := handle { budget(steps: 50) { 1 } } with {
+  exceeded(info), k => info.more(100)
+}
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-014
+source = ```tauto
+let d := handle { budget(steps: 50) { 1 } } with {
+  exceeded(info), k => info.unbounded()
+  return v => v
+}
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-015
+source = ```tauto
+let u := perform show("a", 1)
+let v := perform show("b", true)
+let w := perform show(1, 1)
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-016
+source = ```tauto
+fn f(x: @a i64): i64 { x }
+fn g(x: i64): @a i64 { x }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-017
+source = ```tauto
+let a := match 1 { 0 => 1 }
+let b := match true { true => 1, false => 0 }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-018
+source = ```tauto
+struct P { x: i64, y: i64 }
+enum S { Circle(i64), Empty }
+let p := P { x: 1, y: 2 }
+let a := p.x
+let s := Circle(3)
+let r := match s { Circle(n) => n, Empty => 0 }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-019
+source = ```tauto
+enum S { Circle(i64), Empty }
+let r := match Empty { Circle(n) => n }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-020
+source = ```tauto
+affine struct F {}
+struct W { f: F }
+struct Q { t: Text }
+enum L { Nil, Cons(i64, L) }
+struct P { x: i64 }
+copy struct R { t: Text }
+copy enum E { A, B(i64) }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-021
+source = ```tauto
+enum Left { Same(i64) }
+enum Right { Same(Text) }
+let left := Left::Same(1)
+let right := Right::Same("text")
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-022
+source = ```tauto
+enum Opt(A: Type) { None, Some(A) }
+let value: Opt(i32) := Some(1)
+let empty: Opt(i32) := None
+let standard: Option(i64) := Some(2)
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-023
+source = ```tauto
+enum Opt(A: Type) { None, Some(A) }
+enum Wrap(A: Type) { Hold(A) }
+enum Other(A: Type) { Hold(A) }
+let inner := Some(1)
+let outer: Wrap(Opt(i32)) := Hold(inner)
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-024
+source = ```tauto
+let value := Missing { field: undefined_name }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-025
+source = ```tauto
+copy enum T { Leaf, Node(T, T) }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-026
+source = ```tauto
+struct P { x: i64, y: i64 }
+let a := P { x: 1 }
+let b := P { x: 1, x: 2, y: 3, z: 4 }
+let c := Q { x: 1 }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-027
+source = ```tauto
+struct P { x: i64 }
+let a := P
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-028
+source = ```tauto
+enum Opt(A: Type) { None, Some(A) }
+fn id<A>(x: A): A { x }
+let a := id(Some(1))
+let b := id(None)
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-029
+source = ```tauto
+fn dup<A: Copy>(x: A): A { x }
+affine struct F {}
+fn mk(): F { F {} }
+let a := dup(mk())
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-030
+source = ```tauto
+fn apply(f: (i64) -> i64, x: i64): i64 { f(x) }
+let a := apply((y) => y + 1, 2)
+let g := (x) => x
+let b := g(1)
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-031
+source = ```tauto
+affine struct F {}
+fn use_f(f: F): i64 { 1 }
+fn main(f: F): i64 {
+  let g := () => use_f(f)
+  0
+}
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-032
+source = ```tauto
+fn f(&x: i64): i64 { let g := () => x
+ 0 }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-033
+source = ```tauto
+fn show_it(&t: Text): i64 { 0 }
+fn f(t: Text): i64 { show_it(&t) }
+fn g(t: Text): i64 { show_it(t) }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-034
+source = ```tauto
+fn pick(&t: Text): &Text { t }
+fn f(t: Text): i64 {
+  let &r := pick(&t)
+  let s := pick(&t)
+  0
+}
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-035
+source = ```tauto
+let value: i64 := 9223372036854775807
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-036
+source = ```tauto
+let value: i64 := 9223372036854775808
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-037
+source = ```tauto
+let value := 18446744073709551616
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-038
+source = ```tauto
+fn bad(): &Text { "x" }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-039
+source = ```tauto
+fn f(): i64 {
+  var a := 1
+  a := 2
+  let b := 1
+  b := 2
+  c := 3
+  a
+}
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-040
+source = ```tauto
+fn f(): i64 {
+  var a := 1
+  let b := 2
+  let r := &mut a
+  let s := &mut b
+  0
+}
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-041
+source = ```tauto
+linear struct L {}
+fn mk(): L { L {} }
+fn f(): i64 { var a := mk()
+ 0 }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-042
+source = ```tauto
+struct P { x: i64 }
+fn f(p: P): i64 { p.z }
+fn g(n: i64): i64 { n.x }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-043
+source = ```tauto
+affine struct F { n: i64 }
+struct S { t: Text }
+fn f(&a: F, &s: S): i64 {
+  let b := clone(&a)
+  let c := clone(&s)
+  let d := clone(1)
+  0
+}
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-044
+source = ```tauto
+fn f(): i64 { clone() }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-045
+source = ```tauto
+let a := not(1)
+let b := true && 1
+let c := -true
+let d := 1 == true
+let e := "a" < "b"
+let f := 1 < 2
+let g := +1
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-046
+source = ```tauto
+fn f(a: i64): i64 { a }
+let x := f(1, 2)
+let y := f("a")
+let z := 1(2)
+let w := nothing(1)
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-047
+source = ```tauto
+fn f(): i64 {
+  while 1 { }
+  return "a"
+}
+return 1
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-048
+source = ```tauto
+effect ask(q: i64): i64
+let a := perform ask(1)
+let b := perform ask("x")
+let c := perform ask(1, 2)
+let d := perform nope(1)
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-049
+source = ```tauto
+effect ask(q: i64): i64
+effect zero(): i64 resume 0
+let r := handle { perform ask(1) } with {
+  ask(q), k => k(q)
+  zero(), k => 1
+  nope(), k => 2
+  ask(1, 2), k => 3
+  return v => v
+}
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-050
+source = ```tauto
+effect first(): i64
+effect second(): i64
+fn increment(x: i64): i64 { x + 1 }
+let result := handle { let x := perform first(); perform second() } with { first(), k => increment(k(0)), second(), k => "text" }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-051
+source = ```tauto
+effect next(): i64
+fn increment(x: i64): i64 { x + 1 }
+let result := handle { let x := perform next(); perform next() } with { next(), k => { let x := increment(k(0)); "text" } }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-052
+source = ```tauto
+effect first(): i64
+effect second(): i64
+let result: i64 | Text := handle { let x := perform first(); perform second() } with { first(), k => { let ignored := k(0); 1 }, second(), k => "text" }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-053
+source = ```tauto
+effect ask(): i64
+let r := handle { perform ask() } with {
+  ask(), k => k
+  return v => (x) => x
+}
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-054
+source = ```tauto
+effect gen(): i64 resume 1
+let r := handle { perform gen() } with {
+  gen(), k => k(1)
+  return v => v
+}
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-055
+source = ```tauto
+effect e(): i64 resume 7
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-056
+source = ```tauto
+effect e(x): i64
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-057
+source = ```tauto
+effect put<A>(a: A): Unit
+let r := perform put(1)
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-058
+source = ```tauto
+fn f(): i64 {
+  fn g(x: i64): i64 { x + 1 }
+  g(1)
+}
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-059
+source = ```tauto
+struct P { x: i64 }
+fn f(): i64 {
+  struct Q { y: i64 }
+  0
+}
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-060
+source = ```tauto
+extern { fn ext(x: i64): i64 }
+let a := ext(1)
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-061
+source = ```tauto
+enum S { A(i64, Text), B }
+fn f(s: S): i64 { match s { A(1, "x") => 1, A(n, t) => n, B => 2 } }
+fn g(s: S): i64 { match s { A(n) => n, B => 0 } }
+fn h(n: i64): i64 { match n { true => 1, _ => 0 } }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-062
+source = ```tauto
+struct P { x: i64, y: i64 }
+fn f(p: P): i64 { match p { P { x: a, y: b } => a + b } }
+fn g(p: P): i64 { match p { P { x: a } => a } }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-063
+source = ```tauto
+fn f(n: i64): i64 { match n { m if m > 1 => 1, _ => 0 } }
+fn g(n: i64): i64 { match n { m if m => 1 } }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-064
+source = ```tauto
+fn f(b: Bool): i64 { if b { 1 } else { "a" } }
+let r := if true { 1 } else { 2 }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-065
+source = ```tauto
+let x := @a 1
+let y: i64 := x
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-066
+source = ```tauto
+let a := 99999999999999999999
+let b: u8 := 256
+let c: u64 := 1
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-067
+source = ```tauto
+theorem t: Nat = 1
+let a := (x: Nat) -> Nat
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-068
+source = ```tauto
+import x
+inductive T : Type { }
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-069
+source = ```tauto
+let a := ?x
+```
+differential = "types"
+
+// types_match_on_hard_cases
+@ cases.types-match-on-hard-cases-070
+source = ```tauto
+fn f(
+```
+differential = "types"
+
+@ cases.types-hard-structural-empty-lists
+source = ```tauto
+Nil == Nil
+```
+differential = "types"

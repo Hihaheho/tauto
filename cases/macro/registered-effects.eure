@@ -1,0 +1,74 @@
+// What the function a syntax registers with `with` may perform: its row holds no effect the
+// host answers (`stdout` here), and what it calls is not otherwise restricted, so closures and
+// the text, `Vec` and `HashMap` builtins are accepted.
+
+@ cases.a-registered-fmt-function-that-performs-a-host-effect-is-refused
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+import std::prelude::Os
+import std::prelude::Par
+
+pub fn noisy_fmt(ts: List(SynTok), width: u64): Option(Text) ! {stdout} {
+  print("laying out")
+  None
+}
+
+syntax!(noisy, ```par
+%start Doc
+%title "noisy"
+%%
+Doc: Word;
+Word: /[a-z]+/;
+```, with(fmt: noisy_fmt)) => struct Doc, fn parse
+````
+entry = "lib.taut"
+checks."lib.taut::macro" = "error: "
+@ cases.a-registered-fmt-function-that-performs-a-host-effect-is-refused.diagnostics[]
+file = "lib.taut"
+name = "macro"
+message = "syntax noisy: `noisy_fmt`, the fmt function, performs the host effect stdout, which the host that runs it does not answer"
+
+@ cases.a-registered-fmt-function-may-use-closures-and-collections
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+import std::prelude::Par
+import std::prelude::Shared
+import std::prelude::Affine
+
+pub fn texts(ts: List(SynTok)): List(Text) ! {Div} {
+  map(ts, (t: SynTok) => concat(t.text, "!"))
+}
+
+pub fn total(xs: List(Text)): u64 ! {Div} {
+  let m: HashMap(Text, u64) := HashMap::new()
+  HashMap::insert(m, "a", 1)
+  Vec::len(HashMap::into_vec(m))
+}
+
+pub fn count_fmt(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+  if total(texts(ts)) == 0 { None } else { Some("abc") }
+}
+
+syntax!(count, ```par
+%start Doc
+%title "count"
+%%
+Doc: Word;
+Word: /[a-z]+/;
+```, with(fmt: count_fmt)) => struct Doc, fn parse
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+
+fn other(): count::Doc {
+  count`abc`
+}
+````
+entry = "main.taut"
+format_literals = ````tauto
+import "lib.taut"
+
+fn other(): count::Doc {
+  count`abc`
+}
+````

@@ -24,6 +24,9 @@ pub fn roots(s: &mut Stmt, f: &mut dyn FnMut(&mut SurfaceTerm)) {
         }
         Stmt::Assign { value, .. } => f(value),
         Stmt::Fn(d) => {
+            for t in &mut d.generic_types {
+                f(t);
+            }
             for t in d.param_types.iter_mut().flatten() {
                 f(t);
             }
@@ -85,7 +88,13 @@ pub fn roots(s: &mut Stmt, f: &mut dyn FnMut(&mut SurfaceTerm)) {
             }
         }
         Stmt::Class(c) => {
+            for (_, t) in &mut c.parameters {
+                f(t);
+            }
             for d in &mut c.methods {
+                for t in &mut d.generic_types {
+                    f(t);
+                }
                 for t in d.param_types.iter_mut().flatten() {
                     f(t);
                 }
@@ -95,11 +104,23 @@ pub fn roots(s: &mut Stmt, f: &mut dyn FnMut(&mut SurfaceTerm)) {
             }
         }
         Stmt::Instance(i) => {
+            for t in &mut i.generic_types {
+                f(t);
+            }
             f(&mut i.head);
+            for arg in &mut i.arguments {
+                f(arg);
+            }
             for c in &mut i.where_ {
                 f(&mut c.ty);
+                for arg in &mut c.arguments {
+                    f(arg);
+                }
             }
             for d in &mut i.methods {
+                for t in &mut d.generic_types {
+                    f(t);
+                }
                 for t in d.param_types.iter_mut().flatten() {
                     f(t);
                 }
@@ -111,6 +132,9 @@ pub fn roots(s: &mut Stmt, f: &mut dyn FnMut(&mut SurfaceTerm)) {
         }
         Stmt::Extern { fns, .. } => {
             for d in fns {
+                for t in &mut d.generic_types {
+                    f(t);
+                }
                 for t in d.param_types.iter_mut().flatten() {
                     f(t);
                 }
@@ -128,9 +152,32 @@ pub fn roots(s: &mut Stmt, f: &mut dyn FnMut(&mut SurfaceTerm)) {
 }
 
 /// `f` on `t`, and then on each term inside it that `f` left in place.
+///
+/// The applications nested through their last argument (a list literal, or a
+/// text literal's bytes, nests there once per element) are walked in a loop, so
+/// the stack does not grow with the length of such a chain.
 pub fn term(t: &mut SurfaceTerm, f: &mut dyn FnMut(&mut SurfaceTerm)) {
-    f(t);
-    children(t, &mut |c| term(c, f));
+    let mut cur = t;
+    loop {
+        f(cur);
+        if !matches!(&*cur.kind, TermKind::App { arguments, .. } if !arguments.is_empty()) {
+            children(cur, &mut |c| term(c, f));
+            return;
+        }
+        let TermKind::App {
+            function,
+            arguments,
+        } = Arc::make_mut(&mut cur.kind)
+        else {
+            unreachable!("checked to be an application")
+        };
+        term(function, f);
+        let (last, init) = arguments
+            .split_last_mut()
+            .expect("checked to have an argument");
+        init.iter_mut().for_each(|a| term(a, f));
+        cur = last;
+    }
 }
 
 /// `f` on each term directly inside `t`.
@@ -245,6 +292,7 @@ pub fn children(t: &mut SurfaceTerm, f: &mut dyn FnMut(&mut SurfaceTerm)) {
             }
         }
         TermKind::Var(_)
+        | TermKind::Declaration(_)
         | TermKind::Nat(_)
         | TermKind::Float(_)
         | TermKind::Text(_)

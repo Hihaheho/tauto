@@ -5,6 +5,7 @@ import "../../kernel/src/data.taut"
 import "../../kernel/src/level.taut"
 import "../../kernel/src/term.taut"
 import "../../text/src/text.taut"
+import "nested.taut"
 import std::Text
 import std::Base
 
@@ -17,12 +18,15 @@ pub(open) inductive ElabResult(A: Type): Type {
 pub(open) inductive ElabBinding: Type {
   Mk(name: Text, value: KernelTerm, ty: KernelTerm): ElabBinding
 }
+pub(open) inductive ElabDeclaration: Type {
+  Mk(name: Text, ty: KernelTerm, value: KernelTerm, transparent: Bool): ElabDeclaration
+}
 pub(open) inductive ElabTyped: Type {
   Mk(value: KernelTerm, ty: KernelTerm): ElabTyped
 }
 
 pub fn elab_lookup(env: List(ElabBinding), name: Text): Option(ElabTyped) {
-  match env: Option(ElabTyped) {
+  ⊢ Option(ElabTyped) from match env {
     Nil => None
     Cons(b, rest) => if b.name == name { Some(ElabTyped::Mk(b.value, b.ty)) } else {
       elab_lookup(rest, name)
@@ -31,32 +35,35 @@ pub fn elab_lookup(env: List(ElabBinding), name: Text): Option(ElabTyped) {
 }
 
 pub fn elab_digits(k: Nat, n: Nat): List(Nat) {
-  match k: List(Nat) {
+  ⊢ List(Nat) from match k {
     Zero => Nil
-    Succ(j) => if n == 0 { Nil } else { Cons(Nat::rem_nz(n, 65536, Nat::ne_zero(65536, Refl)), elab_digits(j, Nat::div_nz(n, 65536, Nat::ne_zero(65536, Refl)))) }
+    Succ(j) => if n == 0 { Nil } else {
+      Cons(
+        Nat::rem_nz(n, 65536, Nat::ne_zero(65536, Refl)),
+        elab_digits(j, Nat::div_nz(n, 65536, Nat::ne_zero(65536, Refl)))
+      )
+    }
   }
 }
 
 pub fn elab_sort_number(name: Text): Option(Nat) {
-  match Text::slice(name, 4, Text::len(name)): Option(Nat) {
+  ⊢ Option(Nat) from match Text::slice(name, 4, Text::len(name)) {
     None => None
     Some(suffix) => text_parse_u64(suffix)
   }
 }
 
 pub fn elab_sort(name: Text): Option(KernelTerm) {
-  if name == "Prop" { Some(KernelSortTerm(KernelProp)) } else {
-    if name == "Type" { Some(KernelSortTerm(KernelType(KernelLevel::Mk(0, Nil)))) } else {
-      if text_starts_with(name, "Type", 0) {
-        match elab_sort_number(name): Option(KernelTerm) {
-          None => None
-          Some(n) => if n <= 1000 { Some(KernelSortTerm(KernelType(KernelLevel::Mk(n, Nil)))) } else {
-            None
-          }
-        }
-      } else { None }
+  if name == "Prop" { Some(KernelSortTerm(KernelProp)) } else if name == "Type" {
+    Some(KernelSortTerm(KernelType(KernelLevel::Mk(0, Nil))))
+  } else if text_starts_with(name, "Type", 0) {
+    ⊢ Option(KernelTerm) from match elab_sort_number(name) {
+      None => None
+      Some(n) => if n <= 1000 { Some(KernelSortTerm(KernelType(KernelLevel::Mk(n, Nil)))) } else {
+        None
+      }
     }
-  }
+  } else { None }
 }
 
 pub fn elab_result(
@@ -65,14 +72,14 @@ pub fn elab_result(
   value: KernelTerm,
   expected: Option(KernelTerm)
 ): ElabResult(ElabTyped) {
-  match expected: ElabResult(ElabTyped) {
+  ⊢ ElabResult(ElabTyped) from match expected {
     Some(ty) => if kernel_check(
       k,
       &mut core,
       value,
       ty
     ) { ElabOk(ElabTyped::Mk(value, ty)) } else { ElabErr("type mismatch") }
-    None => match kernel_infer(k, &mut core, value): ElabResult(ElabTyped) {
+    None => ⊢ ElabResult(ElabTyped) from match kernel_infer(k, &mut core, value) {
       None => ElabErr("cannot infer type")
       Some(ty) => ElabOk(ElabTyped::Mk(value, ty))
     }
@@ -88,11 +95,1717 @@ pub fn elab_known(
   expected: Option(KernelTerm)
 ): ElabResult(ElabTyped) {
   if kernel_check(k, &mut core, typed.value, typed.ty) {
-    match expected: ElabResult(ElabTyped) {
+    ⊢ ElabResult(ElabTyped) from match expected {
       None => ElabOk(typed)
       Some(ty) => elab_result(k, &mut core, typed.value, Some(ty))
     }
   } else { ElabErr("invalid elaborated value") }
+}
+
+// The declaration being elaborated is a binding named `#self`, which no
+// source name can spell: its value names the declaration and its type the
+// number of its parameters. The parameters are the bindings made just after it.
+pub fn elab_self(env: List(ElabBinding)): Option(Pair(Text, Nat)) {
+  ⊢ Option(Pair(Text, Nat)) from match env {
+    Nil => None
+    Cons(b, rest) => if b.name == "#self" {
+      ⊢ Option(Pair(Text, Nat)) from match b.value {
+        KernelConst(name) => ⊢ Option(Pair(Text, Nat)) from match b.ty {
+          KernelLit(n) => Some(Pair { fst: name, snd: n })
+          _ => None
+        }
+        _ => None
+      }
+    } else { elab_self(rest) }
+  }
+}
+
+pub fn elab_before_self(env: List(ElabBinding)): List(ElabBinding) {
+  ⊢ List(ElabBinding) from match env {
+    Nil => Nil
+    Cons(b, rest) => if b.name == "#self" { Nil } else { Cons(b, elab_before_self(rest)) }
+  }
+}
+
+pub fn elab_atom_ids(bs: List(ElabBinding)): Option(List(Nat)) {
+  ⊢ Option(List(Nat)) from match bs {
+    Nil => Some(Nil)
+    Cons(b, rest) => ⊢ Option(List(Nat)) from match b.value {
+      KernelFVar(x) => ⊢ Option(List(Nat)) from match elab_atom_ids(rest) {
+        None => None
+        Some(xs) => Some(Cons(x, xs))
+      }
+      _ => None
+    }
+  }
+}
+
+// The atoms of the declaration's parameters, in order.
+pub fn elab_self_params(env: List(ElabBinding), n: Nat): Option(List(Nat)) {
+  elab_atom_ids(elab_take(elab_rev(elab_before_self(env), Nil), n))
+}
+
+pub fn elab_rev(bs: List(ElabBinding), acc: List(ElabBinding)): List(ElabBinding) {
+  ⊢ List(ElabBinding) from match bs {
+    Nil => acc
+    Cons(b, rest) => elab_rev(rest, Cons(b, acc))
+  }
+}
+
+pub fn elab_take(bs: List(ElabBinding), n: Nat): List(ElabBinding) {
+  ⊢ List(ElabBinding) from match n {
+    Zero => Nil
+    Succ(m) => ⊢ List(ElabBinding) from match bs {
+      Nil => Nil
+      Cons(b, rest) => Cons(b, elab_take(rest, m))
+    }
+  }
+}
+
+pub fn elab_take_nat(xs: List(Nat), n: Nat): List(Nat) {
+  ⊢ List(Nat) from match n {
+    Zero => Nil
+    Succ(m) => ⊢ List(Nat) from match xs {
+      Nil => Nil
+      Cons(x, rest) => Cons(x, elab_take_nat(rest, m))
+    }
+  }
+}
+
+// A recursive call leaves the implicit parameters out: they are the
+// declaration's own, unchanged.
+pub fn elab_self_implicits(env: List(ElabBinding), name: Text): List(Nat) {
+  ⊢ List(Nat) from match elab_self(env) {
+    None => Nil
+    Some(me) => ⊢ List(Nat) from match elab_lookup(env, Text::concat("#implicit ", name)) {
+      None => Nil
+      Some(b) => ⊢ List(Nat) from match b.value {
+        KernelLit(n) => ⊢ List(Nat) from match elab_self_params(env, me.snd) {
+          None => Nil
+          Some(ids) => elab_take_nat(ids, n)
+        }
+        _ => Nil
+      }
+    }
+  }
+}
+
+pub fn elab_position(xs: List(Nat), x: Nat, at: Nat): Option(Nat) {
+  ⊢ Option(Nat) from match xs {
+    Nil => None
+    Cons(y, rest) => if y == x { Some(at) } else { elab_position(rest, x, at + 1) }
+  }
+}
+
+pub fn elab_ids_text(xs: List(Nat)): Text {
+  ⊢ Text from match xs {
+    Nil => ""
+    Cons(x, rest) => Text::concat_all(Cons(" ", Cons(Text::of_nat(x), Cons(elab_ids_text(rest), Nil))))
+  }
+}
+
+// The name of the binding that stands for the recursive call with these
+// argument atoms: the induction hypothesis of a smaller field.
+pub fn elab_rec_key(name: Text, ids: List(Nat)): Text {
+  Text::concat_all(Cons("#rec ", Cons(name, Cons(elab_ids_text(ids), Nil))))
+}
+
+pub fn elab_set_nat(xs: List(Nat), at: Nat, x: Nat): List(Nat) {
+  ⊢ List(Nat) from match xs {
+    Nil => Nil
+    Cons(y, rest) => ⊢ List(Nat) from match at {
+      Zero => Cons(x, rest)
+      Succ(i) => Cons(y, elab_set_nat(rest, i, x))
+    }
+  }
+}
+
+pub fn elab_spine(k: Nat, t: KernelTerm, args: List(KernelTerm)): Pair(KernelTerm, List(KernelTerm)) {
+  ⊢ Pair(KernelTerm, List(KernelTerm)) from match k {
+    Zero => Pair { fst: t, snd: args }
+    Succ(j) => ⊢ Pair(KernelTerm, List(KernelTerm)) from match t {
+      KernelApp(f, a, d) => elab_spine(j, f, Cons(a, args))
+      _ => Pair { fst: t, snd: args }
+    }
+  }
+}
+
+pub fn elab_apps(head: KernelTerm, args: List(KernelTerm)): KernelTerm {
+  ⊢ KernelTerm from match args {
+    Nil => head
+    Cons(a, rest) => elab_apps(kernel_app(head, a), rest)
+  }
+}
+
+pub fn elab_fvars(xs: List(Nat)): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(KernelFVar(x), elab_fvars(rest))
+  }
+}
+
+pub fn elab_lams(t: KernelTerm, atoms: List(Nat)): KernelTerm {
+  ⊢ KernelTerm from match atoms {
+    Nil => t
+    Cons(a, rest) => kernel_lam(kernel_abstract_at(elab_lams(t, rest), 0, a))
+  }
+}
+
+pub fn elab_short_name(name: Text, family: Text): Text {
+  let prefix := Text::concat(family, "::")
+  if text_starts_with(name, prefix, 0) {
+    ⊢ Text from match Text::slice(name, Text::len(prefix), Text::len(name)) {
+      Some(t) => t
+      None => name
+    }
+  } else { name }
+}
+
+// The arm whose pattern is the constructor, by its short or qualified name.
+pub fn elab_arm_of(
+  arms: List(SurfaceArm),
+  ctors: List(KernelCtorInfo),
+  ctor: Text,
+  family: Text
+): Option(Pair(SurfaceArm, List(SurfacePattern))) {
+  ⊢ Option(Pair(SurfaceArm, List(SurfacePattern))) from match arms {
+    Nil => None
+    Cons(a, rest) => ⊢ Option(Pair(SurfaceArm, List(SurfacePattern))) from match elab_ctor_pattern(a.pattern, ctors, family) {
+      Some(p) => if p.fst == ctor || p.fst == elab_short_name(ctor, family) { Some(Pair { fst: a, snd: p.snd }) } else {
+        elab_arm_of(rest, ctors, ctor, family)
+      }
+      None => elab_arm_of(rest, ctors, ctor, family)
+    }
+  }
+}
+
+pub fn elab_arms_known(arms: List(SurfaceArm), ctors: List(KernelCtorInfo), family: Text): Bool {
+  ⊢ Bool from match arms {
+    Nil => true
+    Cons(a, rest) => ⊢ Bool from match elab_ctor_pattern(a.pattern, ctors, family) {
+      Some(p) => if elab_unguarded(a.guard) && elab_ctor_named(ctors, p.fst, family) {
+        elab_arms_known(rest, ctors, family)
+      } else { false }
+      None => false
+    }
+  }
+}
+
+// A constructor pattern as its name and fields. A bare name that names a
+// constructor of the matched family is that constructor with no fields.
+pub fn elab_ctor_pattern(p: SurfacePattern, ctors: List(KernelCtorInfo), family: Text): Option(Pair(Text, List(SurfacePattern))) {
+  ⊢ Option(Pair(Text, List(SurfacePattern))) from match p {
+    PtCtor(name, args) => Some(Pair { fst: name, snd: args })
+    PtBind(name) => if elab_ctor_named(ctors, name, family) { Some(Pair { fst: name, snd: Nil }) } else { None }
+    _ => None
+  }
+}
+
+pub fn elab_unguarded(g: Option(SurfaceTerm)): Bool {
+  ⊢ Bool from match g {
+    None => true
+    Some(t) => false
+  }
+}
+
+pub fn elab_ctor_named(ctors: List(KernelCtorInfo), name: Text, family: Text): Bool {
+  ⊢ Bool from match ctors {
+    Nil => false
+    Cons(c, rest) => c.name == name || elab_short_name(c.name, family) == name || elab_ctor_named(rest, name, family)
+  }
+}
+
+pub fn elab_bound_names(ps: List(SurfacePattern)): Option(List(Option(Text))) {
+  ⊢ Option(List(Option(Text))) from match ps {
+    Nil => Some(Nil)
+    Cons(p, rest) => ⊢ Option(List(Option(Text))) from match elab_bound_names(rest) {
+      None => None
+      Some(ns) => ⊢ Option(List(Option(Text))) from match p {
+        PtBind(n) => Some(Cons(Some(n), ns))
+        PtWild => Some(Cons(None, ns))
+        _ => None
+      }
+    }
+  }
+}
+
+// Whether argument `i` of a constructor is a plain recursive field.
+pub fn elab_is_recursive(recs: List(KernelRecArg), i: Nat): Bool {
+  ⊢ Bool from match recs {
+    Nil => false
+    Cons(r, rest) => (r.arg == i && r.ys == 0) || elab_is_recursive(rest, i)
+  }
+}
+
+pub fn elab_instantiate(k: Nat, t: KernelTerm, args: List(KernelTerm)): Option(KernelTerm) {
+  ⊢ Option(KernelTerm) from match args {
+    Nil => Some(t)
+    Cons(a, rest) => ⊢ Option(KernelTerm) from match kernel_as_pi(t) {
+      None => None
+      Some(p) => elab_instantiate(k, kernel_inst(p.snd, a), rest)
+    }
+  }
+}
+
+
+pub fn elab_arg_atoms(env: List(ElabBinding), args: List(SurfaceTerm)): Option(List(Nat)) {
+  ⊢ Option(List(Nat)) from match args {
+    Nil => Some(Nil)
+    Cons(a, rest) => ⊢ Option(List(Nat)) from match a.kind {
+      SkVar(x) => ⊢ Option(List(Nat)) from match elab_lookup(env, x) {
+        Some(t) => ⊢ Option(List(Nat)) from match t.value {
+          KernelFVar(id) => ⊢ Option(List(Nat)) from match elab_arg_atoms(env, rest) {
+            None => None
+            Some(ids) => Some(Cons(id, ids))
+          }
+          _ => None
+        }
+        None => None
+      }
+      _ => None
+    }
+  }
+}
+
+// The number of implicit leading parameters of a global: as declared, or the
+// family parameters of a constructor.
+pub fn elab_implicit_count(env: List(ElabBinding), core: KernelCore, name: Text): Nat {
+  ⊢ Nat from match elab_lookup(env, Text::concat("#implicit ", name)) {
+    Some(b) => ⊢ Nat from match b.value {
+      KernelLit(n) => n
+      _ => 0
+    }
+    None => ⊢ Nat from match kernel_ctor_get(core, name) {
+      Some(c) => ⊢ Nat from match kernel_ind_get(core, c.fst) {
+        Some(info) => info.params
+        None => 0
+      }
+      None => 0
+    }
+  }
+}
+
+pub fn elab_wants_implicit(env: List(ElabBinding), core: KernelCore, name: Text): Bool {
+  ⊢ Bool from match elab_lookup(env, name) {
+    Some(local) => false
+    None => elab_implicit_count(env, core, name) != 0
+  }
+}
+
+// Whether `t` has no loose bound variable under `depth` binders.
+pub fn elab_closed(t: KernelTerm, depth: Nat): Bool {
+  ⊢ Bool from match t {
+    KernelBVar(i) => i < depth
+    KernelPi(a, b, d) => elab_closed(a, depth) && elab_closed(b, Succ(depth))
+    KernelLam(b, d) => elab_closed(b, Succ(depth))
+    KernelApp(f, a, d) => elab_closed(f, depth) && elab_closed(a, depth)
+    _ => true
+  }
+}
+
+pub fn elab_occurs(t: KernelTerm, x: Nat): Bool {
+  ⊢ Bool from match t {
+    KernelFVar(y) => x == y
+    KernelPi(a, b, d) => elab_occurs(a, x) || elab_occurs(b, x)
+    KernelLam(b, d) => elab_occurs(b, x)
+    KernelApp(f, a, d) => elab_occurs(f, x) || elab_occurs(a, x)
+    _ => false
+  }
+}
+
+pub fn elab_solution(sols: List(Pair(Nat, KernelTerm)), x: Nat): Option(KernelTerm) {
+  ⊢ Option(KernelTerm) from match sols {
+    Nil => None
+    Cons(s, rest) => if s.fst == x { Some(s.snd) } else { elab_solution(rest, x) }
+  }
+}
+
+pub fn elab_subst(t: KernelTerm, sols: List(Pair(Nat, KernelTerm))): KernelTerm {
+  ⊢ KernelTerm from match sols {
+    Nil => t
+    Cons(s, rest) => elab_subst(kernel_inst(kernel_abstract_at(t, 0, s.fst), s.snd), rest)
+  }
+}
+
+pub fn elab_any_occurs(t: KernelTerm, xs: List(Nat)): Bool {
+  ⊢ Bool from match xs {
+    Nil => false
+    Cons(x, rest) => elab_occurs(t, x) || elab_any_occurs(t, rest)
+  }
+}
+
+pub fn elab_unsolved(holes: List(Nat), sols: List(Pair(Nat, KernelTerm))): List(Nat) {
+  ⊢ List(Nat) from match holes {
+    Nil => Nil
+    Cons(h, rest) => ⊢ List(Nat) from match elab_solution(sols, h) {
+      None => Cons(h, elab_unsolved(rest, sols))
+      Some(v) => elab_unsolved(rest, sols)
+    }
+  }
+}
+
+pub fn elab_solutions_of(holes: List(Nat), sols: List(Pair(Nat, KernelTerm))): Option(List(KernelTerm)) {
+  ⊢ Option(List(KernelTerm)) from match holes {
+    Nil => Some(Nil)
+    Cons(h, rest) => ⊢ Option(List(KernelTerm)) from match elab_solution(sols, h) {
+      None => None
+      Some(v) => ⊢ Option(List(KernelTerm)) from match elab_solutions_of(rest, sols) {
+        None => None
+        Some(vs) => Some(Cons(v, vs))
+      }
+    }
+  }
+}
+
+pub fn elab_sort_eq(a: KernelSort, b: KernelSort): Bool {
+  kernel_term_eq(KernelSortTerm(a), KernelSortTerm(b))
+}
+
+// First-order matching of `p`, whose unsolved holes are atoms of `holes`,
+// against the hole-free `a`. A hole is solved by a closed part of `a`. A
+// mismatch outside holes is left to the kernel, which checks the result.
+pub fn elab_unify(
+  k: Nat,
+  &mut core: KernelCore,
+  holes: List(Nat),
+  p: KernelTerm,
+  a: KernelTerm,
+  sols: List(Pair(Nat, KernelTerm))
+): Option(List(Pair(Nat, KernelTerm))) {
+  ⊢ Option(List(Pair(Nat, KernelTerm))) from match k {
+    Zero => None
+    Succ(j) => {
+      let q := elab_subst(p, sols)
+      if elab_any_occurs(q, elab_unsolved(holes, sols)) {
+        ⊢ Option(List(Pair(Nat, KernelTerm))) from match q {
+          KernelFVar(h) => if elab_closed(a, 0) { Some(Cons(Pair { fst: h, snd: a }, sols)) } else { None }
+          KernelPi(qa, qb, qd) => ⊢ Option(List(Pair(Nat, KernelTerm))) from match kernel_whnf(j, &mut core, a, true, false) {
+            KernelPi(aa, ab, ad) => ⊢ Option(List(Pair(Nat, KernelTerm))) from match elab_unify(j, &mut core, holes, qa, aa, sols) {
+              None => None
+              Some(s1) => elab_unify(j, &mut core, holes, qb, ab, s1)
+            }
+            _ => None
+          }
+          KernelApp(qf, qx, qd) => ⊢ Option(List(Pair(Nat, KernelTerm))) from match kernel_whnf(j, &mut core, a, true, true) {
+            KernelApp(af, ax, ad) => ⊢ Option(List(Pair(Nat, KernelTerm))) from match elab_unify(j, &mut core, holes, qf, af, sols) {
+              None => None
+              Some(s1) => elab_unify(j, &mut core, holes, qx, ax, s1)
+            }
+            _ => None
+          }
+          KernelLam(qb, qd) => ⊢ Option(List(Pair(Nat, KernelTerm))) from match a {
+            KernelLam(ab, ad) => elab_unify(j, &mut core, holes, qb, ab, sols)
+            _ => None
+          }
+          _ => None
+        }
+      } else { Some(sols) }
+    }
+  }
+}
+
+// The type left after `n` explicit arguments, if it does not depend on them.
+pub fn elab_result_after(k: Nat, &mut core: KernelCore, ty: KernelTerm, n: Nat): Option(KernelTerm) {
+  ⊢ Option(KernelTerm) from match k {
+    Zero => None
+    Succ(j) => ⊢ Option(KernelTerm) from match n {
+      Zero => Some(ty)
+      Succ(m) => ⊢ Option(KernelTerm) from match kernel_as_pi(kernel_whnf(j, &mut core, ty, true, false)) {
+        None => None
+        Some(p) => {
+          let x := kernel_fresh(&mut core, p.fst)
+          ⊢ Option(KernelTerm) from match elab_result_after(j, &mut core, kernel_inst(p.snd, KernelFVar(x)), m) {
+            None => None
+            Some(r) => if elab_occurs(r, x) { None } else { Some(r) }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_holes(k: Nat, &mut core: KernelCore, ty: KernelTerm, n: Nat): Option(Pair(List(Nat), KernelTerm)) {
+  ⊢ Option(Pair(List(Nat), KernelTerm)) from match k {
+    Zero => None
+    Succ(j) => ⊢ Option(Pair(List(Nat), KernelTerm)) from match n {
+      Zero => Some(Pair { fst: Nil, snd: ty })
+      Succ(m) => ⊢ Option(Pair(List(Nat), KernelTerm)) from match kernel_as_pi(kernel_whnf(j, &mut core, ty, true, false)) {
+        None => None
+        Some(p) => {
+          let h := kernel_fresh(&mut core, p.fst)
+          ⊢ Option(Pair(List(Nat), KernelTerm)) from match elab_holes(j, &mut core, kernel_inst(p.snd, KernelFVar(h)), m) {
+            None => None
+            Some(r) => Some(Pair { fst: Cons(h, r.fst), snd: r.snd })
+          }
+        }
+      }
+    }
+  }
+}
+
+
+// The recursion of a match on a parameter of the declaration: its name, the
+// atoms of its parameters, the place of the matched one, and the atoms of the
+// matched value's indices.
+pub(open) inductive ElabRecursion: Type {
+  Mk(name: Text, ids: List(Nat), at: Nat, indices: List(Nat)): ElabRecursion
+}
+
+pub fn elab_take_terms(xs: List(KernelTerm), n: Nat): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match n {
+    Zero => Nil
+    Succ(m) => ⊢ List(KernelTerm) from match xs {
+      Nil => Nil
+      Cons(x, rest) => Cons(x, elab_take_terms(rest, m))
+    }
+  }
+}
+
+pub fn elab_drop_terms(xs: List(KernelTerm), n: Nat): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match n {
+    Zero => xs
+    Succ(m) => ⊢ List(KernelTerm) from match xs {
+      Nil => Nil
+      Cons(x, rest) => elab_drop_terms(rest, m)
+    }
+  }
+}
+
+pub fn elab_has_nat(xs: List(Nat), x: Nat): Bool {
+  ⊢ Bool from match xs {
+    Nil => false
+    Cons(y, rest) => y == x || elab_has_nat(rest, x)
+  }
+}
+
+// The indices as distinct atoms, none of them in `seen`.
+pub fn elab_index_atoms(ts: List(KernelTerm), seen: List(Nat)): Option(List(Nat)) {
+  ⊢ Option(List(Nat)) from match ts {
+    Nil => Some(Nil)
+    Cons(t, rest) => ⊢ Option(List(Nat)) from match t {
+      KernelFVar(a) => if elab_has_nat(seen, a) { None } else {
+        ⊢ Option(List(Nat)) from match elab_index_atoms(rest, Cons(a, seen)) {
+          None => None
+          Some(more) => Some(Cons(a, more))
+        }
+      }
+      _ => None
+    }
+  }
+}
+
+// Whether a local other than `skip` has a type that mentions one of `atoms`:
+// the host would move it after the matched value and generalize it.
+pub fn elab_dependents(env: List(ElabBinding), atoms: List(Nat), skip: List(Nat)): Bool {
+  ⊢ Bool from match env {
+    Nil => false
+    Cons(b, rest) => ⊢ Bool from match b.value {
+      KernelFVar(a) => (elab_has_nat(skip, a) == false && elab_any_occurs(b.ty, atoms)) || elab_dependents(rest, atoms, skip)
+      _ => elab_dependents(rest, atoms, skip)
+    }
+  }
+}
+
+// Abstracts the atoms, innermost (last index) first, at depths from `depth`.
+pub fn elab_abstract_indices(t: KernelTerm, rev: List(Nat), depth: Nat): KernelTerm {
+  ⊢ KernelTerm from match rev {
+    Nil => t
+    Cons(a, rest) => elab_abstract_indices(kernel_abstract_at(t, depth, a), rest, depth + 1)
+  }
+}
+
+pub fn elab_lam_n(t: KernelTerm, n: Nat): KernelTerm {
+  ⊢ KernelTerm from match n {
+    Zero => t
+    Succ(m) => elab_lam_n(kernel_lam(t), m)
+  }
+}
+
+// Instantiates the innermost bound variable first.
+pub fn elab_inst_all(t: KernelTerm, vs: List(KernelTerm)): KernelTerm {
+  ⊢ KernelTerm from match vs {
+    Nil => t
+    Cons(v, rest) => elab_inst_all(kernel_inst(t, v), rest)
+  }
+}
+
+// The parameter atoms of a recursive call on a field, with each index of the
+// matched value replaced by the field's index there; `None` when one of the
+// field's indices is not a variable.
+pub fn elab_moved_indices(ids: List(Nat), indices: List(Nat), at: List(KernelTerm)): Option(List(Nat)) {
+  ⊢ Option(List(Nat)) from match indices {
+    Nil => Some(ids)
+    Cons(i, rest) => ⊢ Option(List(Nat)) from match at {
+      Nil => None
+      Cons(t, more) => ⊢ Option(List(Nat)) from match t {
+        KernelFVar(a) => ⊢ Option(List(Nat)) from match elab_position(ids, i, 0) {
+          None => elab_moved_indices(ids, rest, more)
+          Some(p) => elab_moved_indices(elab_set_nat(ids, p, a), rest, more)
+        }
+        _ => None
+      }
+    }
+  }
+}
+
+// The indices of a type of an inductive family, after its `np` parameters.
+pub fn elab_type_indices(k: Nat, &mut core: KernelCore, ty: KernelTerm, np: Nat): List(KernelTerm) {
+  let spine := elab_spine(k, kernel_whnf(k, &mut core, ty, true, false), Nil)
+  elab_drop_terms(spine.snd, np)
+}
+
+
+
+// The family in the group of a plain recursive field.
+pub fn elab_rec_family(recs: List(KernelRecArg), i: Nat): Nat {
+  ⊢ Nat from match recs {
+    Nil => 0
+    Cons(r, rest) => if r.arg == i && r.ys == 0 { r.family } else { elab_rec_family(rest, i) }
+  }
+}
+
+pub fn elab_plain_recursive(recs: List(KernelRecArg)): Nat {
+  ⊢ Nat from match recs {
+    Nil => 0
+    Cons(r, rest) => if r.ys == 0 { 1 + elab_plain_recursive(rest) } else { elab_plain_recursive(rest) }
+  }
+}
+
+// One motive per family of the group: the match's for its own family, and
+// `Unit` for the others, as the host makes them.
+pub fn elab_group_motives(core: KernelCore, group: List(Text), family: Text, motive: KernelTerm): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match group {
+    Nil => Nil
+    Cons(g, rest) => {
+      let here := if g == family { motive } else {
+        ⊢ KernelTerm from match kernel_ind_get(core, g) {
+          None => KernelConst("Unit")
+          Some(info) => elab_lam_n(KernelConst("Unit"), info.indices + 1)
+        }
+      }
+      Cons(here, elab_group_motives(core, rest, family, motive))
+    }
+  }
+}
+
+pub fn elab_unit_minors(cs: List(KernelCtorInfo)): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(elab_lam_n(KernelConst("Unit::Star"), c.nargs + elab_plain_recursive(c.recursive)), elab_unit_minors(rest))
+  }
+}
+
+// The cases of every family of the group, in order: the match's own, and
+// `Unit::Star` for each constructor of the others.
+pub fn elab_group_minors(core: KernelCore, group: List(Text), family: Text, minors: List(KernelTerm)): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match group {
+    Nil => Nil
+    Cons(g, rest) => {
+      let here := if g == family { minors } else {
+        ⊢ List(KernelTerm) from match kernel_ind_get(core, g) {
+          None => Nil
+          Some(info) => elab_unit_minors(info.constructors)
+        }
+      }
+      List::append(here, elab_group_minors(core, rest, family, minors))
+    }
+  }
+}
+
+// A function of the `mutual` block of functions being elaborated.
+pub fn elab_in_group(env: List(ElabBinding), name: Text): Bool {
+  ⊢ Bool from match elab_lookup(env, Text::concat("#mutual ", name)) {
+    None => false
+    Some(b) => true
+  }
+}
+
+
+// The half of a pair, by its eliminator, as the host projects it.
+pub fn elab_half(a: KernelTerm, b: KernelTerm, p: KernelTerm, first: Bool): KernelTerm {
+  let motive := kernel_lam(if first { a } else { b })
+  let minor := kernel_lam(kernel_lam(KernelBVar(if first { 1 } else { 0 })))
+  elab_apps(KernelConst("BelowPair::rec"), Cons(a, Cons(b, Cons(motive, Cons(minor, Cons(p, Nil))))))
+}
+
+
+// The error of a recursive call that is not on a field of the matched value:
+// such a definition is compiled again, as a recursion on deeper parts.
+pub fn elab_none_recursion(r: Option(ElabRecursion)): Bool {
+  ⊢ Bool from match r {
+    None => true
+    Some(x) => false
+  }
+}
+
+pub fn elab_deep_message(): Text {
+  "a recursive call must pass a smaller field of the matched parameter and the other parameters unchanged"
+}
+
+pub fn elab_below_key(atom: Nat): Text {
+  Text::concat("#below ", Text::of_nat(atom))
+}
+
+pub fn elab_has_function_field(recs: List(KernelRecArg)): Bool {
+  ⊢ Bool from match recs {
+    Nil => false
+    Cons(r, rest) => r.ys != 0 || elab_has_function_field(rest)
+  }
+}
+
+// The atoms of the plain recursive fields, in order.
+pub fn elab_rec_atoms(fields: List(Nat), c: KernelCtorInfo, i: Nat): List(Nat) {
+  ⊢ List(Nat) from match fields {
+    Nil => Nil
+    Cons(f, rest) => if elab_is_recursive(c.recursive, i) { Cons(f, elab_rec_atoms(rest, c, i + 1)) } else { elab_rec_atoms(rest, c, i + 1) }
+  }
+}
+
+pub fn elab_walk_fields(k: Nat, &mut core: KernelCore, cty: KernelTerm, n: Nat): Option(List(Nat)) {
+  ⊢ Option(List(Nat)) from match n {
+    Zero => Some(Nil)
+    Succ(m) => ⊢ Option(List(Nat)) from match kernel_as_pi(kernel_whnf(k, &mut core, cty, true, false)) {
+      None => None
+      Some(p) => {
+        let atom := kernel_fresh(&mut core, p.fst)
+        ⊢ Option(List(Nat)) from match elab_walk_fields(k, &mut core, kernel_inst(p.snd, KernelFVar(atom)), m) {
+          None => None
+          Some(more) => Some(Cons(atom, more))
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_fresh_all(&mut core: KernelCore, xs: List(Nat), body: KernelTerm): List(Nat) {
+  ⊢ List(Nat) from match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let a := kernel_fresh(&mut core, kernel_inst(body, KernelFVar(x)))
+      Cons(a, elab_fresh_all(&mut core, rest, body))
+    }
+  }
+}
+
+pub fn elab_type_zero(): KernelTerm {
+  KernelSortTerm(KernelType(KernelLevel::Mk(0, Nil)))
+}
+
+pub fn elab_fresh_types(&mut core: KernelCore, xs: List(Nat)): List(Nat) {
+  ⊢ List(Nat) from match xs {
+    Nil => Nil
+    Cons(x, rest) => {
+      let a := kernel_fresh(&mut core, elab_type_zero())
+      Cons(a, elab_fresh_types(&mut core, rest))
+    }
+  }
+}
+
+pub fn elab_pair_ty(a: KernelTerm, b: KernelTerm): KernelTerm {
+  elab_apps(KernelConst("BelowPair"), Cons(a, Cons(b, Nil)))
+}
+
+// `(e₁, (e₂, … Unit))` and a value of it.
+pub fn elab_chain_ty(es: List(KernelTerm)): KernelTerm {
+  ⊢ KernelTerm from match es {
+    Nil => KernelConst("Unit")
+    Cons(e, rest) => elab_pair_ty(e, elab_chain_ty(rest))
+  }
+}
+
+pub fn elab_chain_val(es: List(KernelTerm), vs: List(KernelTerm)): KernelTerm {
+  ⊢ KernelTerm from match es {
+    Nil => KernelConst("Unit::Star")
+    Cons(e, rest) => ⊢ KernelTerm from match vs {
+      Nil => KernelConst("Unit::Star")
+      Cons(v, more) => elab_apps(KernelConst("BelowPair::Mk"), Cons(e, Cons(elab_chain_ty(rest), Cons(v, Cons(elab_chain_val(rest, more), Nil)))))
+    }
+  }
+}
+
+// Entry `at` of a value `p` of `elab_chain_ty(es)`.
+pub fn elab_chain_entry(es: List(KernelTerm), at: Nat, p: KernelTerm): KernelTerm {
+  ⊢ KernelTerm from match es {
+    Nil => p
+    Cons(e, rest) => ⊢ KernelTerm from match at {
+      Zero => elab_half(e, elab_chain_ty(rest), p, true)
+      Succ(m) => elab_chain_entry(rest, m, elab_half(e, elab_chain_ty(rest), p, false))
+    }
+  }
+}
+
+// For each recursive field, `M(f) ∧ below(f)` (as `BelowPair`).
+pub fn elab_entries(fs: List(Nat), gtop: KernelTerm, below: KernelTerm): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(elab_pair_ty(kernel_inst(gtop, KernelFVar(f)), kernel_inst(below, KernelFVar(f))), elab_entries(rest, gtop, below))
+  }
+}
+
+pub fn elab_entries_at(fs: List(Nat), bs: List(Nat), gtop: KernelTerm): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match fs {
+    Nil => Nil
+    Cons(f, rest) => ⊢ List(KernelTerm) from match bs {
+      Nil => Nil
+      Cons(b, more) => Cons(elab_pair_ty(kernel_inst(gtop, KernelFVar(f)), KernelFVar(b)), elab_entries_at(rest, more, gtop))
+    }
+  }
+}
+
+pub fn elab_below_minors(
+  k: Nat,
+  &mut core: KernelCore,
+  ctors: List(KernelCtorInfo),
+  params: List(KernelTerm),
+  gtop: KernelTerm
+): Option(List(KernelTerm)) {
+  ⊢ Option(List(KernelTerm)) from match ctors {
+    Nil => Some(Nil)
+    Cons(c, rest) => if elab_has_function_field(c.recursive) { None } else {
+      ⊢ Option(List(KernelTerm)) from match kernel_global_get(core, c.name) {
+        None => None
+        Some(g) => ⊢ Option(List(KernelTerm)) from match elab_instantiate(k, g.ty, params) {
+          None => None
+          Some(cty) => ⊢ Option(List(KernelTerm)) from match elab_walk_fields(k, &mut core, cty, c.nargs) {
+            None => None
+            Some(fields) => {
+              let recf := elab_rec_atoms(fields, c, 0)
+              let bs := elab_fresh_types(&mut core, recf)
+              let minor := elab_lams(elab_chain_ty(elab_entries_at(recf, bs, gtop)), List::append(fields, bs))
+              ⊢ Option(List(KernelTerm)) from match elab_below_minors(k, &mut core, rest, params, gtop) {
+                None => None
+                Some(ms) => Some(Cons(minor, ms))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// `below(t)`, with `t` the loose variable: the values at the parts of `t`,
+// by the family's eliminator into `Type`.
+pub fn elab_below_body(
+  k: Nat,
+  &mut core: KernelCore,
+  info: KernelIndInfo,
+  family: Text,
+  params: List(KernelTerm),
+  gtop: KernelTerm
+): Option(KernelTerm) {
+  ⊢ Option(KernelTerm) from match elab_below_minors(k, &mut core, info.constructors, params, gtop) {
+    None => None
+    Some(minors) => Some(elab_apps(
+      KernelConst(Text::concat(family, "::rec")),
+      List::append(params, Cons(kernel_lam(elab_type_zero()), List::append(minors, Cons(KernelBVar(0), Nil))))
+    ))
+  }
+}
+
+// The bindings of the calls on the recursive fields, from each field's
+// entry `M(f) ∧ below(f)`: the call is its first half, and the field's own
+// `below` its second.
+pub fn elab_deep_bindings(
+  fs: List(Nat),
+  entries: List(KernelTerm),
+  gtop: KernelTerm,
+  below: KernelTerm,
+  r: ElabRecursion,
+  env: List(ElabBinding)
+): List(ElabBinding) {
+  ⊢ List(ElabBinding) from match fs {
+    Nil => env
+    Cons(f, rest) => ⊢ List(ElabBinding) from match entries {
+      Nil => env
+      Cons(e, more) => {
+        let m := kernel_inst(gtop, KernelFVar(f))
+        let b := kernel_inst(below, KernelFVar(f))
+        let inner := elab_deep_bindings(rest, more, gtop, below, r, env)
+        Cons(
+          ElabBinding::Mk(elab_rec_key(r.name, elab_set_nat(r.ids, r.at, f)), elab_half(m, b, e, true), m),
+          Cons(ElabBinding::Mk(elab_below_key(f), elab_half(m, b, e, false), b), inner)
+        )
+      }
+    }
+  }
+}
+
+pub fn elab_chain_entries(es: List(KernelTerm), at: Nat, n: Nat, p: KernelTerm): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match n {
+    Zero => Nil
+    Succ(m) => Cons(elab_chain_entry(es, at, p), elab_chain_entries(es, at + 1, m, p))
+  }
+}
+
+// The recursion of the declaration, as a match nested in a deeper recursion
+// reads it from its environment.
+pub fn elab_deep_recursion(env: List(ElabBinding)): Option(ElabRecursion) {
+  ⊢ Option(ElabRecursion) from match elab_lookup(env, "#deep motive") {
+    None => None
+    Some(d) => ⊢ Option(ElabRecursion) from match d.ty {
+      KernelLit(at) => ⊢ Option(ElabRecursion) from match elab_self(env) {
+        None => None
+        Some(me) => ⊢ Option(ElabRecursion) from match elab_self_params(env, me.snd) {
+          None => None
+          Some(ids) => Some(ElabRecursion::Mk(me.fst, ids, at, Nil))
+        }
+      }
+      _ => None
+    }
+  }
+}
+
+
+// A constructor opened at fresh atoms: its fields, their types, and the
+// fresh atoms for its induction hypotheses.
+pub(open) inductive ElabOpened: Type {
+  Mk(fields: List(Nat), types: List(KernelTerm), ihs: List(Nat)): ElabOpened
+}
+
+pub fn elab_nc_ty0(): KernelTerm { KernelSortTerm(KernelType(KernelLevel::Mk(0, Nil))) }
+
+pub fn elab_eq(ty: KernelTerm, a: KernelTerm, b: KernelTerm): KernelTerm {
+  elab_apps(KernelConst("Eq"), Cons(ty, Cons(a, Cons(b, Nil))))
+}
+
+pub fn elab_open_fields(k: Nat, &mut core: KernelCore, cty: KernelTerm, n: Nat): Option(Pair(List(Nat), List(KernelTerm))) {
+  ⊢ Option(Pair(List(Nat), List(KernelTerm))) from match n {
+    Zero => Some(Pair { fst: Nil, snd: Nil })
+    Succ(m) => ⊢ Option(Pair(List(Nat), List(KernelTerm))) from match kernel_as_pi(kernel_whnf(k, &mut core, cty, true, false)) {
+      None => None
+      Some(p) => {
+        let atom := kernel_fresh(&mut core, p.fst)
+        ⊢ Option(Pair(List(Nat), List(KernelTerm))) from match elab_open_fields(k, &mut core, kernel_inst(p.snd, KernelFVar(atom)), m) {
+          None => None
+          Some(more) => Some(Pair { fst: Cons(atom, more.fst), snd: Cons(p.fst, more.snd) })
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_fresh_units(&mut core: KernelCore, n: Nat): List(Nat) {
+  ⊢ List(Nat) from match n {
+    Zero => Nil
+    Succ(m) => {
+      let a := kernel_fresh(&mut core, KernelConst("Unit"))
+      Cons(a, elab_fresh_units(&mut core, m))
+    }
+  }
+}
+
+pub fn elab_open_ctor(k: Nat, &mut core: KernelCore, c: KernelCtorInfo, params: List(KernelTerm)): Option(ElabOpened) {
+  ⊢ Option(ElabOpened) from match kernel_global_get(core, c.name) {
+    None => None
+    Some(g) => ⊢ Option(ElabOpened) from match elab_instantiate(k, g.ty, params) {
+      None => None
+      Some(cty) => ⊢ Option(ElabOpened) from match elab_open_fields(k, &mut core, cty, c.nargs) {
+        None => None
+        Some(fs) => Some(ElabOpened::Mk(fs.fst, fs.snd, elab_fresh_units(&mut core, List::length(c.recursive))))
+      }
+    }
+  }
+}
+
+pub fn elab_small_sort(s: KernelSort): Bool {
+  ⊢ Bool from match s {
+    KernelProp => true
+    KernelType(l) => l.constant == 0 && List::length(l.variables) == 0
+  }
+}
+
+// The fields that get an equation: independent of the earlier fields, and
+// of a type in `Type`.
+pub fn elab_injective(k: Nat, &mut core: KernelCore, fields: List(Nat), types: List(KernelTerm), earlier: List(Nat), at: Nat): List(Nat) {
+  ⊢ List(Nat) from match fields {
+    Nil => Nil
+    Cons(f, rest) => ⊢ List(Nat) from match types {
+      Nil => Nil
+      Cons(t, more) => {
+        let independent := elab_any_occurs(t, earlier) == false
+        let small := ⊢ Bool from match kernel_infer(k, &mut core, t) {
+          None => false
+          Some(s) => ⊢ Bool from match kernel_as_sort(kernel_whnf(k, &mut core, s, true, false)) {
+            None => false
+            Some(srt) => elab_small_sort(srt)
+          }
+        }
+        let tail := elab_injective(k, &mut core, rest, more, Cons(f, earlier), at + 1)
+        if independent && small { Cons(at, tail) } else { tail }
+      }
+    }
+  }
+}
+
+pub fn elab_has_index(xs: List(Nat), x: Nat): Bool {
+  ⊢ Bool from match xs {
+    Nil => false
+    Cons(y, rest) => y == x || elab_has_index(rest, x)
+  }
+}
+
+
+// A match on a family whose indices are not distinct variables, as the host
+// compiles one: the motive takes an equation `i_k = a_k` for each such index
+// `a_k`, the eliminator is applied to `Refl(a_k)`, and each case solves its
+// equations. Two different constructors make the case impossible, by the
+// no-confusion of their family; the same constructor gives equations between
+// its injective fields; a variable is replaced by what it equals, and the arm
+// is transported back along the equations by `Eq::rec` (`Eq::ind` for a
+// proposition).
+
+// An index the motive generalizes: its position, type and argument.
+pub(open) inductive ElabGen: Type {
+  Mk(k: Nat, ty: KernelTerm, arg: KernelTerm): ElabGen
+}
+
+pub(open) inductive ElabEqn: Type {
+  Mk(l: KernelTerm, r: KernelTerm, ty: KernelTerm, proof: KernelTerm): ElabEqn
+}
+
+// A variable fixed to a term, with a proof of `f = t`.
+pub(open) inductive ElabSol: Type {
+  Mk(f: Nat, t: KernelTerm, ty: KernelTerm, proof: KernelTerm): ElabSol
+}
+
+pub(open) inductive ElabPlan: Type {
+  PlanImpossible(absurd: KernelTerm): ElabPlan
+  PlanSolved(sols: List(ElabSol)): ElabPlan
+  PlanErr(message: Text): ElabPlan
+}
+
+pub fn elab_replace(t: KernelTerm, f: Nat, v: KernelTerm): KernelTerm {
+  kernel_inst(kernel_abstract_at(t, 0, f), v)
+}
+
+pub fn elab_replace_all(t: KernelTerm, sols: List(ElabSol)): KernelTerm {
+  ⊢ KernelTerm from match sols {
+    Nil => t
+    Cons(s, rest) => elab_replace_all(elab_replace(t, s.f, s.t), rest)
+  }
+}
+
+pub fn elab_replace_env(env: List(ElabBinding), sols: List(ElabSol)): List(ElabBinding) {
+  ⊢ List(ElabBinding) from match env {
+    Nil => Nil
+    Cons(b, rest) => Cons(
+      ElabBinding::Mk(b.name, elab_replace_all(b.value, sols), elab_replace_all(b.ty, sols)),
+      elab_replace_env(rest, sols)
+    )
+  }
+}
+
+// From `p: a = b` a proof of `b = a` that computes when `p` is `Refl`.
+pub fn elab_sym(&mut core: KernelCore, ty: KernelTerm, a: KernelTerm, b: KernelTerm, p: KernelTerm): KernelTerm {
+  let y := kernel_fresh(&mut core, ty)
+  let e := kernel_fresh(&mut core, KernelConst("Unit"))
+  let motive := elab_lams(elab_eq(ty, KernelFVar(y), a), Cons(y, Cons(e, Nil)))
+  elab_apps(KernelConst("Eq::ind"), Cons(ty, Cons(a, Cons(motive, Cons(elab_apps(KernelConst("Eq::Refl"), Cons(ty, Cons(a, Nil))), Cons(b, Cons(p, Nil)))))))
+}
+
+pub fn elab_fixed(sols: List(ElabSol), f: Nat): Bool {
+  ⊢ Bool from match sols {
+    Nil => false
+    Cons(s, rest) => s.f == f || elab_fixed(rest, f)
+  }
+}
+
+// `t` as a variable that may be fixed to `other`.
+pub fn elab_fixable(t: KernelTerm, other: KernelTerm, solvable: List(Nat), sols: List(ElabSol)): Option(Nat) {
+  ⊢ Option(Nat) from match t {
+    KernelFVar(f) => if elab_has_nat(solvable, f) && elab_fixed(sols, f) == false && elab_any_occurs(other, Cons(f, Nil)) == false { Some(f) } else { None }
+    _ => None
+  }
+}
+
+pub fn elab_ctor_view(k: Nat, core: KernelCore, t: KernelTerm): Option(Pair(Text, List(KernelTerm))) {
+  let spine := elab_spine(k, t, Nil)
+  ⊢ Option(Pair(Text, List(KernelTerm))) from match spine.fst {
+    KernelConst(n) => ⊢ Option(Pair(Text, List(KernelTerm))) from match kernel_ctor_get(core, n) {
+      None => None
+      Some(c) => Some(Pair { fst: n, snd: spine.snd })
+    }
+    _ => None
+  }
+}
+
+pub fn elab_term_at(xs: List(KernelTerm), n: Nat): KernelTerm {
+  ⊢ KernelTerm from match xs {
+    Nil => KernelConst("Unit")
+    Cons(x, rest) => ⊢ KernelTerm from match n {
+      Zero => x
+      Succ(m) => elab_term_at(rest, m)
+    }
+  }
+}
+
+pub fn elab_find_ctor(cs: List(KernelCtorInfo), name: Text): Option(KernelCtorInfo) {
+  ⊢ Option(KernelCtorInfo) from match cs {
+    Nil => None
+    Cons(c, rest) => if c.name == name { Some(c) } else { elab_find_ctor(rest, name) }
+  }
+}
+
+// The equations between the injective fields of two applications of one
+// constructor, pushed in order on the work list (the last on top).
+pub fn elab_inj_eqns(
+  noconf: Text,
+  pargs: List(KernelTerm),
+  inj: List(Nat),
+  all: List(Nat),
+  pos: Nat,
+  types: List(KernelTerm),
+  al: List(KernelTerm),
+  ar: List(KernelTerm),
+  l: KernelTerm,
+  r: KernelTerm,
+  proof: KernelTerm,
+  work: List(ElabEqn)
+): List(ElabEqn) {
+  ⊢ List(ElabEqn) from match inj {
+    Nil => work
+    Cons(i, rest) => {
+      let fty := elab_term_at(types, i)
+      let a := elab_term_at(al, i)
+      let b := elab_term_at(ar, i)
+      let n := List::length(all)
+      let pick := elab_lam_n(KernelBVar(n - 1 - pos), n)
+      let pr := elab_apps(KernelConst(noconf), List::append(pargs, Cons(elab_eq(fty, a, b), Cons(l, Cons(r, Cons(proof, Cons(pick, Nil)))))))
+      elab_inj_eqns(noconf, pargs, rest, all, pos + 1, types, al, ar, l, r, proof, Cons(ElabEqn::Mk(a, b, fty, pr), work))
+    }
+  }
+}
+
+pub fn elab_cyclic(sols: List(ElabSol), all: List(ElabSol)): Bool {
+  ⊢ Bool from match sols {
+    Nil => false
+    Cons(s, rest) => elab_any_occurs(s.t, elab_sol_atoms(all)) || elab_cyclic(rest, all)
+  }
+}
+
+pub fn elab_sol_atoms(sols: List(ElabSol)): List(Nat) {
+  ⊢ List(Nat) from match sols {
+    Nil => Nil
+    Cons(s, rest) => Cons(s.f, elab_sol_atoms(rest))
+  }
+}
+
+pub fn elab_unify_indices(
+  k: Nat,
+  &mut core: KernelCore,
+  solvable: List(Nat),
+  work: List(ElabEqn),
+  sols: List(ElabSol),
+  stuck: Bool,
+  goal: KernelTerm
+): ElabPlan {
+  ⊢ ElabPlan from match k {
+    Zero => { kernel_set_to(&mut core.exhausted, true)
+      PlanErr("elaboration exhausted") }
+    Succ(j) => ⊢ ElabPlan from match work {
+      Nil => if stuck { PlanErr("an index equation is between a constructor and a term that is not one") } else if elab_cyclic(sols, sols) { PlanErr("the index equations are cyclic") } else { PlanSolved(List::reverse(sols)) }
+      Cons(eq0, rest) => {
+        let l := kernel_whnf(j, &mut core, eq0.l, true, false)
+        let r := kernel_whnf(j, &mut core, eq0.r, true, false)
+        if kernel_conv(j, &mut core, l, r) { elab_unify_indices(j, &mut core, solvable, rest, sols, stuck, goal) } else {
+          let later_is_r := ⊢ Bool from match l {
+            KernelFVar(a) => ⊢ Bool from match r {
+              KernelFVar(b) => b > a
+              _ => false
+            }
+            _ => false
+          }
+          let fl := elab_fixable(l, r, solvable, sols)
+          let fr := elab_fixable(r, l, solvable, sols)
+          ⊢ ElabPlan from match fl {
+            Some(f) => if later_is_r == false {
+              elab_unify_indices(j, &mut core, solvable, rest, Cons(ElabSol::Mk(f, r, eq0.ty, eq0.proof), sols), stuck, goal)
+            } else { ⊢ ElabPlan from match fr {
+              Some(g) => {
+                let pr := elab_sym(&mut core, eq0.ty, l, r, eq0.proof)
+                elab_unify_indices(j, &mut core, solvable, rest, Cons(ElabSol::Mk(g, l, eq0.ty, pr), sols), stuck, goal)
+              }
+              None => elab_unify_indices(j, &mut core, solvable, rest, Cons(ElabSol::Mk(f, r, eq0.ty, eq0.proof), sols), stuck, goal)
+            } }
+            None => ⊢ ElabPlan from match fr {
+              Some(g) => {
+                let pr := elab_sym(&mut core, eq0.ty, l, r, eq0.proof)
+                elab_unify_indices(j, &mut core, solvable, rest, Cons(ElabSol::Mk(g, l, eq0.ty, pr), sols), stuck, goal)
+              }
+              None => ⊢ ElabPlan from match elab_ctor_view(j, core, l) {
+                None => elab_unify_indices(j, &mut core, solvable, rest, sols, true, goal)
+                Some(vl) => ⊢ ElabPlan from match elab_ctor_view(j, core, r) {
+                  None => elab_unify_indices(j, &mut core, solvable, rest, sols, true, goal)
+                  Some(vr) => ⊢ ElabPlan from match kernel_ctor_get(core, vl.fst) {
+                    None => PlanErr("unknown constructor")
+                    Some(cl) => ⊢ ElabPlan from match kernel_ctor_get(core, vr.fst) {
+                      None => PlanErr("unknown constructor")
+                      Some(cr) => if cl.fst != cr.fst { PlanErr("an index equation is between constructors of different types") } else {
+                        let noconf := Text::concat(cl.fst, "::noconf")
+                        ⊢ ElabPlan from match kernel_ind_get(core, cl.fst) {
+                          None => PlanErr("unknown family")
+                          Some(info) => ⊢ ElabPlan from match kernel_global_get(core, noconf) {
+                            None => PlanErr("an index equation is on a family without no-confusion")
+                            Some(nc) => {
+                              let pargs := elab_take_terms(vl.snd, info.params)
+                              if vl.fst != vr.fst {
+                                PlanImpossible(elab_apps(KernelConst(noconf), List::append(pargs, Cons(goal, Cons(l, Cons(r, Cons(eq0.proof, Nil)))))))
+                              } else { ⊢ ElabPlan from match elab_find_ctor(info.constructors, vl.fst) {
+                                None => PlanErr("unknown constructor")
+                                Some(c) => ⊢ ElabPlan from match elab_open_ctor(j, &mut core, c, pargs) {
+                                  None => PlanErr("cannot open the constructor")
+                                  Some(o) => {
+                                    let inj := elab_injective(j, &mut core, o.fields, o.types, Nil, 0)
+                                    let more := elab_inj_eqns(noconf, pargs, inj, inj, 0, o.types, elab_drop_terms(vl.snd, info.params), elab_drop_terms(vr.snd, info.params), l, r, eq0.proof, rest)
+                                    elab_unify_indices(j, &mut core, solvable, more, sols, stuck, goal)
+                                  }
+                                }
+                              } }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_gen_pis_over(atoms: List(Nat), domains: List(KernelTerm), body: KernelTerm): KernelTerm {
+  ⊢ KernelTerm from match atoms {
+    Nil => body
+    Cons(a, rest) => ⊢ KernelTerm from match domains {
+      Nil => body
+      Cons(d, more) => kernel_pi_over(a, d, elab_gen_pis_over(rest, more, body))
+    }
+  }
+}
+
+pub fn elab_atom_type(core: KernelCore, a: Nat): KernelTerm {
+  ⊢ KernelTerm from match kernel_local_get(core, a) {
+    Some(t) => t
+    None => KernelSortTerm(KernelProp)
+  }
+}
+
+// What is bound from the first fixed variable on, other than the matched
+// one, and has a type that mentions a fixed variable or such a binding.
+pub fn elab_dependent_atoms(core: KernelCore, local: List(Nat), started: Bool, x: Nat, changed: List(Nat)): List(Nat) {
+  ⊢ List(Nat) from match local {
+    Nil => Nil
+    Cons(a, rest) => {
+      let on := started || elab_has_nat(changed, a)
+      if on == false || a == x || elab_has_nat(changed, a) { elab_dependent_atoms(core, rest, on, x, changed) } else {
+        if elab_any_occurs(elab_atom_type(core, a), changed) {
+          Cons(a, elab_dependent_atoms(core, rest, on, x, Cons(a, changed)))
+        } else { elab_dependent_atoms(core, rest, on, x, changed) }
+      }
+    }
+  }
+}
+
+pub fn elab_atom_types(core: KernelCore, xs: List(Nat)): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(elab_atom_type(core, x), elab_atom_types(core, rest))
+  }
+}
+
+// The states of the transported goal: each after one more solution.
+pub fn elab_states(t: KernelTerm, sols: List(ElabSol)): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match sols {
+    Nil => Cons(t, Nil)
+    Cons(s, rest) => Cons(t, elab_states(elab_replace(t, s.f, s.t), rest))
+  }
+}
+
+// Transports `cur` back along the solutions, the last one innermost.
+pub fn elab_transport(&mut core: KernelCore, elim: Text, sols: List(ElabSol), states: List(KernelTerm), cur: KernelTerm): KernelTerm {
+  ⊢ KernelTerm from match sols {
+    Nil => cur
+    Cons(s, rest) => ⊢ KernelTerm from match states {
+      Nil => cur
+      Cons(st, more) => {
+        let inner := elab_transport(&mut core, elim, rest, more, cur)
+        let y := kernel_fresh(&mut core, s.ty)
+        let e2 := kernel_fresh(&mut core, KernelConst("Unit"))
+        let motive := elab_lams(elab_replace(st, s.f, KernelFVar(y)), Cons(y, Cons(e2, Nil)))
+        let sym := elab_sym(&mut core, s.ty, KernelFVar(s.f), s.t, s.proof)
+        elab_apps(KernelConst(elim), Cons(s.ty, Cons(s.t, Cons(motive, Cons(inner, Cons(KernelFVar(s.f), Cons(sym, Nil)))))))
+      }
+    }
+  }
+}
+
+pub fn elab_env_atoms(env: List(ElabBinding)): List(Nat) {
+  ⊢ List(Nat) from match env {
+    Nil => Nil
+    Cons(b, rest) => ⊢ List(Nat) from match b.value {
+      KernelFVar(a) => if elab_has_nat(elab_env_atoms(rest), a) { elab_env_atoms(rest) } else { List::append(elab_env_atoms(rest), Cons(a, Nil)) }
+      _ => elab_env_atoms(rest)
+    }
+  }
+}
+
+// Strips one product per equation off the goal, binding each to a fresh atom.
+pub fn elab_strip_eqs(k: Nat, &mut core: KernelCore, goal: KernelTerm, n: Nat): Option(Pair(List(Nat), KernelTerm)) {
+  ⊢ Option(Pair(List(Nat), KernelTerm)) from match n {
+    Zero => Some(Pair { fst: Nil, snd: goal })
+    Succ(m) => ⊢ Option(Pair(List(Nat), KernelTerm)) from match kernel_as_pi(kernel_whnf(k, &mut core, goal, true, false)) {
+      None => None
+      Some(p) => {
+        let e := kernel_fresh(&mut core, p.fst)
+        ⊢ Option(Pair(List(Nat), KernelTerm)) from match elab_strip_eqs(k, &mut core, kernel_inst(p.snd, KernelFVar(e)), m) {
+          None => None
+          Some(more) => Some(Pair { fst: Cons(e, more.fst), snd: more.snd })
+        }
+      }
+    }
+  }
+}
+
+// The initial work list: the equation of each generalized index, the last
+// on top.
+pub fn elab_index_work(gens: List(ElabGen), idx: List(KernelTerm), eqs: List(Nat), work: List(ElabEqn)): List(ElabEqn) {
+  ⊢ List(ElabEqn) from match gens {
+    Nil => work
+    Cons(g, rest) => ⊢ List(ElabEqn) from match eqs {
+      Nil => work
+      Cons(e, more) => elab_index_work(rest, idx, more, Cons(ElabEqn::Mk(elab_term_at(idx, g.k), g.arg, g.ty, KernelFVar(e)), work))
+    }
+  }
+}
+
+pub fn elab_gen_refls(gens: List(ElabGen)): List(KernelTerm) {
+  ⊢ List(KernelTerm) from match gens {
+    Nil => Nil
+    Cons(g, rest) => Cons(elab_apps(KernelConst("Eq::Refl"), Cons(g.ty, Cons(g.arg, Nil))), elab_gen_refls(rest))
+  }
+}
+
+// The index types of a family at its parameters; `None` when one depends on
+// an earlier index.
+pub fn elab_index_types(k: Nat, &mut core: KernelCore, ty: KernelTerm, n: Nat, earlier: List(Nat)): Option(List(KernelTerm)) {
+  ⊢ Option(List(KernelTerm)) from match n {
+    Zero => Some(Nil)
+    Succ(m) => ⊢ Option(List(KernelTerm)) from match kernel_as_pi(kernel_whnf(k, &mut core, ty, true, false)) {
+      None => None
+      Some(p) => if elab_any_occurs(p.fst, earlier) { None } else {
+        let a := kernel_fresh(&mut core, p.fst)
+        ⊢ Option(List(KernelTerm)) from match elab_index_types(k, &mut core, kernel_inst(p.snd, KernelFVar(a)), m, Cons(a, earlier)) {
+          None => None
+          Some(more) => Some(Cons(p.fst, more))
+        }
+      }
+    }
+  }
+}
+
+// Splits the indices: a variable seen for the first time is abstracted by the
+// motive (its atom), any other index is generalized with an equation (a fresh
+// atom of its type).
+pub fn elab_split_indices(&mut core: KernelCore, idx: List(KernelTerm), tys: List(KernelTerm), at: Nat, x: Nat, seen: List(Nat)): Pair(List(Nat), List(ElabGen)) {
+  ⊢ Pair(List(Nat), List(ElabGen)) from match idx {
+    Nil => Pair { fst: Nil, snd: Nil }
+    Cons(t, rest) => {
+      let ty := elab_term_at(tys, at)
+      let v0: Option(Nat) := ⊢ Option(Nat) from match t {
+        KernelFVar(v) => if v != x && elab_has_nat(seen, v) == false { Some(v) } else { None }
+        _ => None
+      }
+      ⊢ Pair(List(Nat), List(ElabGen)) from match v0 {
+        Some(v) => {
+          let more := elab_split_indices(&mut core, rest, tys, at + 1, x, Cons(v, seen))
+          Pair { fst: Cons(v, more.fst), snd: more.snd }
+        }
+        None => {
+          let a := kernel_fresh(&mut core, ty)
+          let more := elab_split_indices(&mut core, rest, tys, at + 1, x, seen)
+          Pair { fst: Cons(a, more.fst), snd: Cons(ElabGen::Mk(at, ty, t), more.snd) }
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_gen_eq_pis(&mut core: KernelCore, gens: List(ElabGen), atoms: List(Nat), body: KernelTerm): KernelTerm {
+  ⊢ KernelTerm from match gens {
+    Nil => body
+    Cons(g, rest) => {
+      let inner := elab_gen_eq_pis(&mut core, rest, atoms, body)
+      let i := elab_gx_nat(atoms, g.k)
+      let ety := elab_eq(g.ty, KernelFVar(i), g.arg)
+      let e := kernel_fresh(&mut core, ety)
+      kernel_pi_over(e, ety, inner)
+    }
+  }
+}
+
+pub fn elab_gen_args_mention(gens: List(ElabGen), atoms: List(Nat)): Bool {
+  ⊢ Bool from match gens {
+    Nil => false
+    Cons(g, rest) => elab_any_occurs(g.arg, atoms) || elab_gen_args_mention(rest, atoms)
+  }
+}
+
+pub fn elab_arms_distinct(arms: List(SurfaceArm), ctors: List(KernelCtorInfo), family: Text, seen: List(Text)): Bool {
+  ⊢ Bool from match arms {
+    Nil => true
+    Cons(a, rest) => ⊢ Bool from match elab_ctor_pattern(a.pattern, ctors, family) {
+      None => false
+      Some(p) => elab_has_text(seen, p.fst) == false && elab_arms_distinct(rest, ctors, family, Cons(p.fst, seen))
+    }
+  }
+}
+
+pub fn elab_has_text(xs: List(Text), x: Text): Bool {
+  ⊢ Bool from match xs {
+    Nil => false
+    Cons(y, rest) => y == x || elab_has_text(rest, x)
+  }
+}
+
+pub fn elab_gx_nat(xs: List(Nat), n: Nat): Nat {
+  ⊢ Nat from match xs {
+    Nil => 0
+    Cons(x, rest) => ⊢ Nat from match n {
+      Zero => x
+      Succ(m) => elab_gx_nat(rest, m)
+    }
+  }
+}
+
+pub fn elab_vars_of(atoms: List(Nat), idx: List(KernelTerm)): List(Nat) {
+  ⊢ List(Nat) from match atoms {
+    Nil => Nil
+    Cons(a, rest) => ⊢ List(Nat) from match idx {
+      Nil => Nil
+      Cons(t, more) => {
+        let tail := elab_vars_of(rest, more)
+        ⊢ List(Nat) from match t {
+          KernelFVar(v) => if v == a { Cons(a, tail) } else { tail }
+          _ => tail
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_sols_mention(sols: List(ElabSol), atoms: List(Nat)): Bool {
+  ⊢ Bool from match sols {
+    Nil => false
+    Cons(s, rest) => elab_any_occurs(s.t, atoms) || elab_sols_mention(rest, atoms)
+  }
+}
+
+pub fn elab_gen_bind_fields(env: List(ElabBinding), names: List(Option(Text)), atoms: List(Nat), types: List(KernelTerm)): List(ElabBinding) {
+  ⊢ List(ElabBinding) from match names {
+    Nil => env
+    Cons(n, rest) => ⊢ List(ElabBinding) from match atoms {
+      Nil => env
+      Cons(a, more) => ⊢ List(ElabBinding) from match types {
+        Nil => env
+        Cons(t, ts) => {
+          let here := ⊢ List(ElabBinding) from match n {
+            None => env
+            Some(x) => Cons(ElabBinding::Mk(x, KernelFVar(a), t), env)
+          }
+          elab_gen_bind_fields(here, rest, more, ts)
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_plain_rec(recs: List(KernelRecArg), i: Nat): Bool {
+  ⊢ Bool from match recs {
+    Nil => false
+    Cons(r, rest) => (r.arg == i && r.ys == 0) || elab_plain_rec(rest, i)
+  }
+}
+
+pub fn elab_any_rec(recs: List(KernelRecArg), i: Nat): Bool {
+  ⊢ Bool from match recs {
+    Nil => false
+    Cons(r, rest) => r.arg == i || elab_any_rec(rest, i)
+  }
+}
+
+// The induction hypotheses of a case of a generalized match, at the motive.
+pub fn elab_general_ihs(k: Nat, &mut core: KernelCore, fields: List(Nat), i: Nat, c: KernelCtorInfo, motive: KernelTerm, np: Nat): Option(List(Nat)) {
+  ⊢ Option(List(Nat)) from match fields {
+    Nil => Some(Nil)
+    Cons(f, rest) => if elab_plain_rec(c.recursive, i) {
+      let at := elab_type_indices(k, &mut core, elab_atom_type(core, f), np)
+      let ty := kernel_whnf(k, &mut core, elab_apps(motive, List::append(at, Cons(KernelFVar(f), Nil))), true, false)
+      let ih := kernel_fresh(&mut core, ty)
+      ⊢ Option(List(Nat)) from match elab_general_ihs(k, &mut core, rest, i + 1, c, motive, np) {
+        None => None
+        Some(more) => Some(Cons(ih, more))
+      }
+    } else if elab_any_rec(c.recursive, i) { None } else { elab_general_ihs(k, &mut core, rest, i + 1, c, motive, np) }
+  }
+}
+
+pub fn elab_without(xs: List(Nat), x: Nat): List(Nat) {
+  ⊢ List(Nat) from match xs {
+    Nil => Nil
+    Cons(y, rest) => if y == x { elab_without(rest, x) } else { Cons(y, elab_without(rest, x)) }
+  }
+}
+
+pub fn elab_is_prop(k: Nat, &mut core: KernelCore, t: KernelTerm): Bool {
+  ⊢ Bool from match kernel_infer(k, &mut core, t) {
+    None => false
+    Some(s) => ⊢ Bool from match kernel_as_sort(kernel_whnf(k, &mut core, s, true, false)) {
+      None => false
+      Some(srt) => ⊢ Bool from match srt {
+        KernelProp => true
+        _ => false
+      }
+    }
+  }
+}
+
+// Fresh atoms for the dependent bindings, each at its type with the solved
+// variables and the earlier ones replaced; the replacements extended by them.
+pub fn elab_prime(&mut core: KernelCore, dep: List(Nat), subs: List(ElabSol)): Pair(List(Nat), List(ElabSol)) {
+  ⊢ Pair(List(Nat), List(ElabSol)) from match dep {
+    Nil => Pair { fst: Nil, snd: subs }
+    Cons(d, rest) => {
+      let ty := elab_replace_all(elab_atom_type(core, d), subs)
+      let d2 := kernel_fresh(&mut core, ty)
+      let more := elab_prime(&mut core, rest, List::append(subs, Cons(ElabSol::Mk(d, KernelFVar(d2), ty, ty), Nil)))
+      Pair { fst: Cons(d2, more.fst), snd: more.snd }
+    }
+  }
+}
+
+// Universe polymorphism by instantiation, as the host does it: a `def` or
+// `theorem` whose leading implicit parameters are typed `Level` is a template.
+// A call names its levels first, as numerals, and is read as a call of the
+// instance `f@1`, declared the first time it is asked for. Inside the
+// template, a level variable stands for its level through a binding of type
+// `#Level`, whose value is the sort `Type(u)`.
+
+pub fn elab_unbound(env: List(ElabBinding), name: Text): Bool {
+  ⊢ Bool from match elab_lookup(env, name) {
+    None => true
+    Some(b) => false
+  }
+}
+
+pub fn elab_level_marker(): KernelTerm { KernelConst("#Level") }
+
+pub fn elab_level_binding(name: Text, l: KernelLevel): ElabBinding {
+  ElabBinding::Mk(name, KernelSortTerm(KernelType(l)), elab_level_marker())
+}
+
+pub fn elab_template_key(name: Text): Text { Text::concat("#template ", name) }
+
+pub fn elab_template_count(env: List(ElabBinding), name: Text): Option(Nat) {
+  ⊢ Option(Nat) from match elab_lookup(env, elab_template_key(name)) {
+    None => None
+    Some(b) => ⊢ Option(Nat) from match b.value {
+      KernelLit(n) => Some(n)
+      _ => None
+    }
+  }
+}
+
+// The instance a template name stands for at levels; a constructor of an
+// inductive template is the constructor of the family's instance.
+pub fn elab_template_target(env: List(ElabBinding), name: Text, ls: List(KernelLevel)): Text {
+  ⊢ Text from match elab_lookup(env, elab_template_key(name)) {
+    None => elab_instance_name(name, ls)
+    Some(b) => ⊢ Text from match b.ty {
+      KernelConst(family) => ⊢ Text from match Text::slice(name, Text::len(family), Text::len(name)) {
+        None => elab_instance_name(name, ls)
+        Some(suffix) => Text::concat(elab_instance_name(family, ls), suffix)
+      }
+      _ => elab_instance_name(name, ls)
+    }
+  }
+}
+
+pub fn elab_is_instance(name: Text): Bool {
+  ⊢ Bool from match text_find(name, "@", 0) {
+    None => false
+    Some(at) => true
+  }
+}
+
+pub fn elab_take_surface(xs: List(SurfaceTerm), n: Nat): List(SurfaceTerm) {
+  ⊢ List(SurfaceTerm) from match n {
+    Zero => Nil
+    Succ(m) => ⊢ List(SurfaceTerm) from match xs {
+      Nil => Nil
+      Cons(x, rest) => Cons(x, elab_take_surface(rest, m))
+    }
+  }
+}
+
+pub fn elab_drop_surface(xs: List(SurfaceTerm), n: Nat): List(SurfaceTerm) {
+  ⊢ List(SurfaceTerm) from match n {
+    Zero => xs
+    Succ(m) => ⊢ List(SurfaceTerm) from match xs {
+      Nil => Nil
+      Cons(x, rest) => elab_drop_surface(rest, m)
+    }
+  }
+}
+
+// A level written as a numeral, `a + b` or `max(a, b)` of such.
+pub fn elab_const_level(k: Nat, t: SurfaceTerm): Option(Nat) {
+  ⊢ Option(Nat) from match k {
+    Zero => None
+    Succ(j) => ⊢ Option(Nat) from match t.kind {
+      SkNat(digits) => text_parse_u64(digits)
+      SkApp(head, args) => ⊢ Option(Nat) from match head.kind {
+        SkVar(op) => ⊢ Option(Nat) from match args {
+          Cons(a, more) => ⊢ Option(Nat) from match more {
+            Cons(b, none) => ⊢ Option(Nat) from match elab_const_level(j, a) {
+              None => None
+              Some(x) => ⊢ Option(Nat) from match elab_const_level(j, b) {
+                None => None
+                Some(y) => if List::length(none) != 0 { None } else if op == "+" { Some(x + y) } else if op == "max" { Some(Nat::max(x, y)) } else { None }
+              }
+            }
+            Nil => None
+          }
+          Nil => None
+        }
+        _ => None
+      }
+      _ => None
+    }
+  }
+}
+
+pub fn elab_const_levels(k: Nat, ts: List(SurfaceTerm)): Option(List(Nat)) {
+  ⊢ Option(List(Nat)) from match ts {
+    Nil => Some(Nil)
+    Cons(t, rest) => ⊢ Option(List(Nat)) from match elab_const_level(k, t) {
+      None => None
+      Some(n) => ⊢ Option(List(Nat)) from match elab_const_levels(k, rest) {
+        None => None
+        Some(ns) => Some(Cons(n, ns))
+      }
+    }
+  }
+}
+
+pub fn elab_var_texts(vs: List(Pair(Text, Nat))): List(Text) {
+  ⊢ List(Text) from match vs {
+    Nil => Nil
+    Cons(v, rest) => Cons(",", Cons(v.fst, Cons("+", Cons(Text::of_nat(v.snd), elab_var_texts(rest)))))
+  }
+}
+
+// A level as it is written in an instance name: a numeral, or, for a level
+// over variables (only while a template is checked), its normal form.
+pub fn elab_level_text(l: KernelLevel): List(Text) {
+  ⊢ List(Text) from match l.variables {
+    Nil => Cons(Text::of_nat(l.constant), Nil)
+    _ => Cons("max(", Cons(Text::of_nat(l.constant), List::append(elab_var_texts(l.variables), Cons(")", Nil))))
+  }
+}
+
+pub fn elab_level_texts(ls: List(KernelLevel)): List(Text) {
+  ⊢ List(Text) from match ls {
+    Nil => Nil
+    Cons(l, rest) => ⊢ List(Text) from match rest {
+      Nil => elab_level_text(l)
+      _ => List::append(elab_level_text(l), Cons(",", elab_level_texts(rest)))
+    }
+  }
+}
+
+// The instance of a template at levels: `f@1`, `f@0,1`.
+pub fn elab_instance_name(name: Text, ls: List(KernelLevel)): Text {
+  Text::concat_all(Cons(name, Cons("@", elab_level_texts(ls))))
+}
+
+pub fn elab_level_up(l: KernelLevel, n: Nat): KernelLevel {
+  ⊢ KernelLevel from match n {
+    Zero => l
+    Succ(m) => elab_level_up(kernel_level_next(l), m)
+  }
+}
+
+// A level over the level variables in scope.
+pub fn elab_level(k: Nat, env: List(ElabBinding), t: SurfaceTerm): Option(KernelLevel) {
+  ⊢ Option(KernelLevel) from match k {
+    Zero => None
+    Succ(j) => ⊢ Option(KernelLevel) from match t.kind {
+      SkNat(digits) => ⊢ Option(KernelLevel) from match text_parse_u64(digits) {
+        None => None
+        Some(n) => Some(KernelLevel::Mk(n, Nil))
+      }
+      SkVar(x) => ⊢ Option(KernelLevel) from match elab_lookup(env, x) {
+        None => None
+        Some(b) => ⊢ Option(KernelLevel) from match b.ty {
+          KernelConst(m) => if m == "#Level" {
+            ⊢ Option(KernelLevel) from match b.value {
+              KernelSortTerm(s) => ⊢ Option(KernelLevel) from match s {
+                KernelType(l) => Some(l)
+                KernelProp => None
+              }
+              _ => None
+            }
+          } else { None }
+          _ => None
+        }
+      }
+      SkApp(head, args) => ⊢ Option(KernelLevel) from match head.kind {
+        SkVar(op) => ⊢ Option(KernelLevel) from match args {
+          Cons(a, more) => ⊢ Option(KernelLevel) from match more {
+            Cons(b, none) => if List::length(none) != 0 { None } else if op == "+" {
+              ⊢ Option(KernelLevel) from match elab_level(j, env, a) {
+                None => None
+                Some(l) => ⊢ Option(KernelLevel) from match elab_const_level(j, b) {
+                  None => None
+                  Some(n) => Some(elab_level_up(l, n))
+                }
+              }
+            } else if op == "max" {
+              ⊢ Option(KernelLevel) from match elab_level(j, env, a) {
+                None => None
+                Some(l) => ⊢ Option(KernelLevel) from match elab_level(j, env, b) {
+                  None => None
+                  Some(r) => Some(kernel_level_join(l, r))
+                }
+              }
+            } else { None }
+            Nil => None
+          }
+          Nil => None
+        }
+        _ => None
+      }
+      _ => None
+    }
+  }
+}
+
+pub fn elab_levels(k: Nat, env: List(ElabBinding), ts: List(SurfaceTerm)): Option(List(KernelLevel)) {
+  ⊢ Option(List(KernelLevel)) from match ts {
+    Nil => Some(Nil)
+    Cons(t, rest) => ⊢ Option(List(KernelLevel)) from match elab_level(k, env, t) {
+      None => None
+      Some(l) => ⊢ Option(List(KernelLevel)) from match elab_levels(k, env, rest) {
+        None => None
+        Some(ls) => Some(Cons(l, ls))
+      }
+    }
+  }
 }
 
 mutual {
@@ -103,49 +1816,105 @@ mutual {
     term: SurfaceTerm,
     expected: Option(KernelTerm)
   ): ElabResult(ElabTyped) {
-    match k: ElabResult(ElabTyped) {
+    ⊢ ElabResult(ElabTyped) from match k {
       Zero => { kernel_set_to(&mut core.exhausted, true)
         ElabErr("elaboration exhausted") }
-      Succ(j) => match term.kind: ElabResult(ElabTyped) {
-        SkVar(name) => match elab_lookup(env, name): ElabResult(ElabTyped) {
+      Succ(j) => ⊢ ElabResult(ElabTyped) from match term.kind {
+        SkVar(name) => ⊢ ElabResult(ElabTyped) from match elab_lookup(env, name) {
           Some(local) => elab_known(j, &mut core, local, expected)
-          None => match kernel_global_get(core.globals, name): ElabResult(ElabTyped) {
-            Some(global) => elab_result(j, &mut core, KernelConst(name), expected)
-            None => match elab_sort(name): ElabResult(ElabTyped) {
+          None => ⊢ ElabResult(ElabTyped) from match kernel_global_get(core, name) {
+            Some(global) => if elab_implicit_count(env, core, name) == 0 {
+              elab_result(j, &mut core, KernelConst(name), expected)
+            } else { elab_implicit_application(j, &mut core, env, name, Nil, expected) }
+            None => ⊢ ElabResult(ElabTyped) from match elab_sort(name) {
               Some(sort) => elab_result(j, &mut core, sort, expected)
               None => elab_result(j, &mut core, KernelConst(name), expected)
             }
           }
         }
-        SkNat(digits) => match text_parse_u64(digits): ElabResult(ElabTyped) {
+        SkNat(digits) => ⊢ ElabResult(ElabTyped) from match text_parse_u64(digits) {
           None => ElabErr("natural literal is outside the elaborator range")
-          Some(n) => elab_result(j, &mut core, KernelLit(elab_digits(4, n)), expected)
+          Some(n) => elab_result(j, &mut core, KernelLit(n), expected)
         }
-        SkBool(value) => elab_result(j, &mut core, KernelBool(value), expected)
-        SkPi(params, result, effects) => match effects: ElabResult(ElabTyped) {
+        SkBool(value) => elab_result(
+          j,
+          &mut core,
+          KernelConst(if value { "Bool::true" } else { "Bool::false" }),
+          expected
+        )
+        SkPi(params, result, effects) => ⊢ ElabResult(ElabTyped) from match effects {
           Some(es) => ElabErr("effect rows are unsupported")
-          None => match elab_pi(j, &mut core, env, params, result): ElabResult(ElabTyped) {
+          None => ⊢ ElabResult(ElabTyped) from match elab_pi(j, &mut core, env, params, result) {
             ElabErr(e) => ElabErr(e)
             ElabOk(p) => elab_result(j, &mut core, p, expected)
           }
         }
-        SkLam(params, body) => match expected: ElabResult(ElabTyped) {
+        SkLam(params, body) => ⊢ ElabResult(ElabTyped) from match expected {
           None => ElabErr("lambda requires an expected type")
           Some(ty) => elab_lambda(j, &mut core, env, params, body, ty)
         }
-        SkApp(head, args) => match head.kind: ElabResult(ElabTyped) {
-          SkVar(name) => if name == "the" {
-            match elab_lookup(env, name): ElabResult(ElabTyped) {
+        SkApp(head, args) => ⊢ ElabResult(ElabTyped) from match head.kind {
+          SkVar(name) => ⊢ ElabResult(ElabTyped) from match elab_template_count(env, name) {
+           Some(n) => ⊢ ElabResult(ElabTyped) from match elab_levels(j, env, elab_take_surface(args, n)) {
+            None => ElabErr("the levels of a call of a level-polymorphic declaration are levels: numerals, level variables, `l + n` or `max(l, l)`")
+            Some(ls) => if List::length(ls) != n { ElabErr("a call of a level-polymorphic declaration must write all its levels") } else {
+              let callee := surface_term_mk(SkVar(elab_template_target(env, name, ls)), head.start, head.end)
+              let rest := elab_drop_surface(args, n)
+              ⊢ ElabResult(ElabTyped) from match rest {
+                Nil => elab_term(j, &mut core, env, callee, expected)
+                _ => elab_term(j, &mut core, env, surface_term_mk(SkApp(callee, rest), term.start, term.end), expected)
+              }
+            }
+           }
+           None => if name == "Type" && elab_unbound(env, name) {
+            ⊢ ElabResult(ElabTyped) from match args {
+              Cons(a, none) => ⊢ ElabResult(ElabTyped) from match elab_level(j, env, a) {
+                None => ElabErr("a universe level is a numeral, a level variable, `l + n` or `max(l, l)`")
+                Some(l) => if List::length(none) != 0 { ElabErr("`Type` takes one level") } else { elab_result(j, &mut core, KernelSortTerm(KernelType(l)), expected) }
+              }
+              Nil => ElabErr("`Type` takes one level")
+            }
+          } else if name == "the" {
+            ⊢ ElabResult(ElabTyped) from match elab_lookup(env, name) {
               Some(local) => elab_application(j, &mut core, env, head, args, expected)
-              None => match kernel_global_get(core.globals, name): ElabResult(ElabTyped) {
+              None => ⊢ ElabResult(ElabTyped) from match kernel_global_get(core, name) {
                 Some(global) => elab_application(j, &mut core, env, head, args, expected)
                 None => elab_annotation(j, &mut core, env, args, expected)
               }
             }
-          } else { elab_application(j, &mut core, env, head, args, expected) }
+          } else {
+            if elab_in_group(env, name) { elab_recursive_call(j, &mut core, env, name, args, expected) } else { ⊢ ElabResult(ElabTyped) from match elab_self(env) {
+              Some(me) => if me.fst == name { elab_recursive_call(j, &mut core, env, name, args, expected) } else {
+                if elab_wants_implicit(env, core, name) { elab_implicit_application(j, &mut core, env, name, args, expected) } else { elab_application(j, &mut core, env, head, args, expected) }
+              }
+              None => if elab_wants_implicit(env, core, name) { elab_implicit_application(j, &mut core, env, name, args, expected) } else { elab_application(j, &mut core, env, head, args, expected) }
+            } }
+          }
+          }
           _ => elab_application(j, &mut core, env, head, args, expected)
         }
         SkBlock(stmts) => elab_block(j, &mut core, env, stmts, expected)
+        SkMatch(scrutinee, motive, arms, binder) => ⊢ ElabResult(ElabTyped) from match motive {
+          // `match x: T { … }`: the result type is written; the motive is
+          // `T` with `x` abstracted, and the whole is checked at `expected`.
+          Some(m) => ⊢ ElabResult(ElabTyped) from match binder {
+            Some(b) => ElabErr("a match binder is unsupported")
+            None => ⊢ ElabResult(ElabTyped) from match elab_type(j, &mut core, env, m) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(ty) => ⊢ ElabResult(ElabTyped) from match elab_match(j, &mut core, env, scrutinee, arms, ty) {
+                ElabErr(e) => ElabErr(e)
+                ElabOk(t) => elab_known(j, &mut core, t, expected)
+              }
+            }
+          }
+          None => ⊢ ElabResult(ElabTyped) from match binder {
+            Some(b) => ElabErr("a match binder is unsupported")
+            None => ⊢ ElabResult(ElabTyped) from match expected {
+              None => ElabErr("a match requires an expected type")
+              Some(ty) => elab_match(j, &mut core, env, scrutinee, arms, ty)
+            }
+          }
+        }
         SkHole(name) => ElabErr("proof hole is not a completed term")
         _ => ElabErr("unsupported term form")
       }
@@ -158,14 +1927,14 @@ mutual {
     env: List(ElabBinding),
     term: SurfaceTerm
   ): ElabResult(KernelTerm) {
-    match k: ElabResult(KernelTerm) {
+    ⊢ ElabResult(KernelTerm) from match k {
       Zero => { kernel_set_to(&mut core.exhausted, true)
         ElabErr("elaboration exhausted") }
-      Succ(j) => match elab_term(j, &mut core, env, term, None): ElabResult(KernelTerm) {
+      Succ(j) => ⊢ ElabResult(KernelTerm) from match elab_term(j, &mut core, env, term, None) {
         ElabErr(e) => ElabErr(e)
-        ElabOk(t) => match kernel_as_sort(
-          kernel_whnf(j, &mut core, t.ty, true)
-        ): ElabResult(KernelTerm) {
+        ElabOk(t) => ⊢ ElabResult(KernelTerm) from match kernel_as_sort(
+          kernel_whnf(j, &mut core, t.ty, true, false)
+        ) {
           None => ElabErr("expected a type")
           Some(s) => ElabOk(t.value)
         }
@@ -180,25 +1949,25 @@ mutual {
     params: List(SurfaceParam),
     result: SurfaceTerm
   ): ElabResult(KernelTerm) {
-    match k: ElabResult(KernelTerm) {
+    ⊢ ElabResult(KernelTerm) from match k {
       Zero => { kernel_set_to(&mut core.exhausted, true)
         ElabErr("elaboration exhausted") }
-      Succ(j) => match params: ElabResult(KernelTerm) {
+      Succ(j) => ⊢ ElabResult(KernelTerm) from match params {
         Nil => elab_type(j, &mut core, env, result)
-        Cons(p, rest) => match elab_type(j, &mut core, env, p.ty): ElabResult(KernelTerm) {
+        Cons(p, rest) => ⊢ ElabResult(KernelTerm) from match elab_type(j, &mut core, env, p.ty) {
           ElabErr(e) => ElabErr(e)
           ElabOk(domain) => {
             let saved := core.locals
             let atom := kernel_fresh(&mut core, domain)
-            let locals := match p.name: List(ElabBinding) {
+            let locals := ⊢ List(ElabBinding) from match p.name {
               None => env
               Some(name) => Cons(ElabBinding::Mk(name, KernelFVar(atom), domain), env)
             }
             let body := elab_pi(j, &mut core, locals, rest, result)
             kernel_set_to(&mut core.locals, saved)
-            match body: ElabResult(KernelTerm) {
+            ⊢ ElabResult(KernelTerm) from match body {
               ElabErr(e) => ElabErr(e)
-              ElabOk(codomain) => ElabOk(KernelPi(domain, kernel_abstract_at(codomain, 0, atom)))
+              ElabOk(codomain) => ElabOk(kernel_pi(domain, kernel_abstract_at(codomain, 0, atom)))
             }
           }
         }
@@ -214,16 +1983,18 @@ mutual {
     body: SurfaceTerm,
     expected: KernelTerm
   ): ElabResult(ElabTyped) {
-    match k: ElabResult(ElabTyped) {
+    ⊢ ElabResult(ElabTyped) from match k {
       Zero => { kernel_set_to(&mut core.exhausted, true)
         ElabErr("elaboration exhausted") }
-      Succ(j) => match params: ElabResult(ElabTyped) {
+      Succ(j) => ⊢ ElabResult(ElabTyped) from match params {
         Nil => elab_term(j, &mut core, env, body, Some(expected))
-        Cons(name, rest) => match kernel_as_pi(
-          kernel_whnf(j, &mut core, expected, true)
-        ): ElabResult(ElabTyped) {
+        Cons(name, rest) => ⊢ ElabResult(ElabTyped) from match kernel_as_pi(
+          kernel_whnf(j, &mut core, expected, true, false)
+        ) {
           None => ElabErr("lambda expected a function type")
-          Some(#(@domain domain, @codomain codomain)) => {
+          Some(dc) => {
+            let domain := dc.fst
+            let codomain := dc.snd
             let saved := core.locals
             let atom := kernel_fresh(&mut core, domain)
             let tail := elab_lambda(
@@ -235,12 +2006,12 @@ mutual {
               kernel_inst(codomain, KernelFVar(atom))
             )
             kernel_set_to(&mut core.locals, saved)
-            match tail: ElabResult(ElabTyped) {
+            ⊢ ElabResult(ElabTyped) from match tail {
               ElabErr(e) => ElabErr(e)
               ElabOk(t) => elab_result(
                 j,
                 &mut core,
-                KernelLam(kernel_abstract_at(t.value, 0, atom)),
+                kernel_lam(kernel_abstract_at(t.value, 0, atom)),
                 Some(expected)
               )
             }
@@ -257,21 +2028,21 @@ mutual {
     args: List(SurfaceTerm),
     expected: Option(KernelTerm)
   ): ElabResult(ElabTyped) {
-    match k: ElabResult(ElabTyped) {
+    ⊢ ElabResult(ElabTyped) from match k {
       Zero => { kernel_set_to(&mut core.exhausted, true)
         ElabErr("elaboration exhausted") }
-      Succ(j) => match args: ElabResult(ElabTyped) {
-        Cons(ty, rest) => match rest: ElabResult(ElabTyped) {
-          Cons(value, more) => match more: ElabResult(ElabTyped) {
-            Nil => match elab_type(j, &mut core, env, ty): ElabResult(ElabTyped) {
+      Succ(j) => ⊢ ElabResult(ElabTyped) from match args {
+        Cons(ty, rest) => ⊢ ElabResult(ElabTyped) from match rest {
+          Cons(value, more) => ⊢ ElabResult(ElabTyped) from match more {
+            Nil => ⊢ ElabResult(ElabTyped) from match elab_type(j, &mut core, env, ty) {
               ElabErr(e) => ElabErr(e)
-              ElabOk(written) => match elab_term(
+              ElabOk(written) => ⊢ ElabResult(ElabTyped) from match elab_term(
                 j,
                 &mut core,
                 env,
                 value,
                 Some(written)
-              ): ElabResult(ElabTyped) {
+              ) {
                 ElabErr(e) => ElabErr(e)
                 ElabOk(t) => elab_known(j, &mut core, t, expected)
               }
@@ -293,12 +2064,12 @@ mutual {
     args: List(SurfaceTerm),
     expected: Option(KernelTerm)
   ): ElabResult(ElabTyped) {
-    match k: ElabResult(ElabTyped) {
+    ⊢ ElabResult(ElabTyped) from match k {
       Zero => { kernel_set_to(&mut core.exhausted, true)
         ElabErr("elaboration exhausted") }
-      Succ(j) => match elab_term(j, &mut core, env, head, None): ElabResult(ElabTyped) {
+      Succ(j) => ⊢ ElabResult(ElabTyped) from match elab_term(j, &mut core, env, head, None) {
         ElabErr(e) => ElabErr(e)
-        ElabOk(t) => match elab_arguments(j, &mut core, env, t, args): ElabResult(ElabTyped) {
+        ElabOk(t) => ⊢ ElabResult(ElabTyped) from match elab_arguments(j, &mut core, env, t, args) {
           ElabErr(e) => ElabErr(e)
           ElabOk(v) => elab_known(j, &mut core, v, expected)
         }
@@ -313,22 +2084,28 @@ mutual {
     head: ElabTyped,
     args: List(SurfaceTerm)
   ): ElabResult(ElabTyped) {
-    match k: ElabResult(ElabTyped) {
+    ⊢ ElabResult(ElabTyped) from match k {
       Zero => { kernel_set_to(&mut core.exhausted, true)
         ElabErr("elaboration exhausted") }
-      Succ(j) => match args: ElabResult(ElabTyped) {
+      Succ(j) => ⊢ ElabResult(ElabTyped) from match args {
         Nil => ElabOk(head)
-        Cons(arg, rest) => match kernel_as_pi(
-          kernel_whnf(j, &mut core, head.ty, true)
-        ): ElabResult(ElabTyped) {
+        Cons(arg, rest) => ⊢ ElabResult(ElabTyped) from match kernel_as_pi(
+          kernel_whnf(j, &mut core, head.ty, true, false)
+        ) {
           None => ElabErr("application expects a function")
-          Some(#(@domain domain, @codomain codomain)) => match elab_term(j, &mut core, env, arg, Some(domain)): ElabResult(ElabTyped) {
+          Some(dc) => ⊢ ElabResult(ElabTyped) from match elab_term(
+            j,
+            &mut core,
+            env,
+            arg,
+            Some(dc.fst)
+          ) {
             ElabErr(e) => ElabErr(e)
             ElabOk(v) => elab_arguments(
               j,
               &mut core,
               env,
-              ElabTyped::Mk(KernelApp(head.value, v.value), kernel_inst(codomain, v.value)),
+              ElabTyped::Mk(kernel_app(head.value, v.value), kernel_inst(dc.snd, v.value)),
               rest
             )
           }
@@ -344,29 +2121,29 @@ mutual {
     stmts: List(SurfaceStmt),
     expected: Option(KernelTerm)
   ): ElabResult(ElabTyped) {
-    match k: ElabResult(ElabTyped) {
+    ⊢ ElabResult(ElabTyped) from match k {
       Zero => { kernel_set_to(&mut core.exhausted, true)
         ElabErr("elaboration exhausted") }
-      Succ(j) => match stmts: ElabResult(ElabTyped) {
+      Succ(j) => ⊢ ElabResult(ElabTyped) from match stmts {
         Nil => ElabErr("empty proof block")
-        Cons(stmt, rest) => match stmt: ElabResult(ElabTyped) {
-          StExpr(value) => match rest: ElabResult(ElabTyped) {
+        Cons(stmt, rest) => ⊢ ElabResult(ElabTyped) from match stmt {
+          StExpr(value) => ⊢ ElabResult(ElabTyped) from match rest {
             Nil => elab_term(j, &mut core, env, value, expected)
             _ => ElabErr("only the last block expression produces a value")
           }
           StLet(name, annotation, value, borrow, mutable) => if borrow || mutable {
             ElabErr("borrowed and mutable lets are unsupported")
           } else {
-            let want := match annotation: ElabResult(Option(KernelTerm)) {
+            let want := ⊢ ElabResult(Option(KernelTerm)) from match annotation {
               None => ElabOk(None)
-              Some(ty) => match elab_type(j, &mut core, env, ty): ElabResult(Option(KernelTerm)) {
+              Some(ty) => ⊢ ElabResult(Option(KernelTerm)) from match elab_type(j, &mut core, env, ty) {
                 ElabErr(e) => ElabErr(e)
                 ElabOk(t) => ElabOk(Some(t))
               }
             }
-            match want: ElabResult(ElabTyped) {
+            ⊢ ElabResult(ElabTyped) from match want {
               ElabErr(e) => ElabErr(e)
-              ElabOk(ty) => match elab_term(j, &mut core, env, value, ty): ElabResult(ElabTyped) {
+              ElabOk(ty) => ⊢ ElabResult(ElabTyped) from match elab_term(j, &mut core, env, value, ty) {
                 ElabErr(e) => ElabErr(e)
                 ElabOk(t) => elab_block(
                   j,
@@ -379,6 +2156,759 @@ mutual {
             }
           }
           _ => ElabErr("unsupported proof block statement")
+        }
+      }
+    }
+  }
+
+  // A call of the declaration itself: each argument is a variable, and the
+  // call is an induction hypothesis only when one of them is a recursive field
+  // of the matched parameter and the others are the parameters as they are.
+  pub fn elab_recursive_call(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    name: Text,
+    args: List(SurfaceTerm),
+    expected: Option(KernelTerm)
+  ): ElabResult(ElabTyped) {
+    ⊢ ElabResult(ElabTyped) from match k {
+      Zero => { kernel_set_to(&mut core.exhausted, true)
+        ElabErr("elaboration exhausted") }
+      Succ(j) => ⊢ ElabResult(ElabTyped) from match elab_arg_atoms(env, args) {
+        None => ElabErr("a recursive call must pass variables")
+        Some(written) => ⊢ ElabResult(ElabTyped) from match elab_lookup(env, elab_rec_key(name, List::append(elab_self_implicits(env, name), written))) {
+          None => ElabErr(elab_deep_message())
+          Some(ih) => elab_known(j, &mut core, ih, expected)
+        }
+      }
+    }
+  }
+
+  // `match x { C(a, …) => … }` on a variable of an inductive family without
+  // indices: the family's eliminator applied to its parameters, the motive
+  // made from the expected type, one case per constructor, and `x`.
+  pub fn elab_match(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    scrutinee: SurfaceTerm,
+    written: List(SurfaceArm),
+    expected: KernelTerm
+  ): ElabResult(ElabTyped) {
+    ⊢ ElabResult(ElabTyped) from match k {
+      Zero => { kernel_set_to(&mut core.exhausted, true)
+        ElabErr("elaboration exhausted") }
+      Succ(j) => ⊢ ElabResult(ElabTyped) from match elab_nest_arms(j, core, written) {
+       NestErr(e) => ElabErr(e)
+       NestOk(arms, fresh, used) => ⊢ ElabResult(ElabTyped) from match scrutinee.kind {
+        SkVar(x) => ⊢ ElabResult(ElabTyped) from match elab_lookup(env, x) {
+          None => ElabErr("a match is on a local variable")
+          Some(local) => ⊢ ElabResult(ElabTyped) from match local.value {
+            KernelFVar(atom) => {
+              let spine := elab_spine(j, kernel_whnf(j, &mut core, local.ty, true, false), Nil)
+              ⊢ ElabResult(ElabTyped) from match spine.fst {
+                KernelConst(family) => ⊢ ElabResult(ElabTyped) from match kernel_ind_get(core, family) {
+                  None => ElabErr("the matched value is not of an inductive type")
+                  Some(info) => if elab_is_instance(family) {
+                    // As in the host: an instance of a level-polymorphic family is not matched on.
+                    ElabErr("a match on an instance of a level-polymorphic family is unsupported")
+                  } else { ⊢ ElabResult(ElabTyped) from match elab_index_atoms(elab_drop_terms(spine.snd, info.params), Cons(atom, Nil)) {
+                   None => ⊢ ElabResult(ElabTyped) from match elab_lookup(env, elab_below_key(atom)) {
+                     Some(bv) => ElabErr("a match in a recursion on deeper parts must be on an unindexed family")
+                     None => elab_general_match(j, &mut core, env, atom, info, family, elab_take_terms(spine.snd, info.params), elab_drop_terms(spine.snd, info.params), arms, expected)
+                   }
+                   Some(indices) => if elab_dependents(env, Cons(atom, indices), Cons(atom, indices)) {
+                    ElabErr("a match whose variable or indices other variables depend on is unsupported")
+                  } else if List::length(arms) != List::length(info.constructors) || elab_arms_known(arms, info.constructors, family) == false {
+                    ElabErr("a match needs exactly one plain arm per constructor")
+                  } else {
+                    let motive := elab_abstract_indices(kernel_abstract_at(expected, 0, atom), List::reverse(indices), 1)
+                    let recursion := ⊢ Option(ElabRecursion) from match elab_self(env) {
+                      None => None
+                      Some(me) => ⊢ Option(ElabRecursion) from match elab_self_params(env, me.snd) {
+                        None => None
+                        Some(ids) => ⊢ Option(ElabRecursion) from match elab_position(ids, atom, 0) {
+                          None => None
+                          Some(at) => Some(ElabRecursion::Mk(me.fst, ids, at, indices))
+                        }
+                      }
+                    }
+                    let params := elab_take_terms(spine.snd, info.params)
+                    let simple := List::length(indices) == 0 && List::length(info.group) == 1
+                    ⊢ ElabResult(ElabTyped) from match elab_lookup(env, elab_below_key(atom)) {
+                     Some(bv) => if simple && elab_none_recursion(recursion) { elab_deep_inner(j, &mut core, env, atom, info, family, params, arms, expected, bv.value) } else {
+                       ElabErr("a match in a recursion on deeper parts must be on an unindexed family")
+                     }
+                     None => ⊢ ElabResult(ElabTyped) from match elab_minors(j, &mut core, env, info.constructors, info.constructors, arms, family, params, motive, info.position, recursion) {
+                      ElabErr(e) => ⊢ ElabResult(ElabTyped) from match recursion {
+                        Some(r) => if simple && e == elab_deep_message() { elab_deep_top(j, &mut core, env, atom, info, family, params, arms, expected, r) } else { ElabErr(e) }
+                        None => ElabErr(e)
+                      }
+                      ElabOk(minors) => elab_result(
+                        j,
+                        &mut core,
+                        elab_apps(
+                          KernelConst(Text::concat(family, "::rec")),
+                          List::append(params, List::append(elab_group_motives(core, info.group, family, elab_lam_n(motive, List::length(indices) + 1)), List::append(elab_group_minors(core, info.group, family, minors), List::append(elab_fvars(indices), Cons(KernelFVar(atom), Nil)))))
+                        ),
+                        Some(expected)
+                      )
+                     }
+                    }
+                  }
+                  }
+                  }
+                }
+                _ => ElabErr("the matched value is not of an inductive type")
+              }
+            }
+            _ => ElabErr("a match is on a variable bound by a parameter or a pattern")
+          }
+        }
+        _ => ElabErr("a match on a term that is not a variable is unsupported")
+       }
+      }
+    }
+  }
+
+  // A recursion on parts deeper than the fields: the motive pairs each value
+  // with `below` of it, the values at its parts, and the declaration's value
+  // is the first half.
+  pub fn elab_deep_top(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    x: Nat,
+    info: KernelIndInfo,
+    family: Text,
+    params: List(KernelTerm),
+    arms: List(SurfaceArm),
+    expected: KernelTerm,
+    r: ElabRecursion
+  ): ElabResult(ElabTyped) {
+    ⊢ ElabResult(ElabTyped) from match k {
+      Zero => { kernel_set_to(&mut core.exhausted, true)
+        ElabErr("elaboration exhausted") }
+      Succ(j) => {
+        let gtop := kernel_abstract_at(expected, 0, x)
+        ⊢ ElabResult(ElabTyped) from match elab_below_body(j, &mut core, info, family, params, gtop) {
+          None => ElabErr("a recursion on deeper parts of a family with function-typed recursive fields is unsupported")
+          Some(below) => {
+            let gm := elab_pair_ty(gtop, below)
+            let inner := Cons(
+              ElabBinding::Mk("#deep motive", gtop, KernelLit(r.at)),
+              Cons(ElabBinding::Mk("#deep below", below, KernelLit(0)), env)
+            )
+            ⊢ ElabResult(ElabTyped) from match elab_deep_minors(j, &mut core, inner, info.constructors, info.constructors, arms, family, params, true, gtop, below, gm, gtop, r) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(minors) => {
+                let whole := elab_apps(
+                  KernelConst(Text::concat(family, "::rec")),
+                  List::append(params, Cons(kernel_lam(gm), List::append(minors, Cons(KernelFVar(x), Nil))))
+                )
+                elab_result(j, &mut core, elab_half(expected, kernel_inst(below, KernelFVar(x)), whole, true), Some(expected))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // A match, in a recursion on deeper parts, on a part whose `below` is in
+  // scope: the match generalizes it, so each arm sees the parts one level
+  // further down.
+  pub fn elab_deep_inner(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    v: Nat,
+    info: KernelIndInfo,
+    family: Text,
+    params: List(KernelTerm),
+    arms: List(SurfaceArm),
+    expected: KernelTerm,
+    bv: KernelTerm
+  ): ElabResult(ElabTyped) {
+    ⊢ ElabResult(ElabTyped) from match k {
+      Zero => { kernel_set_to(&mut core.exhausted, true)
+        ElabErr("elaboration exhausted") }
+      Succ(j) => ⊢ ElabResult(ElabTyped) from match elab_lookup(env, "#deep motive") {
+        None => ElabErr("a part's `below` is outside a recursion on deeper parts")
+        Some(dm) => ⊢ ElabResult(ElabTyped) from match elab_lookup(env, "#deep below") {
+          None => ElabErr("a part's `below` is outside a recursion on deeper parts")
+          Some(db) => ⊢ ElabResult(ElabTyped) from match elab_deep_recursion(env) {
+            None => ElabErr("a part's `below` is outside a recursion on deeper parts")
+            Some(r) => {
+              let ggoal := kernel_abstract_at(expected, 0, v)
+              let gm := kernel_abstract_at(kernel_pi(kernel_inst(db.value, KernelFVar(v)), expected), 0, v)
+              ⊢ ElabResult(ElabTyped) from match elab_deep_minors(j, &mut core, env, info.constructors, info.constructors, arms, family, params, false, dm.value, db.value, gm, ggoal, r) {
+                ElabErr(e) => ElabErr(e)
+                ElabOk(minors) => {
+                  let whole := elab_apps(
+                    KernelConst(Text::concat(family, "::rec")),
+                    List::append(params, Cons(kernel_lam(gm), List::append(minors, Cons(KernelFVar(v), Cons(bv, Nil)))))
+                  )
+                  elab_result(j, &mut core, whole, Some(expected))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn elab_deep_minors(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    all: List(KernelCtorInfo),
+    ctors: List(KernelCtorInfo),
+    arms: List(SurfaceArm),
+    family: Text,
+    params: List(KernelTerm),
+    top: Bool,
+    gtop: KernelTerm,
+    below: KernelTerm,
+    gm: KernelTerm,
+    ggoal: KernelTerm,
+    r: ElabRecursion
+  ): ElabResult(List(KernelTerm)) {
+    ⊢ ElabResult(List(KernelTerm)) from match k {
+      Zero => { kernel_set_to(&mut core.exhausted, true)
+        ElabErr("elaboration exhausted") }
+      Succ(j) => ⊢ ElabResult(List(KernelTerm)) from match ctors {
+        Nil => ElabOk(Nil)
+        Cons(c, rest) => ⊢ ElabResult(List(KernelTerm)) from match elab_arm_of(arms, all, c.name, family) {
+          None => ElabErr("a constructor has no arm")
+          Some(found) => ⊢ ElabResult(List(KernelTerm)) from match elab_bound_names(found.snd) {
+            None => ElabErr("constructor patterns bind variables or `_`")
+            Some(names) => if List::length(names) != c.nargs { ElabErr("a pattern has the wrong number of fields") } else {
+              ⊢ ElabResult(List(KernelTerm)) from match kernel_global_get(core, c.name) {
+                None => ElabErr("unknown constructor")
+                Some(g) => ⊢ ElabResult(List(KernelTerm)) from match elab_instantiate(j, g.ty, params) {
+                  None => ElabErr("cannot instantiate the constructor")
+                  Some(cty) => {
+                    let saved := core.locals
+                    let minor := elab_deep_case(j, &mut core, env, names, cty, Nil, c, found.fst.body, params, top, gtop, below, gm, ggoal, r)
+                    kernel_set_to(&mut core.locals, saved)
+                    ⊢ ElabResult(List(KernelTerm)) from match minor {
+                      ElabErr(e) => ElabErr(e)
+                      ElabOk(m) => ⊢ ElabResult(List(KernelTerm)) from match elab_deep_minors(j, &mut core, env, all, rest, arms, family, params, top, gtop, below, gm, ggoal, r) {
+                        ElabErr(e) => ElabErr(e)
+                        ElabOk(ms) => ElabOk(Cons(m, ms))
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn elab_deep_case(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    names: List(Option(Text)),
+    cty: KernelTerm,
+    fields: List(Nat),
+    c: KernelCtorInfo,
+    body: SurfaceTerm,
+    params: List(KernelTerm),
+    top: Bool,
+    gtop: KernelTerm,
+    below: KernelTerm,
+    gm: KernelTerm,
+    ggoal: KernelTerm,
+    r: ElabRecursion
+  ): ElabResult(KernelTerm) {
+    ⊢ ElabResult(KernelTerm) from match k {
+      Zero => { kernel_set_to(&mut core.exhausted, true)
+        ElabErr("elaboration exhausted") }
+      Succ(j) => ⊢ ElabResult(KernelTerm) from match names {
+        Cons(n, rest) => ⊢ ElabResult(KernelTerm) from match kernel_as_pi(kernel_whnf(j, &mut core, cty, true, false)) {
+          None => ElabErr("a constructor has fewer fields than its pattern")
+          Some(p) => {
+            let atom := kernel_fresh(&mut core, p.fst)
+            let named := ⊢ List(ElabBinding) from match n {
+              None => env
+              Some(x) => Cons(ElabBinding::Mk(x, KernelFVar(atom), p.fst), env)
+            }
+            elab_deep_case(j, &mut core, named, rest, kernel_inst(p.snd, KernelFVar(atom)), List::append(fields, Cons(atom, Nil)), c, body, params, top, gtop, below, gm, ggoal, r)
+          }
+        }
+        Nil => {
+          let recf := elab_rec_atoms(fields, c, 0)
+          let ihs := elab_fresh_all(&mut core, recf, gm)
+          let cv := elab_apps(KernelConst(c.name), List::append(params, elab_fvars(fields)))
+          let es := elab_entries(recf, gtop, below)
+          let bl: Nat := if top { 0 } else { kernel_fresh(&mut core, kernel_inst(below, cv)) }
+          let entries: List(KernelTerm) := if top { elab_fvars(ihs) } else { elab_chain_entries(es, 0, List::length(recf), KernelFVar(bl)) }
+          let inner := elab_deep_bindings(recf, entries, gtop, below, r, env)
+          ⊢ ElabResult(KernelTerm) from match elab_term(j, &mut core, inner, body, Some(kernel_inst(ggoal, cv))) {
+            ElabErr(e) => ElabErr(e)
+            ElabOk(t) => if top {
+              ElabOk(elab_lams(
+                elab_apps(KernelConst("BelowPair::Mk"), Cons(kernel_inst(gtop, cv), Cons(kernel_inst(below, cv), Cons(t.value, Cons(elab_chain_val(es, elab_fvars(ihs)), Nil))))),
+                List::append(fields, ihs)
+              ))
+            } else { ElabOk(elab_lams(t.value, List::append(fields, List::append(ihs, Cons(bl, Nil))))) }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn elab_minors(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    all: List(KernelCtorInfo),
+    ctors: List(KernelCtorInfo),
+    arms: List(SurfaceArm),
+    family: Text,
+    params: List(KernelTerm),
+    motive: KernelTerm,
+    position: Nat,
+    recursion: Option(ElabRecursion)
+  ): ElabResult(List(KernelTerm)) {
+    ⊢ ElabResult(List(KernelTerm)) from match k {
+      Zero => { kernel_set_to(&mut core.exhausted, true)
+        ElabErr("elaboration exhausted") }
+      Succ(j) => ⊢ ElabResult(List(KernelTerm)) from match ctors {
+        Nil => ElabOk(Nil)
+        Cons(c, rest) => ⊢ ElabResult(List(KernelTerm)) from match elab_arm_of(arms, all, c.name, family) {
+          None => ElabErr("a constructor has no arm")
+          Some(found) => {
+            let arm := found.fst
+            ⊢ ElabResult(List(KernelTerm)) from match elab_bound_names(found.snd) {
+              None => ElabErr("constructor patterns bind variables or `_`")
+              Some(names) => if List::length(names) != c.nargs { ElabErr("a pattern has the wrong number of fields") } else {
+                ⊢ ElabResult(List(KernelTerm)) from match kernel_global_get(core, c.name) {
+                  None => ElabErr("unknown constructor")
+                  Some(g) => ⊢ ElabResult(List(KernelTerm)) from match elab_instantiate(j, g.ty, params) {
+                    None => ElabErr("cannot instantiate the constructor")
+                    Some(cty) => {
+                      let saved := core.locals
+                      let minor := elab_case(j, &mut core, env, names, cty, 0, Nil, c, arm.body, motive, params, position, recursion)
+                      kernel_set_to(&mut core.locals, saved)
+                      ⊢ ElabResult(List(KernelTerm)) from match minor {
+                        ElabErr(e) => ElabErr(e)
+                        ElabOk(m) => ⊢ ElabResult(List(KernelTerm)) from match elab_minors(j, &mut core, env, all, rest, arms, family, params, motive, position, recursion) {
+                          ElabErr(e) => ElabErr(e)
+                          ElabOk(ms) => ElabOk(Cons(m, ms))
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Bind the fields of one constructor, then an induction hypothesis for each
+  // recursive field, and elaborate the arm at the motive of the constructor.
+  pub fn elab_case(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    names: List(Option(Text)),
+    cty: KernelTerm,
+    at: Nat,
+    fields: List(Nat),
+    c: KernelCtorInfo,
+    body: SurfaceTerm,
+    motive: KernelTerm,
+    params: List(KernelTerm),
+    position: Nat,
+    recursion: Option(ElabRecursion)
+  ): ElabResult(KernelTerm) {
+    ⊢ ElabResult(KernelTerm) from match k {
+      Zero => { kernel_set_to(&mut core.exhausted, true)
+        ElabErr("elaboration exhausted") }
+      Succ(j) => ⊢ ElabResult(KernelTerm) from match names {
+        Cons(n, rest) => ⊢ ElabResult(KernelTerm) from match kernel_as_pi(kernel_whnf(j, &mut core, cty, true, false)) {
+          None => ElabErr("a constructor has fewer fields than its pattern")
+          Some(p) => {
+            let atom := kernel_fresh(&mut core, p.fst)
+            let named := ⊢ List(ElabBinding) from match n {
+              None => env
+              Some(x) => Cons(ElabBinding::Mk(x, KernelFVar(atom), p.fst), env)
+            }
+            elab_case(j, &mut core, named, rest, kernel_inst(p.snd, KernelFVar(atom)), at + 1, List::append(fields, Cons(atom, Nil)), c, body, motive, params, position, recursion)
+          }
+        }
+        Nil => {
+          let ihs := elab_hypotheses(j, &mut core, env, fields, 0, c, motive, List::length(params), position, recursion)
+          let at_indices := elab_type_indices(j, &mut core, cty, List::length(params))
+          let goal := elab_inst_all(motive, Cons(elab_apps(KernelConst(c.name), List::append(params, elab_fvars(fields))), List::reverse(at_indices)))
+          ⊢ ElabResult(KernelTerm) from match elab_term(j, &mut core, ihs.snd, body, Some(goal)) {
+            ElabErr(e) => ElabErr(e)
+            ElabOk(t) => ElabOk(elab_lams(t.value, List::append(fields, ihs.fst)))
+          }
+        }
+      }
+    }
+  }
+
+  pub fn elab_hypotheses(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    fields: List(Nat),
+    i: Nat,
+    c: KernelCtorInfo,
+    motive: KernelTerm,
+    np: Nat,
+    position: Nat,
+    recursion: Option(ElabRecursion)
+  ): Pair(List(Nat), List(ElabBinding)) {
+    ⊢ Pair(List(Nat), List(ElabBinding)) from match k {
+      Zero => Pair { fst: Nil, snd: env }
+      Succ(j) => ⊢ Pair(List(Nat), List(ElabBinding)) from match fields {
+        Nil => Pair { fst: Nil, snd: env }
+        Cons(f, rest) => if elab_is_recursive(c.recursive, i) && elab_rec_family(c.recursive, i) != position {
+          // A field of another family of the group: its motive is `Unit`.
+          let ih := kernel_fresh(&mut core, KernelConst("Unit"))
+          let more := elab_hypotheses(j, &mut core, env, rest, i + 1, c, motive, np, position, recursion)
+          Pair { fst: Cons(ih, more.fst), snd: more.snd }
+        } else if elab_is_recursive(c.recursive, i) {
+          let fty := ⊢ KernelTerm from match kernel_local_get(core, f) {
+            Some(t) => t
+            None => KernelSortTerm(KernelProp)
+          }
+          let at_indices := elab_type_indices(j, &mut core, fty, np)
+          let ty := elab_inst_all(motive, Cons(KernelFVar(f), List::reverse(at_indices)))
+          let ih := kernel_fresh(&mut core, ty)
+          let bound := ⊢ List(ElabBinding) from match recursion {
+            None => env
+            Some(r) => ⊢ List(ElabBinding) from match elab_moved_indices(r.ids, r.indices, at_indices) {
+              None => env
+              Some(ids) => Cons(
+                ElabBinding::Mk(elab_rec_key(r.name, elab_set_nat(ids, r.at, f)), KernelFVar(ih), ty),
+                env
+              )
+            }
+          }
+          let more := elab_hypotheses(j, &mut core, bound, rest, i + 1, c, motive, np, position, recursion)
+          Pair { fst: Cons(ih, more.fst), snd: more.snd }
+        } else { elab_hypotheses(j, &mut core, env, rest, i + 1, c, motive, np, position, recursion) }
+      }
+    }
+  }
+
+  // A global with implicit parameters: each becomes a hole, solved by
+  // matching the expected result type and then each explicit argument's
+  // type against the parameter types. Every hole must be solved; the
+  // kernel checks the application with the solutions as arguments.
+  pub fn elab_implicit_application(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    name: Text,
+    args: List(SurfaceTerm),
+    expected: Option(KernelTerm)
+  ): ElabResult(ElabTyped) {
+    ⊢ ElabResult(ElabTyped) from match k {
+      Zero => { kernel_set_to(&mut core.exhausted, true)
+        ElabErr("elaboration exhausted") }
+      Succ(j) => ⊢ ElabResult(ElabTyped) from match kernel_global_get(core, name) {
+        None => ElabErr("unknown name")
+        Some(g) => {
+          let saved := core.locals
+          let result := ⊢ ElabResult(ElabTyped) from match elab_holes(j, &mut core, g.ty, elab_implicit_count(env, core, name)) {
+            None => ElabErr("the implicit parameters do not match the type")
+            Some(hs) => {
+              let start := ⊢ Option(List(Pair(Nat, KernelTerm))) from match expected {
+                None => Some(Nil)
+                Some(want) => ⊢ Option(List(Pair(Nat, KernelTerm))) from match elab_result_after(j, &mut core, hs.snd, List::length(args)) {
+                  None => Some(Nil)
+                  Some(r) => ⊢ Option(List(Pair(Nat, KernelTerm))) from match elab_unify(j, &mut core, hs.fst, r, want, Nil) {
+                    None => Some(Nil)
+                    Some(s) => Some(s)
+                  }
+                }
+              }
+              ⊢ ElabResult(ElabTyped) from match start {
+                None => ElabErr("cannot infer the implicit arguments")
+                Some(sols) => elab_implicit_arguments(j, &mut core, env, hs.fst, sols, hs.snd, args, Nil, name)
+              }
+            }
+          }
+          kernel_set_to(&mut core.locals, saved)
+          ⊢ ElabResult(ElabTyped) from match result {
+            ElabErr(e) => ElabErr(e)
+            ElabOk(t) => elab_result(j, &mut core, t.value, expected)
+          }
+        }
+      }
+    }
+  }
+
+  pub fn elab_implicit_arguments(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    holes: List(Nat),
+    sols: List(Pair(Nat, KernelTerm)),
+    ty: KernelTerm,
+    args: List(SurfaceTerm),
+    done: List(KernelTerm),
+    name: Text
+  ): ElabResult(ElabTyped) {
+    ⊢ ElabResult(ElabTyped) from match k {
+      Zero => { kernel_set_to(&mut core.exhausted, true)
+        ElabErr("elaboration exhausted") }
+      Succ(j) => ⊢ ElabResult(ElabTyped) from match args {
+        Nil => ⊢ ElabResult(ElabTyped) from match elab_solutions_of(holes, sols) {
+          None => ElabErr("cannot infer the implicit arguments")
+          Some(vs) => ElabOk(ElabTyped::Mk(elab_apps(KernelConst(name), List::append(vs, done)), elab_subst(ty, sols)))
+        }
+        Cons(arg, rest) => ⊢ ElabResult(ElabTyped) from match kernel_as_pi(kernel_whnf(j, &mut core, ty, true, false)) {
+          None => ElabErr("application expects a function")
+          Some(p) => {
+            let domain := elab_subst(p.fst, sols)
+            let elaborated: ElabResult(Pair(KernelTerm, List(Pair(Nat, KernelTerm)))) := if elab_any_occurs(domain, elab_unsolved(holes, sols)) {
+              ⊢ ElabResult(Pair(KernelTerm, List(Pair(Nat, KernelTerm)))) from match elab_term(j, &mut core, env, arg, None) {
+                ElabErr(e) => ElabErr(e)
+                ElabOk(t) => ⊢ ElabResult(Pair(KernelTerm, List(Pair(Nat, KernelTerm)))) from match elab_unify(j, &mut core, holes, domain, t.ty, sols) {
+                  None => ElabErr("an argument's type does not match its parameter")
+                  Some(s) => ElabOk(Pair { fst: t.value, snd: s })
+                }
+              }
+            } else {
+              ⊢ ElabResult(Pair(KernelTerm, List(Pair(Nat, KernelTerm)))) from match elab_term(j, &mut core, env, arg, Some(domain)) {
+                ElabErr(e) => ElabErr(e)
+                ElabOk(t) => ElabOk(Pair { fst: t.value, snd: sols })
+              }
+            }
+            ⊢ ElabResult(ElabTyped) from match elaborated {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(v) => elab_implicit_arguments(
+                j,
+                &mut core,
+                env,
+                holes,
+                v.snd,
+                kernel_inst(p.snd, v.fst),
+                rest,
+                List::append(done, Cons(v.fst, Nil)),
+                name
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // A match whose indices are not distinct variables (see `ElabGen`).
+  pub fn elab_general_match(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    x: Nat,
+    info: KernelIndInfo,
+    family: Text,
+    params: List(KernelTerm),
+    idx: List(KernelTerm),
+    arms: List(SurfaceArm),
+    expected: KernelTerm
+  ): ElabResult(ElabTyped) {
+    ⊢ ElabResult(ElabTyped) from match k {
+      Zero => { kernel_set_to(&mut core.exhausted, true)
+        ElabErr("elaboration exhausted") }
+      Succ(j) => if List::length(info.group) != 1 {
+        ElabErr("a match on indices that are not distinct variables is supported on a family outside a mutual group")
+      } else if elab_any_occurs(expected, Cons(x, Nil)) {
+        ElabErr("a match on indices that are not distinct variables, whose type mentions the matched value, is unsupported")
+      } else if elab_arms_known(arms, info.constructors, family) == false || elab_arms_distinct(arms, info.constructors, family, Nil) == false {
+        ElabErr("a match needs at most one plain arm per constructor")
+      } else { ⊢ ElabResult(ElabTyped) from match kernel_global_get(core, family) {
+        None => ElabErr("unknown family")
+        Some(fg) => ⊢ ElabResult(ElabTyped) from match elab_instantiate(j, fg.ty, params) {
+          None => ElabErr("cannot instantiate the family")
+          Some(fty) => ⊢ ElabResult(ElabTyped) from match elab_index_types(j, &mut core, fty, info.indices, Nil) {
+            None => ElabErr("a match on indices whose types depend on each other is unsupported")
+            Some(tys) => {
+              let split := elab_split_indices(&mut core, idx, tys, 0, x, Nil)
+              let vars := elab_vars_of(split.fst, idx)
+              if elab_gen_args_mention(split.snd, vars) {
+                ElabErr("a match whose generalized indices mention its variable indices is unsupported")
+              } else if elab_dependents(env, Cons(x, vars), Cons(x, vars)) {
+                ElabErr("a match whose variable or indices other variables depend on is unsupported")
+              } else {
+                let body := elab_gen_eq_pis(&mut core, split.snd, split.fst, expected)
+                let motive := elab_lams(body, List::append(split.fst, Cons(x, Nil)))
+                let is_prop := elab_is_prop(j, &mut core, expected)
+                ⊢ ElabResult(ElabTyped) from match elab_general_minors(j, &mut core, env, info, info.constructors, arms, family, params, motive, split.snd, x, is_prop) {
+                  ElabErr(e) => ElabErr(e)
+                  ElabOk(minors) => elab_result(
+                    j,
+                    &mut core,
+                    elab_apps(
+                      KernelConst(Text::concat(family, "::rec")),
+                      List::append(params, Cons(motive, List::append(minors, List::append(idx, Cons(KernelFVar(x), elab_gen_refls(split.snd))))))
+                    ),
+                    Some(expected)
+                  )
+                }
+              }
+            }
+          }
+        }
+      } }
+    }
+  }
+
+  pub fn elab_general_minors(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    info: KernelIndInfo,
+    ctors: List(KernelCtorInfo),
+    arms: List(SurfaceArm),
+    family: Text,
+    params: List(KernelTerm),
+    motive: KernelTerm,
+    gens: List(ElabGen),
+    x: Nat,
+    is_prop: Bool
+  ): ElabResult(List(KernelTerm)) {
+    ⊢ ElabResult(List(KernelTerm)) from match k {
+      Zero => { kernel_set_to(&mut core.exhausted, true)
+        ElabErr("elaboration exhausted") }
+      Succ(j) => ⊢ ElabResult(List(KernelTerm)) from match ctors {
+        Nil => ElabOk(Nil)
+        Cons(c, rest) => {
+          let found: ElabResult(Option(Pair(List(Option(Text)), SurfaceTerm))) := ⊢ ElabResult(Option(Pair(List(Option(Text)), SurfaceTerm))) from match elab_arm_of(arms, info.constructors, c.name, family) {
+            None => ElabOk(None)
+            Some(f) => ⊢ ElabResult(Option(Pair(List(Option(Text)), SurfaceTerm))) from match elab_bound_names(f.snd) {
+              None => ElabErr("constructor patterns bind variables or `_`")
+              Some(ns) => if List::length(ns) != c.nargs { ElabErr("a pattern has the wrong number of fields") } else {
+                ElabOk(Some(Pair { fst: ns, snd: f.fst.body }))
+              }
+            }
+          }
+          ⊢ ElabResult(List(KernelTerm)) from match found {
+            ElabErr(e) => ElabErr(e)
+            ElabOk(arm) => {
+              let saved := core.locals
+              let minor := elab_general_case(j, &mut core, env, c, arm, params, motive, gens, x, is_prop)
+              kernel_set_to(&mut core.locals, saved)
+              ⊢ ElabResult(List(KernelTerm)) from match minor {
+                ElabErr(e) => ElabErr(e)
+                ElabOk(m) => ⊢ ElabResult(List(KernelTerm)) from match elab_general_minors(j, &mut core, env, info, rest, arms, family, params, motive, gens, x, is_prop) {
+                  ElabErr(e) => ElabErr(e)
+                  ElabOk(ms) => ElabOk(Cons(m, ms))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // One case: the fields, their induction hypotheses and the equations are
+  // bound; the equations are solved, and the arm is elaborated with the
+  // solved variables replaced, then transported back.
+  pub fn elab_general_case(
+    k: Nat,
+    &mut core: KernelCore,
+    env: List(ElabBinding),
+    c: KernelCtorInfo,
+    arm: Option(Pair(List(Option(Text)), SurfaceTerm)),
+    params: List(KernelTerm),
+    motive: KernelTerm,
+    gens: List(ElabGen),
+    x: Nat,
+    is_prop: Bool
+  ): ElabResult(KernelTerm) {
+    ⊢ ElabResult(KernelTerm) from match k {
+      Zero => { kernel_set_to(&mut core.exhausted, true)
+        ElabErr("elaboration exhausted") }
+      Succ(j) => ⊢ ElabResult(KernelTerm) from match kernel_global_get(core, c.name) {
+        None => ElabErr("unknown constructor")
+        Some(g) => ⊢ ElabResult(KernelTerm) from match elab_instantiate(j, g.ty, params) {
+          None => ElabErr("cannot instantiate the constructor")
+          Some(cty) => ⊢ ElabResult(KernelTerm) from match elab_open_fields(j, &mut core, cty, c.nargs) {
+            None => ElabErr("a constructor has fewer fields than its pattern")
+            Some(fs) => {
+              let fields := fs.fst
+              let names: List(Option(Text)) := ⊢ List(Option(Text)) from match arm {
+                None => Nil
+                Some(a) => a.fst
+              }
+              let named := elab_gen_bind_fields(env, names, fields, fs.snd)
+              let rty := ⊢ KernelTerm from match elab_instantiate(j, cty, elab_fvars(fields)) {
+                None => KernelConst("Unit")
+                Some(t) => t
+              }
+              let idx := elab_type_indices(j, &mut core, rty, List::length(params))
+              ⊢ ElabResult(KernelTerm) from match elab_general_ihs(j, &mut core, fields, 0, c, motive, List::length(params)) {
+                None => ElabErr("a match on indices that are not distinct variables, on a family with function-typed recursive fields, is unsupported")
+                Some(ihs) => {
+                  let cval := elab_apps(KernelConst(c.name), List::append(params, elab_fvars(fields)))
+                  let applied := kernel_whnf(j, &mut core, elab_apps(motive, List::append(idx, Cons(cval, Nil))), true, false)
+                  ⊢ ElabResult(KernelTerm) from match elab_strip_eqs(j, &mut core, applied, List::length(gens)) {
+                    None => ElabErr("the motive has no equation binder")
+                    Some(st) => {
+                      let eqs := st.fst
+                      let goal := st.snd
+                      let binders := List::append(fields, List::append(ihs, eqs))
+                      let local := List::append(elab_env_atoms(env), List::append(fields, ihs))
+                      let plan := elab_unify_indices(j, &mut core, elab_without(local, x), elab_index_work(gens, idx, eqs, Nil), Nil, false, goal)
+                      ⊢ ElabResult(KernelTerm) from match plan {
+                        PlanErr(e) => ElabErr(e)
+                        PlanImpossible(a) => ElabOk(elab_lams(a, binders))
+                        PlanSolved(sols) => ⊢ ElabResult(KernelTerm) from match arm {
+                          None => ElabErr("a constructor has no arm")
+                          Some(a) => ⊢ ElabResult(KernelTerm) from match sols {
+                            Nil => ⊢ ElabResult(KernelTerm) from match elab_term(j, &mut core, named, a.snd, Some(goal)) {
+                              ElabErr(e) => ElabErr(e)
+                              ElabOk(t) => ElabOk(elab_lams(t.value, binders))
+                            }
+                            _ => {
+                              let dep := elab_dependent_atoms(core, local, false, x, elab_sol_atoms(sols))
+                              if elab_sols_mention(sols, dep) {
+                                ElabErr("a solved index mentions a variable whose type depends on a solved one")
+                              } else {
+                                // The arm sees each dependent binding again, at its type
+                                // with the solved variables replaced.
+                                let primed := elab_prime(&mut core, dep, sols)
+                                ⊢ ElabResult(KernelTerm) from match elab_term(j, &mut core, elab_replace_env(named, primed.snd), a.snd, Some(elab_replace_all(goal, sols))) {
+                                  ElabErr(e) => ElabErr(e)
+                                  ElabOk(t) => {
+                                    let deps := List::append(dep, eqs)
+                                    let inner := elab_lams(t.value, List::append(primed.fst, eqs))
+                                    let full := elab_gen_pis_over(deps, elab_atom_types(core, deps), goal)
+                                    let elim: Text := if is_prop { "Eq::ind" } else { "Eq::rec" }
+                                    let cur := elab_transport(&mut core, elim, sols, elab_states(full, sols), inner)
+                                    ElabOk(elab_lams(elab_apps(cur, elab_fvars(deps)), binders))
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }

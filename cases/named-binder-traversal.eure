@@ -1,0 +1,51 @@
+description = "Named free-variable traversal preserves empty and multiple binder scopes."
+
+@ cases.zero_argument_nat_closure
+source = ```tauto
+fn answer(): Nat { let value: () -> Nat := () => 42; value() }
+```
+parses = true
+checks.answer = "ok"
+
+@ cases.zero_argument_nat_closure_runs
+source = ```tauto
+fn answer(): Nat { let value: () -> Nat := () => 42; value() }
+perform show("result", answer())
+```
+imports = [path`../std/Text.taut`]
+extract = true
+shows = ["result = 42"]
+
+@ cases.multiple_parameter_nat_closure
+source = ```tauto
+fn answer(): Nat {
+  let add: (Nat, Nat) -> Nat := (left, right) => left + right
+  add(20, 22)
+}
+theorem answer_value(): answer() = 42 { Refl(Nat, 42) }
+```
+checks.answer = "ok"
+checks.answer_value = "ok"
+
+@ cases.zero_argument_nat_closure_rejects_wrong_body
+source = ```tauto
+fn answer(): Nat { let value: () -> Nat := () => true; value() }
+```
+checks.answer = "error: mismatch"
+
+@ cases.multiple_parameter_closure_rejects_wrong_body
+source = ```tauto
+fn answer(): Nat {
+  let first: (Nat, Bool) -> Nat := (left, right) => right
+  first(42, true)
+}
+```
+checks.answer = "error: mismatch"
+
+@ cases.zero_argument_nat_closure_value
+source = ```tauto
+fn answer(): Nat { let value: () -> Nat := () => 42; value() }
+theorem answer_value(): answer() = 42 { Refl(Nat, 42) }
+```
+checks.answer = "ok"
+checks.answer_value = "ok"

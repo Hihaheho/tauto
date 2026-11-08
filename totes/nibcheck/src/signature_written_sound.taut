@@ -29,14 +29,14 @@ pub theorem ck_sig_written_sound(
   p,
   ck_val(ck_sig_written(c, p, generics))
 ) {
-  match p: SignatureType(
+  ⊢ SignatureType(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
     frame_under_borrow(c),
     p,
     ck_val(ck_sig_written(c, p, generics))
-  ) {
+  ) from match p {
     None => SignatureTypeInferred(signature_fresh_index(c))
     Some(source) => Eq::subst(
       (m: Mut1(Ty, Checker)) => SignatureType(
@@ -71,7 +71,7 @@ pub theorem signature_existing_borrow(
   requested: Bool,
   borrowed: ty_is_borrow(t) = true
 ): SignatureBorrow(Some(requested), t, t) {
-  match t: SignatureBorrow(Some(requested), t, t) {
+  ⊢ SignatureBorrow(Some(requested), t, t) from match t {
     TyInt(width) => False::elim(false_ne_true(borrowed))
     TyBool => False::elim(false_ne_true(borrowed))
     TyText => False::elim(false_ne_true(borrowed))
@@ -99,11 +99,11 @@ pub theorem signature_wrap_if_sound(
   borrowed: Bool,
   equal: ty_is_borrow(t) = borrowed
 ): SignatureBorrow(Some(requested), t, ck_val(signature_wrap_if(c, t, requested, borrowed))) {
-  match borrowed: SignatureBorrow(
+  ⊢ SignatureBorrow(
     Some(requested),
     t,
     ck_val(signature_wrap_if(c, t, requested, borrowed))
-  ) {
+  ) from match borrowed {
     true => signature_existing_borrow(t, requested, equal)
     false => SignatureBorrowWrap(requested, t, equal)
   }
@@ -113,7 +113,7 @@ pub theorem signature_wrap_sound(
   c: Checker,
   t: Ty
 ): SignatureBorrow(borrow, t, ck_val(signature_wrap(c, t, borrow))) {
-  match borrow: SignatureBorrow(borrow, t, ck_val(signature_wrap(c, t, borrow))) {
+  ⊢ SignatureBorrow(borrow, t, ck_val(signature_wrap(c, t, borrow))) from match borrow {
     None => SignatureBorrowNone(t)
     Some(requested) => signature_wrap_if_sound(c, t, requested, ty_is_borrow(t), Refl)
   }
@@ -123,7 +123,7 @@ pub theorem ck_sig_written_reset(
   c: Checker,
   generics: Ordmap(Text, Ty)
 ): CkWrittenReset(c, ck_sig_written(c, p, generics)) {
-  match p: CkWrittenReset(c, ck_sig_written(c, p, generics)) {
+  ⊢ CkWrittenReset(c, ck_sig_written(c, p, generics)) from match p {
     None => Refl
     Some(source) => Eq::subst(
       (m: Mut1(Ty, Checker)) => CkWrittenReset(c, m),
@@ -155,14 +155,14 @@ pub theorem signature_parameter_after_sound(
   borrow,
   ck_val(signature_parameter_after(borrow, m))
 ) {
-  match m: SignatureParameter(
+  ⊢ SignatureParameter(
     env,
     generics,
     partial,
     source,
     borrow,
     ck_val(signature_parameter_after(borrow, m))
-  ) {
+  ) from match m {
     mut1(inner, next) => SignatureParameter::Mk(
       inner,
       ck_val(signature_wrap(next, inner, borrow)),
@@ -222,7 +222,9 @@ pub theorem signature_wrap_if_context(
   mutable: Bool,
   borrowed: Bool
 ): written_context(ck_st(signature_wrap_if(c, t, mutable, borrowed))) = written_context(c) {
-  match borrowed: written_context(ck_st(signature_wrap_if(c, t, mutable, borrowed))) = written_context(c) {
+  ⊢ written_context(
+    ck_st(signature_wrap_if(c, t, mutable, borrowed))
+  ) = written_context(c) from match borrowed {
     true => Refl
     false => Refl
   }
@@ -232,7 +234,7 @@ pub theorem signature_wrap_context(
   c: Checker,
   t: Ty
 ): written_context(ck_st(signature_wrap(c, t, borrow))) = written_context(c) {
-  match borrow: written_context(ck_st(signature_wrap(c, t, borrow))) = written_context(c) {
+  ⊢ written_context(ck_st(signature_wrap(c, t, borrow))) = written_context(c) from match borrow {
     None => Refl
     Some(mutable) => signature_wrap_if_context(c, t, mutable, ty_is_borrow(t))
   }
@@ -243,7 +245,7 @@ pub theorem signature_parameter_after_reset(
   m: Mut1(Ty, Checker),
   reset: CkWrittenReset(c, m)
 ): CkWrittenReset(c, signature_parameter_after(borrow, m)) {
-  match m: CkWrittenReset(c, signature_parameter_after(borrow, m)) {
+  ⊢ CkWrittenReset(c, signature_parameter_after(borrow, m)) from match m {
     mut1(inner, next) => Eq::trans(signature_wrap_context(borrow, next, inner), reset)
   }
 }

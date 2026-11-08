@@ -74,7 +74,7 @@ fn retained_readonly_tree_has_a_distinct_private_route() {
     let original = pkg
         .fns
         .iter()
-        .find(|f| f.source == "score" && f.tier == Tier::O)
+        .find(|f| f.source.as_str() == "score" && f.tier == Tier::O)
         .unwrap();
     assert_eq!(original.params[0].local.repr, Repr::Plain);
     assert!(rust.contains(&format!("pub fn {}", original.rust_name)));
@@ -142,7 +142,7 @@ fn moving_a_unique_root_is_not_reclassified_as_a_retained_clone() {
             ExprKind::Call(c) => {
                 for a in &mut c.args {
                     if let ExprKind::Read { local, how } = &mut a.kind
-                        && local.name == "local_rules"
+                        && local.name.as_str() == "local_rules"
                     {
                         *how = Use::Move;
                     }
@@ -170,7 +170,7 @@ fn moving_a_unique_root_is_not_reclassified_as_a_retained_clone() {
         }
     }
     for f in &mut pkg.fns {
-        if f.source == "run" {
+        if f.source.as_str() == "run" {
             moves(&mut f.body);
         }
     }
@@ -314,11 +314,16 @@ fn run_order(steps: i64, rules: List(Rule), input: u64): Pair(u64, u64) {{
     let length = pkg
         .fns
         .iter()
-        .find(|f| f.source == "length" && f.tier == Tier::O)
+        .find(|f| f.source.as_str() == "length" && f.tier == Tier::O)
         .unwrap()
         .id;
-    let mut collision = pkg.datas.iter().find(|d| d.name == "Rule").unwrap().clone();
-    collision.name = format!("__tauto_budget_borrow_{length}_0_budget_sync");
+    let mut collision = pkg
+        .datas
+        .iter()
+        .find(|d| d.name.as_str() == "Rule")
+        .unwrap()
+        .clone();
+    collision.name = format!("__tauto_budget_borrow_{length}_0_budget_sync").into();
     collision.ctors[0].name = collision.name.clone();
     collision.ctors[0].fields.clear();
     let reserved = collision.name.clone();

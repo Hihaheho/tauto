@@ -22,7 +22,7 @@ import "../../surface/src/surface.taut"
 
 pub fn allocation_field_name(field: DataField): Option(Text) { field.name }
 pub fn allocation_find_choice(ty: Ty, rest: Option(Ty), same: Bool): Option(Ty) {
-  match same: Option(Ty) { true => Some(ty)
+  ⊢ Option(Ty) from match same { true => Some(ty)
     false => rest }
 }
 pub fn allocation_find_name(
@@ -31,7 +31,7 @@ pub fn allocation_find_name(
   name: Text,
   named: Option(Text)
 ): Option(Ty) {
-  match named: Option(Ty) { None => rest
+  ⊢ Option(Ty) from match named { None => rest
     Some(n) => allocation_find_choice(allocation_field_ty(field), rest, Text::eq(n, name)) }
 }
 pub theorem allocation_find_choice_ok(
@@ -42,7 +42,7 @@ pub theorem allocation_find_choice_ok(
   tail: OptionTypeAllocated(limit, rest),
   same: Bool
 ): OptionTypeAllocated(limit, allocation_find_choice(ty, rest, same)) {
-  match same: OptionTypeAllocated(limit, allocation_find_choice(ty, rest, same)) { true => bounded
+  ⊢ OptionTypeAllocated(limit, allocation_find_choice(ty, rest, same)) from match same { true => bounded
     false => tail }
 }
 pub theorem allocation_find_name_ok(
@@ -54,10 +54,7 @@ pub theorem allocation_find_name_ok(
   tail: OptionTypeAllocated(limit, rest),
   named: Option(Text)
 ): OptionTypeAllocated(limit, allocation_find_name(field, rest, name, named)) {
-  match named: OptionTypeAllocated(
-    limit,
-    allocation_find_name(field, rest, name, named)
-  ) { None => tail
+  ⊢ OptionTypeAllocated(limit, allocation_find_name(field, rest, name, named)) from match named { None => tail
     Some(n) => allocation_find_choice_ok(
       allocation_field_ty(field),
       rest,
@@ -71,14 +68,22 @@ pub theorem allocation_find_unf(
   field: DataField,
   rest: List(DataField),
   name: Text
-): ck_field_find(Cons(field, rest), name) = allocation_find_name(field, ck_field_find(rest, name), name, allocation_field_name(field)) { Refl }
+): ck_field_find(
+  Cons(field, rest),
+  name
+) = allocation_find_name(
+  field,
+  ck_field_find(rest, name),
+  name,
+  allocation_field_name(field)
+) { Refl }
 pub theorem ck_field_find_allocated(
   fields: List(DataField),
   name: Text,
   limit: Nat,
   bounded: FieldsAllocated(limit, fields)
 ): OptionTypeAllocated(limit, ck_field_find(fields, name)) {
-  match fields: OptionTypeAllocated(limit, ck_field_find(fields, name)) { Nil => Trivial
+  ⊢ OptionTypeAllocated(limit, ck_field_find(fields, name)) from match fields { Nil => Trivial
     Cons(head, tail) => Eq::subst(
       (found: Option(Ty)) => OptionTypeAllocated(limit, found),
       Eq::sym(allocation_find_unf(head, tail, name)),
@@ -98,7 +103,7 @@ pub theorem ty_unborrowed_allocated(
   limit: Nat,
   bounded: TypeAllocated(limit, ty)
 ): TypeAllocated(limit, ty_unborrowed(ty)) {
-  match ty: TypeAllocated(limit, ty_unborrowed(ty)) {
+  ⊢ TypeAllocated(limit, ty_unborrowed(ty)) from match ty {
     TyInt(w) => bounded
     TyBool => bounded
     TyText => bounded
@@ -168,7 +173,7 @@ pub theorem access_info_unbounded_allocation(
   bounded: TypeAllocated(ck_next_of(c), h),
   unbounded: Bool
 ): AllocationResult(c, access_info_unbounded(c, term, name, h, unbounded)) {
-  match unbounded: AllocationResult(c, access_info_unbounded(c, term, name, h, unbounded)) {
+  ⊢ AllocationResult(c, access_info_unbounded(c, term, name, h, unbounded)) from match unbounded {
     true => allocation_result_return(c, TyFn(Nil, h, KindShared), state, AndIntro(Trivial, bounded))
 
     false => allocation_result_rewrap(
@@ -186,7 +191,7 @@ pub theorem access_info_allocation(
   bounded: TypeAllocated(ck_next_of(c), h),
   more: Bool
 ): AllocationResult(c, access_info(c, term, name, h, more)) {
-  match more: AllocationResult(c, access_info(c, term, name, h, more)) {
+  ⊢ AllocationResult(c, access_info(c, term, name, h, more)) from match more {
     true => allocation_result_return(
       c,
       TyFn(Cons(TyInt(Width64), Nil), h, KindShared),
@@ -211,7 +216,7 @@ pub theorem access_borrow_allocation(
   bounded: TypeAllocated(ck_next_of(c), ty),
   borrow: Bool
 ): AllocationResult(c, access_borrow(c, ty, borrow)) {
-  match borrow: AllocationResult(c, access_borrow(c, ty, borrow)) {
+  ⊢ AllocationResult(c, access_borrow(c, ty, borrow)) from match borrow {
     true => allocation_result_return(c, TyBorrow(ty, false), state, bounded)
 
     false => allocation_result_return(c, ty, state, bounded) }
@@ -226,7 +231,7 @@ pub theorem access_found_allocation(
   found: Option(Ty),
   bounded: OptionTypeAllocated(ck_next_of(c), found)
 ): AllocationResult(c, access_found(c, term, name, d, borrowed, found)) {
-  match found: AllocationResult(c, access_found(c, term, name, d, borrowed, found)) {
+  ⊢ AllocationResult(c, access_found(c, term, name, d, borrowed, found)) from match found {
     None => allocation_error_fresh(c, cat4(d, " has no field `", name, "`"), span_of(term), state)
     Some(t) => access_borrow_allocation(
       c,
@@ -248,10 +253,10 @@ pub theorem access_struct_allocation(
   bounded: TypeListAllocated(ck_next_of(c), args),
   structural: Bool
 ): AllocationResult(c, access_struct(c, term, name, d, args, borrowed, structural)) {
-  match structural: AllocationResult(
+  ⊢ AllocationResult(
     c,
     access_struct(c, term, name, d, args, borrowed, structural)
-  ) {
+  ) from match structural {
     true => access_found_allocation(
       c,
       term,
@@ -285,7 +290,7 @@ pub theorem access_field_allocation(
   ty: Ty,
   bounded: TypeAllocated(ck_next_of(c), ty)
 ): AllocationResult(c, access_field(c, term, name, original, borrowed, ty)) {
-  match ty: AllocationResult(c, access_field(c, term, name, original, borrowed, ty)) {
+  ⊢ AllocationResult(c, access_field(c, term, name, original, borrowed, ty)) from match ty {
     TyInt(w) => allocation_result_rewrap(
       c,
       ck_field_missing(c, term, original, name),

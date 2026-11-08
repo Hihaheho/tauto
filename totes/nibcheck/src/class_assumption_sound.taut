@@ -16,7 +16,7 @@ pub theorem class_assumption_weaken(
   head: Pair(Text, Text),
   h: ClassAssumption(assume, r#class, name)
 ): ClassAssumption(Cons(head, assume), r#class, name) {
-  match h: ClassAssumption(Cons(head, assume), r#class, name) {
+  ⊢ ClassAssumption(Cons(head, assume), r#class, name) from match h {
     ClassAssumeDirect(given, parameter, present) => ClassAssumeDirect(
       given,
       parameter,
@@ -35,7 +35,7 @@ pub theorem class_pair_equal(
   left: instantiation_constraint(p) = r#class,
   right: instantiation_parameter(p) = name
 ): p = (Pair {fst: r#class, snd: name}) {
-  match p: p = (Pair {fst: r#class, snd: name}) {
+  ⊢ p = (Pair {fst: r#class, snd: name}) from match p {
     Pair {fst: first, snd: second} => Eq::trans(
       Eq::congr((label: Text) => Pair {fst: label, snd: second}, left),
       Eq::congr((parameter: Text) => Pair {fst: r#class, snd: parameter}, right)
@@ -45,7 +45,10 @@ pub theorem class_pair_equal(
 pub fn class_assumption_test(p: Pair(Text, Text), r#class: Text, name: Text): Bool {
   Bool::and(
     Text::eq(p.snd, name),
-    Bool::or(Text::eq(p.fst, r#class), Bool::and(Text::eq(r#class, "PartialEq"), Text::eq(p.fst, "DecEq")))
+    Bool::or(
+      Text::eq(p.fst, r#class),
+      Bool::and(Text::eq(r#class, "PartialEq"), Text::eq(p.fst, "DecEq"))
+    )
   )
 }
 pub theorem class_assumption_head(
@@ -55,7 +58,9 @@ pub theorem class_assumption_head(
   name: Text,
   h: class_assumption_test(p, r#class, name) = true
 ): ClassAssumption(Cons(p, rest), r#class, name) {
-  let same_name: instantiation_parameter(p) = name := text_eq_sound(
+  let same_name: instantiation_parameter(
+    p
+  ) = name := text_eq_sound(
     instantiation_parameter(p),
     name,
     ck_bool_and_left(
@@ -68,9 +73,9 @@ pub theorem class_assumption_head(
     )
   )
   let alternatives: Bool::or(
-      Text::eq(instantiation_constraint(p), r#class),
-      Bool::and(Text::eq(r#class, "PartialEq"), Text::eq(instantiation_constraint(p), "DecEq"))
-    ) = true := ck_bool_and_right(
+    Text::eq(instantiation_constraint(p), r#class),
+    Bool::and(Text::eq(r#class, "PartialEq"), Text::eq(instantiation_constraint(p), "DecEq"))
+  ) = true := ck_bool_and_right(
     Text::eq(instantiation_parameter(p), name),
     Bool::or(
       Text::eq(instantiation_constraint(p), r#class),
@@ -148,7 +153,7 @@ pub fn class_assumption_choice(
   name: Text,
   test: Bool
 ): Bool {
-  match test: Bool { true => true
+  ⊢ Bool from match test { true => true
     false => class_assumed(rest, r#class, name) }
 }
 pub theorem class_assumption_unf(
@@ -156,7 +161,11 @@ pub theorem class_assumption_unf(
   rest: List(Pair(Text, Text)),
   r#class: Text,
   name: Text
-): class_assumed(Cons(p, rest), r#class, name) = class_assumption_choice(rest, r#class, name, class_assumption_test(p, r#class, name)) { Refl }
+): class_assumed(
+  Cons(p, rest),
+  r#class,
+  name
+) = class_assumption_choice(rest, r#class, name, class_assumption_test(p, r#class, name)) { Refl }
 pub theorem class_assumption_step(
   p: Pair(Text, Text),
   rest: List(Pair(Text, Text)),
@@ -167,7 +176,7 @@ pub theorem class_assumption_step(
   accepted: class_assumption_choice(rest, r#class, name, test) = true,
   ih: ∀ h: class_assumed(rest, r#class, name) = true. ClassAssumption(rest, r#class, name)
 ): ClassAssumption(Cons(p, rest), r#class, name) {
-  match test: ClassAssumption(Cons(p, rest), r#class, name) {
+  ⊢ ClassAssumption(Cons(p, rest), r#class, name) from match test {
     true => class_assumption_head(p, rest, r#class, name, tested)
     false => class_assumption_weaken(rest, r#class, name, p, ih(accepted))
   }
@@ -178,7 +187,7 @@ pub theorem class_assumed_sound(
   name: Text,
   accepted: class_assumed(assume, r#class, name) = true
 ): ClassAssumption(assume, r#class, name) {
-  match assume: ClassAssumption(assume, r#class, name) {
+  ⊢ ClassAssumption(assume, r#class, name) from match assume {
     Nil => False::elim(false_ne_true(accepted))
     Cons(p, rest) => class_assumption_step(
       p,
@@ -199,7 +208,7 @@ pub theorem preds_have_assumption(
   name: Text,
   accepted: preds_have(assume, r#class, name) = true
 ): ClassAssumption(assume, r#class, name) {
-  match assume: ClassAssumption(assume, r#class, name) {
+  ⊢ ClassAssumption(assume, r#class, name) from match assume {
     Nil => False::elim(false_ne_true(accepted))
     Cons(p, rest) => kyn_or_true(
       Bool::and(

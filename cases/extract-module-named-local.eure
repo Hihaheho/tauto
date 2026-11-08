@@ -1,0 +1,79 @@
+description = "A local with the name of a module the extracted program is written in is written with a fresh name."
+
+// The two files each have a private `emit`, so each is written in the
+// modules of its file's path (`module src { module left { … } }`). The
+// pattern of the first binds `src`, the name of one of those modules, which
+// a local may not have; the program binds and uses it under another name.
+@ cases.a-pattern-binds-the-name-of-a-module
+extract = true
+entry = "src/main.taut"
+files."src/left.taut" = ```tauto
+import std::Base
+inductive Box: Type { Mk(value: Nat): Box }
+fn emit(box: Box): Nat { ⊢ Nat from match box { Mk(src) => src + 1 } }
+pub fn left(): Nat { emit(Box::Mk(40)) }
+```
+files."src/right.taut" = ```tauto
+import std::Base
+fn emit(n: Nat): Nat { n }
+pub fn right(): Nat { emit(1) }
+```
+files."src/main.taut" = ```tauto
+import "left.taut"
+import "right.taut"
+perform show("value", left() + right())
+```
+shows = ["value = 42"]
+rust_shows = ["value = 42"]
+javascript_shows = ["value = 42"]
+
+@ cases.a-source-function-does-not-replace-an-extraction-helper
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn extract_nat_sub(a: Nat, b: Nat): Nat { 77 }
+fn subtract(a: Nat, b: Nat): Nat { a - b }
+perform show("subtraction", subtract(5, 2))
+perform show("source", extract_nat_sub(5, 2))
+```
+shows = ["subtraction = 3", "source = 77"]
+rust_shows = ["subtraction = 3", "source = 77"]
+javascript_shows = ["subtraction = 3", "source = 77"]
+
+@ cases.source-roundtrip-keeps-helper-and-source-references-apart
+extract_source = true
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn extract_nat_sub(a: Nat, b: Nat): Nat { 77 }
+fn subtract(a: Nat, b: Nat): Nat { a - b }
+perform show("subtraction", subtract(5, 2))
+perform show("source", extract_nat_sub(5, 2))
+```
+shows = ["subtraction = 3", "source = 77"]
+rust_shows = ["subtraction = 3", "source = 77"]
+javascript_shows = ["subtraction = 3", "source = 77"]
+
+@ cases.source-roundtrip-keeps-locals-apart-from-modules
+extract_source = true
+extract = true
+entry = "src/main.taut"
+files."src/left.taut" = ```tauto
+import std::Base
+inductive Box: Type { Mk(value: Nat): Box }
+fn emit(box: Box): Nat { ⊢ Nat from match box { Mk(src) => src + 1 } }
+pub fn left(): Nat { emit(Box::Mk(40)) }
+```
+files."src/right.taut" = ```tauto
+import std::Base
+fn emit(n: Nat): Nat { n }
+pub fn right(): Nat { emit(1) }
+```
+files."src/main.taut" = ```tauto
+import "left.taut"
+import "right.taut"
+perform show("value", left() + right())
+```
+shows = ["value = 42"]
+rust_shows = ["value = 42"]
+javascript_shows = ["value = 42"]

@@ -16,7 +16,7 @@ pub fn tb_name_byte(b: Nat): Bool {
 // A tote name: lowercase letters, digits and `-`, starting with a letter, at
 // most 64 bytes.
 pub fn tb_name(l: List(Nat)): Bool {
-  match l: Bool {
+  ⊢ Bool from match l {
     Nil => false
     Cons(b, t) => Bool::and(tb_at_most(64, l), Bool::and(is_lower(b), all_bytes(tb_name_byte, t)))
   }
@@ -42,9 +42,9 @@ pub(open) inductive TbUrlProblem: Type {
 
 // The `https` URL, when `url` parses it and writes it back as it is.
 pub fn tb_https_normal(l: List(Nat)): Option(TbUrlProblem) {
-  match parse_bytes(l): Option(TbUrlProblem) {
+  ⊢ Option(TbUrlProblem) from match parse_bytes(l) {
     None => Some(UrlNotNormal)
-    Some(u) => match bytes_eq(serialize(u), l): Option(TbUrlProblem) {
+    Some(u) => ⊢ Option(TbUrlProblem) from match bytes_eq(serialize(u), l) {
       true => None
       false => Some(UrlNotNormal)
     }
@@ -52,11 +52,11 @@ pub fn tb_https_normal(l: List(Nat)): Option(TbUrlProblem) {
 }
 
 pub fn tb_https(whole: List(Nat), rest: List(Nat)): Option(TbUrlProblem) {
-  match split_all(47, rest): Option(TbUrlProblem) {
+  ⊢ Option(TbUrlProblem) from match split_all(47, rest) {
     Nil => Some(UrlNoHost)
-    Cons(host, path) => match is_empty(host): Option(TbUrlProblem) {
+    Cons(host, path) => ⊢ Option(TbUrlProblem) from match is_empty(host) {
       true => Some(UrlNoHost)
-      false => match tb_has_byte(64, host): Option(TbUrlProblem) {
+      false => ⊢ Option(TbUrlProblem) from match tb_has_byte(64, host) {
         true => Some(UrlCredentials)
         false => tb_https_normal(whole)
       }
@@ -65,19 +65,19 @@ pub fn tb_https(whole: List(Nat), rest: List(Nat)): Option(TbUrlProblem) {
 }
 
 pub fn tb_file(path: List(Nat)): Option(TbUrlProblem) {
-  match Bool::and(starts_with(47, path), not(tb_some_piece(
-    (c: List(Nat)) => bytes_eq(c, Text::bytes("..")),
-    split_all(47, path)
-  ))): Option(TbUrlProblem) {
+  ⊢ Option(TbUrlProblem) from match Bool::and(
+    starts_with(47, path),
+    not(tb_some_piece((c: List(Nat)) => bytes_eq(c, Text::bytes("..")), split_all(47, path)))
+  ) {
     true => None
     false => Some(UrlFilePath)
   }
 }
 
 pub fn tb_url_scheme(l: List(Nat)): Option(TbUrlProblem) {
-  match tb_strip(Text::bytes("https://"), l): Option(TbUrlProblem) {
+  ⊢ Option(TbUrlProblem) from match tb_strip(Text::bytes("https://"), l) {
     Some(rest) => tb_https(l, rest)
-    None => match tb_strip(Text::bytes("file://"), l): Option(TbUrlProblem) {
+    None => ⊢ Option(TbUrlProblem) from match tb_strip(Text::bytes("file://"), l) {
       Some(path) => tb_file(path)
       None => Some(UrlScheme)
     }
@@ -87,9 +87,9 @@ pub fn tb_url_scheme(l: List(Nat)): Option(TbUrlProblem) {
 // An `https://` URL in normal form without credentials, query or fragment,
 // or a `file:///` URL of a repository on this machine.
 pub fn tb_url(l: List(Nat)): Option(TbUrlProblem) {
-  match Bool::and(tb_at_most(2048, l), all_bytes(tb_plain_byte, l)): Option(TbUrlProblem) {
+  ⊢ Option(TbUrlProblem) from match Bool::and(tb_at_most(2048, l), all_bytes(tb_plain_byte, l)) {
     false => Some(UrlCharacters)
-    true => match Bool::or(tb_has_byte(63, l), tb_has_byte(35, l)): Option(TbUrlProblem) {
+    true => ⊢ Option(TbUrlProblem) from match Bool::or(tb_has_byte(63, l), tb_has_byte(35, l)) {
       true => Some(UrlQuery)
       false => tb_url_scheme(l)
     }
@@ -101,8 +101,13 @@ pub fn tb_check_url(t: Text): Option(TbUrlProblem) {
 }
 
 pub fn tb_ref_forbidden(b: Nat): Bool {
-  Bool::or(Nat::eq(b, 126), Bool::or(Nat::eq(b, 94), Bool::or(Nat::eq(b, 58),
-    Bool::or(Nat::eq(b, 63), Bool::or(Nat::eq(b, 42), Nat::eq(b, 91))))))
+  Bool::or(
+    Nat::eq(b, 126),
+    Bool::or(
+      Nat::eq(b, 94),
+      Bool::or(Nat::eq(b, 58), Bool::or(Nat::eq(b, 63), Bool::or(Nat::eq(b, 42), Nat::eq(b, 91))))
+    )
+  )
 }
 
 pub fn tb_ref_component_bad(c: List(Nat)): Bool {
@@ -110,16 +115,31 @@ pub fn tb_ref_component_bad(c: List(Nat)): Bool {
 }
 
 pub fn tb_ref_name(r: List(Nat), name: List(Nat)): Bool {
-  Bool::and(not(is_empty(name)), Bool::and(not(tb_infix(Text::bytes(".."), r)),
-    Bool::and(not(tb_infix(Text::bytes("@{"), r)), Bool::and(all_bytes((b: Nat) => not(tb_ref_forbidden(b)), r),
-      Bool::and(not(tb_ends(Text::bytes("."), r)), Bool::and(not(tb_ends(Text::bytes(".lock"), r)),
-        not(tb_some_piece(tb_ref_component_bad, split_all(47, name)))))))))
+  Bool::and(
+    not(is_empty(name)),
+    Bool::and(
+      not(tb_infix(Text::bytes(".."), r)),
+      Bool::and(
+        not(tb_infix(Text::bytes("@{"), r)),
+        Bool::and(
+          all_bytes((b: Nat) => not(tb_ref_forbidden(b)), r),
+          Bool::and(
+            not(tb_ends(Text::bytes("."), r)),
+            Bool::and(
+              not(tb_ends(Text::bytes(".lock"), r)),
+              not(tb_some_piece(tb_ref_component_bad, split_all(47, name)))
+            )
+          )
+        )
+      )
+    )
+  )
 }
 
 pub fn tb_ref_branch_or_tag(r: List(Nat)): Bool {
-  match tb_strip(Text::bytes("refs/heads/"), r): Bool {
+  ⊢ Bool from match tb_strip(Text::bytes("refs/heads/"), r) {
     Some(name) => tb_ref_name(r, name)
-    None => match tb_strip(Text::bytes("refs/tags/"), r): Bool {
+    None => ⊢ Bool from match tb_strip(Text::bytes("refs/tags/"), r) {
       Some(name) => tb_ref_name(r, name)
       None => false
     }
@@ -137,7 +157,10 @@ pub fn tb_check_ref(t: Text): Bool {
 }
 
 pub fn tb_dir_byte(b: Nat): Bool {
-  Bool::or(is_alpha(b), Bool::or(is_digit(b), Bool::or(Nat::eq(b, 46), Bool::or(Nat::eq(b, 95), Nat::eq(b, 45)))))
+  Bool::or(
+    is_alpha(b),
+    Bool::or(is_digit(b), Bool::or(Nat::eq(b, 46), Bool::or(Nat::eq(b, 95), Nat::eq(b, 45))))
+  )
 }
 
 pub fn tb_dir_component(c: List(Nat)): Bool {
@@ -145,7 +168,7 @@ pub fn tb_dir_component(c: List(Nat)): Bool {
 }
 
 pub fn tb_all_components(p: (List(Nat)) -> Bool, cs: List(List(Nat))): Bool {
-  match cs: Bool {
+  ⊢ Bool from match cs {
     Nil => true
     Cons(c, rest) => Bool::and(p(c), tb_all_components(p, rest))
   }
@@ -154,9 +177,12 @@ pub fn tb_all_components(p: (List(Nat)) -> Bool, cs: List(List(Nat))): Bool {
 // A relative directory of plain components (`semver`, `libs/text`), or the
 // root, empty.
 pub fn tb_dir(d: List(Nat)): Bool {
-  match d: Bool {
+  ⊢ Bool from match d {
     Nil => true
-    Cons(b, t) => Bool::and(tb_at_most(1024, d), tb_all_components(tb_dir_component, split_all(47, d)))
+    Cons(b, t) => Bool::and(
+      tb_at_most(1024, d),
+      tb_all_components(tb_dir_component, split_all(47, d))
+    )
   }
 }
 
@@ -170,9 +196,9 @@ pub fn tb_hex(n: Nat, l: List(Nat)): Bool {
 
 // `sha1:` and 40 lowercase hex digits, or `sha256:` and 64.
 pub fn tb_rev(l: List(Nat)): Bool {
-  match tb_strip(Text::bytes("sha1:"), l): Bool {
+  ⊢ Bool from match tb_strip(Text::bytes("sha1:"), l) {
     Some(hex) => tb_hex(40, hex)
-    None => match tb_strip(Text::bytes("sha256:"), l): Bool {
+    None => ⊢ Bool from match tb_strip(Text::bytes("sha256:"), l) {
       Some(hex) => tb_hex(64, hex)
       None => false
     }
@@ -185,7 +211,7 @@ pub fn tb_check_rev(t: Text): Bool {
 
 // The SHA-256 of a source tree: `sha256:` and 64 lowercase hex digits.
 pub fn tb_source_id(l: List(Nat)): Bool {
-  match tb_strip(Text::bytes("sha256:"), l): Bool {
+  ⊢ Bool from match tb_strip(Text::bytes("sha256:"), l) {
     Some(hex) => tb_hex(64, hex)
     None => false
   }

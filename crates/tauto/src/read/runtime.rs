@@ -1,12 +1,12 @@
 //! Separate executable declarations before checking proofs. Failed proofs are
 //! never retried as programs: only positive evidence of runtime dependencies
 //! places a function outside the kernel.
-use crate::surface::{Stmt, TermKind, walk};
+use crate::surface::{Name, Stmt, TermKind, walk};
 use std::collections::{HashMap, HashSet};
 use tauto_message::{Message, msg};
 use tauto_surface::inductive_data;
 
-fn names(s: &Stmt, out: &mut HashSet<String>) {
+fn names(s: &Stmt, out: &mut HashSet<Name>) {
     match s {
         Stmt::Fn(f) => {
             out.insert(f.name.clone());
@@ -38,7 +38,7 @@ fn names(s: &Stmt, out: &mut HashSet<String>) {
 /// Why each name that [`separate`] finds runs as written, in words that
 /// follow "because": a proof that uses one of them says this, not only that
 /// the name is not defined.
-pub(super) type Why = HashMap<String, Message>;
+pub(super) type Why = HashMap<Name, Message>;
 
 /// The names that run as written, and the functions with effects that the
 /// kernel reads as computation trees: those whose reading is skipped or
@@ -46,7 +46,7 @@ pub(super) type Why = HashMap<String, Message>;
 /// each of the names runs as written.
 pub(super) fn separate(
     loaded: &mut crate::program::Loaded,
-) -> Result<(HashSet<String>, HashSet<String>, Why), String> {
+) -> Result<(HashSet<Name>, HashSet<Name>, Why), Message> {
     fn flatten<'a>(stmts: &'a [Stmt], out: &mut Vec<&'a Stmt>) {
         for s in stmts {
             if let Stmt::Mutual { items, .. } = s {
@@ -67,11 +67,14 @@ pub(super) fn separate(
         crate::surface::qualify::BUILTIN_TYPES
             .iter()
             .chain(&["Never", "Text"])
-            .map(|n| n.to_string()),
+            .map(|n| crate::bindings::library_name(n)),
     );
     // Source declarations and the kernel prelude take precedence over builtins.
     let mut declared = HashSet::new();
-    for s in super::check::kernel_prelude()?
+    let mut kernel_prelude = super::check::kernel_prelude()?;
+    tauto_surface::resolve::Resolver::new(crate::bindings::library_definition_bindings())
+        .statements(&mut kernel_prelude.stmts);
+    for s in kernel_prelude
         .stmts
         .iter()
         .chain(loaded.program.stmts.iter())
@@ -89,6 +92,25 @@ pub(super) fn separate(
         .map(|n| {
             // A built-in such as `Text` whose kernel declaration is in the
             // standard library: say which import brings it.
+            let integer = match n.as_str() {
+                "i64" => Some(("I64", "SInt")),
+                "i32" => Some(("I32", "SInt")),
+                "u64" => Some(("U64", "UInt")),
+                "u32" => Some(("U32", "UInt")),
+                "u8" => Some(("U8", "UInt")),
+                _ => None,
+            };
+            if let Some((checked, module)) = integer {
+                return (
+                    n.clone(),
+                    msg!(
+                        "tauto-why-machine-integer",
+                        native = n.to_string(),
+                        checked = checked,
+                        module = module
+                    ),
+                );
+            }
             let hint = match crate::stdlib::not_imported_name(n) {
                 Some(hint) => hint,
                 None => Message::text(""),
@@ -142,7 +164,12 @@ pub(super) fn separate(
             if let Stmt::Effect(e) = s {
                 let mut refs = HashSet::new();
                 for ty in e.params.iter().flatten().chain(e.result.iter()) {
-                    refs.extend(super::check::free_vars(ty));
+                    // Equality in an operation type is a proposition read by the kernel.
+                    refs.extend(
+                        super::check::free_vars(ty)
+                            .into_iter()
+                            .filter(|name| !tauto_surface::bindings::is_library(name, "=")),
+                    );
                 }
                 let readable = e.generics.is_empty()
                     && e.params.iter().all(Option::is_some)
@@ -160,16 +187,15 @@ pub(super) fn separate(
             let Stmt::Fn(f) = s else { continue };
             if f.result
                 .as_ref()
-                .is_some_and(|ty| matches!(&*ty.kind, TermKind::Var(name) if name == "Prop"))
+                .is_some_and(|ty| matches!(&*ty.kind, TermKind::Var(name) if name.sort_symbol() == Some(crate::identity::SortSymbol::Proposition)))
             {
                 continue;
             }
             // A row variable of the function's own is read as the effects
             // it stands for (`check/effects.rs`).
-            let readable = |e: &String| {
+            let readable = |e: &Name| {
                 kernel_effects.contains(e)
-                    || e.strip_prefix('|')
-                        .is_some_and(|v| f.generics.iter().any(|g| g == v))
+                    || e.row_variable().is_some_and(|v| f.generics.contains(&v))
             };
             let mut executable = f.effects.iter().flatten().any(|e| !readable(e))
                 || f.result.is_none()
@@ -198,6 +224,22 @@ pub(super) fn separate(
                 .any(|n| runtime.contains(n) && !f.params.contains(n) && !f.generics.contains(n));
             let mut body = f.body.clone();
             walk::term(&mut body, &mut |t| match &*t.kind {
+                // Ownership free variables omit type annotations. Resolved
+                // declaration references inside type expressions still depend
+                // on the native declaration, independently of value capture.
+                TermKind::Var(name) if runtime.contains(name) => {
+                    refs.push(name.clone());
+                    executable = true;
+                }
+                TermKind::Pi {
+                    effects: Some(row), ..
+                } if row.iter().any(|effect| !readable(effect)) => {
+                    executable = true;
+                }
+                TermKind::Record { name, .. } if runtime.contains(name) => {
+                    refs.push(name.clone());
+                    executable = true;
+                }
                 TermKind::Perform { effect, .. } if !kernel_effects.contains(effect) => {
                     executable = true
                 }
@@ -218,7 +260,7 @@ pub(super) fn separate(
             });
             if executable {
                 if !why.contains_key(&f.name) {
-                    let mut used: Vec<&String> = refs
+                    let mut used: Vec<&Name> = refs
                         .iter()
                         .filter(|n| {
                             runtime.contains(*n)
@@ -241,10 +283,13 @@ pub(super) fn separate(
                 runtime.insert(f.name.clone());
                 // A copy at an effect's index (`types/indices.rs`) runs as
                 // its original would, which the kernel reads as written.
-                if let Some((original, _)) = f.name.split_once('@') {
+                if let Name::Global(reference) = &f.name
+                    && let Some(original) = reference.origin()
+                {
+                    let original: Name = original.clone().into();
                     let w = why[&f.name].clone();
-                    why.entry(original.to_string()).or_insert(w);
-                    runtime.insert(original.to_string());
+                    why.entry(original.clone()).or_insert(w);
+                    runtime.insert(original);
                 }
             } else if f.effects.iter().flatten().next().is_some()
                 || !rows.is_empty()
@@ -253,11 +298,73 @@ pub(super) fn separate(
                 effectful.insert(f.name.clone());
             }
         }
+        // A class without laws whose methods have effects, or whose parameter
+        // is not of kind `Type` (a type constructor), runs as written, with its
+        // instances: a class of the proof language has neither
+        // (`docs/design/classes.md`).
+        let mut written = Vec::new();
+        for stmts in &loaded.kernel_files {
+            flatten(stmts, &mut written);
+        }
+        for s in written {
+            // A function constrained by a class that runs as written takes
+            // that class's methods, which the kernel does not have.
+            if let Stmt::Fn(f) = s {
+                if !runtime.contains(&f.name)
+                    && let Some(c) = f.where_.iter().find(|c| runtime.contains(&c.class))
+                {
+                    let reason = match why.get(&c.class) {
+                        Some(w) => msg!(
+                            "tauto-why-uses-because",
+                            name = c.class.as_str(),
+                            why = w.clone()
+                        ),
+                        None => msg!("tauto-why-uses", name = c.class.as_str()),
+                    };
+                    why.entry(f.name.clone()).or_insert(reason);
+                    runtime.insert(f.name.clone());
+                }
+                continue;
+            }
+            let Stmt::Class(c) = s else { continue };
+            if runtime.contains(&c.name) || !c.laws.is_empty() {
+                continue;
+            }
+            let effects = c.methods.iter().any(|m| {
+                let mut unread = m.effects.iter().flatten().next().is_some();
+                for ty in m.param_types.iter().flatten().chain(m.result.iter()) {
+                    walk::term(&mut ty.clone(), &mut |t| {
+                        if let TermKind::Pi {
+                            effects: Some(row), ..
+                        } = &*t.kind
+                        {
+                            unread |= !row.is_empty();
+                        }
+                    });
+                }
+                unread
+            });
+            if effects || !c.over_types() {
+                why.entry(c.name.clone())
+                    .or_insert_with(|| msg!("tauto-why-unread"));
+                runtime.insert(c.name.clone());
+                // Its methods run as written with it, so that a function
+                // calling one does too.
+                if let Some(owner) = c.name.as_global() {
+                    for (index, m) in c.methods.iter().enumerate() {
+                        let method: Name = owner.class_member(index, false, m.name.as_str()).into();
+                        why.entry(method.clone())
+                            .or_insert_with(|| msg!("tauto-why-unread"));
+                        runtime.insert(method);
+                    }
+                }
+            }
+        }
         if runtime.len() == before {
             break;
         }
     }
-    fn retain_kernel(stmts: &mut Vec<Stmt>, runtime: &HashSet<String>) {
+    fn retain_kernel(stmts: &mut Vec<Stmt>, runtime: &HashSet<Name>) {
         for s in stmts.iter_mut() {
             if let Stmt::Mutual { items, .. } = s {
                 retain_kernel(items, runtime);
@@ -266,6 +373,8 @@ pub(super) fn separate(
         stmts.retain(|s| match s {
             Stmt::Fn(f) => !runtime.contains(&f.name),
             Stmt::Effect(e) => !runtime.contains(&e.name),
+            Stmt::Class(c) => !runtime.contains(&c.name),
+            Stmt::Instance(i) => !runtime.contains(&i.class),
             Stmt::Let { .. } | Stmt::Var { .. } => false,
             Stmt::Mutual { items, .. } => !items.is_empty(),
             _ => true,
@@ -283,15 +392,6 @@ pub(super) fn separate(
 /// kernel as families, with every other declaration left as written: how a
 /// program with a Nib file is read, since nothing in it is set apart to run.
 pub(super) fn families_only(loaded: &mut crate::program::Loaded) {
-    fn flatten<'a>(stmts: &'a [Stmt], out: &mut Vec<&'a Stmt>) {
-        for s in stmts {
-            if let Stmt::Mutual { items, .. } = s {
-                flatten(items, out);
-            } else {
-                out.push(s);
-            }
-        }
-    }
     let mut statements = Vec::new();
     flatten(&loaded.program.stmts, &mut statements);
     let families = kernel_data(&statements);
@@ -301,33 +401,66 @@ pub(super) fn families_only(loaded: &mut crate::program::Loaded) {
 /// The program's `inductive enum`s and `inductive struct`s that the kernel
 /// can read (`kernel_data`), given to it as inductive families in place of
 /// the declarations as written.
-pub(super) fn as_families(loaded: &mut crate::program::Loaded, families: &HashSet<String>) {
-    fn rewrite(
-        stmts: &mut [Stmt],
-        families: &HashSet<String>,
-        kernel_types: &HashMap<String, String>,
-    ) {
-        for s in stmts.iter_mut() {
-            match s {
-                Stmt::Mutual { items, .. } => rewrite(items, families, kernel_types),
-                Stmt::Enum(d) | Stmt::Struct(d) if families.contains(&d.name) => {
-                    let mut d = d.clone();
-                    let is_struct = matches!(s, Stmt::Struct(_));
-                    for c in &mut d.constructors {
-                        for (_, ty) in &mut c.fields {
-                            proof_types(ty, kernel_types);
-                        }
-                    }
-                    *s = Stmt::Inductive(tauto_kernel::check::program_family(&d, is_struct));
-                }
-                _ => {}
-            }
+pub(super) fn as_families(loaded: &mut crate::program::Loaded, families: &HashSet<Name>) {
+    let kernel_types = kernel_types(loaded.kernel_files.iter().flatten());
+    for stmts in &mut loaded.kernel_files {
+        rewrite_families(stmts, families, &kernel_types);
+    }
+}
+
+/// `stmts`, the declarations a macro's check gives the kernel, with their
+/// `inductive enum`s and `inductive struct`s given to it as families, as
+/// the check of the whole file gives them (`as_families`).
+pub(crate) fn prefix_families(stmts: &[Stmt]) -> Vec<Stmt> {
+    let mut flat = Vec::new();
+    flatten(stmts, &mut flat);
+    let families = kernel_data(&flat);
+    let mut stmts = stmts.to_vec();
+    if families.is_empty() {
+        return stmts;
+    }
+    let kernel_types = kernel_types(stmts.iter());
+    rewrite_families(&mut stmts, &families, &kernel_types);
+    stmts
+}
+
+fn flatten<'a>(stmts: &'a [Stmt], out: &mut Vec<&'a Stmt>) {
+    for s in stmts {
+        if let Stmt::Mutual { items, .. } = s {
+            flatten(items, out);
+        } else {
+            out.push(s);
         }
     }
-    // The full names of the families the kernel is given, by their bare
-    // names: where a field's `u64` is the proof side's `U64`.
-    let mut kernel_types = HashMap::new();
-    fn inductives(stmts: &[Stmt], out: &mut HashMap<String, String>) {
+}
+
+fn rewrite_families(
+    stmts: &mut [Stmt],
+    families: &HashSet<Name>,
+    kernel_types: &HashMap<String, Name>,
+) {
+    for s in stmts.iter_mut() {
+        match s {
+            Stmt::Mutual { items, .. } => rewrite_families(items, families, kernel_types),
+            Stmt::Enum(d) | Stmt::Struct(d) if families.contains(&d.name) => {
+                let mut d = d.clone();
+                let is_struct = matches!(s, Stmt::Struct(_));
+                for c in &mut d.constructors {
+                    for (_, ty) in &mut c.fields {
+                        proof_types(ty, kernel_types);
+                    }
+                }
+                *s = Stmt::Inductive(tauto_kernel::check::program_family(&d, is_struct));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The full names of the families the kernel is given, by their bare
+/// names: where a field's `u64` is the proof side's `U64`.
+fn kernel_types<'a>(stmts: impl Iterator<Item = &'a Stmt>) -> HashMap<String, Name> {
+    fn inductives(stmts: &[Stmt], out: &mut HashMap<String, Name>) {
         for s in stmts {
             match s {
                 Stmt::Inductive(i) => {
@@ -341,19 +474,18 @@ pub(super) fn as_families(loaded: &mut crate::program::Loaded, families: &HashSe
             }
         }
     }
-    for stmts in &loaded.kernel_files {
-        inductives(stmts, &mut kernel_types);
+    let mut out = HashMap::new();
+    for s in stmts {
+        inductives(std::slice::from_ref(s), &mut out);
     }
-    for stmts in &mut loaded.kernel_files {
-        rewrite(stmts, &families, &kernel_types);
-    }
+    out
 }
 
 /// The `enum`s and `struct`s the kernel reads as inductive families: those
 /// written `inductive enum` or `inductive struct` that can be given to it
 /// (`tauto_surface::inductive_data::problems`). The kernel checks each family
 /// as it checks an `inductive`, and reports a field it does not have.
-fn kernel_data(statements: &[&Stmt]) -> HashSet<String> {
+fn kernel_data(statements: &[&Stmt]) -> HashSet<Name> {
     statements
         .iter()
         .filter_map(|s| match s {
@@ -373,20 +505,20 @@ fn kernel_data(statements: &[&Stmt]) -> HashSet<String> {
 /// name the qualifier took for the standard library's constructor of the
 /// same spelling (`std::UInt`'s `u64`) is the type too. A family not given
 /// to the kernel is left bare, and the kernel says it is not defined.
-fn proof_types(ty: &mut crate::surface::SurfaceTerm, kernel_types: &HashMap<String, String>) {
+fn proof_types(ty: &mut crate::surface::SurfaceTerm, kernel_types: &HashMap<String, Name>) {
     walk::term(ty, &mut |t| {
         let TermKind::Var(n) = &*t.kind else { return };
         let bare = crate::surface::qualify::short(n);
         let Some(proof) = inductive_data::proof_type(bare) else {
             return;
         };
-        if n != bare && kernel_types.get(bare) == Some(n) {
+        if n.as_str() != bare && kernel_types.get(bare) == Some(n) {
             return;
         }
         let name = kernel_types
             .get(proof)
             .cloned()
-            .unwrap_or(proof.to_string());
+            .unwrap_or_else(|| Name::from(proof));
         *t = t.with_kind(TermKind::Var(name), t.span);
     });
 }
@@ -406,26 +538,39 @@ fn effectful_body(body: &crate::surface::SurfaceTerm) -> bool {
 /// not in the kernel, and where to look when it was meant to be.
 pub(super) fn explain_undefined(entries: &mut [tauto_kernel::check::FileEntry], why: &Why) {
     for e in entries {
-        let tauto_kernel::check::Verdict::Failed(d) = &mut e.entry.verdict else {
+        let tauto_kernel::check::Verdict::Failed(first) = &mut e.entry.verdict else {
             continue;
         };
-        if !matches!(
-            d.message.id.as_ref(),
-            "kernel-not-defined" | "kernel-not-defined-hint"
-        ) {
-            continue;
+        let mut also = std::mem::take(&mut first.also);
+        explain_one(first, why);
+        for d in &mut also {
+            explain_one(d, why);
         }
-        let Some(name) = crate::said::text_arg(&d.message, "name").map(str::to_string) else {
-            continue;
-        };
-        let Some(reason) = why.get(&name) else {
-            continue;
-        };
-        let id = if crate::said::says(reason, &["tauto-why-builtin"]) {
-            "tauto-runs-as-written-builtin"
-        } else {
-            "tauto-runs-as-written"
-        };
-        d.message = msg!(id, name = name, reason = reason.clone());
+        first.also = also;
     }
+}
+
+fn explain_one(d: &mut tauto_kernel::check::Diagnostic, why: &Why) {
+    if !matches!(
+        d.message.id.as_ref(),
+        "kernel-not-defined" | "kernel-not-defined-hint"
+    ) {
+        return;
+    }
+    let Some(name) = crate::said::text_arg(&d.message, "name").map(str::to_string) else {
+        return;
+    };
+    let Some(reason) = why
+        .iter()
+        .find(|(n, _)| n.as_str() == name)
+        .map(|(_, reason)| reason)
+    else {
+        return;
+    };
+    let id = if crate::said::says(reason, &["tauto-why-builtin"]) {
+        "tauto-runs-as-written-builtin"
+    } else {
+        "tauto-runs-as-written"
+    };
+    d.message = msg!(id, name = name, reason = reason.clone());
 }

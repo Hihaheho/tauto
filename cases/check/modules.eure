@@ -1,0 +1,770 @@
+@ cases.imports-are-checked-once-before-the-importer
+files."a.taut" = `pub theorem one(): Eq(Nat, 1, 1) { Refl(Nat, 1) }`
+files."b.taut" = ```tauto
+import "a.taut"
+pub theorem two(): Eq(Nat, 1, 1) { one }
+```
+files."main.nib" = ```tauto
+import "a.taut"
+import "b.taut"
+theorem three(): Eq(Nat, 1, 1) { two }
+```
+checks_all = "ok"
+declarations = ["one", "two", "three"]
+
+@ cases.a-cycle-is-an-error
+files."a.taut" = `import "b.taut"`
+files."b.taut" = `import "a.taut"`
+entry = "a.taut"
+load_error = "cycle"
+
+@ cases.a-name-an-imported-file-declares-is-not-declared-again
+files."a.taut" = `pub theorem t(): Eq(Nat, 1, 1) { Refl }`
+files."main.nib" = ```tauto
+import "a.taut"
+theorem t(): Eq(Nat, 2, 2) { Refl }
+theorem theirs(): Eq(Nat, 1, 1) { a::t }
+```
+checks."main.nib::macro" = "error: `t` is already declared as `a::t`, which this file imports; give this declaration another name"
+checks."main.nib::theirs" = "ok"
+
+@ cases.a-pattern-binder-is-bound-whatever-functions-share-its-name
+files."a.taut" = `pub fn found(n: Nat): Nat { n }`
+files."b.taut" = `pub fn found(n: Nat): Nat { n }`
+files."main.nib" = ```tauto
+import "a.taut"
+import "b.taut"
+fn first(o: Option(Nat)): Nat {
+  match o {
+    Some(found) => found
+    None => 0
+  }
+}
+theorem t(): first(Some(1)) = 1 { Refl }
+```
+checks_all = "ok"
+
+@ cases.a-name-two-imported-files-declare-is-ambiguous
+files."a.taut" = `pub theorem t(): Eq(Nat, 1, 1) { Refl }`
+files."b.taut" = `pub theorem t(): Eq(Nat, 2, 2) { Refl }`
+files."main.nib" = ```tauto
+import "a.taut"
+import "b.taut"
+theorem which(): Eq(Nat, 1, 1) { t }
+```
+checks."main.nib::macro" = "error: `t` is ambiguous: it is declared as `a::t` and `b::t`; write the full name"
+
+@ cases.an-import-of-an-import-does-not-bring-a-value
+files."a.taut" = ```tauto
+pub fn map(n: Nat): Nat { n }
+```
+files."b.taut" = `import "a.taut"`
+files."main.nib" = ```tauto
+import "b.taut"
+import std::prelude::Shared
+theorem which(): map(1) = 1 { Refl }
+```
+checks_all = "ok"
+checks.which = "error: `map` is not defined"
+
+@ cases.a-struct-named-like-a-non-core-prelude-type-is-the-file-s-without-the-prelude-import
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/signal.taut" = ```tauto
+pub(open) struct Response { id: Nat }
+pub fn signal(n: Nat): Response { Response { id: n } }
+```
+files."app/src/main.taut" = ```tauto
+import "signal.taut"
+fn id_of(s: Response): Nat { s.id }
+perform show("p", id_of(signal(3)))
+```
+shows = ["p = 3"]
+
+@ cases.a-struct-named-like-a-non-core-prelude-type-of-a-dependency-tote-is-that-file-s
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/signal.taut" = ```tauto
+pub(open) struct Response { id: Nat }
+pub fn signal(n: Nat): Response { Response { id: n } }
+```
+files."app/src/main.taut" = ```tauto
+import "../../lib/src/signal.taut"
+fn id_of(s: Response): Nat { s.id }
+perform show("p", id_of(signal(3)))
+```
+shows = ["p = 3"]
+
+@ cases.a-record-without-a-name-is-declared-before-the-dependency-that-reads-its-field
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/pick.taut" = ```tauto
+pub fn age_of(r: { age: Nat, years: Nat }): Nat { r.age }
+```
+files."app/src/main.taut" = ```tauto
+import "../../lib/src/pick.taut"
+perform show("p", age_of(#{ age: 3, years: 4 }))
+```
+shows = ["p = 3"]
+
+@ cases.a-struct-named-like-a-prelude-type-is-ambiguous-once-the-prelude-file-is-imported
+files."signal.taut" = ```tauto
+pub(open) struct Response { id: Nat }
+```
+files."main.nib" = ```tauto
+import "signal.taut"
+import std::prelude::Os
+fn id_of(s: Response): Nat { s.id }
+```
+checks."main.nib::macro" = "error: `Response` is ambiguous: it is declared as `signal::Response` and `std::prelude::Response`, and this file imports both; write the full name, or list after `import std::prelude::Os` only what this file uses from it, as in `import std::prelude::Os { … }`"
+
+@ cases.listing-what-the-file-uses-from-the-prelude-file-leaves-the-imported-file-s-name
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/signal.taut" = ```tauto
+pub(open) struct Response { id: Nat }
+pub fn signal(n: Nat): Response { Response { id: n } }
+```
+files."app/src/main.taut" = ```tauto
+import "signal.taut"
+import std::prelude::Os { IoError }
+fn id_of(s: Response): Nat { s.id }
+perform show("p", id_of(signal(3)))
+```
+shows = ["p = 3"]
+
+@ cases.a-non-core-prelude-name-is-not-visible-without-its-import
+files."main.nib" = ```tauto
+fn wait_for(s: Response): Nat { 1 }
+```
+checks."main.nib::macro" = "error: `Response` is declared by `std::prelude::Os`, which this file does not import (what another file or a dependency imports does not reach this one); `import std::prelude::Os` in this file"
+
+@ cases.a-non-core-prelude-name-is-visible-with-its-import
+files."main.nib" = ```tauto
+import std::prelude::Os
+fn wait_for(s: Response): Nat { 1 }
+```
+checks_all = "ok"
+checks.wait_for = "skipped"
+types = "ok"
+
+@ cases.the-import-of-a-file-does-not-bring-the-prelude-file-it-imports
+files."a.taut" = `import std::prelude::Os`
+files."main.nib" = ```tauto
+import "a.taut"
+fn wait_for(s: Response): Nat { 1 }
+```
+checks."main.nib::macro" = "error: `Response` is declared by `std::prelude::Os`, which this file does not import (what another file or a dependency imports does not reach this one); `import std::prelude::Os` in this file"
+
+@ cases.a-core-prelude-name-needs-no-import
+files."main.nib" = ```tauto
+fn first(xs: List(Nat)): Option(Nat) {
+  match xs {
+    Nil => None
+    Cons(x, rest) => Some(x)
+  }
+}
+```
+checks_all = "ok"
+
+@ cases.a-prelude-name-another-file-of-the-tote-declares-is-ambiguous
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/types.taut" = `pub(open) struct Unit { parts: Text }`
+files."app/src/main.taut" = ```tauto
+fn f(a: Unit): Text { a.parts }
+```
+load_error = "`Unit` is ambiguous: it is declared as `app::src::types::Unit` and `std::prelude::Unit`; write the full name, or import the file that declares the one meant"
+
+@ cases.a-prelude-name-a-dependency-tote-declares-is-ambiguous
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/stmt.taut" = ```tauto
+pub(open) enum Stmt { StExpr(Nat), StOther }
+```
+files."app/src/main.taut" = ```tauto
+fn one(n: Nat): List(Stmt) { Cons(StExpr(n), Nil) }
+```
+load_error = "`StExpr` is ambiguous: it is declared as `lib::src::stmt::Stmt::StExpr` and `std::prelude::StExpr`; write the full name, or import the file that declares the one meant"
+
+@ cases.a-prelude-name-of-an-imported-file-of-a-dependency-tote-is-that-file-s
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/stmt.taut" = ```tauto
+pub(open) enum Stmt { StExpr(Nat), StOther }
+```
+files."app/src/main.taut" = ```tauto
+import "../../lib/src/stmt.taut"
+fn one(n: Nat): List(Stmt) { Cons(StExpr(n), Nil) }
+fn first(xs: List(Stmt)): Nat {
+  match xs {
+    Cons(StExpr(n), rest) => n
+    Cons(StOther, rest) => 0
+    Nil => 0
+  }
+}
+perform show("p", first(one(3)))
+```
+shows = ["p = 3"]
+
+@ cases.a-prelude-name-the-tote-depending-on-a-tote-declares-does-not-reach-it
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/lib.taut" = `pub fn u(): Unit { #() }`
+files."app/src/types.taut" = `pub(open) struct Unit { parts: Text }`
+files."app/src/main.taut" = ```tauto
+import "types.taut"
+import "../../lib/src/lib.taut"
+perform show("p", u())
+```
+shows = ["p = ()"]
+
+@ cases.a-prelude-name-a-file-of-the-tote-only-an-importer-reads-is-the-prelude-s
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/types.taut" = `pub(open) struct Unit { parts: Text }`
+files."app/src/uses.taut" = `pub fn u(): Unit { #() }`
+files."app/src/main.taut" = ```tauto
+import "types.taut"
+import "uses.taut"
+perform show("p", u())
+```
+shows = ["p = ()"]
+
+@ cases.a-prelude-name-of-an-imported-file-of-the-tote-is-that-file-s
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/types.taut" = `pub(open) struct Unit { parts: Text }`
+files."app/src/main.taut" = ```tauto
+import "types.taut"
+fn f(a: Unit): Text { a.parts }
+perform show("p", f(Unit { parts: "x" }))
+```
+shows = ["p = \"x\""]
+
+@ cases.the-std-model-of-a-prelude-name-behind-an-import-is-meant
+files."a.taut" = `import std::Text`
+files."main.nib" = ```tauto
+import "a.taut"
+import std::Text
+theorem len(): Text::len("ab") = 2 { Refl }
+```
+checks_all = "ok"
+
+@ cases.a-library-s-std-text-does-not-reach-its-users
+files_tote = "app"
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/tree.taut" = ```tauto
+pub fn text(t: Nat, s: Text): Text { s }
+```
+files."lib/src/proof.taut" = ```tauto
+import std::Text
+import "tree.taut"
+pub fn size(s: Text): Nat { Text::len(s) }
+```
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."app/src/main.taut" = ```tauto
+import "../../lib/src/proof.taut"
+import "../../lib/src/tree.taut"
+fn shown(s: Text): Text { text(1, s) }
+fn len(s: Text): u64 { Text::len(s) }
+perform show("p", shown("x"))
+```
+shows = ["p = \"x\""]
+
+@ cases.a-program-text-fn-is-refused-beside-the-imported-std-text
+files."main.nib" = ```tauto
+import std::Text
+fn utf8_valid(n: Nat): Nat { n }
+theorem len(): Text::len("ab") = 2 { Refl }
+```
+checks."main.nib::macro" = "error: `utf8_valid` is already declared as `std::Text::utf8_valid`, which this file imports; give this declaration another name"
+checks."main.nib::len" = "ok"
+
+@ cases.a-full-name-says-which-of-a-file-behind-an-import-and-the-prelude
+files."a.taut" = ```tauto
+pub fn map(n: Nat): Nat { n }
+```
+files."b.taut" = `import "a.taut"`
+files."main.nib" = ```tauto
+import "b.taut"
+theorem which(): a::map(1) = 1 { Refl }
+```
+checks_all = "ok"
+
+@ cases.a-full-name-says-which-of-two-imported-files
+files."a.taut" = `pub theorem t(): Eq(Nat, 1, 1) { Refl }`
+files."b.taut" = `pub theorem t(): Eq(Nat, 2, 2) { Refl }`
+files."main.nib" = ```tauto
+import "a.taut"
+import "b.taut"
+theorem one(): Eq(Nat, 1, 1) { a::t }
+theorem two(): Eq(Nat, 2, 2) { b::t }
+```
+checks_all = "ok"
+declarations = ["a::t", "b::t", "one", "two"]
+
+@ cases.a-program-nat-is-not-the-prelude-nat
+files."main.nib" = ```tauto
+inductive Nat: Type {
+  Zero: Nat
+  Succ(n: Nat): Nat
+}
+fn two(): Nat { Succ(Succ(Zero)) }
+theorem mine(): two() = Succ(Succ(Zero)) { Refl }
+theorem prelude(): 2 = std::prelude::Succ(1) { Refl }
+```
+checks_all = "ok"
+declarations = ["main::Nat", "two", "mine", "prelude"]
+
+@ cases.a-missing-file-is-reported
+files."main.nib" = `import "nope.taut"`
+load_error = "nope.taut"
+
+@ cases.a-constructor-named-text-does-not-hide-the-text-type
+files."a.taut" = ```tauto
+import std::Text
+pub(open) enum Atom {
+  Num(Nat)
+  Text(Nat)
+}
+```
+files."main.nib" = ```tauto
+import std::Text
+theorem len(): Text::len("ab") = 2 { Refl }
+fn same(t: Text): Text { t }
+```
+checks_all = "ok"
+
+@ cases.a-full-name-reaches-a-constructor-named-text
+files."a.taut" = ```tauto
+import std::Text
+pub(open) enum Atom {
+  Num(Nat)
+  Text(Nat)
+}
+```
+files."main.nib" = ```tauto
+import "a.taut"
+import std::Text
+fn atom(): Atom { Atom::Text(1) }
+theorem len(): Text::len("ab") = 2 { Refl }
+```
+checks.len = "ok"
+checks.atom = "skipped"
+
+@ cases.a-file-keeps-the-constructor-it-imported
+files."lib/def.taut" = `pub(open) inductive Fault: Type { Cut: Fault }`
+files."lib/mid.taut" = `import "def.taut"`
+files."lib/use.taut" = ```tauto
+import "def.taut"
+import "mid.taut"
+pub fn fail(): Fault { Cut }
+```
+files."other/more.taut" = `pub(open) inductive Gap: Type { Cut: Gap }`
+files."main.nib" = ```tauto
+import "lib/use.taut"
+import "other/more.taut"
+fn gap(): Gap { other::more::Cut }
+```
+checks_all = "ok"
+
+@ cases.the-wanted-type-picks-a-constructor-two-imported-files-declare
+files."p/a.taut" = `pub(open) inductive E: Type { Oops: E }`
+files."q/b.taut" = `pub(open) inductive F: Type { Oops: F }`
+files."main.nib" = ```tauto
+import "q/b.taut"
+import "p/a.taut"
+fn f(): F { Oops }
+fn e(): E {
+  let x: E := Oops
+  x
+}
+fn pick(y: Bool): F { if y { Oops } else { Oops } }
+fn back(x: E): F {
+  ⊢ F from match x {
+    Oops => Oops
+  }
+}
+```
+checks_all = "ok"
+
+@ cases.a-constructor-two-imported-files-declare-without-a-wanted-type-is-ambiguous
+files."p/a.taut" = `pub(open) inductive E: Type { Oops: E }`
+files."q/b.taut" = `pub(open) inductive F: Type { Oops: F }`
+files."main.nib" = ```tauto
+import "q/b.taut"
+import "p/a.taut"
+fn n(): Nat {
+  let x := Oops
+  1
+}
+```
+checks."main.nib::macro" = "error: `Oops` is ambiguous: it is declared as `q::b::F::Oops` and `p::a::E::Oops`; write the full name"
+
+@ cases.a-constructor-named-as-a-prelude-constructor-leaves-the-prelude-one-where-it-is-wanted
+files."main.nib" = ```tauto
+inductive Status: Type { Ok: Status, Bad: Status }
+fn mine(): Status { Ok }
+fn theirs(n: Nat): Result(Nat, Status) { Ok(n) }
+fn both(x: Status): Result(Nat, Status) {
+  ⊢ Result(Nat, Status) from match x {
+    Ok => Ok(1)
+    Bad => Err(Ok)
+  }
+}
+```
+checks_all = "ok"
+
+@ cases.an-unknown-function-in-a-match-arm-is-named-not-the-arm-pattern
+files."a.taut" = `import std::Text`
+files."main.nib" = ```tauto
+import "a.taut"
+fn ones(n: Nat, acc: Text): Text {
+  ⊢ Text from match n {
+    Zero => acc
+    Succ(rest) => ones(rest, no_such_concat(acc, "a b "))
+  }
+}
+```
+checks."ones" = "error: `no_such_concat` is not defined"
+
+@ cases.a-function-calling-the-prelude-concat-runs-as-written-behind-an-import
+files."a.taut" = `import std::Text`
+files."main.taut" = ```tauto
+import "a.taut"
+fn ones(n: Nat, acc: Text): Text {
+  ⊢ Text from match n {
+    Zero => acc
+    Succ(rest) => ones(rest, concat(acc, "a b "))
+  }
+}
+```
+entry = "main.taut"
+checks."ones" = "skipped"
+
+@ cases.an-imported-enum-named-prop-does-not-hide-the-sort
+files."a.taut" = `enum Prop(P: Type) { Static(P) }`
+files."b.taut" = ```tauto
+fn Model(B: (Nat) -> Prop, n: Nat): (Nat) -> Prop {
+  ⊢ (Nat) -> Prop from match n {
+    Zero => B
+    Succ(k) => Model((m: Nat) => B(Succ(m)), k)
+  }
+}
+fn InModel(n: Nat, f: Nat): Prop {
+  Model((g: Nat) => g = 0, n)(f)
+}
+```
+files."main.taut" = ```tauto
+import "a.taut"
+import "b.taut"
+theorem t(): Eq(Nat, 1, 1) { Refl }
+```
+entry = "main.taut"
+checks_all = "ok"
+
+// The standard library's files are read with the program's: an `enum Prop`,
+// `Nat` or `List` of a file that imports `std` does not become what the
+// library's own `Prop`, `Nat` and `List` mean (`Bool::cases` of `std/Base.taut`).
+@ cases.an-enum-named-prop-does-not-hide-the-sort-from-the-standard-library
+files."main.taut" = ```tauto
+import std::Base
+
+pub(open) enum Prop(P: Type) { Static(P) }
+theorem t(): Eq(Nat, 1, 1) { Refl }
+```
+entry = "main.taut"
+checks_all = "ok"
+
+@ cases.an-imported-enum-named-prop-does-not-hide-the-sort-from-the-standard-library
+files."a.taut" = ```tauto
+pub(open) enum Prop(P: Type) {
+  Static(P)
+}
+```
+files."main.taut" = ```tauto
+import "a.taut"
+import std::Base
+
+fn f(b: Bool): Nat {
+  if b { 1 } else { 0 }
+}
+```
+entry = "main.taut"
+checks_all = "ok"
+
+@ cases.an-enum-named-nat-does-not-hide-the-type-from-the-standard-library
+files."main.taut" = ```tauto
+import std::Base
+
+pub enum Nat { A }
+pub enum List { B }
+```
+entry = "main.taut"
+checks_all = "ok"
+
+// The same for a function: the library's `not` (`Bool::not_true` of
+// `std/Base.taut`) stays the library's.
+@ cases.a-function-named-not-does-not-hide-the-library-s-from-the-standard-library
+files."main.taut" = ```tauto
+import std::Base
+
+pub fn not(n: Nat): Nat { n }
+```
+entry = "main.taut"
+checks_all = "ok"
+
+@ cases.a-binder-is-not-a-constructor-of-a-file-the-importer-reads
+files."a.taut" = ```tauto
+inductive Waiting: Type {
+  W0: Waiting
+  W1(n: Nat): Waiting
+}
+```
+files."b.taut" = ```tauto
+pub(open) inductive Pair3: Type { P3(a: Nat, b: Nat, c: Nat): Pair3 }
+pub fn middle(p: Pair3): Nat { ⊢ Nat from match p { P3(x, w1, z) => w1 } }
+theorem middle_is_b(): middle(P3(1, 2, 3)) = 2 { Refl }
+```
+files."main.taut" = ```tauto
+import "a.taut"
+import "b.taut"
+theorem t(): middle(P3(1, 2, 3)) = 2 { Refl }
+```
+entry = "main.taut"
+checks_all = "ok"
+
+@ cases.a-nested-binder-is-not-a-constructor-of-a-file-the-importer-reads
+files."a.taut" = `inductive Cert: Type { Mk(n: Nat): Cert }`
+files."b.taut" = ```tauto
+pub fn first(l: List(Nat)): Nat {
+  ⊢ Nat from match l {
+    Nil => 0
+    Cons(cert, rest) => cert
+  }
+}
+theorem first_is_head(): first(Cons(5, Nil)) = 5 { Refl }
+```
+files."main.taut" = ```tauto
+import "a.taut"
+import "b.taut"
+theorem t(): first(Cons(5, Nil)) = 5 { Refl }
+```
+entry = "main.taut"
+checks_all = "ok"
+
+@ cases.a-parameter-in-a-later-parameter-type-is-not-a-global-of-the-importer
+files."a.taut" = `pub fn f(base: Nat, h: base = base): Nat { base }`
+files."b.taut" = ```tauto
+import "a.taut"
+fn base(): Nat { 7 }
+fn g(): Nat { f(1, Refl) }
+theorem t(): g() = 1 { Refl }
+```
+entry = "b.taut"
+checks_all = "ok"
+
+@ cases.a-private-name-of-an-import-may-be-declared-again
+files."c.taut" = ```tauto
+fn r(): Nat { 1 }
+pub fn s(): Nat { r() }
+```
+files."main.taut" = ```tauto
+import "c.taut"
+fn r(): Nat { 3 }
+theorem t(): r() + s() = 4 { Refl }
+```
+entry = "main.taut"
+checks_all = "ok"
+
+@ cases.a-private-name-of-an-import-does-not-make-a-public-one-ambiguous
+files."c.taut" = ```tauto
+fn r(): Nat { 1 }
+pub fn s(): Nat { r() }
+```
+files."e.taut" = `pub fn r(): Nat { 2 }`
+files."main.taut" = ```tauto
+import "c.taut"
+import "e.taut"
+theorem t(): r() + s() = 3 { Refl }
+```
+entry = "main.taut"
+checks_all = "ok"
+
+@ cases.a-constructor-a-file-does-not-import-is-not-taken-as-a-variable-in-a-pattern
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/st.taut" = ```tauto
+pub(open) enum St { StA, StB(Nat) }
+pub fn st_a(): St { StA }
+```
+files."app/src/get.taut" = ```tauto
+import "../../lib/src/st.taut"
+pub fn get(): St { st_a() }
+```
+files."app/src/main.taut" = ```tauto
+fn run(): Nat {
+  match get() {
+    StB(n) => n
+    StA => 7
+  }
+}
+perform show("p", run())
+```
+load_error = "`StA` alone in this pattern binds a new variable, which matches every value, but `StA` is a constructor of `St`, which this file does not import: import the file that declares it to match the constructor, or to bind the value write a name that is not a constructor, like `stA_`"
+
+@ cases.a-constructor-a-file-imports-is-matched-in-a-pattern
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/st.taut" = ```tauto
+pub(open) enum St { StA, StB(Nat) }
+pub fn st_a(): St { StA }
+```
+files."app/src/get.taut" = ```tauto
+import "../../lib/src/st.taut"
+pub fn get(): St { st_a() }
+```
+files."app/src/main.taut" = ```tauto
+import "../../lib/src/st.taut"
+import "get.taut"
+fn run(): Nat {
+  match get() {
+    StB(n) => n
+    StA => 7
+  }
+}
+perform show("p", run())
+```
+shows = ["p = 7"]
+
+// A type the prelude has the name of is renamed; a module of the same name
+// is not, and `Bytes::size` still names its function, in its file and in
+// one that imports it.
+@ cases.a-module-named-as-a-renamed-type-keeps-its-functions
+files."a.taut" = ```tauto
+pub(open) inductive Bytes: Type {
+  Mk(n: Nat): Bytes
+}
+module Bytes {
+  pub fn size(b: Bytes): Nat {
+    ⊢ Nat from match b {
+      Mk(n) => n
+    }
+  }
+}
+module Other {
+  pub fn twice(b: Bytes): Nat { Bytes::size(b) + Bytes::size(b) }
+}
+```
+files."main.nib" = ```tauto
+import "a.taut"
+theorem size_three(): Bytes::size(Bytes::Mk(3)) = 3 { Refl }
+theorem twice_three(): Other::twice(Bytes::Mk(3)) = 6 { Refl }
+```
+checks."main.nib::size_three" = "ok"
+checks."main.nib::twice_three" = "ok"
+
+// `M::P { x: 1 }` is the struct literal of the struct `M` declares, as the pattern
+// `M::P { x }` matches it, and `..b` takes its other fields.
+@ cases.a-struct-a-module-declares-is-written-with-its-module
+files."main.nib" = ```tauto
+module M {
+  pub(open) inductive struct P { x: Nat, y: Nat }
+}
+fn x_of(p: M::P): Nat {
+  match p {
+    M::P { x, y: _ } => x
+  }
+}
+fn base(): M::P { M::P { x: 1, y: 2 } }
+fn moved(): M::P { M::P { x: 3, ..base() } }
+fn pick(b: Bool): Nat {
+  if b { x_of((M::P { x: 4, y: 0 })) } else { 0 }
+}
+theorem first(): x_of(M::P { x: 1, y: 2 }) = 1 { Refl }
+theorem rest(): moved().y = 2 { Refl }
+theorem cond(): pick(true) = 4 { Refl }
+```
+checks_all = "ok"
+
+// A file sees its own declarations, the `pub` declarations of the files it imports directly and
+// the prelude's: what an import imports is not seen through it.
+@ cases.an-import-of-an-import-is-not-seen
+files."a.taut" = `pub fn one(n: Nat): Nat { n }`
+files."b.taut" = ```tauto
+import "a.taut"
+pub fn two(n: Nat): Nat { one(n) }
+```
+files."main.nib" = ```tauto
+import "b.taut"
+fn three(n: Nat): Nat { one(n) }
+```
+checks."main.nib::macro" = "error: `one` is declared by"
+
+@ cases.a-file-the-program-reads-but-this-one-does-not-import-changes-nothing
+files."a.taut" = `pub fn pick(n: Nat): Nat { n }`
+files."other.taut" = `pub fn pick(n: Nat): Nat { 0 }`
+files."side.taut" = ```tauto
+import "other.taut"
+pub fn side(n: Nat): Nat { pick(n) }
+```
+files."main.nib" = ```tauto
+import "a.taut"
+import "side.taut"
+theorem t(): pick(1) = 1 { Refl }
+```
+checks."main.nib::t" = "ok"
+
+@ cases.a-name-not-imported-is-not-found-in-another-file-of-the-program
+files."a.taut" = `pub fn only(n: Nat): Nat { n }`
+files."side.taut" = ```tauto
+import "a.taut"
+pub fn side(n: Nat): Nat { only(n) }
+```
+files."main.nib" = ```tauto
+import "side.taut"
+theorem t(): only(1) = 1 { Refl }
+```
+checks."main.nib::macro" = "error: `only` is declared by"
+
+@ cases.a-type-two-imported-files-declare-is-ambiguous
+files."a.taut" = `pub struct P { x: Nat }`
+files."b.taut" = `pub struct P { x: Nat }`
+files."main.nib" = ```tauto
+import "a.taut"
+import "b.taut"
+fn f(p: P): Nat { 0 }
+```
+checks."main.nib::macro" = "error: `P` is ambiguous"

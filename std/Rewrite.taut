@@ -29,7 +29,9 @@ import std::prelude::Std { List, Option, Result }
 pub macro fn rewrite(s: ProofStep): SynExpr ! {macro_error, elab, Div} {
   let g0 := Judgement::term(s.before)
   let sides := Tac::eq_sides(s)
-  let z := ExVar(SynIdent { name: "z", ctx: SynCtx { scopes: Nil }, span: s.span })
+  let z := ExVar(
+    SynIdent { declaration: None, name: "z", ctx: SynCtx { scopes: Nil }, span: s.span }
+  )
   let by_type := Tac::abstract_sides(s, sides, z)
   let body := match by_type {
     Some(m) => m
@@ -41,7 +43,10 @@ pub macro fn rewrite(s: ProofStep): SynExpr ! {macro_error, elab, Div} {
           Some(#(@after after, @before before)) => if Syn::same(before, g0) {
             Tac::motive(s.span, None)
           } else {
-            Tac::motive(s.span, Syn::abstract(g0, Judgement::term(g.ty), before, after, z))
+            Tac::motive(
+              s.span,
+              Tac::abstract_checked(s.before, g0, Judgement::term(g.ty), before, after, z)
+            )
           }
         }
         Cons(_, _) => Syn::error(s.span, "rewrite! leaves one goal: write one arm")
@@ -49,7 +54,12 @@ pub macro fn rewrite(s: ProofStep): SynExpr ! {macro_error, elab, Div} {
     }
   }
   let motive := ExLam(
-    [BName(SynIdent { name: "z", ctx: SynCtx { scopes: Nil }, span: s.span }, None)],
+    [
+      BName(
+        SynIdent { declaration: None, name: "z", ctx: SynCtx { scopes: Nil }, span: s.span },
+        None
+      )
+    ],
     body,
     s.span
   )
@@ -74,22 +84,148 @@ module Tac {
       Some(#(@lhs lhs, @rhs rhs)) => match s.after {
         Nil => match Tac::elaborated(s.before) {
           None => None
-          Some(g0) => Syn::abstract(g0, Syn::replace(g0, lhs, rhs), lhs, rhs, z)
+          Some(g0) => Tac::abstract_checked(
+            s.before,
+            g0,
+            Tac::replace_checked(s.before, g0, lhs, rhs),
+            lhs,
+            rhs,
+            z
+          )
         }
         Cons(g, rest) => match rest {
           Cons(_, _) => None
-          Nil => match Syn::abstract(Judgement::term(s.before), Judgement::term(g.ty), lhs, rhs, z) {
+          Nil => match Tac::abstract_checked(
+            s.before,
+            Judgement::term(s.before),
+            Judgement::term(g.ty),
+            lhs,
+            rhs,
+            z
+          ) {
             Some(m) => Some(m)
             None => match Tac::elaborated(s.before) {
               None => None
               Some(g0) => match Tac::elaborated(g.ty) {
                 None => None
-                Some(g1) => Syn::abstract(g0, g1, lhs, rhs, z)
+                Some(g1) => Tac::abstract_checked(s.before, g0, g1, lhs, rhs, z)
               }
             }
           }
         }
       }
+    }
+  }
+
+  // References compare by identity. Definitional equality of checked terms
+  // accounts for transparent functions and the operators in their bodies.
+  fn same_checked(ctx: Judgement, a: SynExpr, b: SynExpr): Bool ! {elab, Div} {
+    if Syn::same(a, b) {
+      true
+    } else {
+      match Elab::check(a, ctx, None) {
+        Err(_) => false
+        Ok(left) => match Elab::check(b, ctx, None) {
+          Err(_) => false
+          Ok(right) => Elab::defeq(left, right)
+        }
+      }
+    }
+  }
+
+  fn abstract_checked(
+    ctx: Judgement,
+    a: SynExpr,
+    b: SynExpr,
+    l: SynExpr,
+    r: SynExpr,
+    z: SynExpr
+  ): Option(SynExpr) ! {elab, Div} {
+    if Syn::same(a, b) {
+      Some(a)
+    } else if Tac::same_checked(ctx, a, l) && Tac::same_checked(ctx, b, r) {
+      Some(z)
+    } else {
+      match Syn::app_parts(a) {
+        None => None
+        Some(left) => match Syn::app_parts(b) {
+          None => None
+          Some(right) => match Tac::abstract_checked(
+            ctx,
+            (left: SynExpr),
+            (right: SynExpr),
+            l,
+            r,
+            z
+          ) {
+            None => None
+            Some(head) => match Tac::abstract_all_checked(
+              ctx,
+              (left: List(SynExpr)),
+              (right: List(SynExpr)),
+              l,
+              r,
+              z
+            ) {
+              None => None
+              Some(args) => Some(ExApp(head, args, SynSpan { id: Syn::expr_span(a) }))
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fn abstract_all_checked(
+    ctx: Judgement,
+    xs: List(SynExpr),
+    ys: List(SynExpr),
+    l: SynExpr,
+    r: SynExpr,
+    z: SynExpr
+  ): Option(List(SynExpr)) ! {elab, Div} {
+    match xs {
+      Nil => match ys { Nil => Some(Nil), Cons(_, _) => None }
+      Cons(x, xr) => match ys {
+        Nil => None
+        Cons(y, yr) => match Tac::abstract_checked(ctx, x, y, l, r, z) {
+          None => None
+          Some(item) => match Tac::abstract_all_checked(ctx, xr, yr, l, r, z) {
+            None => None
+            Some(rest) => Some(Cons(item, rest))
+          }
+        }
+      }
+    }
+  }
+
+  fn replace_checked(ctx: Judgement, e: SynExpr, l: SynExpr, r: SynExpr): SynExpr ! {elab, Div} {
+    if Tac::same_checked(ctx, e, l) {
+      r
+    } else {
+      match Syn::app_parts(e) {
+        None => e
+        Some(parts) => ExApp(
+          Tac::replace_checked(ctx, (parts: SynExpr), l, r),
+          Tac::replace_all_checked(ctx, (parts: List(SynExpr)), l, r),
+          SynSpan { id: Syn::expr_span(e) }
+        )
+      }
+    }
+  }
+
+  fn replace_all_checked(
+    ctx: Judgement,
+    xs: List(SynExpr),
+    l: SynExpr,
+    r: SynExpr
+  ): List(SynExpr) ! {elab, Div} {
+    match xs {
+      Nil => Nil
+      Cons(item, rest) => Cons(
+        Tac::replace_checked(ctx, item, l, r),
+        Tac::replace_all_checked(ctx, rest, l, r)
+      )
     }
   }
 

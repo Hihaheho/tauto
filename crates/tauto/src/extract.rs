@@ -18,6 +18,8 @@
 //! responsible for preserving their behavior in executable code.
 
 mod dependent;
+mod runtime;
+mod source;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -26,52 +28,44 @@ use tauto_message::{Message, msg};
 
 use crate::check::{Checked, CtorSite, Role, Verdict, record_sugar};
 use crate::surface::print::{in_modules_text, raw};
-use crate::surface::{
-    FnDecl, InductiveDecl, MatchArm, Pattern, Stmt, SurfaceTerm, TermKind, parse_program_at,
-};
+use crate::surface::{FnDecl, InductiveDecl, MatchArm, Name, Pattern, Stmt, SurfaceTerm, TermKind};
 
 /// Which names are the standard library's own declarations. The tables
 /// below map a declaration of `std/` (or the prelude) onto Nib by its short
 /// name; a declaration of the program's own files with the same name is
 /// extracted from its definition, which is what the proofs were about.
 struct StdNames {
-    own: HashSet<String>,
-    std: HashSet<String>,
-    prelude: HashSet<String>,
+    /// What the program's own files declare.
+    own: HashSet<Name>,
+    /// What the files of `std/` declare, as the program reads them.
+    std: HashSet<Name>,
+    /// What the prelude declares: the library prelude and the kernel's.
+    prelude: HashSet<Name>,
 }
 
 impl StdNames {
     fn new(sources: &[(crate::program::SourceFile, Vec<Stmt>)]) -> Self {
-        let std_root = Path::new(crate::stdlib::ROOT);
         let mut own = HashSet::new();
         let mut std = HashSet::new();
         for (file, stmts) in sources {
             // A file read by its path that is a copy of a file of `std/`, word
             // for word, declares what that file declares.
-            let of_std = file.path.starts_with(std_root)
-                || crate::stdlib::FILES
-                    .iter()
-                    .any(|(_, text)| *text == file.text);
+            let of_std = file.is_standard();
             let set = if of_std { &mut std } else { &mut own };
-            for s in stmts {
-                crate::surface::qualify::declared(s, &mut |n| {
-                    set.insert(n.to_string());
-                });
-            }
+            set.extend(
+                tauto_surface::bindings::declared_names(stmts)
+                    .into_iter()
+                    .cloned(),
+            );
         }
-        let mut prelude = crate::surface::qualify::prelude_names().clone();
-        for s in crate::check::kernel_prelude()
-            .map(|p| p.stmts)
-            .unwrap_or_default()
-        {
-            crate::surface::qualify::declared(&s, &mut |n| {
-                prelude.insert(n.to_string());
-            });
-        }
+        let prelude = crate::bindings::library_bindings()
+            .bindings()
+            .map(|(_, reference)| Name::Global(reference.clone()))
+            .collect();
         StdNames { own, std, prelude }
     }
 
-    fn in_std(&self, n: &str) -> bool {
+    fn in_std(&self, n: &Name) -> bool {
         !self.own.contains(n) && self.std.contains(n)
     }
 
@@ -79,33 +73,77 @@ impl StdNames {
     /// mapping of the `std/` function it names. The name decides, not the
     /// spelling: the prelude's `Text::len`, a builtin of Nib, is never
     /// written by a mapping.
-    fn written_by_mapping(&self, n: &str) -> bool {
+    fn written_by_mapping(&self, n: &Name) -> bool {
         self.in_std(n) && mapped_fn(crate::surface::qualify::short(n)).is_some()
     }
 
     /// The short name of `n` when `n` names a declaration of the standard
     /// library: one of `std/`, or the prelude's when no file of the program
     /// declares it.
-    fn of<'n>(&self, n: &'n str) -> Option<&'n str> {
-        use crate::surface::qualify::{PRELUDE_MODULE, SEPARATOR, short};
+    fn of<'n>(&self, n: &'n Name) -> Option<&'n str> {
+        use crate::surface::qualify::short;
         if self.own.contains(n) {
             return None;
+        }
+        for spelling in [
+            "Star", "Zero", "Succ", "true", "false", "Nil", "Cons", "None", "Some", "Less",
+            "Equal", "Greater",
+        ] {
+            if crate::bindings::is_library(n, spelling) {
+                return Some(spelling);
+            }
         }
         if self.std.contains(n) {
             return Some(short(n));
         }
-        // The constructor a struct's record syntax gives it (`Pair::Mk`).
-        if let Some((family, _)) = n.rsplit_once("::") {
-            return self.of(family).map(|_| short(n));
-        }
-        let bare = n
-            .strip_prefix(PRELUDE_MODULE)
-            .and_then(|rest| rest.strip_prefix(SEPARATOR))
-            .unwrap_or(n);
-        self.prelude.contains(bare).then_some(bare)
+        self.prelude.contains(n).then(|| short(n))
     }
 }
 
+/// Applies the constructor choices recorded by checking these occurrences.
+pub(crate) fn selected_references(
+    checked: &Checked,
+    statements: &mut [Stmt],
+) -> Result<(), String> {
+    selected_references_in(checked, statements).map_err(|e| e.to_string())
+}
+
+fn selected_references_in(checked: &Checked, statements: &mut [Stmt]) -> Result<(), Message> {
+    let mut choices = HashMap::new();
+    for site in checked.ctor_sites.iter().filter(|site| site.expression) {
+        let key = (site.occurrence, site.written.clone());
+        if choices
+            .insert(key, site.resolved.clone())
+            .is_some_and(|prior| prior != site.resolved)
+        {
+            return Err(
+                "one expression occurrence has incompatible checked constructor references".into(),
+            );
+        }
+    }
+    for statement in statements {
+        crate::surface::walk::stmt(statement, &mut |term| {
+            let id = term.id();
+            if let TermKind::Var(name) = std::sync::Arc::make_mut(&mut term.kind) {
+                if let Some(reference) = choices.get(&(id, name.clone())) {
+                    *name = reference.clone();
+                }
+            }
+        });
+    }
+    Ok(())
+}
+
+/// An unmapped constructor keeps the identity accepted for its family.
+fn extracted_ctor(checked: &Checked, name: &Name) -> Option<Name> {
+    checked
+        .families
+        .values()
+        .any(|family| family.ctors.contains(name))
+        .then(|| name.clone())
+}
+
+/// The Nib type a family of `std/` is extracted to.
 fn mapped_type(name: &str) -> Option<&'static str> {
     Some(match name {
         "Nat" => "nat",
@@ -148,16 +186,11 @@ fn std_instance_head(name: &str) -> bool {
 }
 
 /// The constructor of an instance's head: `List` of `List(A)`.
-fn head_name(head: &SurfaceTerm) -> &str {
+fn head_name(head: &SurfaceTerm) -> Option<&Name> {
     match &*head.kind {
-        TermKind::Var(n) => n,
-        TermKind::App { function, .. } => match &*function.kind {
-            TermKind::Var(n) => n,
-            _ => "",
-        },
-        // An instance for the product `A × B` is keyed by `Prod`.
-        TermKind::Product(_) => "Prod",
-        _ => "",
+        TermKind::Var(n) => Some(n),
+        TermKind::App { function, .. } => head_name(function),
+        _ => None,
     }
 }
 
@@ -517,6 +550,29 @@ fn builtin_name(name: &str) -> bool {
             | "Float32::bits"
             | "Float32::of_bits"
             | "Float32::of_float"
+            | "Float32::is_nan"
+            | "Float32::abs"
+            | "Float32::sqrt"
+            | "Float32::trunc"
+            | "Float32::floor"
+            | "Float32::ceil"
+            | "Float32::round"
+            | "Float32::cbrt"
+            | "Float32::exp"
+            | "Float32::ln"
+            | "Float32::log2"
+            | "Float32::log10"
+            | "Float32::pow"
+            | "Float32::sin"
+            | "Float32::cos"
+            | "Float32::tan"
+            | "Float32::asin"
+            | "Float32::acos"
+            | "Float32::atan"
+            | "Float32::atan2"
+            | "Float32::sinh"
+            | "Float32::cosh"
+            | "Float32::tanh"
             | "Float::of_float32"
     )
 }
@@ -536,7 +592,7 @@ const HELPERS: &str = "\
 
 /// The helpers of the `Text` functions, written when `std/Text.taut` is
 /// in the program.
-const TEXT_HELPERS: &str = "\nfn extract_text_byte(t: Text, i: nat): Option(nat) {\n  match Text::byte(t, U64::of_nat(i)) {\n    Some(b) => Some(Nat::of_u64(U64::of_u8(b)))\n    None => None\n  }\n}\n\nfn extract_text_bytes_from(t: Text, i: u64, acc: List(nat)): List(nat) {\n  if i == 0 {\n    acc\n  } else {\n    match Text::byte(t, i - 1) {\n      Some(b) => extract_text_bytes_from(t, i - 1, Cons(Nat::of_u64(U64::of_u8(b)), acc))\n      None => acc\n    }\n  }\n}\n\nfn extract_text_bytes(t: Text): List(nat) {\n  extract_text_bytes_from(t, Text::len(t), Nil)\n}\n\nfn extract_text_push_all(&mut b: Buf, parts: List(Text)): () {\n  match parts {\n    Nil => ()\n    Cons(part, rest) => {\n      Buf::push(&mut b, &part)\n      extract_text_push_all(&mut b, rest)\n    }\n  }\n}\n\nfn extract_text_concat_all(parts: List(Text)): Text {\n  var b := Buf::new()\n  extract_text_push_all(&mut b, parts)\n  Text::of(b)\n}\n\nfn extract_ordering(c: i64): Ordering {\n  if c < 0 { Less } else if c == 0 { Equal } else { Greater }\n}\n\nfn extract_text_of_code_point(c: nat): Option(Text) {\n  if c > 1114111 {\n    None\n  } else {\n    Text::of_code_point(U32::of_u64(U64::of_nat(c)))\n  }\n}\n\nfn extract_text_utf8_of_code_point(c: nat): Text {\n  match extract_text_of_code_point(c) {\n    Some(t) => t\n    None => \"\"\n  }\n}\n\nfn extract_bytes_of(bs: List(nat)): Option(List(u8)) {\n  match bs {\n    Nil => Some(Nil)\n    Cons(b, rest) => if b > 255 {\n      None\n    } else {\n      match extract_bytes_of(rest) {\n        Some(r) => Some(Cons(U8::of_u64(U64::of_nat(b)), r))\n        None => None\n      }\n    }\n  }\n}\n\nfn extract_text_of_utf8(bs: List(nat)): Option(Text) {\n  match extract_bytes_of(bs) {\n    Some(r) => Text::of_utf8(r)\n    None => None\n  }\n}\n\n// `Text::Mk(bs)`. A `Text` at run time is well-formed UTF-8, so other bytes\n// have no value to stand for, and the program stops rather than go on\n// with a wrong one. It stops through a conversion that does not fit (Nib\n// has no other way to stop without an effect), so a function value that\n// builds a text stays pure.\nfn extract_text_of_bytes(bs: List(nat)): Text {\n  match extract_text_of_utf8(bs) {\n    Some(t) => t\n    None => Text::of_u64(U64::of_u8(U8::of_u64(256)))\n  }\n}\n";
+const TEXT_HELPERS: &str = "\nfn extract_text_byte(t: Text, i: nat): Option(nat) {\n  match Text::byte(t, U64::of_nat(i)) {\n    Some(b) => Some(Nat::of_u64(U64::of_u8(b)))\n    None => None\n  }\n}\n\nfn extract_text_bytes_from(t: Text, i: u64, acc: List(nat)): List(nat) {\n  if i == 0 {\n    acc\n  } else {\n    match Text::byte(t, i - 1) {\n      Some(b) => extract_text_bytes_from(t, i - 1, Cons(Nat::of_u64(U64::of_u8(b)), acc))\n      None => acc\n    }\n  }\n}\n\nfn extract_text_bytes(t: Text): List(nat) {\n  extract_text_bytes_from(t, Text::len(t), Nil)\n}\n\nfn extract_text_push_all(&mut b: Buf, parts: List(Text)): () {\n  match parts {\n    Nil => ()\n    Cons(part, rest) => {\n      Buf::push(&mut b, &part)\n      extract_text_push_all(&mut b, rest)\n    }\n  }\n}\n\nfn extract_text_concat_all(parts: List(Text)): Text {\n  var b := Buf::new()\n  extract_text_push_all(&mut b, parts)\n  Text::of(b)\n}\n\nfn extract_ordering(c: i64): Ordering {\n  if c < 0 { Less } else if c == 0 { Equal } else { Greater }\n}\n\nfn extract_text_of_code_point(c: nat): Option(Text) {\n  if c > 1114111 {\n    None\n  } else {\n    Text::of_code_point(U32::of_u64(U64::of_nat(c)))\n  }\n}\n\nfn extract_text_utf8_of_code_point(c: nat): Text {\n  match extract_text_of_code_point(c) {\n    Some(t) => t\n    None => \"\"\n  }\n}\n\n// The bytes are read with tail calls, which run as a loop, so a long text\n// takes no stack: built in reverse, then turned around.\nfn extract_bytes_reverse_onto(bs: List(u8), acc: List(u8)): List(u8) {\n  match bs {\n    Nil => acc\n    Cons(b, rest) => extract_bytes_reverse_onto(rest, Cons(b, acc))\n  }\n}\n\nfn extract_bytes_of_onto(bs: List(nat), acc: List(u8)): Option(List(u8)) {\n  match bs {\n    Nil => Some(extract_bytes_reverse_onto(acc, Nil))\n    Cons(b, rest) => if b > 255 {\n      None\n    } else {\n      extract_bytes_of_onto(rest, Cons(U8::of_u64(U64::of_nat(b)), acc))\n    }\n  }\n}\n\nfn extract_bytes_of(bs: List(nat)): Option(List(u8)) {\n  extract_bytes_of_onto(bs, Nil)\n}\n\nfn extract_text_of_utf8(bs: List(nat)): Option(Text) {\n  match extract_bytes_of(bs) {\n    Some(r) => Text::of_utf8(r)\n    None => None\n  }\n}\n\n// `Text::Mk(bs)`. A `Text` at run time is well-formed UTF-8, so other bytes\n// have no value to stand for, and the program stops rather than go on\n// with a wrong one. It stops through a conversion that does not fit (Nib\n// has no other way to stop without an effect), so a function value that\n// builds a text stays pure.\nfn extract_text_of_bytes(bs: List(nat)): Text {\n  match extract_text_of_utf8(bs) {\n    Some(t) => t\n    None => Text::of_u64(U64::of_u8(U8::of_u64(256)))\n  }\n}\n";
 
 /// `std/SInt.taut`'s widths: the Nib type and the module whose `fits` the
 /// helpers call. Extraction keeps those same `fits`, so the name called and
@@ -607,242 +663,81 @@ pub const EXTRACTED_END: &str = "// tauto:extracted-end\n";
 /// incomplete declarations. Unproved instance laws and proofs incomplete only
 /// because they use those laws are erased and do not prevent extraction.
 pub fn extract_files(roots: &[PathBuf]) -> Result<String, String> {
+    extract_files_in(roots).map_err(|e| e.to_string())
+}
+
+fn extract_files_in(roots: &[PathBuf]) -> Result<String, Message> {
     let input = crate::read::check_files_for_extraction(roots, true, false)?;
-    extract_checked(&input, false, roots).map(|(text, _, _, _)| text)
+    let (text, _, _) = extract_checked(&input, false, roots)?;
+    let (loaded, _) = runtime::assemble(&input, &text, roots)?;
+    write_source(&loaded)
 }
 
 pub(crate) struct Extracted {
-    pub texts: Vec<(PathBuf, String)>,
-    pub total: HashSet<String>,
-    pub protected: HashSet<String>,
-    /// For each file read again to run, whether each declaration its macros
-    /// made, in order, runs as written. The text keeps the macro calls, so
-    /// they make their declarations again; one the kernel read is in
-    /// `extracted.taut` already and is left out.
-    pub generated: HashMap<PathBuf, Vec<bool>>,
-    /// The files each file read again imports, for what its names mean
-    /// (`qualify::files`); every one reaches `extracted.taut`.
-    pub imports: HashMap<PathBuf, Vec<PathBuf>>,
-    /// The directories of the files that were checked, whether or not a
-    /// file of theirs is read again to run: where the tables of a syntax
-    /// they declare are, which an extracted `syn_parse` reads at run time.
-    pub syntax_dirs: Vec<PathBuf>,
+    pub loaded: crate::program::Loaded,
+    pub total: HashSet<Name>,
 }
 
-/// The original files have already passed visibility checking. Generated
-/// representations need an additional boundary check after their types exist.
-pub(crate) fn dependent_visibility(
+fn helpers_only(text: &str) -> bool {
+    text == format!(
+        "{EXTRACTED_BEGIN}{}\n{EXTRACTED_END}",
+        crate::fmt::format(HELPERS).unwrap_or(HELPERS.into())
+    )
+}
+
+/// Original declarations have passed visibility checking. Generated nominal
+/// representations retain their private fields and constructors.
+fn dependent_visibility(
     loaded: &crate::program::Loaded,
-    protected: &HashSet<String>,
-) -> Vec<(String, tauto_parol::Span)> {
-    use crate::surface::Vis;
+    protected: &HashSet<Name>,
+) -> Vec<(tauto_message::Message, tauto_parol::Span)> {
     if protected.is_empty() {
         return Vec::new();
     }
-    let mut files = loaded.kernel_files.clone();
-    fn open_original(s: &mut Stmt, protected: &HashSet<String>) {
-        let generated = |n: &str| {
-            protected.contains(n) || protected.contains(crate::surface::qualify::short(n))
-        };
-        match s {
-            Stmt::Fn(f) if !generated(&f.name) => f.vis = Vis::Pub,
-            Stmt::Struct(d) | Stmt::Enum(d) if !generated(&d.name) => d.vis = Vis::Open,
-            Stmt::Inductive(i) => i.vis = Vis::Open,
+    fn open(statement: &mut Stmt, protected: &HashSet<Name>) {
+        use crate::surface::Vis;
+        match statement {
+            Stmt::Fn(f) if !protected.contains(&f.name) => f.vis = Vis::Pub,
+            Stmt::Struct(d) | Stmt::Enum(d) if !protected.contains(&d.name) => d.vis = Vis::Open,
+            Stmt::Inductive(i) if !protected.contains(&i.name) => i.vis = Vis::Open,
             Stmt::Theorem(t) | Stmt::Def(t) => t.vis = Vis::Pub,
-            Stmt::Effect(e) => e.vis = Vis::Open,
+            Stmt::Effect(e) if !protected.contains(&e.name) => e.vis = Vis::Open,
             Stmt::Class(c) => c.vis = Vis::Pub,
             Stmt::Module { items, .. } | Stmt::Mutual { items, .. } => {
-                items.iter_mut().for_each(|s| open_original(s, protected))
+                items.iter_mut().for_each(|s| open(s, protected))
             }
             _ => {}
         }
     }
-    let empty = HashSet::new();
-    for (file, stmts) in loaded.files.iter().zip(&mut files) {
-        let protected = if file.path == Path::new(EXTRACTED_PATH) {
-            protected
-        } else {
-            &empty
-        };
-        stmts.iter_mut().for_each(|s| open_original(s, protected));
+    let mut files = loaded.kernel_files.clone();
+    for statements in &mut files {
+        statements.iter_mut().for_each(|s| open(s, protected));
     }
     crate::surface::qualify::sealed_visibility(&files, &crate::program::module_names(&loaded.files))
 }
 
-/// Whether `s` is a declaration a macro made: its span is one of an
-/// expansion's, which no file's text has.
-pub(crate) fn macro_made(s: &Stmt) -> bool {
-    let span = match s {
-        Stmt::Fn(f) => f.span,
-        Stmt::Effect(e) => e.span,
-        Stmt::Theorem(t) | Stmt::Def(t) => t.span,
-        Stmt::Inductive(i) => i.span,
-        Stmt::Class(c) => c.span,
-        Stmt::Instance(i) => i.span,
-        Stmt::Mutual { span, .. } => *span,
-        _ => return false,
-    };
-    (crate::macros::EXPANSION_BASE..crate::surface::PRELUDE_BASE).contains(&span.start)
-}
-
-/// Whether `path` is the marker file of a non-core prelude file
-/// (`std/prelude/Os.taut` as the loader names it).
-fn is_prelude_marker(path: &Path) -> bool {
-    path.strip_prefix(crate::stdlib::ROOT)
-        .is_ok_and(|rest| rest.starts_with("prelude") && crate::stdlib::text(path).is_some())
-}
-
 pub(crate) fn extract_tote(roots: &[PathBuf]) -> Result<Extracted, String> {
+    extract_tote_in(roots).map_err(|e| e.to_string())
+}
+
+pub(crate) fn extract_tote_in(roots: &[PathBuf]) -> Result<Extracted, Message> {
     let input = crate::read::check_files_for_extraction(roots, true, true)?;
-    let (text, mut runtime, total, protected) = extract_checked(&input, true, roots)?;
-    // The non-core prelude files `extracted.taut` imports (its leading
-    // `import std::prelude::X` lines), as the files the loader reads for them.
-    let prelude_files: Vec<PathBuf> = crate::surface::parse_program_unresolved_at(&text, 0)
-        .map(|p| p.stmts)
-        .unwrap_or_default()
+    let (text, _, total) = extract_checked(&input, true, roots)?;
+    let (loaded, generated) = runtime::assemble(&input, &text, roots)?;
+    let mut total: HashSet<_> = total.into_iter().filter(Name::is_resolved).collect();
+    total.extend(generated);
+    Ok(Extracted { loaded, total })
+}
+
+pub(crate) fn write_source(loaded: &crate::program::Loaded) -> Result<String, Message> {
+    let statements = loaded
+        .kernel_files
         .iter()
-        .filter_map(|s| match s {
-            Stmt::Import {
-                path, module: true, ..
-            } if path.starts_with("std::prelude::") => crate::stdlib::import_path(path).ok(),
-            _ => None,
-        })
-        .collect();
-    if text
-        != format!("{EXTRACTED_BEGIN}{}\n{EXTRACTED_END}", {
-            let helpers = with_prelude_imports(HELPERS, &HashSet::new());
-            crate::fmt::format(&helpers).unwrap_or(helpers)
-        })
-    {
-        runtime.insert(0, (PathBuf::from(EXTRACTED_PATH), text));
-    }
-    let generated = input
-        .sources
-        .iter()
-        .filter(|(file, _)| runtime.iter().any(|(p, _)| *p == file.path))
-        .map(|(file, stmts)| {
-            let made = stmts.iter().filter(|s| macro_made(s));
-            // A `mutual` block is kept whole, as its text would be.
-            let runs = made
-                .map(|s| matches!(s, Stmt::Mutual { .. }) || executable(s, &input.checked.runtime));
-            (file.path.clone(), runs.collect())
-        })
-        .collect();
-    let extracted = PathBuf::from("extracted.taut");
-    // A file left out (one with nothing to run) is passed through: a file
-    // importing it reaches what it imports, as it did when it was checked.
-    let canon = |p: &PathBuf| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
-    let kept: HashSet<PathBuf> = runtime.iter().map(|(p, _)| canon(p)).collect();
-    let imported: HashMap<PathBuf, &Vec<PathBuf>> =
-        input.imports.iter().map(|(p, v)| (canon(p), v)).collect();
-    let mut markers: HashSet<PathBuf> = HashSet::new();
-    let mut imports: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
-    // What a macro made is written out in the file of its call, but its names
-    // were read as the file of the macro reads them: that file's imports are
-    // the file's imports too when it is read again.
-    let mut made_imports: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
-    for (file, stmts) in &input.sources {
-        let mut from: Vec<usize> = Vec::new();
-        for s in stmts.iter().filter(|s| macro_made(s)) {
-            let mut s = s.clone();
-            crate::surface::walk::stmt(&mut s, &mut |t| {
-                if let Some(o) = t.origin()
-                    && !from.contains(&o)
-                {
-                    from.push(o);
-                }
-            });
-        }
-        for o in from {
-            let Some((there, _)) = input.sources.get(o) else {
-                continue;
-            };
-            if there.path == file.path {
-                continue;
-            }
-            let reached = made_imports.entry(canon(&file.path)).or_default();
-            reached.push(there.path.clone());
-            if let Some(more) = imported.get(&canon(&there.path)) {
-                reached.extend(more.iter().cloned());
-            }
-        }
-    }
-    for (path, direct) in &input.imports {
-        let direct: Vec<PathBuf> = direct
-            .iter()
-            .chain(made_imports.get(&canon(path)).into_iter().flatten())
-            .cloned()
-            .collect();
-        let direct = &direct;
-        let mut out = Vec::new();
-        let mut seen = HashSet::new();
-        // A non-core prelude file the file itself imports stays an import of
-        // it (a file of the program: its marker, below), not an import it
-        // passes on.
-        for t in direct.iter().filter(|t| is_prelude_marker(t)) {
-            out.push(t.clone());
-            markers.insert(t.clone());
-        }
-        let mut todo: Vec<&PathBuf> = direct.iter().rev().collect();
-        while let Some(t) = todo.pop() {
-            let c = canon(t);
-            if !seen.insert(c.clone()) {
-                continue;
-            }
-            if is_prelude_marker(t) {
-                continue;
-            }
-            if kept.contains(&c) {
-                out.push(t.clone());
-            } else if let Some(next) = imported.get(&c) {
-                todo.extend(next.iter().rev());
-            }
-        }
-        imports.insert(path.clone(), out);
-    }
-    for (path, _) in &runtime {
-        if *path != extracted {
-            imports
-                .entry(path.clone())
-                .or_default()
-                .push(extracted.clone());
-        }
-    }
-    // `extracted.taut` reaches the prelude files it imports: they are files
-    // of the program (empty, as the standard library's are), and its imports.
-    let mut runtime = runtime;
-    if runtime.iter().any(|(p, _)| *p == extracted) {
-        for f in &prelude_files {
-            markers.insert(f.clone());
-            let reached = imports.entry(extracted.clone()).or_default();
-            if !reached.contains(f) {
-                reached.push(f.clone());
-            }
-        }
-    }
-    let mut markers: Vec<PathBuf> = markers.into_iter().collect();
-    markers.sort();
-    for f in markers {
-        if !runtime.iter().any(|(p, _)| *p == f) {
-            runtime.push((f, String::new()));
-        }
-    }
-    let mut syntax_dirs: Vec<PathBuf> = Vec::new();
-    for (file, _) in &input.sources {
-        if let Some(dir) = file.path.parent()
-            && !syntax_dirs.iter().any(|d| d == dir)
-        {
-            syntax_dirs.push(dir.to_path_buf());
-        }
-    }
-    Ok(Extracted {
-        texts: runtime,
-        total,
-        protected,
-        generated,
-        imports,
-        syntax_dirs,
-    })
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
+    let text = source::write(&statements)?;
+    Ok(format!("{EXTRACTED_BEGIN}{text}\n{EXTRACTED_END}"))
 }
 
 /// An axiom of `std/Float.taut` that extraction maps onto a builtin of Nib
@@ -850,6 +745,13 @@ pub(crate) fn extract_tote(roots: &[PathBuf]) -> Result<Extracted, String> {
 /// trusted as the mapped functions are. `Quot::sound` is a proof and is
 /// erased: a quotient is extracted as its representation, which a program
 /// reads only through `Quot_lift`, giving related values the same result.
+fn bound_kernel_prelude() -> Result<crate::surface::Program, Message> {
+    let mut program = crate::check::kernel_prelude()?;
+    crate::resolve::Resolver::new(crate::bindings::library_definition_bindings())
+        .statements(&mut program.stmts);
+    Ok(program)
+}
+
 fn mapped_axiom(name: &str) -> bool {
     // The axiom is named under the module of its type (`Float::exp`,
     // `Text::of_float`), after the module of its file if any.
@@ -868,19 +770,65 @@ fn mapped_axiom(name: &str) -> bool {
 /// while the program is read: a macro's function is executable code, and the
 /// files before it are not extracted yet. What the kernel does not accept,
 /// or does not read (executable code), is left out, with what depends on it.
-pub(crate) fn executable_prefix(prefix: &[Stmt]) -> Result<String, String> {
-    use crate::surface::qualify::{SEPARATOR, declared};
+pub(crate) fn executable_prefix(
+    prefix: &[Stmt],
+    standard: &HashSet<Name>,
+) -> Result<Vec<Stmt>, String> {
+    // Every declaration of the prefix is checked whole here, and a tactic asks
+    // for the same prefix at each of its steps: the answer is kept by what the
+    // prefix is, its statements without places and binder numbers, and the
+    // references its declarations are bound to.
+    const KEPT: usize = 8;
+    thread_local! {
+        static KEPT_PREFIXES: std::cell::RefCell<Vec<(String, Result<Vec<Stmt>, String>)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+    let mut key = String::new();
+    let mut names: Vec<&str> = standard.iter().map(|n| n.as_str()).collect();
+    names.sort();
+    key.push_str(&names.join(","));
+    for s in prefix {
+        key.push('\n');
+        key.push_str(&crate::check::fingerprint(s, false));
+    }
+    // The declarations it makes are bound to the references of this reading of
+    // the files: one read again (the files before a later file, in a whole
+    // project) is bound anew, and the library is compared with it by them.
+    for n in tauto_surface::bindings::declared_names(prefix) {
+        key.push('\n');
+        key.push_str(&format!("{n:?}"));
+    }
+    let key = tauto_syntax::sha256_hex(key.as_bytes());
+    if let Some(found) = KEPT_PREFIXES.with(|k| {
+        k.borrow().iter().find(|(k, _)| *k == key).map(|(_, r)| r.clone())
+    }) {
+        return found;
+    }
+    let made = executable_prefix_in(prefix, standard).map_err(|e| e.to_string());
+    KEPT_PREFIXES.with(|k| {
+        let mut k = k.borrow_mut();
+        if k.len() >= KEPT {
+            let _ = k.remove(0);
+        }
+        k.push((key, made.clone()));
+    });
+    made
+}
+
+fn executable_prefix_in(prefix: &[Stmt], standard: &HashSet<Name>) -> Result<Vec<Stmt>, Message> {
     // The files before keep their modules (`module Nat { … }`) until the
     // whole program is read; the kernel takes their functions by full name.
-    let flat = crate::surface::modules::resolve_with(
+    let mut flat = crate::surface::modules::resolve_joined_files(
         prefix.to_vec(),
         &crate::surface::effect_sets::Sets::new(),
         crate::program::prelude_module_names(),
     )
     .0;
-    let prefix = flat.as_slice();
     let mut kernel = crate::check::Kernel::new();
     let prelude_names = crate::check::declare_prelude(&mut kernel)?;
+    kernel.resolve_statements(&mut flat);
+    kernel.record_ctor_sites();
+    let prefix = flat.as_slice();
     let path = PathBuf::from("macro library");
     let mut kept = Vec::new();
     let mut out = Vec::new();
@@ -908,8 +856,8 @@ pub(crate) fn executable_prefix(prefix: &[Stmt]) -> Result<String, String> {
         // name would be declared twice.
         let mapped = matches!(
             s,
-            Stmt::Fn(f) if (mapped_fn(&f.name).is_some() || nib_prelude_fn(&f.name))
-                && std_declared().contains(&f.name)
+            Stmt::Fn(f) if (mapped_fn(crate::surface::qualify::short(&f.name)).is_some() || nib_prelude_fn(crate::surface::qualify::short(&f.name)))
+                && standard.contains(&f.name)
         );
         if accepted && proof_language && !mapped {
             kept.push(s.clone());
@@ -920,18 +868,15 @@ pub(crate) fn executable_prefix(prefix: &[Stmt]) -> Result<String, String> {
         }));
     }
     let checked = crate::check::checked_entries(kernel, vec![path.clone()], out, prelude_names);
-    // A name of `std/` is qualified by its module (`std::Nat::add`).
-    let std_prefix = format!("std{SEPARATOR}");
+    selected_references(&checked, &mut kept)?;
     let mut own = HashSet::new();
     let mut std = HashSet::new();
-    for s in prefix {
-        declared(s, &mut |n| {
-            if n.starts_with(&std_prefix) || std_declared().contains(n) {
-                std.insert(n.to_string());
-            } else {
-                own.insert(n.to_string());
-            }
-        });
+    for n in tauto_surface::bindings::declared_names(prefix) {
+        if standard.contains(n) {
+            std.insert(n.clone());
+        } else {
+            own.insert(n.clone());
+        }
     }
     let mut std_names = StdNames::new(&[]);
     std_names.own = own;
@@ -939,11 +884,13 @@ pub(crate) fn executable_prefix(prefix: &[Stmt]) -> Result<String, String> {
     let mut ex = Extractor {
         dependent: None,
         checked: &checked,
+        field_selections: None,
         generated: HashSet::new(),
         out: String::from(HELPERS),
         fresh: 0,
         mixed: false,
         needed: HashSet::new(),
+        dependencies: HashSet::new(),
         runtime: Vec::new(),
         total: HashSet::new(),
         thunks: HashSet::new(),
@@ -956,58 +903,28 @@ pub(crate) fn executable_prefix(prefix: &[Stmt]) -> Result<String, String> {
         refined_takers: HashSet::new(),
         module_segments: module_segments(&checked),
     };
-    if checked.families.contains_key("Text") {
+    if checked
+        .families
+        .keys()
+        .any(|n| std_names.of(n) == Some("Text"))
+    {
         ex.out.push_str(TEXT_HELPERS);
     }
-    if checked.families.contains_key("U64") {
+    if checked
+        .families
+        .keys()
+        .any(|n| std_names.of(n) == Some("U64"))
+    {
         ex.out.push_str(&uint_helpers());
     }
-    if checked.families.contains_key("I64") {
+    if checked
+        .families
+        .keys()
+        .any(|n| std_names.of(n) == Some("I64"))
+    {
         ex.out.push_str(&sint_helpers());
     }
-    let file = crate::program::SourceFile {
-        path,
-        base: 0,
-        text: String::new(),
-    };
-    // One declaration extraction cannot write is left out, with what calls it,
-    // which the checker of executable code then leaves out.
-    for s in &kept {
-        let (out, fresh) = (ex.out.len(), ex.fresh);
-        if ex.file(&file, std::slice::from_ref(s)).is_err() {
-            ex.out.truncate(out);
-            ex.fresh = fresh;
-        }
-    }
-    // No imports: the library is read as one program with no import graph,
-    // where every prelude name is visible, and an `import` among its
-    // statements would be read as one of the macro library.
-    Ok(legal_names(&ex.out).0)
-}
-
-/// The full names the files of `std/` declare (`Bool.or`), which the files
-/// before a macro hold as they are written, without `std.` before them.
-fn std_declared() -> &'static HashSet<String> {
-    static NAMES: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
-    NAMES.get_or_init(|| {
-        let mut names = HashSet::new();
-        for (_, text) in crate::stdlib::FILES {
-            let Ok(p) = crate::surface::parse_program_unresolved_at(text, 0) else {
-                continue;
-            };
-            let (stmts, _) = crate::surface::modules::resolve_with(
-                p.stmts,
-                &crate::surface::effect_sets::Sets::new(),
-                crate::program::prelude_module_names(),
-            );
-            for s in &stmts {
-                crate::surface::qualify::declared(s, &mut |n| {
-                    names.insert(n.to_string());
-                });
-            }
-        }
-        names
-    })
+    runtime::prefix(&kept, prefix, &ex, &ex.out)
 }
 
 /// `text` with an `import std::prelude::<file>` for each non-core prelude file
@@ -1111,20 +1028,12 @@ fn extract_checked(
     input: &crate::read::ExtractionInput,
     mixed: bool,
     roots: &[PathBuf],
-) -> Result<
-    (
-        String,
-        Vec<(PathBuf, String)>,
-        HashSet<String>,
-        HashSet<String>,
-    ),
-    String,
-> {
+) -> Result<(String, Vec<(PathBuf, String)>, HashSet<Name>), Message> {
     let checked = &input.checked;
     let mut problems = Vec::new();
     let unproved = unproved_laws(&checked);
     let generated = generated_nib_names(input);
-    let read_time = read_time_functions(input);
+    let read_time = registered_functions(input);
     let unused = unused_imported(input, roots, &read_time);
     for e in &checked.entries {
         match &e.entry.verdict {
@@ -1142,14 +1051,17 @@ fn extract_checked(
             // the program still runs.
             Verdict::Incomplete { .. } if !mixed && unproved.contains(&e.entry.name) => {}
             Verdict::Checked { axioms } if !axioms.iter().all(|a| mapped_axiom(a)) => problems
-                .push(format!(
-                    "{}: {}",
-                    e.file.display(),
+                .push(located(
+                    e.file.display().to_string(),
                     msg!(
                         "tauto-extract-uses-axioms",
-                        name = &e.entry.name,
-                        axioms = axioms.join(", ")
-                    )
+                        name = e.entry.name.to_string(),
+                        axioms = axioms
+                            .iter()
+                            .map(Name::as_str)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
                 )),
             Verdict::Failed(d) => {
                 // `file:line:col:`, as a type error from the run says where it is.
@@ -1161,33 +1073,39 @@ fn extract_checked(
                         Some(format!("{}:{l}:{c}", e.file.display()))
                     })
                     .unwrap_or_else(|| e.file.display().to_string());
-                problems.push(format!("{place}: {}: {}", e.entry.name, d.message))
+                problems.push(located(
+                    place,
+                    msg!(
+                        "tauto-extract-failed",
+                        name = e.entry.name.to_string(),
+                        why = d.message.clone()
+                    ),
+                ))
             }
-            Verdict::Incomplete { .. } => problems.push(format!(
-                "{}: {}",
-                e.file.display(),
-                msg!("tauto-extract-incomplete", name = &e.entry.name)
+            Verdict::Incomplete { .. } => problems.push(located(
+                e.file.display().to_string(),
+                msg!("tauto-extract-incomplete", name = e.entry.name.to_string()),
             )),
-            Verdict::Skipped(why) => problems.push(format!(
-                "{}: {}",
-                e.file.display(),
+            Verdict::Skipped(why) => problems.push(located(
+                e.file.display().to_string(),
                 msg!(
                     "tauto-extract-skipped",
-                    name = &e.entry.name,
-                    why = why.as_str()
-                )
+                    name = e.entry.name.to_string(),
+                    why = why.clone()
+                ),
             )),
             Verdict::Checked { .. } => {}
         }
     }
     if !problems.is_empty() {
-        return Err(problems.join("\n"));
+        return Err(joined(problems));
     }
     let std = StdNames::new(&input.sources);
     let lowered = dependent::lower(input, roots, &std)?;
     let mut ex = Extractor {
         dependent: None,
         checked: &checked,
+        field_selections: None,
         generated: generated.clone(),
         out: String::from(HELPERS),
         fresh: 0,
@@ -1197,6 +1115,7 @@ fn extract_checked(
         } else {
             HashSet::new()
         },
+        dependencies: HashSet::new(),
         runtime: Vec::new(),
         total: HashSet::new(),
         thunks: HashSet::new(),
@@ -1209,13 +1128,13 @@ fn extract_checked(
         refined_takers: HashSet::new(),
         module_segments: module_segments(&checked),
     };
-    if checked.families.contains_key("Text") {
+    if checked.families.keys().any(|n| std.of(n) == Some("Text")) {
         ex.out.push_str(TEXT_HELPERS);
     }
-    if checked.families.contains_key("U64") {
+    if checked.families.keys().any(|n| std.of(n) == Some("U64")) {
         ex.out.push_str(&uint_helpers());
     }
-    if checked.families.contains_key("I64") {
+    if checked.families.keys().any(|n| std.of(n) == Some("I64")) {
         ex.out.push_str(&sint_helpers());
     }
     if let Some(lowered) = lowered {
@@ -1254,32 +1173,17 @@ fn extract_checked(
     }
     if mixed {
         ex.kernel_functions()?;
-        ex.runtime_files()?;
+        ex.runtime_files(&input.runtime_reasons)?;
     }
-    let (out, renamed) = legal_names(&ex.out);
-    let protected = ex
-        .dependent
-        .as_ref()
-        .map(|d| {
-            d.protected
-                .iter()
-                .map(|n| renamed.get(n).cloned().unwrap_or_else(|| n.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
-    let out = with_prelude_imports(&out, &ex.std.own);
-    let total = ex
-        .total
-        .into_iter()
-        .map(|n| renamed.get(&n).cloned().unwrap_or(n))
-        .collect();
+    let (out, _) = legal_names(&ex.out);
+    let out = with_prelude_imports(&out, &ex.std.own.iter().map(ToString::to_string).collect());
+    let total = ex.total;
     // Laid out as `tauto fmt` would, for whoever reads `tauto extract`.
     let text = crate::fmt::format(&out).unwrap_or(out);
     Ok((
         format!("{EXTRACTED_BEGIN}{text}\n{EXTRACTED_END}"),
         ex.runtime,
         total,
-        protected,
     ))
 }
 
@@ -1303,7 +1207,7 @@ fn local_name(n: &str) -> String {
 
 fn dotted(t: &crate::surface::SurfaceTerm) -> Option<String> {
     match &*t.kind {
-        TermKind::Var(n) => Some(n.clone()),
+        TermKind::Var(n) => Some(n.to_string()),
         TermKind::Field { base, name } => Some(format!("{}::{name}", dotted(base)?)),
         _ => None,
     }
@@ -1399,8 +1303,8 @@ fn legal_names(text: &str) -> (String, HashMap<String, String>) {
 
 /// The declarations that are incomplete only for laws that were not written:
 /// those with such holes, and what uses only those.
-fn unproved_laws(checked: &Checked) -> HashSet<String> {
-    let mut out: HashSet<String> = HashSet::new();
+fn unproved_laws(checked: &Checked) -> HashSet<Name> {
+    let mut out: HashSet<Name> = HashSet::new();
     loop {
         let before = out.len();
         for e in &checked.entries {
@@ -1429,6 +1333,7 @@ fn def_as_fn(t: &crate::surface::TheoremDecl) -> Option<FnDecl> {
         budget: None,
         vis: Default::default(),
         name: t.name.clone(),
+        generic_types: Vec::new(),
         generics: Vec::new(),
         rows: Vec::new(),
         bounds: Vec::new(),
@@ -1451,19 +1356,21 @@ fn def_as_fn(t: &crate::surface::TheoremDecl) -> Option<FnDecl> {
     })
 }
 
-fn executable(s: &Stmt, runtime: &HashSet<String>) -> bool {
+fn executable(s: &Stmt, runtime: &HashSet<Name>) -> bool {
     match s {
         Stmt::Fn(f) => runtime.contains(&f.name),
         Stmt::Effect(e) => runtime.contains(&e.name),
         // An `inductive enum` the kernel reads is extracted with the
         // functions over it, which name its constructors.
         Stmt::Enum(d) => runtime.contains(&d.name),
+        // A class whose methods have effects the proofs do not read runs as
+        // written, with its instances.
+        Stmt::Class(c) => runtime.contains(&c.name),
+        Stmt::Instance(i) => runtime.contains(&i.class),
         Stmt::Inductive(_)
         | Stmt::Theorem(_)
         | Stmt::Def(_)
         | Stmt::Import { .. }
-        | Stmt::Class(_)
-        | Stmt::Instance(_)
         | Stmt::Mutual { .. } => false,
         _ => true,
     }
@@ -1473,21 +1380,21 @@ fn executable(s: &Stmt, runtime: &HashSet<String>) -> bool {
 /// proofs: the struct a constructor builds, if it builds one, and whether a
 /// name is a constructor.
 struct Ctors<'a> {
-    struct_of: &'a dyn Fn(&str) -> Option<String>,
-    struct_fields: &'a dyn Fn(&str) -> Option<(String, Vec<String>)>,
-    is_ctor: &'a dyn Fn(&str) -> bool,
+    struct_of: &'a dyn Fn(&Name) -> Option<Name>,
+    struct_fields: &'a dyn Fn(&Name) -> Option<(Name, Vec<Name>)>,
+    is_ctor: &'a dyn Fn(&Name) -> bool,
     /// The path of a variant that kept its short name inside a type written
     /// out in modules ([`Extractor::qualified_ctor`]).
-    qualified: &'a dyn Fn(&str) -> Option<String>,
+    qualified: &'a dyn Fn(&Name) -> Option<String>,
 }
 
 fn runtime_source(
     text: &str,
     base: u32,
     stmts: &[Stmt],
-    runtime: &HashSet<String>,
+    runtime: &HashSet<Name>,
     std: &StdNames,
-    written: &HashSet<String>,
+    written: &HashSet<Name>,
     called: &HashSet<String>,
     ctors: Ctors,
 ) -> String {
@@ -1515,7 +1422,7 @@ fn runtime_source(
         original: &[u8],
         base: u32,
         stmts: &[Stmt],
-        runtime: &HashSet<String>,
+        runtime: &HashSet<Name>,
         macro_fns: &HashSet<String>,
     ) {
         for s in stmts {
@@ -1580,7 +1487,9 @@ fn runtime_source(
                 }
                 // A `macro fn` no expression calls is erased with its keyword:
                 // erasing only the function would leave `macro` alone.
-                Stmt::Macro { function, span, .. } if !runtime.contains(function) => {
+                Stmt::Macro { function, span, .. }
+                    if !runtime.iter().any(|name| name.as_str() == function) =>
+                {
                     blank(&mut bytes, *span, base)
                 }
                 Stmt::Called { span, .. } => blank(&mut bytes, *span, base),
@@ -1797,9 +1706,11 @@ fn runtime_source(
                 && n.contains(crate::surface::qualify::SEPARATOR)
                 && written.contains(n)
                 && !runtime.contains(n)
-                && text.get(range(t.span, base)).is_some_and(|w| w != n)
+                && text
+                    .get(range(t.span, base))
+                    .is_some_and(|w| w != n.as_str())
             {
-                included.push((t.span, n.clone()));
+                included.push((t.span, n.to_string()));
             }
         });
     }
@@ -1812,7 +1723,9 @@ fn runtime_source(
             if let TermKind::Var(n) = &*t.kind
                 && !runtime.contains(n)
                 && let Some(q) = qualified(n)
-                && text.get(range(t.span, base)).is_some_and(|w| w == n)
+                && text
+                    .get(range(t.span, base))
+                    .is_some_and(|w| w == n.as_str())
             {
                 included.push((t.span, q));
             }
@@ -1885,8 +1798,11 @@ fn runtime_source(
                     .filter_map(|n| {
                         let word = source_word(n);
                         match struct_of(n) {
-                            Some(s) => Some((word, s)),
-                            None if word != n && written.contains(n) && !runtime.contains(n) => {
+                            Some(s) => Some((word, s.to_string())),
+                            None if word != n.as_str()
+                                && written.contains(n)
+                                && !runtime.contains(n) =>
+                            {
                                 Some((word, n.to_string()))
                             }
                             None if !runtime.contains(n) => qualified(n).map(|q| (word, q)),
@@ -1904,15 +1820,17 @@ fn runtime_source(
                     if runtime.contains(n) {
                         return None;
                     }
-                    let word = source_word(n);
-                    if word != n && written.contains(n) {
+                    let word = crate::surface::qualify::short(n);
+                    if word != n.as_str() && written.contains(n) {
                         return Some((word, n.to_string()));
                     }
                     if let Some(q) = qualified(n) {
                         return Some((word, q));
                     }
                     match std.of(n)? {
-                        m @ ("Zero" | "true" | "false") => mapped_ctor(m, &[]).map(|l| (n, l)),
+                        m @ ("Zero" | "true" | "false") => {
+                            mapped_ctor(m, &[]).map(|l| (n.as_str(), l))
+                        }
                         _ => None,
                     }
                 }));
@@ -1940,6 +1858,11 @@ fn runtime_source(
             .iter()
             .any(|g| g != span && g.start <= span.start && span.end <= g.end)
     });
+    // What a macro made in a written statement (a lambda written inside
+    // `${…}` of a syntax literal, with its `Nat`) has no text of its own
+    // here: the macro makes it again when the file is read again, so there
+    // is nothing written to rewrite.
+    included.retain(|(span, _)| span.start < crate::macros::EXPANSION_BASE);
     included.sort_by_key(|(span, _)| std::cmp::Reverse(span.start));
     for (span, literal) in included {
         bytes.splice(range(span, base), literal.into_bytes());
@@ -2002,21 +1925,32 @@ fn nat_subject(at: u32) -> String {
 fn nat_chain(
     arms: &[MatchArm],
     std: &StdNames,
-    runtime: &HashSet<String>,
+    runtime: &HashSet<Name>,
     at: u32,
 ) -> Option<Vec<String>> {
-    fn succ_in(p: &Pattern, std: &StdNames, runtime: &HashSet<String>) -> bool {
+    nat_chain_with(arms, std, runtime, at, &mut |name| raw(name))
+}
+
+fn nat_chain_with(
+    arms: &[MatchArm],
+    std: &StdNames,
+    runtime: &HashSet<Name>,
+    at: u32,
+    binding: &mut dyn FnMut(&Name) -> String,
+) -> Option<Vec<String>> {
+    fn succ_in(p: &Pattern, std: &StdNames, runtime: &HashSet<Name>) -> bool {
         matches!(p, Pattern::Ctor { name, .. } if !runtime.contains(name) && std.of(name) == Some("Succ"))
     }
     fn test(
         p: &Pattern,
         at: &str,
         std: &StdNames,
-        runtime: &HashSet<String>,
+        runtime: &HashSet<Name>,
         tests: &mut Vec<String>,
         binds: &mut Vec<String>,
+        binding: &mut dyn FnMut(&Name) -> String,
     ) -> Option<()> {
-        fn short<'n>(n: &'n str, std: &StdNames, runtime: &HashSet<String>) -> Option<&'n str> {
+        fn short<'n>(n: &'n Name, std: &StdNames, runtime: &HashSet<Name>) -> Option<&'n str> {
             if runtime.contains(n) { None } else { std.of(n) }
         }
         let mapped = |n| short(n, std, runtime);
@@ -2024,14 +1958,22 @@ fn nat_chain(
             Pattern::Wild => {}
             Pattern::Bind(n) if mapped(n) == Some("Zero") => tests.push(format!("{at} == 0")),
             Pattern::Bind(n) if mapped(n).is_none() => {
-                binds.push(format!("let {} := {at};", raw(n)))
+                binds.push(format!("let {} := {at};", binding(n)))
             }
             Pattern::Int(k) => tests.push(format!("{at} == {k}")),
             Pattern::Ctor { name, args } => match (mapped(name)?, args.as_slice()) {
                 ("Zero", []) => tests.push(format!("{at} == 0")),
                 ("Succ", [q]) => {
                     tests.push(format!("{at} >= 1"));
-                    test(q, &format!("({at} - 1)"), std, runtime, tests, binds)?;
+                    test(
+                        q,
+                        &format!("({at} - 1)"),
+                        std,
+                        runtime,
+                        tests,
+                        binds,
+                        binding,
+                    )?;
                 }
                 _ => return None,
             },
@@ -2046,12 +1988,21 @@ fn nat_chain(
     let n = arms.len();
     let mut out = Vec::new();
     for (k, arm) in arms.iter().enumerate() {
-        if arm.guard.is_some() || arm.goal.is_some() {
+        // A goal on the arm is the type of its body, which the branches keep.
+        if arm.guard.is_some() {
             return None;
         }
         let mut tests = Vec::new();
         let mut binds = Vec::new();
-        test(&arm.pattern, &subject, std, runtime, &mut tests, &mut binds)?;
+        test(
+            &arm.pattern,
+            &subject,
+            std,
+            runtime,
+            &mut tests,
+            &mut binds,
+            binding,
+        )?;
         let binds = binds.iter().map(|b| format!("{b} ")).collect::<String>();
         let open = if k + 1 == n {
             if k == 0 {
@@ -2084,7 +2035,8 @@ fn source_word(n: &str) -> &str {
     short.rsplit("::").next().unwrap_or(short)
 }
 
-fn pattern_ctors<'p>(p: &'p Pattern, out: &mut Vec<&'p str>) {
+/// The constructors a pattern names.
+fn pattern_ctors<'p>(p: &'p Pattern, out: &mut Vec<&'p Name>) {
     match p {
         Pattern::Ctor { name, args } => {
             out.push(name);
@@ -2102,7 +2054,8 @@ fn pattern_ctors<'p>(p: &'p Pattern, out: &mut Vec<&'p str>) {
     }
 }
 
-fn pattern_binds<'p>(p: &'p Pattern, out: &mut Vec<&'p str>) {
+/// The names a pattern binds, a nullary constructor among them.
+fn pattern_binds<'p>(p: &'p Pattern, out: &mut Vec<&'p Name>) {
     match p {
         Pattern::Bind(name) => out.push(name),
         Pattern::Ctor { args, .. } => {
@@ -2147,55 +2100,22 @@ fn words(text: &str, base: u32, start: u32, end: u32) -> Vec<(u32, &str)> {
     out
 }
 
-// The functions needed while the runtime source is read again: macros still
-// called by its expressions and the tools its native syntaxes register.
-fn read_time_functions(input: &crate::read::ExtractionInput) -> HashSet<String> {
-    let written: Vec<_> = input
-        .sources
+// Registered formatters and tokenizers remain executable editor entry points.
+fn registered_functions(input: &crate::read::ExtractionInput) -> HashSet<Name> {
+    input
+        .loaded
+        .registrations
         .iter()
-        .filter(|(_, stmts)| stmts.iter().any(|s| executable(s, &input.checked.runtime)))
-        .filter_map(|(file, stmts)| {
-            crate::surface::parse_program_unresolved_at(&file.text, file.base)
-                .ok()
-                .map(|p| (stmts, p))
-        })
-        .collect();
-    let mut called = HashSet::new();
-    for (_, program) in &written {
-        for mut stmt in program.stmts.clone() {
-            crate::surface::walk::stmt(&mut stmt, &mut |term| {
-                if let TermKind::MacroCall { name, .. } = &*term.kind {
-                    called.insert(name.clone());
-                }
-            });
-        }
-    }
-    let mut needed = input.registered.clone();
-    for (stmts, program) in &written {
-        for stmt in &program.stmts {
-            if let Stmt::Macro { name, span, .. } = stmt
-                && called.contains(name)
-            {
-                for stmt in *stmts {
-                    if let Stmt::Fn(f) = stmt
-                        && span.start <= f.span.start
-                        && f.span.end <= span.end
-                    {
-                        needed.insert(f.name.clone());
-                    }
-                }
-            }
-        }
-    }
-    needed
+        .map(|r| r.function.clone())
+        .collect()
 }
 
 // Proof-only helper functions are checked but need no executable representation.
 fn reachable(
     input: &crate::read::ExtractionInput,
     roots: &[PathBuf],
-    read_time: &HashSet<String>,
-) -> Result<HashSet<String>, String> {
+    read_time: &HashSet<Name>,
+) -> Result<HashSet<Name>, Message> {
     let checked = &input.checked;
     let exports: HashSet<_> = roots
         .iter()
@@ -2204,10 +2124,10 @@ fn reachable(
     let mut needed = read_time.clone();
     let mut candidates = HashSet::new();
     let mut unsupported = HashSet::new();
-    let mut dependencies = std::collections::HashMap::<String, HashSet<String>>::new();
+    let mut dependencies = std::collections::HashMap::<Name, HashSet<Name>>::new();
     let std_names = StdNames::new(&input.sources);
     let aliases = type_aliases(checked, input.sources.iter().flat_map(|(_, s)| s));
-    fn references(s: &Stmt) -> HashSet<String> {
+    fn references(s: &Stmt) -> HashSet<Name> {
         let mut refs = HashSet::new();
         let mut s = s.clone();
         crate::surface::walk::stmt(&mut s, &mut |t| match &*t.kind {
@@ -2216,7 +2136,7 @@ fn reachable(
             }
             TermKind::Field { .. } => {
                 if let Some(n) = dotted(t) {
-                    refs.insert(n);
+                    refs.insert(Name::from(n));
                 }
             }
             _ => {}
@@ -2245,7 +2165,18 @@ fn reachable(
             }
         }
         for s in normalized {
-            if executable(&s, &checked.runtime) || matches!(s, Stmt::Instance(_)) {
+            if let Stmt::Fn(f) = &s
+                && executable(&s, &checked.runtime)
+                && !exports.contains(&crate::program::canonical_path(path))
+            {
+                // A function an imported file runs as written is extracted
+                // when something reached uses it, as `unused_imported` reads
+                // it; its uses make what it uses needed then, not before.
+                dependencies
+                    .entry(f.name.clone())
+                    .or_default()
+                    .extend(references(&s));
+            } else if executable(&s, &checked.runtime) || matches!(s, Stmt::Instance(_)) {
                 needed.extend(references(&s));
             } else if let Some((f, def)) = match s {
                 Stmt::Fn(f) => Some((f, false)),
@@ -2255,11 +2186,13 @@ fn reachable(
                 let mut probe = Extractor {
                     dependent: None,
                     checked,
+                    field_selections: None,
                     generated: HashSet::new(),
                     out: String::new(),
                     fresh: 0,
                     mixed: false,
                     needed: HashSet::new(),
+                    dependencies: HashSet::new(),
                     runtime: Vec::new(),
                     total: HashSet::new(),
                     thunks: HashSet::new(),
@@ -2278,27 +2211,7 @@ fn reachable(
                 }
                 // Follow the erased executable body, not its proof arguments or
                 // termination certificates. Mapped primitives have no dependencies.
-                let (written, renamed) = legal_names(&probe.out);
-                let back: HashMap<&String, &String> =
-                    renamed.iter().map(|(from, to)| (to, from)).collect();
-                let mut refs = HashSet::new();
-                // What extraction wrote not parsing is a fault of extraction,
-                // named with the function it came from.
-                let parsed = parse_program_at(&written, 0).map_err(|e| {
-                    format!(
-                        "{}: extracting `{}` wrote code that does not parse ({e}):\n{}",
-                        path.display(),
-                        f.name,
-                        written.trim()
-                    )
-                })?;
-                for stmt in parsed.stmts {
-                    refs.extend(
-                        references(&stmt)
-                            .into_iter()
-                            .map(|r| back.get(&r).map_or(r, |from| (*from).clone())),
-                    );
-                }
+                let refs = probe.dependencies.clone();
                 // A `def` is written out only when executable code reaches it.
                 if !def
                     && exports.contains(&crate::program::canonical_path(path))
@@ -2326,8 +2239,18 @@ fn reachable(
     // normal extraction then reports the error instead of silently dropping it.
     needed.extend(candidates.difference(&unsupported).cloned());
     // The helpers of `std/SInt.taut` call its range checks.
-    if checked.families.contains_key("I64") {
-        needed.extend(SINT_WIDTHS.map(|(_, module)| format!("{module}::fits")));
+    if checked
+        .families
+        .keys()
+        .any(|name| std_names.of(name) == Some("I64"))
+    {
+        needed.extend(
+            std_names
+                .std
+                .iter()
+                .filter(|name| matches!(std_names.of(name), Some("I32::fits" | "I64::fits")))
+                .cloned(),
+        );
     }
     loop {
         let before = needed.len();
@@ -2348,8 +2271,8 @@ fn reachable(
 fn unused_imported(
     input: &crate::read::ExtractionInput,
     roots: &[PathBuf],
-    read_time: &HashSet<String>,
-) -> HashSet<String> {
+    read_time: &HashSet<Name>,
+) -> HashSet<Name> {
     let named: HashSet<_> = roots
         .iter()
         .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()))
@@ -2363,7 +2286,7 @@ fn unused_imported(
             }
         }
     }
-    fn references(s: &Stmt, refs: &mut HashSet<String>) {
+    fn references(s: &Stmt, refs: &mut HashSet<Name>) {
         let mut s = s.clone();
         crate::surface::walk::stmt(&mut s, &mut |t| match &*t.kind {
             TermKind::Var(n) => {
@@ -2371,13 +2294,13 @@ fn unused_imported(
             }
             TermKind::Field { .. } => {
                 if let Some(n) = dotted(t) {
-                    refs.insert(n);
+                    refs.insert(Name::from(n));
                 }
             }
             _ => {}
         });
     }
-    let mut imported = std::collections::HashMap::<String, Stmt>::new();
+    let mut imported = std::collections::HashMap::<Name, Stmt>::new();
     let mut needed = read_time.clone();
     for (file, stmts) in &input.sources {
         let mut flat = Vec::new();
@@ -2395,7 +2318,7 @@ fn unused_imported(
             }
         }
     }
-    let mut queue: Vec<String> = needed.iter().cloned().collect();
+    let mut queue: Vec<Name> = needed.iter().cloned().collect();
     while let Some(name) = queue.pop() {
         if let Some(s) = imported.get(&name) {
             let mut refs = HashSet::new();
@@ -2416,32 +2339,37 @@ fn unused_imported(
 struct Extractor<'a> {
     dependent: Option<dependent::Lowered>,
     checked: &'a Checked,
-    generated: HashSet<String>,
+    field_selections: Option<HashMap<crate::surface::TermId, HashSet<Name>>>,
+    /// The names `inductive_syntax!` declarations make for Nib.
+    generated: HashSet<Name>,
     out: String,
     fresh: usize,
     mixed: bool,
-    needed: HashSet<String>,
+    needed: HashSet<Name>,
+    dependencies: HashSet<Name>,
     runtime: Vec<(PathBuf, String)>,
-    total: HashSet<String>,
+    total: HashSet<Name>,
     /// The functions written with effects and no parameters: such a name
     /// without `()` is the function, passed as a value.
-    thunks: HashSet<String>,
+    thunks: HashSet<Name>,
     std: &'a StdNames,
-    written: HashSet<String>,
+    /// The functions written out, by the names they are written with.
+    written: HashSet<Name>,
+    /// The files whose executable source is still to be written.
     pending: Vec<(crate::program::SourceFile, Vec<Stmt>)>,
     /// Functions of imported files that nothing in the named files uses;
     /// they are not extracted, so that an import does not make the
     /// extraction depend on what it does not use.
-    unused: HashSet<String>,
+    unused: HashSet<Name>,
     /// The functions that return a type, by name: a type naming one is
     /// read as its body, as the checker reads it, since Nib has no aliases.
-    aliases: HashMap<String, FnDecl>,
+    aliases: HashMap<Name, FnDecl>,
     /// The functions written out that take a proof among the parameters a
     /// call writes (not the laws a `where` adds).
-    proof_takers: HashSet<String>,
+    proof_takers: HashSet<Name>,
     /// The functions and constructors written out that take a refined
     /// value ([`Extractor::refined`]) among the parameters a call writes.
-    refined_takers: HashSet<String>,
+    refined_takers: HashSet<Name>,
     /// Each segment of a module path a declaration is written in, and the
     /// fresh name a local with that name is written with, once one is.
     module_segments: HashMap<String, Option<String>>,
@@ -2452,8 +2380,8 @@ struct Extractor<'a> {
 fn type_aliases<'s>(
     checked: &Checked,
     stmts: impl IntoIterator<Item = &'s Stmt>,
-) -> HashMap<String, FnDecl> {
-    fn walk(checked: &Checked, s: &Stmt, out: &mut HashMap<String, FnDecl>) {
+) -> HashMap<Name, FnDecl> {
+    fn walk(checked: &Checked, s: &Stmt, out: &mut HashMap<Name, FnDecl>) {
         match s {
             Stmt::Mutual { items, .. } => items.iter().for_each(|s| walk(checked, s, out)),
             Stmt::Fn(f) if f.generics.is_empty() => {
@@ -2473,7 +2401,7 @@ fn type_aliases<'s>(
     out
 }
 
-type Locals = HashSet<String>;
+type Locals = HashSet<Name>;
 
 /// Each segment of the module path of a name `checked` declares
 /// (`m::src::left` of `m::src::left::emit`), the modules the program is
@@ -2489,8 +2417,24 @@ fn module_segments(checked: &Checked) -> HashMap<String, Option<String>> {
         .collect()
 }
 
-fn fail<X>(file: &Path, what: Message) -> Result<X, String> {
-    Err(format!("{}: {what}", file.display()))
+fn fail<X>(file: &Path, what: Message) -> Result<X, Message> {
+    Err(located(file.display().to_string(), what))
+}
+
+/// What is wrong, and where: `place: what`.
+fn located(place: String, what: Message) -> Message {
+    msg!("tauto-extract-located", place = place, what = what)
+}
+
+/// Several problems as one message, in order.
+fn joined(problems: Vec<Message>) -> Message {
+    let mut rest = problems.into_iter().rev();
+    let last = rest
+        .next()
+        .unwrap_or_else(|| msg!("tauto-extract-no-problems"));
+    rest.fold(last, |rest, first| {
+        msg!("tauto-extract-problems", first = first, rest = rest)
+    })
 }
 
 impl Extractor<'_> {
@@ -2498,7 +2442,7 @@ impl Extractor<'_> {
         &mut self,
         file: &crate::program::SourceFile,
         source_stmts: &[Stmt],
-    ) -> Result<(), String> {
+    ) -> Result<(), Message> {
         let path = &file.path;
         let mut stmts = Vec::new();
         let mut runtime = Vec::new();
@@ -2545,9 +2489,8 @@ impl Extractor<'_> {
                 Stmt::Class(c) if self.checked.classes.contains(&c.name) => self.class(path, c)?,
                 Stmt::Instance(i)
                     if self.std.of(&i.class).is_some_and(mapped_class)
-                        && self
-                            .std
-                            .of(head_name(&i.head))
+                        && head_name(&i.head)
+                            .and_then(|name| self.std.of(name))
                             .is_some_and(std_instance_head) => {}
                 Stmt::Instance(i) if self.checked.classes.contains(&i.class) => {
                     self.instance(path, i)?
@@ -2561,7 +2504,10 @@ impl Extractor<'_> {
                 Stmt::Let { name, .. } => {
                     return fail(
                         path,
-                        msg!("tauto-extract-a-constant-is-not-extracted", name = name),
+                        msg!(
+                            "tauto-extract-a-constant-is-not-extracted",
+                            name = name.to_string()
+                        ),
                     );
                 }
                 _ => {
@@ -2580,17 +2526,20 @@ impl Extractor<'_> {
     /// The executable source of each file that has some, kept verbatim,
     /// including its original positions and kinds: reprinting it would lose
     /// source locations and can change native syntax.
-    fn runtime_files(&mut self) -> Result<(), String> {
+    fn runtime_files(
+        &mut self,
+        reasons: &HashMap<Name, tauto_message::Message>,
+    ) -> Result<(), Message> {
         let mut problems = Vec::new();
         for (file, stmts) in &self.pending {
-            self.proofs_given(file, stmts, &mut problems);
+            self.proofs_given(file, stmts, reasons, &mut problems);
         }
         if !problems.is_empty() {
-            return Err(problems.join("\n"));
+            return Err(joined(problems));
         }
         // An imported function nothing in the named files reaches (a macro's, which
         // runs while the program is read) is left out of what runs.
-        let kept: HashSet<String> = self
+        let kept: HashSet<Name> = self
             .checked
             .runtime
             .iter()
@@ -2644,7 +2593,8 @@ impl Extractor<'_> {
         &self,
         file: &crate::program::SourceFile,
         stmts: &[Stmt],
-        problems: &mut Vec<String>,
+        reasons: &HashMap<Name, tauto_message::Message>,
+        problems: &mut Vec<Message>,
     ) {
         if let Some(d) = &self.dependent {
             for statement in stmts {
@@ -2657,23 +2607,24 @@ impl Extractor<'_> {
                         fn forbidden_pattern(
                             p: &Pattern,
                             checked: &Checked,
-                            families: &HashSet<String>,
+                            families: &HashSet<Name>,
                         ) -> bool {
-                            let (name, children): (&str, Vec<&Pattern>) = match p {
-                                Pattern::Bind(n) => (n, Vec::new()),
-                                Pattern::Ctor { name, args } => (name, args.iter().collect()),
+                            let (name, children): (Option<&Name>, Vec<&Pattern>) = match p {
+                                Pattern::Bind(n) => (Some(n), Vec::new()),
+                                Pattern::Ctor { name, args } => (Some(name), args.iter().collect()),
                                 Pattern::Record { name, fields } => {
-                                    (name, fields.iter().map(|(_, p)| p).collect())
+                                    (Some(name), fields.iter().map(|(_, p)| p).collect())
                                 }
-                                Pattern::Tuple(ps) => ("", ps.iter().collect()),
-                                _ => ("", Vec::new()),
+                                Pattern::Tuple(ps) => (None, ps.iter().collect()),
+                                _ => (None, Vec::new()),
                             };
                             families.iter().any(|f| {
-                                f == name
-                                    || checked
-                                        .families
-                                        .get(f)
-                                        .is_some_and(|f| f.ctors.iter().any(|c| c == name))
+                                name.is_some_and(|name| {
+                                    f == name
+                                        || checked.families.get(f).is_some_and(|family| {
+                                            family.ctors.iter().any(|c| c == name)
+                                        })
+                                })
                             }) || children
                                 .into_iter()
                                 .any(|p| forbidden_pattern(p, checked, families))
@@ -2682,10 +2633,9 @@ impl Extractor<'_> {
                             .iter()
                             .any(|a| forbidden_pattern(&a.pattern, self.checked, &d.families))
                         {
-                            problems.push(format!(
-                                "{}: {}",
-                                file.path.display(),
-                                msg!("tauto-extract-opaque-dependent-pattern")
+                            problems.push(located(
+                                file.path.display().to_string(),
+                                msg!("tauto-extract-opaque-dependent-pattern"),
                             ));
                         }
                     }
@@ -2696,7 +2646,7 @@ impl Extractor<'_> {
         let refined_takers = &self.refined_takers;
         // A function by the parameters a call writes; a constructor by its
         // fields, after the family's parameters.
-        let takes_proof = |n: &str| {
+        let takes_proof = |n: &Name| {
             !runtime.contains(n)
                 && (self.proof_takers.contains(n)
                     // A family mapped onto a type of Nib (`U64` onto `u64`)
@@ -2726,6 +2676,7 @@ impl Extractor<'_> {
             }
         }
         for s in &mut kept {
+            let before = problems.len();
             crate::surface::walk::stmt(s, &mut |t| {
                 let (name, what) = match &*t.kind {
                     TermKind::Var(n) if takes_proof(n) => {
@@ -2754,12 +2705,29 @@ impl Extractor<'_> {
                 let at = (t.span.start.saturating_sub(file.base)) as usize;
                 let (l, c) = crate::report::line_col(&file.text, at);
                 let short = crate::surface::qualify::short(&name);
-                problems.push(format!(
-                    "{}:{l}:{c}: {}",
-                    file.path.display(),
+                problems.push(located(
+                    format!("{}:{l}:{c}", file.path.display()),
                     msg!(what, name = short.to_string()),
                 ));
             });
+            if problems.len() > before
+                && let Stmt::Fn(f) = s
+                && let Some(reason) = reasons.get(&f.name)
+            {
+                let at = f.span.start.saturating_sub(file.base) as usize;
+                let (line, column) = crate::report::line_col(&file.text, at);
+                problems.insert(
+                    before,
+                    located(
+                        format!("{}:{line}:{column}", file.path.display()),
+                        msg!(
+                            "tauto-extract-unchecked-function",
+                            name = crate::surface::qualify::short(&f.name).to_string(),
+                            reason = reason.clone()
+                        ),
+                    ),
+                );
+            }
         }
     }
 
@@ -2767,13 +2735,13 @@ impl Extractor<'_> {
     /// (`nat_lt`, `nat_sub`, …). No file declares them, so no file writes
     /// them out; each is written as the proofs' calls to it are, by its
     /// mapping, and only when the program has no declaration of its own.
-    fn kernel_functions(&mut self) -> Result<(), String> {
-        let prelude = crate::check::kernel_prelude()?;
+    fn kernel_functions(&mut self) -> Result<(), Message> {
+        let prelude = bound_kernel_prelude()?;
         let path = Path::new("prelude");
         for s in &prelude.stmts {
             if let Stmt::Fn(f) = s
                 && self.needed.contains(&f.name)
-                && !nib_prelude_fn(&f.name)
+                && !self.std.of(&f.name).is_some_and(nib_prelude_fn)
                 && self.std.of(&f.name).is_some_and(|n| mapped_fn(n).is_some())
             {
                 self.function(path, f)?;
@@ -2782,7 +2750,7 @@ impl Extractor<'_> {
         Ok(())
     }
 
-    fn inductive(&mut self, path: &Path, i: &InductiveDecl) -> Result<(), String> {
+    fn inductive(&mut self, path: &Path, i: &InductiveDecl) -> Result<(), Message> {
         if self
             .dependent
             .as_ref()
@@ -2791,7 +2759,10 @@ impl Extractor<'_> {
             return Ok(());
         }
         let Some(fam) = self.checked.families.get(&i.name) else {
-            return fail(path, msg!("tauto-extract-did-not-check", name = &i.name));
+            return fail(
+                path,
+                msg!("tauto-extract-did-not-check", name = i.name.to_string()),
+            );
         };
         if fam.prop || fam.predicate || self.mapped_type(&i.name).is_some() {
             return Ok(());
@@ -2799,7 +2770,10 @@ impl Extractor<'_> {
         if fam.indices > 0 {
             return fail(
                 path,
-                msg!("tauto-extract-has-indices-a-family-of", name = &i.name),
+                msg!(
+                    "tauto-extract-has-indices-a-family-of",
+                    name = i.name.to_string()
+                ),
             );
         }
         // Executable code names the family and its constructors by what
@@ -2822,7 +2796,13 @@ impl Extractor<'_> {
             .filter(|(_, k)| **k)
             .map(|((n, _), _)| n.as_str())
             .collect();
-        let mut locals: Locals = generics.iter().map(|g| g.to_string()).collect();
+        let mut locals: Locals = i
+            .params
+            .iter()
+            .zip(&kept)
+            .filter(|(_, keep)| **keep)
+            .map(|((name, _), _)| name.clone())
+            .collect();
         if let [c] = i.constructors.as_slice()
             && let Some((_, names)) = self.struct_fields(&c.name)
         {
@@ -2857,7 +2837,10 @@ impl Extractor<'_> {
             if c.name != i.name {
                 // The parameters have names of their own: a field's name can
                 // be the name of a module the function is written in.
-                let args: Vec<String> = names.iter().map(|_| self.fresh("field")).collect();
+                let args: Vec<String> = names
+                    .iter()
+                    .map(|_| self.fresh("field").to_string())
+                    .collect();
                 let values: Vec<String> = names
                     .iter()
                     .zip(&args)
@@ -2869,16 +2852,15 @@ impl Extractor<'_> {
                     .map(|(a, t)| format!("{a}: {t}"))
                     .collect();
                 let result = if generics.is_empty() {
-                    i.name.clone()
+                    i.name.to_string()
                 } else {
                     format!("{}({})", i.name, generics.join(", "))
                 };
-                let ctor = c.name.rsplit("::").next().unwrap_or(&c.name);
-                // The function is written in a module named as the struct is
-                // (`m::T` for `m::T::C`), so that two types of one name in two
-                // files have two functions. The record names the struct by its
-                // full name: a bare name could be a constructor of a prelude
-                // file the program imports.
+                let target = extracted_ctor(self.checked, &c.name)
+                    .ok_or_else(|| format!("constructor {} has no checked owner", c.name))?;
+                let ctor = raw(target.rsplit("::").next().unwrap_or(&target));
+                // A record expression names its struct without a path, which
+                // the modules around it find.
                 let decl = format!(
                     "fn {ctor}{}({}): {result} {{\n  {} {{ {} }}\n}}",
                     angle(&generics),
@@ -2886,11 +2868,7 @@ impl Extractor<'_> {
                     i.name,
                     values.join(", ")
                 );
-                let _ = writeln!(
-                    self.out,
-                    "\n{}",
-                    in_modules_text(&format!("{}::{ctor}", i.name), &decl)
-                );
+                let _ = writeln!(self.out, "\n{}", in_modules_text(&target, &decl));
             }
             return Ok(());
         }
@@ -2915,7 +2893,7 @@ impl Extractor<'_> {
             // A variant is declared by its own name: one another type's
             // variant shares has its full name (`m::Bytecode::CBranch`), which
             // names this one.
-            let name = c.name.rsplit("::").next().unwrap_or(&c.name);
+            let name = &c.name;
             if fields.is_empty() {
                 let _ = writeln!(decl, "  {name}");
             } else {
@@ -2932,7 +2910,7 @@ impl Extractor<'_> {
     /// (`p: (A) -> Bool`) is used only by the proofs in the fields, since a
     /// family of data has no indices and its value fields' types are data,
     /// so the extracted family does not take it.
-    fn kept_params(&self, n: &str) -> Vec<bool> {
+    fn kept_params(&self, n: &Name) -> Vec<bool> {
         let Some(fam) = self.checked.families.get(n) else {
             return Vec::new();
         };
@@ -2973,14 +2951,14 @@ impl Extractor<'_> {
 
     /// For the one constructor of a family of data with fields: the family
     /// and the names of its value fields (it is extracted as a struct).
-    fn struct_fields(&self, ctor: &str) -> Option<(String, Vec<String>)> {
+    fn struct_fields(&self, ctor: &Name) -> Option<(Name, Vec<Name>)> {
         let (family, (_, names)) = self.checked.records.iter().find(|(_, (c, _))| c == ctor)?;
         let fam = self.checked.families.get(family)?;
         if fam.prop || fam.indices > 0 || self.mapped_type(family).is_some() {
             return None;
         }
         let sig = self.checked.signatures.get(ctor)?;
-        let values: Vec<String> = names
+        let values: Vec<Name> = names
             .iter()
             .zip(sig.params.get(fam.params..)?)
             .filter(|(_, r)| **r == Role::Value)
@@ -2989,7 +2967,91 @@ impl Extractor<'_> {
         (!values.is_empty()).then(|| (family.clone(), values))
     }
 
-    fn function(&mut self, path: &Path, f: &FnDecl) -> Result<(), String> {
+    /// Type binders used by the executable declaration. Full checked calls
+    /// erase their type/proof arguments; a binder occurring only in those
+    /// slots is not a native generic (and cannot be inferred by Rust).
+    /// Unknown and partial calls are kept conservatively.
+    fn native_generic_uses(&self, f: &FnDecl) -> HashSet<Name> {
+        let mut uses = HashSet::new();
+        let mut statement = Stmt::Fn(f.clone());
+        // Binder declarations themselves are not uses. Their domains, value
+        // annotations, constraints and bodies still are.
+        let Stmt::Fn(function) = &mut statement else {
+            unreachable!()
+        };
+        function.generics.clear();
+        function.generic_types.clear();
+        let mut body = function.body.clone();
+        crate::surface::walk::term(&mut body, &mut |term| {
+            if let TermKind::App {
+                function,
+                arguments,
+            } = &*term.kind
+                && let TermKind::Var(name) = &*function.kind
+                && let Some(signature) = self.checked.source_call_signature(name)
+                && arguments.len()
+                    == self
+                        .checked
+                        .arities
+                        .get(name)
+                        .copied()
+                        .map(|arity| {
+                            arity
+                                - self
+                                    .checked
+                                    .row_parameter_slots
+                                    .get(name)
+                                    .map_or(0, |slots| slots.len())
+                        })
+                        .unwrap_or(signature.params.len())
+            {
+                let arguments = arguments
+                    .iter()
+                    .zip(&signature.params)
+                    .filter(|(_, role)| **role == Role::Value)
+                    .map(|(argument, _)| argument.clone())
+                    .collect();
+                *term = term.with_kind(
+                    TermKind::App {
+                        function: function.clone(),
+                        arguments,
+                    },
+                    term.span,
+                );
+            }
+        });
+        function.body = body;
+        let source_roles = self
+            .checked
+            .signatures
+            .get(&f.name)
+            .map(|s| s.source_generic_roles(f))
+            .unwrap_or_default();
+        for (index, (_, ty)) in f.generic_parameters().into_iter().enumerate() {
+            if source_roles.get(index) == Some(&Role::Value) {
+                function.generic_types.push(ty);
+            }
+        }
+        crate::surface::walk::stmt(&mut statement, &mut |term| {
+            if let TermKind::Var(name) = &*term.kind {
+                uses.insert(name.clone());
+            }
+        });
+        for constraint in &f.where_ {
+            let mut arguments = vec![constraint.ty.clone()];
+            arguments.extend(constraint.arguments.iter().cloned());
+            for mut argument in arguments {
+                crate::surface::walk::term(&mut argument, &mut |term| {
+                    if let TermKind::Var(name) = &*term.kind {
+                        uses.insert(name.clone());
+                    }
+                });
+            }
+        }
+        uses
+    }
+
+    fn function(&mut self, path: &Path, f: &FnDecl) -> Result<(), Message> {
         if self
             .dependent
             .as_ref()
@@ -3008,7 +3070,10 @@ impl Extractor<'_> {
         crate::surface::walk::strip_recursion_proofs(&mut stripped);
         let f = &stripped;
         let Some(sig) = self.checked.signatures.get(&f.name).cloned() else {
-            return fail(path, msg!("tauto-extract-did-not-check", name = &f.name));
+            return fail(
+                path,
+                msg!("tauto-extract-did-not-check", name = f.name.to_string()),
+            );
         };
         let std = self.std.of(&f.name);
         if sig.result != Role::Value
@@ -3017,24 +3082,55 @@ impl Extractor<'_> {
         {
             return Ok(());
         }
-        let mut generics: Vec<String> = f.generics.clone();
+        let generic_uses = self.native_generic_uses(f);
+        let source_generic_roles = sig.source_generic_roles(f);
+        let mut generics: Vec<Name> = Vec::new();
         let mut params = Vec::new();
-        let mut locals: Locals = f.generics.iter().cloned().collect();
+        let mut locals: Locals = Locals::new();
+        for (index, (name, ty)) in f.generic_parameters().into_iter().enumerate() {
+            if f.rows.get(index) == Some(&true) {
+                generics.push(name.clone());
+            } else {
+                match source_generic_roles[index] {
+                    Role::Type => {
+                        if generic_uses.contains(&name) {
+                            generics.push(name.clone());
+                        }
+                    }
+                    Role::Proof => {
+                        self.proof_takers.insert(f.name.clone());
+                    }
+                    Role::Value => {
+                        if self.refined(&ty) {
+                            self.refined_takers.insert(f.name.clone());
+                        }
+                        let ty = self.ty(path, &ty, &locals)?;
+                        params.push(format!("{}: {ty}", self.local(&name)));
+                    }
+                }
+            }
+            locals.insert(name);
+        }
         // The records of a `where` come after the generics in the kernel's
         // signature; the extracted function has the `where` itself.
         // A row variable is read as two parameters (`check/effects.rs`), in
         // place of its generic.
         let records = self.records_of(&f.where_);
-        let row_var = f.effects.iter().flatten().any(|e| {
-            e.strip_prefix('|')
-                .is_some_and(|v| f.generics.iter().any(|g| g == v))
-        });
+        let row_var = f
+            .effects
+            .iter()
+            .flatten()
+            .any(|e| e.row_variable().is_some_and(|v| f.generics.contains(&v)));
         let n_generics = f.generics.len() + records + usize::from(row_var);
         for (k, (n, t)) in f.params.iter().zip(&f.param_types).enumerate() {
             let Some(t) = t else {
                 return fail(
                     path,
-                    msg!("tauto-extract-parameter-has-no-type", name = &f.name, n = n),
+                    msg!(
+                        "tauto-extract-parameter-has-no-type",
+                        name = f.name.to_string(),
+                        n = n.to_string()
+                    ),
                 );
             };
             let lent = match f.borrows.get(k) {
@@ -3060,20 +3156,27 @@ impl Extractor<'_> {
         let Some(result) = &f.result else {
             return fail(
                 path,
-                msg!("tauto-extract-has-no-result-type", name = &f.name),
+                msg!(
+                    "tauto-extract-has-no-result-type",
+                    name = f.name.to_string()
+                ),
             );
         };
         let result = self.ty(path, result, &locals)?;
         let body = match std.and_then(mapped_fn) {
             Some(template) => {
-                let names: Vec<String> = f
+                self.template_dependencies(template)?;
+                let names: Vec<Name> = f
                     .params
                     .iter()
                     .enumerate()
                     .filter(|(k, _)| sig.params[n_generics + k] == Role::Value)
                     .map(|(_, n)| n.clone())
                     .collect();
-                fill(template, &names)
+                fill(
+                    template,
+                    &names.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                )
             }
             None => self.expr(path, &f.body, &locals, 1)?,
         };
@@ -3081,10 +3184,17 @@ impl Extractor<'_> {
         // and is not a type with a bound.
         let generics: Vec<String> = generics
             .into_iter()
-            .enumerate()
-            .map(|(k, g)| match f.rows.get(k) {
-                Some(true) => format!("!{g}"),
-                _ => g,
+            .map(|g| {
+                if f.generics
+                    .iter()
+                    .position(|name| name == &g)
+                    .and_then(|index| f.rows.get(index))
+                    == Some(&true)
+                {
+                    format!("!{g}")
+                } else {
+                    g.to_string()
+                }
             })
             .collect();
         let generics: Vec<&str> = generics.iter().map(String::as_str).collect();
@@ -3115,20 +3225,30 @@ impl Extractor<'_> {
     }
 
     /// `effect e(P, …): R`, its types mapped as the functions' are.
-    fn effect(&mut self, path: &Path, e: &crate::surface::EffectDecl) -> Result<(), String> {
+    fn effect(&mut self, path: &Path, e: &crate::surface::EffectDecl) -> Result<(), Message> {
+        if self
+            .dependent
+            .as_ref()
+            .is_some_and(|d| d.effects.contains(&e.name))
+        {
+            return Ok(());
+        }
         let locals = Locals::new();
         let mut params = Vec::new();
         for (i, p) in e.params.iter().enumerate() {
             let Some(p) = p else {
                 return fail(
                     path,
-                    msg!("tauto-extract-a-parameter-has-no-type", name = &e.name),
+                    msg!(
+                        "tauto-extract-a-parameter-has-no-type",
+                        name = e.name.to_string()
+                    ),
                 );
             };
             // Nib reads a parameter only with its name, so the written one
             // is kept and one is made up where none was written.
             let name = match e.param_names.get(i) {
-                Some(n) if !n.is_empty() => n.clone(),
+                Some(n) if !n.is_empty() => n.to_string(),
                 _ => format!("p{i}"),
             };
             params.push(format!("{}: {}", raw(&name), self.ty(path, p, &locals)?));
@@ -3171,7 +3291,7 @@ impl Extractor<'_> {
         path: &Path,
         wheres: &[crate::surface::Constraint],
         locals: &Locals,
-    ) -> Result<String, String> {
+    ) -> Result<String, Message> {
         if wheres.is_empty() {
             return Ok(String::new());
         }
@@ -3182,7 +3302,7 @@ impl Extractor<'_> {
         Ok(format!(" where {}", parts.join(", ")))
     }
 
-    fn class(&mut self, path: &Path, c: &crate::surface::ClassDecl) -> Result<(), String> {
+    fn class(&mut self, path: &Path, c: &crate::surface::ClassDecl) -> Result<(), Message> {
         let locals: Locals = std::iter::once(c.param.clone()).collect();
         let bound = c.bound.as_deref().unwrap_or("Type");
         let mut text = format!("\nclass {}({}: {bound}) {{\n", c.name, c.param);
@@ -3194,9 +3314,9 @@ impl Extractor<'_> {
                         path,
                         msg!(
                             "tauto-extract-member-parameter-has-no-type",
-                            class = &c.name,
-                            member = &m.name,
-                            n = n
+                            class = c.name.to_string(),
+                            member = m.name.to_string(),
+                            n = n.to_string()
                         ),
                     );
                 };
@@ -3225,25 +3345,31 @@ impl Extractor<'_> {
 
     /// `instance<G> C(H) where … { fn m(…): R { … } }`: the methods, with
     /// the types and the proofs erased like a function's.
-    fn instance(&mut self, path: &Path, i: &crate::surface::InstanceDecl) -> Result<(), String> {
+    fn instance(&mut self, path: &Path, i: &crate::surface::InstanceDecl) -> Result<(), Message> {
         let records = self.records_of(&i.where_);
         let n_generics = i.generics.len() + records;
         let locals: Locals = i.generics.iter().cloned().collect();
         let head = self.ty(path, &i.head, &locals)?;
         let wheres = self.where_clause(path, &i.where_, &locals)?;
-        let generics: Vec<&str> = i.generics.iter().map(String::as_str).collect();
+        let generics: Vec<&str> = i.generics.iter().map(Name::as_str).collect();
         let mut text = format!(
             "\ninstance{} {}({head}){wheres} {{\n",
             angle(&generics),
             i.class
         );
-        let head_name = head_name(&i.head);
+        let head_ref = head_name(&i.head);
         for m in &i.methods {
-            let kernel_name = format!("{}::{}@{head_name}", i.class, m.name);
-            let Some(sig) = self.checked.signatures.get(&kernel_name).cloned() else {
+            let target = head_ref.and_then(|head| {
+                self.checked.instance_methods.get(&(
+                    i.class.clone(),
+                    head.clone(),
+                    m.name.to_string(),
+                ))
+            });
+            let Some(sig) = target.and_then(|n| self.checked.signatures.get(n)).cloned() else {
                 return fail(
                     path,
-                    msg!("tauto-extract-did-not-check", name = kernel_name),
+                    msg!("tauto-extract-did-not-check", name = m.name.to_string()),
                 );
             };
             let mut params = Vec::new();
@@ -3254,9 +3380,9 @@ impl Extractor<'_> {
                         path,
                         msg!(
                             "tauto-extract-member-parameter-has-no-type",
-                            class = &i.class,
-                            member = &m.name,
-                            n = n
+                            class = i.class.to_string(),
+                            member = m.name.to_string(),
+                            n = n.to_string()
                         ),
                     );
                 };
@@ -3277,8 +3403,8 @@ impl Extractor<'_> {
                     path,
                     msg!(
                         "tauto-extract-member-has-no-result-type",
-                        class = &i.class,
-                        member = &m.name
+                        class = i.class.to_string(),
+                        member = m.name.to_string()
                     ),
                 );
             };
@@ -3296,7 +3422,7 @@ impl Extractor<'_> {
         Ok(())
     }
 
-    fn ty(&self, path: &Path, t: &SurfaceTerm, locals: &Locals) -> Result<String, String> {
+    fn ty(&self, path: &Path, t: &SurfaceTerm, locals: &Locals) -> Result<String, Message> {
         self.ty_in(path, t, locals, &HashMap::new())
     }
 
@@ -3307,14 +3433,14 @@ impl Extractor<'_> {
         path: &Path,
         t: &SurfaceTerm,
         locals: &Locals,
-        env: &HashMap<String, String>,
-    ) -> Result<String, String> {
+        env: &HashMap<Name, String>,
+    ) -> Result<String, Message> {
         if is_unit(t) {
             return Ok("Unit".into());
         }
         match &*t.kind {
             TermKind::Var(n) if env.contains_key(n) => Ok(env[n].clone()),
-            TermKind::Var(n) if locals.contains(n) => Ok(n.clone()),
+            TermKind::Var(n) if locals.contains(n) => Ok(n.to_string()),
             TermKind::Var(n) if self.aliases.contains_key(n) => self.unfold(path, n, Vec::new()),
             TermKind::Var(n) => self.type_name(path, n).map(|s| s.to_string()),
             TermKind::App {
@@ -3421,14 +3547,15 @@ impl Extractor<'_> {
         }
     }
 
-    fn unfold(&self, path: &Path, n: &str, args: Vec<String>) -> Result<String, String> {
+    /// The alias `n` given `args`, as the type its body names.
+    fn unfold(&self, path: &Path, n: &Name, args: Vec<String>) -> Result<String, Message> {
         let f = &self.aliases[n];
         if f.params.len() != args.len() {
             return fail(
                 path,
                 msg!(
                     "tauto-extract-is-given-types-for-parameters",
-                    n = n,
+                    n = n.to_string(),
                     count = args.len(),
                     params = f.params.len()
                 ),
@@ -3438,7 +3565,12 @@ impl Extractor<'_> {
         while let TermKind::Block(stmts) = &*body.kind {
             match stmts.as_slice() {
                 [Stmt::Expr(e)] => body = e,
-                _ => return fail(path, msg!("tauto-extract-a-type-alias-s-body", n = n)),
+                _ => {
+                    return fail(
+                        path,
+                        msg!("tauto-extract-a-type-alias-s-body", n = n.to_string()),
+                    );
+                }
             }
         }
         let env = f.params.iter().cloned().zip(args).collect();
@@ -3446,11 +3578,11 @@ impl Extractor<'_> {
     }
 
     /// The builtin of Nib a family of the standard library is mapped onto.
-    fn mapped_type(&self, n: &str) -> Option<&'static str> {
+    fn mapped_type(&self, n: &Name) -> Option<&'static str> {
         self.std.of(n).and_then(mapped_type)
     }
 
-    fn type_name<'s>(&self, path: &Path, n: &'s str) -> Result<&'s str, String> {
+    fn type_name<'s>(&self, path: &Path, n: &'s Name) -> Result<&'s str, Message> {
         if let Some(m) = self.mapped_type(n) {
             return Ok(m);
         }
@@ -3458,13 +3590,16 @@ impl Extractor<'_> {
         // own type (`u64`), which the kernel reads as its family (`U64`).
         let bare = crate::surface::qualify::short(n);
         if tauto_surface::inductive_data::proof_type(bare).is_some()
-            && (n == bare || self.std.of(n).is_some())
+            && (crate::bindings::is_library(n, bare) || self.std.of(n).is_some())
         {
             return Ok(bare);
         }
         match self.checked.families.get(n) {
             Some(f) if !f.prop && !f.predicate => Ok(n),
-            _ => fail(path, msg!("tauto-extract-is-not-a-type-of", n = n)),
+            _ => fail(
+                path,
+                msg!("tauto-extract-is-not-a-type-of", n = n.to_string()),
+            ),
         }
     }
 
@@ -3479,7 +3614,7 @@ impl Extractor<'_> {
             None => raw(n),
             Some(Some(m)) => m.clone(),
             Some(None) => {
-                let m = self.fresh(n);
+                let m = self.fresh(n).to_string();
                 self.module_segments.insert(n.to_string(), Some(m.clone()));
                 m
             }
@@ -3496,9 +3631,12 @@ impl Extractor<'_> {
         }
     }
 
-    fn fresh(&mut self, base: &str) -> String {
+    fn fresh(&mut self, base: &str) -> Name {
         self.fresh += 1;
-        format!("{base}_x{}", self.fresh)
+        Name::from(tauto_surface::identity::LocalRef::fresh(format!(
+            "{base}_x{}",
+            self.fresh
+        )))
     }
 
     /// `t` as the subject of a `match`: in parentheses unless it is a name,
@@ -3510,7 +3648,7 @@ impl Extractor<'_> {
         t: &SurfaceTerm,
         locals: &Locals,
         depth: usize,
-    ) -> Result<String, String> {
+    ) -> Result<String, Message> {
         let s = self.expr(path, t, locals, depth)?;
         Ok(match &*t.kind {
             TermKind::Var(_) => s,
@@ -3525,7 +3663,7 @@ impl Extractor<'_> {
         t: &SurfaceTerm,
         locals: &Locals,
         depth: usize,
-    ) -> Result<String, String> {
+    ) -> Result<String, Message> {
         if is_unit(t) {
             return Ok("#()".into());
         }
@@ -3575,7 +3713,9 @@ impl Extractor<'_> {
                 // `Cons(a, Cons(b, Nil))` is written back as `[a, b]`, which
                 // the parser reads as the same terms: a long list nested as
                 // calls would be deeper than any source is allowed to be.
-                TermKind::Var(n) if n == "Cons" && !locals.contains(n) => {
+                TermKind::Var(n)
+                    if crate::bindings::is_library(&n, "Cons") && !locals.contains(n) =>
+                {
                     match list_items(t, locals) {
                         Some(items) => {
                             let items = items
@@ -3714,7 +3854,7 @@ impl Extractor<'_> {
                 scrutinee, arms, ..
             } => self.matching(path, scrutinee, arms, locals, depth),
             TermKind::Block(stmts) => self.block(path, stmts, locals, depth),
-            TermKind::Field { base, name } => self.field(path, base, name, locals, depth),
+            TermKind::Field { base, name } => self.field(path, t.id(), base, name, locals, depth),
             TermKind::Perform { effect, args } => {
                 let args = args
                     .iter()
@@ -3756,9 +3896,9 @@ impl Extractor<'_> {
         handlers: &[crate::surface::Handler],
         locals: &Locals,
         depth: usize,
-    ) -> Result<String, String> {
+    ) -> Result<String, Message> {
         use crate::surface::Handler;
-        fn name(path: &Path, p: &Pattern) -> Result<String, String> {
+        fn name(path: &Path, p: &Pattern) -> Result<Name, Message> {
             match p {
                 Pattern::Bind(n) => Ok(n.clone()),
                 Pattern::Wild => Ok("_".into()),
@@ -3820,17 +3960,31 @@ impl Extractor<'_> {
     fn field(
         &mut self,
         path: &Path,
+        occurrence: crate::surface::TermId,
         base: &SurfaceTerm,
         name: &str,
         locals: &Locals,
         depth: usize,
-    ) -> Result<String, String> {
-        let owners: Vec<(String, (String, Vec<String>))> = self
+    ) -> Result<String, Message> {
+        let selections = self.field_selections.get_or_insert_with(|| {
+            let mut selections: HashMap<_, HashSet<_>> = HashMap::new();
+            for site in &self.checked.field_sites {
+                selections
+                    .entry(site.occurrence)
+                    .or_default()
+                    .insert(site.family.clone());
+            }
+            selections
+        });
+        let selected = selections.get(&occurrence);
+        let owners: Vec<(Name, (Name, Vec<Name>))> = self
             .checked
             .records
             .iter()
             .filter(|(family, (_, fs))| {
-                !self.checked.props.contains(*family) && fs.iter().any(|f| f == name)
+                !self.checked.props.contains(*family)
+                    && selected.is_none_or(|selected| selected.contains(*family))
+                    && fs.iter().any(|f| f.as_str() == name)
             })
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
@@ -3847,14 +4001,16 @@ impl Extractor<'_> {
         let [(_, (ctor, fields))] = owners.as_slice() else {
             return fail(path, msg!("tauto-extract-is-a-field-of-no", name = name));
         };
-        let var = format!("extract_{name}");
+        let var = Name::from(tauto_surface::identity::LocalRef::fresh(format!(
+            "extract_{name}"
+        )));
         let arm = MatchArm {
             goal: None,
             pattern: Pattern::Ctor {
                 name: ctor.clone(),
                 args: fields
                     .iter()
-                    .map(|f| match f == name {
+                    .map(|f| match f.as_str() == name {
                         true => Pattern::Bind(var.clone()),
                         false => Pattern::Wild,
                     })
@@ -3872,7 +4028,7 @@ impl Extractor<'_> {
         stmts: &[Stmt],
         locals: &Locals,
         depth: usize,
-    ) -> Result<String, String> {
+    ) -> Result<String, Message> {
         // A block that ends with a statement is `()`.
         let (last, lets) = match stmts.split_last() {
             Some((Stmt::Expr(last), lets)) => (Some(last), lets),
@@ -3939,7 +4095,11 @@ impl Extractor<'_> {
     fn is_prop(&self, ty: &SurfaceTerm) -> bool {
         match &*ty.kind {
             TermKind::Pi { result, .. } => self.is_prop(result),
-            TermKind::Var(n) => self.checked.props.contains(n) || n == "Prop" || n == "=",
+            TermKind::Var(n) => {
+                self.checked.props.contains(n)
+                    || n.sort_symbol() == Some(crate::identity::SortSymbol::Proposition)
+                    || crate::bindings::is_library(n, "=")
+            }
             TermKind::App { function, .. } => self.is_prop(function),
             _ => false,
         }
@@ -3948,28 +4108,40 @@ impl Extractor<'_> {
     fn global(
         &mut self,
         path: &Path,
-        n: &str,
+        n: &Name,
         args: &[SurfaceTerm],
         locals: &Locals,
         depth: usize,
-    ) -> Result<String, String> {
-        if matches!(
-            n,
-            "+" | "*" | "<" | "<=" | ">" | ">=" | "&&" | "||" | "==" | "!="
-        ) {
+    ) -> Result<String, Message> {
+        if crate::bindings::is_library(n, n.as_str())
+            && matches!(
+                n.as_str(),
+                "+" | "*" | "<" | "<=" | ">" | ">=" | "&&" | "||" | "==" | "!="
+            )
+        {
             let [a, b] = args else {
-                return fail(path, msg!("tauto-extract-takes-two-arguments", n = n));
+                return fail(
+                    path,
+                    msg!("tauto-extract-takes-two-arguments", n = n.to_string()),
+                );
             };
             let a = self.expr(path, a, locals, depth)?;
             let b = self.expr(path, b, locals, depth)?;
             return Ok(format!("({a} {n} {b})"));
         }
-        if n == "-" {
+        if crate::bindings::is_library(n, "-") {
             // `-a`: the negative of an integer (`-2147483648`). The program
             // language reads `-5` as an `i64`, so it is `Int::neg` of the
             // literal, which is the integer the proofs mean.
             if let [a] = args {
                 let a = self.int_operand(path, a, locals, depth)?;
+                let negate = self
+                    .std
+                    .std
+                    .iter()
+                    .find(|name| self.std.of(name) == Some("Int::neg"))
+                    .ok_or("integer negation has no checked declaration")?;
+                self.dependencies.insert(negate.clone());
                 return Ok(format!("Int::neg({a})"));
             }
             let [a, b] = args else {
@@ -3979,14 +4151,17 @@ impl Extractor<'_> {
             let b = self.expr(path, b, locals, depth)?;
             return Ok(format!("extract_nat_sub({a}, {b})"));
         }
-        if n == "the" {
+        if crate::bindings::is_library(&n, "the") {
             let Some(last) = args.last() else {
                 return fail(path, msg!("tauto-extract-the-takes-a-type-and"));
             };
             return self.expr(path, last, locals, depth);
         }
-        let Some(mut sig) = self.checked.signatures.get(n).cloned() else {
-            return fail(path, msg!("tauto-extract-is-not-a-declaration-that", n = n));
+        let Some(mut sig) = self.checked.source_call_signature(n) else {
+            return fail(
+                path,
+                msg!("tauto-extract-is-not-a-declaration-that", n = n.to_string()),
+            );
         };
         // A constructor is built from its fields: the family's parameters,
         // values among them, are not passed.
@@ -4003,7 +4178,10 @@ impl Extractor<'_> {
             }
         }
         if sig.result != Role::Value {
-            return fail(path, msg!("tauto-extract-is-used-as-a-value", n = n));
+            return fail(
+                path,
+                msg!("tauto-extract-is-used-as-a-value", n = n.to_string()),
+            );
         }
         // The arguments as the kernel has them: the implicit ones left out
         // are the leading ones.
@@ -4018,7 +4196,7 @@ impl Extractor<'_> {
                 path,
                 msg!(
                     "tauto-extract-is-applied-to-arguments-write",
-                    n = n,
+                    n = n.to_string(),
                     count = args.len()
                 ),
             );
@@ -4026,12 +4204,14 @@ impl Extractor<'_> {
         // The standard library's `Int::` functions take integers, and a
         // literal among their arguments is a natural number the program
         // language does not read as an `Int`.
-        let int_fn = self.std.of(n).is_some_and(|m| m.starts_with("Int::"));
+        let int_fn = !self.is_ctor(n) && self.std.of(n).is_some_and(|m| m.starts_with("Int::"));
         // `C::m(…)` of a mapped class: its methods borrow their arguments,
         // and one written already lent (`Ord::compare(&a, &b)`) is lent once.
-        let lends = n.rsplit_once("::").is_some_and(|(c, _)| {
-            self.checked.classes.contains(c) && self.std.of(c).is_some_and(mapped_class)
-        });
+        let lends = self
+            .checked
+            .class_members
+            .get(n)
+            .is_some_and(|c| self.std.of(c).is_some_and(mapped_class));
         let mut values = Vec::new();
         for (a, r) in args.iter().zip(roles) {
             if *r == Role::Value {
@@ -4050,7 +4230,7 @@ impl Extractor<'_> {
         let wanted = sig.params.iter().filter(|r| **r == Role::Value).count();
         if args.is_empty() && wanted > 0 {
             // Used as a function value.
-            let xs: Vec<String> = (0..wanted).map(|_| self.fresh("a")).collect();
+            let xs: Vec<String> = (0..wanted).map(|_| self.fresh("a").to_string()).collect();
             let call = self.call(path, n, &xs)?;
             return Ok(format!("({}) => {call}", xs.join(", ")));
         }
@@ -4064,23 +4244,29 @@ impl Extractor<'_> {
         t: &SurfaceTerm,
         locals: &Locals,
         depth: usize,
-    ) -> Result<String, String> {
+    ) -> Result<String, Message> {
         match &*t.kind {
             TermKind::Nat(n) => Ok(format!("IntOfNat({n})")),
             _ => self.expr(path, t, locals, depth),
         }
     }
 
-    fn call(&mut self, path: &Path, n: &str, values: &[String]) -> Result<String, String> {
+    /// `n` applied to the value arguments `values`.
+    fn call(&mut self, path: &Path, n: &Name, values: &[String]) -> Result<String, Message> {
         if let Some(c) = self.std.of(n).and_then(|m| mapped_ctor(m, values)) {
             return Ok(c);
         }
         // The standard library's constructor of `Text`, by its full name.
-        if let ("std::Text::Text::Mk", [bytes]) = (n, values)
-            && self.checked.families.contains_key("Text")
+        if let [bytes] = values
+            && self
+                .checked
+                .families
+                .iter()
+                .any(|(family, info)| self.std.of(family) == Some("Text") && info.ctors.contains(n))
         {
             return Ok(format!("extract_text_of_bytes({bytes})"));
         }
+
         if self.checked.families.iter().any(|(name, family)| {
             matches!(
                 self.std.of(name).unwrap_or(""),
@@ -4101,7 +4287,7 @@ impl Extractor<'_> {
                 path,
                 msg!(
                     "tauto-extract-has-no-executable-constructor-representation",
-                    n = n
+                    n = n.to_string()
                 ),
             );
         }
@@ -4119,11 +4305,16 @@ impl Extractor<'_> {
             return Ok(folded);
         }
         if let Some(template) = self.std.of(n).and_then(mapped_fn) {
+            self.template_dependencies(template)?;
             return Ok(format!("({})", fill(template, values)));
         }
         if is_eliminator(n) {
-            return fail(path, msg!("tauto-extract-is-an-eliminator-write-a", n = n));
+            return fail(
+                path,
+                msg!("tauto-extract-is-an-eliminator-write-a", n = n.to_string()),
+            );
         }
+        self.dependencies.insert(n.clone());
         let is_ctor = self
             .checked
             .families
@@ -4138,11 +4329,45 @@ impl Extractor<'_> {
         Ok(format!("{}({})", raw(n), values.join(", ")))
     }
 
+    /// Compiler templates contribute their checked standard declarations to
+    /// reachability, even when the source function's body is replaced.
+    fn template_dependencies(&mut self, template: &str) -> Result<(), Message> {
+        let slots = template
+            .split('$')
+            .skip(1)
+            .filter_map(|tail| {
+                tail.split(|c: char| !c.is_ascii_digit())
+                    .next()?
+                    .parse::<usize>()
+                    .ok()
+            })
+            .max()
+            .map_or(0, |index| index + 1);
+        let source = fill(template, &vec!["0".into(); slots]);
+        let mut program = crate::surface::parse_program_unresolved_at(&source, 0)?;
+        if let Some((error, _)) = program.errors.first() {
+            return Err(error.clone());
+        }
+        for statement in &mut program.stmts {
+            crate::surface::walk::stmt(statement, &mut |term| {
+                let TermKind::Var(reference) = &*term.kind else {
+                    return;
+                };
+                for declaration in &self.std.std {
+                    if self.std.of(declaration) == Some(reference.as_str()) {
+                        self.dependencies.insert(declaration.clone());
+                    }
+                }
+            });
+        }
+        Ok(())
+    }
+
     /// The path of a variant that kept its short name inside a type written
     /// out in modules: when the type was renamed to its full name (a
     /// program's `Pending` against the prelude's) it is declared inside the
     /// modules of that name, which the bare variant does not find.
-    fn qualified_ctor(&self, n: &str) -> Option<String> {
+    fn qualified_ctor(&self, n: &Name) -> Option<String> {
         if n.contains(['.', ':']) || !self.written.contains(n) {
             return None;
         }
@@ -4159,25 +4384,12 @@ impl Extractor<'_> {
             .then(|| format!("{family}::{}", raw(n)))
     }
 
-    /// A variant as the extracted code names it: under the name its type is
-    /// declared by (`Expr.ExVar`). A variant renamed to its full name
-    /// because another declaration shares its short name
-    /// (`fluent.src.syntax.Expr.ExVar`) is declared by its own name inside
-    /// the type, which is written by its full name.
-    fn ctor_ref(&self, n: &str) -> String {
-        let family = self
-            .checked
-            .families
-            .iter()
-            .find(|(_, f)| f.ctors.iter().any(|c| c == n))
-            .map(|(family, _)| family.as_str());
-        let Some(short) = n.rsplit(['.', ':']).next().filter(|s| s.len() < n.len()) else {
-            return self.qualified_ctor(n).unwrap_or_else(|| raw(n));
-        };
-        match family {
-            Some(family) => format!("{family}::{}", raw(short)),
-            None => raw(n),
-        }
+    /// The constructor is referenced through the family that owns it in
+    /// the executable declaration table.
+    fn ctor_ref(&self, n: &Name) -> String {
+        extracted_ctor(self.checked, n)
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| raw(n))
     }
 
     fn matching(
@@ -4187,7 +4399,7 @@ impl Extractor<'_> {
         arms: &[MatchArm],
         locals: &Locals,
         depth: usize,
-    ) -> Result<String, String> {
+    ) -> Result<String, Message> {
         // A constructor written by its short name is the one the kernel read it as
         // (`Checked::ctor_sites`), not the first declaration with that spelling.
         let named: Vec<MatchArm>;
@@ -4201,7 +4413,7 @@ impl Extractor<'_> {
                         .checked
                         .ctor_sites
                         .iter()
-                        .filter(|s| s.span == a.body.span)
+                        .filter(|s| !s.expression && s.occurrence == a.body.id())
                         .collect();
                     MatchArm {
                         pattern: self.kernel_named(&a.pattern, &notes, &mut 0),
@@ -4279,7 +4491,7 @@ impl Extractor<'_> {
             };
         }
         // `Text::Mk(bs)` binds the bytes of the text.
-        if family == "Text"
+        if crate::bindings::is_library(&family, "Text")
             && let [arm] = arms
             && arm.guard.is_none()
             && let Pattern::Ctor { args, .. } = &arm.pattern
@@ -4321,7 +4533,10 @@ impl Extractor<'_> {
         ) {
             return fail(
                 path,
-                msg!("tauto-extract-a-match-on-has-no", family = family),
+                msg!(
+                    "tauto-extract-a-match-on-has-no",
+                    family = family.to_string()
+                ),
             );
         }
         let s = self.subject(path, scrutinee, locals, depth + 1)?;
@@ -4374,8 +4589,13 @@ impl Extractor<'_> {
     /// this walk. A constructor is taken from the next note when the note was made
     /// for that spelling; otherwise the pattern is left as written.
     fn kernel_named(&self, p: &Pattern, notes: &[&CtorSite], next: &mut usize) -> Pattern {
-        let mut read = |name: &String| match notes.get(*next) {
-            Some(site) if site.written == *name => {
+        let mut read = |name: &Name| match notes.get(*next) {
+            Some(site)
+                if site.written == *name
+                    || matches!(name, Name::Selection(selection)
+                    if site.written.as_global().is_some_and(|reference|
+                        selection.candidates().contains(reference))) =>
+            {
                 *next += 1;
                 site.resolved.clone()
             }
@@ -4402,7 +4622,7 @@ impl Extractor<'_> {
         }
     }
 
-    fn pattern_family(&self, p: &Pattern) -> Option<String> {
+    fn pattern_family(&self, p: &Pattern) -> Option<Name> {
         let name = match p {
             Pattern::Ctor { name, .. } => name,
             Pattern::Bind(name) => name,
@@ -4415,7 +4635,7 @@ impl Extractor<'_> {
             .map(|(n, _)| n.clone())
     }
 
-    fn is_ctor(&self, name: &str) -> bool {
+    fn is_ctor(&self, name: &Name) -> bool {
         self.checked
             .families
             .values()
@@ -4431,12 +4651,12 @@ impl Extractor<'_> {
         arms: &[MatchArm],
         locals: &Locals,
         depth: usize,
-    ) -> Result<String, String> {
+    ) -> Result<String, Message> {
         let (subject, bind) = if is_name(s) {
             (s.to_string(), None)
         } else {
             let v = self.fresh("m");
-            (v.clone(), Some(format!("let {v} := {s}")))
+            (v.to_string(), Some(format!("let {v} := {s}")))
         };
         let rows: Vec<(Vec<Pattern>, &SurfaceTerm)> = arms
             .iter()
@@ -4459,7 +4679,7 @@ impl Extractor<'_> {
         rows: &[(Vec<Pattern>, &SurfaceTerm)],
         locals: &Locals,
         depth: usize,
-    ) -> Result<String, String> {
+    ) -> Result<String, Message> {
         let mut out = String::new();
         let n = rows.len();
         for (k, (pats, body)) in rows.iter().enumerate() {
@@ -4507,7 +4727,7 @@ impl Extractor<'_> {
         arms: &[MatchArm],
         locals: &Locals,
         depth: usize,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<String>, Message> {
         let mut shapes = Vec::new();
         for arm in arms {
             let mut holes = Vec::new();
@@ -4547,12 +4767,12 @@ impl Extractor<'_> {
             (s.to_string(), None)
         } else {
             let v = self.fresh("m");
-            (v.clone(), Some(format!("let {v} := {s}")))
+            (v.to_string(), Some(format!("let {v} := {s}")))
         };
         let mut lines = Vec::new();
         for (shape, members) in &groups {
             let count = shapes[members[0]].1.len();
-            let names: Vec<String> = (0..count).map(|_| self.fresh("p")).collect();
+            let names: Vec<Name> = (0..count).map(|_| self.fresh("p")).collect();
             let mut next = names.iter();
             let filled = fill_holes(shape, &mut next);
             let mut inner = locals.clone();
@@ -4571,10 +4791,10 @@ impl Extractor<'_> {
             }
             let subjects: Vec<String> = if default.is_some() {
                 std::iter::once(subject.clone())
-                    .chain(names.iter().cloned())
+                    .chain(names.iter().map(ToString::to_string))
                     .collect()
             } else {
-                names.clone()
+                names.iter().map(ToString::to_string).collect()
             };
             let rows: Vec<(Vec<Pattern>, &SurfaceTerm)> = if default.is_some() {
                 rows.into_iter()
@@ -4668,7 +4888,7 @@ impl Extractor<'_> {
         locals: &mut Locals,
         tests: &mut Vec<String>,
         binds: &mut Vec<String>,
-    ) -> Result<(), String> {
+    ) -> Result<(), Message> {
         match p {
             Pattern::Wild => Ok(()),
             Pattern::Bind(n) if !self.is_ctor(n) => {
@@ -4706,7 +4926,10 @@ impl Extractor<'_> {
                         tests.push(format!("not({at})"));
                         Ok(())
                     }
-                    _ => fail(path, msg!("tauto-extract-in-a-match-on-at", name = name)),
+                    _ => fail(
+                        path,
+                        msg!("tauto-extract-in-a-match-on-at", name = name.to_string()),
+                    ),
                 }
             }
             Pattern::Int(k) => {
@@ -4726,7 +4949,7 @@ impl Extractor<'_> {
         locals: &mut Locals,
         tests: &mut Vec<String>,
         binds: &mut Vec<String>,
-    ) -> Result<String, String> {
+    ) -> Result<String, Message> {
         match p {
             Pattern::Wild => Ok("_".into()),
             Pattern::Bind(n) if !self.is_ctor(n) => {
@@ -4758,9 +4981,14 @@ impl Extractor<'_> {
                     let mut inner_binds = Vec::new();
                     self.test(path, p, &v, locals, tests, &mut inner_binds)?;
                     binds.extend(inner_binds);
-                    return Ok(v);
+                    return Ok(v.to_string());
                 }
-                let sig = self.checked.signatures[name].clone();
+                let sig = self.checked.signatures.get(name).cloned().ok_or_else(|| {
+                    format!(
+                        "{}: pattern constructor {name:?} has no checked declaration",
+                        path.display()
+                    )
+                })?;
                 let fields: &[Role] = if args.len() + sig.implicit == sig.params.len() {
                     &sig.params[sig.implicit..]
                 } else {
@@ -4770,7 +4998,10 @@ impl Extractor<'_> {
                 if fields.len() != args.len() {
                     return fail(
                         path,
-                        msg!("tauto-extract-in-a-pattern-has-the", name = name),
+                        msg!(
+                            "tauto-extract-in-a-pattern-has-the",
+                            name = name.to_string()
+                        ),
                     );
                 }
                 let mut parts = Vec::new();
@@ -4800,7 +5031,7 @@ impl Extractor<'_> {
                 let v = self.fresh("p");
                 locals.insert(v.clone());
                 self.test(path, p, &v, locals, tests, binds)?;
-                Ok(v)
+                Ok(v.to_string())
             }
             // `#(p, q)`: Nib's own product; the std's `Pair` is written as the record it is.
             Pattern::Tuple(items) => {
@@ -4822,12 +5053,14 @@ fn list_items<'t>(mut t: &'t SurfaceTerm, locals: &Locals) -> Option<Vec<&'t Sur
     let mut items = Vec::new();
     loop {
         match &*t.kind {
-            TermKind::Var(n) if n == "Nil" && !locals.contains(n) => return Some(items),
+            TermKind::Var(n) if crate::bindings::is_library(&n, "Nil") && !locals.contains(n) => {
+                return Some(items);
+            }
             TermKind::App {
                 function,
                 arguments,
             } if arguments.len() == 2
-                && matches!(&*function.kind, TermKind::Var(n) if n == "Cons" && !locals.contains(n)) =>
+                && matches!(&*function.kind, TermKind::Var(n) if crate::bindings::is_library(&n, "Cons") && !locals.contains(n)) =>
             {
                 items.push(&arguments[0]);
                 t = &arguments[1];
@@ -4849,7 +5082,10 @@ fn has_bool(p: &Pattern) -> bool {
 
 fn bool_constructors(p: &Pattern) -> Pattern {
     match p {
-        Pattern::Bool(b) => Pattern::Bind(b.to_string()),
+        Pattern::Bool(b) => Pattern::Ctor {
+            name: crate::bindings::library_name(if *b { "true" } else { "false" }),
+            args: Vec::new(),
+        },
         Pattern::Ctor { name, args } => Pattern::Ctor {
             name: name.clone(),
             args: args.iter().map(bool_constructors).collect(),
@@ -4868,12 +5104,14 @@ fn bool_constructors(p: &Pattern) -> Pattern {
 
 fn is_unit(t: &SurfaceTerm) -> bool {
     matches!(&*t.kind, TermKind::App { function, arguments }
-        if arguments.is_empty() && matches!(&*function.kind, TermKind::Var(f) if f == "Tuple"))
+        if arguments.is_empty() && matches!(&*function.kind, TermKind::Var(f) if crate::bindings::is_library(&f, "Tuple")))
 }
 
 fn mapped_ctor(n: &str, values: &[String]) -> Option<String> {
     Some(match (n, values) {
-        ("Zero", []) => "0".into(),
+        // A bare numeral defaults to an integer where nothing else says what it is
+        // (`Ord::compare(Pair::Mk(Zero, Zero), …)`); `Zero` is a `nat`.
+        ("Zero", []) => "(0: nat)".into(),
         ("Succ", [x]) => format!("({x} + 1)"),
         ("true", []) => "true".into(),
         ("false", []) => "false".into(),
@@ -5004,64 +5242,9 @@ fn show(t: &SurfaceTerm) -> String {
 }
 
 /// The statements an `inductive_syntax!` declaration makes: the types and `<syntax>.parse` of Nib,
-/// one `mutual` block of `inductive` types and `<syntax>.<Type>.to_i`.
-fn inductive_syntax_stmts(
-    name: &str,
-    grammar: &crate::surface::SyntaxLit,
-    generates: &crate::surface::Generates,
-    span: tauto_parol::Span,
-) -> Result<Vec<Stmt>, String> {
-    let mut cx = crate::syntax::Syntaxes::default();
-    let stmts = cx.declare_all(vec![Stmt::Syntax {
-        name: name.to_string(),
-        grammar: grammar.clone(),
-        inductive: true,
-        generates: generates.clone(),
-        uses: Vec::new(),
-        span,
-    }]);
-    match cx.errors.first() {
-        Some((m, _)) => Err(m.clone()),
-        None => Ok(stmts),
-    }
-}
-
-fn generated_nib_names(input: &crate::read::ExtractionInput) -> HashSet<String> {
-    let mut names = HashSet::new();
-    for (file, _) in &input.sources {
-        let text = &file.text;
-        if !text.contains("inductive_syntax!") {
-            continue;
-        }
-        let Ok(program) = crate::surface::parse_program_unresolved_at(&text, 0) else {
-            continue;
-        };
-        for s in program.stmts {
-            if let Stmt::Syntax {
-                inductive: true,
-                name,
-                grammar,
-                generates,
-                span,
-                ..
-            } = s
-                && let Ok(stmts) = inductive_syntax_stmts(&name, &grammar, &generates, span)
-            {
-                for g in stmts {
-                    match g {
-                        Stmt::Fn(f) => {
-                            names.insert(f.name);
-                        }
-                        Stmt::Struct(d) | Stmt::Enum(d) => {
-                            names.insert(d.name);
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-    names
+/// Executable declarations retained from the syntax expansion boundary.
+fn generated_nib_names(input: &crate::read::ExtractionInput) -> HashSet<Name> {
+    input.loaded.generated_executable.clone()
 }
 
 #[cfg(test)]
@@ -5146,7 +5329,7 @@ mod tests {
                 "import \"{}\"\n{}",
                 base.display(),
                 r#"fn twice(n: Nat): Nat {
-  match n: Nat {
+  ⊢ Nat from match n {
     Zero => Zero
     Succ(k) => Succ(Succ(twice(k)))
   }
@@ -5161,8 +5344,8 @@ perform show("value", twice(2))
         let input = crate::read::check_files_for_extraction(&roots, false, true).unwrap();
         std::fs::write(&source, r#"fn twice(n: Nat): Nat { twice(n) }"#).unwrap();
         std::fs::remove_file(&included).unwrap();
-        let (text, runtime, total, _) = extract_checked(&input, true, &roots).unwrap();
-        assert!(total.contains("twice"));
+        let (text, runtime, total) = extract_checked(&input, true, &roots).unwrap();
+        assert!(total.iter().any(|name| name.as_str() == "twice"));
         assert!(text.contains("+ 1"), "{text}");
         assert!(
             runtime
@@ -5174,6 +5357,30 @@ perform show("value", twice(2))
                 .iter()
                 .all(|(_, text)| !text.contains("include_text!"))
         );
+        let (loaded, _) = runtime::assemble(&input, &text, &roots).unwrap();
+        assert_eq!(
+            loaded.files[..input.loaded.files.len()]
+                .iter()
+                .map(|f| &f.text)
+                .collect::<Vec<_>>(),
+            input
+                .loaded
+                .files
+                .iter()
+                .map(|f| &f.text)
+                .collect::<Vec<_>>()
+        );
+        for i in 0..input.loaded.spans.len() {
+            let at = crate::macros::EXPANSION_BASE + i as u32;
+            assert_eq!(loaded.spans.origin(at), input.loaded.spans.origin(at));
+        }
+        assert!(loaded.program.stmts.iter().any(|s| {
+            let mut found = false;
+            crate::surface::walk::stmt(&mut s.clone(), &mut |t| {
+                found |= matches!(&*t.kind, TermKind::Text(value) if value == "checked text");
+            });
+            found
+        }));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -5187,7 +5394,7 @@ perform show("value", twice(2))
             .checked
             .entries
             .iter_mut()
-            .find(|e| e.entry.name == name)
+            .find(|e| e.entry.name.as_str() == name)
             .unwrap();
         entry.entry.verdict =
             Verdict::Failed(tauto_surface::diagnostic::Diagnostic::new("rejected", None));
@@ -5195,23 +5402,45 @@ perform show("value", twice(2))
         let Err(e) = extract_checked(&input, true, &roots) else {
             panic!("a rejected function was extracted");
         };
-        assert!(e.contains(name) && e.contains("rejected"), "{e}");
+        // The problems come as a chain of `tauto-extract-problems`; the rejected
+        // function is one of them, said by its id and arguments.
+        let mut problems = vec![&e];
+        let mut rejected = false;
+        while let Some(problem) = problems.pop() {
+            if problem.id == "tauto-extract-problems" {
+                for part in ["first", "rest"] {
+                    if let Some(tauto_message::Value::Message(m)) = problem.get(part) {
+                        problems.push(m);
+                    }
+                }
+            } else if problem.id == "tauto-extract-located"
+                && let Some(tauto_message::Value::Message(what)) = problem.get("what")
+            {
+                rejected |= what.id == "tauto-extract-failed"
+                    && what.get("name") == Some(&name.into())
+                    && what.get("why") == Some(&Message::text("rejected").into());
+            }
+        }
+        assert!(rejected, "{e:?}");
     }
 }
 
 /// A row as written, a set expression: its effects `{A, B}`, then its variable united with them,
 /// `{A, B} ∪ e`; a row of a variable alone is `e`.
-fn row_text(row: &[String]) -> String {
-    let (vars, effects): (Vec<&String>, Vec<&String>) =
-        row.iter().partition(|e| e.starts_with('|'));
+fn row_text(row: &[Name]) -> String {
+    let (vars, effects): (Vec<&Name>, Vec<&Name>) =
+        row.iter().partition(|e| e.row_variable().is_some());
     let effects = effects
         .iter()
         .map(|e| e.as_str())
         .collect::<Vec<_>>()
         .join(", ");
     match vars.first() {
-        Some(v) if effects.is_empty() => v[1..].to_string(),
-        Some(v) => format!("{{{effects}}} ∪ {}", &v[1..]),
+        Some(v) if effects.is_empty() => v.row_variable().expect("a row variable").to_string(),
+        Some(v) => format!(
+            "{{{effects}}} ∪ {}",
+            v.row_variable().expect("a row variable")
+        ),
         None => format!("{{{effects}}}"),
     }
 }
@@ -5227,7 +5456,7 @@ fn nib_prelude_fn(name: &str) -> bool {
                     p.stmts
                         .iter()
                         .filter_map(|s| match s {
-                            Stmt::Fn(f) => Some(f.name.clone()),
+                            Stmt::Fn(f) => Some(f.name.to_string()),
                             _ => None,
                         })
                         .collect()
@@ -5241,9 +5470,12 @@ fn nib_prelude_fn(name: &str) -> bool {
 /// program can write.
 const HOLE: &str = "\u{0}hole";
 
-fn fill_holes<'n>(shape: &Pattern, names: &mut impl Iterator<Item = &'n String>) -> Pattern {
+/// `shape` with its holes, in order, as the names of `names`.
+fn fill_holes<'n>(shape: &Pattern, names: &mut impl Iterator<Item = &'n Name>) -> Pattern {
     match shape {
-        Pattern::Bind(n) if n == HOLE => Pattern::Bind(names.next().cloned().unwrap_or_default()),
+        Pattern::Bind(n) if n.spelling() == Some(HOLE) => {
+            Pattern::Bind(names.next().cloned().unwrap_or_default())
+        }
         Pattern::Ctor { name, args } => Pattern::Ctor {
             name: name.clone(),
             args: args.iter().map(|q| fill_holes(q, names)).collect(),
@@ -5259,7 +5491,7 @@ fn fill_holes<'n>(shape: &Pattern, names: &mut impl Iterator<Item = &'n String>)
 /// `shape` does not take apart is taken to overlap.
 fn overlap(a: &Pattern, b: &Pattern) -> bool {
     match (a, b) {
-        (Pattern::Bind(n), _) | (_, Pattern::Bind(n)) if n == HOLE => true,
+        (Pattern::Bind(n), _) | (_, Pattern::Bind(n)) if n.spelling() == Some(HOLE) => true,
         (Pattern::Ctor { name: m, args: x }, Pattern::Ctor { name: n, args: y }) => {
             m == n && x.len() == y.len() && x.iter().zip(y).all(|(p, q)| overlap(p, q))
         }
@@ -5277,4 +5509,18 @@ fn unlabel(p: &Pattern) -> Pattern {
         p = inner;
     }
     p.clone()
+}
+
+pub(crate) fn macro_made(s: &Stmt) -> bool {
+    let span = match s {
+        Stmt::Fn(f) => f.span,
+        Stmt::Effect(e) => e.span,
+        Stmt::Theorem(t) | Stmt::Def(t) => t.span,
+        Stmt::Inductive(i) => i.span,
+        Stmt::Class(c) => c.span,
+        Stmt::Instance(i) => i.span,
+        Stmt::Mutual { span, .. } => *span,
+        _ => return false,
+    };
+    (crate::macros::EXPANSION_BASE..crate::surface::PRELUDE_BASE).contains(&span.start)
 }

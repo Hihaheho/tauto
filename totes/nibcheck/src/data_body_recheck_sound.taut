@@ -17,7 +17,7 @@ pub theorem data_generic_map_sound(
   names: List(Text),
   initial: Ordmap(Text, Ty)
 ): DataGenericMap(names, initial, ck_param_generics(names, KindLinear, initial)) {
-  match names: DataGenericMap(names, initial, ck_param_generics(names, KindLinear, initial)) {
+  ⊢ DataGenericMap(names, initial, ck_param_generics(names, KindLinear, initial)) from match names {
     Nil => DataGenericMapNil(initial)
     Cons(name, rest) => DataGenericMapCons(
       name,
@@ -46,7 +46,7 @@ pub theorem data_generic_map_determined<names: List(
 )>(
   bindings: DataGenericMap(names, initial, final)
 ): ck_param_generics(names, KindLinear, initial) = final {
-  match bindings: ck_param_generics(names, KindLinear, initial) = final {
+  ⊢ ck_param_generics(names, KindLinear, initial) = final from match bindings {
     DataGenericMapNil(map) => Refl
     DataGenericMapCons(name, rest, before, after, tail) => data_generic_map_determined(tail)
   }
@@ -68,7 +68,7 @@ pub theorem data_body_recheck<source: SurfaceData, constructors: List(
     )
   )
 ): DataBodyFormed(ck_datas_of(c), source, constructors) {
-  match known: DataBodyFormed(ck_datas_of(c), source, constructors) {
+  ⊢ DataBodyFormed(ck_datas_of(c), source, constructors) from match known {
     Mk(old_env, generics, bindings, meaning) => DataBodyFormed::Mk(
       ck_param_generics(body_source_generics(source), KindLinear, Ordmap::empty()),
       data_generic_map_sound(body_source_generics(source), Ordmap::empty()),

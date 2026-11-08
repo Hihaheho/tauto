@@ -1,0 +1,122 @@
+description = "Class method telescopes are checked as polymorphic dictionary fields."
+
+@ cases.method-type-parameter
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+instance Identity(Nat) { fn apply<B>(owner: Nat, value: B): B { value } }
+fn value(): Nat { Identity::apply(0, 7) }
+theorem computes(): Eq(Nat, value(), 7) { Refl }
+```
+checks_all = "ok"
+
+@ cases.method-term-parameter
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Tagged(n: Nat): Type { Mk: Tagged(n) }
+class Read(A: Type) { fn read<n: Nat>(owner: A, value: Tagged(n)): Nat }
+instance Read(Nat) { fn read<index: Nat>(owner: Nat, value: Tagged(index)): Nat { index } }
+fn value(): Nat { Read::read(0, Tagged::Mk(7)) }
+theorem computes(): Eq(Nat, value(), 7) { Refl }
+```
+checks_all = "ok"
+
+@ cases.generic-method-through-dictionary
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+instance Identity(Nat) { fn apply<B>(owner: Nat, value: B): B { value } }
+fn apply<A, B>(owner: A, value: B): B where Identity(A) { Identity::apply(owner, value) }
+fn value(): Nat { apply(0, 7) }
+theorem computes(): Eq(Nat, value(), 7) { Refl }
+```
+checks_all = "ok"
+
+@ cases.renamed-method-binders-with-inherited-annotations
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+instance Identity(Nat) { fn apply<C>(receiver, item) { item } }
+fn value(): Nat { Identity::apply(0, 7) }
+theorem computes(): Eq(Nat, value(), 7) { Refl }
+```
+checks_all = "ok"
+
+@ cases.multiple-instantiations-through-one-dictionary
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+instance Identity(Nat) { fn apply<B>(owner: Nat, value: B): B { value } }
+fn both<A>(owner: A): Nat where Identity(A) {
+  let first: Nat := Identity::apply(owner, 7)
+  let second: Bool := Identity::apply(owner, true)
+  ⊢ Nat from match second { true => first, false => 0 }
+}
+theorem computes(): Eq(Nat, both(0), 7) { Refl }
+```
+checks_all = "ok"
+
+@ cases.method-generic-count-must-match
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+instance Identity(Nat) { fn apply(owner: Nat, value: Nat): Nat { value } }
+```
+checks."input/main.taut::Identity(Nat)" = "error: has 0 parameters, but the class has 1"
+
+@ cases.method-generic-domain-must-match
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Read(A: Type) { fn read<n: Nat>(owner: A): Nat }
+instance Read(Nat) { fn read<n: Bool>(owner: Nat): Nat { 0 } }
+```
+checks."input/main.taut::Read::read@Nat" = "ok"
+checks."input/main.taut::Read::inst@Nat" = "error: type mismatch"
+
+@ cases.effectful-instance-is-not-made-pure
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+instance Identity(Nat) { fn apply<B>(owner: Nat, value: B): B !{Div} { value } }
+```
+checks."input/main.taut::Identity(Nat)" = "error: has generics"
+
+@ cases.method-row-generics-stay-out-of-checked-dictionaries
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Keep(A: Type) { fn keep<!e>(owner: A): A }
+```
+checks."input/main.taut::Keep" = "skipped"
+
+@ cases.method-ownership-bounds-stay-out-of-checked-dictionaries
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Keep(A: Type) { fn keep<B: Shared>(owner: A, value: B): B }
+```
+checks."input/main.taut::Keep" = "skipped"
+
+@ cases.pure-law-can-instantiate-method-local-type
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Identity(A: Type) {
+  fn apply<B>(owner: A, value: B): B
+  theorem identity<B>(owner: A, value: B): Identity::apply(owner, value) = value
+}
+instance Identity(Nat) {
+  fn apply<B>(owner: Nat, value: B): B { value }
+  theorem identity<B>(owner: Nat, value: B): Identity::apply(owner, value) = value { Refl }
+}
+theorem computes(): Eq(Nat, Identity::apply(0, 7), 7) { Identity::identity(0, 7) }
+```
+checks_all = "ok"

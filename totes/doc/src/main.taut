@@ -1,0 +1,134 @@
+import "doc.taut"
+import "../../names/src/names.taut"
+import "../../syntax/src/syntax.taut"
+import "../../text/src/text.taut"
+import "../../unicode/src/classes.taut"
+import "../../unicode/src/unicode.taut"
+import std::Base
+import std::Text
+import std::Sort
+import std::List
+import std::prelude::Os
+
+// `doc OUT ROOT TITLE PATH…`: reads the files `PATH…` under the directory
+// `ROOT`, and the files under it they import, and writes their pages and
+// `index.html` into the directory `OUT`, which the caller has made. An
+// argument with a line break gives the tokens inside a file's macros
+// (`DocDsl`) instead of a path. The
+// exit status is 1 when a file cannot be read or a page cannot be written.
+
+pub fn doc_under(dir: Text, path: Text): Text {
+  doc_concat(Cons(dir, Cons("/", Cons(path, Nil))))
+}
+
+// The files `todo` and the ones they import, read from under `root`; each
+// file once. `status` becomes 1 when one cannot be read.
+pub fn doc_read_all(&t: SyntaxTables, classes: UnicodeClasses, root: Text, todo: List(Text), &mut status: i32): List(DocFile) ! {fs_read, stderr, Div} {
+  var done := Nil
+  var seen := Nil
+  var queue := todo
+  var running := true
+  while running {
+    match queue {
+      Nil => {
+        running := false
+      }
+      Cons(path, rest) => {
+        queue := rest
+        if names_has(seen, path) {
+          #()
+        } else {
+          seen := Cons(path, seen)
+          match read_file(doc_under(root, path)) {
+            Err(e) => {
+              eprint(doc_concat(Cons(path, Cons(": ", Cons(e, Cons("\n", Nil))))))
+              status := 1
+            }
+            Ok(source) => {
+              let f := doc_read(t, classes, path, source)
+              done := Cons(f, done)
+              queue := List::append(queue, f.imports)
+            }
+          }
+        }
+      }
+    }
+  }
+  done
+}
+
+pub fn doc_path_cmp(a: DocFile, b: DocFile): Ordering {
+  doc_text_cmp(a.path, b.path)
+}
+
+pub fn doc_write(path: Text, contents: Text, &mut status: i32): Unit ! {fs_write, stderr} {
+  match write_file(path, contents) {
+    Ok(u) => #()
+    Err(e) => {
+      eprint(doc_concat(Cons(path, Cons(": ", Cons(e, Cons("\n", Nil))))))
+      status := 1
+    }
+  }
+}
+
+pub fn doc_make_dirs(out: Text, path: Text, &mut status: i32): Unit ! {fs_create_dir, stderr} {
+  match doc_dir_parts(path) {
+    Nil => #()
+    Cons(d, r) => {
+      let dir := doc_under(out, text_join(doc_dir_parts(path), "/"))
+      match perform fs_create_dir(dir) {
+        Ok(u) => #()
+        Err(e) => {
+          eprint(doc_concat(Cons(dir, Cons(": ", Cons(io_message(e), Cons("\n", Nil))))))
+          status := 1
+        }
+      }
+    }
+  }
+}
+
+pub fn doc_command(&t: SyntaxTables, classes: UnicodeClasses, args: List(Text)): i32 ! {fs_read, fs_write, fs_create_dir, stderr, Div} {
+  match args {
+    Cons(out, Cons(root, Cons(title, items))) => {
+      let paths := List::filter((a: Text) => not(doc_is_dsl_arg(a)), items)
+      let dsl := List::map(doc_dsl_arg, List::filter(doc_is_dsl_arg, items))
+      var status := 0
+      let files := List::sort(doc_path_cmp, doc_read_all(t, classes, root, paths, &mut status))
+      var rest := files
+      var running := true
+      while running {
+        match rest {
+          Nil => {
+            running := false
+          }
+          Cons(f, more) => {
+            rest := more
+            doc_make_dirs(out, f.path, &mut status)
+            doc_write(doc_under(out, doc_page(f.path)), doc_source_page(t, files, dsl, f), &mut status)
+          }
+        }
+      }
+      doc_write(doc_under(out, "index.html"), doc_index_page(title, files), &mut status)
+      status
+    }
+    _ => {
+      eprint("usage: doc OUT ROOT TITLE PATH...\n")
+      2
+    }
+  }
+}
+
+match syntax_tables() {
+  None => {
+    eprint("the tables of the syntax are damaged\n")
+    perform exit(2)
+  }
+  Some(tables) => {
+    let code := doc_command(tables, unicode_classes(), perform argv())
+    if code != 0 {
+      perform exit(code)
+    } else {
+      #()
+    }
+  }
+}

@@ -5,7 +5,7 @@
 // proofs read too; the instances here are for the builtin types, which the
 // kernel does not see, and their laws are trusted.
 
-pub class ToText(A: Linear) {
+pub(open) class ToText(A: Linear) {
   fn to_text(&a: A): Text
 }
 
@@ -124,18 +124,9 @@ instance<A> ToText(Option(A)) where ToText(A) {
   }
 }
 
-instance<A, B> ToText(Pair(A, B)) where ToText(A), ToText(B) {
-  fn to_text(&a: Pair(A, B)): Text {
-    concat("(", concat(ToText::to_text(&a.fst), concat(", ", concat(ToText::to_text(&a.snd), ")"))))
-  }
-}
-
-// The members joined by ` × `, as a product is shown: `1 × 2 × 3`.
 instance<A, B> ToText(A × B) where ToText(A), ToText(B) {
   fn to_text(&a: A × B): Text {
-    match a {
-      #(x, y) => concat(ToText::to_text(&x), concat(" × ", ToText::to_text(&y)))
-    }
+    concat("(", concat(ToText::to_text(&a.fst), concat(", ", concat(ToText::to_text(&a.snd), ")"))))
   }
 }
 

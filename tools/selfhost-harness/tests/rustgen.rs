@@ -17,14 +17,14 @@ fn rust_backend_compiles_real_type_engine_and_rejects_unsupported_inputs() {
         std::fs::read_to_string(root().join("totes/rustgen/src/types.taut")).unwrap(),
         std::fs::read_to_string(root().join("totes/rustgen/src/bindings.taut")).unwrap(),
         std::fs::read_to_string(root().join("totes/rustgen/src/generic_core.taut")).unwrap(),
-        r#"fn answer(): Nat { match rustgen_unify(100, RustgenApply("List", Cons(RustgenMeta("x"), Nil)), RustgenApply("List", Cons(RustgenText, Nil)), Nil): Nat { RustgenErr(message) => 0
-RustgenOk(subst) => match rustgen_resolve(100, RustgenMeta("x"), subst): Nat { RustgenErr(message) => 1
+        r#"fn answer(): Nat { ⊢ Nat from match rustgen_unify(100, RustgenApply("List", Cons(RustgenMeta("x"), Nil)), RustgenApply("List", Cons(RustgenText, Nil)), Nil) { RustgenErr(message) => 0
+RustgenOk(subst) => ⊢ Nat from match rustgen_resolve(100, RustgenMeta("x"), subst) { RustgenErr(message) => 1
 RustgenOk(ty) => if rustgen_same(ty, RustgenText) { 42 } else { 2 } } } }"#
     );
     let accepted = [
         (
             "nat-zero",
-            r#"fn pred(n: Nat): Nat { match n: Nat { Zero => 0
+            r#"fn pred(n: Nat): Nat { ⊢ Nat from match n { Zero => 0
 Succ(k) => k } }
 fn answer(): Nat { pred(0) }"#,
         ),
@@ -51,12 +51,12 @@ fn answer(): i64 { identity(42) }"#,
         (
             "generic-data",
             r#"inductive Boxed(A: Type): Type { Mk(value: A): Boxed(A) }
-fn unbox<A>(x: Boxed(A)): A { match x: A { Mk(value) => value } }
+fn unbox<A>(x: Boxed(A)): A { ⊢ A from match x { Mk(value) => value } }
 fn answer(): Nat { unbox(Boxed::Mk(42)) }"#,
         ),
         (
             "generic-empty",
-            r#"fn first<A>(xs: List(A), fallback: A): A { match xs: A { Nil => fallback
+            r#"fn first<A>(xs: List(A), fallback: A): A { ⊢ A from match xs { Nil => fallback
 Cons(x, rest) => x } }
 fn answer(): i64 { first(Nil, 42) }"#,
         ),
@@ -73,7 +73,7 @@ fn answer(): Nat { sub(0, 1) }"#,
         ),
         (
             "nat-case",
-            r#"fn pred(n: Nat): Nat { match n: Nat { Zero => 0
+            r#"fn pred(n: Nat): Nat { ⊢ Nat from match n { Zero => 0
 Succ(k) => k } }
 fn answer(): Nat { pred(Succ(42)) }"#,
         ),
@@ -82,7 +82,7 @@ fn answer(): Nat { pred(Succ(42)) }"#,
             "recursive-data",
             r#"inductive Tree: Type { Leaf(n: i64): Tree
 Branch(left: Tree, right: Tree): Tree }
-fn sum(t: Tree): i64 { match t: i64 { Leaf(n) => n
+fn sum(t: Tree): i64 { ⊢ i64 from match t { Leaf(n) => n
 Branch(l, r) => sum(l) + sum(r) } }
 fn answer(): i64 { let t := Branch(Leaf(10), Leaf(11))
 sum(t) + sum(t) }"#,
@@ -91,7 +91,7 @@ sum(t) + sum(t) }"#,
             "recursive-text",
             r#"inductive Words: Type { End: Words
 Word(value: Text, next: Words): Words }
-fn count(w: Words): i64 { match w: i64 { End => 0
+fn count(w: Words): i64 { ⊢ i64 from match w { End => 0
 Word(s, rest) => if s == "" { count(rest) } else { 1 + count(rest) } } }
 fn answer(): i64 { let w := Word("日本語", Word("", End))
 count(w) + count(w) }"#,
@@ -159,7 +159,7 @@ fn answer(): Text { f("x") }"#,
         r#"fn answer(): Nat { 1 - 2 }"#,
         r#"fn mixed(a: Nat, b: i64): Bool { a == b }
 fn answer(): Bool { mixed(1, 1) }"#,
-        r#"fn answer(): i64 { match Cons(1, Nil): i64 { Nil => 0
+        r#"fn answer(): i64 { ⊢ i64 from match Cons(1, Nil) { Nil => 0
 Cons(x, x) => x } }"#,
         r#"fn same<A>(a: A, b: A): A { a }
 fn answer(): i64 { same(1, true) }"#,
@@ -178,27 +178,27 @@ let x := 1 }"#,
         r#"inductive T: Type => fn T::beq { A: T }
 fn answer(): i64 { 1 }"#,
         r#"inductive T: Type { A(n: i64): T }
-fn answer(): i64 { match A(1): i64 { A(x, y) => x } }"#,
+fn answer(): i64 { ⊢ i64 from match A(1) { A(x, y) => x } }"#,
         r#"inductive T: Type { A: T
 B: T }
 inductive W: Type { Wrap(x: T): W }
-fn answer(): i64 { match Wrap(B): i64 { Wrap(A) => 1 } }"#,
+fn answer(): i64 { ⊢ i64 from match Wrap(B) { Wrap(A) => 1 } }"#,
         r#"fn yes(): i64 { 1 }
 fn answer(): i64 { yes() }"#,
         r#"inductive T: Type { A: T
 B: T }
-fn answer(): i64 { match A: i64 { A => 1 } }"#,
+fn answer(): i64 { ⊢ i64 from match A { A => 1 } }"#,
         r#"inductive T: Type { A: T
 B: T }
-fn answer(): i64 { match A: i64 { A => 1
+fn answer(): i64 { ⊢ i64 from match A { A => 1
 A => 2 } }"#,
         r#"inductive T: Type { A: T }
 inductive U: Type { B: U }
-fn answer(): i64 { match A: i64 { B => 1 } }"#,
+fn answer(): i64 { ⊢ i64 from match A { B => 1 } }"#,
         r#"inductive T: Type { A(n: i64): T }
-fn answer(): i64 { match A(1): i64 { A => 1 } }"#,
+fn answer(): i64 { ⊢ i64 from match A(1) { A => 1 } }"#,
         r#"inductive T: Type { A(n: i64): T }
-fn answer(): i64 { match A(true): i64 { A(n) => n } }"#,
+fn answer(): i64 { ⊢ i64 from match A(true) { A(n) => n } }"#,
         r#"inductive T: Type { A: T }
 fn answer(): Bool { A == A }"#,
         r#"inductive T(n: Nat): Type { C: T(n) }
@@ -207,13 +207,13 @@ fn answer(): i64 { 1 }"#,
 fn answer(): i64 { 1 }"#,
         r#"inductive T: Type { A: T
 B: T }
-fn answer(): i64 { match A: i64 { A => 1
+fn answer(): i64 { ⊢ i64 from match A { A => 1
 B => true } }"#,
         r#"inductive T: Type { A(n: i64): T
 B: T }
 fn answer(): i64 { A(1).n }"#,
         r#"inductive T: Type { A(n: i64): T }
-fn answer(): i64 { match A(1): i64 { A(_) => 1 } }"#,
+fn answer(): i64 { ⊢ i64 from match A(1) { A(_) => 1 } }"#,
         r#"inductive T: Type { A: i64 }
 fn answer(): i64 { 1 }"#,
         r#"fn answer(): bool { true }"#,

@@ -1,0 +1,986 @@
+@ cases.induction-and-a-lemma
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      Case Zero. By Refl.
+      [succ] Case Succ(k). By Eq::congr.
+    %%
+    [succ] (Succ, ih)
+  ```)
+}
+````
+checks.add_zero_left = "ok"
+diagnostics = []
+
+@ cases.an-embedded-expression-in-proof-code
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      Case Zero. By Refl.
+      [succ] Case Succ(k). By Eq::congr.
+    %%
+    [succ] (Succ, ${ih})
+  ```)
+}
+````
+checks.add_zero_left = "ok"
+diagnostics = []
+
+@ cases.a-case-analysis-on-a-boolean-and-a-rewrite
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::Nat
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_consider, proof_case, proof_using }
+
+fn pick(b: Bool, n: Nat): Nat {
+  ⊢ Nat from match b {
+    true => n
+    false => Zero
+  }
+}
+
+theorem pick_zero(b: Bool, n: Nat): Nat::le(pick(b, Zero), n) = true {
+  proof!(```
+    Consider whether b holds.
+      [not_b] Case h: not(b). Using h, the claim follows from Nat::le_zero.
+      [b] Case h: b. Using h, the claim follows from Nat::le_zero.
+    %%
+    [not_b] (n)
+    [b] (n)
+  ```)
+}
+````
+checks.pick_zero = "ok"
+diagnostics = []
+
+@ cases.a-contradiction-the-checker-computes
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_this }
+
+theorem no_succ_le_zero(n: Nat, h: Nat::le(Succ(n), Zero) = true): False {
+  proof!(```
+    This contradicts h.
+  ```)
+}
+````
+checks.no_succ_le_zero = "ok"
+diagnostics = []
+
+@ cases.a-named-induction-hypothesis-and-a-definition
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case, proof_let }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      Case Zero. By Refl.
+      [succ] Case Succ(k). By the induction hypothesis, p: Nat::add(0, k) = k. Let s = Succ. By Eq::congr.
+    %%
+    [succ] (s, p)
+  ```)
+}
+````
+checks.add_zero_left = "ok"
+diagnostics = []
+
+@ cases.a-chain-of-equations-with-congruence
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case, proof_we }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      Case Zero. By Refl.
+      Case Succ(k). We have Nat::add(0, Succ(k)) = ${Succ(0 + k)} = Succ(k) by the induction hypothesis.
+  ```)
+}
+
+theorem add_zero_left_named(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      Case Zero. By Refl.
+      [succ] Case Succ(k). We have q: Nat::add(0, k) = k by the induction hypothesis. By Eq::congr.
+    %%
+    [succ] (Succ, q)
+  ```)
+}
+````
+checks.add_zero_left = "ok"
+checks.add_zero_left_named = "ok"
+diagnostics = []
+
+@ cases.a-step-of-a-chain-is-by-an-equation
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case, proof_we }
+
+theorem bad(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      Case Zero. By Refl.
+      Case Succ(k). We have Nat::add(0, Succ(k)) = Succ(k) by Nat::add.
+  ```)
+}
+````
+macro_error = "macro.error"
+
+@ cases.a-step-by-a-call-of-the-theorem-itself
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_we }
+
+pub(open) inductive K: Type {
+  A: K
+  B: K
+}
+
+pub fn f(k: K): K {
+  match k {
+    A => B
+    B => A
+  }
+}
+
+theorem g(k: K): f(f(k)) = k {
+  ⊢ f(f(k)) = k from match k {
+    A => Refl
+    B => Refl
+  }
+}
+
+theorem by_named(n: Nat, k: K): f(f(f(k))) = f(k) {
+  ⊢ f(f(f(k))) = f(k) from match n {
+    Zero => g(f(k))
+    Succ(m) => {
+      let ih: f(f(f(k))) = f(k) := by_named(m, k)
+      proof!(```
+        We have f(f(f(k))) = f(k) by ih.
+      ```)
+    }
+  }
+}
+
+theorem by_call(n: Nat, k: K): f(f(f(k))) = f(k) {
+  ⊢ f(f(f(k))) = f(k) from match n {
+    Zero => g(f(k))
+    Succ(m) => proof!(```
+      We have f(f(f(k))) = f(k) by by_call(m, k).
+    ```)
+  }
+}
+````
+checks.by_named = "ok"
+checks.by_call = "ok"
+diagnostics = []
+
+@ cases.a-hypothesis-on-the-variable-of-the-induction-is-generalized
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case }
+
+theorem keep(m: Nat, n: Nat, h: Nat::add(n, m) = Nat::add(n, m)): Nat::add(n, m) = Nat::add(n, m) {
+  proof!(```
+    By induction on m.
+      Case Zero. By h.
+      Case Succ(k). By h.
+  ```)
+}
+````
+checks.keep = "ok"
+diagnostics = []
+
+@ cases.induction-on-a-type-with-parameters-and-a-generalized-hypothesis
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case, proof_we }
+
+fn product<A>(op: (A, A) -> A, unit: A, xs: List(A)): A {
+  ⊢ A from match xs {
+    Nil => unit
+    Cons(x, rest) => op(x, product(op, unit, rest))
+  }
+}
+
+fn append<A>(xs: List(A), ys: List(A)): List(A) {
+  ⊢ List(A) from match xs {
+    Nil => ys
+    Cons(x, rest) => Cons(x, append(rest, ys))
+  }
+}
+
+theorem product_append<A>(
+  op: (A, A) -> A,
+  unit: A,
+  assoc: (a: A, b: A, c: A) -> op(op(a, b), c) = op(a, op(b, c)),
+  left_unit: (a: A) -> op(unit, a) = a,
+  xs: List(A),
+  ys: List(A)
+): product(op, unit, append(xs, ys)) = op(product(op, unit, xs), product(op, unit, ys)) {
+  proof!(```
+    By induction on xs.
+      [nil] Case Nil. By Eq::sym.
+      Case Cons(x, rest). We have op(x, product(op, unit, append(rest, ys)))
+        = op(x, op(product(op, unit, rest), product(op, unit, ys))) by the induction hypothesis
+        = op(op(x, product(op, unit, rest)), product(op, unit, ys)) by assoc(x, product(op, unit, rest), product(op, unit, ys)).
+    %%
+    [nil] left_unit(product(op, unit, ys))
+  ```)
+}
+````
+checks.product_append = "ok"
+diagnostics = []
+
+@ cases.induction-with-qualified-constructors
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case, proof_we }
+
+fn product<A>(op: (A, A) -> A, unit: A, xs: List(A)): A {
+  ⊢ A from match xs {
+    Nil => unit
+    Cons(x, rest) => op(x, product(op, unit, rest))
+  }
+}
+
+fn map_list<A, B>(f: (A) -> B, xs: List(A)): List(B) {
+  ⊢ List(B) from match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(f(x), map_list(f, rest))
+  }
+}
+
+theorem map_product<A, B>(
+  op: (A, A) -> A,
+  unit: A,
+  target: (B, B) -> B,
+  target_unit: B,
+  f: (A) -> B,
+  preserves_unit: f(unit) = target_unit,
+  preserves_op: (a: A, b: A) -> f(op(a, b)) = target(f(a), f(b)),
+  xs: List(A)
+): f(product(op, unit, xs)) = product(target, target_unit, map_list(f, xs)) {
+  proof!(```
+    By induction on xs.
+      Case List::Nil. By preserves_unit.
+      Case List::Cons(x, rest). We have f(op(x, product(op, unit, rest)))
+        = target(f(x), f(product(op, unit, rest))) by preserves_op(x, product(op, unit, rest))
+        = target(f(x), product(target, target_unit, map_list(f, rest))) by the induction hypothesis.
+  ```)
+}
+````
+checks.map_product = "ok"
+diagnostics = []
+
+@ cases.congruence-at-a-place-where-several-arguments-differ
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_we }
+
+theorem swap_inside<A>(
+  op: (A, A) -> A,
+  comm: (a: A, b: A) -> op(a, b) = op(b, a),
+  f: (A) -> A,
+  a: A,
+  b: A,
+  c: A
+): f(op(op(a, b), c)) = f(op(op(b, a), c)) {
+  proof!(```
+    We have f(op(op(a, b), c)) = f(op(op(b, a), c)) by comm(a, b).
+  ```)
+}
+````
+checks.swap_inside = "ok"
+diagnostics = []
+
+// The place of a congruence is where the sides of the equation are, not the
+// deepest place where the two terms differ: by `a ⋆ b = a ⋆ c` the place is
+// `a ⋆ b`, although the terms first differ at `b`.
+@ cases.congruence-at-the-sides-of-the-equation
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_we }
+
+theorem inside<A>(op: (A, A) -> A, i: A, a: A, b: A, c: A, h: op(a, b) = op(a, c)): op(i, op(a, b)) = op(i, op(a, c)) {
+  proof!(```
+    We have op(i, op(a, b)) = op(i, op(a, c)) by h.
+  ```)
+}
+````
+checks.inside = "ok"
+diagnostics = []
+
+@ cases.a-named-chain-of-equations
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_we }
+
+theorem named<A>(
+  op: (A, A) -> A,
+  unit: A,
+  a: A,
+  b: A,
+  h1: op(a, b) = a,
+  h2: a = unit
+): unit = op(a, b) {
+  proof!(```
+    [main] We have h: op(a, b) = a by h1 = unit by h2. By Eq::sym.
+    %%
+    [main] h
+  ```)
+}
+````
+checks.named = "ok"
+diagnostics = []
+
+@ cases.a-sentence-names-a-let-of-the-body
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case, proof_we }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      Case Zero. By Refl.
+      Case Succ(k). We have Nat::add(0, Succ(k)) = ${Succ(0 + k)} = Succ(k) by the induction hypothesis.
+  ```)
+}
+
+theorem twice(n: Nat): Nat::add(0, Nat::add(0, n)) = n {
+  let base: Nat::add(0, n) = n := add_zero_left(n)
+  proof!(```
+    We have Nat::add(0, Nat::add(0, n)) = Nat::add(0, n) by add_zero_left(Nat::add(0, n)) = n by base.
+  ```)
+}
+````
+checks.add_zero_left = "ok"
+checks.twice = "ok"
+diagnostics = []
+
+@ cases.a-proof-after-a-file-whose-helpers-extraction-writes
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::UInt
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_this }
+
+theorem no_succ_le_zero(n: Nat, h: Nat::le(Succ(n), Zero) = true): False {
+  proof!(```
+    This contradicts h.
+  ```)
+}
+````
+checks.no_succ_le_zero = "ok"
+diagnostics = []
+
+@ cases.a-case-analysis-after-a-file-that-declares-never
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::UInt
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case, proof_consider }
+
+theorem same(b: Bool): b = b {
+  proof!(```
+    Consider b.
+      Case true. By Refl.
+      Case false. By Refl.
+  ```)
+}
+````
+checks.same = "ok"
+diagnostics = []
+
+@ cases.a-case-analysis-after-a-file-that-declares-text
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::Text
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case, proof_consider }
+
+theorem same(b: Bool): b = b {
+  proof!(```
+    Consider b.
+      Case true. By Refl.
+      Case false. By Refl.
+  ```)
+}
+````
+checks.same = "ok"
+diagnostics = []
+
+@ cases.a-sentence-indented-between-two-columns-is-rejected
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+        Case Zero. By Refl.
+      Case Succ(k). By Eq::congr.
+    %%
+  ```)
+}
+````
+macro_error = "macro.error"
+
+@ cases.a-second-first-sentence-is-rejected
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+    Case Zero. By Refl.
+  ```)
+}
+````
+macro_error = "macro.error"
+
+@ cases.a-label-used-twice-is-rejected
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      [s] Case Zero. By Refl.
+      [s] Case Succ(k). By Eq::congr.
+    %%
+    [s] (Succ, ih)
+  ```)
+}
+````
+macro_error = "macro.error"
+
+@ cases.proof-code-under-an-unknown-label-is-rejected
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      Case Zero. By Refl.
+      [succ] Case Succ(k). By Eq::congr.
+    %%
+    [suc] (Succ, ih)
+  ```)
+}
+````
+macro_error = "macro.error"
+
+@ cases.a-number-is-a-label-too
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      Case Zero. By Refl.
+      [2] Case Succ(k). By Eq::congr.
+    %%
+    [2] (Succ, ih)
+  ```)
+}
+````
+checks.add_zero_left = "ok"
+diagnostics = []
+
+// A proof about a type the file declares itself: the macro's check gives the
+// kernel the file's `inductive enum` as the family the file's check gives it.
+@ cases.a-proof-about-an-inductive-enum-of-the-file
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by }
+
+inductive enum N { Z, S(N) }
+
+theorem same(n: N): n = n {
+  proof!(```
+    By Refl.
+  ```)
+}
+````
+checks.same = "ok"
+diagnostics = []
+
+@ cases.induction-on-a-type-of-another-file
+entry = "main.taut"
+files."n.taut" = ````tauto
+import std::Base
+
+pub inductive enum N {
+  Z
+  S(N)
+}
+
+pub fn add(a: N, b: N): N {
+  ⊢ N from match b {
+    Z => a
+    S(k) => S(add(a, k))
+  }
+}
+````
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case }
+import "n.taut"
+
+theorem add_z_left(n: N): add(Z, n) = n {
+  proof!(```
+    By induction on n.
+      Case Z. By Refl.
+      [succ] Case S(k). By Eq::congr.
+    %%
+    [succ] (S, ih)
+  ```)
+}
+````
+checks.add_z_left = "ok"
+diagnostics = []
+
+
+@ cases.names-in-unicode-letters
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case }
+
+pub(open) inductive 記号: Type {
+  M: 記号
+  I: 記号
+}
+
+pub(open) inductive 導出可能: (List(記号)) -> Prop {
+  公理: 導出可能(Cons(M, Cons(I, Nil)))
+  規則2(x: List(記号), h: 導出可能(Cons(M, x))): 導出可能(Cons(M, List::append(x, x)))
+}
+
+theorem 例(): 導出可能(Cons(M, Cons(I, Cons(I, Nil)))) {
+  proof!(```
+    We have 導出1: 導出可能(Cons(M, Cons(I, Cons(I, Nil)))) by 規則2(Cons(I, Nil), 公理). By 導出1.
+  ```)
+}
+
+theorem 零足す(数: Nat): Nat::add(0, 数) = 数 {
+  proof!(```
+    By induction on 数.
+      Case Zero. By Refl.
+      [後者] Case Succ(前). We have 仮定: Nat::add(0, 前) = 前 by the induction hypothesis. By Eq::congr.
+    %%
+    [後者] (Succ, 仮定)
+  ```)
+}
+````
+checks."例" = "ok"
+checks."零足す" = "ok"
+diagnostics = []
+
+@ cases.a-list-literal-in-the-prose
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_we }
+
+theorem append_pair(a: Nat, b: Nat): List::append([a], [b]) = [a, b] {
+  proof!(```
+    We have List::append($[a], $[b]) = $[a, b].
+  ```)
+}
+
+theorem append_empty(a: Nat): List::append([a], []) = [a] {
+  proof!(```
+    We have List::append($[a], $[]) = $[a].
+  ```)
+}
+````
+checks.append_pair = "ok"
+checks.append_empty = "ok"
+diagnostics = []
+
+@ cases.a-list-literal-with-a-rest-and-nested-lists-in-the-prose
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_we }
+
+theorem append_cons<A>(x: A, rest: List(A), ys: List(A)): List::append([x, ..rest], ys) = [x, ..List::append(rest, ys)] {
+  proof!(```
+    We have List::append($[x, ..rest], ys) = $[x, ..List::append(rest, ys)].
+  ```)
+}
+
+theorem append_nested(a: Nat, b: Nat): List::append([[a]], [[b]]) = [[a], [b]] {
+  proof!(```
+    We have List::append($[[a]], $[[b]]) = $[[a], [b]].
+  ```)
+}
+````
+checks.append_cons = "ok"
+checks.append_nested = "ok"
+diagnostics = []
+
+@ cases.an-induction-whose-case-is-a-case-analysis
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case, proof_consider }
+
+pub(open) inductive S: Type {
+  I: S
+  O: S
+}
+
+pub fn count(xs: List(S)): Nat {
+  match xs {
+    Nil => Zero
+    Cons(c, r) => match c {
+      I => Succ(count(r))
+      O => count(r)
+    }
+  }
+}
+
+pub fn cat(a: List(S), b: List(S)): List(S) {
+  match a {
+    Nil => b
+    Cons(c, r) => Cons(c, cat(r, b))
+  }
+}
+
+pub fn plus(n: Nat, m: Nat): Nat {
+  match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
+  }
+}
+
+theorem count_cat(a: List(S), b: List(S)): count(cat(a, b)) = plus(count(a), count(b)) {
+  proof!(```
+    By induction on a.
+      Case Nil. By Refl.
+      Case Cons(c, r). Consider c.
+        [i] Case I. By Eq::congr.
+        Case O. By ih(b).
+    %%
+    [i] (Succ, ih(b))
+  ```)
+}
+````
+checks.count_cat = "ok"
+diagnostics = []
+
+@ cases.the-induction-hypothesis-over-a-generalized-variable-is-applied-to-it
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case, proof_consider }
+
+pub(open) inductive S: Type {
+  I: S
+  O: S
+}
+
+pub fn count(xs: List(S)): Nat {
+  match xs {
+    Nil => Zero
+    Cons(c, r) => match c {
+      I => Succ(count(r))
+      O => count(r)
+    }
+  }
+}
+
+pub fn cat(a: List(S), b: List(S)): List(S) {
+  match a {
+    Nil => b
+    Cons(c, r) => Cons(c, cat(r, b))
+  }
+}
+
+pub fn plus(n: Nat, m: Nat): Nat {
+  match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
+  }
+}
+
+theorem count_cat(a: List(S), b: List(S)): count(cat(a, b)) = plus(count(a), count(b)) {
+  proof!(```
+    By induction on a.
+      Case Nil. By Refl.
+      Case Cons(c, r). Consider c.
+        [i] Case I. By Eq::congr.
+        Case O. By the induction hypothesis.
+    %%
+    [i] (Succ, ih(b))
+  ```)
+}
+````
+checks.count_cat = "ok"
+diagnostics = []
+
+@ cases.the-induction-hypothesis-as-a-reason-of-its-own
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case }
+
+theorem zero_add(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      Case Zero. By the induction hypothesis.
+      [succ] Case Succ(k). By Eq::congr.
+    %%
+    [succ] (Succ, ih)
+  ```)
+}
+````
+checks."main.taut::macro" = "error: "
+@ cases.the-induction-hypothesis-as-a-reason-of-its-own.diagnostics[]
+file = "main.taut"
+name = "macro"
+message = "proof!: `By the induction hypothesis.` needs the case to have one"
+
+@ cases.a-sentence-without-its-final-dot-says-what-ends-it
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By Refl
+  ```)
+}
+````
+checks."main.taut::macro" = "error: "
+@ cases.a-sentence-without-its-final-dot-says-what-ends-it.diagnostics[]
+file = "main.taut"
+name = "macro"
+message = "macro.syntax_error: in proof_lang: expected Name or Number or Comma or Colon or Equals or Define or the '.' that ends a sentence or the names of a λ or Line or Space or TautoExpr, found the end of the text"
+
+@ cases.a-tactic-as-a-reason-of-a-sentence
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::Tactic { nat_norm }
+import std::Rewrite { rewrite }
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_we }
+
+theorem chain(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(b, a) {
+  proof!(```
+    We have Nat::add(a, b) = Nat::add(b, a) by $nat_norm!(()).
+  ```)
+}
+
+theorem fact(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(b, a) {
+  proof!(```
+    We have h: Nat::add(a, b) = Nat::add(b, a) by $nat_norm!(()). By h.
+  ```)
+}
+
+theorem whole(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(b, a) {
+  proof!(```
+    By $nat_norm!(()).
+  ```)
+}
+
+theorem suffices(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(b, a) {
+  proof!(```
+    By $rewrite!(Nat::add_comm(a, b)), it suffices to show Nat::add(b, a) = Nat::add(b, a). By Refl.
+  ```)
+}
+
+theorem under(a: Nat, b: Nat): Nat::add(a, b) = Nat::add(b, a) {
+  proof!(```
+    By $rewrite!(Nat::add_comm(a, b)).
+      We show Nat::add(b, a) = Nat::add(b, a). By Refl.
+  ```)
+}
+````
+checks."main.taut::chain" = "ok"
+checks."main.taut::fact" = "ok"
+checks."main.taut::whole" = "ok"
+checks."main.taut::suffices" = "ok"
+checks."main.taut::under" = "ok"
+diagnostics = []
+
+@ cases.a-goal-a-tactic-leaves-with-variables-of-its-own
+entry = "main.taut"
+files."lib.taut" = path`../fixtures/steps-lib-0ca09a6d.taut`
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by }
+import "lib.taut" { intro }
+
+theorem refl_all(): ∀ n: Nat. n = n {
+  proof!(```
+    By $intro!(()).
+      Let m: Nat. We show m = m. By Refl.
+  ```)
+}
+````
+checks."main.taut::refl_all" = "ok"
+diagnostics = []
+
+@ cases.what-a-tactic-in-a-sentence-proves-is-checked
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::Tactic { nat_norm }
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_we }
+
+theorem bad(a: Nat, b: Nat): Nat::add(a, b) = Nat::mul(a, b) {
+  proof!(```
+    We have Nat::add(a, b) = Nat::mul(a, b) by $nat_norm!(()).
+  ```)
+}
+````
+macro_error = "macro.error"
+
+@ cases.a-let-in-the-body-is-not-a-premise-of-the-induction-hypothesis
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case, proof_consider }
+
+pub(open) inductive K: Type {
+  A: K
+  B: K
+}
+
+pub fn f(a: List(K), b: List(K)): List(K) {
+  match a {
+    [] => b
+    [x, ..rest] => f(rest, b)
+  }
+}
+
+theorem f_end(a: List(K), b: List(K)): f(a, b) = b {
+  let g: ∀ k: K. k = k := (k) => Refl
+  proof!(```
+    By induction on a.
+      Case Nil. By Refl.
+      Case Cons(c, rest). Consider c.
+        Case A. By the induction hypothesis, ih: ${∀ d: List(K). f(rest, d) = d}. By ${ih(b)}.
+        Case B. By the induction hypothesis, ih: ${∀ d: List(K). f(rest, d) = d}. By ${ih(b)}.
+  ```)
+}
+
+theorem uses_g(a: List(K), b: List(K)): K::A = K::A {
+  let g: ∀ k: K. k = k := (k) => Refl
+  proof!(```
+    By induction on a.
+      Case Nil. By ${g(K::A)}.
+      Case Cons(c, rest). By ${g(K::A)}.
+  ```)
+}
+````
+checks.f_end = "ok"
+checks.uses_g = "ok"
+diagnostics = []
+
+@ cases.an-induction-hypothesis-written-without-its-generalized-variables-says-its-form
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case, proof_consider }
+
+pub(open) inductive K: Type {
+  A: K
+  B: K
+}
+
+pub fn f(a: List(K), b: List(K)): List(K) {
+  match a {
+    [] => b
+    [x, ..rest] => f(rest, b)
+  }
+}
+
+theorem f_end(a: List(K), b: List(K)): f(a, b) = b {
+  let g: ∀ k: K. k = k := (k) => Refl
+  proof!(```
+    By induction on a.
+      Case Nil. By Refl.
+      Case Cons(c, rest). Consider c.
+        Case A. By the induction hypothesis, ih: f(rest, b) = b. By ${ih}.
+        Case B. By the induction hypothesis, ih: f(rest, b) = b. By ${ih}.
+  ```)
+}
+````
+checks."main.taut::macro" = "error: "
+@ cases.an-induction-hypothesis-written-without-its-generalized-variables-says-its-form.diagnostics[]
+file = "main.taut"
+name = "macro"
+message = "macro.error: proof!: the induction hypothesis is `∀ b. …`: the induction generalizes the variables after the one it is on. Write `h: ∀ b. …` and apply it, as `${h(…)}`"

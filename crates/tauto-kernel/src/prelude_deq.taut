@@ -6,7 +6,7 @@ module Bool {
   // gets its decidable equality without importing anything.
 
   fn and(a: Bool, b: Bool): Bool {
-    match a: Bool {
+    ⊢ Bool from match a {
       false => false
       true => b
     }
@@ -14,7 +14,7 @@ module Bool {
 }
 
 fn not(a: Bool): Bool {
-  match a: Bool {
+  ⊢ Bool from match a {
     false => true
     true => false
   }
@@ -22,14 +22,14 @@ fn not(a: Bool): Bool {
 
 module Bool {
   fn eq(a: Bool, b: Bool): Bool {
-    match a: Bool {
+    ⊢ Bool from match a {
       false => not(b)
       true => b
     }
   }
 
   theorem eq_refl(a: Bool): (eq(a, a) = true) {
-    match a: (eq(a, a) = true) {
+    ⊢ (eq(a, a) = true) from match a {
       false => Refl
       true => Refl
     }
@@ -37,25 +37,25 @@ module Bool {
 }
 
 theorem true_ne_false(e: true = false): False {
-  match e: False {
+  ⊢ False from match e {
   }
 }
 
 module Nat {
   theorem eq_refl(n: Nat): (Nat::eq(n, n) = true) {
-    match n: (Nat::eq(n, n) = true) {
+    ⊢ (Nat::eq(n, n) = true) from match n {
       Zero => Refl
       Succ(k) => eq_refl(k)
     }
   }
 
   theorem eq_sound(a: Nat, b: Nat, e: Nat::eq(a, b) = true): (a = b) {
-    match a: (a = b) {
-      Zero => match b: (Zero = b) {
+    ⊢ (a = b) from match a {
+      Zero => ⊢ (Zero = b) from match b {
         Zero => Refl
         Succ(b2) => False::elim(true_ne_false(Eq::sym(e)))
       }
-      Succ(a2) => match b: (Succ(a2) = b) {
+      Succ(a2) => ⊢ (Succ(a2) = b) from match b {
         Zero => False::elim(true_ne_false(Eq::sym(e)))
         Succ(b2) => Eq::congr(Succ, eq_sound(a2, b2, e))
       }
@@ -69,12 +69,12 @@ theorem false_ne_true(e: false = true): False {
 
 module Bool {
   theorem eq_sound(a: Bool, b: Bool, e: eq(a, b) = true): (a = b) {
-    match a: (a = b) {
-      false => match b: false = b {
+    ⊢ (a = b) from match a {
+      false => ⊢ false = b from match b {
         false => Refl
         true => False::elim(false_ne_true(e))
       }
-      true => match b: true = b {
+      true => ⊢ true = b from match b {
         false => False::elim(false_ne_true(e))
         true => Refl
       }
@@ -87,7 +87,7 @@ module Bool {
     hp: p = true,
     hq: q = true
   ): (and(p, q) = true) {
-    match p: (and(p, q) = true) {
+    ⊢ (and(p, q) = true) from match p {
       false => False::elim(false_ne_true(hp))
       true => hq
     }
@@ -98,7 +98,7 @@ module Bool {
     q: Bool,
     e: and(p, q) = true
   ): And(p = true, q = true) {
-    match p: And(p = true, q = true) {
+    ⊢ And(p = true, q = true) from match p {
       false => False::elim(false_ne_true(e))
       true => AndIntro(Refl, e)
     }

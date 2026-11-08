@@ -24,5 +24,5 @@ fn compare(label: &str, inputs: Vec<(String, String)>) {
 
 #[test]
 fn fmt_matches_the_corpus() {
-    compare("fmt-corpus", corpus());
+    tauto_test_suite::with_deep_stack(|| compare("fmt-corpus", corpus()));
 }

@@ -1,0 +1,68 @@
+@ cases.nested-owned-callback-under-multi-shot-budget
+backends = ["rust", "javascript"]
+source = ```tauto
+effect ask(): i64 resume ω
+fn twice(f: (i64) -> i64 ! {Div}, x: i64): i64 { f(f(x)) }
+let value := handle {
+  let n := perform ask()
+  handle { budget(steps: 0) { twice(x => x + n, 3) } } with {
+    exceeded(info), k => info.unbounded()
+  }
+} with {
+  ask(), k => k(1) + k(2)
+}
+perform show("value", value)
+```
+shows = ["value = 12"]
+
+@ cases.owned-callback-in-a-conditional-multi-shot-path
+backends = ["rust", "javascript"]
+source = ```tauto
+struct Point { x: i64, y: i64 }
+enum Shape { Dot, Line(i64), Rect(i64, i64) }
+effect ask(n: i64): i64 resume ω
+fn spin(): i64 {
+  while true { }
+  0
+}
+fn twice(f: (i64) -> i64 ! {Div}, x: i64): i64 {
+  f(f(x))
+}
+fn count(n: i64): i64 {
+  var i := 0
+  var s := 0
+  while i < n {
+    i := i + 1
+    s := s + i
+  }
+  s
+}
+fn f0(p0_0: i64): Point {
+  Point { x: 9223372036854775807, y: 71 }
+}
+fn f1(): Shape {
+  (if false { (if (match Line((0 - 9223372036854775807 - 1)) { Dot => false, Line(a1) => (a1 <= 3037000501), Rect(a1, b2) => (4611686018427387904 != 14) }) { Dot } else { (match (match Line(4611686018427387904) { Dot => Line(0), Line(a3) => Dot, Rect(a3, b4) => Rect(75, 47) }) { Dot => Dot, Line(a5) => Rect(a5, (0 - 9223372036854775807 - 1)), Rect(a5, b6) => Line(3037000500) }) }) } else { Dot })
+}
+fn f2(): i64 {
+  (handle { let r11 := perform ask({ let x9 := { let x8 := false
+ (46 < 0) }
+ { let x10 := Rect(4611686018427387904, 57)
+ (handle { budget(steps: 78) { spin() } } with {
+  exceeded(info), k => k(0)
+}) } })
+ (handle { budget(steps: 45) { count(30) + twice((l12) => (handle { budget(steps: 28) { count(30) + 6 } } with {
+  exceeded(info), k => info.unbounded()
+}), 33) } } with {
+  exceeded(info), k => info.unbounded()
+}) } with {
+  ask(n7), k => k(mod(3037000501, twice((l13) => { let gl14 := (l14) => (0 - 1)
+ gl14(3037000499) }, n7)))
+})
+}
+fn f3(): Shape {
+  Rect((0 - 1), 38)
+}
+perform show("v0", f0((if { let x15 := Dot
+ (false && false) } { 19 } else { f2() })))
+```
+shows = ["v0 = Point { x: 9223372036854775807, y: 71 }"]

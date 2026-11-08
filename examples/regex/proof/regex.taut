@@ -39,9 +39,9 @@ pub theorem append_nil_left(
   t: List(Nat),
   e: List::append(s, t) = Nil
 ): s = Nil {
-  match s: s = Nil {
+  ⊢ s = Nil from match s {
     Nil => Refl
-    Cons(h, tl) => match e: Cons(h, tl) = Nil {
+    Cons(h, tl) => ⊢ Cons(h, tl) = Nil from match e {
     }
   }
 }
@@ -51,15 +51,15 @@ pub theorem append_nil_right(
   t: List(Nat),
   e: List::append(s, t) = Nil
 ): t = Nil {
-  match s: t = Nil {
+  ⊢ t = Nil from match s {
     Nil => e
-    Cons(h, tl) => match e: t = Nil {
+    Cons(h, tl) => ⊢ t = Nil from match e {
     }
   }
 }
 
 pub theorem bool_or_true_right(a: Bool): Bool::or(a, true) = true {
-  match a: Bool::or(a, true) = true {
+  ⊢ Bool::or(a, true) = true from match a {
     false => Refl
     true => Refl
   }
@@ -71,7 +71,7 @@ pub theorem bool_subst(P: (Bool) -> Prop, a: Bool, b: Bool, e: a = b, p: P(a)): 
 }
 
 pub theorem bool_or_inv(x: Bool, y: Bool, h: Bool::or(x, y) = true): x = true ∨ y = true {
-  match x: x = true ∨ y = true {
+  ⊢ x = true ∨ y = true from match x {
     false => OrInr(h)
     true => OrInl(Refl)
   }
@@ -82,14 +82,14 @@ pub theorem bool_and_inv(
   y: Bool,
   h: Bool::and(x, y) = true
 ): x = true ∧ y = true {
-  match x: x = true ∧ y = true {
+  ⊢ x = true ∧ y = true from match x {
     false => False::elim(false_ne_true(h))
     true => AndIntro(Refl, h)
   }
 }
 
 pub theorem nullable_sound(r: Re, h: re_nullable(r) = true): Matches(r, Nil) {
-  match r: Matches(r, Nil) {
+  ⊢ Matches(r, Nil) from match r {
     REmpty => False::elim(false_ne_true(h))
     REps => MEps
     RChr(c) => False::elim(false_ne_true(h))
@@ -98,7 +98,7 @@ pub theorem nullable_sound(r: Re, h: re_nullable(r) = true): Matches(r, Nil) {
       h1 => MLeft(nullable_sound(a, h1)),
       h2 => MRight(nullable_sound(b, h2))
     )
-    RSeq(a, b) => match bool_and_inv(re_nullable(a), re_nullable(b), h): Matches(RSeq(a, b), Nil) {
+    RSeq(a, b) => ⊢ Matches(RSeq(a, b), Nil) from match bool_and_inv(re_nullable(a), re_nullable(b), h) {
       AndIntro(h1, h2) => MSeq(nullable_sound(a, h1), nullable_sound(b, h2), Refl)
     }
     RStar(a) => MStarNil
@@ -106,13 +106,13 @@ pub theorem nullable_sound(r: Re, h: re_nullable(r) = true): Matches(r, Nil) {
 }
 
 pub theorem nullable_complete(r: Re, h: Matches(r, Nil)): re_nullable(r) = true {
-  match r: re_nullable(r) = true {
-    REmpty => match h: false = true {
+  ⊢ re_nullable(r) = true from match r {
+    REmpty => ⊢ false = true from match h {
     }
     REps => Refl
-    RChr(c) => match h: false = true {
+    RChr(c) => ⊢ false = true from match h {
     }
-    RAlt(a, b) => match h: re_nullable(RAlt(a, b)) = true {
+    RAlt(a, b) => ⊢ re_nullable(RAlt(a, b)) = true from match h {
       MLeft(a2, b2, w, h1) => Eq::subst(
         (o: Bool) => Bool::or(o, re_nullable(b)) = true,
         Eq::sym(nullable_complete(a, h1)),
@@ -124,7 +124,7 @@ pub theorem nullable_complete(r: Re, h: Matches(r, Nil)): re_nullable(r) = true 
         bool_or_true_right(re_nullable(a))
       )
     }
-    RSeq(a, b) => match h: re_nullable(RSeq(a, b)) = true {
+    RSeq(a, b) => ⊢ re_nullable(RSeq(a, b)) = true from match h {
       MSeq(a2, b2, s, t, w, ha, hb, e) => Eq::subst(
         (o: Bool) => Bool::and(o, re_nullable(b)) = true,
         Eq::sym(
@@ -164,12 +164,12 @@ pub theorem seq_cons(
 }
 
 pub theorem no_match(s: List(Nat), h: Matches(REmpty, s)): False {
-  match h: False {
+  ⊢ False from match h {
   }
 }
 
 pub theorem eps_match(s: List(Nat), h: Matches(REps, s)): s = Nil {
-  match h: s = Nil {
+  ⊢ s = Nil from match h {
     MEps => Refl
   }
 }
@@ -184,7 +184,7 @@ pub theorem deriv_chr_false(
 ): Matches(REmpty, s) {
   bool_subst(
     (q: Bool) => Matches(
-      match q: Re {
+      ⊢ Re from match q {
         false => REmpty
         true => REps
       },
@@ -206,7 +206,7 @@ pub theorem deriv_chr_true(
 ): Matches(REps, s) {
   bool_subst(
     (q: Bool) => Matches(
-      match q: Re {
+      ⊢ Re from match q {
         false => REmpty
         true => REps
       },
@@ -231,7 +231,7 @@ pub theorem if_nullable_false(
     s,
     bool_subst(
       (q: Bool) => Matches(
-        match q: Re {
+        ⊢ Re from match q {
           false => REmpty
           true => r
         },
@@ -254,7 +254,7 @@ pub theorem if_nullable_true(
 ): Matches(r, s) {
   bool_subst(
     (q: Bool) => Matches(
-      match q: Re {
+      ⊢ Re from match q {
         false => REmpty
         true => r
       },
@@ -273,10 +273,10 @@ pub theorem deriv_sound(
   s: List(Nat),
   h: Matches(re_deriv(c, r), s)
 ): Matches(r, Cons(c, s)) {
-  match r: Matches(r, Cons(c, s)) {
-    REmpty => match h: Matches(REmpty, Cons(c, s)) {
+  ⊢ Matches(r, Cons(c, s)) from match r {
+    REmpty => ⊢ Matches(REmpty, Cons(c, s)) from match h {
     }
-    REps => match h: Matches(REps, Cons(c, s)) {
+    REps => ⊢ Matches(REps, Cons(c, s)) from match h {
     }
     RChr(d) => Bool::cases(
       (o: Bool) => Matches(RChr(d), Cons(c, s)),
@@ -288,21 +288,21 @@ pub theorem deriv_sound(
         Eq::subst((x: Nat) => Matches(RChr(d), Cons(x, Nil)), Eq::sym(Nat::eq_sound(c, d, e)), MChr)
       )
     )
-    RAlt(a, b) => match h: Matches(RAlt(a, b), Cons(c, s)) {
+    RAlt(a, b) => ⊢ Matches(RAlt(a, b), Cons(c, s)) from match h {
       MLeft(a2, b2, w, h1) => MLeft(deriv_sound(a, c, w, h1))
       MRight(a2, b2, w, h1) => MRight(deriv_sound(b, c, w, h1))
     }
     RSeq(a, b) => Bool::cases(
       (o: Bool) => Matches(RSeq(a, b), Cons(c, s)),
       re_nullable(a),
-      e => match h: Matches(RSeq(a, b), Cons(c, s)) {
-        MLeft(a2, b2, w, h1) => match h1: Matches(RSeq(a, b), Cons(c, w)) {
+      e => ⊢ Matches(RSeq(a, b), Cons(c, s)) from match h {
+        MLeft(a2, b2, w, h1) => ⊢ Matches(RSeq(a, b), Cons(c, w)) from match h1 {
           MSeq(a3, b3, s1, t, w3, ha, hb, e1) => seq_cons(a, b, c, s1, t, w3, deriv_sound(a, c, s1, ha), hb, e1)
         }
         MRight(a2, b2, w, h1) => False::elim(if_nullable_false(a, re_deriv(c, b), w, e, h1))
       },
-      e => match h: Matches(RSeq(a, b), Cons(c, s)) {
-        MLeft(a2, b2, w, h1) => match h1: Matches(RSeq(a, b), Cons(c, w)) {
+      e => ⊢ Matches(RSeq(a, b), Cons(c, s)) from match h {
+        MLeft(a2, b2, w, h1) => ⊢ Matches(RSeq(a, b), Cons(c, w)) from match h1 {
           MSeq(a3, b3, s1, t, w3, ha, hb, e1) => seq_cons(a, b, c, s1, t, w3, deriv_sound(a, c, s1, ha), hb, e1)
         }
         MRight(a2, b2, w, h1) => MSeq(
@@ -312,7 +312,7 @@ pub theorem deriv_sound(
         )
       }
     )
-    RStar(a) => match h: Matches(RStar(a), Cons(c, s)) {
+    RStar(a) => ⊢ Matches(RStar(a), Cons(c, s)) from match h {
       MSeq(a2, b2, s1, t, w, ha, hb, e) => MStarCons(
         deriv_sound(a, c, s1, ha),
         hb,
@@ -331,7 +331,7 @@ pub theorem if_nullable_intro(
 ): Matches(re_if_nullable(a, r), s) {
   bool_subst(
     (q: Bool) => Matches(
-      match q: Re {
+      ⊢ Re from match q {
         false => REmpty
         true => r
       },
@@ -347,7 +347,7 @@ pub theorem if_nullable_intro(
 pub theorem deriv_chr_same(c: Nat): Matches(re_deriv(c, RChr(c)), Nil) {
   bool_subst(
     (q: Bool) => Matches(
-      match q: Re {
+      ⊢ Re from match q {
         false => REmpty
         true => REps
       },
@@ -361,7 +361,7 @@ pub theorem deriv_chr_same(c: Nat): Matches(re_deriv(c, RChr(c)), Nil) {
 }
 
 pub theorem chr_word(d: Nat, w: List(Nat), h: Matches(RChr(d), w)): Cons(d, Nil) = w {
-  match h: Cons(d, Nil) = w {
+  ⊢ Cons(d, Nil) = w from match h {
     MChr(d2) => Refl
   }
 }
@@ -372,20 +372,20 @@ pub theorem deriv_complete(
   s: List(Nat),
   h: Matches(r, Cons(c, s))
 ): Matches(re_deriv(c, r), s) {
-  match r: Matches(re_deriv(c, r), s) {
-    REmpty => match h: Matches(REmpty, s) {
+  ⊢ Matches(re_deriv(c, r), s) from match r {
+    REmpty => ⊢ Matches(REmpty, s) from match h {
     }
-    REps => match h: Matches(REmpty, s) {
+    REps => ⊢ Matches(REmpty, s) from match h {
     }
-    RChr(d) => match chr_word(d, Cons(c, s), h): Matches(re_deriv(c, RChr(d)), s) {
+    RChr(d) => ⊢ Matches(re_deriv(c, RChr(d)), s) from match chr_word(d, Cons(c, s), h) {
       Refl => deriv_chr_same(c)
     }
-    RAlt(a, b) => match h: Matches(re_deriv(c, RAlt(a, b)), s) {
+    RAlt(a, b) => ⊢ Matches(re_deriv(c, RAlt(a, b)), s) from match h {
       MLeft(a2, b2, w, h1) => MLeft(deriv_complete(a, c, s, h1))
       MRight(a2, b2, w, h1) => MRight(deriv_complete(b, c, s, h1))
     }
-    RSeq(a, b) => match h: Matches(re_deriv(c, RSeq(a, b)), s) {
-      MSeq(a2, b2, s1, t, w, ha, hb, e) => match s1: Matches(re_deriv(c, RSeq(a, b)), s) {
+    RSeq(a, b) => ⊢ Matches(re_deriv(c, RSeq(a, b)), s) from match h {
+      MSeq(a2, b2, s1, t, w, ha, hb, e) => ⊢ Matches(re_deriv(c, RSeq(a, b)), s) from match s1 {
         Nil => MRight(
           if_nullable_intro(
             a,
@@ -395,13 +395,13 @@ pub theorem deriv_complete(
             deriv_complete(b, c, s, Eq::subst((z: List(Nat)) => Matches(b, z), e, hb))
           )
         )
-        Cons(c1, s2) => match e: Matches(re_deriv(c, RSeq(a, b)), s) {
+        Cons(c1, s2) => ⊢ Matches(re_deriv(c, RSeq(a, b)), s) from match e {
           Refl => MLeft(MSeq(deriv_complete(a, c1, s2, ha), hb, Refl))
         }
       }
     }
-    RStar(a) => match h: Matches(re_deriv(c, RStar(a)), s) {
-      MStarCons(a2, c1, s1, t, w, ha, ht, e) => match e: Matches(re_deriv(c, RStar(a)), s) {
+    RStar(a) => ⊢ Matches(re_deriv(c, RStar(a)), s) from match h {
+      MStarCons(a2, c1, s1, t, w, ha, ht, e) => ⊢ Matches(re_deriv(c, RStar(a)), s) from match e {
         Refl => MSeq(deriv_complete(a, c1, s1, ha), ht, Refl)
       }
     }
@@ -409,14 +409,14 @@ pub theorem deriv_complete(
 }
 
 pub theorem re_match_sound(w: List(Nat), r: Re, h: re_match(w, r) = true): Matches(r, w) {
-  match w: Matches(r, w) {
+  ⊢ Matches(r, w) from match w {
     Nil => nullable_sound(r, h)
     Cons(c, rest) => deriv_sound(r, c, rest, re_match_sound(rest, re_deriv(c, r), h))
   }
 }
 
 pub theorem re_match_complete(w: List(Nat), r: Re, h: Matches(r, w)): re_match(w, r) = true {
-  match w: re_match(w, r) = true {
+  ⊢ re_match(w, r) = true from match w {
     Nil => nullable_complete(r, h)
     Cons(c, rest) => re_match_complete(rest, re_deriv(c, r), deriv_complete(r, c, rest, h))
   }

@@ -42,6 +42,7 @@
 use super::ledger::Sha256;
 use super::state::Point;
 use eure_document::document::NodeId;
+use tauto_message::{Message, msg};
 
 use super::strict::{self, Doc, Fields, hex_of};
 use crate::spec::Rev;
@@ -117,11 +118,15 @@ impl Policy {
 }
 
 pub fn parse(bytes: &[u8], name: &str) -> Result<Policy, String> {
+    parse_message(bytes, name).map_err(|e| e.to_string())
+}
+
+pub(crate) fn parse_message(bytes: &[u8], name: &str) -> Result<Policy, Message> {
     let doc = Doc::parse(bytes, name, MAX_POLICY)?;
     let mut f = doc.fields(doc.root(), name)?;
     let format = f.integer("format")?;
     if format != 1 {
-        return Err(say!(
+        return Err(msg!(
             "totebag-at",
             place = name,
             error = tauto_message::msg!("totebag-unknown-format", format = format)
@@ -134,7 +139,7 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<Policy, String> {
     let rule_items = match f.optional("rules") {
         Some(id) => doc
             .list(id, MAX_ITEMS)
-            .map_err(|e| say!("totebag-at", place = format!("{name}.rules"), error = e))?,
+            .map_err(|e| msg!("totebag-at", place = format!("{name}.rules"), error = e))?,
         None => Vec::new(),
     };
     f.finish()?;
@@ -151,7 +156,7 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<Policy, String> {
         let mut f = doc.fields(id, &what)?;
         let project = f.text_as("project", strict::sha256)?;
         if rules.iter().any(|(p, _)| *p == project) {
-            return Err(say!("totebag-one-rule", what = &what));
+            return Err(msg!("totebag-one-rule", what = &what));
         }
         rules.push((project, rule(f, &indexes)?));
     }
@@ -167,20 +172,20 @@ pub(super) fn read_indexes(
     doc: &Doc,
     items: Vec<NodeId>,
     name: &str,
-) -> Result<Vec<(Trusted, bool)>, String> {
+) -> Result<Vec<(Trusted, bool)>, Message> {
     let mut indexes: Vec<(Trusted, bool)> = Vec::new();
     for (i, id) in items.into_iter().enumerate() {
         let what = format!("{name}: indexes[{i}]");
         let mut f = doc.fields(id, &what)?;
         let alias = f.text_as("alias", strict::alias)?;
         if alias == "local" {
-            return Err(say!("totebag-local-not-index", what = &what));
+            return Err(msg!("totebag-local-not-index", what = &what));
         }
         let index = f.text_as("id", strict::sha256)?;
         let https = f.text_as("transport", |s| match s {
             "https" => Ok(true),
             "local-owned" => Ok(false),
-            _ => Err(say!("totebag-not-transport", value = format!("{s:?}"))),
+            _ => Err(msg!("totebag-not-transport", value = format!("{s:?}"))),
         })?;
         let url = f.text_as("repository", |s| {
             if https {
@@ -190,21 +195,21 @@ pub(super) fn read_indexes(
                 if s.starts_with("file:///") {
                     Ok(s.to_string())
                 } else {
-                    Err(say!("totebag-local-owned-file", value = format!("{s:?}")))
+                    Err(msg!("totebag-local-owned-file", value = format!("{s:?}")))
                 }
             }
         })?;
         let reference = f.text_as("ref", strict::branch)?;
         let pin = Point {
-            rev: f.text_as("pin_rev", Rev::parse)?,
+            rev: f.text_as("pin_rev", |s| Rev::parse(s).map_err(Message::from))?,
             digest: f.text_as("pin_sha256", strict::sha256)?,
         };
         f.finish()?;
         if let Some((t, _)) = indexes.iter().find(|(t, _)| t.alias == alias) {
-            return Err(say!("totebag-alias-twice", what = &what, alias = &t.alias));
+            return Err(msg!("totebag-alias-twice", what = &what, alias = &t.alias));
         }
         if let Some((t, _)) = indexes.iter().find(|(t, _)| t.index == index) {
-            return Err(say!(
+            return Err(msg!(
                 "totebag-index-twice",
                 what = &what,
                 index = hex_of(&index),
@@ -225,9 +230,9 @@ pub(super) fn read_indexes(
     Ok(indexes)
 }
 
-pub(super) fn expect(s: &str, want: &str) -> Result<(), String> {
+pub(super) fn expect(s: &str, want: &str) -> Result<(), Message> {
     (s == want).then_some(()).ok_or_else(|| {
-        say!(
+        msg!(
             "totebag-expected-value",
             value = format!("{s:?}"),
             want = format!("{want:?}")
@@ -235,7 +240,7 @@ pub(super) fn expect(s: &str, want: &str) -> Result<(), String> {
     })
 }
 
-pub(super) fn aliases(f: &mut Fields<'_>, key: &str) -> Result<Vec<String>, String> {
+pub(super) fn aliases(f: &mut Fields<'_>, key: &str) -> Result<Vec<String>, Message> {
     let names = f.read(key, |d, id| {
         d.list(id, MAX_ITEMS)?
             .into_iter()
@@ -243,16 +248,16 @@ pub(super) fn aliases(f: &mut Fields<'_>, key: &str) -> Result<Vec<String>, Stri
             .collect::<Result<Vec<_>, _>>()
     })?;
     if names.is_empty() {
-        return Err(say!("totebag-names-no-index", key = key));
+        return Err(msg!("totebag-names-no-index", key = key));
     }
     let listed = crate::list(names.iter().map(|n| tauto_rt::Text::from(n.as_str())));
     if let Some(n) = crate::core::generated::api::tb_twice(listed) {
-        return Err(say!("totebag-names-twice", key = key, name = &*n));
+        return Err(msg!("totebag-names-twice", key = key, name = &*n));
     }
     Ok(names)
 }
 
-fn rule(mut f: Fields<'_>, indexes: &[(Trusted, bool)]) -> Result<Rule, String> {
+fn rule(mut f: Fields<'_>, indexes: &[(Trusted, bool)]) -> Result<Rule, Message> {
     f.text_as("require", |s| expect(s, "all"))?;
     let observers = observers(&aliases(&mut f, "observers")?, indexes)?;
     let witnesses = witnesses(&aliases(&mut f, "age_witnesses")?, indexes)?;
@@ -265,7 +270,7 @@ fn rule(mut f: Fields<'_>, indexes: &[(Trusted, bool)]) -> Result<Rule, String> 
         max_source_check_age: seconds(&mut f, "max_source_check_age_seconds")?,
     };
     if limits.max_checkpoint_lifetime == 0 || limits.max_source_check_age == 0 {
-        return Err(say!("totebag-limits-positive"));
+        return Err(msg!("totebag-limits-positive"));
     }
     f.finish()?;
     Ok(Rule {
@@ -275,22 +280,22 @@ fn rule(mut f: Fields<'_>, indexes: &[(Trusted, bool)]) -> Result<Rule, String> 
     })
 }
 
-fn find<'a>(alias: &str, indexes: &'a [(Trusted, bool)]) -> Result<&'a (Trusted, bool), String> {
+fn find<'a>(alias: &str, indexes: &'a [(Trusted, bool)]) -> Result<&'a (Trusted, bool), Message> {
     indexes
         .iter()
         .find(|(t, _)| t.alias == alias)
-        .ok_or_else(|| say!("totebag-no-such-index", alias = alias))
+        .ok_or_else(|| msg!("totebag-no-such-index", alias = alias))
 }
 
 pub(super) fn observers(
     names: &[String],
     indexes: &[(Trusted, bool)],
-) -> Result<Vec<Trusted>, String> {
+) -> Result<Vec<Trusted>, Message> {
     names
         .iter()
         .map(|a| {
             if a == "local" {
-                Err(say!("totebag-local-does-not-observe"))
+                Err(msg!("totebag-local-does-not-observe"))
             } else {
                 find(a, indexes).map(|(t, _)| t.clone())
             }
@@ -302,7 +307,7 @@ pub(super) fn observers(
 pub(super) fn witnesses(
     names: &[String],
     indexes: &[(Trusted, bool)],
-) -> Result<Vec<Witness>, String> {
+) -> Result<Vec<Witness>, Message> {
     let mut witnesses = Vec::new();
     for a in names {
         if a == "local" {
@@ -311,7 +316,7 @@ pub(super) fn witnesses(
         }
         let (t, https) = find(a, indexes)?;
         if !https {
-            return Err(say!("totebag-witness-local-owned", alias = a));
+            return Err(msg!("totebag-witness-local-owned", alias = a));
         }
         witnesses.push(Witness::Remote(t.clone()));
     }
@@ -320,7 +325,7 @@ pub(super) fn witnesses(
 
 /// Fails when a remote witness is an observer's index, or is read from an
 /// observer's repository.
-pub(super) fn independent(observers: &[Trusted], witnesses: &[Witness]) -> Result<(), String> {
+pub(super) fn independent(observers: &[Trusted], witnesses: &[Witness]) -> Result<(), Message> {
     use crate::core::generated::api::{TbIndex, TbNotIndependent, tb_independent};
     let index = |t: &Trusted| TbIndex {
         alias: tauto_rt::Text::from(t.alias.as_str()),
@@ -337,7 +342,7 @@ pub(super) fn independent(observers: &[Trusted], witnesses: &[Witness]) -> Resul
         crate::list(remote),
     ) {
         None => Ok(()),
-        Some(TbNotIndependent { witness, observer }) => Err(say!(
+        Some(TbNotIndependent { witness, observer }) => Err(msg!(
             "totebag-witness-not-independent",
             witness = &*witness,
             observer = &*observer

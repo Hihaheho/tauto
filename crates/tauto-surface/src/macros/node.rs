@@ -6,20 +6,77 @@ use tauto_parol::Span;
 
 use crate::surface::{SurfaceTerm, TermKind};
 
+/// The constructor's identity and the schema name used to display syntax values.
+#[derive(Clone)]
+pub struct ConstructorRef {
+    reference: crate::identity::Name,
+    schema: String,
+}
+
+impl ConstructorRef {
+    pub fn resolved(reference: crate::identity::Name, schema: String) -> Self {
+        Self { reference, schema }
+    }
+    pub fn reference(&self) -> &crate::identity::Name {
+        &self.reference
+    }
+    pub fn as_str(&self) -> &str {
+        &self.schema
+    }
+}
+impl From<crate::identity::Name> for ConstructorRef {
+    fn from(reference: crate::identity::Name) -> Self {
+        let schema = reference.to_string();
+        Self { reference, schema }
+    }
+}
+impl From<&str> for ConstructorRef {
+    fn from(schema: &str) -> Self {
+        crate::identity::Name::from(schema).into()
+    }
+}
+impl From<String> for ConstructorRef {
+    fn from(schema: String) -> Self {
+        crate::identity::Name::from(schema).into()
+    }
+}
+impl std::ops::Deref for ConstructorRef {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.schema
+    }
+}
+impl std::fmt::Debug for ConstructorRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.schema.fmt(f)
+    }
+}
+impl std::fmt::Display for ConstructorRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.schema)
+    }
+}
+impl PartialEq for ConstructorRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.reference == other.reference
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
-    /// A struct's value or an enum's variant, by the name `make` takes
-    /// (`SynIdent`, `math.Term.Num`), with the names of the fields written
-    /// as such. A struct and a record variant name all their fields.
-    Ctor(String, Vec<(Option<String>, Node)>),
+    /// A declaration supplied by the expansion host, with no source constructor.
+    Declaration(crate::identity::DeclRef),
+    /// A constructor reference with labeled or positional fields. Host schema
+    /// input may carry a source spelling; evaluator output carries the resolved
+    /// reference so transporting a value cannot change its constructor.
+    Ctor(ConstructorRef, Vec<(Option<String>, Node)>),
     Text(String),
     Int(i64),
     Bool(bool),
     List(Vec<Node>),
     Option(Option<Box<Node>>),
-    /// A product's value: each member under its key, the member's type as written
-    /// with full names and its label (`@name SynIdent`), in the order written.
-    Product(Vec<(String, Node)>),
+    /// A `Pair`'s value: `A × B × C` nests to the right, `Pair(a, Pair(b, c))`.
+    Pair(Box<(Node, Node)>),
     /// A value filled in where a `quote` has `$`: the term that makes it.
     Splice(Box<SurfaceTerm>),
     /// In a list: a list of the same kind whose items go in here.
@@ -28,10 +85,7 @@ pub enum Node {
 
 impl Node {
     pub fn ctor(name: &str, fields: Vec<Node>) -> Node {
-        Node::Ctor(
-            name.to_string(),
-            fields.into_iter().map(|f| (None, f)).collect(),
-        )
+        Node::Ctor(name.into(), fields.into_iter().map(|f| (None, f)).collect())
     }
 
     pub fn text(t: &str) -> Node {
@@ -50,24 +104,23 @@ impl Node {
         Node::Option(n.map(Box::new))
     }
 
-    /// The product of `members`, each `(label, type, value)`, in the order given: the order of
-    /// the declared type. A member is also found by its label, or by its type when it has none.
-    pub fn product(members: Vec<(Option<&str>, &str, Node)>) -> Node {
-        let ms: Vec<(String, Node)> = members
-            .into_iter()
-            .map(|(l, t, n)| (member_key(l, t), n))
-            .collect();
-        Node::Product(ms)
+    /// The product of `members` in the order of the declared type, which `×` nests to
+    /// the right.
+    pub fn product(members: Vec<Node>) -> Node {
+        let mut members = members;
+        let mut tail = members.pop().expect("a product has members");
+        while let Some(head) = members.pop() {
+            tail = Node::Pair(Box::new((head, tail)));
+        }
+        tail
     }
 
-    /// The member of a product under `label` (`@label T`), or of type `ty` when
-    /// `label` is `None`.
-    pub fn member(&self, label: Option<&str>, ty: &str) -> Option<&Node> {
-        let Node::Product(ms) = self else {
-            return None;
-        };
-        let key = member_key(label, ty);
-        ms.iter().find(|(k, _)| *k == key).map(|(_, n)| n)
+    /// The two members of a `Pair`.
+    pub fn pair(&self) -> Option<(&Node, &Node)> {
+        match self {
+            Node::Pair(p) => Some((&p.0, &p.1)),
+            _ => None,
+        }
     }
 
     /// The constructor's name without its type: `Num` of `math.Term.Num`.
@@ -134,6 +187,7 @@ impl Node {
     /// `Name(a label=b)`, `[a b]`, `Some(a)`, `None`, `<a b>`, `t:HEX`.
     pub fn show(&self) -> String {
         match self {
+            Node::Declaration(_) => "<declaration reference>".into(),
             Node::Ctor(name, fs) => {
                 let fields: Vec<String> = fs
                     .iter()
@@ -157,13 +211,7 @@ impl Node {
             ),
             Node::Option(None) => "None".into(),
             Node::Option(Some(n)) => format!("Some({})", n.show()),
-            Node::Product(ms) => format!(
-                "<{}>",
-                ms.iter()
-                    .map(|(_, n)| n.show())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            ),
+            Node::Pair(p) => format!("<{} {}>", p.0.show(), p.1.show()),
             Node::Splice(_) | Node::SpliceList(_) => "splice".into(),
         }
     }
@@ -174,7 +222,7 @@ impl Node {
             Node::Ctor(_, fs) => fs.iter().map(|(_, f)| f.size()).sum(),
             Node::List(v) => v.iter().map(Node::size).sum(),
             Node::Option(Some(n)) => n.size(),
-            Node::Product(ms) => ms.iter().map(|(_, n)| n.size()).sum(),
+            Node::Pair(p) => p.0.size() + p.1.size(),
             _ => 0,
         }
     }
@@ -191,6 +239,7 @@ impl Node {
             })
         };
         match self {
+            Node::Declaration(reference) => term(TermKind::Declaration(reference.clone())),
             Node::Splice(t) | Node::SpliceList(t) => (**t).clone(),
             Node::Text(t) => term(TermKind::Text(t.clone())),
             Node::Int(n) => {
@@ -213,30 +262,23 @@ impl Node {
             }
             Node::Option(None) => var("Option::None"),
             Node::Option(Some(n)) => app("Option::Some", vec![n.to_term(span)]),
-            // `#(@a x, …)`: the members in the order written, each under its label.
-            Node::Product(ms) => {
-                let mut members: Vec<SurfaceTerm> = ms
-                    .iter()
-                    .map(|(k, n)| match label_of(k) {
-                        Some(tag) => term(TermKind::Tagged {
-                            tag: tag.to_string(),
-                            term: Box::new(n.to_term(span)),
-                        }),
-                        None => n.to_term(span),
-                    })
-                    .collect();
-                match members.len() {
-                    0 => var("Tuple"),
-                    1 => members.pop().expect("one"),
-                    _ => term(TermKind::Tuple(members)),
+            // `#(a, b, …)`: the members of the `Pair`s nested to the right.
+            Node::Pair(_) => {
+                let mut members = Vec::new();
+                let mut at = self;
+                while let Node::Pair(p) = at {
+                    members.push(p.0.to_term(span));
+                    at = &p.1;
                 }
+                members.push(at.to_term(span));
+                term(TermKind::Tuple(members))
             }
             Node::Ctor(name, fields) => {
                 if fields.is_empty() {
-                    var(name)
+                    SurfaceTerm::var(name.reference(), span)
                 } else if fields.iter().all(|(n, _)| n.is_some()) {
                     term(TermKind::Record {
-                        name: name.clone(),
+                        name: name.reference().clone(),
                         fields: fields
                             .iter()
                             .map(|(n, f)| (n.clone().unwrap_or_default(), f.to_term(span)))
@@ -244,7 +286,10 @@ impl Node {
                         base: None,
                     })
                 } else {
-                    app(name, fields.iter().map(|(_, f)| f.to_term(span)).collect())
+                    term(TermKind::App {
+                        function: Box::new(SurfaceTerm::var(name.reference(), span)),
+                        arguments: fields.iter().map(|(_, f)| f.to_term(span)).collect(),
+                    })
                 }
             }
         }
@@ -263,7 +308,7 @@ impl Node {
             }
             Node::List(v) => v.iter().any(|x| x.mentions_atom(n)),
             Node::Option(Some(x)) => x.mentions_atom(n),
-            Node::Product(ms) => ms.iter().any(|(_, m)| m.mentions_atom(n)),
+            Node::Pair(p) => p.0.mentions_atom(n) || p.1.mentions_atom(n),
             _ => false,
         }
     }
@@ -278,6 +323,12 @@ impl Node {
                 if last == "ExVar"
                     && let Some((_, Node::Ctor(_, id))) = fs.first()
                 {
+                    if id.iter().any(|(label, value)| {
+                        label.as_deref() == Some("declaration")
+                            && matches!(value.as_option(), Some(Some(_)))
+                    }) {
+                        return Some(self.clone());
+                    }
                     let named = id
                         .iter()
                         .find(|(n, _)| n.as_deref() == Some("name"))
@@ -292,7 +343,7 @@ impl Node {
                     }
                     return Some(self.clone());
                 }
-                if ctor == "SynIdent"
+                if ctor.as_str() == "SynIdent"
                     && fs
                         .iter()
                         .any(|(n, f)| n.as_deref() == Some("name") && f.as_text() == Some(name))
@@ -311,11 +362,10 @@ impl Node {
                     .collect::<Option<_>>()?,
             )),
             Node::Option(Some(x)) => Some(Node::some(x.open_var(name, atom)?)),
-            Node::Product(ms) => Some(Node::Product(
-                ms.iter()
-                    .map(|(k, m)| Some((k.clone(), m.open_var(name, atom)?)))
-                    .collect::<Option<Vec<_>>>()?,
-            )),
+            Node::Pair(p) => Some(Node::Pair(Box::new((
+                p.0.open_var(name, atom)?,
+                p.1.open_var(name, atom)?,
+            )))),
             other => Some(other.clone()),
         }
     }
@@ -332,4 +382,60 @@ pub fn member_key(label: Option<&str>, ty: &str) -> String {
 pub fn label_of(key: &str) -> Option<&str> {
     key.strip_prefix('@')
         .map(|r| r.split(' ').next().unwrap_or(r))
+}
+
+#[cfg(test)]
+mod declaration_tests {
+    use super::*;
+
+    #[test]
+    fn a_schema_name_does_not_replace_the_constructor_reference() {
+        let reference: crate::identity::Name =
+            crate::identity::DeclRef::fresh("SynIdent::Mk").into();
+        let shown = ConstructorRef::resolved(reference.clone(), "SynIdent".into());
+        let node = Node::Ctor(shown, vec![]);
+        assert_eq!(node.ctor_name(), Some("SynIdent"));
+        assert_eq!(node.show(), "SynIdent()");
+        assert_eq!(node, Node::Ctor(reference.clone().into(), vec![]));
+        let term = node.to_term(Span::default());
+        assert!(matches!(&*term.kind, TermKind::Var(name) if name == &reference));
+    }
+
+    #[test]
+    fn constructor_syntax_retains_identity_for_every_field_shape() {
+        use crate::identity::{DeclRef, Name};
+        let reference = Name::Global(DeclRef::fresh("same"));
+        let other = Name::Global(DeclRef::fresh("same"));
+        for fields in [
+            vec![],
+            vec![(None, Node::Int(1))],
+            vec![(Some("value".into()), Node::Int(1))],
+        ] {
+            let node = Node::Ctor(reference.clone().into(), fields.clone());
+            assert_ne!(node, Node::Ctor(other.clone().into(), fields));
+            let term = node.to_term(Span::new(0, 0));
+            let actual = match &*term.kind {
+                TermKind::Var(name) | TermKind::Record { name, .. } => name,
+                TermKind::App { function, .. } => match &*function.kind {
+                    TermKind::Var(name) => name,
+                    _ => panic!("constructor application"),
+                },
+                _ => panic!("constructor syntax"),
+            };
+            assert_eq!(actual, &reference);
+            assert_ne!(actual, &other);
+        }
+    }
+
+    #[test]
+    fn a_declaration_is_not_reconstructed_from_its_display() {
+        let first = Node::Declaration(crate::identity::DeclRef::fresh("same"));
+        let second = Node::Declaration(crate::identity::DeclRef::fresh("same"));
+        assert_ne!(first, second);
+        assert_eq!(first, first.clone());
+        assert!(matches!(
+            &*first.to_term(Span::new(0, 0)).kind,
+            TermKind::Declaration(reference) if first == Node::Declaration(reference.clone())
+        ));
+    }
 }

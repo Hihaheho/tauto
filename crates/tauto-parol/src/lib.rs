@@ -191,6 +191,10 @@ pub fn parse(source: &str) -> Parsed {
                     && let_type_without_assign(&terminals, span.start)
                 {
                     e.message = msg!("parse-let-type-eq").to_string();
+                } else if let Some(span) = e.span
+                    && let_destructures(source, span)
+                {
+                    e.message = msg!("parse-let-pattern").to_string();
                 }
             }
             if errors.is_empty() {
@@ -254,6 +258,33 @@ fn let_type_without_assign(terminals: &[(TerminalKind, Span)], at: u32) -> bool 
     false
 }
 
+/// Whether the error at `at` is a `let` followed by a pattern
+/// (`let { a, b } := v`, `let (a, b) := v`): `let` binds one name only, so
+/// the keyword is not misused as a name and saying so would mislead.
+fn let_destructures(source: &str, span: Span) -> bool {
+    // The tree stops at the error, so the token after `let` is read from
+    // the text.
+    source.get(span.start as usize..span.end as usize) == Some("let")
+        && source[span.end as usize..]
+            .trim_start_matches([' ', '\t'])
+            .starts_with(['{', '(', '[', '#'])
+}
+
+/// What the parser did not expect, as it is written: the token's own text, not the name of
+/// its terminal in the grammar (`Error` for a character no token takes, `RParen`, …).
+fn unexpected_text(span: Option<Span>, source: &str) -> String {
+    let text = span
+        .and_then(|s| source.get(s.start as usize..s.end as usize))
+        .unwrap_or_default();
+    if text.is_empty() {
+        msg!("parse-unexpected-input").to_string()
+    } else if text.trim().is_empty() {
+        msg!("parse-unexpected-line-break").to_string()
+    } else {
+        msg!("parse-unexpected", found = text).to_string()
+    }
+}
+
 fn collect_errors(error: parol_runtime::ParolError, source: &str, out: &mut Vec<SyntaxError>) {
     use parol_runtime::{ParolError, ParserError};
     match error {
@@ -283,7 +314,7 @@ fn collect_errors(error: parol_runtime::ParolError, source: &str, out: &mut Vec<
                     } else if let Some(word) = keyword_text(&found, span, source) {
                         msg!("parse-keyword-as-name", word = word).to_string()
                     } else {
-                        msg!("parse-unexpected", found = found).to_string()
+                        unexpected_text(span, source)
                     },
                     span,
                     expected,

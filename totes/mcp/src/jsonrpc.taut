@@ -1,0 +1,208 @@
+import std::Base
+import std::prelude::Os
+import std::prelude::Shared
+import std::List
+import std::Text
+import std::Data
+import json::json
+
+pub(open) enum RpcError {
+  ParseError
+  InvalidRequest
+  MethodNotFound
+  InvalidParams
+  InternalError
+  ServerError(i64, Text)
+}
+
+pub fn rpc_error_code(err: RpcError): i64 {
+  match err {
+    ParseError => -32700
+    InvalidRequest => -32600
+    MethodNotFound => -32601
+    InvalidParams => -32602
+    InternalError => -32603
+    ServerError(code, _) => code
+  }
+}
+
+pub fn rpc_error_message(err: RpcError): Text {
+  match err {
+    ParseError => "Parse error"
+    InvalidRequest => "Invalid Request"
+    MethodNotFound => "Method not found"
+    InvalidParams => "Invalid params"
+    InternalError => "Internal error"
+    ServerError(_, msg) => msg
+  }
+}
+
+pub(open) enum RpcId {
+  RpcIdNull
+  RpcIdNumber(Text)
+  RpcIdString(Text)
+}
+
+pub fn rpc_id_from_json(val: Json): Option(RpcId) {
+  match val {
+    JNull => Some(RpcIdNull)
+    JNum(n) => Some(RpcIdNumber(n))
+    JStr(s) => Some(RpcIdString(s))
+    _ => None
+  }
+}
+
+pub fn rpc_id_to_json(id: RpcId): Json {
+  match id {
+    RpcIdNull => JNull
+    RpcIdNumber(n) => JNum(n)
+    RpcIdString(s) => JStr(s)
+  }
+}
+
+pub fn rpc_id_eq(a: RpcId, b: RpcId): Bool {
+  match a {
+    RpcIdNull => match b {
+      RpcIdNull => true
+      _ => false
+    }
+    RpcIdNumber(na) => match b {
+      RpcIdNumber(nb) => Text::eq(na, nb)
+      _ => false
+    }
+    RpcIdString(sa) => match b {
+      RpcIdString(sb) => Text::eq(sa, sb)
+      _ => false
+    }
+  }
+}
+
+pub(open) struct RpcRequest {
+  id: Option(RpcId)
+  method: Text
+  params: Option(Json)
+}
+
+pub(open) struct RpcResponse {
+  id: RpcId
+  result: Option(Json)
+  error: Option(RpcErrorObject)
+}
+
+pub(open) struct RpcErrorObject {
+  code: i64
+  message: Text
+  data: Option(Json)
+}
+
+pub fn parse_rpc_request(val: Json): Result(RpcRequest, RpcError) {
+  match val {
+    JObj(fields) => {
+      let jsonrpc_opt: Option(Json) := json_get(val, "jsonrpc")
+      match jsonrpc_opt {
+        None => Err(InvalidRequest)
+        Some(jsonrpc_val) => match jsonrpc_val {
+          JStr(ver) => match Text::eq(ver, "2.0") {
+            false => Err(InvalidRequest)
+            true => {
+              let method_opt: Option(Json) := json_get(val, "method")
+              match method_opt {
+                None => Err(InvalidRequest)
+                Some(method_val) => match method_val {
+                  JStr(method) => {
+                    let id_opt: Option(Json) := json_get(val, "id")
+                    let parsed_id: Option(RpcId) := parse_optional_id(id_opt)
+                    let params_opt: Option(Json) := json_get(val, "params")
+                    Ok(RpcRequest { id: parsed_id, method: method, params: params_opt })
+                  }
+                  _ => Err(InvalidRequest)
+                }
+              }
+            }
+          }
+          _ => Err(InvalidRequest)
+        }
+      }
+    }
+    _ => Err(InvalidRequest)
+  }
+}
+
+fn parse_optional_id(opt: Option(Json)): Option(RpcId) {
+  match opt {
+    None => None
+    Some(val) => rpc_id_from_json(val)
+  }
+}
+
+pub fn make_rpc_response(id: RpcId, result: Json): Json {
+  JObj(
+    Cons(
+      #("jsonrpc", JStr("2.0")),
+      Cons(#("id", rpc_id_to_json(id)), Cons(#("result", result), Nil))
+    )
+  )
+}
+
+pub fn make_rpc_error_response(id: RpcId, err: RpcError, data: Option(Json)): Json {
+  let error_obj: Json := JObj(Cons(
+    #("code", JNum(i64_to_text(rpc_error_code(err)))),
+    Cons(#("message", JStr(rpc_error_message(err))),
+    match data {
+      None => Nil
+      Some(d) => Cons(#("data", d), Nil)
+    })
+  ))
+  JObj(
+    Cons(
+      #("jsonrpc", JStr("2.0")),
+      Cons(#("id", rpc_id_to_json(id)), Cons(#("error", error_obj), Nil))
+    )
+  )
+}
+
+pub fn make_rpc_notification(method: Text, params: Option(Json)): Json {
+  JObj(Cons(
+    #("jsonrpc", JStr("2.0")),
+    Cons(#("method", JStr(method)),
+    match params {
+      None => Nil
+      Some(p) => Cons(#("params", p), Nil)
+    })
+  ))
+}
+
+fn i64_to_text(n: i64): Text {
+  match n < 0 {
+    true => {
+      let abs_n: i64 := 0 - n
+      Text::concat("-", nat_to_text(i64_to_nat(abs_n)))
+    }
+    false => nat_to_text(i64_to_nat(n))
+  }
+}
+
+fn i64_to_nat(n: i64): Nat {
+  match n <= 0 {
+    true => Zero
+    false => Succ(i64_to_nat(n - 1))
+  }
+}
+
+fn nat_to_text(n: Nat): Text {
+  match n {
+    Zero => "0"
+    Succ(k) => nat_to_text_helper(n, Nil)
+  }
+}
+
+fn nat_to_text_helper(n: Nat, acc: List(u64)): Text {
+  match n {
+    Zero => Text::of_bytes(acc)
+    Succ(k) => {
+      let digit: Nat := Nat::mod(n, 10)
+      let digit_byte: u64 := Nat::add(48, digit)
+      nat_to_text_helper(Nat::div(n, 10), Cons(digit_byte, acc))
+    }
+  }
+}

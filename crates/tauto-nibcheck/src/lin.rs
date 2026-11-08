@@ -28,7 +28,9 @@ use tauto_parol::Span;
 use crate::rows::{Row, RowReport, check_program_rows};
 use crate::surface::print::print_term;
 use crate::surface::walk;
-use crate::surface::{FnDecl, Handler, MatchArm, Pattern, Program, Stmt, SurfaceTerm, TermKind};
+use crate::surface::{
+    FnDecl, Handler, MatchArm, Name, Pattern, Program, Stmt, SurfaceTerm, TermKind,
+};
 use crate::types::{Kind, Quant, Ty, TypeReport, check_program, site};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,7 +64,11 @@ pub fn dump_lin(errors: &[LinError]) -> String {
     for e in errors {
         out.push_str(&format!(
             "error {} {} {}\n",
-            e.span.start, e.span.end, e.message
+            e.span.start,
+            e.span.end,
+            // The steps after the first line are for the reader; the self-hosted checker writes
+            // the verdict and this line.
+            e.message.lines().next().unwrap_or_default()
         ));
     }
     out
@@ -140,7 +146,7 @@ enum Mode {
     Borrow(bool),
     /// A closure that holds borrows or `var`s with affine content:
     /// the names it borrows, and whether one is lent `&mut`.
-    BorrowClosure(Vec<String>, bool),
+    BorrowClosure(Vec<Name>, bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -153,7 +159,7 @@ enum State {
 
 #[derive(Debug, Clone)]
 struct Binding {
-    name: String,
+    name: Name,
     class: Class,
     mode: Mode,
     state: State,
@@ -186,7 +192,7 @@ impl Binding {
 #[derive(Debug, Clone, Default)]
 struct HandleCtx {
     start: usize,
-    answers: BTreeSet<String>,
+    answers: BTreeSet<Name>,
     return_uses: Vec<usize>,
 }
 
@@ -196,8 +202,11 @@ struct Frame {
     handles: Vec<HandleCtx>,
     budgets: usize,
     loops: usize,
-    bounded: Vec<String>,
-    direct_bounded: Vec<String>,
+    /// Row variables bounded `<=1`.
+    bounded: Vec<Name>,
+    /// Row variables bounded `direct`.
+    direct_bounded: Vec<Name>,
+    /// The function returns a borrow (`-> &A`).
     returns_borrow: bool,
 }
 
@@ -241,7 +250,7 @@ struct Checker<'a> {
     /// Inside the arm of a `direct` operation: the bindings below the first
     /// index are outside the handle, and the arm borrows them as a borrowing
     /// closure does, but may not move them; and the operation.
-    arm_direct: Option<(usize, String)>,
+    arm_direct: Option<(usize, Name)>,
 }
 
 impl<'a> Checker<'a> {
@@ -264,10 +273,10 @@ impl<'a> Checker<'a> {
         self.frames.last_mut().expect("a frame")
     }
 
-    fn find(&self, name: &str) -> Option<usize> {
+    fn find(&self, name: &Name) -> Option<usize> {
         self.bindings
             .iter()
-            .rposition(|b| b.name == name && !b.held)
+            .rposition(|b| b.name == *name && !b.held)
     }
 
     fn class_of(&self, ty: Option<&Ty>) -> (Class, Option<bool>) {
@@ -288,7 +297,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn push(&mut self, name: &str, site: crate::surface::TermId, var: bool) -> usize {
+    fn push(&mut self, name: &Name, site: crate::surface::TermId, var: bool) -> usize {
         let (class, borrow) = self.class_of(self.types.local(name, site));
         let mode = match (var, borrow) {
             (true, _) => Mode::Var,
@@ -303,10 +312,10 @@ impl<'a> Checker<'a> {
         i
     }
 
-    fn push_binding(&mut self, name: &str, class: Class, mode: Mode) -> usize {
+    fn push_binding(&mut self, name: &Name, class: Class, mode: Mode) -> usize {
         let loops = self.frame().loops;
         self.bindings.push(Binding {
-            name: name.to_string(),
+            name: name.clone(),
             class,
             mode,
             state: State::Owned,
@@ -365,7 +374,7 @@ impl<'a> Checker<'a> {
             .frozen
             .iter()
             .find(|(_, m)| mutable || *m)
-            .map(|(by, _)| self.bindings[*by].name.clone())
+            .map(|(by, _)| self.bindings[*by].name.to_string())
     }
 
     fn take(&mut self, i: usize, span: Span) {
@@ -395,7 +404,11 @@ impl<'a> Checker<'a> {
                 let message = format!(
                     "{} borrows {} and cannot be stored",
                     b.name,
-                    borrows.join(", ")
+                    borrows
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 );
                 self.error(message, span);
                 return;
@@ -443,8 +456,8 @@ impl<'a> Checker<'a> {
         for effect in row {
             let bounded = self.frame().bounded.clone();
             let direct = self.frame().direct_bounded.clone();
-            let quants = match effect.strip_prefix('|') {
-                Some(var) if direct.iter().any(|d| d == var) => vec![Quant::Direct],
+            let quants = match effect.row_variable() {
+                Some(var) if direct.iter().any(|d| d == &var) => vec![Quant::Direct],
                 _ => self
                     .rows
                     .quants_of(effect, &|v| bounded.iter().any(|b| b == v)),
@@ -484,7 +497,7 @@ impl<'a> Checker<'a> {
                 let message = if many && duplicated {
                     format!("{} is live across {shown}, which resumes ω", b.name)
                 } else if not_one && b.class == Class::Linear && b.mode == Mode::Owned {
-                    let hint = if effect == "Div" {
+                    let hint = if tauto_surface::bindings::is_library(&effect, "Div") {
                         // A `budget` turns `Div` into `Exceeded` and drops the
                         // rest; the host's step limit stops it.
                         "; finish the loop before the arm (in the body), give it fuel so it \
@@ -640,7 +653,10 @@ impl<'a> Checker<'a> {
                 }
             }
             Stmt::While { condition, body } => {
-                self.event(&Row::from(["Div".to_string()]), condition.span);
+                self.event(
+                    &Row::from([tauto_surface::bindings::library_name("Div")]),
+                    condition.span,
+                );
                 self.frame_mut().loops += 1;
                 self.value(condition, Pos::Drop);
                 let before = self.snapshot();
@@ -727,12 +743,15 @@ impl<'a> Checker<'a> {
 
     /// Walks `t`, whose value is taken as `pos` says. A closure that
     /// borrows returns what it borrows, for a `let` to record.
-    fn value(&mut self, t: &SurfaceTerm, pos: Pos) -> Option<(Vec<String>, bool)> {
+    fn value(&mut self, t: &SurfaceTerm, pos: Pos) -> Option<(Vec<Name>, bool)> {
         if self.dead {
             return None;
         }
         if self.frames.last().is_some_and(|f| f.budgets > 0) {
-            self.event(&Row::from(["Exceeded".to_string()]), t.span);
+            self.event(
+                &Row::from([tauto_surface::bindings::library_name("Exceeded")]),
+                t.span,
+            );
         }
         match &*t.kind {
             TermKind::Var(name) => {
@@ -778,7 +797,11 @@ impl<'a> Checker<'a> {
                     }
                     let message = format!(
                         "this closure borrows {} and cannot be stored",
-                        names.join(", ")
+                        names
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     );
                     self.error(message, t.span);
                 }
@@ -922,7 +945,9 @@ impl<'a> Checker<'a> {
         if let TermKind::Var(name) = &*function.kind {
             match self.find(name) {
                 Some(i) => local_callee = Some(i),
-                None if name == "clone" => borrows = vec![Some(false); arguments.len()],
+                None if tauto_surface::bindings::is_library(&name, "clone") => {
+                    borrows = vec![Some(false); arguments.len()]
+                }
                 None if matches!(name.as_str(), "==" | "!=") => {
                     borrows = vec![Some(false); arguments.len()]
                 }
@@ -1000,7 +1025,7 @@ impl<'a> Checker<'a> {
         if let Some(class) = moved_callee.filter(|c| *c != Class::Dup) {
             let name = match &*function.kind {
                 TermKind::Var(n) => n.clone(),
-                _ => "the function called".to_string(),
+                _ => "the function called".into(),
             };
             let i = self.push_binding(&name, class, Mode::Owned);
             self.bindings[i].held = true;
@@ -1029,7 +1054,7 @@ impl<'a> Checker<'a> {
                     if class != Class::Dup {
                         let name = match &*a.kind {
                             TermKind::Var(n) => n.clone(),
-                            _ => "an argument before it".to_string(),
+                            _ => "an argument before it".into(),
                         };
                         let i = self.push_binding(&name, class, Mode::Owned);
                         self.bindings[i].held = true;
@@ -1144,7 +1169,7 @@ impl<'a> Checker<'a> {
     /// borrowed ones and the `var`s with affine content, which makes it a
     /// closure that borrows. Its body is checked as a function's.
     /// Returns what it borrows, when it does.
-    fn closure(&mut self, t: &SurfaceTerm) -> Option<(Vec<String>, bool)> {
+    fn closure(&mut self, t: &SurfaceTerm) -> Option<(Vec<Name>, bool)> {
         let lam = match &*t.kind {
             TermKind::BorrowLam { lam, .. } => &**lam,
             _ => t,
@@ -1155,7 +1180,7 @@ impl<'a> Checker<'a> {
         self.closure_body(lam, params, body)
     }
 
-    fn closure_fn(&mut self, f: &FnDecl) -> Option<(Vec<String>, bool)> {
+    fn closure_fn(&mut self, f: &FnDecl) -> Option<(Vec<Name>, bool)> {
         let lam = SurfaceTerm::new(
             TermKind::Lam {
                 params: f.params.clone(),
@@ -1172,23 +1197,23 @@ impl<'a> Checker<'a> {
     fn closure_body(
         &mut self,
         lam: &SurfaceTerm,
-        params: &[String],
+        params: &[Name],
         body: &SurfaceTerm,
-    ) -> Option<(Vec<String>, bool)> {
+    ) -> Option<(Vec<Name>, bool)> {
         let free = free_vars(lam);
         self.capture_and_check(&free, params, body, true)
     }
 
     fn capture_and_check(
         &mut self,
-        free: &[String],
-        params: &[String],
+        free: &[Name],
+        params: &[Name],
         body: &SurfaceTerm,
         _lambda: bool,
-    ) -> Option<(Vec<String>, bool)> {
-        let mut borrowed: Vec<String> = Vec::new();
+    ) -> Option<(Vec<Name>, bool)> {
+        let mut borrowed: Vec<Name> = Vec::new();
         let mut any_mut = false;
-        let mut captured: Vec<(String, Class, Mode)> = Vec::new();
+        let mut captured: Vec<(Name, Class, Mode)> = Vec::new();
         for name in free {
             let Some(i) = self.find(name) else {
                 continue;
@@ -1385,7 +1410,7 @@ impl<'a> Checker<'a> {
 
     /// A binding from here out that `body` borrows: `&x`, or a borrow or
     /// borrow closure it uses. The names in `bound` are `body`'s own.
-    fn lent_outside(&self, body: &SurfaceTerm, bound: &[String]) -> Option<String> {
+    fn lent_outside(&self, body: &SurfaceTerm, bound: &[Name]) -> Option<Name> {
         let mut roots = Vec::new();
         borrow_roots(body, &mut roots);
         free_vars(body).into_iter().find(|n| {
@@ -1404,7 +1429,17 @@ impl<'a> Checker<'a> {
     /// that carries the code of `t` carries the `var`'s cell with it, shared
     /// by every copy of the continuation (`docs/design/ownership.md`「`let` と
     /// `var`」). The names in `bound` are `t`'s own.
-    fn var_in(&self, t: &SurfaceTerm, bound: &[String]) -> Option<String> {
+    fn var_in(&self, t: &SurfaceTerm, bound: &[Name]) -> Option<Name> {
+        self.var_in_scope(t, bound, true)
+    }
+
+    /// `var_in` for a handler arm: a `var` declared inside a function value of the arm is made
+    /// afresh by each call of that function, and a continuation holds no frame of the arm.
+    fn var_in_arm(&self, t: &SurfaceTerm, bound: &[Name]) -> Option<Name> {
+        self.var_in_scope(t, bound, false)
+    }
+
+    fn var_in_scope(&self, t: &SurfaceTerm, bound: &[Name], in_functions: bool) -> Option<Name> {
         if let Some(n) = free_vars(t).into_iter().find(|n| {
             !bound.contains(n)
                 && self.find(n).is_some_and(|i| {
@@ -1413,12 +1448,25 @@ impl<'a> Checker<'a> {
         }) {
             return Some(n);
         }
+        let mut in_function_values = BTreeSet::new();
+        if !in_functions {
+            walk::value_terms(t, &mut |u| {
+                if let TermKind::Lam { body, .. } = &*u.kind {
+                    walk::values(body, &mut |node| {
+                        if let walk::Node::Stmt(st) = node {
+                            in_function_values.insert(st as *const Stmt);
+                        }
+                    });
+                }
+            });
+        }
         let mut declared = None;
         walk::value_terms(t, &mut |u| {
             if let TermKind::Block(stmts) = &*u.kind {
                 for st in stmts {
                     if let Stmt::Var { name, .. } = st
                         && declared.is_none()
+                        && !in_function_values.contains(&(st as *const Stmt))
                     {
                         declared = Some(name.clone());
                     }
@@ -1435,7 +1483,7 @@ impl<'a> Checker<'a> {
         &mut self,
         effect: &str,
         patterns: &[Pattern],
-        cont: &Option<String>,
+        cont: &Option<Name>,
         guard: &Option<SurfaceTerm>,
         body: &SurfaceTerm,
     ) {
@@ -1472,7 +1520,11 @@ impl<'a> Checker<'a> {
         if roots.is_empty() {
             return;
         }
-        let arm = self.push_binding(&format!("the arm of {effect}"), Class::Dup, Mode::Owned);
+        let arm = self.push_binding(
+            &format!("the arm of {effect}").into(),
+            Class::Dup,
+            Mode::Owned,
+        );
         for (i, mutable) in roots {
             self.bindings[i].frozen.push((arm, mutable));
         }
@@ -1500,11 +1552,13 @@ impl<'a> Checker<'a> {
                     .iter()
                     .all(|p| matches!(p, Pattern::Wild | Pattern::Bind(_))) =>
                 {
-                    answers.insert(if effect == "exceeded" {
-                        "Exceeded".to_string()
-                    } else {
-                        effect.clone()
-                    });
+                    answers.insert(
+                        if tauto_surface::bindings::is_library(&effect, "exceeded") {
+                            tauto_surface::bindings::library_name("Exceeded")
+                        } else {
+                            effect.clone()
+                        },
+                    );
                 }
                 Handler::Return { pattern, body } => {
                     let mut bound = Vec::new();
@@ -1556,8 +1610,8 @@ impl<'a> Checker<'a> {
                         pattern_names(p, &mut bound);
                     }
                     bound.extend(cont.iter().cloned());
-                    self.var_in(body, &bound)
-                        .or_else(|| guard.as_ref().and_then(|g| self.var_in(g, &bound)))
+                    self.var_in_arm(body, &bound)
+                        .or_else(|| guard.as_ref().and_then(|g| self.var_in_arm(g, &bound)))
                 }
             })
         });
@@ -1685,7 +1739,7 @@ impl<'a> Checker<'a> {
 
 /// The roots of the places `t` borrows (`&x`, `&mut x.f`), bound in `t` or
 /// not.
-fn borrow_roots(t: &SurfaceTerm, out: &mut Vec<String>) {
+fn borrow_roots(t: &SurfaceTerm, out: &mut Vec<Name>) {
     walk::value_terms(t, &mut |u| {
         if let TermKind::Borrow { term, .. } = &*u.kind
             && let Some((root, _)) = place(term)
@@ -1717,9 +1771,23 @@ pub fn kept_continuation(handlers: &[Handler]) -> Option<Span> {
     out.into_iter().min_by_key(|s| s.start)
 }
 
+/// Whether an arm uses its continuation other than by calling it in the arm.
+pub(crate) fn keeps_continuation(
+    k: &Name,
+    guard: Option<&SurfaceTerm>,
+    body: &SurfaceTerm,
+) -> bool {
+    let mut stray = Vec::new();
+    stray_conts(body, k, false, &mut stray);
+    if let Some(g) = guard {
+        stray_conts(g, k, false, &mut stray);
+    }
+    !stray.is_empty()
+}
+
 /// The uses of `k` in `t` other than a call in place: `k` as a value, or
 /// under a closure or a nested handle, which may keep it.
-fn stray_conts(t: &SurfaceTerm, k: &str, kept: bool, out: &mut Vec<Span>) {
+fn stray_conts(t: &SurfaceTerm, k: &Name, kept: bool, out: &mut Vec<Span>) {
     match &*t.kind {
         TermKind::Var(n) if n == k => out.push(t.span),
         TermKind::App {
@@ -1814,9 +1882,10 @@ fn frozen_text(name: &str, by: &str) -> String {
     }
 }
 
-fn place(t: &SurfaceTerm) -> Option<(String, Vec<String>)> {
+/// `x`, `x.f.g`: the root name and the fields.
+fn place(t: &SurfaceTerm) -> Option<(Name, Vec<String>)> {
     match &*t.kind {
-        TermKind::Var(n) => Some((n.clone(), vec![n.clone()])),
+        TermKind::Var(n) => Some((n.clone(), vec![n.to_string()])),
         TermKind::Field { base, name } => {
             let (root, mut path) = place(base)?;
             path.push(name.clone());
@@ -1833,7 +1902,7 @@ fn place(t: &SurfaceTerm) -> Option<(String, Vec<String>)> {
 
 /// Whether `t` is a product, also behind a borrow.
 fn is_product(t: Option<&Ty>) -> bool {
-    matches!(t.map(|t| t.unborrowed()), Some(Ty::Product(_)))
+    matches!(t.map(|t| t.unborrowed()), Some(t) if crate::types::is_pair_ty(t))
 }
 
 fn path_text(_root: &str, path: &[String]) -> String {
@@ -1856,7 +1925,7 @@ fn stmt_span(s: &Stmt) -> Span {
 
 /// The names `t` refers to and does not bind, but those it only borrows
 /// (`&x`, `&mut x.f`).
-fn used_vars(t: &SurfaceTerm) -> Vec<String> {
+fn used_vars(t: &SurfaceTerm) -> Vec<Name> {
     let mut out = Vec::new();
     let mut bound = Vec::new();
     free_in(t, &mut bound, &mut out, true);
@@ -1865,20 +1934,20 @@ fn used_vars(t: &SurfaceTerm) -> Vec<String> {
 
 /// The names `t` refers to that it does not bind, in order of first
 /// occurrence.
-pub fn free_vars(t: &SurfaceTerm) -> Vec<String> {
+pub fn free_vars(t: &SurfaceTerm) -> Vec<Name> {
     let mut out = Vec::new();
     let mut bound = Vec::new();
     free_in(t, &mut bound, &mut out, false);
     out
 }
 
-fn note(name: &str, bound: &[String], out: &mut Vec<String>) {
+fn note(name: &Name, bound: &[Name], out: &mut Vec<Name>) {
     if !bound.iter().any(|b| b == name) && !out.iter().any(|o| o == name) {
-        out.push(name.to_string());
+        out.push(name.clone());
     }
 }
 
-fn free_in(t: &SurfaceTerm, bound: &mut Vec<String>, out: &mut Vec<String>, skip: bool) {
+fn free_in(t: &SurfaceTerm, bound: &mut Vec<Name>, out: &mut Vec<Name>, skip: bool) {
     match &*t.kind {
         TermKind::Var(n) => note(n, bound, out),
         TermKind::App {
@@ -1976,7 +2045,7 @@ fn free_in(t: &SurfaceTerm, bound: &mut Vec<String>, out: &mut Vec<String>, skip
     }
 }
 
-fn free_in_stmt(s: &Stmt, bound: &mut Vec<String>, out: &mut Vec<String>, skip: bool) {
+fn free_in_stmt(s: &Stmt, bound: &mut Vec<Name>, out: &mut Vec<Name>, skip: bool) {
     match s {
         Stmt::Let { name, value, .. } | Stmt::Var { name, value, .. } => {
             free_in(value, bound, out, skip);
@@ -2004,7 +2073,7 @@ fn free_in_stmt(s: &Stmt, bound: &mut Vec<String>, out: &mut Vec<String>, skip: 
 
 /// The names a pattern binds; a bare name may be a constructor, which the
 /// caller tells apart.
-pub fn pattern_names(p: &Pattern, out: &mut Vec<String>) {
+pub fn pattern_names(p: &Pattern, out: &mut Vec<Name>) {
     match p {
         Pattern::Bind(n) => out.push(n.clone()),
         Pattern::Ctor { args, .. } => args.iter().for_each(|a| pattern_names(a, out)),

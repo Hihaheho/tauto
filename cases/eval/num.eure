@@ -2,40 +2,99 @@
 
 @ cases.num-widen
 source = ```nib
-perform show("a", u64_of_u8(255))
-perform show("b", i64_of_i32(7))
-perform show("c", u64_of_u32(7))
+perform show("a", U64::of_u8(255))
+perform show("b", I64::of_i32(7))
+perform show("c", U64::of_u32(7))
 ```
 shows = ["a = 255", "b = 7", "c = 7"]
 
 @ cases.num-narrow-fails
 source = ```nib
-perform show("a", u8_of_u64(256))
+perform show("a", U8::of_u64(256))
 ```
 run_error = "the number is too large"
 
 @ cases.num-narrow-fits
 source = ```nib
-perform show("a", u8_of_u64(255))
-perform show("b", u32_of_u64(4294967295))
-perform show("c", i32_of_i64(0 - 2147483648))
+perform show("a", U8::of_u64(255))
+perform show("b", U32::of_u64(4294967295))
+perform show("c", I32::of_i64(0 - 2147483648))
 ```
 shows = ["a = 255", "b = 4294967295", "c = -2147483648"]
 
 @ cases.num-i32-of-i64-fails
 source = ```nib
-perform show("a", i32_of_i64(2147483648))
+perform show("a", I32::of_i64(2147483648))
 ```
 run_error = "the number is too large"
 
 @ cases.num-i64-of-u64
 source = ```nib
-perform show("a", i64_of_u64(5))
+perform show("a", I64::of_u64(5))
 ```
 shows = ["a = 5"]
 
 @ cases.num-u64-of-i64-negative-fails
 source = ```nib
-perform show("a", u64_of_i64(0 - 1))
+perform show("a", U64::of_i64(0 - 1))
 ```
 run_error = "the number is too large"
+
+@ cases.num-i64-min-div-minus-one-fails
+source = ```nib
+perform show("a", div((0 - 9223372036854775807 - 1), (0 - 1)))
+```
+run_error = "the number is too large"
+
+@ cases.num-u64-past-i64-max
+source = ```nib
+let b: u64 := 9223372036854775807
+let m: u64 := 18446744073709551615
+perform show("a", b + 1)
+perform show("b", b * 2 + 1)
+perform show("c", m - 1)
+perform show("d", div(m, 2))
+perform show("e", m > b)
+perform show("f", m == m)
+```
+shows = [
+  "a = 9223372036854775808",
+  "b = 18446744073709551615",
+  "c = 18446744073709551614",
+  "d = 9223372036854775807",
+  "e = true",
+  "f = true",
+]
+
+@ cases.num-u64-max-plus-one-fails
+source = ```nib
+let m: u64 := 18446744073709551615
+perform show("a", m + 1)
+```
+run_error = "the number is too large"
+
+@ cases.num-u64-below-zero-fails
+source = ```nib
+let z: u64 := 0
+perform show("a", z - 1)
+```
+run_error = "the number is too large"
+
+@ cases.num-atomic-fetch-add-wraps-at-u64
+source = ```nib
+import std::prelude::Par
+
+let a := Atomic::new(18446744073709551615)
+perform show("a", Atomic::fetch_add(a, 0))
+perform show("b", Atomic::fetch_add(a, 1))
+perform show("c", Atomic::load(a))
+perform show("d", Atomic::fetch_add(a, 18446744073709551615))
+perform show("e", Atomic::load(a))
+```
+shows = [
+  "a = 18446744073709551615",
+  "b = 18446744073709551615",
+  "c = 0",
+  "d = 0",
+  "e = 18446744073709551615",
+]

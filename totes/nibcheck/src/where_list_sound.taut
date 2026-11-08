@@ -24,7 +24,7 @@ pub theorem signature_pred_duplicate_classes(
   g: Text,
   dup: Bool
 ): WhereClassFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) {
-  match dup: WhereClassFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) {
+  ⊢ WhereClassFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) from match dup {
     true => Refl
     false => Refl
   }
@@ -36,7 +36,7 @@ pub theorem signature_pred_generic_classes(
   preds: List(Pair(Text, Text)),
   o: Option(Text)
 ): WhereClassFrame(c, signature_pred_generic(c, w, name, preds, o)) {
-  match o: WhereClassFrame(c, signature_pred_generic(c, w, name, preds, o)) {
+  ⊢ WhereClassFrame(c, signature_pred_generic(c, w, name, preds, o)) from match o {
     None => Refl
     Some(g) => signature_pred_duplicate_classes(
       c,
@@ -55,7 +55,7 @@ pub theorem signature_pred_missing_classes(
   preds: List(Pair(Text, Text)),
   missing: Bool
 ): WhereClassFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) {
-  match missing: WhereClassFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) {
+  ⊢ WhereClassFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) from match missing {
     true => Refl
     false => signature_pred_generic_classes(
       c,
@@ -126,13 +126,13 @@ pub theorem where_constraints_after_sound(
   previous,
   ck_val(where_constraints_after(rest, generics, function, m))
 ) {
-  match m: WhereConstraints(
+  ⊢ WhereConstraints(
     where_classes(c),
     generics,
     Cons(source, rest),
     previous,
     ck_val(where_constraints_after(rest, generics, function, m))
-  ) {
+  ) from match m {
     mut1(preds, next) => {
       let accepted: DiagnosticClean(
         ck_st(ck_where_preds(rest, next, generics, function, preds))
@@ -187,13 +187,13 @@ pub theorem ck_where_preds_sound(
   previous,
   ck_val(ck_where_preds(sources, c, generics, function, previous))
 ) {
-  match sources: WhereConstraints(
+  ⊢ WhereConstraints(
     where_classes(c),
     generics,
     sources,
     previous,
     ck_val(ck_where_preds(sources, c, generics, function, previous))
-  ) {
+  ) from match sources {
     Nil => WhereConstraintsNil(previous)
     Cons(source, rest) => Eq::subst(
       (m: Mut1(List(Pair(Text, Text)), Checker)) => WhereConstraints(
@@ -239,7 +239,7 @@ pub theorem where_classes_bind<A: Type, B: Type>(
   before: WhereClassFrame(c, m),
   after: ∀ value: A. ∀ next: Checker. WhereClassFrame(next, k(value, next))
 ): WhereClassFrame(c, frame_bind(A, B, k, m)) {
-  match m: WhereClassFrame(c, frame_bind(A, B, k, m)) {
+  ⊢ WhereClassFrame(c, frame_bind(A, B, k, m)) from match m {
     mut1(value, next) => Eq::trans(after(value, next), before)
   }
 }
@@ -281,7 +281,7 @@ pub theorem ck_where_preds_classes(
   name: Text,
   preds: List(Pair(Text, Text))
 ): WhereClassFrame(c, ck_where_preds(ws, c, gs, name, preds)) {
-  match ws: WhereClassFrame(c, ck_where_preds(ws, c, gs, name, preds)) {
+  ⊢ WhereClassFrame(c, ck_where_preds(ws, c, gs, name, preds)) from match ws {
     Nil => Refl
     Cons(w, rest) => Eq::subst(
       (z: Mut1(List(Pair(Text, Text)), Checker)) => WhereClassFrame(c, z),

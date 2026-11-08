@@ -1,0 +1,90 @@
+@ cases.a-numeral-where-an-int-is-expected-is-its-constructors
+imports = [path`../../std/Int.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn three(): Int { 3 }
+fn minus_three(): Int { -3 }
+theorem three_is(): three() = IntOfNat(3) { Refl }
+theorem minus_three_is(): minus_three() = IntNegSucc(2) { Refl }
+theorem minus_zero(): Int::neg(0) = -0 { Refl }
+theorem neg_three(): Int::neg(3) = -3 { Refl }
+theorem add_neg(): Int::add(2, -5) = -3 { Refl }
+```
+
+checks."input/main.taut::three" = "ok"
+checks."input/main.taut::minus_three" = "ok"
+checks."input/main.taut::three_is" = "ok"
+checks."input/main.taut::minus_three_is" = "ok"
+checks."input/main.taut::minus_zero" = "ok"
+checks."input/main.taut::neg_three" = "ok"
+checks."input/main.taut::add_neg" = "ok"
+
+@ cases.an-int-has-a-decidable-equality
+imports = [path`../../std/Int.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn is_minus_one(x: Int): Bool { x == -1 }
+theorem minus_one(): is_minus_one(-1) = true { Refl }
+theorem not_minus_one(): is_minus_one(1) = false { Refl }
+```
+
+checks."input/main.taut::is_minus_one" = "ok"
+checks."input/main.taut::minus_one" = "ok"
+checks."input/main.taut::not_minus_one" = "ok"
+
+@ cases.a-match-on-int-literals-with-a-named-last-arm-is-checked
+imports = [path`../../std/Int.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn sign(x: Int): Nat {
+  ⊢ Nat from match x {
+    -1 => 1
+    0 => 2
+    other => ⊢ Nat from match other {
+      IntOfNat(n) => n
+      IntNegSucc(n) => n
+    }
+  }
+}
+theorem sign_minus_one(): sign(-1) = 1 { Refl }
+theorem sign_zero(): sign(0) = 2 { Refl }
+theorem sign_other(): sign(-5) = 4 { Refl }
+```
+
+checks."input/main.taut::sign" = "ok"
+checks."input/main.taut::sign_minus_one" = "ok"
+checks."input/main.taut::sign_zero" = "ok"
+checks."input/main.taut::sign_other" = "ok"
+
+@ cases.a-match-on-int-literals-without-a-last-arm-is-rejected
+imports = [path`../../std/Int.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn sign(x: Int): Nat {
+  ⊢ Nat from match x {
+    -1 => 1
+    0 => 2
+  }
+}
+```
+
+checks."input/main.taut::sign" = "error: is not a `Nat`"
+
+@ cases.int-norm-reads-a-numeral-where-an-int-is-expected-as-a-constant
+imports = [path`../../std/IntNorm.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem self_cancel(x: Int): Int::add(x, Int::neg(x)) = 0 {
+  by int_norm!(): Int::add(x, Int::neg(x)) = 0 {}
+}
+theorem shift_numeral(x: Int): Int::add(x, 3) = Int::sub(x, -3) {
+  by int_norm!(): Int::add(x, 3) = Int::sub(x, -3) {}
+}
+theorem negative_numeral(x: Int): Int::add(x, -2) = Int::sub(x, 2) {
+  by int_norm!(): Int::add(x, -2) = Int::sub(x, 2) {}
+}
+```
+
+checks."input/main.taut::self_cancel" = "ok"
+checks."input/main.taut::shift_numeral" = "ok"
+checks."input/main.taut::negative_numeral" = "ok"

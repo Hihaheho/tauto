@@ -778,7 +778,7 @@ rust { bridge = "bridge" }"#,
     write(
         &d,
         "bridge/src/lib.rs",
-        "pub fn is_view<T>(x:&mut T)->&mut T{x}",
+        "pub fn view<T>(x:&mut T)->&mut T{x}",
     );
     write(
         &d,
@@ -1397,17 +1397,14 @@ fn outer<C: Shared>(captured: C): Unit {
 outer("kept")
 perform show("native", native_identity(11))"#;
     let package = tauto_nir::compile_javascript(source).unwrap();
-    assert!(
-        package
-            .externs
-            .iter()
-            .any(|external| external.name == "native_identity" && !external.generics.is_empty())
-    );
+    assert!(package.externs.iter().any(
+        |external| external.name.as_str() == "native_identity" && !external.generics.is_empty()
+    ));
     let mut checked_function_value = false;
     for function in &package.fns {
         function.body.walk(&mut |expression| {
             if let tauto_nir::ExprKind::FnValue { inst, targs } = &expression.kind
-                && package.fns[*inst].source == "choose"
+                && package.fns[*inst].source.as_str() == "choose"
             {
                 assert_eq!(
                     package.fns[*inst]
@@ -1501,4 +1498,54 @@ javascript { chunks { settings = ["missing"] } }
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("javascript chunk settings names missing")
     );
+}
+
+#[test]
+fn javascript_host_types_stay_out_of_the_wasm_build() {
+    let d = dir();
+    write(
+        &d,
+        "Tauto.eure",
+        r#"package { name = "mixed-types" }
+javascript {
+  extern { make = "host/h.mjs#make" label = "host/h.mjs#label" }
+  types { Node = "host/h.mjs#release" }
+  sources = ["host"]
+}
+rust { bridge = "bridge" }
+"#,
+    );
+    write(
+        &d,
+        "bridge/Cargo.toml",
+        "[package]\nname=\"mixed-types-bridge\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+    );
+    write(&d, "bridge/src/lib.rs", "pub fn double(n:i64)->i64{n*2}\n");
+    write(
+        &d,
+        "src/main.taut",
+        r#"extern {
+  affine type Node
+  fn make(name: Text): Node
+  fn label(&n: Node): Text
+  fn double(n: i64): i64
+}
+let a := make("a")
+perform show("label", label(&a))
+perform show("double", double(21))
+"#,
+    );
+    write(
+        &d,
+        "host/h.mjs",
+        "export function make(name){return {name};}\nexport function label(n){return n.name;}\nexport function release(n){console.log('release '+n.name);}\n",
+    );
+    success(&cli(&d, "node"));
+    let out = run(&d);
+    success(&out);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "label = \"a\"\ndouble = 42\nrelease a\n"
+    );
+    fs::remove_dir_all(d).unwrap();
 }

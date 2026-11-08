@@ -1,0 +1,826 @@
+// The standard effects' permissions (`docs/design/host-effects.md`): what
+// a limited permission covers is the target as the host acts on it.
+
+// `link/..` goes up from where the link points, as the system resolves it,
+// so it does not reach a file beside the allowed directory.
+@ cases.a-link-then-dot-dot-does-not-leave-a-read-permission
+files."allowed/a.txt" = "inside"
+files."outside/secret" = "secret"
+files."outside/sub/x" = ""
+links."allowed/link" = "../outside/sub"
+files."main.nib" = ```nib
+import std::prelude::Os
+
+match perform argv() {
+  Cons(inside, Cons(through, Nil)) => {
+    perform show("inside", perform fs_read(inside))
+    match perform fs_read(through) {
+      Ok(t) => perform show("through", t)
+      Err(Denied(_)) => perform show("through", "denied")
+      Err(Failed(_)) => perform show("through", "failed")
+      Err(TimedOut) => perform show("through", "timed out")
+    }
+  }
+  _ => #()
+}
+```
+permissions = ["--allow-read={dir}/allowed"]
+args = ["{dir}/allowed/a.txt", "{dir}/allowed/link/../secret"]
+shows = ["inside = Ok(\"inside\")", "through = \"denied\""]
+
+@ cases.a-link-then-dot-dot-does-not-leave-a-write-permission
+files."allowed/a.txt" = ""
+files."outside/sub/x" = ""
+links."allowed/link" = "../outside/sub"
+files."main.nib" = ```nib
+import std::prelude::Os
+
+match perform argv() {
+  Cons(through, Nil) => match perform fs_write(through, "x") {
+    Ok(u) => perform show("through", "written")
+    Err(Denied(_)) => perform show("through", "denied")
+    Err(Failed(_)) => perform show("through", "failed")
+    Err(TimedOut) => perform show("through", "timed out")
+  }
+  _ => #()
+}
+```
+permissions = ["--allow-write={dir}/allowed"]
+args = ["{dir}/allowed/link/../secret"]
+shows = ["through = \"denied\""]
+
+// A backslash before `@` is part of the path to the client, which connects
+// to 127.0.0.1: the permission for allowed.example does not cover it.
+@ cases.a-url-is-checked-as-the-client-reads-it
+files."main.nib" = ```nib
+import std::prelude::Os
+
+match http_get("http://127.0.0.1:18765\\@allowed.example/") {
+  Ok(r) => perform show("net", "sent")
+  Err(Denied(_)) => perform show("net", "denied")
+  Err(Failed(_)) => perform show("net", "failed")
+  Err(TimedOut) => perform show("net", "timed out")
+}
+```
+permissions = ["--allow-net=allowed.example"]
+shows = ["net = \"denied\""]
+
+// Resolving a name is checked as the URL `http://host/`:
+// the permission for a host covers it, and an address resolves to itself.
+@ cases.resolving-is-covered-by-the-permission-for-its-host
+files."main.nib" = ```nib
+import std::prelude::Os
+
+match perform net_resolve("127.0.0.1") {
+  Ok(Cons(a, Nil)) => perform show("resolve", a)
+  Ok(_) => perform show("resolve", "other")
+  Err(Denied(_)) => perform show("resolve", "denied")
+  Err(Failed(_)) => perform show("resolve", "failed")
+  Err(TimedOut) => perform show("resolve", "timed out")
+}
+```
+permissions = ["--allow-net=127.0.0.1"]
+shows = ["resolve = \"127.0.0.1\""]
+
+// A name the permission does not cover is denied before the system is asked,
+// and a spelling the URL parser reads as another host is too.
+@ cases.resolving-outside-the-permission-is-denied
+files."main.nib" = ```nib
+import std::prelude::Os
+
+match perform net_resolve("localhost") {
+  Ok(_) => perform show("other", "resolved")
+  Err(Denied(_)) => perform show("other", "denied")
+  Err(Failed(_)) => perform show("other", "failed")
+  Err(TimedOut) => perform show("other", "timed out")
+}
+match perform net_resolve("127.0.0.1\\@allowed.example") {
+  Ok(_) => perform show("through", "resolved")
+  Err(Denied(_)) => perform show("through", "denied")
+  Err(Failed(_)) => perform show("through", "failed")
+  Err(TimedOut) => perform show("through", "timed out")
+}
+```
+permissions = ["--allow-net=allowed.example"]
+shows = ["other = \"denied\"", "through = \"denied\""]
+
+// `net_addr` is checked for its URL as `net` is, and for its address as the URL
+// `http://address/`: under a limited permission, naming an address does not
+// reach a host the permission does not name.
+@ cases.connecting-to-an-address-outside-the-permission-is-denied
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Shared
+
+let r := Request { method: "GET", url: "http://allowed.example/", headers: Nil, body: Bytes::of_list(Nil) }
+match perform net_addr(r, "127.0.0.1") {
+  Ok(_) => perform show("v4", "sent")
+  Err(Denied(_)) => perform show("v4", "denied")
+  Err(Failed(_)) => perform show("v4", "failed")
+  Err(TimedOut) => perform show("v4", "timed out")
+}
+match perform net_addr(r, "::1") {
+  Ok(_) => perform show("v6", "sent")
+  Err(Denied(_)) => perform show("v6", "denied")
+  Err(Failed(_)) => perform show("v6", "failed")
+  Err(TimedOut) => perform show("v6", "timed out")
+}
+let other := Request { method: "GET", url: "http://other.example/", headers: Nil, body: Bytes::of_list(Nil) }
+match perform net_addr(other, "127.0.0.1") {
+  Ok(_) => perform show("url", "sent")
+  Err(Denied(_)) => perform show("url", "denied")
+  Err(Failed(_)) => perform show("url", "failed")
+  Err(TimedOut) => perform show("url", "timed out")
+}
+```
+permissions = ["--allow-net=allowed.example"]
+shows = ["v4 = \"denied\"", "v6 = \"denied\"", "url = \"denied\""]
+
+// A task asks the host under the run's permissions, as the main line does
+// (`docs/design/nib.md`「並列のプリミティブ」).
+@ cases.a-task-reads-what-the-permission-covers
+files."allowed/a.txt" = "inside"
+files."outside/secret" = "secret"
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Par
+
+fn read_in_task(path: Text): Result(Text, IoError) ! {∀ A. spawn(A), fs_read, wait} {
+  Task::join(perform spawn(() => perform fs_read(path)))
+}
+match perform argv() {
+  Cons(inside, Cons(outside, Nil)) => {
+    let both := Pair { fst: read_in_task(inside), snd: read_in_task(outside) }
+    perform show("inside", both.fst)
+    match both.snd {
+      Ok(t) => perform show("outside", t)
+      Err(Denied(_)) => perform show("outside", "denied")
+      Err(Failed(_)) => perform show("outside", "failed")
+      Err(TimedOut) => perform show("outside", "timed out")
+    }
+  }
+  _ => #()
+}
+```
+permissions = ["--allow-read={dir}/allowed"]
+args = ["{dir}/allowed/a.txt", "{dir}/outside/secret"]
+shows = ["inside = Ok(\"inside\")", "outside = \"denied\""]
+
+// What a task performs is in the row of its `spawn`, so the run is refused
+// before it starts when the permission is missing.
+@ cases.a-task-needs-the-permission-before-the-run
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Par
+
+let n := Task::join(perform spawn(() => match perform env("HOME") {
+  Ok(_) => 1
+  Err(_) => 0
+}))
+perform show("n", n)
+```
+run_error = "the program needs --allow-env to run"
+
+// A handler around the `spawn` does not answer the task: the host does.
+@ cases.a-handler-around-a-spawn-does-not-answer-the-task
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Par
+
+let r := handle {
+  Task::join(perform spawn(() => perform env("TAUTO_NO_SUCH_VARIABLE")))
+} with {
+  env(name), k => k(Ok(Some("from the handler")))
+}
+perform show("r", r)
+```
+permissions = ["--allow-env"]
+shows = ["r = Ok(None)"]
+
+// Bytes that are not UTF-8 make the round trip through a file, under the
+// same permissions as text.
+@ cases.bytes-round-trip-under-the-file-permissions
+files."allowed/keep" = ""
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Shared
+
+match perform argv() {
+  Cons(inside, Cons(outside, Nil)) => {
+    let bytes := Bytes::of_list(Cons(0, Cons(255, Cons(120, Cons(156, Nil)))))
+    perform show("write", perform fs_write_bytes(inside, bytes))
+    perform show("read", perform fs_read_bytes(inside))
+    match perform fs_read_bytes(outside) {
+      Ok(b) => perform show("outside", "read")
+      Err(Denied(_)) => perform show("outside", "denied")
+      Err(Failed(_)) => perform show("outside", "failed")
+      Err(TimedOut) => perform show("outside", "timed out")
+    }
+  }
+  _ => #()
+}
+```
+permissions = ["--allow-read={dir}/allowed", "--allow-write={dir}/allowed"]
+args = ["{dir}/allowed/bin", "{dir}/secret"]
+shows = [
+  "write = Ok(())",
+  "read = Ok(Bytes[0, 255, 120, 156])",
+  "outside = \"denied\"",
+]
+
+// A directory and its missing parents are made under the write permission;
+// making it again is fine, and outside the permission it is denied.
+@ cases.create-dir-under-the-write-permission
+files."allowed/keep" = ""
+files."main.nib" = ```nib
+import std::prelude::Os
+
+match perform argv() {
+  Cons(inside, Cons(file, Cons(outside, Nil))) => {
+    perform show("make", perform fs_create_dir(inside))
+    perform show("again", perform fs_create_dir(inside))
+    perform show("write", perform fs_write(file, "x"))
+    match perform fs_create_dir(outside) {
+      Ok(_) => perform show("outside", "made")
+      Err(Denied(_)) => perform show("outside", "denied")
+      Err(Failed(_)) => perform show("outside", "failed")
+      Err(TimedOut) => perform show("outside", "timed out")
+    }
+  }
+  _ => #()
+}
+```
+permissions = ["--allow-write={dir}/allowed"]
+args = ["{dir}/allowed/objects/ab", "{dir}/allowed/objects/ab/cd", "{dir}/secret/objects"]
+shows = [
+  "make = Ok(())",
+  "again = Ok(())",
+  "write = Ok(())",
+  "outside = \"denied\"",
+]
+
+// Byte streams (`tcp_*`): one program listens, connects to itself and
+// echoes. The connection waits in the system's backlog until the accept,
+// so one task is enough.
+@ cases.a-stream-connects-to-its-own-listener
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Shared
+
+fn bytes_text(r: Result(Bytes, IoError)): Text {
+  match r {
+    Ok(bs) => match Text::of_bytes(bs) {
+      Some(t) => t
+      None => "not UTF-8"
+    }
+    Err(e) => io_message(e)
+  }
+}
+let later := perform monotonic_clock() + 5000000000
+match perform tcp_listen("127.0.0.1:0") {
+  Ok(l) => match perform tcp_connect(l.address, Some(later)) {
+    Ok(c) => match perform tcp_accept(l, Some(later)) {
+      Ok(s) => {
+        perform show("write", perform tcp_write(c, Bytes::of_list([104, 105, 33]), None))
+        perform show("half", perform tcp_shutdown(c, ShutdownWrite))
+        perform show("two", bytes_text(perform tcp_read(s, 2, Some(later))))
+        perform show("rest", bytes_text(perform tcp_read(s, 16, Some(later))))
+        perform show("end", perform tcp_read(s, 16, Some(later)))
+        perform tcp_close(s)
+        perform tcp_close(c)
+      }
+      Err(e) => perform show("accept", io_message(e))
+    }
+    Err(e) => perform show("connect", io_message(e))
+  }
+  Err(e) => perform show("listen", io_message(e))
+}
+```
+permissions = ["--allow-net=127.0.0.1"]
+shows = ["write = Ok(())", "half = Ok(())", "two = \"hi\"", "rest = \"!\"", "end = Ok(Bytes[])"]
+backend_known_failure.vm = "unsupported: the host request Os::tcp_listen"
+
+// What a read gives may be written back: an echo.
+@ cases.a-stream-echoes-what-it-reads
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Shared
+
+match perform tcp_listen("127.0.0.1:0") {
+  Ok(l) => match perform tcp_connect(l.address, None) {
+    Ok(c) => match perform tcp_accept(l, None) {
+      Ok(s) => {
+        perform show("send", perform tcp_write(c, Bytes::of_list([1, 2, 3]), None))
+        match perform tcp_read(s, 16, None) {
+          Ok(bs) => perform show("echo", perform tcp_write(s, bs, None))
+          Err(e) => perform show("read", io_message(e))
+        }
+        perform show("back", perform tcp_read(c, 16, None))
+        perform tcp_close(s)
+        perform tcp_close(c)
+      }
+      Err(e) => perform show("accept", io_message(e))
+    }
+    Err(e) => perform show("connect", io_message(e))
+  }
+  Err(e) => perform show("listen", io_message(e))
+}
+```
+permissions = ["--allow-net=127.0.0.1"]
+shows = ["send = Ok(())", "echo = Ok(())", "back = Ok(Bytes[1, 2, 3])"]
+backend_known_failure.vm = "unsupported: the host request Os::tcp_listen"
+
+// A deadline that passes is `Err(TimedOut)`: an accept no one connects to,
+// and a read from a peer that sends nothing.
+@ cases.a-stream-request-past-its-deadline-times-out
+files."main.nib" = ```nib
+import std::prelude::Os
+
+match perform tcp_listen("127.0.0.1:0") {
+  Ok(l) => {
+    let soon := perform monotonic_clock() + 30000000
+    perform show("accept", perform tcp_accept(l, Some(soon)))
+    match perform tcp_connect(l.address, None) {
+      Ok(c) => {
+        let soon := perform monotonic_clock() + 30000000
+        perform show("read", perform tcp_read(c, 8, Some(soon)))
+        perform tcp_close(c)
+      }
+      Err(e) => perform show("connect", io_message(e))
+    }
+    perform tcp_unlisten(l)
+  }
+  Err(e) => perform show("listen", io_message(e))
+}
+```
+permissions = ["--allow-net=127.0.0.1"]
+shows = ["accept = Err(TimedOut)", "read = Err(TimedOut)"]
+backend_known_failure.vm = "unsupported: the host request Os::tcp_listen"
+
+// A deadline already passed still takes bytes that have already arrived,
+// without waiting: a program can check a connection it is not waiting on.
+// The first read waits so the bytes are known to be there; the second takes
+// the rest past its deadline, and only a third, with nothing left, times out.
+@ cases.a-stream-read-past-its-deadline-takes-what-arrived
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Shared
+
+fn bytes_text(r: Result(Bytes, IoError)): Text {
+  match r {
+    Ok(bs) => match Text::of_bytes(bs) {
+      Some(t) => t
+      None => "not UTF-8"
+    }
+    Err(e) => io_message(e)
+  }
+}
+let later := perform monotonic_clock() + 5000000000
+match perform tcp_listen("127.0.0.1:0") {
+  Ok(l) => match perform tcp_connect(l.address, Some(later)) {
+    Ok(c) => match perform tcp_accept(l, Some(later)) {
+      Ok(s) => {
+        perform show("write", perform tcp_write(c, Bytes::of_list([104, 105, 33]), None))
+        perform show("first", bytes_text(perform tcp_read(s, 1, Some(later))))
+        perform show("rest", bytes_text(perform tcp_read(s, 16, Some(perform monotonic_clock()))))
+        perform show("none", perform tcp_read(s, 16, Some(perform monotonic_clock())))
+        perform tcp_close(s)
+        perform tcp_close(c)
+      }
+      Err(e) => perform show("accept", io_message(e))
+    }
+    Err(e) => perform show("connect", io_message(e))
+  }
+  Err(e) => perform show("listen", io_message(e))
+}
+```
+permissions = ["--allow-net=127.0.0.1"]
+shows = ["write = Ok(())", "first = \"h\"", "rest = \"i!\"", "none = Err(TimedOut)"]
+backend_known_failure.vm = "unsupported: the host request Os::tcp_listen"
+
+// `--allow-net=HOST:PORT` covers that port only; a connection is checked
+// as a listener is.
+@ cases.a-stream-outside-the-permission-is-denied
+files."main.nib" = ```nib
+import std::prelude::Os
+
+perform show("listen", match perform tcp_listen("127.0.0.1:0") {
+  Ok(l) => "listening"
+  Err(Denied(_)) => "denied"
+  Err(Failed(_)) => "failed"
+  Err(TimedOut) => "timed out"
+})
+perform show("connect", match perform tcp_connect("other.test:80", None) {
+  Ok(c) => "connected"
+  Err(Denied(_)) => "denied"
+  Err(Failed(_)) => "failed"
+  Err(TimedOut) => "timed out"
+})
+```
+permissions = ["--allow-net=127.0.0.1:1"]
+shows = ["listen = \"denied\"", "connect = \"denied\""]
+
+// A Unix domain socket is `unix:PATH`, covered by `--allow-net=unix:DIR`
+// for the sockets under DIR.
+@ cases.a-unix-socket-is-covered-by-its-directory
+files."sock/.keep" = ""
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Shared
+
+match perform argv() {
+  Cons(inside, Cons(outside, Nil)) => {
+    perform show("outside", match perform tcp_listen(outside) {
+      Ok(l) => "listening"
+      Err(Denied(_)) => "denied"
+      Err(Failed(_)) => "failed"
+      Err(TimedOut) => "timed out"
+    })
+    match perform tcp_listen(inside) {
+      Ok(l) => match perform tcp_connect(inside, None) {
+        Ok(c) => match perform tcp_accept(l, None) {
+          Ok(s) => {
+            perform show("write", perform tcp_write(c, Bytes::of_list([7, 8]), None))
+            perform show("read", perform tcp_read(s, 8, None))
+            perform tcp_close(s)
+            perform tcp_close(c)
+            perform tcp_unlisten(l)
+          }
+          Err(e) => perform show("accept", io_message(e))
+        }
+        Err(e) => perform show("connect", io_message(e))
+      }
+      Err(e) => perform show("listen", io_message(e))
+    }
+  }
+  _ => #()
+}
+```
+permissions = ["--allow-net=unix:{dir}/sock"]
+args = ["unix:{dir}/sock/a.sock", "unix:{dir}/b.sock"]
+shows = ["outside = \"denied\"", "write = Ok(())", "read = Ok(Bytes[7, 8])"]
+backend_known_failure.vm = "unsupported: the host request Os::tcp_listen"
+
+// `fs_list_dir` gives the names in byte order; `fs_remove` takes a
+// directory with all it holds, under `--allow-write`.
+@ cases.a-directory-is-listed-and-removed
+files."d/b.txt" = ""
+files."d/a.txt" = ""
+files."d/sub/c.txt" = ""
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Shared
+
+match perform argv() {
+  Cons(d, Nil) => {
+    // The case runs twice in the same directory: put `sub` back first.
+    let _ := perform fs_create_dir(concat(d, "/sub"))
+    let _ := perform fs_write(concat(d, "/sub/c.txt"), "")
+    perform show("listed", perform fs_list_dir(d))
+    perform show("removed", perform fs_remove(concat(d, "/sub")))
+    perform show("after", perform fs_list_dir(d))
+  }
+  _ => #()
+}
+```
+permissions = ["--allow-read={dir}", "--allow-write={dir}"]
+args = ["{dir}/d"]
+shows = [
+  "listed = Ok(Cons(\"a.txt\", Cons(\"b.txt\", Cons(\"sub\", Nil))))",
+  "removed = Ok(())",
+  "after = Ok(Cons(\"a.txt\", Cons(\"b.txt\", Nil)))",
+]
+
+// `fs_stat` tells a file from a directory and what is not there, `fs_rename`
+// and `fs_copy` need `--allow-write` for the path they write, and
+// `fs_canonicalize` gives the path the host will use.
+@ cases.a-path-is-statted-renamed-and-copied
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Shared
+fn kind(r: Result(Option(FileStat), IoError)): Text {
+  match r {
+    Ok(None) => "absent"
+    Ok(Some(s)) => match s.kind {
+      IsFile => concat("file ", Text::of_u64(s.size))
+      IsDir => "dir"
+      IsOther => "other"
+    }
+    Err(_) => "failed"
+  }
+}
+match perform argv() {
+  Cons(d, Nil) => {
+    let a := concat(d, "/a.txt")
+    let b := concat(d, "/b.txt")
+    let _ := perform fs_create_dir(d)
+    let _ := perform fs_write(a, "abc")
+    let _ := perform fs_remove(b)
+    perform show("a", kind(perform fs_stat(a)))
+    perform show("dir", kind(perform fs_stat(d)))
+    perform show("none", kind(perform fs_stat(b)))
+    perform show("copy", perform fs_copy(a, b))
+    perform show("b", kind(perform fs_stat(b)))
+    perform show("rename", perform fs_rename(b, concat(d, "/c.txt")))
+    perform show("b after", kind(perform fs_stat(b)))
+    perform show("c", kind(perform fs_stat(concat(d, "/c.txt"))))
+    perform show("canonical", match perform fs_canonicalize(concat(d, "/./a.txt")) {
+      Ok(p) => match perform fs_canonicalize(a) {
+        Ok(q) => p == q
+        Err(_) => false
+      }
+      Err(_) => false
+    })
+    let _ := perform fs_remove(concat(d, "/c.txt"))
+  }
+  _ => #()
+}
+```
+permissions = ["--allow-read={dir}", "--allow-write={dir}"]
+args = ["{dir}/d"]
+shows = ["a = \"file 3\"", "dir = \"dir\"", "none = \"absent\"", "copy = Ok(())", "b = \"file 3\"", "rename = Ok(())", "b after = \"absent\"", "c = \"file 3\"", "canonical = true"]
+
+// `fs_read_link` reads a link as it is and `fs_write_new` makes a file only where nothing is:
+// not over a file, not over a link (even one that points at nothing), and never through one.
+// The permission covers the place of the entry, so a link that points out of the granted
+// directory can be read, and a file cannot be made through it.
+@ cases.a-link-is-read-and-a-new-file-never-goes-through-it
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Shared
+fn target(r: Result(Option(Text), IoError)): Text {
+  match r {
+    Ok(None) => "none"
+    Ok(Some(t)) => t
+    Err(Denied(_)) => "denied"
+    Err(_) => "failed"
+  }
+}
+fn done(r: Result(Unit, IoError)): Text {
+  match r {
+    Ok(_) => "made"
+    Err(Denied(_)) => "denied"
+    Err(_) => "failed"
+  }
+}
+match perform argv() {
+  Cons(d, Nil) => {
+    let _ := perform fs_create_dir(d)
+    let a := concat(d, "/a.txt")
+    let l := concat(d, "/l")
+    let dangling := concat(d, "/dangling")
+    let _ := perform fs_remove(a)
+    let _ := perform fs_remove(l)
+    let _ := perform fs_remove(dangling)
+    let _ := perform fs_write(a, "abc")
+    let ln := Process { program: "ln", args: ["-s", "a.txt", l], dir: "", env: [], stdin: Bytes::of_text("") }
+    let ln2 := Process { program: "ln", args: ["-s", "nowhere", dangling], dir: "", env: [], stdin: Bytes::of_text("") }
+    let _ := perform proc_run(ln)
+    let _ := perform proc_run(ln2)
+    perform show("link", target(perform fs_read_link(l)))
+    perform show("dangling", target(perform fs_read_link(dangling)))
+    perform show("file", target(perform fs_read_link(a)))
+    perform show("absent", target(perform fs_read_link(concat(d, "/absent"))))
+    perform show("over file", done(perform fs_write_new(a, "x")))
+    perform show("over link", done(perform fs_write_new(l, "x")))
+    perform show("over dangling", done(perform fs_write_new(dangling, "x")))
+    perform show("a kept", perform fs_read(a))
+    perform show("dangling kept", target(perform fs_read_link(dangling)))
+    perform show("fresh", done(perform fs_write_new(concat(d, "/fresh.txt"), "new")))
+    perform show("fresh read", perform fs_read(concat(d, "/fresh.txt")))
+    perform show("outside", done(perform fs_write_new("/tmp/outside-the-grant.txt", "x")))
+    perform show("not an entry", done(perform fs_write_new(concat(d, "/.."), "x")))
+    let _ := perform fs_remove(concat(d, "/fresh.txt"))
+  }
+  _ => #()
+}
+```
+permissions = ["--allow-read={dir}", "--allow-write={dir}", "--allow-run=ln"]
+args = ["{dir}/d"]
+shows = [
+  "link = \"a.txt\"",
+  "dangling = \"nowhere\"",
+  "file = \"none\"",
+  "absent = \"none\"",
+  "over file = \"failed\"",
+  "over link = \"failed\"",
+  "over dangling = \"failed\"",
+  "a kept = Ok(\"abc\")",
+  "dangling kept = \"nowhere\"",
+  "fresh = \"made\"",
+  "fresh read = Ok(\"new\")",
+  "outside = \"denied\"",
+  "not an entry = \"denied\"",
+]
+backend_known_failure.vm = "unsupported: the host request Os::run"
+
+// `fs_read_under` reads a file under a root and nothing outside it: a path
+// with `..`, an absolute one or a directory fails, and the permission is
+// checked on the root.
+@ cases.a-file-is-read-under-its-root
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Shared
+fn got(r: Result(Text, IoError)): Text {
+  match r {
+    Ok(t) => t
+    Err(Denied(_)) => "denied"
+    Err(_) => "failed"
+  }
+}
+match perform argv() {
+  Cons(d, Nil) => {
+    let _ := perform fs_create_dir(concat(d, "/root/sub"))
+    let _ := perform fs_write(concat(d, "/root/sub/a.txt"), "abc")
+    let _ := perform fs_write(concat(d, "/out.txt"), "out")
+    let root := concat(d, "/root")
+    perform show("inside", got(perform fs_read_under(root, "sub/a.txt")))
+    perform show("bytes", match perform fs_read_bytes_under(root, "sub/a.txt") {
+      Ok(b) => Bytes::len(b)
+      Err(_) => 0
+    })
+    perform show("parent", got(perform fs_read_under(root, "../out.txt")))
+    perform show("dot", got(perform fs_read_under(root, "./sub/a.txt")))
+    perform show("absolute", got(perform fs_read_under(root, concat(d, "/out.txt"))))
+    perform show("dir", got(perform fs_read_under(root, "sub")))
+    perform show("absent", got(perform fs_read_under(root, "sub/b.txt")))
+    perform show("denied", got(perform fs_read_under("/", "etc/hostname")))
+    let _ := perform fs_remove(d)
+  }
+  _ => #()
+}
+```
+permissions = ["--allow-read={dir}", "--allow-write={dir}"]
+args = ["{dir}/d"]
+shows = ["inside = \"abc\"", "bytes = 3", "parent = \"failed\"", "dot = \"failed\"", "absolute = \"failed\"", "dir = \"failed\"", "absent = \"failed\"", "denied = \"denied\""]
+
+// The host picked the temporary directory, so the run reads and writes
+// under it though no flag names it; elsewhere the flags still hold.
+@ cases.a-temporary-directory-is-the-runs-to-write
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Shared
+
+match perform fs_temp_dir() {
+  Ok(d) => {
+    let f := concat(d, "/x.txt")
+    perform show("written", perform fs_write(f, "x"))
+    perform show("read", perform fs_read(f))
+    perform show("removed", perform fs_remove(d))
+  }
+  Err(_) => perform show("made", "failed")
+}
+match perform fs_write("elsewhere.txt", "x") {
+  Ok(_) => perform show("elsewhere", "written")
+  Err(Denied(_)) => perform show("elsewhere", "denied")
+  Err(_) => perform show("elsewhere", "failed")
+}
+```
+permissions = ["--allow-read={dir}/none", "--allow-write={dir}/none"]
+shows = [
+  "written = Ok(())",
+  "read = Ok(\"x\")",
+  "removed = Ok(())",
+  "elsewhere = \"denied\"",
+]
+
+// `--allow-run=NAME` covers the program spelled so, and no other; the
+// program gets its arguments, variables and input, and its status and
+// output come back.
+@ cases.a-run-permission-names-the-program
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Shared
+
+let p := Process {
+  program: "sh",
+  args: ["-c", "cat; printf \"$X\" >&2; exit 3"],
+  dir: "",
+  env: [Pair { fst: "X", snd: "set" }],
+  stdin: Bytes::of_text("in")
+}
+match perform proc_run(p) {
+  Ok(o) => {
+    perform show("status", o.status)
+    perform show("stdout", Text::of_bytes(o.stdout))
+    perform show("stderr", o.stderr)
+  }
+  Err(_) => perform show("sh", "failed")
+}
+match perform proc_run(Process { program: "env", args: [], dir: "", env: [], stdin: Bytes::of_text("") }) {
+  Ok(_) => perform show("env", "ran")
+  Err(Denied(_)) => perform show("env", "denied")
+  Err(_) => perform show("env", "failed")
+}
+```
+permissions = ["--allow-run=sh"]
+shows = [
+  "status = Some(3)",
+  "stdout = Some(\"in\")",
+  "stderr = \"set\"",
+  "env = \"denied\"",
+]
+backend_known_failure.vm = "unsupported: the host request Os::run"
+
+// `proc_spawn` starts a program and goes on while it runs: input is written
+// as it goes, output read in pieces, and the end waited for; a program
+// that is not covered is denied, and `proc_close` ends one that still runs.
+@ cases.a-spawned-program-is-written-read-and-waited-for
+files."main.nib" = ```nib
+import std::prelude::Os
+import std::prelude::Shared
+fn text(r: Result(Bytes, IoError)): Text {
+  match r {
+    Ok(b) => match Text::of_bytes(b) {
+      Some(t) => t
+      None => "?"
+    }
+    Err(TimedOut) => "timed out"
+    Err(_) => "failed"
+  }
+}
+let p := Process {
+  program: "sh",
+  args: ["-c", "read x; printf \"got $x\"; printf err >&2; exit 3"],
+  dir: "",
+  env: [],
+  stdin: Bytes::of_text("")
+}
+match perform proc_spawn(p, ProcessIo { stdin: StdioPiped, stdout: StdioPiped, stderr: StdioPiped }) {
+  Ok(c) => {
+    perform show("write", perform proc_write(c, Bytes::of_text("hi\n")))
+    perform show("out", text(perform proc_read(c, ChildStdout, 100, None)))
+    perform show("err", text(perform proc_read(c, ChildStderr, 100, None)))
+    perform show("end", Bytes::len(match perform proc_read(c, ChildStdout, 100, None) { Ok(b) => b, Err(_) => Bytes::of_text("x") }))
+    perform show("status", perform proc_wait(c, None))
+    perform proc_close(c)
+  }
+  Err(_) => perform show("spawn", "failed")
+}
+let sleeper := Process { program: "sh", args: ["-c", "sleep 30"], dir: "", env: [], stdin: Bytes::of_text("") }
+match perform proc_spawn(sleeper, ProcessIo { stdin: StdioPiped, stdout: StdioPiped, stderr: StdioPiped }) {
+  Ok(c) => {
+    perform show("early", perform proc_wait(c, Some(perform monotonic_clock())))
+    perform proc_close(c)
+  }
+  Err(_) => perform show("sleeper", "failed")
+}
+match perform proc_spawn(Process { program: "env", args: [], dir: "", env: [], stdin: Bytes::of_text("") }, ProcessIo { stdin: StdioPiped, stdout: StdioPiped, stderr: StdioPiped }) {
+  Ok(_) => perform show("env", "ran")
+  Err(Denied(_)) => perform show("env", "denied")
+  Err(_) => perform show("env", "failed")
+}
+```
+permissions = ["--allow-run=sh"]
+shows = [
+  "write = Ok(())",
+  "out = \"got hi\"",
+  "err = \"err\"",
+  "end = 0",
+  "status = Ok(Some(3))",
+  "early = Err(TimedOut)",
+  "env = \"denied\"",
+]
+backend_known_failure.vm = "unsupported: the host request Os::child_spawn"
+
+// A program asks the host's permission check itself: covered, the target
+// as the host will use it; not covered, `None`. Asking needs no flag.
+@ cases.a-program-asks-the-permission-check
+files."allowed/a.txt" = "inside"
+files."main.nib" = ```nib
+import std::prelude::Os
+
+match perform argv() {
+  Cons(inside, Cons(outside, Nil)) => {
+    perform show("inside", match perform permission("read", inside) {
+      Some(_) => "covered"
+      None => "not covered"
+    })
+    perform show("outside", perform permission("read", outside))
+    perform show("env", perform permission("env", "HOME"))
+  }
+  _ => #()
+}
+```
+permissions = ["--allow-read={dir}/allowed"]
+args = ["{dir}/allowed/a.txt", "{dir}/outside/secret"]
+shows = [
+  "inside = \"covered\"",
+  "outside = None",
+  "env = None",
+]
+
+// What a task in a function that is never called performs is not asked of the run: a task's
+// effects are in the row of its `spawn`, and reach the run only through calls.
+@ cases.a-task-in-an-uncalled-function-asks-no-permission
+backends = ["javascript"]
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::prelude::Os
+import std::prelude::Par
+fn unused(): Unit ! {∀ T. spawn(T), net_resolve} {
+  Task::detach(perform spawn(() => perform net_resolve("localhost")))
+}
+print("ok")
+```
+stdout = "ok"

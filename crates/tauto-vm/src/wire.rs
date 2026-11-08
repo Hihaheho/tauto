@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Write;
+use tauto_nir::Name;
 
 use tauto_nir::cps::{self, Cps, CpsPat, PathStep, Prim, Unary};
 use tauto_nir::{Arith, Cmp, Package, Quant, Width};
@@ -23,8 +24,9 @@ struct Ctor {
 #[derive(Default)]
 pub(crate) struct Writer {
     ctors: Vec<Ctor>,
-    ids: HashMap<(String, String), u32>,
+    ids: HashMap<(Name, Name), u32>,
     pub(crate) out: String,
+    operation_symbols: HashMap<Name, String>,
     /// Each runtime syntax parser of the package (`syn_parse`), as the machine reads it.
     parsers: Vec<(String, String, tauto_nir::Ty, String)>,
 }
@@ -38,13 +40,48 @@ pub fn write(pkg: &Package) -> Rs<String> {
     };
     let mut w = Writer::default();
     // The prelude's data types first, in the order the machine has them.
-    w.ctor("Option", "Some", &[None], false);
-    w.ctor("Option", "None", &[], false);
-    w.ctor("Result", "Ok", &[None], false);
-    w.ctor("Result", "Err", &[None], false);
-    w.ctor("Pair", "Pair", &[Some("fst"), Some("snd")], true);
-    w.ctor("List", "Cons", &[None, None], false);
-    w.ctor("List", "Nil", &[], false);
+    w.ctor(
+        &tauto_nir::library_name("Option"),
+        &tauto_nir::library_name("Some"),
+        &[None],
+        false,
+    );
+    w.ctor(
+        &tauto_nir::library_name("Option"),
+        &tauto_nir::library_name("None"),
+        &[],
+        false,
+    );
+    w.ctor(
+        &tauto_nir::library_name("Result"),
+        &tauto_nir::library_name("Ok"),
+        &[None],
+        false,
+    );
+    w.ctor(
+        &tauto_nir::library_name("Result"),
+        &tauto_nir::library_name("Err"),
+        &[None],
+        false,
+    );
+    w.ctor(
+        &tauto_nir::library_name("Pair"),
+        &tauto_nir::library_name("Pair"),
+        &[Some("fst"), Some("snd")],
+        true,
+    );
+    w.ctor(
+        &tauto_nir::library_name("List"),
+        &tauto_nir::library_name("Cons"),
+        &[None, None],
+        false,
+    );
+    w.ctor(
+        &tauto_nir::library_name("List"),
+        &tauto_nir::library_name("Nil"),
+        &[],
+        false,
+    );
     for d in &pkg.datas {
         for c in &d.ctors {
             let names: Vec<Option<&str>> = c.fields.iter().map(|f| f.name.as_deref()).collect();
@@ -70,11 +107,8 @@ pub fn write(pkg: &Package) -> Rs<String> {
     let mut out = std::mem::take(&mut w.out);
     write!(out, " {}", w.ctors.len()).unwrap();
     for c in &w.ctors {
-        // Shown by the name written, not by its full name `m.T.C`.
-        let tag = c.tag.rsplit('.').next().unwrap_or(&c.tag);
-        let tag = tag.strip_prefix(':').unwrap_or(tag);
         let named = (c.is_struct || !c.names.is_empty()) && c.names.iter().all(Option::is_some);
-        text_out(&mut out, tag);
+        text_out(&mut out, &c.tag);
         write!(out, " {} {}", u8::from(named), c.names.len()).unwrap();
         for n in &c.names {
             text_out(&mut out, n.as_deref().unwrap_or(""));
@@ -110,14 +144,31 @@ fn text_out(out: &mut String, t: &str) {
 }
 
 impl Writer {
+    fn operation(&mut self, operation: &Name) {
+        let symbol = match operation {
+            Name::Spelled(spelling) => spelling.clone(),
+            Name::Global(reference) if tauto_nir::is_library(&operation, operation.as_str()) => {
+                reference.display().to_string()
+            }
+            _ => {
+                let next = self.operation_symbols.len();
+                self.operation_symbols
+                    .entry(operation.clone())
+                    .or_insert_with(|| format!("tauto_operation_{next}"))
+                    .clone()
+            }
+        };
+        self.text(&symbol);
+    }
+
     pub(crate) fn ctor(
         &mut self,
-        owner: &str,
-        tag: &str,
+        owner: &Name,
+        tag: &Name,
         names: &[Option<&str>],
         is_struct: bool,
     ) -> u32 {
-        let key = (owner.to_string(), tag.to_string());
+        let key = (owner.clone(), tag.clone());
         if let Some(&id) = self.ids.get(&key) {
             // A constructor matched before it was made has its names now.
             let c = &mut self.ctors[id as usize];
@@ -129,7 +180,11 @@ impl Writer {
         }
         let id = self.ctors.len() as u32;
         self.ctors.push(Ctor {
-            tag: tag.to_string(),
+            tag: if is_struct {
+                tauto_nir::display_name(owner).to_string()
+            } else {
+                tag.rsplit("::").next().unwrap_or(tag).to_string()
+            },
             names: names.iter().map(|n| n.map(String::from)).collect(),
             is_struct,
         });
@@ -137,8 +192,8 @@ impl Writer {
         id
     }
 
-    fn ctor_id(&mut self, owner: &str, tag: &str) -> u32 {
-        let key = (owner.to_string(), tag.to_string());
+    fn ctor_id(&mut self, owner: &Name, tag: &Name) -> u32 {
+        let key = (owner.clone(), tag.clone());
         match self.ids.get(&key) {
             Some(&id) => id,
             None => self.ctor(owner, tag, &[], false),
@@ -166,6 +221,10 @@ impl Writer {
 
     fn value(&mut self, v: &cps::Value) {
         match v {
+            cps::Value::Declaration(slot) => {
+                self.num(6);
+                self.num(slot);
+            }
             cps::Value::Unit => self.num(0),
             cps::Value::Int(n) => {
                 self.num(1);
@@ -228,7 +287,6 @@ impl Writer {
                     self.pat(f)?;
                 }
             }
-            CpsPat::Product(_) => return Err("a pattern of a product".into()),
         }
         Ok(())
     }
@@ -279,6 +337,7 @@ impl Writer {
                 order,
                 is_struct,
                 data,
+                ..
             } => {
                 let names: Vec<Option<&str>> = order.iter().map(|i| names[*i].as_deref()).collect();
                 let id = self.ctor(data, ctor, &names, *is_struct);
@@ -287,17 +346,6 @@ impl Writer {
                 self.num(order.len());
                 for i in order {
                     self.num(i);
-                }
-            }
-            Prim::Product { picks } => {
-                self.num(5);
-                self.num(picks.len());
-                for (i, j) in picks {
-                    self.num(i);
-                    self.yn(j.is_some());
-                    if let Some(j) = j {
-                        self.num(j);
-                    }
                 }
             }
             Prim::Concat => self.num(6),
@@ -328,10 +376,6 @@ impl Writer {
     fn unary(&mut self, op: &Unary) {
         match op {
             Unary::Not => self.num(0),
-            Unary::Member(i) => {
-                self.num(1);
-                self.num(i);
-            }
             Unary::Field { name, index } => {
                 self.num(2);
                 match index {
@@ -495,7 +539,7 @@ impl Writer {
             }
             Cps::Perform { op, quant, args } => {
                 self.num(15);
-                self.text(op);
+                self.operation(op);
                 self.num(match quant {
                     Quant::Zero => 0,
                     Quant::AtMostOne | Quant::One => 1,
@@ -512,7 +556,7 @@ impl Writer {
                     if a.guard != Cps::Pure(cps::Value::Bool(true)) {
                         return Err("a guard on a handler's arm".into());
                     }
-                    self.text(&a.op);
+                    self.operation(&a.op);
                     self.num(a.pats.len());
                     for p in &a.pats {
                         self.pat(p)?;
@@ -582,6 +626,8 @@ pub fn machine_args(
         shows.unwrap_or(program).display()
     ));
     out.push("--allow-env=TAUTO_VM_NO_SUCH_VARIABLE".into());
+    out.push("--allow-net=tauto-vm-no-such-host.invalid".into());
+    out.push("--allow-run=tauto-vm-no-such-program".into());
     out.push("--".into());
     out.push(program.display().to_string());
     out.push(steps.map_or("-".into(), |s| s.to_string()));
@@ -594,7 +640,7 @@ fn locals(e: &Cps, used: &mut Vec<u32>, bound: &mut Vec<u32>) {
     fn pat(p: &CpsPat, bound: &mut Vec<u32>) {
         match p {
             CpsPat::Bind { id, .. } => bound.push(*id),
-            CpsPat::Ctor { fields, .. } | CpsPat::Product(fields) => {
+            CpsPat::Ctor { fields, .. } => {
                 fields.iter().for_each(|f| pat(f, bound))
             }
             CpsPat::Wild | CpsPat::Literal(_) => {}

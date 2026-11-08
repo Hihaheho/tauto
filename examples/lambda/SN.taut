@@ -13,13 +13,13 @@ pub theorem sn_induction(
   t: Tm,
   h: SN(t)
 ): P(t) {
-  match h: P(t) {
+  ⊢ P(t) from match h {
     SnIntro(t0, k) => step(t0, k, u => s => sn_induction(P, step, u, k(u, s)))
   }
 }
 
 pub theorem sn_step<t: Tm, u: Tm>(h: SN(t), s: lc!(`$t ~> $u`)): SN(u) {
-  match h: SN(u) {
+  ⊢ SN(u) from match h {
     SnIntro(t0, k) => k(u, s)
   }
 }
@@ -27,8 +27,8 @@ pub theorem sn_step<t: Tm, u: Tm>(h: SN(t), s: lc!(`$t ~> $u`)): SN(u) {
 pub theorem step_subst<t: Tm, u: Tm>(
   s: lc!(`$t ~> $u`),
   sigma: (Nat) -> Tm
-): lc!(`${subst(t, sigma)} ~> ${subst(u, sigma)}`) {
-  match s: Step(subst(t, sigma), subst(u, sigma)) {
+): lc!(`$subst(t, sigma) ~> $subst(u, sigma)`) {
+  ⊢ Step(subst(t, sigma), subst(u, sigma)) from match s {
     SBeta(A, b, a) => Eq::subst(
       x => Step(App(Lam(A, subst(b, up(sigma))), subst(a, sigma)), x),
       Eq::sym(subst_single_subst(b, a, sigma)),
@@ -65,7 +65,7 @@ pub theorem sn_of_subst(t: Tm, sigma: (Nat) -> Tm, h: SN(subst(t, sigma))): SN(t
 }
 
 pub theorem no_step_star<u: Tm>(s: Step(Tstar, u)): False {
-  match s: False {
+  ⊢ False from match s {
   }
 }
 
@@ -103,12 +103,12 @@ pub(open) inductive Neutral: (Tm) -> Prop {
 }
 
 pub theorem neutral_lam<A: Ty, b: Tm>(n: Neutral(Lam(A, b))): False {
-  match n: False {
+  ⊢ False from match n {
   }
 }
 
 pub theorem no_step_var<i: Nat, u: Tm>(s: Step(Tvar(i), u)): False {
-  match s: False {
+  ⊢ False from match s {
   }
 }
 
@@ -117,7 +117,7 @@ pub def RedArr(P: (Tm) -> Prop, Q: (Tm) -> Prop, t: Tm): Prop := ∀ w: Tm. (P(w
 // Reducibility candidates: strong normalization at the base type, and
 // preservation of reducibility by application at an arrow.
 pub fn Red(A: Ty, t: Tm): Prop {
-  match A: Prop {
+  ⊢ Prop from match A {
     Tunit => SN(t)
     Arr(A1, B1) => RedArr(w => Red(A1, w), w => Red(B1, w), t)
   }
@@ -143,7 +143,7 @@ pub(open) inductive InvStepApp(t: Tm, x: Tm, v: Tm): Prop {
 }
 
 pub theorem invert_step_app<t: Tm, x: Tm, v: Tm>(s: Step(App(t, x), v)): InvStepApp(t, x, v) {
-  match s: InvStepApp(t, x, v) {
+  ⊢ InvStepApp(t, x, v) from match s {
     SBeta(A0, b, a) => IsaBeta(Refl, Refl)
     SAppL(f, f2, a, h) => IsaL(h, Refl)
     SAppR(f, a, a2, h) => IsaR(h, Refl)
@@ -168,7 +168,7 @@ pub theorem neutral_app_reduct(
   v: Tm,
   s: Step(App(t, x), v)
 ): Red(B, v) {
-  match invert_step_app(s): Red(B, v) {
+  ⊢ Red(B, v) from match invert_step_app(s) {
     IsaBeta(A0, b, e, ev) => False::elim(neutral_lam(Eq::subst(Neutral, e, n)))
     IsaL(f2, s2, ev) => Eq::subst(y => Red(B, y), Eq::sym(ev), k(f2, s2)(x, hx))
     IsaR(x2, s2, ev) => Eq::subst(
@@ -223,7 +223,7 @@ pub theorem cr_arr(A1: Ty, B1: Ty, ca: CrAll(A1), cb: CrAll(B1)): CrAll(Arr(A1, 
 }
 
 pub theorem cr(A: Ty): CrAll(A) {
-  match A: CrAll(A) {
+  ⊢ CrAll(A) from match A {
     Tunit => AndIntro(
       t => h => h,
       AndIntro(t => u => h => s => sn_step(h, s), t => n => k => SnIntro(k))
@@ -241,13 +241,13 @@ pub(open) inductive InvStepLam(A: Ty, b: Tm, f2: Tm): Prop {
 }
 
 pub theorem invert_step_lam<A: Ty, b: Tm, f2: Tm>(s: Step(Lam(A, b), f2)): InvStepLam(A, b, f2) {
-  match s: InvStepLam(A, b, f2) {
+  ⊢ InvStepLam(A, b, f2) from match s {
     SLam(A0, b0, b2, h) => Isl(h, Refl)
   }
 }
 
 pub fn lam_ty(t: Tm): Ty {
-  match t: Ty {
+  ⊢ Ty from match t {
     Tvar(i) => Tunit
     Lam(A, b) => A
     App(f, a) => Tunit
@@ -256,7 +256,7 @@ pub fn lam_ty(t: Tm): Ty {
 }
 
 pub fn lam_body(t: Tm): Tm {
-  match t: Tm {
+  ⊢ Tm from match t {
     Tvar(i) => t
     Lam(A, b) => b
     App(f, a) => t
@@ -294,13 +294,13 @@ pub theorem beta_step(
   v: Tm,
   s: Step(App(Lam(A, b), w), v)
 ): Red(B, v) {
-  match invert_step_app(s): Red(B, v) {
+  ⊢ Red(B, v) from match invert_step_app(s) {
     IsaBeta(A0, b0, e, ev) => Eq::subst(
       y => Red(B, y),
       Eq::sym(ev),
       Eq::subst(y => Red(B, subst(y, single(w))), Eq::congr(lam_body, e), hyp(w, hw))
     )
-    IsaL(f2, s2, ev) => match invert_step_lam(s2): Red(B, v) {
+    IsaL(f2, s2, ev) => ⊢ Red(B, v) from match invert_step_lam(s2) {
       Isl(b2, s3, e2) => Eq::subst(
         y => Red(B, y),
         Eq::sym(ev),
@@ -380,10 +380,10 @@ pub theorem redsub_extend_at(
   rs: RedSub(sigma, G),
   i: Nat,
   C: Ty,
-  h: Has(Cons(Ty, A, G), i, C)
+  h: Has(Cons(<A: Ty>, A, G), i, C)
 ): Red(C, extend(w, sigma, i)) {
-  match i: Red(C, extend(w, sigma, i)) {
-    Zero => match h: Red(C, w) {
+  ⊢ Red(C, extend(w, sigma, i)) from match i {
+    Zero => ⊢ Red(C, w) from match h {
       HasHere(g, a) => rw
     }
     Succ(m) => rs(m, C, has_pred(h))
@@ -396,7 +396,7 @@ pub theorem lam_red(
   b: Tm,
   sigma: (Nat) -> Tm,
   G: List(Ty),
-  ihb: ∀ tau: (Nat) -> Tm. (RedSub(tau, Cons(Ty, A, G))) -> Red(B, subst(b, tau)),
+  ihb: ∀ tau: (Nat) -> Tm. (RedSub(tau, Cons(<A: Ty>, A, G))) -> Red(B, subst(b, tau)),
   rs: RedSub(sigma, G)
 ): Red(Arr(A, B), Lam(A, subst(b, up(sigma)))) {
   w => hw => red_beta(
@@ -440,7 +440,7 @@ pub theorem fundamental<G: List(
   sigma: (Nat) -> Tm,
   rs: RedSub(sigma, G)
 ): Red(A, subst(t, sigma)) {
-  match h: Red(A, subst(t, sigma)) {
+  ⊢ Red(A, subst(t, sigma)) from match h {
     TVar(G1, i, A1, hv) => rs(i, A1, hv)
     TLam(G1, A1, B1, b, hb) => lam_red(
       A1,

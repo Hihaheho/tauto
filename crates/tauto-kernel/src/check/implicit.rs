@@ -11,6 +11,7 @@
 
 use super::classes::{call, head_name, is_dict};
 use super::{Ctx, Diagnostic, Kernel, T, describe, err, expand_numeral, lam, occurs, pi};
+use crate::surface::Name;
 use crate::surface::TermKind;
 use tauto_message::{Message, msg};
 use tauto_parol::Span;
@@ -68,7 +69,7 @@ impl Kernel {
             let inner_ty = inner_e.as_ref().ok().and_then(|i| self.infer(ctx, i).ok());
             match (inner_e, inner_ty) {
                 (Ok(inner_e), Some(ty)) if super::sort_of(&self.whnf(ctx, &ty)).is_none() => {
-                    let mk = T::new(TermKind::Var(format!("{f}::Mk")), t.span);
+                    let mk = T::new(TermKind::Var(super::sugar::label_constructor(f)), t.span);
                     let built = T::new(
                         TermKind::App {
                             function: Box::new(mk),
@@ -91,41 +92,6 @@ impl Kernel {
         let saved = self.metas.clone();
         let have = self.infer(ctx, &e);
         self.metas = saved;
-        // A product and a `Pair` written by its name are two types, though the kernel sees
-        // the product as that `Pair`: neither stands where the other is written.
-        // As written: `#(…)` (`prod_mk`) where a `Pair` is written, and `Pair { … }` where a
-        // product is. `prod_mk` itself makes the product of its `Pair`.
-        let head = match &*e.kind {
-            TermKind::App { function, .. } => match &*function.kind {
-                TermKind::Var(f) => Some(f.as_str()),
-                _ => None,
-            },
-            _ => None,
-        };
-        let literal = matches!(head, Some(f) if f == "prod_mk" || f.ends_with("::prod_mk")
-            || f == "Pair::Mk" || f.ends_with("::Pair::Mk"));
-        // A type the core wrote back (a product unfolded where a goal was reduced) has the
-        // span of the whole at its head; a `Pair` written in the source has its own name's.
-        let written = |t: &T| match &*t.kind {
-            TermKind::App { function, .. } => function.span != t.span,
-            _ => false,
-        };
-        if literal
-            && self.projecting == 0
-            && written(want)
-            && let Ok(have) = &have
-            && self.current.as_deref() != Some("prod_mk")
-            && !has_meta(have)
-            && !has_meta(want)
-            && ((self.product_parts(have).is_some() && self.pair_family(want).is_some())
-                || (self.pair_family(have).is_some() && self.product_parts(want).is_some()))
-        {
-            let (a, b) = (super::describe(have), super::describe(want));
-            return Err(Diagnostic::new(
-                msg!("kernel-product-not-pair", have = &a, want = &b),
-                Some(e.span),
-            ));
-        }
         match have {
             Ok(have) if self.needs_ascription(ctx, &have, want) => {
                 let taken = self.ascribe_at(&e, want, ctx, e.span)?;
@@ -142,6 +108,60 @@ impl Kernel {
 
     fn elab_inner(&mut self, ctx: &Ctx, t: &T, expected: Option<&T>) -> Result<T, Diagnostic> {
         let sp = t.span;
+        let head = match &*t.kind {
+            TermKind::App { function, .. } => function.as_ref(),
+            _ => t,
+        };
+        if let TermKind::Var(Name::Selection(selection)) = &*head.kind {
+            let wanted = expected.map(|ty| self.whnf(ctx, ty));
+            let mut wanted = wanted.as_ref();
+            while let Some(TermKind::Pi { result, .. }) = wanted.map(|ty| &*ty.kind) {
+                wanted = Some(result);
+            }
+            let family = wanted.and_then(head_name);
+            let candidates: Vec<Name> = selection
+                .candidates()
+                .iter()
+                .map(|reference| Name::Global(reference.clone()))
+                .filter(|reference| {
+                    self.ctors.get(reference).is_some_and(|(owner, _)| {
+                        family.as_ref().is_none_or(|family| owner == family)
+                    })
+                })
+                .collect();
+            if let [reference] = candidates.as_slice() {
+                let kind = match &*t.kind {
+                    TermKind::App {
+                        function,
+                        arguments,
+                    } => TermKind::App {
+                        function: Box::new(
+                            function.with_kind(TermKind::Var(reference.clone()), function.span),
+                        ),
+                        arguments: arguments.clone(),
+                    },
+                    _ => TermKind::Var(reference.clone()),
+                };
+                let result = self.elab_inner(ctx, &t.with_kind(kind, sp), expected)?;
+                if self.record_sites {
+                    let occurrences = self
+                        .ctor_site_origins
+                        .get(&head.id())
+                        .cloned()
+                        .unwrap_or_else(|| vec![head.id()]);
+                    for occurrence in occurrences {
+                        self.ctor_sites.push(super::CtorSite {
+                            expression: true,
+                            occurrence,
+                            span: head.span,
+                            written: Name::Selection(selection.clone()),
+                            resolved: reference.clone(),
+                        });
+                    }
+                }
+                return Ok(result);
+            }
+        }
         // A sort over level variables is not a call: its level is not elaborated.
         if self.core.level_sort(t).is_some() {
             return Ok(t.clone());
@@ -190,9 +210,11 @@ impl Kernel {
             TermKind::App {
                 function,
                 arguments,
-            } if matches!(&*function.kind, TermKind::Var(op) if op == "=")
+            } if matches!(&*function.kind, TermKind::Var(op) if tauto_surface::bindings::is_library(&op, "="))
                 && arguments.len() == 2
-                && !ctx.iter().any(|(n, _)| n == "=") =>
+                && !ctx
+                    .iter()
+                    .any(|(n, _)| tauto_surface::bindings::is_library(&n, "=")) =>
             {
                 self.equation(ctx, &arguments[0], &arguments[1], sp)
             }
@@ -211,7 +233,7 @@ impl Kernel {
             // as its programs are run: the bare name is not a second
             // spelling of the call.
             TermKind::Var(g) if self.nullary_fn(ctx, g) => Err(Diagnostic::new(
-                msg!("kernel-implicit-nullary", name = g),
+                msg!("kernel-implicit-nullary", name = (g).to_string()),
                 Some(sp),
             )),
             // A constructor with nothing but implicit parameters, written bare.
@@ -222,7 +244,7 @@ impl Kernel {
                         k > 0 && pi_arity(&x.ty) == k
                     }) =>
             {
-                self.implicit_call(ctx, g, t, &[], expected, t.span)
+                self.implicit_call(ctx, g, t, &[], &[], expected, t)
             }
             // A generic function passed as a value where a function type is
             // expected: its generics are what make its type that one
@@ -235,15 +257,18 @@ impl Kernel {
                     return Ok(t.clone());
                 }
                 let saved = self.metas.clone();
-                match self.implicit_call(ctx, g, t, &[], Some(&expected), t.span) {
+                let mark = self.application_sites.len();
+                match self.implicit_call(ctx, g, t, &[], &[], Some(&expected), t) {
                     Ok(e) => match self.infer(ctx, &e) {
                         Ok(actual) if self.unify(ctx, &expected, &actual) => Ok(e),
                         _ => {
+                            self.application_sites.truncate(mark);
                             self.metas = saved;
                             Ok(t.clone())
                         }
                     },
                     Err(_) => {
+                        self.application_sites.truncate(mark);
                         self.metas = saved;
                         Ok(t.clone())
                     }
@@ -261,18 +286,19 @@ impl Kernel {
                 true
             }
             TermKind::Var(n) if !ctx.iter().any(|(x, _)| x == n) => {
-                let suffix = format!(".{n}");
-                let found = self.ctors.get(n).or_else(|| {
-                    self.ctors
-                        .iter()
-                        .find(|(k, _)| k.ends_with(&suffix))
-                        .map(|(_, v)| v)
-                });
-                found.is_some_and(|(family, at)| {
+                let open = |(family, at): &(Name, usize)| {
                     let ind = &self.inds[family];
                     let c = &ind.ctors[*at];
                     (!ind.params.is_empty() || c.implicit > 0) && c.args.len() == c.implicit
-                })
+                };
+                match n {
+                    Name::Selection(selection) => selection.candidates().iter().any(|reference| {
+                        self.ctors
+                            .get(&Name::Global(reference.clone()))
+                            .is_some_and(open)
+                    }),
+                    _ => self.ctors.get(n).is_some_and(open),
+                }
             }
             // `#(a, b)` has the type `A × B` made from its components' types, so it is open
             // when one of them is.
@@ -283,7 +309,7 @@ impl Kernel {
                 && matches!(&*function.kind, TermKind::Var(n)
                 if !ctx.iter().any(|(x, _)| x == n)
                     && self.ctors.get(n).is_some_and(|(family, _)| {
-                        family == "Pair" || family.ends_with("::Pair")
+                        tauto_surface::bindings::is_library(family, "Pair")
                     })) =>
             {
                 arguments.iter().any(|x| self.type_open(ctx, x))
@@ -324,7 +350,11 @@ impl Kernel {
         let (ty, rest, done, flipped) = found;
         let rest = self.elab_inner(ctx, rest, Some(&ty))?;
         let (lhs, rhs) = if flipped { (rest, done) } else { (done, rest) };
-        Ok(call("Eq", vec![ty, lhs, rhs], sp))
+        Ok(call(
+            &tauto_surface::bindings::library_name("Eq"),
+            vec![ty, lhs, rhs],
+            sp,
+        ))
     }
 
     /// A numeral where std's `Int` is expected, as its constructors write it: `3` is
@@ -336,7 +366,7 @@ impl Kernel {
             TermKind::App {
                 function,
                 arguments,
-            } if matches!(&*function.kind, TermKind::Var(op) if op == "-")
+            } if matches!(&*function.kind, TermKind::Var(op) if tauto_surface::bindings::is_library(&op, "-"))
                 && let [x] = arguments.as_slice()
                 && let TermKind::Nat(n) = &*x.kind =>
             {
@@ -349,15 +379,15 @@ impl Kernel {
         let TermKind::Var(family) = &*ty.kind else {
             return None;
         };
-        if !(family == "Int" || family.ends_with("::Int")) {
+        if self.resolver.source_reference("Int").as_ref() != Some(family) {
             return None;
         }
         let ind = self.inds.get(family)?;
         let ctor = |name: &str| {
-            let suffix = format!(".{name}");
+            let reference = self.resolver.source_reference(name)?;
             ind.ctors
                 .iter()
-                .find(|c| c.name == name || c.name.ends_with(&suffix))
+                .find(|c| c.name == reference)
                 .filter(|c| c.args.len() == 1)
                 .map(|c| c.name.clone())
         };
@@ -381,15 +411,18 @@ impl Kernel {
     /// known from the end, so it is written out in one pass. The kernel gets
     /// the term elaboration would make and types it once.
     fn numeral_list(&self, ctx: &Ctx, t: &T) -> Option<T> {
-        let global = |n: &str| !ctx.iter().any(|(m, _)| m == n);
-        let ctor = |n: &str, arity: usize| {
+        let global = |n: &Name| !ctx.iter().any(|(m, _)| m == n);
+        let ctor = |n: &Name, arity: usize| {
             global(n)
                 && self
                     .globals
                     .get(n)
                     .is_some_and(|g| g.implicit == 1 && pi_arity(&g.ty) == arity)
         };
-        if !(global("Nat") && ctor("Cons", 3) && ctor("Nil", 1)) {
+        if !(global(&tauto_surface::bindings::library_name("Nat"))
+            && ctor(&tauto_surface::bindings::library_name("Cons"), 3)
+            && ctor(&tauto_surface::bindings::library_name("Nil"), 1))
+        {
             return None;
         }
         let mut heads = Vec::new();
@@ -404,13 +437,15 @@ impl Kernel {
             };
             match (&*function.kind, arguments.as_slice()) {
                 (TermKind::Var(c), [head, tail])
-                    if c == "Cons" && matches!(&*head.kind, TermKind::Nat(_)) =>
+                    if tauto_surface::bindings::is_library(&c, "Cons")
+                        && matches!(&*head.kind, TermKind::Nat(_)) =>
                 {
                     heads.push((at, function, head));
                     at = tail;
                 }
                 (TermKind::Var(c), [ty])
-                    if c == "Nil" && matches!(&*ty.kind, TermKind::Var(n) if n == "Nat") =>
+                    if tauto_surface::bindings::is_library(&c, "Nil")
+                        && matches!(&*ty.kind, TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "Nat")) =>
                 {
                     break;
                 }
@@ -425,7 +460,11 @@ impl Kernel {
             list = T::new(
                 TermKind::App {
                     function: function.clone(),
-                    arguments: vec![T::var("Nat", node.span), head.clone(), list],
+                    arguments: vec![
+                        T::var(&tauto_surface::bindings::library_name("Nat"), node.span),
+                        head.clone(),
+                        list,
+                    ],
                 },
                 node.span,
             );
@@ -449,7 +488,7 @@ impl Kernel {
     /// The type of `g` and how many of its leading parameters are implicit:
     /// a global, or a function being defined (typed as a variable in `ctx`),
     /// whose recursive calls leave the generics out like any other call.
-    fn implicit_sig(&self, ctx: &Ctx, g: &str) -> Option<(T, usize)> {
+    fn implicit_sig(&self, ctx: &Ctx, g: &Name) -> Option<(T, usize)> {
         if let Some((_, ty)) = ctx.iter().rev().find(|(n, _)| n == g) {
             let k = self.defining_implicit.iter().find(|(n, _)| n == g)?.1;
             return self
@@ -461,14 +500,27 @@ impl Kernel {
         self.globals.get(g).map(|x| (x.ty.clone(), x.implicit))
     }
 
-    fn note_application(&mut self, span: Span, written: usize, omitted: usize, callee: &str) {
+    fn note_application(&mut self, source: &T, written: usize, arguments: &[T], callee: &Name) {
         if self.record_sites {
-            self.application_sites.push(super::ApplicationSite {
-                span,
-                callee: callee.into(),
-                written,
-                omitted,
-            });
+            let occurrences = self
+                .ctor_site_origins
+                .get(&source.id())
+                .cloned()
+                .unwrap_or_else(|| vec![source.id()]);
+            let arguments: Vec<_> = arguments.iter().map(|t| self.resolve(t)).collect();
+            for occurrence in occurrences {
+                self.application_sites.push(super::ApplicationSite {
+                    span: source.span,
+                    occurrence,
+                    callee: match self.application_heads.get(&occurrence) {
+                        Some(name @ Name::Local(_)) => name.clone(),
+                        _ => callee.clone(),
+                    },
+                    written,
+                    omitted: arguments.len(),
+                    arguments: arguments.clone(),
+                });
+            }
         }
     }
 
@@ -483,20 +535,21 @@ impl Kernel {
         let out = self.elab_app_inner(ctx, whole, function, arguments, expected)?;
         if self.record_sites {
             let mut head = &out;
-            let mut count = 0;
+            let mut spine = Vec::new();
             while let TermKind::App {
                 function,
                 arguments,
             } = &*head.kind
             {
-                count += arguments.len();
+                spine.push(arguments.as_slice());
                 head = function;
             }
+            let arguments_out: Vec<_> = spine.into_iter().rev().flatten().cloned().collect();
             if let (TermKind::Var(a), TermKind::Var(b)) = (&*function.kind, &*head.kind)
                 && a == b
-                && let Some(omitted) = count.checked_sub(arguments.len())
+                && let Some(omitted) = arguments_out.len().checked_sub(arguments.len())
             {
-                self.note_application(whole.span, arguments.len(), omitted, a);
+                self.note_application(whole, arguments.len(), &arguments_out[..omitted], a);
             }
         }
         Ok(out)
@@ -511,6 +564,19 @@ impl Kernel {
         expected: Option<&T>,
     ) -> Result<T, Diagnostic> {
         let sp = whole.span;
+        // `f(<x: v>, h)`: the implicit arguments named are carried first, as a
+        // record of the internal name `IMPLICITS`.
+        let (named, explicit) = match arguments.split_first() {
+            Some((first, rest)) => match &*first.kind {
+                TermKind::Record { name, fields, .. }
+                    if name.spelling() == Some(tauto_surface::IMPLICITS) =>
+                {
+                    (Some((first, fields.as_slice())), rest)
+                }
+                _ => (None, arguments),
+            },
+            None => (None, arguments),
+        };
         // A constructor without fields is written without `()`, as `Nil` is.
         if arguments.is_empty()
             && let TermKind::Var(g) = &*function.kind
@@ -534,22 +600,26 @@ impl Kernel {
                 _ => pi_arity(&ty),
             };
             let k = implicit + dict_count(&ty, implicit);
-            if arguments.len() + k == arity {
-                return self.implicit_call(ctx, g, function, arguments, expected, sp);
+            if explicit.len() + k == arity {
+                let fields = named.map_or(&[][..], |(_, fields)| fields);
+                return self.implicit_call(ctx, g, function, explicit, fields, expected, whole);
             }
             // Arguments past the declared ones apply the call's result:
-            // `f(a, h)` is `f(a)(h)`. A call at least as long as the
-            // parameters may also be one writing the implicit arguments out,
-            // `f(u, A, m, x)` being `f(u, A, m)(x)` (as a call written
-            // `f(u, A, m)(x)` reads once its applications are flattened);
-            // that reading is tried first.
-            if arity >= k && arguments.len() + k > arity {
+            // `f(a, h)` is `f(a)(h)`. The source writes implicit arguments
+            // only by name (`f(<x: v>, a)`); a term the checker builds writes
+            // every argument out, `f(u, A, m, x)` being `f(u, A, m)(x)`, and
+            // that reading is tried first for it.
+            if arity >= k && explicit.len() + k > arity {
                 let applied_at = |at: usize| {
-                    let (first, rest) = arguments.split_at(at);
+                    let (first, rest) = explicit.split_at(at);
                     let call = T::new(
                         TermKind::App {
                             function: Box::new(function.clone()),
-                            arguments: first.to_vec(),
+                            arguments: named
+                                .map(|(r, _)| r.clone())
+                                .into_iter()
+                                .chain(first.iter().cloned())
+                                .collect(),
                         },
                         sp,
                     );
@@ -562,8 +632,24 @@ impl Kernel {
                     )
                 };
                 let applied = applied_at(arity - k);
-                if arguments.len() < arity {
-                    return self.elab(ctx, &applied, expected);
+                // A call the source wrote; a term an expansion or the class
+                // expansion makes (spans from `EXPANSION_BASE` up to the prelude's)
+                // may still write every argument out.
+                let generated = (tauto_surface::macros::EXPANSION_BASE
+                    ..tauto_surface::surface::PRELUDE_BASE)
+                    .contains(&sp.start);
+                let written = whole.is_written_call() && !generated;
+                if named.is_some() || written || arguments.len() < arity {
+                    return self.elab(ctx, &applied, expected).map_err(|e| {
+                        if named.is_none() && written && arguments.len() >= arity {
+                            Diagnostic::new(
+                                msg!("kernel-implicit-positional", name = (g).to_string()),
+                                Some(sp),
+                            )
+                        } else {
+                            e
+                        }
+                    });
                 }
                 let saved = self.metas.clone();
                 let app_mark = self.application_sites.len();
@@ -584,6 +670,57 @@ impl Kernel {
                     }
                 }
             }
+            if named.is_some() {
+                return err(
+                    msg!(
+                        "kernel-implicit-named-partial",
+                        name = (g).to_string(),
+                        count = arity.saturating_sub(k)
+                    ),
+                    sp,
+                );
+            }
+        }
+        if let Some((_, fields)) = named {
+            // A recursive call under a match goes through the induction
+            // hypothesis, whose leading parameters are the function's
+            // implicit ones under their names: the values are put in that order.
+            if let TermKind::Var(g) = &*function.kind
+                && let Some((_, ty)) = ctx.iter().rev().find(|(n, _)| n == g)
+            {
+                let mut order: Vec<String> = Vec::new();
+                let ty = ty.clone();
+                let mut t = self.whnf(ctx, &ty);
+                while order.len() < fields.len() {
+                    let TermKind::Pi { params, result, effects } = (*t.kind).clone() else {
+                        break;
+                    };
+                    let Some(n) = params[0].0.clone() else { break };
+                    // A renamed binder reads `R'12`: the name written is before the `'`.
+                    let shown = n.to_string();
+                    let base = match shown.rsplit_once('\'') {
+                        Some((base, n)) if n.chars().all(|c| c.is_ascii_digit()) => base.to_string(),
+                        _ => shown,
+                    };
+                    order.push(base);
+                    t = if params.len() > 1 {
+                        T::new(TermKind::Pi { params: params[1..].to_vec(), result, effects }, t.span)
+                    } else {
+                        (*result).clone()
+                    };
+                }
+                let values: Option<Vec<T>> = order
+                    .iter()
+                    .map(|n| fields.iter().find(|(f, _)| f.as_str() == n.as_str()).map(|(_, v)| v.clone()))
+                    .collect();
+                if let Some(values) = values
+                    && values.len() == fields.len()
+                {
+                    let all: Vec<T> = values.into_iter().chain(explicit.iter().cloned()).collect();
+                    return self.plain_app(ctx, whole, function, &all, expected);
+                }
+            }
+            return err(msg!("kernel-implicit-named-none"), sp);
         }
         self.plain_app(ctx, whole, function, arguments, expected)
     }
@@ -658,25 +795,33 @@ impl Kernel {
     fn implicit_call(
         &mut self,
         ctx: &Ctx,
-        g: &str,
+        g: &Name,
         function: &T,
         arguments: &[T],
+        named: &[(String, T)],
         expected: Option<&T>,
-        whole: Span,
+        whole: &T,
     ) -> Result<T, Diagnostic> {
         let sp = function.span;
         let Some((mut ty, implicit)) = self.implicit_sig(ctx, g) else {
-            return err(msg!("kernel-implicit-not-defined", name = g), sp);
+            return err(
+                msg!("kernel-implicit-not-defined", name = (g).to_string()),
+                sp,
+            );
         };
         let k = implicit + dict_count(&ty, implicit);
         let mut metas = Vec::new();
-        let mut names: Vec<String> = Vec::new();
+        let mut names: Vec<Name> = Vec::new();
         // The records of the classes a call needs (`check/classes.rs`): not
         // matched against an argument but found once the types are known.
-        let mut dicts: Vec<(String, T)> = Vec::new();
+        let mut dicts: Vec<(Name, T)> = Vec::new();
+        let mut params_of: Vec<T> = Vec::new();
         for i in 0..k {
             let TermKind::Pi { params, result, .. } = (*ty.kind).clone() else {
-                return err(msg!("kernel-implicit-fewer-params", name = g), sp);
+                return err(
+                    msg!("kernel-implicit-fewer-params", name = (g).to_string()),
+                    sp,
+                );
             };
             let name = params[0].0.clone().unwrap_or_else(|| "_".into());
             let m = self.fresh_name("?");
@@ -684,9 +829,47 @@ impl Kernel {
             if i >= implicit {
                 dicts.push((m.clone(), params[0].1.clone()));
             }
+            if i < implicit {
+                params_of.push(params[0].1.clone());
+            }
             ty = self.subst(&result, &name, &T::var(&m, sp));
             names.push(name);
             metas.push(m);
+        }
+        // The implicit arguments written by name fix their metavariables
+        // before anything is inferred.
+        for (field, value) in named {
+            let Some(i) = names[..implicit]
+                .iter()
+                .position(|n| n.as_str() == field.as_str())
+            else {
+                return err(
+                    msg!(
+                        "kernel-implicit-named-unknown",
+                        name = (g).to_string(),
+                        field = field.clone()
+                    ),
+                    value.span,
+                );
+            };
+            if named.iter().filter(|(f, _)| f == field).count() > 1 {
+                return err(
+                    msg!("kernel-implicit-named-twice", field = field.clone()),
+                    value.span,
+                );
+            }
+            let want = self.resolve(&params_of[i]);
+            let value = self.elab(ctx, value, Some(&want))?;
+            if !self.unify(ctx, &T::var(&metas[i], sp), &value) {
+                return err(
+                    msg!(
+                        "kernel-implicit-named-mismatch",
+                        name = (g).to_string(),
+                        field = field.clone()
+                    ),
+                    value.span,
+                );
+            }
         }
         let base = ty.clone();
         // The expected type is matched first when the result does not depend
@@ -701,6 +884,7 @@ impl Kernel {
         let attempts = 1 + usize::from(expected_first);
         let mut outcome = Ok(T::var(g, sp));
         for attempt in 0..attempts {
+            let application_mark = self.application_sites.len();
             if attempt == 1 {
                 self.metas = start.clone();
             }
@@ -708,7 +892,7 @@ impl Kernel {
             outcome = self
                 .implicit_arguments(
                     ctx,
-                    (g, sp),
+                    (g, sp, whole.span),
                     arguments,
                     expected,
                     Unknowns {
@@ -721,6 +905,7 @@ impl Kernel {
                     &mut out,
                 )
                 .map(|mut args| {
+                    self.note_application(whole, arguments.len(), &args, g);
                     args.extend(out);
                     self.direct_member(g, &args, sp).unwrap_or_else(|| {
                         // The call as written, so that an error in it can
@@ -730,7 +915,7 @@ impl Kernel {
                                 function: Box::new(function.clone()),
                                 arguments: args,
                             },
-                            whole,
+                            whole.span,
                         )
                     })
                 });
@@ -747,12 +932,10 @@ impl Kernel {
                 Ok(_) => break,
                 Err(_) => {}
             }
+            self.application_sites.truncate(application_mark);
         }
         for m in &metas {
             self.metas.remove(m);
-        }
-        if outcome.is_ok() {
-            self.note_application(whole, arguments.len(), k, g);
         }
         outcome
     }
@@ -792,8 +975,17 @@ impl Kernel {
             return false;
         }
         let result = result.clone();
+        // The expected type of a match arm is the motive applied to the
+        // pattern (`(t => A)(Succ(k))`): applied, so a generic filled in from
+        // it is `A` itself, which a recursive call has to pass unchanged.
+        let expected = match &*expected.kind {
+            TermKind::App { function, .. } if matches!(&*function.kind, TermKind::Lam { .. }) => {
+                self.beta(expected)
+            }
+            _ => expected.clone(),
+        };
         let saved = self.metas.clone();
-        if self.unify(ctx, &result, expected) {
+        if self.unify(ctx, &result, &expected) {
             return true;
         }
         self.metas = saved;
@@ -858,7 +1050,7 @@ impl Kernel {
     fn implicit_arguments(
         &mut self,
         ctx: &Ctx,
-        (g, sp): (&str, Span),
+        (g, sp, call): (&Name, Span, Span),
         arguments: &[T],
         expected: Option<&T>,
         Unknowns {
@@ -904,7 +1096,10 @@ impl Kernel {
             }
             let whnf = self.whnf(ctx, &ty);
             let TermKind::Pi { params, result, .. } = &*whnf.kind else {
-                return err(msg!("kernel-too-many-arguments", name = g), arg.span);
+                return err(
+                    msg!("kernel-too-many-arguments", name = (g).to_string()),
+                    arg.span,
+                );
             };
             let name = params[0].0.clone().unwrap_or_else(|| "_".into());
             let dom = self.resolve(&params[0].1);
@@ -947,6 +1142,17 @@ impl Kernel {
         if let Some(expected) = expected {
             self.unify_expected(ctx, base, out, &deferred, expected, sp);
         }
+        // A later argument can depend on a type-valued class method. Once
+        // the ordinary arguments have fixed a dictionary's complete goal,
+        // resolve it before checking those deferred argument types. This
+        // does not infer an unknown class parameter from instance search.
+        for (meta, wanted) in dicts {
+            let wanted = self.resolve(wanted);
+            if !has_meta(&wanted) && has_meta(&self.resolve(&T::var(meta, sp))) {
+                let dictionary = self.wanted_dictionary(ctx, &wanted, sp)?;
+                self.metas.insert(meta.clone(), Some(dictionary));
+            }
+        }
         // Functions last: the other arguments that waited may fix their
         // types (`Eq::congr((z: L) => f(z), Eq::congr(g, e))`).
         let mut deferred = std::mem::take(&mut deferred);
@@ -979,14 +1185,23 @@ impl Kernel {
                     (Err(why), Ok(_)) => return Err(why),
                 };
                 if !self.unify(ctx, &dom, &actual) {
+                    // The message is about the call to `g`. An argument
+                    // that a `let` name stood for carries the span of the
+                    // value it was bound to, outside this call: point at
+                    // the call then, not at that earlier value.
+                    let at = if call.start <= arg.span.start && arg.span.end <= call.end {
+                        arg.span
+                    } else {
+                        call
+                    };
                     return err(
                         msg!(
                             "kernel-implicit-no-match",
-                            name = g,
+                            name = (g).to_string(),
                             expected = describe(&dom),
                             found = describe(&actual)
                         ),
-                        arg.span,
+                        at,
                     );
                 }
             }
@@ -1026,14 +1241,21 @@ impl Kernel {
             let v = self.resolve(&T::var(m, sp));
             if has_meta(&v) {
                 if j >= implicit {
-                    return err(msg!("kernel-implicit-cannot-infer", name = g), sp);
+                    return err(
+                        msg!("kernel-implicit-cannot-infer", name = (g).to_string()),
+                        sp,
+                    );
                 }
                 return err(
                     msg!(
                         "kernel-implicit-generic",
-                        generic = &names[j],
-                        name = g,
-                        generics = names[..implicit].join(", ")
+                        generic = (&names[j]).to_string(),
+                        name = (g).to_string(),
+                        generics = names[..implicit]
+                            .iter()
+                            .map(Name::as_str)
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     ),
                     sp,
                 );
@@ -1047,7 +1269,79 @@ impl Kernel {
     /// assumption of the context (a `where` of the declaration being
     /// checked) of that type, or the instance for the head of `T`, applied to
     /// the records its own `where` needs.
+    fn unify_instance_pattern(&mut self, ctx: &Ctx, pattern: &T, actual: &T) -> bool {
+        let pkey = self.instance_argument_key(pattern, &[], false, false);
+        let akey = self.instance_argument_key(actual, &[], false, true);
+        if matches!((&pkey, &akey), (Some(super::classes::HeadKey::Text(a)), Some(super::classes::HeadKey::Text(b))) if a == b)
+        {
+            return true;
+        }
+        if let (
+            TermKind::App {
+                function: p,
+                arguments: pa,
+            },
+            TermKind::App {
+                function: a,
+                arguments: aa,
+            },
+        ) = (&*pattern.kind, &*actual.kind)
+            && let (TermKind::Var(p), TermKind::Var(a)) = (&*p.kind, &*a.kind)
+            && p == a
+            && let Some((implicit, total)) = self.instance_constructor_shape(p)
+        {
+            let explicit = |args: &[T]| -> Option<Vec<T>> {
+                if args.len() == total {
+                    Some(args[implicit..].to_vec())
+                } else if args.len() + implicit == total {
+                    Some(args.to_vec())
+                } else {
+                    None
+                }
+            };
+            if let (Some(pa), Some(aa)) = (explicit(pa), explicit(aa)) {
+                return pa
+                    .iter()
+                    .zip(&aa)
+                    .all(|(p, a)| self.unify_instance_pattern(ctx, p, a));
+            }
+        }
+        self.unify(ctx, pattern, actual)
+    }
+
     fn wanted_dictionary(&mut self, ctx: &Ctx, wanted: &T, sp: Span) -> Result<T, Diagnostic> {
+        self.find_dictionary(ctx, wanted, sp, &mut Vec::new())
+    }
+
+    fn find_dictionary(
+        &mut self,
+        ctx: &Ctx,
+        wanted: &T,
+        sp: Span,
+        pending: &mut Vec<T>,
+    ) -> Result<T, Diagnostic> {
+        // Failure is explicit: a cycle or a growing chain must never become
+        // an accepted dictionary, nor exhaust the host stack.
+        if pending.len() >= 128 {
+            return err(msg!("kernel-instance-resolution-depth"), sp);
+        }
+        let wanted = self.resolve(wanted);
+        if pending.iter().any(|goal| self.conv(ctx, goal, &wanted)) {
+            return err(msg!("kernel-instance-resolution-cycle"), sp);
+        }
+        pending.push(wanted.clone());
+        let result = self.wanted_dictionary_inner(ctx, &wanted, sp, pending);
+        pending.pop();
+        result
+    }
+
+    fn wanted_dictionary_inner(
+        &mut self,
+        ctx: &Ctx,
+        wanted: &T,
+        sp: Span,
+        pending: &mut Vec<T>,
+    ) -> Result<T, Diagnostic> {
         let wanted = self.resolve(wanted);
         let TermKind::App {
             function,
@@ -1063,10 +1357,10 @@ impl Kernel {
         // A type written through a function that returns a type (an alias,
         // `fn Reg(T: Type): Type { KeyMap(T, …) }`) is searched under the
         // type it stands for: unfold the head while it names no instance.
-        let base = class.strip_suffix("::laws").unwrap_or(class);
+        let base = self.classes.law_owners.get(class).unwrap_or(class).clone();
         while !has_meta(&ty)
             && !head_name(&ty)
-                .is_some_and(|h| self.classes.instances.contains_key(&(base.to_string(), h)))
+                .is_some_and(|h| self.classes.instances.contains_key(&(base.clone(), h)))
         {
             let w = self.whnf(ctx, &ty);
             if w == ty {
@@ -1075,7 +1369,6 @@ impl Kernel {
             ty = w;
         }
         let shown = |laws: bool| {
-            let base = class.strip_suffix("::laws").unwrap_or(class);
             let instance = format!("{base}({})", describe(&ty));
             if laws {
                 msg!("kernel-implicit-laws-of", instance = instance)
@@ -1084,30 +1377,58 @@ impl Kernel {
             }
         };
         if has_meta(&ty) || arguments.iter().any(has_meta) {
-            return err(msg!("kernel-implicit-class-type", class = class), sp);
+            return err(
+                msg!("kernel-implicit-class-type", class = (class).to_string()),
+                sp,
+            );
         }
-        let laws = class.ends_with("::laws");
+        let laws = self.classes.law_owners.contains_key(class);
         for (n, t) in ctx.iter().rev() {
             if is_dict(n) && self.conv(ctx, t, &wanted) {
                 return Ok(T::var(n, sp));
             }
         }
-        let id = match (base, head_name(&ty).as_deref()) {
+        let id = match (base.as_str(), head_name(&ty).as_deref()) {
             ("Ord", Some("Nat")) => "kernel-implicit-no-instance-ord",
             _ => "kernel-implicit-no-instance",
         };
         let no_instance = || err(msg!(id, instance = shown(laws)), sp);
-        let Some(head) = head_name(&ty) else {
+        let arity = self.classes.arity(&base);
+        if arguments.len() < arity {
             return no_instance();
-        };
-        let Some(instance) = self
+        }
+        let mut wanted_args: Vec<T> = arguments[..arity]
+            .iter()
+            .map(|arg| self.whnf(ctx, arg))
+            .collect();
+        wanted_args[0] = ty.clone();
+        let mut matches = self
             .classes
             .instances
-            .get(&(base.to_string(), head))
-            .cloned()
-        else {
+            .iter()
+            .filter_map(|((owner, _), instance)| {
+                if owner != &base {
+                    return None;
+                }
+                let pattern = std::iter::once(&instance.head).chain(&instance.arguments);
+                let compatible = pattern.zip(&wanted_args).zip(&instance.type_heads).all(
+                    |((p, a), type_head)| match (
+                        self.instance_argument_key(p, &instance.generics, *type_head, false),
+                        self.instance_argument_key(a, &[], *type_head, true),
+                    ) {
+                        (Some(p), Some(a)) => p.overlaps(&a),
+                        _ => false,
+                    },
+                );
+                compatible.then_some(instance.clone())
+            });
+        let Some(instance) = matches.next() else {
             return no_instance();
         };
+        if matches.next().is_some() {
+            return err(msg!("kernel-instance-ambiguous"), sp);
+        }
+
         let global = if laws {
             let Some(g) = &instance.laws_global else {
                 return no_instance();
@@ -1117,15 +1438,23 @@ impl Kernel {
             instance.global.clone()
         };
         let mut metas = Vec::new();
-        let mut pattern = instance.head.clone();
+        let mut patterns: Vec<T> = std::iter::once(instance.head.clone())
+            .chain(instance.arguments.clone())
+            .collect();
         for g in &instance.generics {
             let m = self.fresh_name("?");
             self.metas.insert(m.clone(), None);
-            pattern = self.subst(&pattern, g, &T::var(&m, sp));
+            for pattern in &mut patterns {
+                *pattern = self.subst(pattern, g, &T::var(&m, sp));
+            }
             metas.push(m);
         }
         let result = (|| {
-            if !self.unify(ctx, &pattern, &ty) {
+            if !patterns
+                .iter()
+                .zip(&wanted_args)
+                .all(|(p, a)| self.unify_instance_pattern(ctx, p, a))
+            {
                 return no_instance();
             }
             let mut generics = Vec::new();
@@ -1143,17 +1472,24 @@ impl Kernel {
             for (c, t) in &instance.wheres {
                 // Through the fresh names, so that a type given for one
                 // generic is not read again as another (`V` given for `K`).
-                let mut t = t.clone();
-                for (g, m) in instance.generics.iter().zip(&metas) {
-                    t = self.subst(&t, g, &T::var(m, sp));
+                let mut terms = t.clone();
+                for term in &mut terms {
+                    for (g, m) in instance.generics.iter().zip(&metas) {
+                        *term = self.subst(term, g, &T::var(m, sp));
+                    }
+                    *term = self.resolve(term);
                 }
-                let t = self.resolve(&t);
-                let goal = T::app(c, vec![t.clone()], sp);
-                let record = self.wanted_dictionary(ctx, &goal, sp)?;
+                let goal = T::app(c, terms.clone(), sp);
+                let record = self.find_dictionary(ctx, &goal, sp, pending)?;
                 args.push(record.clone());
                 if laws && self.classes.has_laws(c) {
-                    let goal = T::app(&format!("{c}::laws"), vec![t, record], sp);
-                    args.push(self.wanted_dictionary(ctx, &goal, sp)?);
+                    let law_record = &self.classes.law_records[c];
+                    let goal = T::app(
+                        law_record,
+                        terms.into_iter().chain(std::iter::once(record)).collect(),
+                        sp,
+                    );
+                    args.push(self.find_dictionary(ctx, &goal, sp, pending)?);
                 }
             }
             Ok(call(&global, args, sp))
@@ -1187,28 +1523,42 @@ impl Kernel {
         let TermKind::Var(direct) = &*direct.kind else {
             return None;
         };
-        let (class, member) = g.rsplit_once("::")?;
-        let head = direct.strip_prefix(&format!("{class}::{member}@"))?;
+        let (member, head) = self.classes.direct_origins.get(direct)?;
+        if member != g {
+            return None;
+        }
+        let class = self.classes.member_owners.get(g)?;
         let instance = self
             .classes
             .instances
-            .get(&(class.to_string(), head.to_string()))
+            .get(&(class.clone(), head.clone()))
             .cloned()?;
         let own = instance.generics.len() + instance.wheres.len();
-        if given.len() != own + arguments.len() - 2 {
+        let arity = self.classes.arity(class);
+        let method_generics = self.classes.method_generics(g);
+        let dictionary_at = arity + method_generics;
+        if arguments.len() < dictionary_at + 1 || given.len() != own + arguments.len() - arity - 1 {
             return None;
         }
         let sp = actual.span;
-        let mut head_term = instance.head.clone();
-        for (g, a) in instance.generics.iter().zip(given) {
-            head_term = self.subst(&head_term, g, a);
+        let mut heads: Vec<T> = std::iter::once(instance.head.clone())
+            .chain(instance.arguments.clone())
+            .collect();
+        for term in &mut heads {
+            for (g, a) in instance.generics.iter().zip(given) {
+                *term = self.subst(term, g, a);
+            }
         }
         let record = call(&instance.global, given[..own].to_vec(), sp);
         Some(
-            self.unify(ctx, &arguments[0], &head_term)
-                && self.unify(ctx, &arguments[1], &record)
-                && arguments[2..]
+            arguments[..arity]
+                .iter()
+                .zip(&heads)
+                .all(|(a, h)| self.unify(ctx, a, h))
+                && self.unify(ctx, &arguments[dictionary_at], &record)
+                && arguments[arity..dictionary_at]
                     .iter()
+                    .chain(&arguments[dictionary_at + 1..])
                     .zip(&given[own..])
                     .all(|(x, y)| self.unify(ctx, x, y)),
         )
@@ -1218,7 +1568,7 @@ impl Kernel {
     /// function `C::m@H(…)`: what a recursive method needs to be a recursion,
     /// and what the proofs read. A law is the instance's theorem likewise,
     /// when the instance proves it.
-    fn direct_member(&self, g: &str, args: &[T], sp: Span) -> Option<T> {
+    fn direct_member(&self, g: &Name, args: &[T], sp: Span) -> Option<T> {
         let law = self.classes.law_generics(g);
         if !self.classes.is_method(g) && law.is_none() {
             return None;
@@ -1226,40 +1576,37 @@ impl Kernel {
         // The class's type and the generics of a law come first, then the
         // record; for a law, then the record of the laws, from which the
         // instance's theorem is read.
-        let at = 1 + law.unwrap_or(0);
+        let class = self.classes.member_owners.get(g)?;
+        let class_arity = self.classes.arity(class);
+        let at = class_arity + law.unwrap_or_else(|| self.classes.method_generics(g));
         let from = at + usize::from(law.is_some());
         if args.len() <= from {
             return None;
         }
-        let (class, member) = g.rsplit_once("::")?;
+        let class = self.classes.member_owners.get(g)?;
         let (function, given) = match &*args[from].kind {
             TermKind::App {
                 function,
                 arguments,
             } => match &*function.kind {
-                TermKind::Var(n) => (n.as_str(), arguments.as_slice()),
+                TermKind::Var(n) => (n, arguments.as_slice()),
                 _ => return None,
             },
-            TermKind::Var(n) => (n.as_str(), &[][..]),
+            TermKind::Var(n) => (n, &[][..]),
             _ => return None,
         };
         let (c, head) = self.classes.globals.get(function)?;
         if c != class {
             return None;
         }
-        if law.is_some()
-            && !self
-                .classes
-                .instances
-                .get(&(c.clone(), head.clone()))
-                .is_some_and(|i| i.proved.contains(member))
-        {
-            return None;
-        }
+        let direct = self
+            .classes
+            .direct_members
+            .get(&(g.clone(), head.clone()))?;
         let mut rest = given.to_vec();
-        rest.extend(args[1..at].iter().cloned());
+        rest.extend(args[class_arity..at].iter().cloned());
         rest.extend(args[from + 1..].iter().cloned());
-        Some(call(&format!("{class}::{member}@{head}"), rest, sp))
+        Some(call(direct, rest, sp))
     }
 
     /// For a call `function(arguments…)` whose result is expected to be
@@ -1296,7 +1643,13 @@ impl Kernel {
             {
                 let global = &self.globals[g];
                 let (mut ty, implicit) = (global.ty.clone(), global.implicit);
-                let k = implicit + dict_count(&ty, implicit);
+                let mut k = implicit + dict_count(&ty, implicit);
+                // The implicit arguments may also be written, as a call
+                // written whole (`List::ind(A, motive, …, xs, b)`, applied
+                // further when the motive gives a Π) has them.
+                if k > 0 && arguments.len() >= pi_arity(&ty) {
+                    k = 0;
+                }
                 if k > 0 && arguments.len() + k != pi_arity(&ty) {
                     return None;
                 }
@@ -1327,16 +1680,29 @@ impl Kernel {
             let mut fits = true;
             // The domains, each with the parameters before it whose values
             // are not known.
-            let mut domains: Vec<(T, Vec<String>)> = Vec::new();
-            let mut unknown: Vec<String> = Vec::new();
+            let mut domains: Vec<Option<(T, Vec<Name>)>> = Vec::new();
+            let mut unknown: Vec<Name> = Vec::new();
+            // Past a result that is not yet a Π (`motive(xs)` with the motive
+            // left out, applied further when the motive gives a Π), the
+            // domains are not known; the ones before it still are.
+            let mut stuck = false;
             for arg in arguments {
+                if stuck {
+                    domains.push(None);
+                    continue;
+                }
                 let whnf = self.whnf(ctx, &ty);
                 let TermKind::Pi { params, result, .. } = &*whnf.kind else {
-                    return None;
+                    if unknown.is_empty() {
+                        return None;
+                    }
+                    stuck = true;
+                    domains.push(None);
+                    continue;
                 };
                 let name = params[0].0.clone().unwrap_or_else(|| "_".into());
                 let dom = params[0].1.clone();
-                domains.push((dom.clone(), unknown.clone()));
+                domains.push(Some((dom.clone(), unknown.clone())));
                 match arg {
                     Some(a) => {
                         if let Ok(aty) = self.infer(ctx, a) {
@@ -1354,6 +1720,7 @@ impl Kernel {
                 continue;
             }
             if let Some(e) = expected
+                && !stuck
                 && !unknown.iter().any(|u| occurs(&ty, u))
             {
                 self.unify(ctx, &ty, e);
@@ -1361,7 +1728,8 @@ impl Kernel {
             return Some(
                 domains
                     .into_iter()
-                    .map(|(d, before)| {
+                    .map(|d| {
+                        let (d, before) = d?;
                         let d = self.resolve(&d);
                         (!has_meta(&d) && !before.iter().any(|u| occurs(&d, u))).then_some(d)
                     })
@@ -1430,7 +1798,7 @@ impl Kernel {
                     && is_meta(m)
                 {
                     // `?m x⃗` with distinct variables: `?m := λ x⃗. actual`.
-                    let vars: Option<Vec<String>> = arguments
+                    let vars: Option<Vec<Name>> = arguments
                         .iter()
                         .map(|a| match &*a.kind {
                             TermKind::Var(v) if !is_meta(v) => Some(v.clone()),
@@ -1443,7 +1811,7 @@ impl Kernel {
                             return false;
                         }
                     }
-                    let fresh: Vec<String> = vars.iter().map(|v| self.fresh_name(v)).collect();
+                    let fresh: Vec<Name> = vars.iter().map(|v| self.fresh_name(v)).collect();
                     let mut body = actual.clone();
                     for (v, f) in vars.iter().zip(&fresh) {
                         body = self.subst(&body, v, &T::var(f, sp));
@@ -1525,9 +1893,9 @@ impl Kernel {
 /// parameters they stand for, the records of classes among them (with the
 /// types wanted), and how many come before the records.
 struct Unknowns<'a> {
-    metas: &'a [String],
-    names: &'a [String],
-    dicts: &'a [(String, T)],
+    metas: &'a [Name],
+    names: &'a [Name],
+    dicts: &'a [(Name, T)],
     implicit: usize,
 }
 
@@ -1539,7 +1907,7 @@ pub(super) fn dict_count(ty: &T, skip: usize) -> usize {
     let mut counted = 0;
     while let TermKind::Pi { params, result, .. } = &*walk.kind {
         if n >= skip {
-            if params[0].0.as_deref().is_some_and(is_dict) {
+            if params[0].0.as_ref().is_some_and(is_dict) {
                 counted += 1;
             } else {
                 break;

@@ -59,7 +59,7 @@ pub theorem pattern_fresh_unf(
 ): ck_fresh_each(Cons(g, rest), c) = pattern_fresh_cons(g, rest, c) { Refl }
 
 pub theorem ck_fresh_each_frame(gs: List(Text), c: Checker): CkReadFrame(c, ck_fresh_each(gs, c)) {
-  match gs: CkReadFrame(c, ck_fresh_each(gs, c)) {
+  ⊢ CkReadFrame(c, ck_fresh_each(gs, c)) from match gs {
     Nil => Refl
     Cons(g, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => CkReadFrame(c, z),
@@ -157,7 +157,12 @@ pub theorem pattern_literal_unf(
   l: Ty,
   t: Ty,
   span: TySpan
-): ck_pattern_literal(c, l, t, span) = pattern_literal(c, l, ty_unborrowed(ck_resolve(c, t)), span) { Refl }
+): ck_pattern_literal(
+  c,
+  l,
+  t,
+  span
+) = pattern_literal(c, l, ty_unborrowed(ck_resolve(c, t)), span) { Refl }
 
 pub theorem ck_pattern_literal_run_frame(
   c: Checker,
@@ -184,7 +189,7 @@ pub fn pattern_ctor_arity(
   span: TySpan,
   same: Bool
 ): Mut1(Option(List(DataField)), Checker) {
-  match same: Mut1(Option(List(DataField)), Checker) {
+  ⊢ Mut1(Option(List(DataField)), Checker) from match same {
     false => mut1(Some(fields), c)
     true => frame_bind(
       Unit,
@@ -214,7 +219,7 @@ pub theorem pattern_ctor_arity_frame(
   same: Bool,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, pattern_ctor_arity(c, name, args, fields, span, same)) {
-  match same: CkRunFrame(c, pattern_ctor_arity(c, name, args, fields, span, same)) {
+  ⊢ CkRunFrame(c, pattern_ctor_arity(c, name, args, fields, span, same)) from match same {
     false => run_frame_return(c, Some(fields), ordered)
     true => run_frame_bind(
       Unit,
@@ -274,7 +279,7 @@ pub fn pattern_ctor_same(
   target: Ty,
   same: Bool
 ): Mut1(Option(List(DataField)), Checker) {
-  match same: Mut1(Option(List(DataField)), Checker) {
+  ⊢ Mut1(Option(List(DataField)), Checker) from match same {
     false => pattern_ctor_arity(
       c,
       name,
@@ -320,7 +325,7 @@ pub theorem pattern_ctor_same_frame(
   same: Bool,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, pattern_ctor_same(c, name, args, t, span, dc, targs, target, same)) {
-  match same: CkRunFrame(c, pattern_ctor_same(c, name, args, t, span, dc, targs, target, same)) {
+  ⊢ CkRunFrame(c, pattern_ctor_same(c, name, args, t, span, dc, targs, target, same)) from match same {
     false => pattern_ctor_arity_frame(
       c,
       name,
@@ -460,7 +465,7 @@ pub fn pattern_ctor_lookup(
   span: TySpan,
   found: Option(Pair(Text, Nat))
 ): Mut1(Option(List(DataField)), Checker) {
-  match found: Mut1(Option(List(DataField)), Checker) {
+  ⊢ Mut1(Option(List(DataField)), Checker) from match found {
     None => frame_bind(
       Unit,
       Option(List(DataField)),
@@ -494,7 +499,7 @@ pub theorem pattern_ctor_lookup_frame(
   found: Option(Pair(Text, Nat)),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, pattern_ctor_lookup(c, name, args, t, span, found)) {
-  match found: CkRunFrame(c, pattern_ctor_lookup(c, name, args, t, span, found)) {
+  ⊢ CkRunFrame(c, pattern_ctor_lookup(c, name, args, t, span, found)) from match found {
     None => run_frame_bind(
       Unit,
       Option(List(DataField)),
@@ -551,14 +556,20 @@ pub theorem pattern_ctor_fields_unf(
   args: List(SurfacePattern),
   t: Ty,
   span: TySpan
-): ck_ctor_fields(c, name, args, t, span) = pattern_ctor_lookup(
-    c,
-    name,
-    args,
-    t,
-    span,
-    datas_ctor_expected(ck_datas_of(c), name, ck_resolve(c, t))
-  ) { Refl }
+): ck_ctor_fields(
+  c,
+  name,
+  args,
+  t,
+  span
+) = pattern_ctor_lookup(
+  c,
+  name,
+  args,
+  t,
+  span,
+  datas_ctor_expected(ck_datas_of(c), name, ck_resolve(c, t))
+) { Refl }
 
 pub theorem ck_ctor_fields_run_frame(
   c: Checker,

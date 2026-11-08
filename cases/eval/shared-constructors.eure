@@ -1,0 +1,56 @@
+@ cases.a-pattern-names-the-matched-types-constructor-across-files
+description = "`Mk` is declared by two types. The pattern `Mk(n)` in `answer` is the constructor of the type of `one`, a `let` without a written type, so the program runs the constructor the proofs checked."
+extract = true
+backends = ["rust", "javascript"]
+files."defs.taut" = ```tauto
+import std::Base
+inductive One: Type { Mk(value: Nat): One }
+inductive Two: Type { Mk(left: Nat, right: Nat): Two }
+pub fn answer(): Nat {
+  let one := One::Mk(42)
+  ⊢ Nat from match one { Mk(n) => n }
+}
+```
+files."main.taut" = ```tauto
+import "defs.taut"
+perform show("answer", answer())
+```
+entry = "main.taut"
+shows = ["answer = 42"]
+
+@ cases.a-pattern-names-the-matched-types-constructor-in-one-file
+description = "The matched value is a `let` without a written type, a call, and a parameter; in each the pattern `Mk(…)` is the constructor of that value's type, whichever other type declares `Mk`."
+extract = true
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::Base
+inductive One: Type { Mk(value: Nat): One }
+inductive Two: Type { Mk(left: Nat, right: Nat): Two }
+fn from_let(): Nat {
+  let two := Two::Mk(3, 4)
+  ⊢ Nat from match two { Mk(a, b) => a + b }
+}
+fn make(): One { One::Mk(10) }
+fn from_call(): Nat { ⊢ Nat from match make() { Mk(n) => n } }
+fn from_param(t: Two): Nat { ⊢ Nat from match t { Mk(a, b) => a * b } }
+perform show("let", from_let())
+perform show("call", from_call())
+perform show("param", from_param(Two::Mk(5, 6)))
+```
+shows = ["let = 7", "call = 10", "param = 30"]
+
+@ cases.a-nested-pattern-names-each-matched-types-constructor
+description = "In `Mk(Mk(x, _))` the outer `Mk` is `Box`'s and the inner one is `Usage`'s, the type of the field `value` at the matched type `Box(Usage)`."
+extract = true
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::Base
+inductive Usage: Type { Mk(input: Nat, output: Nat): Usage }
+inductive Box(A: Type): Type { Mk(value: A): Box(A) }
+fn inner(): Nat {
+  let boxed := Box::Mk(Usage::Mk(5, 2))
+  ⊢ Nat from match boxed { Mk(Mk(x, _)) => x }
+}
+perform show("inner", inner())
+```
+shows = ["inner = 5"]

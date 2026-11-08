@@ -31,13 +31,13 @@ pub theorem written_name_mode_sound(
   partial,
   ck_val(ck_written_var(c, name, generics, span))
 ) {
-  match partial: WrittenNameType(
+  ⊢ WrittenNameType(
     ck_datas_of(c),
     generics,
     name,
     partial,
     ck_val(ck_written_var(c, name, generics, span))
-  ) {
+  ) from match partial {
     false => WrittenNameValue(ck_written_var_sound(c, name, generics, span, position, clean))
     true => WrittenNameConstructor(
       Eq::subst(
@@ -80,7 +80,7 @@ pub theorem written_arity_mode_sound(
   position: frame_constructor_position(c) = partial,
   clean: DiagnosticClean(ck_st(ck_arity(c, name, list_len(args), span)))
 ): WrittenArity(ck_datas_of(c), name, args, partial) {
-  match partial: WrittenArity(ck_datas_of(c), name, args, partial) {
+  ⊢ WrittenArity(ck_datas_of(c), name, args, partial) from match partial {
     true => WrittenArityConstructor
     false => WrittenArityValue(
       data => found => ck_declared_arity_sound(c, name, args, span, data, position, found, clean)
@@ -99,7 +99,7 @@ pub theorem ck_written_arity_mode_sound(
 }
 
 pub fn written_function_kind_value(o: Option(Kind)): Kind {
-  match o: Kind {
+  ⊢ Kind from match o {
     None => KindShared
     Some(k) => k
   }
@@ -109,7 +109,7 @@ pub theorem written_function_kind_sound(
   o: Option(Kind),
   parsed: kind_parse(spelling) = o
 ): WrittenFunctionKind(spelling, written_function_kind_value(o)) {
-  match o: WrittenFunctionKind(spelling, written_function_kind_value(o)) {
+  ⊢ WrittenFunctionKind(spelling, written_function_kind_value(o)) from match o {
     None => WrittenFunctionKindDefault(parsed)
     Some(k) => MkWrittenFunctionKind(k, parsed)
   }
@@ -133,14 +133,14 @@ pub theorem ck_written_fn_kind_sound(
   SkFnKind(spelling, body),
   ck_val(ck_written_fn_kind(w, c, spelling, span))
 ) {
-  match w: WrittenKind(
+  ⊢ WrittenKind(
     ck_datas_of(c),
     generics,
     partial,
     under_borrow,
     SkFnKind(spelling, body),
     ck_val(ck_written_fn_kind(w, c, spelling, span))
-  ) {
+  ) from match w {
     TyInt(width) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     TyBool => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     TyText => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))

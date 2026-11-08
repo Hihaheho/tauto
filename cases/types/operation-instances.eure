@@ -1,0 +1,197 @@
+
+@ cases.operation-instance-handlers-stay-separate
+source = ```tauto
+effect identity<A>(value: A): A
+let number := handle { perform identity(7) } with { identity<i64>(value), k => k(value) }
+let text := handle { perform identity("kept") } with { identity<Text>(value), k => k(value) }
+perform show("number", number)
+perform show("text", text)
+```
+types = "ok"
+shows = ['number = 7', 'text = "kept"']
+
+@ cases.operation-instance-independent-parameters-and-wildcard
+source = ```tauto
+effect second<A, B>(first: A, second: B): B
+let result := handle { perform second("kept", 7) } with {
+  second<Text, i64>(_, value), k => k(value)
+}
+perform show("answer", result)
+```
+types = "ok"
+shows = ['answer = 7']
+
+@ cases.operation-instance-result-only-singleton
+source = ```tauto
+effect supply<A>(): A
+let result: i64 := handle { perform supply() } with { supply<i64>(), k => k(7) }
+perform show("answer", result)
+```
+types = "ok"
+shows = ['answer = 7']
+
+@ cases.operation-instance-numeric-singleton
+source = ```tauto
+effect identity<A>(value: A): A
+let result := handle { perform identity(7) } with { identity<i64>(value), k => k(value + 1) }
+perform show("answer", result)
+```
+types = "ok"
+shows = ['answer = 8']
+
+@ cases.operation-instance-formal-union-payload
+source = ```tauto
+effect keep<A>(fixed: i64 | Text, value: A): A
+let number: i64 := 7
+let result := handle { perform keep(number, true) } with { ∀ A. keep<A>(_, value), k => k(value) }
+perform show("answer", result)
+```
+types = "ok"
+shows = ['answer = true']
+
+@ cases.operation-instance-shared-handler-capture
+source = ```tauto
+effect identity<A>(value: A): A
+let result := handle { perform identity("kept") } with {
+  identity<Text>(value), k => {
+    let r#copy := () => value
+    k(r#copy())
+  }
+}
+perform show("answer", result)
+```
+types = "ok"
+shows = ['answer = "kept"']
+
+@ cases.operation-instance-narrowed-arm-mismatch
+source = ```tauto
+effect identity<A>(value: A): A
+let result := handle { perform identity("kept") } with {
+  identity<Text>(value), k => k(value + 1)
+}
+```
+types = "error: the operands differ"
+
+@ cases.operation-instance-independent-parameters-cannot-collapse
+source = ```tauto
+effect second<A, B>(first: A, second: B): B
+let result := handle { perform second("kept", 7) } with {
+  second<Text, i64>(first, second), k => k(first)
+}
+```
+types = "error: an argument: Text does not fit i64"
+
+@ cases.operation-instance-linear-wildcard-is-rejected
+source = ```tauto
+linear struct Token {}
+effect second<A, B>(first: A, second: B): B
+let result := handle { perform second(Token {}, 7) } with {
+  second<Token, i64>(_, value), k => k(value)
+}
+```
+types = "ok"
+lin = "error: `_` drops a linear Token"
+
+@ cases.operation-instance-nested-linear-wildcard-is-rejected
+source = ```tauto
+linear struct Token {}
+struct Wrapped(A: Type) { value: A }
+effect second<A, B>(first: Wrapped(A), second: B): B
+let token: Token := Token {}
+let wrapped: Wrapped(Token) := Wrapped { value: token }
+let result := handle { perform second(wrapped, 7) } with {
+  second<Token, i64>(Wrapped { value: _ }, value), k => k(value)
+}
+```
+types = "ok"
+lin = "error: `_` drops a linear Token"
+
+@ cases.operation-instance-distinct-requests-remain-a-rust-boundary
+source = ```tauto
+effect identity<A>(value: A): A
+handle {
+  let number: i64 := perform identity(7)
+  let text: Text := perform identity("kept")
+  perform show("number", number)
+  perform show("text", text)
+} with { ∀ A. identity<A>(value), k => k(value) }
+```
+types = "ok"
+shows = ['number = 7', 'text = "kept"']
+compile_errors.rust = "build: the handled body has distinct parameterized operation instances"
+
+@ cases.operation-instance-indeterminate-integers-keep-frontend-behavior
+source = ```tauto
+effect identity<A>(value: A): A
+let result := handle {
+  if true { perform identity(7) } else { perform identity(8) }
+} with { ∀ A. identity<A>(value), k => k(value) }
+perform show("answer", result)
+```
+types = "ok"
+shows = ['answer = 7']
+compile_errors.rust = "build: the handled operation instances are not determined before checking the arm"
+
+@ cases.operation-instance-opaque-callback-keeps-javascript-behavior
+source = ```tauto
+effect identity<A>(value: A): A
+let action := () => perform identity(7)
+let result := handle { action() } with { ∀ A. identity<A>(value), k => k(value) }
+perform show("answer", result)
+```
+types = "ok"
+shows = ['answer = 7']
+compile_errors.rust = "build: the handled body has an opaque or storage-sensitive operation context"
+
+@ cases.operation-instance-builtin-show-keeps-erased-payloads
+source = ```tauto
+let result := handle {
+  perform show("number", 7)
+  perform show("text", "kept")
+  9
+} with { ∀ A. show<A>(_, _), k => k(#()) }
+perform show("answer", result)
+```
+types = "ok"
+shows = ['answer = 9']
+
+@ cases.operation-instance-linear-return-wildcard-builds-with-its-instance
+source = ```tauto
+linear struct Token {}
+effect supply<A>(): A
+let result := handle { let t: Token := perform supply(); t } with {
+  return _ => 7
+  supply<Token>(), k => k(Token {})
+}
+```
+types = "ok"
+
+@ cases.operation-instance-nested-linear-return-builds-with-its-instance
+source = ```tauto
+linear struct Token {}
+struct Wrapped(A: Type) { value: A }
+effect supply<A>(): A
+let result := handle { let w: Wrapped(Token) := perform supply(); w } with {
+  return Wrapped { value: _ } => 7
+  supply<Wrapped(Token)>(), k => k(Wrapped { value: Token {} })
+}
+```
+types = "ok"
+
+@ cases.operation-instance-host-wrapper-keeps-signatures
+source = ```tauto
+import std::prelude::Os
+
+effect identity<A>(value: A): A
+effect keep<B>(fixed: i64 | Text, value: B): B
+let number: i64 := 7
+let result := handle { perform identity(number) } with { ∀ A. identity<A>(value), k => k(value) }
+let kept := handle { perform keep(number, true) } with { ∀ B. keep<B>(_, value), k => k(value) }
+perform stdout("host\n")
+perform show("answer", result)
+perform show("kept", kept)
+```
+types = "ok"
+shows = ['answer = 7', 'kept = true']
+stdout = "host\n"
+stderr = ""

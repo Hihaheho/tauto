@@ -1,0 +1,42 @@
+// Unknown parameter types cannot make a function structurally comparable.
+@ cases.eq-on-inferred-function
+source = ```nib
+fn identity(x) { x }
+identity == identity
+```
+types = "error: == needs PartialEq"
+
+@ cases.eq-on-inferred-lambda
+source = ```nib
+let identity := (x) => x
+identity == identity
+```
+types = "error: == needs PartialEq"
+
+@ cases.eq-on-empty-lists
+source = ```nib
+Nil == Nil
+```
+types = "ok"
+
+@ cases.eq-on-inferred-vec
+source = ```nib
+let values := Vec::new()
+values == values
+```
+types = "error: == needs PartialEq"
+
+@ cases.eq-on-inferred-hashmap
+source = ```nib
+let values := HashMap::new()
+values == values
+```
+types = "error: == needs PartialEq"
+
+@ cases.eq-on-inferred-function-field
+source = ```nib
+struct Holder(A: Shared) { f: (A) -> A }
+let holder := Holder { f: (x) => x }
+holder == holder
+```
+types = "error: == needs PartialEq"

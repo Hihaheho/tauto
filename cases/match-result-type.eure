@@ -1,0 +1,370 @@
+description = "Where a kernel match takes its result type from, and the default arm beside nested patterns."
+
+@ cases.a_lambda_parameter_has_its_type_from_the_call
+source = ```tauto
+theorem t<A: Prop, B: Prop>(p: Or(And(A, B), B)): B {
+  Or::elim(p, y => match y { AndIntro(a, b) => b }, h => h)
+}
+```
+checks."t" = "checked"
+
+@ cases.an_argument_match_has_the_parameter_type
+source = ```tauto
+theorem t<A: Prop, B: Prop>(p: And(A, B)): Or(B, A) {
+  OrInl(match p { AndIntro(a, b) => b })
+}
+```
+checks."t" = "checked"
+
+@ cases.an_argument_match_is_checked_at_the_parameter_type
+source = ```tauto
+theorem t<A: Prop, B: Prop>(p: And(A, B)): Or(B, A) {
+  OrInl(match p { AndIntro(a, b) => a })
+}
+```
+checks."t" = "error: type mismatch"
+
+@ cases.an_argument_match_on_a_term_names_its_equation
+source = ```tauto
+inductive Yn: Type {
+  Yes: Yn
+  No: Yn
+}
+fn yn_not(a: Yn): Yn {
+  match a {
+    Yes => No
+    No => Yes
+  }
+}
+theorem t(a: Yn): And(True, Or(Eq(Yn, yn_not(a), Yes), Eq(Yn, yn_not(a), No))) {
+  AndIntro(Trivial, match yn_not(a) eqn e {
+    Yes => OrInl(Refl)
+    No => OrInr(Refl)
+  })
+}
+```
+checks."t" = "checked"
+
+@ cases.an_equation_unfolded_into_the_goal_keeps_the_term
+source = ```tauto
+fn f(m: Nat, h: Nat::eq(m, 0) = false): Nat { m }
+fn g(m: Nat): Nat {
+  ⊢ Nat from match Nat::eq(m, 0) eqn h {
+    true => m
+    false => f(m, h)
+  }
+}
+theorem t(m: Nat): g(m) = m {
+  ⊢ g(m) = m from match Nat::eq(m, 0) eqn hg {
+    true => ⊢ m = m from Refl
+    false => ⊢ f(m, hg) = m from Refl
+  }
+}
+```
+checks."t" = "checked"
+
+@ cases.a_match_whose_type_is_not_known_needs_one
+source = ```tauto
+theorem t<A: Prop, B: Prop>(p: And(A, B)): B {
+  (x => x)(match p { AndIntro(a, b) => b })
+}
+```
+checks."t" = "error: needs its result type"
+
+@ cases.a_default_arm_beside_nested_patterns
+source = ```tauto
+inductive Yn: Type {
+  Yes: Yn
+  No: Yn
+}
+fn last_true(l: List(Yn)): Yn {
+  match l {
+    Cons(Yes, Nil) => Yes
+    _ => No
+  }
+}
+theorem t1(): Eq(Yn, last_true(Cons(Yes, Nil)), Yes) { Refl }
+theorem t2(): Eq(Yn, last_true(Cons(Yes, Cons(Yes, Nil))), No) { Refl }
+theorem t3(): Eq(Yn, last_true(Cons(No, Nil)), No) { Refl }
+theorem t4(): Eq(Yn, last_true(Nil), No) { Refl }
+theorem t5(l: List(Yn)): Or(Eq(Yn, last_true(l), Yes), Eq(Yn, last_true(l), No)) {
+  match l {
+    Cons(Yes, Nil) => OrInl(Refl)
+    _ => OrInr(Refl)
+  }
+}
+```
+checks."t1" = "checked"
+checks."t2" = "checked"
+checks."t3" = "checked"
+checks."t4" = "checked"
+checks."t5" = "checked"
+
+@ cases.a_default_arm_beside_nested_patterns_reaches_a_case
+source = ```tauto
+fn f(l: List(Nat)): Nat {
+  match l {
+    Nil => Zero
+    Cons(Zero, t) => Zero
+    Cons(Succ(k), t) => k
+    _ => Zero
+  }
+}
+```
+checks."f" = "error: matches no value"
+
+@ cases.a_default_arm_beside_nested_patterns_is_the_last
+source = ```tauto
+fn f(l: List(Nat)): Nat {
+  match l {
+    _ => Zero
+    Cons(Zero, Nil) => Zero
+  }
+}
+```
+checks."f" = "error: must be the last"
+
+@ cases.a_named_field_beside_split_ones_is_reported
+source = ```tauto
+fn f(l: List(Nat)): Nat {
+  match l {
+    Nil => Zero
+    Cons(Zero, t) => Zero
+    Cons(k, t) => k
+  }
+}
+```
+checks."f" = "error: only a last `_ =>` stands for the other cases"
+
+@ cases.a_lambda_parameter_type_is_checked_against_the_call
+source = ```tauto
+inductive Yn: Type {
+  Yes: Yn
+  No: Yn
+}
+fn ap(f: (Yn) -> Yn): Yn { f(Yes) }
+fn bad(): Yn { ap((o: Nat) => Yes) }
+```
+checks."bad" = "error: is written as"
+
+@ cases.a_lambda_parameter_type_that_matches_the_call
+source = ```tauto
+inductive Yn: Type {
+  Yes: Yn
+  No: Yn
+}
+fn ap(f: (Yn) -> Yn): Yn { f(Yes) }
+fn good(): Yn { ap((o: Yn) => o) }
+```
+checks."good" = "checked"
+
+@ cases.a_lambda_parameter_type_is_checked_where_a_generic_fixes_it
+source = ```tauto
+inductive Yn: Type {
+  Yes: Yn
+  No: Yn
+}
+fn ap2<A: Type>(f: (A) -> Yn, a: A): Yn { f(a) }
+fn bad(): Yn { ap2((o: Nat) => Yes, Yes) }
+```
+checks."bad" = "error: is written as"
+
+@ cases.a_lambda_parameter_type_gives_a_match_its_scrutinee_type
+source = ```tauto
+inductive Yn: Type {
+  Yes: Yn
+  No: Yn
+}
+fn get(o: Option(Yn)): Yn {
+  match o {
+    None => No
+    Some(x) => x
+  }
+}
+theorem t(a: Option(Yn), b: Option(Yn), p: Eq(Option(Yn), a, b)): Eq(Yn, get(a), get(b)) {
+  Eq::congr((o: Option(Yn)) => ⊢ Yn from match o {
+    None => No
+    Some(x) => x
+  }, p)
+}
+```
+checks."t" = "checked"
+
+@ cases.a_lambda_parameter_has_the_type_written_on_it
+source = ```tauto
+inductive Yn: Type {
+  Yes: Yn
+  No: Yn
+}
+fn flip(a: Yn): Yn {
+  match a {
+    Yes => No
+    No => Yes
+  }
+}
+theorem t(x: Yn, h: Eq(Yn, Yes, x)): Eq(Yn, flip(x), No) {
+  Eq::subst((z: Yn) => Eq(Yn, match z {
+    Yes => No
+    No => Yes
+  }, No), h, Refl)
+}
+```
+checks."t" = "checked"
+
+@ cases.a_lambda_parameter_has_its_type_from_arguments_after_it
+source = ```tauto
+inductive Yn: Type {
+  Yes: Yn
+  No: Yn
+}
+fn flip(a: Yn): Yn {
+  match a {
+    Yes => No
+    No => Yes
+  }
+}
+theorem t(x: Yn, h: Eq(Yn, Yes, x)): Eq(Yn, flip(x), No) {
+  Eq::subst(z => Eq(Yn, match z {
+    Yes => No
+    No => Yes
+  }, No), h, Refl)
+}
+```
+checks."t" = "checked"
+
+@ cases.a_lambda_parameter_written_with_a_wrong_type_is_rejected
+source = ```tauto
+theorem t<A: Prop, B: Prop>(p: Or(And(A, B), B)): B {
+  Or::elim(p, (y: And(B, A)) => match y { AndIntro(a, b) => a }, h => h)
+}
+```
+checks."t" = "error: the parameter `y` is written as `And(B, A)`"
+
+@ cases.bool_is_matched_by_its_constructors
+source = ```tauto
+inductive Yn: Type {
+  Yes: Yn
+  No: Yn
+}
+fn g(x: Bool): Yn {
+  match x {
+    true => Yes
+    false => No
+  }
+}
+```
+checks."g" = "checked"
+
+@ cases.a_match_in_a_type_is_on_the_parameters
+source = ```tauto
+inductive Yn: Type {
+  Yes: Yn
+  No: Yn
+}
+fn flip(a: Yn): Yn {
+  match a {
+    Yes => No
+    No => Yes
+  }
+}
+theorem inline_is_flip(a: Yn): Eq(Yn, match a {
+  Yes => No
+  No => Yes
+}, flip(a)) {
+  match a {
+    Yes => Refl
+    No => Refl
+  }
+}
+theorem with_result(a: Yn): Eq(Yn, flip(a), ⊢ Yn from match a {
+  Yes => No
+  No => Yes
+}) {
+  match a {
+    Yes => Refl
+    No => Refl
+  }
+}
+theorem wrong(a: Yn): Eq(Yn, match a {
+  Yes => Yes
+  No => Yes
+}, flip(a)) {
+  match a {
+    Yes => Refl
+    No => Refl
+  }
+}
+theorem true_false_absurd(h: Eq(Yn, No, Yes)): Eq(Yn, Yes, No) {
+  match h {
+  }
+}
+theorem in_hyp(a: Yn, h: Eq(Yn, match a {
+  Yes => No
+  No => Yes
+}, Yes)): Eq(Yn, a, No) {
+  match a {
+    Yes => true_false_absurd(h)
+    No => Refl
+  }
+}
+```
+checks."inline_is_flip" = "checked"
+checks."with_result" = "checked"
+checks."wrong" = "error: type mismatch"
+checks."in_hyp" = "checked"
+
+@ cases.a_function_body_match_is_the_match_written_inline
+source = ```tauto
+inductive Yn: Type {
+  Yes: Yn
+  No: Yn
+}
+fn pick(y: Yn, a: Nat, b: Nat): Nat {
+  match y {
+    Yes => a
+    No => b
+  }
+}
+fn pick_last(a: Nat, b: Nat, y: Yn): Nat {
+  match y {
+    Yes => a
+    No => b
+  }
+}
+theorem same_first(y: Yn, a: Nat, b: Nat): Eq(Nat, pick(y, a, b), match y {
+  Yes => a
+  No => b
+}) {
+  Refl
+}
+theorem same_last(y: Yn, a: Nat, b: Nat): Eq(Nat, pick_last(a, b, y), match y {
+  Yes => a
+  No => b
+}) {
+  Refl
+}
+```
+checks."same_first" = "checked"
+checks."same_last" = "checked"
+
+@ cases.a_scrutinee_carries_its_own_type
+source = ```tauto
+inductive Yn: Type {
+  Yes: Yn
+  No: Yn
+}
+fn get(o: Option(Yn)): Yn {
+  ⊢ Yn from match (o: Option(Yn)) {
+    None => No
+    Some(x) => x
+  }
+}
+fn get_untyped_result(o: Option(Yn)): Yn {
+  match (o: Option(Yn)) {
+    None => No
+    Some(x) => x
+  }
+}
+```
+checks."get" = "checked"
+checks."get_untyped_result" = "checked"

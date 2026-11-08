@@ -1,0 +1,357 @@
+// Differential cases: each named route compares the self-hosted component with its oracle, not only evaluator success.
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-001
+source = ```tauto
+linear struct L { n: i64 }
+fn mk(): L { L { n: 1 } }
+fn eat(l: L): i64 { match l { L { n: k } => k } }
+fn f(): i64 { let a := mk()
+ 0 }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-002
+source = ```tauto
+linear struct L { n: i64 }
+fn mk(): L { L { n: 1 } }
+fn eat(l: L): i64 { match l { L { n: k } => k } }
+fn f(): i64 { let a := mk()
+ eat(a) }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-003
+source = ```tauto
+linear struct L { n: i64 }
+fn mk(): L { L { n: 1 } }
+fn eat(l: L): i64 { match l { L { n: k } => k } }
+fn f(): i64 { let a := mk()
+ eat(a) + eat(a) }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-004
+source = ```tauto
+linear struct L { n: i64 }
+fn mk(): L { L { n: 1 } }
+fn eat(l: L): i64 { match l { L { n: k } => k } }
+fn f(b: Bool): i64 { let a := mk()
+ if b { eat(a) } else { 0 } }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-005
+source = ```tauto
+linear struct L { n: i64 }
+fn mk(): L { L { n: 1 } }
+fn eat(l: L): i64 { match l { L { n: k } => k } }
+fn f(b: Bool): i64 { let a := mk()
+ if b { eat(a) } else { eat(a) } }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-006
+source = ```tauto
+linear struct L { n: i64 }
+fn mk(): L { L { n: 1 } }
+fn eat(l: L): i64 { match l { L { n: k } => k } }
+fn f(b: Bool): i64 { let a := mk()
+ if b { return 0 }
+ eat(a) }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-007
+source = ```tauto
+linear struct L { n: i64 }
+fn mk(): L { L { n: 1 } }
+fn eat(l: L): i64 { match l { L { n: k } => k } }
+fn f(): i64 { let a := mk()
+ match a { _ => 0 } }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-008
+source = ```tauto
+affine struct F { n: i64 }
+fn mkf(): F { F { n: 1 } }
+fn eatf(f: F): i64 { match f { F { n: k } => k } }
+fn f(): i64 { let a := mkf()
+ let b := eatf(a)
+ eatf(a) }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-009
+source = ```tauto
+affine struct F { n: i64 }
+fn mkf(): F { F { n: 1 } }
+fn eatf(f: F): i64 { match f { F { n: k } => k } }
+fn f(): i64 { let a := mkf()
+ 0 }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-010
+source = ```tauto
+affine struct F { n: i64 }
+fn mkf(): F { F { n: 1 } }
+fn eatf(f: F): i64 { match f { F { n: k } => k } }
+fn f(a: F): i64 { a.n }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-011
+source = ```tauto
+affine struct F { n: i64 }
+fn mkf(): F { F { n: 1 } }
+fn eatf(f: F): i64 { match f { F { n: k } => k } }
+fn f(): i64 { let a := mkf()
+ while true { eatf(a) }
+ 0 }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-012
+source = ```tauto
+affine struct F { n: i64 }
+fn mkf(): F { F { n: 1 } }
+fn eatf(f: F): i64 { match f { F { n: k } => k } }
+fn f(): i64 { var a := mkf()
+ let x := eatf(a)
+ a := mkf()
+ eatf(a) }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-013
+source = ```tauto
+affine struct F { n: i64 }
+fn mkf(): F { F { n: 1 } }
+fn eatf(f: F): i64 { match f { F { n: k } => k } }
+fn f(): i64 { let a := mkf()
+ let g := () => eatf(a)
+ g() }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-014
+source = ```tauto
+affine struct F { n: i64 }
+fn mkf(): F { F { n: 1 } }
+fn eatf(f: F): i64 { match f { F { n: k } => k } }
+fn f(): i64 { let a := mkf()
+ let g := () => eatf(a)
+ let h := () => eatf(a)
+ g() }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-015
+source = ```tauto
+fn f(): i64 {
+  var v := Vec::new()
+  let g := () => Vec::push(&mut v, 1)
+  g()
+  0
+}
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-016
+source = ```tauto
+fn f(): i64 {
+  var v := Vec::new()
+  Vec::push(&mut v, 1)
+  let g := () => Vec::len(&v)
+  let h := g
+  0
+}
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-017
+source = ```tauto
+fn f(&mut a: Vec(i64), &b: Vec(i64)): Unit { Vec::push(&mut a, 1) }
+var v := Vec::new()
+f(&mut v, &v)
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-018
+source = ```tauto
+fn g(a: Vec(i64), &b: Vec(i64)): Unit { }
+var v := Vec::new()
+g(v, &v)
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-019
+source = ```tauto
+struct P { a: Vec(i64), b: Vec(i64) }
+fn f(&mut x: Vec(i64), &mut y: Vec(i64)): Unit { Vec::push(&mut x, 1) }
+var p := P { a: Vec::new(), b: Vec::new() }
+f(&mut p.a, &mut p.b)
+f(&mut p.a, &mut p.a)
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-020
+source = ```tauto
+fn first(&v: Vec(i64)): &i64 { Vec::get(&v, 0) }
+fn f(): i64 {
+  var v := Vec::new()
+  Vec::push(&mut v, 1)
+  let &x := Vec::get(&v, 0)
+  Vec::push(&mut v, 2)
+  0
+}
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-021
+source = ```tauto
+struct P { a: Vec(i64) }
+fn f(&p: P): Vec(i64) { p.a }
+fn g(p: P): Vec(i64) { p.a }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-022
+source = ```tauto
+enum E { A(Vec(i64)), B }
+fn f(&e: E): i64 { match e { A(v) => Vec::len(&v), B => 0 } }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-023
+source = ```tauto
+effect pick(): i64 resume ω
+linear struct L { n: i64 }
+fn mk(): L { L { n: 1 } }
+fn eat(l: L): i64 { match l { L { n: k } => k } }
+fn f(): i64 {
+  let a := mk()
+  let r := handle { perform pick() } with {
+    pick(), k => k(1) + k(2)
+    return v => v
+  }
+  eat(a) + r
+}
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-024
+source = ```tauto
+effect stop(): i64 resume 0
+linear struct L { n: i64 }
+fn mk(): L { L { n: 1 } }
+fn eat(l: L): i64 { match l { L { n: k } => k } }
+fn f(): i64 {
+  let a := mk()
+  let r := handle { perform stop() } with {
+    stop() => 0
+    return v => v
+  }
+  eat(a) + r
+}
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-025
+source = ```tauto
+affine struct F { n: i64 }
+fn mkf(): F { F { n: 1 } }
+effect ask(): i64
+fn f(): i64 {
+  let a := mkf()
+  handle { perform ask() } with {
+    ask(), k => { let b := a
+ k(1) }
+    return v => v
+  }
+}
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-026
+source = ```tauto
+linear struct L { n: i64 }
+fn mk(): L { L { n: 1 } }
+fn eat(l: L): i64 { match l { L { n: k } => k } }
+fn f(): i64 {
+  let a := mk()
+  let r := handle { budget(steps: 10) { 1 } } with {
+    exceeded(i), k => 0
+    return v => v
+  }
+  eat(a)
+}
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-027
+source = ```tauto
+fn pick(&t: Vec(i64)): &Vec(i64) { t }
+fn bad(&t: Vec(i64)): Vec(i64) { t }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-028
+source = ```tauto
+linear struct L { n: i64 }
+fn mk(): L { L { n: 1 } }
+fn two(a: L, b: L): i64 { 0 }
+fn f(): i64 { let a := mk()
+ two(a, a) }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-029
+source = ```tauto
+fn f(): i64 { "a" }
+```
+differential = "lin"
+
+// lin_match_on_hard_cases
+@ cases.lin-match-on-hard-cases-030
+source = ```tauto
+fn f(
+```
+differential = "lin"
+
+@ cases.lin-hard-linear-struct-wild
+source = ```tauto
+linear struct Token {}
+fn f(t: Token): i64 { match t { _ => 0 } }
+```
+differential = "lin"

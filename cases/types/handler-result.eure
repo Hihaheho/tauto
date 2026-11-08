@@ -1,0 +1,49 @@
+// The continuation returns the union of every handler arm, including later arms.
+
+@ cases.a-later-handler-arm-invalidates-an-earlier-continuation-use
+source = ```nib
+effect first(): i64
+effect second(): i64
+fn increment(x: i64): i64 { x + 1 }
+let result := handle {
+  let x := perform first()
+  perform second()
+} with {
+  first(), k => increment(k(0))
+  second(), k => "text"
+}
+```
+types = "error: does not fit i64"
+
+@ cases.an-arm-cannot-use-its-continuation-at-the-provisional-result
+source = ```nib
+effect next(): i64
+fn increment(x: i64): i64 { x + 1 }
+let result := handle {
+  let x := perform next()
+  perform next()
+} with {
+  next(), k => {
+    let x := increment(k(0))
+    "text"
+  }
+}
+```
+types = "error: does not fit i64"
+
+@ cases.a-continuation-result-can-be-discarded-when-arms-differ
+source = ```nib
+effect first(): i64
+effect second(): i64
+let result: i64 | Text := handle {
+  let x := perform first()
+  perform second()
+} with {
+  first(), k => {
+    let ignored := k(0)
+    1
+  }
+  second(), k => "text"
+}
+```
+types = "ok"

@@ -39,7 +39,7 @@ pub theorem run_data_invariant_after(
   m: Mut1(Unit, Checker),
   ready: DataInvariantReady(p, ck_st(m))
 ): DataInvariantReady(p, ck_st(run_after_data_result(prelude, program, own, m))) {
-  match m: DataInvariantReady(p, ck_st(run_after_data_result(prelude, program, own, m))) {
+  ⊢ DataInvariantReady(p, ck_st(run_after_data_result(prelude, program, own, m))) from match m {
     mut1(v, next) => {
       let frame: CkRunFrame(
         next,
@@ -59,7 +59,7 @@ pub theorem run_data_invariant_builtins(
   decls: CkDatasOrdered(ck_st(m)),
   prepared: PreparedDataInvariant(p, prelude, program)
 ): DataInvariantReady(p, ck_st(run_after_builtins(prelude, program, m))) {
-  match m: DataInvariantReady(p, ck_st(run_after_builtins(prelude, program, m))) {
+  ⊢ DataInvariantReady(p, ck_st(run_after_builtins(prelude, program, m))) from match m {
     mut1(v, next) => run_data_invariant_after(
       p,
       prelude,
@@ -114,14 +114,18 @@ pub theorem run_data_invariant_finish_known(
   m: Mut1(Unit, Checker),
   ready: DataInvariantReady(p, ck_st(m))
 ): DataReportInvariant(p, run_finish_known(m)) {
-  match m: DataReportInvariant(p, run_finish_known(m)) {
+  ⊢ DataReportInvariant(p, run_finish_known(m)) from match m {
     mut1(v, next) => Eq::subst(
       (z: Mut1(TypeReport, Checker)) => DataReportInvariant(p, z),
       Eq::sym(ck_rewrap1_id(ck_finish(next))),
       Eq::subst(
         p,
         Eq::sym(ck_finish_report_agrees(next)),
-        Eq::subst(p, Eq::sym(And::right(ck_finish_run_frame(next, And::left(ready)))), And::right(ready))
+        Eq::subst(
+          p,
+          Eq::sym(And::right(ck_finish_run_frame(next, And::left(ready)))),
+          And::right(ready)
+        )
       )
     )
   }
@@ -131,7 +135,7 @@ pub theorem run_finish_known_input_clean(
   m: Mut1(Unit, Checker),
   clean: DiagnosticReportClean(run_finish_known(m))
 ): DiagnosticClean(ck_st(m)) {
-  match m: DiagnosticClean(ck_st(m)) {
+  ⊢ DiagnosticClean(ck_st(m)) from match m {
     mut1(value, next) => ck_finish_input_clean(
       next,
       Eq::subst(DiagnosticReportClean, ck_rewrap1_id(ck_finish(next)), clean)
@@ -200,7 +204,7 @@ pub theorem run_data_invariant_modules(
   decls: CkDatasOrdered(ck_st(m)),
   prepared: PreparedDataInvariant(p, prelude, program)
 ): DataReportInvariant(p, run_after_module_errors(prelude, program, m)) {
-  match m: DataReportInvariant(p, run_after_module_errors(prelude, program, m)) {
+  ⊢ DataReportInvariant(p, run_after_module_errors(prelude, program, m)) from match m {
     mut1(v, next) => run_data_invariant_finish(
       p,
       ck_run(next, prelude, program),
@@ -248,7 +252,9 @@ pub theorem types_check_data_invariant(
 ): p(finish_report_datas(types_check(prelude, program, errors))) {
   ck_types_run_data_invariant(
     p,
-    checker_new(Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))),
+    checker_new(
+      Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))
+    ),
     prelude,
     program,
     errors,

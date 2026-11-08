@@ -1,0 +1,15 @@
+// The immutable binding owns the completed list before traversal. Mutable-root
+// traversal has a separate live-alias contract.
+@ cases.immutable-borrowed-list-traversal
+backends = ["rust", "javascript"]
+source = ```tauto
+fn length(&items: List(i64)): i64 ! {Div} {
+    match items { Nil => 0, Cons(head, tail) => 1 + length(&tail) }
+}
+var items: List(i64) := Nil
+var index := 0
+while index < 20000 { items := Cons(index, items); index := index + 1 }
+let stable_items := items
+perform show("length", length(&stable_items))
+```
+rust_shows = ["length = 20000"]

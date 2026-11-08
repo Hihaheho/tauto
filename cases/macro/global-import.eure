@@ -1,0 +1,274 @@
+// A name a macro writes with `Syn::global` is held to the imports of the file of the
+// macro, as a name in a `quote` is; the file that calls the macro need not import it
+// (`docs/design/macro.md`「衛生（スコープ集合）」).
+
+@ cases.a-global-a-macro-writes-with-syn-global-is-not-held-to-the-callers-imports
+backends = ["javascript"]
+files."lib.nib" = ````nib
+import std::prelude::Macro
+import std::prelude::Shared
+pub macro fn hello(value: SynExpr): SynExpr {
+  ExApp(ExVar(Syn::global("concat")), [value, ExText("!", Syn::call_span())], Syn::call_span())
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+perform show("result", hello!("Hello"))
+````
+shows = ["result = \"Hello!\""]
+
+@ cases.a-global-a-macro-writes-with-syn-global-needs-the-import-in-the-macros-file
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/lib.taut" = ````tauto
+import std::prelude::Macro
+pub macro fn hello(value: SynExpr): SynExpr {
+  ExApp(ExVar(Syn::global("concat")), [value, ExText("!", Syn::call_span())], Syn::call_span())
+}
+````
+files."app/src/main.taut" = ````tauto
+import "lib.taut"
+perform show("result", hello!("Hello"))
+````
+load_error = "main.taut:2:24: macro: macro.runtime: macro hello: macro.global: concat is not a unique declaration visible in the macro definition"
+
+// Every name a macro's expansion writes is read where the macro is written, wherever it
+// stands in the output: the result type of a function the macro makes is not held to the
+// caller's imports either.
+@ cases.a-global-a-macro-writes-in-a-result-type-is-not-held-to-the-callers-imports
+backends = ["javascript"]
+files."defs.nib" = ````nib
+pub(open) shared struct Payload { value: Text }
+````
+files."lib.nib" = ````nib
+import std::prelude::Macro
+import "defs.nib"
+pub macro fn make(name: SynExpr): List(SynStmt) {
+  let id := match name { ExVar(id) => id
+    _ => Syn::global("invalid") }
+  let at := Syn::call_span()
+  [StFn(SynFn {
+    name: id, generics: Nil, generic_types: Nil, bounds: Nil, params: Nil, borrows: Nil, param_types: Nil,
+    result: Some(ExVar(Syn::global("Payload"))), effects: None,
+    body: ExRecord(Syn::global("Payload"), [#(ExText("ok", at), "value")], at), span: at
+  })]
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+make!(answer) => fn answer
+perform show("value", answer().value)
+````
+shows = ["value = \"ok\""]
+
+// The same in the proof language: the files read again to run keep what the check let them see.
+@ cases.a-global-a-macro-writes-in-a-result-type-runs-from-the-proof-language
+entry = "main.taut"
+backends = ["javascript"]
+files."defs.taut" = ````tauto
+pub(open) shared struct Payload { value: Text }
+````
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+import "defs.taut"
+pub macro fn make(name: SynExpr): List(SynStmt) {
+  let id := match name { ExVar(id) => id
+    _ => Syn::global("invalid") }
+  let at := Syn::call_span()
+  [StFn(SynFn {
+    name: id, generics: Nil, generic_types: Nil, bounds: Nil, params: Nil, borrows: Nil, param_types: Nil,
+    result: Some(ExVar(Syn::global("Payload"))), effects: None,
+    body: ExRecord(Syn::global("Payload"), [#(ExText("ok", at), "value")], at), span: at
+  })]
+}
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+make!(answer) => fn answer
+perform show("value", answer().value)
+````
+shows = ["value = \"ok\""]
+
+// The caller declares a `Payload` of its own: the macro's `Payload` is still the one its
+// file sees, when the program is checked and when it is read again to run.
+@ cases.a-global-a-macro-writes-means-the-macros-declaration-beside-the-callers-own
+backends = ["javascript"]
+files."defs.nib" = ````nib
+pub(open) shared struct Payload { value: Text }
+````
+files."lib.nib" = ````nib
+import std::prelude::Macro
+import "defs.nib"
+pub macro fn make(name: SynExpr): List(SynStmt) {
+  let id := match name { ExVar(id) => id
+    _ => Syn::global("invalid") }
+  let at := Syn::call_span()
+  [StFn(SynFn {
+    name: id, generics: Nil, generic_types: Nil, bounds: Nil, params: Nil, borrows: Nil, param_types: Nil,
+    result: Some(ExVar(Syn::global("Payload"))), effects: None,
+    body: ExRecord(Syn::global("Payload"), [#(ExText("macro", at), "value")], at), span: at
+  })]
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+pub(open) shared struct Payload { count: Nat }
+make!(answer) => fn answer
+perform show("value", answer().value)
+````
+shows = ["value = \"macro\""]
+
+
+@ cases.editing-an-identifiers-display-does-not-change-its-declaration
+backends = ["javascript", "rust", "vm"]
+files."lib.nib" = ````nib
+import std::prelude::Macro
+pub fn original(): i64 { 7 }
+pub fn other(): i64 { 9 }
+pub macro fn keep(value: SynExpr): SynExpr {
+  let bound := Syn::global("original")
+  let renamed := SynIdent {
+    name: "other", ctx: bound.ctx, span: bound.span, declaration: bound.declaration
+  }
+  ExApp(ExVar(renamed), [], Syn::call_span())
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+perform show("result", keep!(0))
+````
+shows = ["result = 7"]
+
+@ cases.a-quoted-global-retains-its-declaration-when-its-display-is-edited
+backends = ["javascript", "rust", "vm"]
+files."lib.nib" = ````nib
+import std::prelude::Macro
+pub fn original(): i64 { 7 }
+pub fn other(): i64 { 9 }
+pub macro fn keep(value: SynExpr): SynExpr {
+  match quote { original() } {
+    ExApp(ExVar(bound), args, at) => {
+      let renamed := SynIdent {
+        name: "other", ctx: bound.ctx, span: bound.span, declaration: bound.declaration
+      }
+      ExApp(ExVar(renamed), args, at)
+    }
+    _ => value
+  }
+}
+````
+files."main.nib" = ````nib
+import "lib.nib"
+perform show("result", keep!(0))
+````
+shows = ["result = 7"]
+
+// A `macro fn` of an imported file is kept as written in the program read again to run, so its calls
+// expand there too.
+@ cases.an-imported-private-macro-fn-runs-on-every-backend
+backends = ["javascript"]
+entry = "main.taut"
+files."Lib.taut" = ```tauto
+import std::prelude::Macro
+macro fn identity(value: SynExpr): SynExpr { value }
+```
+files."main.taut" = ```tauto
+import "Lib.taut"
+perform show("value", identity!(1))
+```
+shows = ["value = 1"]
+
+@ cases.quoted-declaration-values-keep-identity-in-executable-code
+backends = ["javascript", "rust", "vm"]
+source = ```tauto
+import std::prelude::Macro
+fn first(): i64 { 1 }
+fn second(): i64 { 2 }
+let a := quote { first }
+let b := quote { first }
+let c := quote { second }
+perform show("same", Syn::same(a, b))
+perform show("different", Syn::same(a, c))
+```
+shows = ["same = true", "different = false"]
+
+@ cases.nested-expansions-preserve-inputs-generated-bindings-and-definition-globals
+backends = ["javascript", "rust", "vm"]
+files."lib.nib" = ```nib
+import std::prelude::Macro
+fn value(): i64 { 7 }
+pub macro fn inner(e: SynExpr): SynExpr {
+  quote { { let tmp := 10; $e + tmp + value() } }
+}
+pub macro fn outer(e: SynExpr): SynExpr {
+  quote { { let tmp := 20; inner!($e) + tmp } }
+}
+pub macro fn capture(e: SynExpr): SynExpr {
+  match e {
+    ExVar(id) => {
+      let picked := Syn::ident_like(id, "it")
+      quote { { let $picked := 30; $e + value() } }
+    }
+    _ => e
+  }
+}
+pub macro fn outer_capture(e: SynExpr): SynExpr {
+  quote { { let tmp := 20; capture!($e) + tmp } }
+}
+```
+files."main.nib" = ```nib
+import "lib.nib"
+fn value(): i64 { 99 }
+let tmp := 1
+perform show("direct", inner!(tmp))
+perform show("nested", outer!(tmp))
+perform show("capture", capture!(it))
+perform show("nested_capture", outer_capture!(it))
+```
+shows = ["direct = 18", "nested = 38", "capture = 37", "nested_capture = 57"]
+
+@ cases.an-imported-macro-fn-no-expression-calls-is-erased-for-every-backend
+backends = ["javascript"]
+entry = "main.taut"
+files."Lib.taut" = ```tauto
+import std::prelude::Macro
+macro fn identity(value: SynExpr): SynExpr { value }
+```
+files."main.taut" = ```tauto
+import "Lib.taut"
+perform show("value", 1)
+```
+shows = ["value = 1"]
+
+@ cases.implicit-library-constructors-have-definition-site-identities
+backends = ["rust", "javascript", "vm"]
+files."lib.nib" = ```nib
+import std::prelude::Macro
+pub macro fn singleton(value: SynExpr): SynExpr {
+  ExApp(ExVar(Syn::global("List::Cons")),
+    [value, ExVar(Syn::global("List::Nil"))], Syn::call_span())
+}
+```
+files."main.nib" = ```nib
+import "lib.nib"
+enum Other { Cons(Text), Nil }
+let items: List(i64) := singleton!(7)
+match items {
+  List::Cons(first, rest) => perform show("first", first)
+  List::Nil => perform show("first", 0)
+}
+```
+shows = ["first = 7"]
+
+@ cases.syn-global-respects-a-definition-without-the-prelude
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" prelude = false }'
+files."app/src/lib.taut" = ```tauto
+import std::prelude::Macro { Syn, SynExpr }
+pub macro fn hidden(value: SynExpr): SynExpr { ExVar(Syn::global("List::Nil")) }
+```
+files."app/src/main.taut" = ```tauto
+import "lib.taut" { hidden }
+perform show("value", hidden!(0))
+```
+load_error = "macro.global: List::Nil is not a unique declaration visible in the macro definition"

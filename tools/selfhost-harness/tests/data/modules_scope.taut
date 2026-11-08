@@ -5,7 +5,7 @@ fn scope_term(name: Text): SurfaceTerm {
 }
 
 fn scope_name(term: SurfaceTerm): Text {
-  match term.kind: Text { SkVar(name) => name
+  ⊢ Text from match term.kind { SkVar(name) => name
     _ => "not a name" }
 }
 
@@ -21,7 +21,7 @@ var state := ModState {
 }
 let path := Cons("M", Nil)
 let function := SurfaceFn {
-  name: "g", generics: Nil, bounds: Nil, params: Cons("f", Nil),
+  name: "g", generics: Nil, generic_types: Nil, bounds: Nil, params: Cons("f", Nil),
   borrows: Nil, param_types: Nil, result: None, effects: None, wheres: Nil,
   start: 0, end: 1, body: scope_term("f")
 }
@@ -32,7 +32,7 @@ let lambda := mod_term(
   &mut state,
   path
 )
-scope_print("lambda", match lambda.kind: Text { SkLam(params, body) => scope_name(body)
+scope_print("lambda", ⊢ Text from match lambda.kind { SkLam(params, body) => scope_name(body)
     _ => "not a lambda" })
 let arm := mod_arm(
   SurfaceArm { pattern: PtBind("f"), guard: None, goal: None, body: scope_term("f") },
@@ -41,7 +41,7 @@ let arm := mod_arm(
 )
 scope_print("pattern", scope_name(arm.body))
 let handler := mod_handler(HdReturn(PtBind("f"), scope_term("f")), &mut state, path)
-scope_print("handler", match handler: Text { HdReturn(pattern, body) => scope_name(body)
+scope_print("handler", ⊢ Text from match handler { HdReturn(pattern, body) => scope_name(body)
     _ => "not a return" })
 let block := mod_term(
   SurfaceTerm { kind: SkBlock(
@@ -50,7 +50,7 @@ let block := mod_term(
   &mut state,
   path
 )
-scope_print("block", match block.kind: Text {
+scope_print("block", ⊢ Text from match block.kind {
   SkBlock(Cons(StLet(name, ty, initial, borrow, mutable), Cons(StExpr(value), Nil))) => Text.concat_all(Cons(scope_name(initial), Cons("/", Cons(scope_name(value), Nil))))
   _ => "not a block"
 })

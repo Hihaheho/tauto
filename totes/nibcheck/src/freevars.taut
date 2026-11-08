@@ -12,15 +12,15 @@ import "datas.taut"
 // The root of a place (`x`, `x.f.g`) and its path, the root first.
 mutual {
   pub fn lin_place(t: SurfaceTerm): Option(Pair(Text, List(Text))) {
-    match t: Option(Pair(Text, List(Text))) {
+    ⊢ Option(Pair(Text, List(Text))) from match t {
       SurfaceTermIndexedMk(k, start, end, ast_occurrence) => lin_place_kind(k)
     }
   }
 
   pub fn lin_place_kind(k: SurfaceKind): Option(Pair(Text, List(Text))) {
-    match k: Option(Pair(Text, List(Text))) {
+    ⊢ Option(Pair(Text, List(Text))) from match k {
       SkVar(n) => Some(Pair { fst: n, snd: Cons(n, Nil) })
-      SkField(base, name) => match lin_place(base): Option(Pair(Text, List(Text))) {
+      SkField(base, name) => ⊢ Option(Pair(Text, List(Text))) from match lin_place(base) {
         Some(p) => Some(Pair { fst: p.fst, snd: List::append(p.snd, Cons(name, Nil)) })
         None => None
       }
@@ -34,11 +34,13 @@ pub(open) inductive FreeState: Type {
 }
 
 pub fn free_note(name: Text, bound: List(Text), out: List(Text)): List(Text) {
-  if not(list_has_text(bound, name)) && not(list_has_text(out, name)) { Cons(name, out) } else { out }
+  if not(
+    list_has_text(bound, name)
+  ) && not(list_has_text(out, name)) { Cons(name, out) } else { out }
 }
 
 pub fn free_names(ns: List(Text), bound: List(Text)): List(Text) {
-  match ns: List(Text) {
+  ⊢ List(Text) from match ns {
     Nil => bound
     Cons(n, rest) => free_names(rest, Cons(n, bound))
   }
@@ -48,7 +50,7 @@ pub fn free_names(ns: List(Text), bound: List(Text)): List(Text) {
 // constructor, which the caller tells apart.
 mutual {
   pub fn pattern_names(p: SurfacePattern, bound: List(Text)): List(Text) {
-    match p: List(Text) {
+    ⊢ List(Text) from match p {
       PtBind(n) => Cons(n, bound)
       PtCtor(name, args) => pattern_names_each(args, bound)
       PtRecord(name, fields) => pattern_names_fields(fields, bound)
@@ -57,35 +59,35 @@ mutual {
   }
 
   pub fn pattern_names_each(ps: List(SurfacePattern), bound: List(Text)): List(Text) {
-    match ps: List(Text) {
+    ⊢ List(Text) from match ps {
       Nil => bound
       Cons(p, rest) => pattern_names_each(rest, pattern_names(p, bound))
     }
   }
 
   pub fn pattern_names_fields(fs: List(SurfacePatternField), bound: List(Text)): List(Text) {
-    match fs: List(Text) {
+    ⊢ List(Text) from match fs {
       Nil => bound
       Cons(f, rest) => pattern_names_fields(rest, pattern_names_field(f, bound))
     }
   }
 
   pub fn pattern_names_field(f: SurfacePatternField, bound: List(Text)): List(Text) {
-    match f: List(Text) {
+    ⊢ List(Text) from match f {
       SurfacePatternFieldMk(name, p) => pattern_names(p, bound)
     }
   }
 }
 
 pub fn free_cont(cont: Option(Text), bound: List(Text)): List(Text) {
-  match cont: List(Text) {
+  ⊢ List(Text) from match cont {
     None => bound
     Some(k) => Cons(k, bound)
   }
 }
 
 pub fn free_borrow(skip: Bool, x: SurfaceTerm): Bool {
-  match lin_place(x): Bool {
+  ⊢ Bool from match lin_place(x) {
     Some(p) => skip
     None => false
   }
@@ -93,13 +95,13 @@ pub fn free_borrow(skip: Bool, x: SurfaceTerm): Bool {
 
 mutual {
   pub fn free_in(t: SurfaceTerm, bound: List(Text), out: List(Text), skip: Bool): List(Text) {
-    match t: List(Text) {
+    ⊢ List(Text) from match t {
       SurfaceTermIndexedMk(k, start, end, ast_occurrence) => free_kind(k, bound, out, skip)
     }
   }
 
   pub fn free_kind(k: SurfaceKind, bound: List(Text), out: List(Text), skip: Bool): List(Text) {
-    match k: List(Text) {
+    ⊢ List(Text) from match k {
       SkVar(n) => free_note(n, bound, out)
       SkApp(f, args) => free_each(args, bound, free_in(f, bound, out, skip), skip)
       SkLam(params, body) => free_in(body, free_names(params, bound), out, skip)
@@ -139,7 +141,7 @@ mutual {
     out: List(Text),
     skip: Bool
   ): List(Text) {
-    match ts: List(Text) {
+    ⊢ List(Text) from match ts {
       Nil => out
       Cons(t, rest) => free_each(rest, bound, free_in(t, bound, out, skip), skip)
     }
@@ -151,14 +153,14 @@ mutual {
     out: List(Text),
     skip: Bool
   ): List(Text) {
-    match fs: List(Text) {
+    ⊢ List(Text) from match fs {
       Nil => out
       Cons(f, rest) => free_fields(rest, bound, free_field(f, bound, out, skip), skip)
     }
   }
 
   pub fn free_field(f: SurfaceField, bound: List(Text), out: List(Text), skip: Bool): List(Text) {
-    match f: List(Text) {
+    ⊢ List(Text) from match f {
       SurfaceFieldMk(name, value) => free_in(value, bound, out, skip)
     }
   }
@@ -169,7 +171,7 @@ mutual {
     out: List(Text),
     skip: Bool
   ): List(Text) {
-    match t: List(Text) {
+    ⊢ List(Text) from match t {
       None => out
       Some(x) => free_in(x, bound, out, skip)
     }
@@ -181,14 +183,14 @@ mutual {
     out: List(Text),
     skip: Bool
   ): List(Text) {
-    match arms: List(Text) {
+    ⊢ List(Text) from match arms {
       Nil => out
       Cons(arm, rest) => free_arms(rest, bound, free_arm(arm, bound, out, skip), skip)
     }
   }
 
   pub fn free_arm(arm: SurfaceArm, bound: List(Text), out: List(Text), skip: Bool): List(Text) {
-    match arm: List(Text) {
+    ⊢ List(Text) from match arm {
       SurfaceArmMk(pattern, guard, goal, body) => free_in(
         body,
         pattern_names(pattern, bound),
@@ -204,7 +206,7 @@ mutual {
     out: List(Text),
     skip: Bool
   ): List(Text) {
-    match hs: List(Text) {
+    ⊢ List(Text) from match hs {
       Nil => out
       Cons(h, rest) => free_handlers(rest, bound, free_handler(h, bound, out, skip), skip)
     }
@@ -216,7 +218,7 @@ mutual {
     out: List(Text),
     skip: Bool
   ): List(Text) {
-    match h: List(Text) {
+    ⊢ List(Text) from match h {
       HdReturn(p, body) => free_in(body, pattern_names(p, bound), out, skip)
       HdOperation(eff, hfa, hty, patterns, cont, guard, body) => free_in(
         body,
@@ -228,14 +230,14 @@ mutual {
   }
 
   pub fn free_stmts(ss: List(SurfaceStmt), st: FreeState, skip: Bool): FreeState {
-    match ss: FreeState {
+    ⊢ FreeState from match ss {
       Nil => st
       Cons(s, rest) => free_stmts(rest, free_stmt(s, st.bound, st.out, skip), skip)
     }
   }
 
   pub fn free_stmt(s: SurfaceStmt, bound: List(Text), out: List(Text), skip: Bool): FreeState {
-    match s: FreeState {
+    ⊢ FreeState from match s {
       StLet(name, ty, value, borrow, bm) => FreeState {
         bound: Cons(name, bound),
         out: free_in(value, bound, out, skip)
@@ -260,21 +262,8 @@ mutual {
   }
 
   pub fn free_fn(f: SurfaceFn, bound: List(Text), out: List(Text), skip: Bool): FreeState {
-    match f: FreeState {
-      SurfaceFnMk(
-        name,
-        generics,
-        bounds,
-        params,
-        borrows,
-        ParamTypes,
-        result,
-        effects,
-        wheres,
-        start,
-        end,
-        body
-      ) => FreeState {
+    ⊢ FreeState from match f {
+      SurfaceFnMk(name, generics, bounds, params, borrows, ParamTypes, result, effects, wheres, start, end, body, generic_types) => FreeState {
         bound: Cons(name, bound),
         out: free_in(body, free_names(params, Cons(name, bound)), out, skip)
       }
@@ -294,7 +283,7 @@ pub fn used_vars(t: SurfaceTerm): List(Text) {
 // `lin.rs` in reverse).
 mutual {
   pub fn subterms(t: SurfaceTerm, acc: List(SurfaceTerm)): List(SurfaceTerm) {
-    match t: List(SurfaceTerm) {
+    ⊢ List(SurfaceTerm) from match t {
       SurfaceTermIndexedMk(k, start, end, ast_occurrence) => subterms_kind(
         k,
         Cons(SurfaceTermIndexedMk(k, start, end, ast_occurrence), acc)
@@ -303,7 +292,7 @@ mutual {
   }
 
   pub fn subterms_kind(k: SurfaceKind, here: List(SurfaceTerm)): List(SurfaceTerm) {
-    match k: List(SurfaceTerm) {
+    ⊢ List(SurfaceTerm) from match k {
       SkApp(f, args) => subterms_each(args, subterms(f, here))
       SkLam(params, body) => subterms(body, here)
       SkBorrowLam(borrows, lam) => subterms(lam, here)
@@ -322,41 +311,41 @@ mutual {
   }
 
   pub fn subterms_each(ts: List(SurfaceTerm), acc: List(SurfaceTerm)): List(SurfaceTerm) {
-    match ts: List(SurfaceTerm) {
+    ⊢ List(SurfaceTerm) from match ts {
       Nil => acc
       Cons(t, rest) => subterms_each(rest, subterms(t, acc))
     }
   }
 
   pub fn subterms_opt(t: Option(SurfaceTerm), acc: List(SurfaceTerm)): List(SurfaceTerm) {
-    match t: List(SurfaceTerm) {
+    ⊢ List(SurfaceTerm) from match t {
       None => acc
       Some(x) => subterms(x, acc)
     }
   }
 
   pub fn subterms_fields(fs: List(SurfaceField), acc: List(SurfaceTerm)): List(SurfaceTerm) {
-    match fs: List(SurfaceTerm) {
+    ⊢ List(SurfaceTerm) from match fs {
       Nil => acc
       Cons(f, rest) => subterms_fields(rest, subterms_field(f, acc))
     }
   }
 
   pub fn subterms_field(f: SurfaceField, acc: List(SurfaceTerm)): List(SurfaceTerm) {
-    match f: List(SurfaceTerm) {
+    ⊢ List(SurfaceTerm) from match f {
       SurfaceFieldMk(name, value) => subterms(value, acc)
     }
   }
 
   pub fn subterms_stmts(ss: List(SurfaceStmt), acc: List(SurfaceTerm)): List(SurfaceTerm) {
-    match ss: List(SurfaceTerm) {
+    ⊢ List(SurfaceTerm) from match ss {
       Nil => acc
       Cons(s, rest) => subterms_stmts(rest, subterms_stmt(s, acc))
     }
   }
 
   pub fn subterms_stmt(s: SurfaceStmt, acc: List(SurfaceTerm)): List(SurfaceTerm) {
-    match s: List(SurfaceTerm) {
+    ⊢ List(SurfaceTerm) from match s {
       StFn(f) => subterms_fn(f, acc)
       StLet(name, ty, value, borrow, bm) => subterms(value, acc)
       StVar(name, ty, value, vb) => subterms(value, acc)
@@ -369,33 +358,23 @@ mutual {
   }
 
   pub fn subterms_fn(f: SurfaceFn, acc: List(SurfaceTerm)): List(SurfaceTerm) {
-    match f: List(SurfaceTerm) {
-      SurfaceFnMk(
-        name,
-        generics,
-        bounds,
-        params,
-        borrows,
-        ParamTypes,
-        result,
-        effects,
-        wheres,
-        start,
-        end,
-        body
-      ) => subterms(body, acc)
+    ⊢ List(SurfaceTerm) from match f {
+      SurfaceFnMk(name, generics, bounds, params, borrows, ParamTypes, result, effects, wheres, start, end, body, generic_types) => subterms(
+        body,
+        acc
+      )
     }
   }
 
   pub fn subterms_handlers(hs: List(SurfaceHandler), acc: List(SurfaceTerm)): List(SurfaceTerm) {
-    match hs: List(SurfaceTerm) {
+    ⊢ List(SurfaceTerm) from match hs {
       Nil => acc
       Cons(h, rest) => subterms_handlers(rest, subterms_handler(h, acc))
     }
   }
 
   pub fn subterms_handler(h: SurfaceHandler, acc: List(SurfaceTerm)): List(SurfaceTerm) {
-    match h: List(SurfaceTerm) {
+    ⊢ List(SurfaceTerm) from match h {
       HdReturn(p, body) => subterms(body, acc)
       HdOperation(eff, hfa, hty, patterns, cont, guard, body) => subterms_opt(
         guard,
@@ -405,22 +384,22 @@ mutual {
   }
 
   pub fn subterms_arms(arms: List(SurfaceArm), acc: List(SurfaceTerm)): List(SurfaceTerm) {
-    match arms: List(SurfaceTerm) {
+    ⊢ List(SurfaceTerm) from match arms {
       Nil => acc
       Cons(arm, rest) => subterms_arms(rest, subterms_arm(arm, acc))
     }
   }
 
   pub fn subterms_arm(arm: SurfaceArm, acc: List(SurfaceTerm)): List(SurfaceTerm) {
-    match arm: List(SurfaceTerm) {
+    ⊢ List(SurfaceTerm) from match arm {
       SurfaceArmMk(pattern, guard, goal, body) => subterms(body, subterms_opt(guard, acc))
     }
   }
 }
 
 pub fn borrow_root(t: SurfaceTerm): Option(Text) {
-  match t.kind: Option(Text) {
-    SkBorrow(m, x) => match lin_place(x): Option(Text) {
+  ⊢ Option(Text) from match t.kind {
+    SkBorrow(m, x) => ⊢ Option(Text) from match lin_place(x) {
       Some(p) => Some(p.fst)
       None => None
     }
@@ -429,9 +408,9 @@ pub fn borrow_root(t: SurfaceTerm): Option(Text) {
 }
 
 pub fn borrow_roots(ts: List(SurfaceTerm)): List(Text) {
-  match ts: List(Text) {
+  ⊢ List(Text) from match ts {
     Nil => Nil
-    Cons(t, rest) => match borrow_root(t): List(Text) {
+    Cons(t, rest) => ⊢ List(Text) from match borrow_root(t) {
       Some(r) => Cons(r, borrow_roots(rest))
       None => borrow_roots(rest)
     }
@@ -439,7 +418,7 @@ pub fn borrow_roots(ts: List(SurfaceTerm)): List(Text) {
 }
 
 pub fn var_is(t: SurfaceTerm, k: Text): Bool {
-  match t.kind: Bool {
+  ⊢ Bool from match t.kind {
     SkVar(n) => n == k
     _ => false
   }
@@ -447,7 +426,7 @@ pub fn var_is(t: SurfaceTerm, k: Text): Bool {
 
 // The spans of the uses of `k` among the terms, the last first.
 pub fn var_spans(ts: List(SurfaceTerm), k: Text): List(TySpan) {
-  match ts: List(TySpan) {
+  ⊢ List(TySpan) from match ts {
     Nil => Nil
     Cons(t, rest) => if var_is(
       t,

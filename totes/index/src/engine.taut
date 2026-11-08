@@ -1,4 +1,3 @@
-
 import "admission.taut"
 import "history.taut"
 import std::Base
@@ -11,27 +10,27 @@ pub(open) inductive IxLedger: Type {
 }
 
 pub fn ix_ledger_prefix(ledger: IxLedger): IxState {
-  match ledger: IxState {
+  ⊢ IxState from match ledger {
     IxOpen(state) => state
     IxFrozen(prefix) => prefix
   }
 }
 
 pub fn ix_batch_point(batch: IxBatch): IxPoint {
-  match batch: IxPoint {
+  ⊢ IxPoint from match batch {
     Mk(sequence, issued, until, config, parent, point, events) => point
   }
 }
 
 pub fn ix_ingest_new_grounded(state: IxState, batch: IxBatch): IxLedger {
-  match ix_ingest(state, batch): IxLedger {
+  ⊢ IxLedger from match ix_ingest(state, batch) {
     None => IxFrozen(state)
     Some(next) => IxOpen(next)
   }
 }
 
 pub fn ix_ingest_grounded(ledger: IxLedger, batch: IxBatch): IxLedger {
-  match ledger: IxLedger {
+  ⊢ IxLedger from match ledger {
     IxOpen(state) => ix_choose(
       ix_checkpoint_known(ix_batch_point(batch), state),
       ix_ingest_new_grounded(state, batch),
@@ -42,9 +41,9 @@ pub fn ix_ingest_grounded(ledger: IxLedger, batch: IxBatch): IxLedger {
 }
 
 pub fn ix_open_states(ledgers: List(IxLedger)): List(IxState) {
-  match ledgers: List(IxState) {
+  ⊢ List(IxState) from match ledgers {
     Nil => Nil
-    Cons(ledger, rest) => match ledger: List(IxState) {
+    Cons(ledger, rest) => ⊢ List(IxState) from match ledger {
       IxOpen(state) => Cons(state, ix_open_states(rest))
       IxFrozen(prefix) => ix_open_states(rest)
     }

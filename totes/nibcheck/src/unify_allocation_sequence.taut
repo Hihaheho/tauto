@@ -39,7 +39,7 @@ pub theorem allocation_and_next(
   tail: AllocationRun(next, k(next)),
   flag: Bool
 ): AllocationRun(c, ck_and_k(k, next, flag)) {
-  match flag: AllocationRun(c, ck_and_k(k, next, flag)) {
+  ⊢ AllocationRun(c, ck_and_k(k, next, flag)) from match flag {
     false => AndIntro(same, state)
     true => allocation_run_rewrap(
       c,
@@ -54,9 +54,13 @@ pub theorem allocation_and(
   m: Mut1(Bool, Checker),
   first: AllocationRun(c, m),
   ordered: CkOrdered(ck_st(m)),
-  tail: ∀ next: Checker. ∀ same: ck_next_of(c) = ck_next_of(next). ∀ state: CheckerAllocation(next). ∀ order: CkOrdered(next). AllocationRun(next, k(next))
+  tail: ∀ next: Checker. ∀ same: ck_next_of(
+    c
+  ) = ck_next_of(
+    next
+  ). ∀ state: CheckerAllocation(next). ∀ order: CkOrdered(next). AllocationRun(next, k(next))
 ): AllocationRun(c, ck_and(k, m)) {
-  match m: AllocationRun(c, ck_and(k, m)) {
+  ⊢ AllocationRun(c, ck_and(k, m)) from match m {
     mut1(flag, next) => allocation_and_next(
       c,
       next,
@@ -89,9 +93,9 @@ pub theorem allocated_unify_pairs_step(
   left: TypeListAllocated(ck_next_of(c), xs),
   right: TypeListAllocated(ck_next_of(c), ys)
 ): AllocationRun(c, ck_unify_pairs_in(Succ(fuel), c, xs, ys)) {
-  match xs: AllocationRun(c, ck_unify_pairs_in(Succ(fuel), c, xs, ys)) {
+  ⊢ AllocationRun(c, ck_unify_pairs_in(Succ(fuel), c, xs, ys)) from match xs {
     Nil => AndIntro(Refl, state)
-    Cons(x, xr) => match ys: AllocationRun(c, ck_unify_pairs_in(Succ(fuel), c, Cons(x, xr), ys)) {
+    Cons(x, xr) => ⊢ AllocationRun(c, ck_unify_pairs_in(Succ(fuel), c, Cons(x, xr), ys)) from match ys {
       Nil => AndIntro(Refl, state)
       Cons(y, yr) => allocation_and(
         c,

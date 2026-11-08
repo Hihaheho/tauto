@@ -16,7 +16,7 @@ import "unify_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub fn decl_names_check(c: Checker, duplicate: Option(SurfaceFn)): Mut1(Unit, Checker) {
-  match duplicate: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match duplicate {
     None => mut1(Star, c)
     Some(f) => ck_rewrap1(
       ck_error(c, cat3("function ", signature_name(f), " is declared twice"), cf_method_span(f))
@@ -27,7 +27,7 @@ pub theorem decl_names_check_frame(
   c: Checker,
   duplicate: Option(SurfaceFn)
 ): CkReadFrame(c, decl_names_check(c, duplicate)) {
-  match duplicate: CkReadFrame(c, decl_names_check(c, duplicate)) {
+  ⊢ CkReadFrame(c, decl_names_check(c, duplicate)) from match duplicate {
     None => Refl
     Some(f) => Refl
   }
@@ -49,14 +49,10 @@ pub theorem ck_check_fn_names_frame(
 
 // The map covers every name already encountered in this scope.
 pub def DeclNameCover(seen: List(Text), map: Ordmap(Text, Bool)): Prop :=
-∀ n: Text. ∀ h: Mem(
-  Text,
-  n,
-  seen
-). Ordmap::get(map, n, Ordmap::compare_text) = Some(true)
+∀ n: Text. ∀ h: Mem(Text, n, seen). Ordmap::get(map, n, Ordmap::compare_text) = Some(true)
 
 pub fn decl_names_present(o: Option(Bool)): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     None => false
     Some(v) => true
   }
@@ -76,8 +72,16 @@ pub theorem decl_names_insert_old_at(
   ordered: Ordmap::ordered(map, Ordmap::compare_text),
   equal: Ordmap::compare_text(q, n) = cmp,
   old: Ordmap::get(map, q, Ordmap::compare_text) = Some(true)
-): Ordmap::get(Ordmap::insert(map, n, true, Ordmap::compare_text), q, Ordmap::compare_text) = Some(true) {
-  match cmp: Ordmap::get(Ordmap::insert(map, n, true, Ordmap::compare_text), q, Ordmap::compare_text) = Some(true) {
+): Ordmap::get(
+  Ordmap::insert(map, n, true, Ordmap::compare_text),
+  q,
+  Ordmap::compare_text
+) = Some(true) {
+  ⊢ Ordmap::get(
+    Ordmap::insert(map, n, true, Ordmap::compare_text),
+    q,
+    Ordmap::compare_text
+  ) = Some(true) from match cmp {
     Less => Eq::trans(
       Ordmap::get_insert_other(
         Ordmap::compare_text,
@@ -94,7 +98,11 @@ pub theorem decl_names_insert_old_at(
       old
     )
     Equal => Eq::subst(
-      (key: Text) => Ordmap::get(Ordmap::insert(map, n, true, Ordmap::compare_text), key, Ordmap::compare_text) = Some(true),
+      (key: Text) => Ordmap::get(
+        Ordmap::insert(map, n, true, Ordmap::compare_text),
+        key,
+        Ordmap::compare_text
+      ) = Some(true),
       Eq::sym(Ordmap::compare_text_eq(q, n, equal)),
       Ordmap::text_get_insert_same(map, n, true, ordered)
     )
@@ -122,7 +130,11 @@ pub theorem decl_names_insert_cover(
   ordered: Ordmap::ordered(map, Ordmap::compare_text),
   cover: DeclNameCover(seen, map)
 ): DeclNameCover(Cons(n, seen), Ordmap::insert(map, n, true, Ordmap::compare_text)) {
-  q => h => match h: Ordmap::get(Ordmap::insert(map, n, true, Ordmap::compare_text), q, Ordmap::compare_text) = Some(true) {
+  q => h => ⊢ Ordmap::get(
+    Ordmap::insert(map, n, true, Ordmap::compare_text),
+    q,
+    Ordmap::compare_text
+  ) = Some(true) from match h {
     MemHere(tail) => Ordmap::text_get_insert_same(map, n, true, ordered)
     MemThere(head, tail, member) => decl_names_insert_old_at(
       map,
@@ -141,16 +153,27 @@ pub fn decl_names_step(
   map: Ordmap(Text, Bool),
   duplicate: Bool
 ): Option(SurfaceFn) {
-  match duplicate: Option(SurfaceFn) {
+  ⊢ Option(SurfaceFn) from match duplicate {
     true => Some(f)
-    false => types_duplicate_fn(rest, Ordmap::insert(map, decl_fn_name(f), true, Ordmap::compare_text))
+    false => types_duplicate_fn(
+      rest,
+      Ordmap::insert(map, decl_fn_name(f), true, Ordmap::compare_text)
+    )
   }
 }
 pub theorem decl_names_step_unf(
   f: SurfaceFn,
   rest: List(SurfaceFn),
   map: Ordmap(Text, Bool)
-): types_duplicate_fn(Cons(f, rest), map) = decl_names_step(f, rest, map, Ordmap::contains(map, decl_fn_name(f), Ordmap::compare_text)) { Refl }
+): types_duplicate_fn(
+  Cons(f, rest),
+  map
+) = decl_names_step(
+  f,
+  rest,
+  map,
+  Ordmap::contains(map, decl_fn_name(f), Ordmap::compare_text)
+) { Refl }
 
 pub def DeclNamesIH(rest: List(SurfaceFn)): Prop :=
 ∀ map: Ordmap(
@@ -178,7 +201,7 @@ pub theorem decl_names_cons_sound(
   clean: decl_names_step(f, rest, map, duplicate) = None,
   ih: DeclNamesIH(rest)
 ): FreshFunctionNames(Cons(f, rest), seen) {
-  match duplicate: FreshFunctionNames(Cons(f, rest), seen) {
+  ⊢ FreshFunctionNames(Cons(f, rest), seen) from match duplicate {
     true => False::elim(ck_none_ne_some(f, Eq::sym(clean)))
     false => FreshFunctionsCons(
       f,
@@ -215,7 +238,7 @@ pub theorem types_duplicate_fn_sound(
   cover: DeclNameCover(seen, map),
   clean: types_duplicate_fn(fs, map) = None
 ): FreshFunctionNames(fs, seen) {
-  match fs: FreshFunctionNames(fs, seen) {
+  ⊢ FreshFunctionNames(fs, seen) from match fs {
     Nil => FreshFunctionsNil(seen)
     Cons(f, rest) => decl_names_cons_sound(
       f,
@@ -256,7 +279,7 @@ pub theorem types_function_names_unique(
 }
 pub fn decl_names_errors(c: Checker): List(TypeError) { c.errors }
 pub fn decl_names_empty(es: List(TypeError)): Bool {
-  match es: Bool {
+  ⊢ Bool from match es {
     Nil => true
     Cons(e, rest) => false
   }
@@ -266,7 +289,7 @@ pub theorem decl_names_check_clean(
   duplicate: Option(SurfaceFn),
   clean: decl_names_errors(ck_st(decl_names_check(c, duplicate))) = Nil
 ): duplicate = None {
-  match duplicate: duplicate = None {
+  ⊢ duplicate = None from match duplicate {
     None => Refl
     Some(f) => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
   }

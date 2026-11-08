@@ -1,0 +1,166 @@
+description = "Implicit value parameters retain their checked types and executable values."
+
+@ cases.nat-parameter-and-transparent-computation
+source = ```tauto
+fn remember<n: Nat>(): Nat { n }
+fn forward<n: Nat>(): Nat { remember(n) }
+theorem remembers(): remember(7) = 7 { Refl }
+theorem forwards(): forward(9) = 9 { Refl }
+```
+checks_all = "ok"
+
+@ cases.dependent-telescope
+source = ```tauto
+fn choose<A: Type, x: A>(): A { x }
+theorem natural(): choose(Nat, 4) = 4 { Refl }
+theorem boolean(): choose(Bool, true) = true { Refl }
+```
+checks_all = "ok"
+
+@ cases.value-type-mismatch
+source = ```tauto
+fn remember<n: Nat>(): Nat { n }
+theorem wrong(): remember(true) = 7 { Refl }
+```
+checks.remember = "checked"
+checks.wrong = "error: "
+
+@ cases.inferred-index-is-retained
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+inductive At(n: Nat): Type { Mk: At(n) }
+fn index<n: Nat>(w: At(n)): Nat { n }
+fn demo(): Nat { index(At::Mk(17)) }
+perform show("index", demo())
+```
+shows = ["index = 17"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["index = 17"]
+javascript_shows = ["index = 17"]
+
+@ cases.dynamic-value-generics-run
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn choose<A: Type, x: A>(): A { x }
+fn pass(n: Nat): Nat { choose(Nat, n) }
+perform show("value", pass(23))
+```
+shows = ["value = 23"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["value = 23"]
+javascript_shows = ["value = 23"]
+
+@ cases.text-value-generic-runs
+extract = true
+imports = [path`../std/Text.taut`]
+source = ```tauto
+fn text_value<s: Text>(): Text { s }
+fn pass_text(s: Text): Text { text_value(s) }
+theorem literal_text(): text_value("日本語") = "日本語" { Refl }
+perform show("text", pass_text("日本語"))
+```
+shows = ['text = "日本語"']
+backends = ["rust", "javascript", "vm"]
+rust_shows = ['text = "日本語"']
+javascript_shows = ['text = "日本語"']
+
+@ cases.constructor-value-generic-runs
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+inductive Choice: Type { First: Choice, Second: Choice }
+fn select<c: Choice>(): Nat { ⊢ Nat from match c { First => 11, Second => 22 } }
+fn pass_choice(c: Choice): Nat { select(c) }
+theorem selects(): select(Second) = 22 { Refl }
+perform show("first", pass_choice(First))
+perform show("second", pass_choice(Second))
+```
+shows = ["first = 11", "second = 22"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["first = 11", "second = 22"]
+javascript_shows = ["first = 11", "second = 22"]
+
+@ cases.function-value-generic-runs
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn apply<f: (Nat) -> Nat>(n: Nat): Nat { f(n) }
+fn identity(n: Nat): Nat { n }
+fn pass_callback(f: (Nat) -> Nat, n: Nat): Nat { apply(f, n) }
+theorem applies(): apply(identity, 31) = 31 { Refl }
+perform show("callback", pass_callback(identity, 31))
+```
+shows = ["callback = 31"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["callback = 31"]
+javascript_shows = ["callback = 31"]
+
+@ cases.proof-value-generic-is-erased
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn justified<n: Nat, h: Eq(Nat, n, n)>(): Nat { n }
+fn pass_proof(n: Nat): Nat { justified(n, Refl) }
+theorem proves(): justified(41, Refl) = 41 { Refl }
+perform show("proof", pass_proof(41))
+```
+shows = ["proof = 41"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["proof = 41"]
+javascript_shows = ["proof = 41"]
+
+@ cases.runtime-calls-mixed-generic-directly
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn choose<A: Type, x: A>(): A { x }
+let number := 53
+perform show("direct", choose(Nat, number))
+```
+shows = ["direct = 53"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["direct = 53"]
+javascript_shows = ["direct = 53"]
+
+@ cases.checked-function-value-generic-runs
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn apply<f: (Nat) -> Nat>(n: Nat): Nat { f(n) }
+fn identity(n: Nat): Nat { n }
+fn pass_callback(f: (Nat) -> Nat, n: Nat): Nat { apply(f, n) }
+fn demo(): Nat { pass_callback(identity, 31) }
+perform show("callback", demo())
+```
+shows = ["callback = 31"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["callback = 31"]
+javascript_shows = ["callback = 31"]
+
+@ cases.function-value-generic-return-boundary
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn forward<f: (Nat) -> Nat>(): (Nat) -> Nat { f }
+fn identity(n: Nat): Nat { n }
+perform show("returned", forward(identity)(32))
+```
+shows = ["returned = 32"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["returned = 32"]
+javascript_shows = ["returned = 32"]
+
+@ cases.multiple-argument-function-generic-boundary
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn apply_two<f: (Nat, Nat) -> Nat>(x: Nat, y: Nat): Nat { f(x, y) }
+fn first(x: Nat, y: Nat): Nat { x }
+perform show("two", apply_two(first, 61, 62))
+```
+shows = ["two = 61"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["two = 61"]
+javascript_shows = ["two = 61"]

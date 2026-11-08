@@ -27,11 +27,11 @@ pub fn scan_walk(
   i: Nat,
   n: Nat
 ): Option(Pair(Nat, Nat)) {
-  match m: Option(Pair(Nat, Nat)) {
+  ⊢ Option(Pair(Nat, Nat)) from match m {
     Zero => Some(Pair { fst: state, snd: i })
-    Succ(m2) => match i < n: Option(Pair(Nat, Nat)) {
+    Succ(m2) => ⊢ Option(Pair(Nat, Nat)) from match i < n {
       false => None
-      true => match scan_next(t, text, state, i): Option(Pair(Nat, Nat)) {
+      true => ⊢ Option(Pair(Nat, Nat)) from match scan_next(t, text, state, i) {
         Zero => None
         Succ(s2) => scan_walk(m2, t, text, s2, scan_after(text, i), n)
       }
@@ -48,9 +48,9 @@ pub fn scan_walk_in(
   n: Nat,
   c: Bool
 ): Option(Pair(Nat, Nat)) {
-  match c: Option(Pair(Nat, Nat)) {
+  ⊢ Option(Pair(Nat, Nat)) from match c {
     false => None
-    true => match scan_next(t, text, state, i): Option(Pair(Nat, Nat)) {
+    true => ⊢ Option(Pair(Nat, Nat)) from match scan_next(t, text, state, i) {
       Zero => None
       Succ(s2) => scan_walk(m, t, text, s2, scan_after(text, i), n)
     }
@@ -65,7 +65,7 @@ pub fn scan_walk_next(
   n: Nat,
   x: Nat
 ): Option(Pair(Nat, Nat)) {
-  match x: Option(Pair(Nat, Nat)) {
+  ⊢ Option(Pair(Nat, Nat)) from match x {
     Zero => None
     Succ(s2) => scan_walk(m, t, text, s2, scan_after(text, i), n)
   }
@@ -73,24 +73,24 @@ pub fn scan_walk_next(
 
 // What the accept entries of the state say at the byte.
 pub fn scan_accept_at(t: ScanTables, text: Text, n: Nat, p: Pair(Nat, Nat)): Option(Nat) {
-  match p: Option(Nat) {
+  ⊢ Option(Nat) from match p {
     Pair { fst: s, snd: e } => scan_accept(t, text, s, e, n)
   }
 }
 
 pub fn scan_pair_snd(p: Pair(Nat, Nat)): Nat {
-  match p: Nat {
+  ⊢ Nat from match p {
     Pair { fst: a, snd: b } => b
   }
 }
 
 pub theorem scan_none_ne_some<A: Type>(x: A, e: None = Some(x)): False {
-  match e: False {
+  ⊢ False from match e {
   }
 }
 
 pub fn scan_option_or<A>(o: Option(A), d: A): A {
-  match o: A {
+  ⊢ A from match o {
     None => d
     Some(x) => x
   }
@@ -106,7 +106,7 @@ pub theorem scan_nat_cases(
   a: (o = Zero) -> P(Zero),
   b: ∀ x: Nat. (o = Succ(x)) -> P(Succ(x))
 ): P(o) {
-  match o: P(o) {
+  ⊢ P(o) from match o {
     Zero => a(Refl)
     Succ(x) => b(x, Refl)
   }
@@ -118,14 +118,14 @@ pub theorem scan_option_cases<A: Type>(
   a: (o = None) -> P(None),
   b: ∀ x: A. (o = Some(x)) -> P(Some(x))
 ): P(o) {
-  match o: P(o) {
+  ⊢ P(o) from match o {
     None => a(Refl)
     Some(x) => b(x, Refl)
   }
 }
 
 pub theorem scan_le_add(a: Nat, d: Nat): Nat::le(a, Nat::add(a, d)) = true {
-  match d: Nat::le(a, Nat::add(a, d)) = true {
+  ⊢ Nat::le(a, Nat::add(a, d)) = true from match d {
     Zero => Nat::le_refl(a)
     Succ(d2) => Nat::le_trans(
       a,
@@ -141,12 +141,8 @@ pub theorem scan_le_after(text: Text, i: Nat): Nat::le(i, scan_after(text, i)) =
   scan_le_add(i, scan_char_length(Text::byte_value(text, i)))
 }
 
-pub fn scan_find_upd(
-  best: Option(Pair(Nat, Nat)),
-  e: Nat,
-  o: Option(Nat)
-): Option(Pair(Nat, Nat)) {
-  match o: Option(Pair(Nat, Nat)) {
+pub fn scan_find_upd(best: Option(Pair(Nat, Nat)), e: Nat, o: Option(Nat)): Option(Pair(Nat, Nat)) {
+  ⊢ Option(Pair(Nat, Nat)) from match o {
     None => best
     Some(token) => Some(Pair { fst: e, snd: token })
   }
@@ -161,7 +157,7 @@ pub fn scan_find_next(
   best: Option(Pair(Nat, Nat)),
   x: Nat
 ): Option(Pair(Nat, Nat)) {
-  match x: Option(Pair(Nat, Nat)) {
+  ⊢ Option(Pair(Nat, Nat)) from match x {
     Zero => best
     Succ(s2) => scan_find_in(
       k,
@@ -185,7 +181,7 @@ pub fn scan_find_cmp(
   best: Option(Pair(Nat, Nat)),
   c: Bool
 ): Option(Pair(Nat, Nat)) {
-  match c: Option(Pair(Nat, Nat)) {
+  ⊢ Option(Pair(Nat, Nat)) from match c {
     false => best
     true => scan_find_next(k, t, text, i, n, best, scan_next(t, text, state, i))
   }
@@ -193,9 +189,9 @@ pub fn scan_find_cmp(
 
 // A result ends at `j` or later.
 pub fn scan_at_least(j: Nat, r: Option(Pair(Nat, Nat))): Prop {
-  match r: Prop {
+  ⊢ Prop from match r {
     None => False
-    Some(p) => match p: Prop {
+    Some(p) => ⊢ Prop from match p {
       Pair { fst: e, snd: token } => Nat::le(j, e) = true
     }
   }
@@ -214,7 +210,7 @@ pub theorem scan_find_in_mono(
   hb: scan_at_least(e0, best),
   hi: Nat::le(e0, i) = true
 ): scan_at_least(e0, scan_find_in(k, t, text, state, i, n, best)) {
-  match k: scan_at_least(e0, scan_find_in(k, t, text, state, i, n, best)) {
+  ⊢ scan_at_least(e0, scan_find_in(k, t, text, state, i, n, best)) from match k {
     Zero => hb
     Succ(k2) => Bool::cases(
       (c: Bool) => scan_at_least(e0, scan_find_cmp(k2, t, text, state, i, n, best, c)),
@@ -238,9 +234,7 @@ pub theorem scan_find_in_mono(
             )
           ),
           scan_accept(t, text, s2, scan_after(text, i), n),
-          (
-            qa: scan_accept(t, text, s2, scan_after(text, i), n) = None
-          ) => scan_find_in_mono(
+          (qa: scan_accept(t, text, s2, scan_after(text, i), n) = None) => scan_find_in_mono(
             k2,
             t,
             text,
@@ -252,9 +246,7 @@ pub theorem scan_find_in_mono(
             hb,
             Nat::le_trans(e0, i, scan_after(text, i), hi, scan_le_after(text, i))
           ),
-          (tok: Nat) => (
-            qa: scan_accept(t, text, s2, scan_after(text, i), n) = Some(tok)
-          ) => scan_find_in_mono(
+          (tok: Nat) => (qa: scan_accept(t, text, s2, scan_after(text, i), n) = Some(tok)) => scan_find_in_mono(
             k2,
             t,
             text,
@@ -293,7 +285,14 @@ pub theorem scan_le_at(
         Pair { fst: s3, snd: scan_after(text, i) },
         Pair { fst: s2, snd: j },
         Eq::subst(
-          (z: Nat) => scan_walk(z, t, text, s3, scan_after(text, i), n) = Some(Pair { fst: s2, snd: j }),
+          (z: Nat) => scan_walk(
+            z,
+            t,
+            text,
+            s3,
+            scan_after(text, i),
+            n
+          ) = Some(Pair { fst: s2, snd: j }),
           qm,
           w
         )
@@ -321,7 +320,7 @@ pub theorem scan_find_in_longest(
   w: scan_walk(Succ(m), t, text, state, i, n) = Some(Pair { fst: s2, snd: j }),
   a: scan_accept(t, text, s2, j, n) = Some(tok)
 ): scan_at_least(j, scan_find_in(k, t, text, state, i, n, best)) {
-  match k: scan_at_least(j, scan_find_in(k, t, text, state, i, n, best)) {
+  ⊢ scan_at_least(j, scan_find_in(k, t, text, state, i, n, best)) from match k {
     Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(Nat::lt_zero_false(m)), lt)))
     Succ(k2) => Bool::cases(
       (c: Bool) => scan_at_least(j, scan_find_cmp(k2, t, text, state, i, n, best, c)),
@@ -346,7 +345,15 @@ pub theorem scan_find_in_longest(
               (x: Nat) => scan_walk_next(m, t, text, i, n, x) = Some(Pair { fst: s2, snd: j }),
               qz,
               Eq::subst(
-                (c: Bool) => scan_walk_in(m, t, text, state, i, n, c) = Some(Pair { fst: s2, snd: j }),
+                (c: Bool) => scan_walk_in(
+                  m,
+                  t,
+                  text,
+                  state,
+                  i,
+                  n,
+                  c
+                ) = Some(Pair { fst: s2, snd: j }),
                 q,
                 w
               )
@@ -392,13 +399,35 @@ pub theorem scan_find_in_longest(
                     Pair { fst: s3, snd: scan_after(text, i) },
                     Pair { fst: s2, snd: j },
                     Eq::subst(
-                      (z: Nat) => scan_walk(z, t, text, s3, scan_after(text, i), n) = Some(Pair { fst: s2, snd: j }),
+                      (z: Nat) => scan_walk(
+                        z,
+                        t,
+                        text,
+                        s3,
+                        scan_after(text, i),
+                        n
+                      ) = Some(Pair { fst: s2, snd: j }),
                       qm,
                       Eq::subst(
-                        (x: Nat) => scan_walk_next(m, t, text, i, n, x) = Some(Pair { fst: s2, snd: j }),
+                        (x: Nat) => scan_walk_next(
+                          m,
+                          t,
+                          text,
+                          i,
+                          n,
+                          x
+                        ) = Some(Pair { fst: s2, snd: j }),
                         qs,
                         Eq::subst(
-                          (c: Bool) => scan_walk_in(m, t, text, state, i, n, c) = Some(Pair { fst: s2, snd: j }),
+                          (c: Bool) => scan_walk_in(
+                            m,
+                            t,
+                            text,
+                            state,
+                            i,
+                            n,
+                            c
+                          ) = Some(Pair { fst: s2, snd: j }),
                           q,
                           w
                         )
@@ -432,7 +461,15 @@ pub theorem scan_find_in_longest(
                   (x: Nat) => scan_walk_next(m, t, text, i, n, x) = Some(Pair { fst: s2, snd: j }),
                   qs,
                   Eq::subst(
-                    (c: Bool) => scan_walk_in(m, t, text, state, i, n, c) = Some(Pair { fst: s2, snd: j }),
+                    (c: Bool) => scan_walk_in(
+                      m,
+                      t,
+                      text,
+                      state,
+                      i,
+                      n,
+                      c
+                    ) = Some(Pair { fst: s2, snd: j }),
                     q,
                     w
                   )
@@ -452,7 +489,15 @@ pub theorem scan_find_in_longest(
                   (x: Nat) => scan_walk_next(m, t, text, i, n, x) = Some(Pair { fst: s2, snd: j }),
                   qs,
                   Eq::subst(
-                    (c: Bool) => scan_walk_in(m, t, text, state, i, n, c) = Some(Pair { fst: s2, snd: j }),
+                    (c: Bool) => scan_walk_in(
+                      m,
+                      t,
+                      text,
+                      state,
+                      i,
+                      n,
+                      c
+                    ) = Some(Pair { fst: s2, snd: j }),
                     q,
                     w
                   )
@@ -478,13 +523,28 @@ pub theorem scan_find_in_longest(
             tok,
             Eq::subst((z: Nat) => (z < Succ(k2)) = true, qm, lt),
             Eq::subst(
-              (z: Nat) => scan_walk(z, t, text, s3, scan_after(text, i), n) = Some(Pair { fst: s2, snd: j }),
+              (z: Nat) => scan_walk(
+                z,
+                t,
+                text,
+                s3,
+                scan_after(text, i),
+                n
+              ) = Some(Pair { fst: s2, snd: j }),
               qm,
               Eq::subst(
                 (x: Nat) => scan_walk_next(m, t, text, i, n, x) = Some(Pair { fst: s2, snd: j }),
                 qs,
                 Eq::subst(
-                  (c: Bool) => scan_walk_in(m, t, text, state, i, n, c) = Some(Pair { fst: s2, snd: j }),
+                  (c: Bool) => scan_walk_in(
+                    m,
+                    t,
+                    text,
+                    state,
+                    i,
+                    n,
+                    c
+                  ) = Some(Pair { fst: s2, snd: j }),
                   q,
                   w
                 )
@@ -526,9 +586,9 @@ pub fn scan_ok(
   i0: Nat,
   r: Option(Pair(Nat, Nat))
 ): Prop {
-  match r: Prop {
+  ⊢ Prop from match r {
     None => True
-    Some(p) => match p: Prop {
+    Some(p) => ⊢ Prop from match p {
       Pair { fst: e, snd: tok } => ScanHit(t, text, n, s0, i0, e, tok)
     }
   }
@@ -541,7 +601,7 @@ pub fn scan_walk_at(
   n: Nat,
   p: Pair(Nat, Nat)
 ): Option(Pair(Nat, Nat)) {
-  match p: Option(Pair(Nat, Nat)) {
+  ⊢ Option(Pair(Nat, Nat)) from match p {
     Pair { fst: s, snd: i } => scan_walk(m, t, text, s, i, n)
   }
 }
@@ -557,10 +617,25 @@ pub theorem scan_walk_one(
   qs: scan_next(t, text, s, i) = Succ(s2)
 ): scan_walk(1, t, text, s, i, n) = Some(Pair { fst: s2, snd: scan_after(text, i) }) {
   Eq::subst(
-    (c: Bool) => scan_walk_in(0, t, text, s, i, n, c) = Some(Pair { fst: s2, snd: scan_after(text, i) }),
+    (c: Bool) => scan_walk_in(
+      0,
+      t,
+      text,
+      s,
+      i,
+      n,
+      c
+    ) = Some(Pair { fst: s2, snd: scan_after(text, i) }),
     Eq::sym(q),
     Eq::subst(
-      (x: Nat) => scan_walk_next(0, t, text, i, n, x) = Some(Pair { fst: s2, snd: scan_after(text, i) }),
+      (x: Nat) => scan_walk_next(
+        0,
+        t,
+        text,
+        i,
+        n,
+        x
+      ) = Some(Pair { fst: s2, snd: scan_after(text, i) }),
       Eq::sym(qs),
       Refl
     )
@@ -581,14 +656,35 @@ pub theorem scan_walk_snoc(
   q: (i < n) = true,
   qs: scan_next(t, text, s, i) = Succ(s2)
 ): scan_walk(Succ(m), t, text, s0, i0, n) = Some(Pair { fst: s2, snd: scan_after(text, i) }) {
-  match m: scan_walk(Succ(m), t, text, s0, i0, n) = Some(Pair { fst: s2, snd: scan_after(text, i) }) {
+  ⊢ scan_walk(
+    Succ(m),
+    t,
+    text,
+    s0,
+    i0,
+    n
+  ) = Some(Pair { fst: s2, snd: scan_after(text, i) }) from match m {
     Zero => Eq::subst(
-      (p: Pair(Nat, Nat)) => scan_walk_at(1, t, text, n, p) = Some(Pair { fst: s2, snd: scan_after(text, i) }),
+      (p: Pair(Nat, Nat)) => scan_walk_at(
+        1,
+        t,
+        text,
+        n,
+        p
+      ) = Some(Pair { fst: s2, snd: scan_after(text, i) }),
       Eq::sym(scan_some_inj(Pair { fst: s0, snd: i0 }, Pair { fst: s, snd: i }, wm)),
       scan_walk_one(t, text, s, i, n, s2, q, qs)
     )
     Succ(m2) => Bool::cases(
-      (c: Bool) => scan_walk_in(Succ(m2), t, text, s0, i0, n, c) = Some(Pair { fst: s2, snd: scan_after(text, i) }),
+      (c: Bool) => scan_walk_in(
+        Succ(m2),
+        t,
+        text,
+        s0,
+        i0,
+        n,
+        c
+      ) = Some(Pair { fst: s2, snd: scan_after(text, i) }),
       i0 < n,
       (q0: (i0 < n) = false) => False::elim(
         scan_none_ne_some(
@@ -601,7 +697,14 @@ pub theorem scan_walk_snoc(
         )
       ),
       (q0: (i0 < n) = true) => scan_nat_cases(
-        (x: Nat) => scan_walk_next(Succ(m2), t, text, i0, n, x) = Some(Pair { fst: s2, snd: scan_after(text, i) }),
+        (x: Nat) => scan_walk_next(
+          Succ(m2),
+          t,
+          text,
+          i0,
+          n,
+          x
+        ) = Some(Pair { fst: s2, snd: scan_after(text, i) }),
         scan_next(t, text, s0, i0),
         (qz: scan_next(t, text, s0, i0) = Zero) => False::elim(
           scan_none_ne_some(
@@ -610,7 +713,9 @@ pub theorem scan_walk_snoc(
               (x: Nat) => scan_walk_next(m2, t, text, i0, n, x) = Some(Pair { fst: s, snd: i }),
               qz,
               Eq::subst(
-                (c: Bool) => scan_walk_in(m2, t, text, s0, i0, n, c) = Some(Pair { fst: s, snd: i }),
+                (c: Bool) => scan_walk_in(m2, t, text, s0, i0, n, c) = Some(
+                  Pair { fst: s, snd: i }
+                ),
                 q0,
                 wm
               )
@@ -660,7 +765,7 @@ pub theorem scan_find_in_sound(
   wm: scan_walk(m0, t, text, s0, i0, n) = Some(Pair { fst: state, snd: i }),
   hb: scan_ok(t, text, n, s0, i0, best)
 ): scan_ok(t, text, n, s0, i0, scan_find_in(k, t, text, state, i, n, best)) {
-  match k: scan_ok(t, text, n, s0, i0, scan_find_in(k, t, text, state, i, n, best)) {
+  ⊢ scan_ok(t, text, n, s0, i0, scan_find_in(k, t, text, state, i, n, best)) from match k {
     Zero => hb
     Succ(k2) => Bool::cases(
       (c: Bool) => scan_ok(t, text, n, s0, i0, scan_find_cmp(k2, t, text, state, i, n, best, c)),
@@ -688,9 +793,7 @@ pub theorem scan_find_in_sound(
             )
           ),
           scan_accept(t, text, s2, scan_after(text, i), n),
-          (
-            qa: scan_accept(t, text, s2, scan_after(text, i), n) = None
-          ) => scan_find_in_sound(
+          (qa: scan_accept(t, text, s2, scan_after(text, i), n) = None) => scan_find_in_sound(
             k2,
             t,
             text,
@@ -704,9 +807,7 @@ pub theorem scan_find_in_sound(
             scan_walk_snoc(m0, t, text, s0, i0, n, state, i, s2, wm, q, qs),
             hb
           ),
-          (tok: Nat) => (
-            qa: scan_accept(t, text, s2, scan_after(text, i), n) = Some(tok)
-          ) => scan_find_in_sound(
+          (tok: Nat) => (qa: scan_accept(t, text, s2, scan_after(text, i), n) = Some(tok)) => scan_find_in_sound(
             k2,
             t,
             text,
@@ -731,7 +832,7 @@ pub theorem scan_lt_pred(
   x: Nat,
   h: Nat::lt(Succ(a), x) = true
 ): Nat::lt(a, Nat::pred(x)) = true {
-  match x: Nat::lt(a, Nat::pred(x)) = true {
+  ⊢ Nat::lt(a, Nat::pred(x)) = true from match x {
     Zero => False::elim(false_ne_true(Eq::trans(Eq::sym(Nat::lt_zero_false(Succ(a))), h)))
     Succ(x2) => h
   }
@@ -744,7 +845,7 @@ pub theorem scan_lt_sub(
   n: Nat,
   h: Nat::lt(Nat::add(a, i), n) = true
 ): Nat::lt(a, Nat::sub(n, i)) = true {
-  match i: Nat::lt(a, Nat::sub(n, i)) = true {
+  ⊢ Nat::lt(a, Nat::sub(n, i)) = true from match i {
     Zero => h
     Succ(i2) => scan_lt_pred(
       a,
@@ -765,7 +866,7 @@ pub theorem scan_le_add_mono(
   c: Nat,
   h: Nat::le(a, b) = true
 ): Nat::le(Nat::add(a, c), Nat::add(b, c)) = true {
-  match c: Nat::le(Nat::add(a, c), Nat::add(b, c)) = true {
+  ⊢ Nat::le(Nat::add(a, c), Nat::add(b, c)) = true from match c {
     Zero => h
     Succ(c2) => scan_le_add_mono(a, b, c2, h)
   }
@@ -773,42 +874,42 @@ pub theorem scan_le_add_mono(
 
 // A character is a byte at least.
 pub fn scan_len_3(c: Bool): Nat {
-  match c: Nat {
+  ⊢ Nat from match c {
     true => 3
     false => 4
   }
 }
 
 pub fn scan_len_2(first: Nat, c: Bool): Nat {
-  match c: Nat {
+  ⊢ Nat from match c {
     true => 2
     false => scan_len_3(first < 240)
   }
 }
 
 pub fn scan_len_1(first: Nat, c: Bool): Nat {
-  match c: Nat {
+  ⊢ Nat from match c {
     true => 1
     false => scan_len_2(first, first < 224)
   }
 }
 
 pub theorem scan_len_3_pos(c: Bool): Nat::lt(0, scan_len_3(c)) = true {
-  match c: Nat::lt(0, scan_len_3(c)) = true {
+  ⊢ Nat::lt(0, scan_len_3(c)) = true from match c {
     true => Refl
     false => Refl
   }
 }
 
 pub theorem scan_len_2_pos(first: Nat, c: Bool): Nat::lt(0, scan_len_2(first, c)) = true {
-  match c: Nat::lt(0, scan_len_2(first, c)) = true {
+  ⊢ Nat::lt(0, scan_len_2(first, c)) = true from match c {
     true => Refl
     false => scan_len_3_pos(first < 240)
   }
 }
 
 pub theorem scan_len_1_pos(first: Nat, c: Bool): Nat::lt(0, scan_len_1(first, c)) = true {
-  match c: Nat::lt(0, scan_len_1(first, c)) = true {
+  ⊢ Nat::lt(0, scan_len_1(first, c)) = true from match c {
     true => Refl
     false => scan_len_2_pos(first, first < 224)
   }
@@ -819,7 +920,7 @@ pub theorem scan_le_add_pos(
   x: Nat,
   h: Nat::lt(0, x) = true
 ): Nat::le(Succ(i), Nat::add(i, x)) = true {
-  match x: Nat::le(Succ(i), Nat::add(i, x)) = true {
+  ⊢ Nat::le(Succ(i), Nat::add(i, x)) = true from match x {
     Zero => False::elim(false_ne_true(h))
     Succ(p) => scan_le_add(i, p)
   }
@@ -849,11 +950,7 @@ pub theorem scan_walk_lt(
     (q: (i < n) = false) => False::elim(
       scan_none_ne_some(
         r,
-        Eq::subst(
-          (c: Bool) => scan_walk_in(m, t, text, s, i, n, c) = Some(r),
-          q,
-          w
-        )
+        Eq::subst((c: Bool) => scan_walk_in(m, t, text, s, i, n, c) = Some(r), q, w)
       )
     ),
     (q: (i < n) = true) => Refl
@@ -871,7 +968,7 @@ pub theorem scan_walk_bound(
   r: Pair(Nat, Nat),
   w: scan_walk(Succ(m), t, text, s, i, n) = Some(r)
 ): Nat::lt(Nat::add(i, m), n) = true {
-  match m: Nat::lt(Nat::add(i, m), n) = true {
+  ⊢ Nat::lt(Nat::add(i, m), n) = true from match m {
     Zero => scan_walk_lt(Zero, t, text, s, i, n, r, w)
     Succ(m2) => scan_nat_cases(
       (x: Nat) => Nat::lt(Nat::add(i, Succ(m2)), n) = true,

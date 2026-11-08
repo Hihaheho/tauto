@@ -8,6 +8,7 @@ use eure_document::document::node::NodeValue;
 use eure_document::document::{EureDocument, NodeId};
 use eure_document::text::Language;
 use eure_document::value::{ObjectKey, PrimitiveValue as P};
+use tauto_message::{Message, msg};
 
 /// At most this many levels of blocks and lists.
 pub const MAX_DEPTH: usize = 64;
@@ -18,14 +19,14 @@ pub struct Doc {
 
 impl Doc {
     /// Parses `bytes` (UTF-8, at most `max` bytes) as Eure.
-    pub fn parse(bytes: &[u8], name: &str, max: usize) -> Result<Doc, String> {
+    pub fn parse(bytes: &[u8], name: &str, max: usize) -> Result<Doc, Message> {
         if bytes.len() > max {
-            return Err(say!("totebag-file-too-large", name = name, max = max));
+            return Err(msg!("totebag-file-too-large", name = name, max = max));
         }
         let text =
-            std::str::from_utf8(bytes).map_err(|_| say!("totebag-file-not-utf8", name = name))?;
+            std::str::from_utf8(bytes).map_err(|_| msg!("totebag-file-not-utf8", name = name))?;
         let doc = eure_reader::parse_to_document(text, name).map_err(|e| {
-            say!(
+            msg!(
                 "totebag-at",
                 place = name,
                 error = e.to_string().lines().next().unwrap_or("")
@@ -33,7 +34,7 @@ impl Doc {
         })?;
         let d = Doc { doc };
         d.check_depth(d.root(), 0)
-            .map_err(|e| say!("totebag-at", place = name, error = e))?;
+            .map_err(|e| msg!("totebag-at", place = name, error = e))?;
         Ok(d)
     }
 
@@ -41,13 +42,13 @@ impl Doc {
         self.doc.get_root_id()
     }
 
-    fn check_depth(&self, id: NodeId, depth: usize) -> Result<(), String> {
+    fn check_depth(&self, id: NodeId, depth: usize) -> Result<(), Message> {
         if depth > MAX_DEPTH {
-            return Err(say!("totebag-too-deep", max = MAX_DEPTH));
+            return Err(msg!("totebag-too-deep", max = MAX_DEPTH));
         }
         let node = self.doc.node(id);
         if !node.extensions.is_empty() {
-            return Err(say!("totebag-no-extension"));
+            return Err(msg!("totebag-no-extension"));
         }
         match &node.content {
             NodeValue::Map(m) => {
@@ -61,21 +62,21 @@ impl Doc {
                 }
             }
             NodeValue::Primitive(_) => {}
-            NodeValue::Hole(_) => return Err(say!("totebag-no-hole")),
-            _ => return Err(say!("totebag-unread-value")),
+            NodeValue::Hole(_) => return Err(msg!("totebag-no-hole")),
+            _ => return Err(msg!("totebag-unread-value")),
         }
         Ok(())
     }
 
     /// The fields of a block, to be taken one by one and then [`Fields::finish`]ed.
-    pub fn fields(&self, id: NodeId, what: &str) -> Result<Fields<'_>, String> {
+    pub fn fields(&self, id: NodeId, what: &str) -> Result<Fields<'_>, Message> {
         let NodeValue::Map(m) = &self.doc.node(id).content else {
-            return Err(say!("totebag-is-a-block", what = what));
+            return Err(msg!("totebag-is-a-block", what = what));
         };
         let mut entries = BTreeMap::new();
         for (k, v) in m.iter() {
             let ObjectKey::String(k) = k else {
-                return Err(say!("totebag-key-is-a-name", what = what));
+                return Err(msg!("totebag-key-is-a-name", what = what));
             };
             entries.insert(k.clone(), *v);
         }
@@ -86,30 +87,30 @@ impl Doc {
         })
     }
 
-    pub fn text(&self, id: NodeId) -> Result<String, String> {
+    pub fn text(&self, id: NodeId) -> Result<String, Message> {
         match &self.doc.node(id).content {
             NodeValue::Primitive(P::Text(t)) if t.language == Language::Plaintext => {
                 Ok(t.content.clone())
             }
-            _ => Err(say!("totebag-expected-quoted-text")),
+            _ => Err(msg!("totebag-expected-quoted-text")),
         }
     }
 
-    pub fn integer(&self, id: NodeId) -> Result<u64, String> {
+    pub fn integer(&self, id: NodeId) -> Result<u64, Message> {
         match &self.doc.node(id).content {
             NodeValue::Primitive(P::Integer(n)) => n
                 .to_string()
                 .parse::<u64>()
-                .map_err(|_| say!("totebag-integer-range")),
-            _ => Err(say!("totebag-expected-integer")),
+                .map_err(|_| msg!("totebag-integer-range")),
+            _ => Err(msg!("totebag-expected-integer")),
         }
     }
 
-    pub fn list(&self, id: NodeId, max: usize) -> Result<Vec<NodeId>, String> {
+    pub fn list(&self, id: NodeId, max: usize) -> Result<Vec<NodeId>, Message> {
         match &self.doc.node(id).content {
             NodeValue::Array(a) if a.len() <= max => Ok(a.iter().copied().collect()),
-            NodeValue::Array(_) => Err(say!("totebag-too-many-items", max = max)),
-            _ => Err(say!("totebag-expected-list")),
+            NodeValue::Array(_) => Err(msg!("totebag-too-many-items", max = max)),
+            _ => Err(msg!("totebag-expected-list")),
         }
     }
 }
@@ -130,21 +131,21 @@ impl<'a> Fields<'a> {
         self.entries.remove(key)
     }
 
-    pub fn required(&mut self, key: &str) -> Result<NodeId, String> {
+    pub fn required(&mut self, key: &str) -> Result<NodeId, Message> {
         self.entries
             .remove(key)
-            .ok_or_else(|| say!("totebag-has-no", what = &self.what, key = key))
+            .ok_or_else(|| msg!("totebag-has-no", what = &self.what, key = key))
     }
 
     /// A required field, read by `read`, its errors naming the field.
     pub fn read<T>(
         &mut self,
         key: &str,
-        read: impl FnOnce(&'a Doc, NodeId) -> Result<T, String>,
-    ) -> Result<T, String> {
+        read: impl FnOnce(&'a Doc, NodeId) -> Result<T, Message>,
+    ) -> Result<T, Message> {
         let id = self.required(key)?;
         read(self.doc, id).map_err(|e| {
-            say!(
+            msg!(
                 "totebag-at",
                 place = format!("{}.{key}", self.what),
                 error = e
@@ -155,30 +156,30 @@ impl<'a> Fields<'a> {
     pub fn text_as<T>(
         &mut self,
         key: &str,
-        check: impl FnOnce(&str) -> Result<T, String>,
-    ) -> Result<T, String> {
+        check: impl FnOnce(&str) -> Result<T, Message>,
+    ) -> Result<T, Message> {
         self.read(key, |d, id| check(&d.text(id)?))
     }
 
-    pub fn integer(&mut self, key: &str) -> Result<u64, String> {
+    pub fn integer(&mut self, key: &str) -> Result<u64, Message> {
         self.read(key, |d, id| d.integer(id))
     }
 
     /// Fails on a key not taken.
-    pub fn finish(self) -> Result<(), String> {
+    pub fn finish(self) -> Result<(), Message> {
         match self.entries.keys().next() {
-            Some(k) => Err(say!("totebag-unknown-key-in", key = k, what = &self.what)),
+            Some(k) => Err(msg!("totebag-unknown-key-in", key = k, what = &self.what)),
             None => Ok(()),
         }
     }
 }
 
 /// A SHA-256 written `sha256:<64 lowercase hex>`.
-pub fn sha256(s: &str) -> Result<[u8; 32], String> {
+pub fn sha256(s: &str) -> Result<[u8; 32], Message> {
     let hex = s
         .strip_prefix("sha256:")
         .filter(|h| h.len() == 64 && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
-        .ok_or_else(|| say!("totebag-bad-sha256", value = format!("{s:?}")))?;
+        .ok_or_else(|| msg!("totebag-bad-sha256", value = format!("{s:?}")))?;
     Ok(hex_bytes(hex))
 }
 
@@ -199,8 +200,8 @@ fn is_leap(y: u64) -> bool {
 }
 
 /// A time `YYYY-MM-DDTHH:MM:SSZ` in UTC, 1970 to 9999, as seconds since 1970.
-pub fn time(s: &str) -> Result<u64, String> {
-    let bad = || say!("totebag-bad-time", value = format!("{s:?}"));
+pub fn time(s: &str) -> Result<u64, Message> {
+    let bad = || msg!("totebag-bad-time", value = format!("{s:?}"));
     let b = s.as_bytes();
     if b.len() != 20
         || b[4] != b'-'
@@ -212,7 +213,7 @@ pub fn time(s: &str) -> Result<u64, String> {
     {
         return Err(bad());
     }
-    let num = |r: std::ops::Range<usize>| -> Result<u64, String> {
+    let num = |r: std::ops::Range<usize>| -> Result<u64, Message> {
         let part = &s[r];
         if part.bytes().all(|c| c.is_ascii_digit()) {
             Ok(part.parse().unwrap())
@@ -297,62 +298,62 @@ pub fn time_text(secs: u64) -> String {
 }
 
 /// A length of time in seconds, 0 to 315360000 (ten years).
-pub fn seconds(n: u64) -> Result<u64, String> {
+pub fn seconds(n: u64) -> Result<u64, Message> {
     if n <= 315_360_000 {
         Ok(n)
     } else {
-        Err(say!("totebag-too-many-seconds", n = n))
+        Err(msg!("totebag-too-many-seconds", n = n))
     }
 }
 
 /// An alias of an index: 1 to 64 lowercase letters, digits and `-`, starting
 /// with a letter; `local` is the local witness.
-pub fn alias(s: &str) -> Result<String, String> {
+pub fn alias(s: &str) -> Result<String, Message> {
     if crate::valid_name(s) {
         Ok(s.to_string())
     } else {
-        Err(say!("totebag-bad-alias", value = format!("{s:?}")))
+        Err(msg!("totebag-bad-alias", value = format!("{s:?}")))
     }
 }
 
 /// An explanation: 1 to 4096 bytes.
-pub fn reason(s: &str) -> Result<String, String> {
+pub fn reason(s: &str) -> Result<String, Message> {
     if (1..=4096).contains(&s.len()) {
         Ok(s.to_string())
     } else {
-        Err(say!("totebag-reason-length"))
+        Err(msg!("totebag-reason-length"))
     }
 }
 
 /// A package revision: 1 to 256 ASCII letters, digits and `._:+-`.
-pub fn package_rev(s: &str) -> Result<String, String> {
+pub fn package_rev(s: &str) -> Result<String, Message> {
     if (1..=256).contains(&s.len())
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'+' | b'-'))
     {
         Ok(s.to_string())
     } else {
-        Err(say!("totebag-bad-package-rev", value = format!("{s:?}")))
+        Err(msg!("totebag-bad-package-rev", value = format!("{s:?}")))
     }
 }
 
 /// An `https://` URL without credentials, query or fragment.
-pub fn https_url(s: &str) -> Result<String, String> {
+pub fn https_url(s: &str) -> Result<String, Message> {
     crate::spec::check_url(s)?;
     if s.starts_with("https://") {
         Ok(s.to_string())
     } else {
-        Err(say!("totebag-index-https", value = format!("{s:?}")))
+        Err(msg!("totebag-index-https", value = format!("{s:?}")))
     }
 }
 
 /// A full branch ref, `refs/heads/NAME`.
-pub fn branch(s: &str) -> Result<String, String> {
+pub fn branch(s: &str) -> Result<String, Message> {
     crate::spec::check_ref(s)?;
     if s.starts_with("refs/heads/") {
         Ok(s.to_string())
     } else {
-        Err(say!("totebag-index-branch", value = format!("{s:?}")))
+        Err(msg!("totebag-index-branch", value = format!("{s:?}")))
     }
 }
 
@@ -407,6 +408,25 @@ mod tests {
         assert!(Doc::parse(b"a = 1\na = 1\n", "t", 100).is_err());
         assert!(Doc::parse(b"a = 1\n", "t", 3).is_err());
         assert!(Doc::parse(b"a = \"\xff\"\n", "t", 100).is_err());
+    }
+
+    #[test]
+    fn errors_are_messages_checked_by_id_and_arguments() {
+        assert_eq!(
+            time("nope"),
+            Err(msg!("totebag-bad-time", value = "\"nope\"".to_string()))
+        );
+        assert_eq!(
+            seconds(315_360_001).unwrap_err().id,
+            "totebag-too-many-seconds"
+        );
+        let d = Doc::parse(b"a = 1\n", "t", 100).unwrap();
+        let mut f = d.fields(d.root(), "t").unwrap();
+        let e = f.required("b").unwrap_err();
+        assert_eq!(e.id, "totebag-has-no");
+        assert_eq!(e.get("key"), Some(&tauto_message::Value::Text("b".into())));
+        let e = Doc::parse(b"a = 1\n", "t", 3).err().unwrap();
+        assert_eq!(e.id, "totebag-file-too-large");
     }
 
     #[test]

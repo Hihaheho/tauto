@@ -20,7 +20,11 @@ pub def SubstExtExcept(
   after: Ordmap(Nat, Ty)
 ): Prop := ∀ index: Nat. ∀ ty: Ty. ∀ different: (
   index = private
-) -> False. ∀ found: Ordmap::get(before, index, Ordmap::compare_nat) = Some(ty). Ordmap::get(after, index, Ordmap::compare_nat) = Some(ty)
+) -> False. ∀ found: Ordmap::get(
+  before,
+  index,
+  Ordmap::compare_nat
+) = Some(ty). Ordmap::get(after, index, Ordmap::compare_nat) = Some(ty)
 pub theorem subst_except_refl(
   private: Nat,
   subst: Ordmap(Nat, Ty)
@@ -51,10 +55,10 @@ pub theorem subst_except_insert(
 ): SubstExtExcept(private, subst, Ordmap::insert(subst, private, value, Ordmap::compare_nat)) {
   index => ty => different => found => Ordering::cases(
     (order: Ordering) => Ordmap::get(
-        Ordmap::insert(subst, private, value, Ordmap::compare_nat),
-        index,
-        Ordmap::compare_nat
-      ) = Some(ty),
+      Ordmap::insert(subst, private, value, Ordmap::compare_nat),
+      index,
+      Ordmap::compare_nat
+    ) = Some(ty),
     Ordmap::compare_nat(index, private),
     less => Eq::trans(
       Ordmap::get_insert_other(
@@ -201,7 +205,7 @@ pub theorem except_frame_bind<A: Type, B: Type>(
     next
   ). ExceptRunFrame(private, next, k(value, next))
 ): ExceptRunFrame(private, c, frame_bind(A, B, k, m)) {
-  match m: ExceptRunFrame(private, c, frame_bind(A, B, k, m)) {
+  ⊢ ExceptRunFrame(private, c, frame_bind(A, B, k, m)) from match m {
     mut1(value, next) => {
       let last: ExceptRunFrame(private, next, k(value, next)) := tail(value, next, And::left(first))
       AndIntro(

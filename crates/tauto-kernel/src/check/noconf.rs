@@ -14,44 +14,56 @@
 //! `Type`) get an equation; the others cannot be compared without
 //! heterogeneous equality.
 
+use crate::surface::Name;
 use std::collections::BTreeSet;
+use tauto_surface::identity::Generation;
 
 use super::inductive::{app, pi_all, var};
 use super::{Ctx, Kernel, Sort, T, lam, occurs, pi};
 
 fn eq(ty: &T, a: &T, b: &T) -> T {
-    app(var("Eq"), vec![ty.clone(), a.clone(), b.clone()])
+    app(
+        var(tauto_surface::bindings::library_name("Eq")),
+        vec![ty.clone(), a.clone(), b.clone()],
+    )
 }
 
-fn lams(names: &[String], body: T) -> T {
+fn lams(names: &[Name], body: T) -> T {
     names.iter().rev().fold(body, |acc, n| lam(n, acc))
 }
 
 impl Kernel {
     /// Generates `I::nc`, `I::nc_diag` and `I::noconf`; an inductive for which
     /// they do not check simply has no no-confusion.
-    pub(super) fn no_confusion(&mut self, family: &str) {
-        if !self.globals.contains_key("Eq::rec") || !self.inds.contains_key("Eq") {
+    pub(super) fn no_confusion(&mut self, family: &Name) {
+        if !self
+            .globals
+            .contains_key(&tauto_surface::bindings::library_name("Eq::rec"))
+            || !self
+                .inds
+                .contains_key(&tauto_surface::bindings::library_name("Eq"))
+        {
             return;
         }
         let Some(ind) = self.inds.get(family).cloned() else {
             return;
         };
         let (nc, diag, noconf) = (
-            format!("{family}::nc"),
-            format!("{family}::nc_diag"),
-            format!("{family}::noconf"),
+            self.resolver.generated(family, Generation::NoConfusionType),
+            self.resolver
+                .generated(family, Generation::NoConfusionDiagonal),
+            self.resolver.generated(family, Generation::NoConfusion),
         );
         // A name already taken keeps its meaning; the type gets no
         // no-confusion.
         if [&nc, &diag, &noconf]
             .iter()
-            .any(|n| self.globals.contains_key(n.as_str()))
+            .any(|n| self.globals.contains_key(n))
         {
             return;
         }
         // The other members of a mutual group get trivial motives and minors.
-        let members: Vec<(String, super::inductive::Ind)> = ind
+        let members: Vec<(Name, super::inductive::Ind)> = ind
             .group
             .iter()
             .filter_map(|g| self.inds.get(g).map(|i| (g.clone(), i.clone())))
@@ -59,15 +71,20 @@ impl Kernel {
         if members.len() != ind.group.len()
             || members.iter().any(|(_, m)| m.indices != 0)
             || (members.len() > 1
-                && (!self.globals.contains_key("Unit") || !self.globals.contains_key("Star")))
+                && (!self
+                    .globals
+                    .contains_key(&tauto_surface::bindings::library_name("Unit"))
+                    || !self
+                        .globals
+                        .contains_key(&tauto_surface::bindings::library_name("Star"))))
         {
             return;
         }
-        let rec = var(&format!("{family}::rec"));
-        let pnames: Vec<String> = ind.params.iter().map(|(n, _)| n.clone()).collect();
+        let rec = var(self.resolver.generated(family, Generation::Recursion));
+        let pnames: Vec<Name> = ind.params.iter().map(|(n, _)| n.clone()).collect();
         let pvars: Vec<T> = pnames.iter().map(|n| var(n)).collect();
         let this = app(var(family), pvars.clone());
-        let ty_sort = var("Type");
+        let ty_sort = var(tauto_surface::bindings::library_name("Type"));
 
         let mut inj: Vec<Vec<usize>> = Vec::new();
         for c in &ind.ctors {
@@ -84,11 +101,15 @@ impl Kernel {
             inj.push(keep);
         }
 
-        let fields = |c: &super::inductive::Ctor, tag: &str| -> Vec<String> {
-            (0..c.args.len()).map(|i| format!("{tag}'{i}")).collect()
+        let fields = |c: &super::inductive::Ctor, tag: &str| -> Vec<Name> {
+            (0..c.args.len())
+                .map(|i| Name::from(format!("{tag}'{i}")))
+                .collect()
         };
-        let ihs = |c: &super::inductive::Ctor, tag: &str| -> Vec<String> {
-            (0..c.recs.len()).map(|i| format!("{tag}h'{i}")).collect()
+        let ihs = |c: &super::inductive::Ctor, tag: &str| -> Vec<Name> {
+            (0..c.recs.len())
+                .map(|i| Name::from(format!("{tag}h'{i}")))
+                .collect()
         };
 
         let nc_ty = pi_all(
@@ -103,9 +124,12 @@ impl Kernel {
         for (g, gi) in &members {
             for (j, c) in gi.ctors.iter().enumerate() {
                 let a = fields(c, "a");
-                let all: Vec<String> = [a.clone(), ihs(c, "a")].concat();
+                let all: Vec<Name> = [a.clone(), ihs(c, "a")].concat();
                 if g != family {
-                    outer_minors.push(lams(&all, var("Star")));
+                    outer_minors.push(lams(
+                        &all,
+                        var(tauto_surface::bindings::library_name("Star")),
+                    ));
                     continue;
                 }
                 let mut inner_minors = Vec::new();
@@ -113,17 +137,20 @@ impl Kernel {
                     for (k, d) in gi2.ctors.iter().enumerate() {
                         let b = fields(d, "b");
                         let body = if g2 == family && k == j {
-                            let eqs: Vec<(String, T)> = inj[j]
+                            let eqs: Vec<(Name, T)> = inj[j]
                                 .iter()
                                 .map(|&i| {
-                                    (format!("q'{i}"), eq(&c.args[i].1, &var(&a[i]), &var(&b[i])))
+                                    (
+                                        Name::from(format!("q'{i}")),
+                                        eq(&c.args[i].1, &var(&a[i]), &var(&b[i])),
+                                    )
                                 })
                                 .collect();
                             pi("k'", pi_all(&eqs, var("P")), var("P"))
                         } else {
                             var("P")
                         };
-                        let all2: Vec<String> = [b, ihs(d, "b")].concat();
+                        let all2: Vec<Name> = [b, ihs(d, "b")].concat();
                         inner_minors.push(lams(&all2, body));
                     }
                 }
@@ -142,7 +169,7 @@ impl Kernel {
             args.push(if g == family {
                 motive1.clone()
             } else {
-                lam("z'", var("Unit"))
+                lam("z'", var(tauto_surface::bindings::library_name("Unit")))
             });
         }
         args.extend(outer_minors);
@@ -169,14 +196,22 @@ impl Kernel {
         for (g, gi) in &members {
             for (j, c) in gi.ctors.iter().enumerate() {
                 let a = fields(c, "a");
-                let all: Vec<String> = [a.clone(), ihs(c, "a")].concat();
+                let all: Vec<Name> = [a.clone(), ihs(c, "a")].concat();
                 if g != family {
-                    minors.push(lams(&all, var("Star")));
+                    minors.push(lams(
+                        &all,
+                        var(tauto_surface::bindings::library_name("Star")),
+                    ));
                     continue;
                 }
                 let refls: Vec<T> = inj[j]
                     .iter()
-                    .map(|&i| app(var("Refl"), vec![c.args[i].1.clone(), var(&a[i])]))
+                    .map(|&i| {
+                        app(
+                            var(tauto_surface::bindings::library_name("Refl")),
+                            vec![c.args[i].1.clone(), var(&a[i])],
+                        )
+                    })
                     .collect();
                 let call = app(var("f"), refls);
                 minors.push(lams(&all, lam("f", call)));
@@ -188,7 +223,7 @@ impl Kernel {
             args.push(if g == family {
                 motive.clone()
             } else {
-                lam("z'", var("Unit"))
+                lam("z'", var(tauto_surface::bindings::library_name("Unit")))
             });
         }
         args.extend(minors);
@@ -221,7 +256,7 @@ impl Kernel {
         diag_args.extend([var("P"), var("x")]);
         let motive = lam("z'", lam("e'", nc_at(&var("x"), &var("z'"))));
         let body = app(
-            var("Eq::rec"),
+            var(tauto_surface::bindings::library_name("Eq::rec")),
             vec![
                 this.clone(),
                 var("x"),
@@ -242,7 +277,26 @@ impl Kernel {
             (&noconf, noconf_ty, noconf_val),
         ];
         // Checked before (`check/cache.rs`): only the core checks them again.
-        let key = self.key(&format!("no-confusion {decls:?}"), &[&nc, &diag, &noconf]);
+        let cache_declarations: Vec<_> = decls
+            .iter()
+            .map(|(name, ty, value)| {
+                crate::surface::Stmt::Def(crate::surface::TheoremDecl {
+                    name: (*name).clone(),
+                    ty: ty.clone(),
+                    body: Some(value.clone()),
+                    params: Vec::new(),
+                    implicit: 0,
+                    span: value.span,
+                    vis: Default::default(),
+                    budget: None,
+                    decreasing_by: None,
+                })
+            })
+            .collect();
+        let key = self.key(
+            &cache_declarations,
+            &[nc.clone(), diag.clone(), noconf.clone()],
+        );
         let before = key
             .as_ref()
             .is_some_and(|k| self.cache.as_ref().is_some_and(|c| c.get(k).is_some()));

@@ -1,0 +1,98 @@
+// Code over the program's data, options, generic library functions and
+// builtins on text runs in direct form, not in continuation form.
+@ cases.direct-generic-option-text-walk
+backends = ["rust", "javascript"]
+source = ```tauto
+fn spaces(t: Text, i: u64, found: List(Option(u64))): List(Option(u64)) ! {Div} {
+    match Text::byte(t, i) {
+        None => found,
+        Some(b) => spaces(t, i + 1, Cons(if b == 32 { Some(i) } else { None }, found))
+    }
+}
+fn count<A>(&l: List(A)): i64 ! {Div} {
+    match l { Nil => 0, Cons(h, rest) => 1 + count(&rest) }
+}
+var t := ""
+var n := 0
+while n < 500 { t := concat(t, "a b "); n := n + 1 }
+let found := spaces(t, 0, Nil)
+// A generic function runs in direct form under a caller that is in it.
+fn total(&l: List(Option(u64))): i64 ! {Div} { count(&l) }
+perform show("bytes", total(&found))
+```
+rust_shows = ["bytes = 2000"]
+
+// The bits of a word run in direct form, as the continuation form computes them.
+@ cases.direct-word-bits
+backends = ["rust", "javascript"]
+source = ```tauto
+fn mix(n: u64): u64 ! {Div} {
+    var a: u32 := 2166136261
+    var b: u64 := 1469598103934665603
+    var i: u64 := 0
+    while i < n {
+        let w := U32::of_u64(U64::and(b, 4294967295))
+        a := U32::xor(U32::rotl(a, 5), U32::or(U32::and(w, 65535), U32::shl(a, 3)))
+        a := U32::rotr(U32::xor(a, U32::shr(a, 7)), 11)
+        b := U64::xor(U64::rotl(b, 13), U64::of_u32(a))
+        b := U64::or(U64::and(b, U64::shl(b, 1)), U64::shr(U64::rotr(b, 17), 3))
+        i := i + 1
+    }
+    U64::xor(b, U64::of_u32(a))
+}
+perform show("mix", mix(300))
+```
+rust_shows = ["mix = 18446744072294971391"]
+
+// Integers past the safe range of a number, in direct form: sums, products,
+// quotients and matches give what the evaluator gives.
+@ cases.direct-integer-range
+backends = ["rust", "javascript"]
+source = ```tauto
+fn grow(n: u64): u64 ! {Div} {
+    var x: u64 := 1
+    var i: u64 := 0
+    while i < n { x := x * 3 + 1; i := i + 1 }
+    x
+}
+fn shrink(x: u64): u64 ! {Div} {
+    var y := x
+    var k: u64 := 0
+    while y > 1 { y := div(y, 7); k := k + 1 }
+    k
+}
+fn signed(a: i64, b: i64): i64 ! {Div} {
+    div(a, b) * 1000 + mod(a, b)
+}
+fn big_i64(n: u64): i64 ! {Div} {
+    var x: i64 := -1
+    var i: u64 := 0
+    while i < n { x := x * 2; i := i + 1 }
+    x
+}
+fn neg(a: i64): i64 { 0 - a }
+fn nat_pow(n: nat): nat ! {Div} {
+    var x: nat := 1
+    var i: nat := 0
+    while i < n { x := x * 10; i := i + 1 }
+    x
+}
+fn classify(n: u64): u64 { match n { 0 => 10, 9007199254740993 => 20, other => 30 } }
+fn same(a: u64, b: u64): Bool { a == b }
+fn wrap(n: u64): Option(u64) ! {Div} { Some(n * 2) }
+fn unwrap(o: Option(u64)): u64 ! {Div} { match o { None => 0, Some(v) => v + 1 } }
+fn shifts(a: u32): u32 { U32::xor(U32::shl(a, 31), U32::shr(a, 33)) }
+perform show("grow40", grow(40))
+perform show("shrink", shrink(grow(40)))
+perform show("signed", signed(0 - 7, 2))
+perform show("signed2", signed(7, 0 - 2))
+perform show("i64min", big_i64(63))
+perform show("negsafe", neg(9007199254740991))
+perform show("nat", nat_pow(30))
+perform show("classify", classify(9007199254740992 + 1))
+perform show("classify0", classify(0))
+perform show("same", same(9007199254740992 + 1, 9007199254740993))
+perform show("opt", unwrap(wrap(4611686018427387904)))
+perform show("shifts", shifts(3))
+```
+rust_shows = ["grow40 = 18236498188585393201", "shrink = 23", "signed = -3001", "signed2 = -2999", "i64min = -9223372036854775808", "negsafe = -9007199254740991", "nat = 1000000000000000000000000000000", "classify = 20", "classify0 = 10", "same = true", "opt = 9223372036854775809", "shifts = 2147483649"]

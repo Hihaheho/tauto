@@ -13,6 +13,7 @@
 //! Every object read is hashed again by Git and compared with its ID; the two
 //! files are read as blobs of mode 100644, not from a checkout.
 
+use tauto_message::{Message, msg};
 use tauto_syntax::Sha256 as Hasher;
 
 use super::ledger::{self, Batch, Config, Sha256};
@@ -56,7 +57,7 @@ struct Commit {
     payload: Vec<u8>,
 }
 
-fn read_commit(mirror: &Mirror, rev: &Rev) -> Result<Commit, String> {
+fn read_commit(mirror: &Mirror, rev: &Rev) -> Result<Commit, Message> {
     let payload = mirror.commit(rev)?;
     let text = String::from_utf8_lossy(&payload);
     let mut tree = None;
@@ -70,7 +71,7 @@ fn read_commit(mirror: &Mirror, rev: &Rev) -> Result<Commit, String> {
         }
     }
     Ok(Commit {
-        tree: tree.ok_or_else(|| say!("totebag-commit-no-tree", rev = rev.short()))?,
+        tree: tree.ok_or_else(|| msg!("totebag-commit-no-tree", rev = rev.short()))?,
         parents,
         payload,
     })
@@ -82,16 +83,16 @@ fn root_blob(
     tree: &str,
     name: &str,
     max: usize,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, Message> {
     match mirror.root_entry(tree, name)? {
-        Some((mode, oid)) if mode == "100644" => mirror.blob(&oid, max),
-        Some((mode, _)) => Err(say!(
+        Some((mode, oid)) if mode == "100644" => mirror.blob(&oid, max).map_err(Message::from),
+        Some((mode, _)) => Err(msg!(
             "totebag-root-not-regular",
             name = name,
             rev = rev.short(),
             mode = &mode
         )),
-        None => Err(say!("totebag-has-no", what = rev.short(), key = name)),
+        None => Err(msg!("totebag-has-no", what = rev.short(), key = name)),
     }
 }
 
@@ -127,18 +128,22 @@ pub fn digest(
 /// the root, each with at most one parent, `Index.eure` the same throughout,
 /// the root's batch numbered 0 and empty.
 pub fn history(mirror: &Mirror, head: &Rev) -> Result<History, String> {
+    history_message(mirror, head).map_err(|e| e.to_string())
+}
+
+pub(crate) fn history_message(mirror: &Mirror, head: &Rev) -> Result<History, Message> {
     let mut line = Vec::new();
     let mut at = head.clone();
     loop {
         if line.len() >= MAX_HISTORY {
-            return Err(say!("totebag-history-too-long", max = MAX_HISTORY));
+            return Err(msg!("totebag-history-too-long", max = MAX_HISTORY));
         }
         let commit = read_commit(mirror, &at)?;
         let parent = match commit.parents.as_slice() {
             [] => None,
             [p] => Some(Rev::from_git(p)?),
             _ => {
-                return Err(say!("totebag-history-merge", rev = at.short()));
+                return Err(msg!("totebag-history-merge", rev = at.short()));
             }
         };
         line.push((at.clone(), commit));
@@ -158,7 +163,7 @@ pub fn history(mirror: &Mirror, head: &Rev) -> Result<History, String> {
     )?;
     let config = ledger::config(&config_bytes)?;
     if config.git_object_format != head.format() {
-        return Err(say!(
+        return Err(msg!(
             "totebag-object-format-differs",
             file = ledger::CONFIG_FILE,
             said = &config.git_object_format,
@@ -175,7 +180,7 @@ pub fn history(mirror: &Mirror, head: &Rev) -> Result<History, String> {
             ledger::MAX_CONFIG,
         )?;
         if this_config != config_bytes {
-            return Err(say!(
+            return Err(msg!(
                 "totebag-config-changed",
                 file = ledger::CONFIG_FILE,
                 rev = rev.short()
@@ -189,10 +194,10 @@ pub fn history(mirror: &Mirror, head: &Rev) -> Result<History, String> {
             ledger::MAX_BATCH,
         )?;
         let batch = ledger::batch(&batch_bytes, &config.git_object_format)
-            .map_err(|e| say!("totebag-at-rev", rev = rev.short(), error = e))?;
+            .map_err(|e| msg!("totebag-at-rev", rev = rev.short(), error = e))?;
         let parent = checkpoints.last().map(|c| c.digest);
         if parent.is_none() && (batch.sequence != 0 || !batch.events.is_empty()) {
-            return Err(say!("totebag-root-not-empty", rev = rev.short()));
+            return Err(msg!("totebag-root-not-empty", rev = rev.short()));
         }
         let digest = digest(
             parent.as_ref(),

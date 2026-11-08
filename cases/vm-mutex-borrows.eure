@@ -1,0 +1,69 @@
+@ cases.map-updates-through-a-mutex-guard-persist
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Affine
+import std::prelude::Par
+import std::prelude::Shared
+
+let table: Mutex(HashMap(u64, u64)) := Mutex::new(HashMap::new())
+{
+  var guard := Mutex::lock(table)
+  HashMap::insert(MutexGuard::get_mut(&mut guard), (1: u64), (42: u64))
+  #()
+}
+{
+  let guard := Mutex::lock(table)
+  let result: u64 := match HashMap::get(MutexGuard::get(&guard), &(1: u64)) {
+    Some(value) => value
+    None => 0
+  }
+  perform show("direct", result)
+}
+fn with_table<A, R>(m: Mutex(A), &body: (&mut x: A) -> R): R ! {wait} {
+  var guard := Mutex::lock(m)
+  body(MutexGuard::get_mut(&mut guard))
+}
+with_table(table, (&mut map) => {
+  HashMap::insert(&mut map, (2: u64), (43: u64))
+  #()
+})
+let result := with_table(table, (&mut map) => {
+  let result: u64 := match HashMap::get(&map, &(2: u64)) {
+    Some(value) => value
+    None => 0
+  }
+  result
+})
+perform show("through callback", result)
+```
+shows = ["direct = 42", "through callback = 43"]
+
+@ cases.a-returned-mutable-borrow-is-forwarded-to-a-borrowed-parameter
+backends = ["rust", "javascript", "vm"]
+source = ```nib
+fn same(&mut value: i64): &mut i64 { value }
+fn set(&mut value: i64, next: i64): Unit { value := next }
+fn read(&value: i64): i64 { value }
+fn copied(value: i64): i64 { value }
+var value := 1
+set(same(&mut value), 42)
+perform show("owner", value)
+perform show("borrowed", read(same(&mut value)))
+perform show("copied", copied(same(&mut value)))
+```
+shows = ["owner = 42", "borrowed = 42", "copied = 42"]
+
+@ cases.a-map-update-without-a-mutex-persists
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Affine
+import std::prelude::Shared
+var table: HashMap(u64, u64) := HashMap::new()
+HashMap::insert(&mut table, (1: u64), (42: u64))
+let value: u64 := match HashMap::get(&table, &(1: u64)) {
+  Some(value) => value
+  None => 0
+}
+perform show("without mutex", value)
+```
+shows = ["without mutex = 42"]

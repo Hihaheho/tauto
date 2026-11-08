@@ -1,0 +1,31 @@
+inductive Depth: (List(Nat), Nat) -> Prop {
+  DNil: Depth(Nil, Zero)
+  DCons<x: Nat, xs: List(Nat), n: Nat>(h: Depth(xs, n)): Depth(Cons(x, xs), Succ(n))
+}
+
+inductive Measured(l: List(Nat)): Type {
+  MeasuredYes(n: Nat, h: Depth(l, n), unique: ∀ m: Nat. (Depth(l, m)) -> m = n): Measured(l)
+  MeasuredNo(refute: ∀ m: Nat. (Depth(l, m)) -> False): Measured(l)
+}
+
+fn depth(l: List(Nat)): Measured(l) {
+  ⊢ Measured(l) from match l {
+    Nil => MeasuredYes(Zero, DNil, m => p => ⊢ m = Zero from match p {
+      DNil => Refl
+    })
+    Cons(x, xs) => ⊢ Measured(Cons(x, xs)) from match depth(xs) {
+      MeasuredYes(n, h, unique) => MeasuredYes(Succ(n), DCons(h), m => p => ⊢ m = Succ(n) from match p {
+        DCons(x2, xs2, n2, h2) => ⊢ Succ(n2) = Succ(n) from match unique(n2, h2) {
+          Refl => Refl
+        }
+      })
+      MeasuredNo(refute) => MeasuredNo(m => p => ⊢ False from match p {
+        DCons(x2, xs2, n2, h2) => refute(n2, h2)
+      })
+    }
+  }
+}
+
+theorem depth_empty(): depth(Nil) = MeasuredYes(Zero, DNil, m => p => ⊢ m = Zero from match p {
+  DNil => Refl
+}) { Refl }

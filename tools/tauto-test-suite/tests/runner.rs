@@ -243,7 +243,9 @@ fn direct_case_invocation_finds_repository_grammar_fixtures() {
     let report = run_path(
         &path,
         path.parent().unwrap(),
-        Some("a-syntax-macro-makes-the-theorem-statement"),
+        Some(tauto_test_suite::Filter::Contains(
+            "a-syntax-macro-makes-the-theorem-statement",
+        )),
     )
     .unwrap();
     assert_eq!(report.results.len(), 1);
@@ -323,7 +325,9 @@ fn insertion_fixes_are_checked_at_the_written_call() {
             "path`../../crates/",
             &format!("path`{}/crates/", repo.display()),
         );
-    let filter = Some("a-call-that-makes-a-declaration-without-a-list-is-an-error-0");
+    let filter = Some(tauto_test_suite::Filter::Contains(
+        "a-call-that-makes-a-declaration-without-a-list-is-an-error-0",
+    ));
     let path = f.write("case.eure", &text);
     let report = run_path(&path, &f.0, filter).unwrap();
     assert!(report.error.is_none(), "{:?}", report.error);
@@ -883,13 +887,13 @@ fn extracted_file_and_tote_compilation_keep_kernel_checked_evidence() {
         .unwrap();
     let proof = r#"mutual {
   fn twice(n: Nat): Nat {
-    match n: Nat {
+    ⊢ Nat from match n {
       Zero => Zero
       Succ(k) => Succ(Succ(twice_again(k)))
     }
   }
   fn twice_again(n: Nat): Nat {
-    match n: Nat {
+    ⊢ Nat from match n {
       Zero => Zero
       Succ(k) => Succ(Succ(twice(k)))
     }

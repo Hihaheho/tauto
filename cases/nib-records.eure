@@ -1,0 +1,127 @@
+description = "A record without a name: the type `{ a: A, b: B }` and the value `#{ a: x, b: y }`. A record is the same type wherever it has the same field names with the same types, in any order; it is not a product."
+
+@ cases.a-record-is-read-by-its-fields
+source = ```tauto
+fn area(r: { w: u64, h: u64 }): u64 { r.w * r.h }
+perform show("area", area(#{ w: 3, h: 4 }))
+```
+types = "ok"
+shows = ["area = 12"]
+backends = ["rust", "javascript", "vm"]
+
+@ cases.the-order-of-the-fields-is-not-part-of-the-type
+source = ```tauto
+fn swap(r: { b: u64, a: u64 }): { a: u64, b: u64 } { #{ b: r.a, a: r.b } }
+let s := swap(#{ a: 1, b: 2 })
+perform show("a", s.a)
+perform show("b", s.b)
+```
+types = "ok"
+shows = ["a = 2", "b = 1"]
+backends = ["rust", "javascript", "vm"]
+
+@ cases.a-record-holds-functions
+source = ```tauto
+fn run(r: { body: () -> u64, failed: (u64) -> u64 }): u64 {
+  let v := (r.body)()
+  if v == 0 { (r.failed)(v) } else { v }
+}
+perform show("ok", run(#{ failed: (e) => e + 100, body: () => 7 }))
+perform show("failed", run(#{ failed: (e) => e + 100, body: () => 0 }))
+```
+types = "ok"
+shows = ["ok = 7", "failed = 100"]
+backends = ["rust", "javascript", "vm"]
+
+@ cases.a-record-of-lambdas-takes-the-rows-its-parameter-writes
+source = ```tauto
+fn run<E, !e>(r: { body: () -> u64 ! {Div, fail(E)} ∪ e, failed: (E) -> u64 ! {Div} ∪ e }): u64 ! {Div} ∪ e {
+  handle { (r.body)() } with {
+    fail<E>(why) => (r.failed)(why)
+    return v => v
+  }
+}
+fn load(): u64 ! {Div, fail(u64)} { let w: u64 := 5; perform fail(w) }
+perform show("failed", run(#{ failed: (e) => e + 100, body: () => load() }))
+perform show("ok", run(#{ failed: (e) => e + 100, body: () => 7 }))
+```
+types = "ok"
+rows = "ok"
+shows = ["failed = 105", "ok = 7"]
+backends = ["rust", "javascript", "vm"]
+
+@ cases.a-record-of-lambdas-takes-the-row-index-its-parameter-writes
+source = ```tauto
+struct Ui(!e) { n: u64 }
+effect ui<!e>(): Ui(e) direct
+fn current<!e>(): Ui(e) ! {ui(e)} { perform ui() }
+fn run<!e>(r: { body: () -> u64 ! {ui(e)} ∪ e, failed: (u64) -> u64 ! {ui(e)} ∪ e }): u64 ! {ui(e)} ∪ e {
+  (r.body)() + (r.failed)(1)
+}
+fn with_ui<A, !e, !f>(u: Ui(e), body: () -> A ! {ui(e)} ∪ f): A ! f {
+  handle { body() } with {
+    ui(), k => k(u)
+    return v => v
+  }
+}
+fn page(): u64 ! {ui(!{})} {
+  run(#{ body: () => current().n, failed: (x) => x + current().n })
+}
+let u: Ui(!{}) := Ui { n: 10 }
+perform show("page", with_ui(u, () => page()))
+```
+types = "ok"
+shows = ["page = 21"]
+backends = ["rust", "javascript", "vm"]
+
+@ cases.a-record-with-another-field-is-another-type
+source = ```tauto
+fn f(o: { a: u64 }): u64 { o.a }
+let x := f(#{ a: 1, b: 2 })
+```
+types = "error: { a: i64, b: i64 } does not fit { a: u64 }"
+
+@ cases.a-record-is-not-a-product
+source = ```tauto
+fn f(o: { a: u64, b: Bool }): u64 { o.a }
+let x := f(#(1, true))
+```
+types = "error: an argument: i64 × Bool does not fit { a: u64, b: Bool }"
+
+@ cases.a-field-is-written-once
+source = ```tauto
+fn f(o: { a: u64, a: u64 }): u64 { 1 }
+```
+types = "error: `a` is written twice in the record"
+
+@ cases.a-block-is-not-a-record
+source = ```tauto
+fn f(a: u64): u64 {
+  let r := { a }
+  r + 1
+}
+perform show("f", f(1))
+```
+types = "ok"
+shows = ["f = 2"]
+backends = ["rust", "javascript", "vm"]
+
+@ cases.a-record-type-spans-lines
+source = ```tauto
+fn run(b: {
+  failed: (u64) -> u64,
+  body: () -> u64
+}): u64 {
+  let v := (b.body)()
+  if v == 0 { (b.failed)(v) } else { v }
+}
+let empty := {
+}
+perform show("r", run(#{
+  failed: (e) => e + 1,
+  body: () => 0,
+}))
+```
+types = "ok"
+shows = ["r = 1"]
+backends = ["rust", "javascript", "vm"]

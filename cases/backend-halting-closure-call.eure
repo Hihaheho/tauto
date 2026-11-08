@@ -1,0 +1,48 @@
+@ cases.halting-closure-call-inside-handled-callback
+backends = ["rust", "javascript"]
+source = ```nib
+import std::prelude::Par
+effect halt(): Never resume 0
+struct Located { path: Text }
+struct Kind { locate: Option((Text) -> Located ! {halt, Div}) }
+fn in_frame(body: () -> Text ! {halt, Div}): Result(Text, Text) ! {Div} {
+  handle { Ok(body()) } with { halt() => Err("halted") }
+}
+fn run(c: Kind, key: Text): Option(Located) ! {Div} {
+  match c.locate {
+    None => None
+    Some(f) => {
+      let answer := Ref::new(Located { path: "pending" })
+      let r := in_frame(() => {
+        Ref::set(answer, f(key))
+        ""
+      })
+      match r {
+        Ok(x) => Some(Ref::get(answer))
+        Err(e) => None
+      }
+    }
+  }
+}
+let kind := Kind { locate: Some((k) => Located { path: k }) }
+perform show("found", match run(kind, "a.txt") { Some(l) => l.path, None => "none" })
+```
+shows = ["found = \"a.txt\""]
+
+@ cases.halting-closure-in-option-field-called-directly
+backends = ["rust", "javascript"]
+source = ```nib
+effect halt(): Never resume 0
+struct Located { path: Text }
+struct Kind { locate: Option((Text) -> Located ! {halt, Div}) }
+fn run(c: Kind, key: Text): Option(Located) ! {halt, Div} {
+  match c.locate {
+    None => None
+    Some(f) => Some(f(key))
+  }
+}
+let kind := Kind { locate: Some((k) => Located { path: k }) }
+let r := handle { run(kind, "a.txt") } with { halt() => None }
+perform show("found", match r { Some(l) => l.path, None => "none" })
+```
+shows = ["found = \"a.txt\""]

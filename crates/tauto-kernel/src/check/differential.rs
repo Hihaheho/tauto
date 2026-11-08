@@ -14,7 +14,7 @@
 
 use super::parse_program;
 use super::{Kernel, Verdict};
-use crate::surface::Stmt;
+use crate::surface::{Name, Stmt};
 
 #[path = "../../tests/support/differential.rs"]
 mod generator;
@@ -82,7 +82,7 @@ fn judge(base: &Kernel, case: &Case) -> Option<Judgement> {
             .ok()?;
         Some(
             core.core
-                .add_decl("t", &statement, Some(&lam), false)
+                .add_decl(&Name::from("t"), &statement, Some(&lam), false)
                 .is_ok(),
         )
     })();

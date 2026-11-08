@@ -14,8 +14,12 @@ import std::Nat
 // serializes gives the same URL again (`parse_idem`).
 
 // No byte of an encoding is in its set.
-pub theorem enc_out_clean(set: (Nat) -> Bool, s: Stable(set), x: List(Nat)): clean(set, pct_encode(set, x)) = true {
-  match x: clean(set, pct_encode(set, x)) = true {
+pub theorem enc_out_clean(
+  set: (Nat) -> Bool,
+  s: Stable(set),
+  x: List(Nat)
+): clean(set, pct_encode(set, x)) = true {
+  ⊢ clean(set, pct_encode(set, x)) = true from match x {
     Nil => Refl
     Cons(b, t) => Bool::cases(
       (z: Bool) => clean(set, pct_encode(set, Cons(b, t))) = true,
@@ -23,7 +27,13 @@ pub theorem enc_out_clean(set: (Nat) -> Bool, s: Stable(set), x: List(Nat)): cle
       (e: set(b) = false) => Eq::subst(
         (w: List(Nat)) => clean(set, w) = true,
         Eq::sym(enc_clean_byte(set, b, t, e)),
-        all_bytes_cons((y: Nat) => not(set(y)), b, pct_encode(set, t), Eq::congr(not, e), enc_out_clean(set, s, t))
+        all_bytes_cons(
+          (y: Nat) => not(set(y)),
+          b,
+          pct_encode(set, t),
+          Eq::congr(not, e),
+          enc_out_clean(set, s, t)
+        )
       ),
       (e: set(b) = true) => Eq::subst(
         (w: List(Nat)) => clean(set, w) = true,
@@ -31,11 +41,18 @@ pub theorem enc_out_clean(set: (Nat) -> Bool, s: Stable(set), x: List(Nat)): cle
         all_bytes_cons(
           (y: Nat) => not(set(y)),
           37,
-          Cons(hex_digit(Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))), Cons(hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))), pct_encode(set, t))),
+          Cons(
+            hex_digit(
+              Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))
+            ),
+            Cons(hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))), pct_encode(set, t))
+          ),
           Eq::congr(not, s.a),
           all_bytes_cons(
             (y: Nat) => not(set(y)),
-            hex_digit(Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))),
+            hex_digit(
+              Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))
+            ),
             Cons(hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))), pct_encode(set, t)),
             Eq::congr(not, hex_not_in(set, s, Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)))),
             all_bytes_cons(
@@ -62,7 +79,7 @@ pub theorem enc_keeps(
   x: List(Nat),
   hx: all_bytes(q, x) = true
 ): all_bytes(q, pct_encode(set, x)) = true {
-  match x: (all_bytes(q, x) = true) -> all_bytes(q, pct_encode(set, x)) = true {
+  (⊢ (all_bytes(q, x) = true) -> all_bytes(q, pct_encode(set, x)) = true from match x {
     Nil => (e0: true = true) => Refl
     Cons(b, t) => (e0: all_bytes(q, Cons(b, t)) = true) => Bool::cases(
       (z: Bool) => all_bytes(q, pct_encode(set, Cons(b, t))) = true,
@@ -70,7 +87,13 @@ pub theorem enc_keeps(
       (e: set(b) = false) => Eq::subst(
         (w: List(Nat)) => all_bytes(q, w) = true,
         Eq::sym(enc_clean_byte(set, b, t, e)),
-        all_bytes_cons(q, b, pct_encode(set, t), all_bytes_head(q, b, t, e0), enc_keeps(set, q, h37, hhex, t, all_bytes_tail(q, b, t, e0)))
+        all_bytes_cons(
+          q,
+          b,
+          pct_encode(set, t),
+          all_bytes_head(q, b, t, e0),
+          enc_keeps(set, q, h37, hhex, t, all_bytes_tail(q, b, t, e0))
+        )
       ),
       (e: set(b) = true) => Eq::subst(
         (w: List(Nat)) => all_bytes(q, w) = true,
@@ -78,33 +101,64 @@ pub theorem enc_keeps(
         all_bytes_cons(
           q,
           37,
-          Cons(hex_digit(Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))), Cons(hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))), pct_encode(set, t))),
+          Cons(
+            hex_digit(
+              Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))
+            ),
+            Cons(hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))), pct_encode(set, t))
+          ),
           h37,
           all_bytes_cons(
             q,
-            hex_digit(Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))),
+            hex_digit(
+              Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl))
+            ),
             Cons(hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))), pct_encode(set, t)),
-            below_sound(16, (d: Nat) => q(hex_digit(d)), Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl)), hhex, Nat::mod_lt(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Refl)),
+            below_sound(
+              16,
+              (d: Nat) => q(hex_digit(d)),
+              Nat::rem_nz(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Nat::ne_zero(16, Refl)),
+              hhex,
+              Nat::mod_lt(Nat::div_nz(b, 16, Nat::ne_zero(16, Refl)), 16, Refl)
+            ),
             all_bytes_cons(
               q,
               hex_digit(Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl))),
               pct_encode(set, t),
-              below_sound(16, (d: Nat) => q(hex_digit(d)), Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl)), hhex, Nat::mod_lt(b, 16, Refl)),
+              below_sound(
+                16,
+                (d: Nat) => q(hex_digit(d)),
+                Nat::rem_nz(b, 16, Nat::ne_zero(16, Refl)),
+                hhex,
+                Nat::mod_lt(b, 16, Refl)
+              ),
               enc_keeps(set, q, h37, hhex, t, all_bytes_tail(q, b, t, e0))
             )
           )
         )
       )
     )
-  }(hx)
+  })(hx)
 }
 
-pub theorem enc_nonempty(set: (Nat) -> Bool, b: Nat, t: List(Nat)): is_empty(pct_encode(set, Cons(b, t))) = false {
+pub theorem enc_nonempty(
+  set: (Nat) -> Bool,
+  b: Nat,
+  t: List(Nat)
+): is_empty(pct_encode(set, Cons(b, t))) = false {
   Bool::cases(
     (z: Bool) => is_empty(pct_encode(set, Cons(b, t))) = false,
     set(b),
-    (e: set(b) = false) => Eq::subst((w: List(Nat)) => is_empty(w) = false, Eq::sym(enc_clean_byte(set, b, t, e)), Refl),
-    (e: set(b) = true) => Eq::subst((w: List(Nat)) => is_empty(w) = false, Eq::sym(enc_set_byte(set, b, t, e)), Refl)
+    (e: set(b) = false) => Eq::subst(
+      (w: List(Nat)) => is_empty(w) = false,
+      Eq::sym(enc_clean_byte(set, b, t, e)),
+      Refl
+    ),
+    (e: set(b) = true) => Eq::subst(
+      (w: List(Nat)) => is_empty(w) = false,
+      Eq::sym(enc_set_byte(set, b, t, e)),
+      Refl
+    )
   )
 }
 
@@ -118,15 +172,31 @@ pub theorem enc_not_slash(
   Bool::cases(
     (z: Bool) => starts_with(47, pct_encode(set, Cons(b, t))) = false,
     set(b),
-    (e: set(b) = false) => Eq::subst((w: List(Nat)) => starts_with(47, w) = false, Eq::sym(enc_clean_byte(set, b, t, e)), hb),
-    (e: set(b) = true) => Eq::subst((w: List(Nat)) => starts_with(47, w) = false, Eq::sym(enc_set_byte(set, b, t, e)), Refl)
+    (e: set(b) = false) => Eq::subst(
+      (w: List(Nat)) => starts_with(47, w) = false,
+      Eq::sym(enc_clean_byte(set, b, t, e)),
+      hb
+    ),
+    (e: set(b) = true) => Eq::subst(
+      (w: List(Nat)) => starts_with(47, w) = false,
+      Eq::sym(enc_set_byte(set, b, t, e)),
+      Refl
+    )
   )
 }
 
-pub fn CutSpec(c: Nat, q: (Nat) -> Bool, l: List(Nat), o: Option(Pair(List(Nat), List(Nat)))): Prop {
-  match o: Prop {
+pub fn CutSpec(
+  c: Nat,
+  q: (Nat) -> Bool,
+  l: List(Nat),
+  o: Option(Pair(List(Nat), List(Nat)))
+): Prop {
+  ⊢ Prop from match o {
     None => all_bytes(ne(c), l) = true
-    Some(p) => And(all_bytes(ne(c), p.fst) = true, And(all_bytes(q, p.fst) = true, all_bytes(q, p.snd) = true))
+    Some(p) => And(
+      all_bytes(ne(c), p.fst) = true,
+      And(all_bytes(q, p.fst) = true, all_bytes(q, p.snd) = true)
+    )
   }
 }
 
@@ -140,24 +210,29 @@ pub theorem cut_after_spec(
   o: Option(Pair(List(Nat), List(Nat))),
   h: CutSpec(c, q, t, o)
 ): CutSpec(c, q, Cons(b, t), cut_after(b, o)) {
-  match o: (CutSpec(c, q, t, o)) -> CutSpec(c, q, Cons(b, t), cut_after(b, o)) {
+  (⊢ (CutSpec(c, q, t, o)) -> CutSpec(c, q, Cons(b, t), cut_after(b, o)) from match o {
     None => (e: all_bytes(ne(c), t) = true) => all_bytes_cons(ne(c), b, t, Eq::congr(not, hb), e)
     Some(p) => (e: And(all_bytes(ne(c), p.fst) = true, And(all_bytes(q, p.fst) = true, all_bytes(q, p.snd) = true))) => AndIntro(
       all_bytes_cons(ne(c), b, p.fst, Eq::congr(not, hb), e.a),
       AndIntro(all_bytes_cons(q, b, p.fst, hq, e.b.a), e.b.b)
     )
-  }(h)
+  })(h)
 }
 
-pub theorem cut_spec(c: Nat, q: (Nat) -> Bool, l: List(Nat), h: all_bytes(q, l) = true): CutSpec(c, q, l, cut(c, l)) {
-  match l: (all_bytes(q, l) = true) -> CutSpec(c, q, l, cut(c, l)) {
+pub theorem cut_spec(
+  c: Nat,
+  q: (Nat) -> Bool,
+  l: List(Nat),
+  h: all_bytes(q, l) = true
+): CutSpec(c, q, l, cut(c, l)) {
+  (⊢ (all_bytes(q, l) = true) -> CutSpec(c, q, l, cut(c, l)) from match l {
     Nil => (e: true = true) => Refl
     Cons(b, t) => (e: all_bytes(q, Cons(b, t)) = true) => Bool::cases(
       (z: Bool) => CutSpec(
         c,
         q,
         Cons(b, t),
-        match z: Option(Pair(List(Nat), List(Nat))) {
+        ⊢ Option(Pair(List(Nat), List(Nat))) from match z {
           true => Some(Pair { fst: Nil, snd: t })
           false => cut_after(b, cut(c, t))
         }
@@ -175,7 +250,7 @@ pub theorem cut_spec(c: Nat, q: (Nat) -> Bool, l: List(Nat), h: all_bytes(q, l) 
       ),
       (eb: Nat::eq(b, c) = true) => AndIntro(Refl, AndIntro(Refl, all_bytes_tail(q, b, t, e)))
     )
-  }(h)
+  })(h)
 }
 
 pub theorem push_front_pieces(
@@ -185,15 +260,20 @@ pub theorem push_front_pieces(
   ps: List(List(Nat)),
   h: all_pieces(q, ps) = true
 ): all_pieces(q, push_front(b, ps)) = true {
-  match ps: (all_pieces(q, ps) = true) -> all_pieces(q, push_front(b, ps)) = true {
-    Nil => (e: true = true) => Bool::and_intro(all_bytes(q, Cons(b, Nil)), true, Bool::and_intro(q(b), true, hb, Refl), Refl)
+  (⊢ (all_pieces(q, ps) = true) -> all_pieces(q, push_front(b, ps)) = true from match ps {
+    Nil => (e: true = true) => Bool::and_intro(
+      all_bytes(q, Cons(b, Nil)),
+      true,
+      Bool::and_intro(q(b), true, hb, Refl),
+      Refl
+    )
     Cons(p, rest) => (e: Bool::and(all_bytes(q, p), all_pieces(q, rest)) = true) => Bool::and_intro(
       all_bytes(q, Cons(b, p)),
       all_pieces(q, rest),
       all_bytes_cons(q, b, p, hb, Bool::and_split(all_bytes(q, p), all_pieces(q, rest), e).a),
       Bool::and_split(all_bytes(q, p), all_pieces(q, rest), e).b
     )
-  }(h)
+  })(h)
 }
 
 // The pieces keep what the bytes had, and hold no `c`.
@@ -203,12 +283,14 @@ pub theorem split_pieces(
   l: List(Nat),
   h: all_bytes(q, l) = true
 ): all_pieces((b: Nat) => Bool::and(q(b), ne(c)(b)), split_all(c, l)) = true {
-  match l: (all_bytes(q, l) = true) -> all_pieces((b: Nat) => Bool::and(q(b), ne(c)(b)), split_all(c, l)) = true {
+  (⊢ (
+    all_bytes(q, l) = true
+  ) -> all_pieces((b: Nat) => Bool::and(q(b), ne(c)(b)), split_all(c, l)) = true from match l {
     Nil => (e: true = true) => Refl
     Cons(x, t) => (e: all_bytes(q, Cons(x, t)) = true) => Bool::cases(
       (z: Bool) => all_pieces(
         (b: Nat) => Bool::and(q(b), ne(c)(b)),
-        match z: List(List(Nat)) {
+        ⊢ List(List(Nat)) from match z {
           true => Cons(Nil, split_all(c, t))
           false => push_front(x, split_all(c, t))
         }
@@ -228,22 +310,22 @@ pub theorem split_pieces(
         split_pieces(c, q, t, all_bytes_tail(q, x, t, e))
       )
     )
-  }(h)
+  })(h)
 }
 
 pub theorem push_front_ne(b: Nat, ps: List(List(Nat))): is_empty_list(push_front(b, ps)) = false {
-  match ps: is_empty_list(push_front(b, ps)) = false {
+  ⊢ is_empty_list(push_front(b, ps)) = false from match ps {
     Nil => Refl
     Cons(p, rest) => Refl
   }
 }
 
 pub theorem split_nonempty(c: Nat, l: List(Nat)): is_empty_list(split_all(c, l)) = false {
-  match l: is_empty_list(split_all(c, l)) = false {
+  ⊢ is_empty_list(split_all(c, l)) = false from match l {
     Nil => Refl
     Cons(x, t) => Bool::cases(
       (z: Bool) => is_empty_list(
-        match z: List(List(Nat)) {
+        ⊢ List(List(Nat)) from match z {
           true => Cons(Nil, split_all(c, t))
           false => push_front(x, split_all(c, t))
         }
@@ -265,28 +347,32 @@ pub fn sb(sp: Bool): (Nat) -> Bool {
 }
 
 pub theorem implies_true(a: Bool): implies(a, true) = true {
-  match a: implies(a, true) = true {
+  ⊢ implies(a, true) = true from match a {
     true => Refl
     false => Refl
   }
 }
 
-pub theorem nb_all(sp: Bool, x: List(Nat), h: all_bytes(nb(sp), x) = true): implies(sp, all_bytes(ne(92), x)) = true {
-  match sp: (all_bytes(nb(sp), x) = true) -> implies(sp, all_bytes(ne(92), x)) = true {
+pub theorem nb_all(
+  sp: Bool,
+  x: List(Nat),
+  h: all_bytes(nb(sp), x) = true
+): implies(sp, all_bytes(ne(92), x)) = true {
+  (⊢ (all_bytes(nb(sp), x) = true) -> implies(sp, all_bytes(ne(92), x)) = true from match sp {
     true => (e: all_bytes(nb(true), x) = true) => e
     false => (e: all_bytes(nb(false), x) = true) => Refl
-  }(h)
+  })(h)
 }
 
 pub theorem nb_false(x: List(Nat)): all_bytes(nb(false), x) = true {
-  match x: all_bytes(nb(false), x) = true {
+  ⊢ all_bytes(nb(false), x) = true from match x {
     Nil => Refl
     Cons(b, t) => nb_false(t)
   }
 }
 
 pub theorem nat_cases(G: Prop, n: Nat, a: (n = Zero) -> G, b: (k: Nat) -> (n = Succ(k)) -> G): G {
-  match n: G {
+  ⊢ G from match n {
     Zero => a(Refl)
     Succ(k) => b(k, Refl)
   }
@@ -296,15 +382,24 @@ pub theorem seg_nil(sp: Bool): seg_ok(sp, Nil) = true {
   implies_true(sp)
 }
 
-pub theorem segs_pop(sp: Bool, st: List(List(Nat)), h: segs_ok(sp, st) = true): segs_ok(sp, pop(st)) = true {
-  match st: (segs_ok(sp, st) = true) -> segs_ok(sp, pop(st)) = true {
+pub theorem segs_pop(
+  sp: Bool,
+  st: List(List(Nat)),
+  h: segs_ok(sp, st) = true
+): segs_ok(sp, pop(st)) = true {
+  (⊢ (segs_ok(sp, st) = true) -> segs_ok(sp, pop(st)) = true from match st {
     Nil => (e: true = true) => Refl
     Cons(x, rest) => (e: segs_ok(sp, Cons(x, rest)) = true) => segs_tail(sp, x, rest, e)
-  }(h)
+  })(h)
 }
 
-pub theorem segs_push_last(sp: Bool, st: List(List(Nat)), last: Bool, h: segs_ok(sp, st) = true): segs_ok(sp, push_last(st, last)) = true {
-  match last: segs_ok(sp, push_last(st, last)) = true {
+pub theorem segs_push_last(
+  sp: Bool,
+  st: List(List(Nat)),
+  last: Bool,
+  h: segs_ok(sp, st) = true
+): segs_ok(sp, push_last(st, last)) = true {
+  ⊢ segs_ok(sp, push_last(st, last)) = true from match last {
     true => Bool::and_intro(seg_ok(sp, Nil), segs_ok(sp, st), seg_nil(sp), h)
     false => h
   }
@@ -318,7 +413,7 @@ pub theorem walk_step_dots(
   ek: dots(e) = Succ(k)
 ): walk_step(st, e, last) = walk_dots(k, st, last) {
   Eq::subst(
-    (n: Nat) => (match n: List(List(Nat)) {
+    (n: Nat) => (⊢ List(List(Nat)) from match n {
         Zero => Cons(e, st)
         Succ(j) => walk_dots(j, st, last)
       }) = walk_dots(k, st, last),
@@ -334,14 +429,17 @@ pub theorem segs_walk_dots(
   last: Bool,
   h: segs_ok(sp, st) = true
 ): segs_ok(sp, walk_dots(k, st, last)) = true {
-  match k: segs_ok(sp, walk_dots(k, st, last)) = true {
+  ⊢ segs_ok(sp, walk_dots(k, st, last)) = true from match k {
     Zero => segs_push_last(sp, st, last, h)
     Succ(k2) => segs_push_last(sp, pop(st), last, segs_pop(sp, st, h))
   }
 }
 
-pub theorem walk_dots_last(k: Nat, st: List(List(Nat))): is_empty_list(walk_dots(k, st, true)) = false {
-  match k: is_empty_list(walk_dots(k, st, true)) = false {
+pub theorem walk_dots_last(
+  k: Nat,
+  st: List(List(Nat))
+): is_empty_list(walk_dots(k, st, true)) = false {
+  ⊢ is_empty_list(walk_dots(k, st, true)) = false from match k {
     Zero => Refl
     Succ(k2) => Refl
   }
@@ -355,7 +453,17 @@ pub theorem enc_seg(
   hd: dots(pct_encode(path_set, s)) = 0
 ): seg_ok(sp, pct_encode(path_set, s)) = true {
   let e: List(Nat) := pct_encode(path_set, s)
-  let hk: all_bytes(sb(sp), e) = true := enc_keeps(path_set, sb(sp), Bool::and_intro(nb(sp)(37), true, implies_true(sp), Refl), below16_sb(sp), s, hs)
+  let hk: all_bytes(
+    sb(sp),
+    e
+  ) = true := enc_keeps(
+    path_set,
+    sb(sp),
+    Bool::and_intro(nb(sp)(37), true, implies_true(sp), Refl),
+    below16_sb(sp),
+    s,
+    hs
+  )
   Bool::and_intro(
     clean(path_set, e),
     seg_rest2(sp, e),
@@ -363,7 +471,13 @@ pub theorem enc_seg(
     Bool::and_intro(
       all_bytes(ne(47), e),
       seg_rest3(sp, e),
-      all_bytes_imp(sb(sp), ne(47), (b: Nat) => (eb: sb(sp)(b) = true) => Bool::and_split(nb(sp)(b), ne(47)(b), eb).b, e, hk),
+      all_bytes_imp(
+        sb(sp),
+        ne(47),
+        (b: Nat) => (eb: sb(sp)(b) = true) => Bool::and_split(nb(sp)(b), ne(47)(b), eb).b,
+        e,
+        hk
+      ),
       Bool::and_intro(
         Nat::eq(dots(e), 0),
         implies(sp, all_bytes(ne(92), e)),
@@ -371,7 +485,13 @@ pub theorem enc_seg(
         nb_all(
           sp,
           e,
-          all_bytes_imp(sb(sp), nb(sp), (b: Nat) => (eb: sb(sp)(b) = true) => Bool::and_split(nb(sp)(b), ne(47)(b), eb).a, e, hk)
+          all_bytes_imp(
+            sb(sp),
+            nb(sp),
+            (b: Nat) => (eb: sb(sp)(b) = true) => Bool::and_split(nb(sp)(b), ne(47)(b), eb).a,
+            e,
+            hk
+          )
         )
       )
     )
@@ -379,7 +499,7 @@ pub theorem enc_seg(
 }
 
 pub theorem below16_sb(sp: Bool): below(16, (d: Nat) => sb(sp)(hex_digit(d))) = true {
-  match sp: below(16, (d: Nat) => sb(sp)(hex_digit(d))) = true {
+  ⊢ below(16, (d: Nat) => sb(sp)(hex_digit(d))) = true from match sp {
     true => Refl
     false => Refl
   }
@@ -399,7 +519,12 @@ pub theorem segs_walk_step(
     (e: dots(pct_encode(path_set, s)) = Zero) => Eq::subst(
       (w: List(List(Nat))) => segs_ok(sp, w) = true,
       Eq::sym(walk_step_plain(st, pct_encode(path_set, s), last, e)),
-      Bool::and_intro(seg_ok(sp, pct_encode(path_set, s)), segs_ok(sp, st), enc_seg(sp, s, hs, e), hst)
+      Bool::and_intro(
+        seg_ok(sp, pct_encode(path_set, s)),
+        segs_ok(sp, st),
+        enc_seg(sp, s, hs, e),
+        hst
+      )
     ),
     (k: Nat) => (e: dots(pct_encode(path_set, s)) = Succ(k)) => Eq::subst(
       (w: List(List(Nat))) => segs_ok(sp, w) = true,
@@ -409,7 +534,10 @@ pub theorem segs_walk_step(
   )
 }
 
-pub theorem walk_step_last(st: List(List(Nat)), e: List(Nat)): is_empty_list(walk_step(st, e, true)) = false {
+pub theorem walk_step_last(
+  st: List(List(Nat)),
+  e: List(Nat)
+): is_empty_list(walk_step(st, e, true)) = false {
   nat_cases(
     is_empty_list(walk_step(st, e, true)) = false,
     dots(e),
@@ -433,16 +561,23 @@ pub theorem segs_walk(
   hst: segs_ok(sp, st) = true,
   hs: all_pieces(sb(sp), segs) = true
 ): segs_ok(sp, walk(st, segs)) = true {
-  match segs: (all_pieces(sb(sp), segs) = true) -> segs_ok(sp, walk(st, segs)) = true {
+  (⊢ (all_pieces(sb(sp), segs) = true) -> segs_ok(sp, walk(st, segs)) = true from match segs {
     Nil => (e: true = true) => hst
     Cons(s, rest) => (e: Bool::and(all_bytes(sb(sp), s), all_pieces(sb(sp), rest)) = true) => segs_walk(
       sp,
       walk_step(st, pct_encode(path_set, s), is_empty_list(rest)),
       rest,
-      segs_walk_step(sp, st, s, is_empty_list(rest), hst, Bool::and_split(all_bytes(sb(sp), s), all_pieces(sb(sp), rest), e).a),
+      segs_walk_step(
+        sp,
+        st,
+        s,
+        is_empty_list(rest),
+        hst,
+        Bool::and_split(all_bytes(sb(sp), s), all_pieces(sb(sp), rest), e).a
+      ),
       Bool::and_split(all_bytes(sb(sp), s), all_pieces(sb(sp), rest), e).b
     )
-  }(hs)
+  })(hs)
 }
 
 pub theorem walk_cons_ne(
@@ -450,7 +585,7 @@ pub theorem walk_cons_ne(
   s: List(Nat),
   rest: List(List(Nat))
 ): is_empty_list(walk(st, Cons(s, rest))) = false {
-  match rest: is_empty_list(walk(st, Cons(s, rest))) = false {
+  ⊢ is_empty_list(walk(st, Cons(s, rest))) = false from match rest {
     Nil => walk_step_last(st, pct_encode(path_set, s))
     Cons(s2, more) => walk_cons_ne(walk_step(st, pct_encode(path_set, s), false), s2, more)
   }
@@ -463,7 +598,9 @@ pub theorem segs_rev_onto(
   hl: segs_ok(sp, l) = true,
   ha: segs_ok(sp, acc) = true
 ): segs_ok(sp, List::reverse_onto(l, acc)) = true {
-  match l: (segs_ok(sp, l) = true) -> (segs_ok(sp, acc) = true) -> segs_ok(sp, List::reverse_onto(l, acc)) = true {
+  (⊢ (
+    segs_ok(sp, l) = true
+  ) -> (segs_ok(sp, acc) = true) -> segs_ok(sp, List::reverse_onto(l, acc)) = true from match l {
     Nil => (e1: true = true) => (e2: segs_ok(sp, acc) = true) => e2
     Cons(x, t) => (e1: segs_ok(sp, Cons(x, t)) = true) => (e2: segs_ok(sp, acc) = true) => segs_rev_onto(
       sp,
@@ -472,7 +609,7 @@ pub theorem segs_rev_onto(
       segs_tail(sp, x, t, e1),
       Bool::and_intro(seg_ok(sp, x), segs_ok(sp, acc), segs_head(sp, x, t, e1), e2)
     )
-  }(hl, ha)
+  })(hl, ha)
 }
 
 pub theorem rev_onto_ne(
@@ -480,10 +617,16 @@ pub theorem rev_onto_ne(
   acc: List(List(Nat)),
   h: Bool::or(not(is_empty_list(l)), not(is_empty_list(acc))) = true
 ): is_empty_list(List::reverse_onto(l, acc)) = false {
-  match l: (Bool::or(not(is_empty_list(l)), not(is_empty_list(acc))) = true) -> is_empty_list(List::reverse_onto(l, acc)) = false {
+  (⊢ (
+    Bool::or(not(is_empty_list(l)), not(is_empty_list(acc))) = true
+  ) -> is_empty_list(List::reverse_onto(l, acc)) = false from match l {
     Nil => (e: not(is_empty_list(acc)) = true) => not_true(is_empty_list(acc), e)
-    Cons(x, t) => (e: true = true) => rev_onto_ne(t, Cons(x, acc), or_true_right(not(is_empty_list(t)), true, Refl))
-  }(h)
+    Cons(x, t) => (e: true = true) => rev_onto_ne(
+      t,
+      Cons(x, acc),
+      or_true_right(not(is_empty_list(t)), true, Refl)
+    )
+  })(h)
 }
 
 pub fn PathOk(sp: Bool, ss: List(List(Nat))): Prop {
@@ -503,7 +646,13 @@ pub theorem path_spec(
       sp,
       walk(List::reverse(base), split_all(47, y)),
       Nil,
-      segs_walk(sp, List::reverse(base), split_all(47, y), segs_rev_onto(sp, base, Nil, hb, Refl), split_pieces(47, nb(sp), y, hy)),
+      segs_walk(
+        sp,
+        List::reverse(base),
+        split_all(47, y),
+        segs_rev_onto(sp, base, Nil, hb, Refl),
+        split_pieces(47, nb(sp), y, hy)
+      ),
       Refl
     ),
     rev_onto_ne(
@@ -518,26 +667,33 @@ pub theorem path_spec(
   )
 }
 
-pub theorem split_walk_ne(st: List(List(Nat)), y: List(Nat)): is_empty_list(walk(st, split_all(47, y))) = false {
+pub theorem split_walk_ne(
+  st: List(List(Nat)),
+  y: List(Nat)
+): is_empty_list(walk(st, split_all(47, y))) = false {
   split_cases(st, split_all(47, y), split_nonempty(47, y))
 }
 
-pub theorem split_cases(st: List(List(Nat)), ps: List(List(Nat)), h: is_empty_list(ps) = false): is_empty_list(walk(st, ps)) = false {
-  match ps: (is_empty_list(ps) = false) -> is_empty_list(walk(st, ps)) = false {
+pub theorem split_cases(
+  st: List(List(Nat)),
+  ps: List(List(Nat)),
+  h: is_empty_list(ps) = false
+): is_empty_list(walk(st, ps)) = false {
+  (⊢ (is_empty_list(ps) = false) -> is_empty_list(walk(st, ps)) = false from match ps {
     Nil => (e: true = false) => False::elim(true_ne_false(e))
     Cons(s, rest) => (e: false = false) => walk_cons_ne(st, s, rest)
-  }(h)
+  })(h)
 }
 
 pub theorem bytes_eq_refl(a: List(Nat)): bytes_eq(a, a) = true {
-  match a: bytes_eq(a, a) = true {
+  ⊢ bytes_eq(a, a) = true from match a {
     Nil => Refl
     Cons(x, t) => Bool::and_intro(Nat::eq(x, x), bytes_eq(t, t), Nat::eq_refl(x), bytes_eq_refl(t))
   }
 }
 
 pub fn HostSpec(sp: Bool, h: List(Nat), o: Option(List(Nat))): Prop {
-  match o: Prop {
+  ⊢ Prop from match o {
     None => True
     Some(x) => And(host_ok(sp, x) = true, implies(not(is_empty(h)), not(is_empty(x))) = true)
   }
@@ -558,7 +714,11 @@ pub theorem domain_byte_bound(b: Nat, h: domain_byte(b) = true): Nat::lt(b, 127)
   Bool::and_split(
     Nat::lt(b, 127),
     Bool::and(not(forbidden_host(b)), not(Nat::eq(b, 37))),
-    Bool::and_split(Nat::lt(32, b), Bool::and(Nat::lt(b, 127), Bool::and(not(forbidden_host(b)), not(Nat::eq(b, 37)))), h).b
+    Bool::and_split(
+      Nat::lt(32, b),
+      Bool::and(Nat::lt(b, 127), Bool::and(not(forbidden_host(b)), not(Nat::eq(b, 37)))),
+      h
+    ).b
   ).a
 }
 
@@ -567,7 +727,7 @@ pub theorem special_host_spec(h: List(Nat)): HostSpec(true, h, host_special(h)) 
     (z: Bool) => HostSpec(
       true,
       h,
-      match z: Option(List(Nat)) {
+      ⊢ Option(List(Nat)) from match z {
         true => Some(lower(h))
         false => None
       }
@@ -588,7 +748,7 @@ pub theorem special_host_spec(h: List(Nat)): HostSpec(true, h, host_special(h)) 
           bounded_to(domain_byte, (b: Nat) => not(host_set(b)), 127, domain_byte_bound, Refl, lower(h), hdb),
           Eq::subst(
             (w: List(Nat)) => opt_list_is(
-              match domain_ok(w): Option(List(Nat)) {
+              ⊢ Option(List(Nat)) from match domain_ok(w) {
                 true => Some(w)
                 false => None
               },
@@ -597,7 +757,7 @@ pub theorem special_host_spec(h: List(Nat)): HostSpec(true, h, host_special(h)) 
             Eq::sym(lower_idem(h)),
             Eq::subst(
               (z: Bool) => opt_list_is(
-                match z: Option(List(Nat)) {
+                ⊢ Option(List(Nat)) from match z {
                   true => Some(lower(h))
                   false => None
                 },
@@ -623,7 +783,7 @@ pub theorem opaque_host_spec(h: List(Nat)): HostSpec(false, h, host_opaque(h)) {
     (z: Bool) => HostSpec(
       false,
       h,
-      match z: Option(List(Nat)) {
+      ⊢ Option(List(Nat)) from match z {
         true => Some(pct_encode(c0_control_set, h))
         false => None
       }
@@ -652,7 +812,7 @@ pub theorem opaque_host_spec(h: List(Nat)): HostSpec(false, h, host_opaque(h)) {
           ),
           Eq::subst(
             (z: Bool) => opt_list_is(
-              match z: Option(List(Nat)) {
+              ⊢ Option(List(Nat)) from match z {
                 true => Some(pct_encode(c0_control_set, x))
                 false => None
               },
@@ -666,7 +826,7 @@ pub theorem opaque_host_spec(h: List(Nat)): HostSpec(false, h, host_opaque(h)) {
             )
           )
         ),
-        match h: implies(not(is_empty(h)), not(is_empty(pct_encode(c0_control_set, h)))) = true {
+        ⊢ implies(not(is_empty(h)), not(is_empty(pct_encode(c0_control_set, h)))) = true from match h {
           Nil => Refl
           Cons(b, t) => Eq::subst(
             (z: Bool) => implies(true, not(z)) = true,
@@ -680,26 +840,30 @@ pub theorem opaque_host_spec(h: List(Nat)): HostSpec(false, h, host_opaque(h)) {
 }
 
 pub theorem host_spec(sp: Bool, h: List(Nat)): HostSpec(sp, h, host_of(sp, h)) {
-  match sp: HostSpec(sp, h, host_of(sp, h)) {
+  ⊢ HostSpec(sp, h, host_of(sp, h)) from match sp {
     true => special_host_spec(h)
     false => opaque_host_spec(h)
   }
 }
 
 pub fn PortSpec(d: Option(Nat), o: Option(Option(Nat))): Prop {
-  match o: Prop {
+  ⊢ Prop from match o {
     None => True
     Some(pt) => port_ok(d, pt) = true
   }
 }
 
-pub theorem port_after_spec(d: Option(Nat), v: Nat, hv: Nat::lt(v, 65536) = true): PortSpec(d, port_value_after(d, v)) {
-  match d: PortSpec(d, port_value_after(d, v)) {
+pub theorem port_after_spec(
+  d: Option(Nat),
+  v: Nat,
+  hv: Nat::lt(v, 65536) = true
+): PortSpec(d, port_value_after(d, v)) {
+  ⊢ PortSpec(d, port_value_after(d, v)) from match d {
     None => Bool::and_intro(Nat::lt(v, 65536), true, hv, Refl)
     Some(x) => Bool::cases(
       (z: Bool) => PortSpec(
         Some(x),
-        match z: Option(Option(Nat)) {
+        ⊢ Option(Option(Nat)) from match z {
           true => Some(None)
           false => Some(Some(v))
         }
@@ -715,7 +879,7 @@ pub theorem port_value_spec(d: Option(Nat), v: Nat): PortSpec(d, port_value(d, v
   Bool::cases(
     (z: Bool) => PortSpec(
       d,
-      match z: Option(Option(Nat)) {
+      ⊢ Option(Option(Nat)) from match z {
         false => None
         true => port_value_after(d, v)
       }
@@ -727,21 +891,21 @@ pub theorem port_value_spec(d: Option(Nat), v: Nat): PortSpec(d, port_value(d, v
 }
 
 pub theorem port_digits_spec(d: Option(Nat), o: Option(Nat)): PortSpec(d, port_digits(d, o)) {
-  match o: PortSpec(d, port_digits(d, o)) {
+  ⊢ PortSpec(d, port_digits(d, o)) from match o {
     None => Trivial
     Some(v) => port_value_spec(d, v)
   }
 }
 
 pub theorem port_spec(d: Option(Nat), l: List(Nat)): PortSpec(d, port_of(d, l)) {
-  match l: PortSpec(d, port_of(d, l)) {
+  ⊢ PortSpec(d, port_of(d, l)) from match l {
     Nil => Refl
     Cons(b, t) => port_digits_spec(d, digits_value(0, Cons(b, t)))
   }
 }
 
 pub fn AuthSpec(sp: Bool, d: Option(Nat), o: Option(Authority)): Prop {
-  match o: Prop {
+  ⊢ Prop from match o {
     None => True
     Some(a) => auth_ok(sp, d, a) = true
   }
@@ -750,17 +914,23 @@ pub fn AuthSpec(sp: Bool, d: Option(Nat), o: Option(Authority)): Prop {
 // What the host must be, given the port: something when there are
 // credentials or a port.
 pub fn PortCond(port: Option(Option(Nat)), u: List(Nat), pw: List(Nat), h: List(Nat)): Prop {
-  match port: Prop {
+  ⊢ Prop from match port {
     None => True
     Some(pt) => implies(Bool::or(not(cred_empty(u, pw)), not(is_none(pt))), not(is_empty(h))) = true
   }
 }
 
-pub theorem implies_trans(a: Bool, b: Bool, c: Bool, h1: implies(a, b) = true, h2: implies(b, c) = true): implies(a, c) = true {
-  match a: (implies(a, b) = true) -> implies(a, c) = true {
+pub theorem implies_trans(
+  a: Bool,
+  b: Bool,
+  c: Bool,
+  h1: implies(a, b) = true,
+  h2: implies(b, c) = true
+): implies(a, c) = true {
+  (⊢ (implies(a, b) = true) -> implies(a, c) = true from match a {
     false => (e: true = true) => Refl
     true => (e: b = true) => implies_use(b, c, h2, e)
-  }(h1)
+  })(h1)
 }
 
 pub theorem hwp_host(
@@ -776,7 +946,7 @@ pub theorem hwp_host(
   o: Option(List(Nat)),
   ho: HostSpec(sp, h, o)
 ): AuthSpec(sp, d, with_host(u, pw, pt, o)) {
-  match o: (HostSpec(sp, h, o)) -> AuthSpec(sp, d, with_host(u, pw, pt, o)) {
+  (⊢ (HostSpec(sp, h, o)) -> AuthSpec(sp, d, with_host(u, pw, pt, o)) from match o {
     None => (e: True) => Trivial
     Some(x) => (e: And(host_ok(sp, x) = true, implies(not(is_empty(h)), not(is_empty(x))) = true)) => Bool::and_intro(
       cred_ok(u, pw),
@@ -800,7 +970,7 @@ pub theorem hwp_host(
         )
       )
     )
-  }(ho)
+  })(ho)
 }
 
 pub theorem hwp_spec(
@@ -814,7 +984,9 @@ pub theorem hwp_spec(
   hport: PortSpec(d, port),
   hcond: PortCond(port, u, pw, h)
 ): AuthSpec(sp, d, host_with_port(sp, u, pw, h, port)) {
-  match port: (PortSpec(d, port)) -> (PortCond(port, u, pw, h)) -> AuthSpec(sp, d, host_with_port(sp, u, pw, h, port)) {
+  (⊢ (
+    PortSpec(d, port)
+  ) -> (PortCond(port, u, pw, h)) -> AuthSpec(sp, d, host_with_port(sp, u, pw, h, port)) from match port {
     None => (e1: True) => (e2: True) => Trivial
     Some(pt) => (e1: port_ok(d, pt) = true) => (e2: implies(Bool::or(not(cred_empty(u, pw)), not(is_none(pt))), not(is_empty(h))) = true) => hwp_host(
       sp,
@@ -829,11 +1001,17 @@ pub theorem hwp_spec(
       host_of(sp, h),
       host_spec(sp, h)
     )
-  }(hport, hcond)
+  })(hport, hcond)
 }
 
-pub theorem port_cond_host(port: Option(Option(Nat)), u: List(Nat), pw: List(Nat), h: List(Nat), hh: is_empty(h) = false): PortCond(port, u, pw, h) {
-  match port: PortCond(port, u, pw, h) {
+pub theorem port_cond_host(
+  port: Option(Option(Nat)),
+  u: List(Nat),
+  pw: List(Nat),
+  h: List(Nat),
+  hh: is_empty(h) = false
+): PortCond(port, u, pw, h) {
+  ⊢ PortCond(port, u, pw, h) from match port {
     None => Trivial
     Some(pt) => Eq::subst(
       (z: Bool) => implies(Bool::or(not(cred_empty(u, pw)), not(is_none(pt))), not(z)) = true,
@@ -862,7 +1040,7 @@ pub theorem port_cond_none(
 }
 
 pub theorem or_false_id(a: Bool, b: Bool, e: b = false): Bool::or(a, b) = a {
-  match a: Bool::or(a, b) = a {
+  ⊢ Bool::or(a, b) = a from match a {
     true => Refl
     false => e
   }
@@ -878,13 +1056,13 @@ pub theorem host_port_cut_spec(
   hw: Bool::or(not(is_empty(hp)), cred_empty(u, pw)) = true,
   o: Option(Pair(List(Nat), List(Nat)))
 ): AuthSpec(sp, d, host_port_cut(sp, d, u, pw, hp, o)) {
-  match o: AuthSpec(sp, d, host_port_cut(sp, d, u, pw, hp, o)) {
+  ⊢ AuthSpec(sp, d, host_port_cut(sp, d, u, pw, hp, o)) from match o {
     None => hwp_spec(sp, d, u, pw, hp, hcred, Some(None), Refl, port_cond_none(u, pw, hp, hw))
     Some(p) => Bool::cases(
       (z: Bool) => AuthSpec(
         sp,
         d,
-        match z: Option(Authority) {
+        ⊢ Option(Authority) from match z {
           true => None
           false => host_with_port(sp, u, pw, p.fst, port_of(d, p.snd))
         }
@@ -914,8 +1092,11 @@ pub fn psnd(p: Pair(List(Nat), List(Nat))): List(Nat) {
   p.snd
 }
 
-pub theorem user_pass_spec(c: List(Nat), o: Option(Pair(List(Nat), List(Nat)))): cred_ok(pfst(user_pass_cut(c, o)), psnd(user_pass_cut(c, o))) = true {
-  match o: cred_ok(pfst(user_pass_cut(c, o)), psnd(user_pass_cut(c, o))) = true {
+pub theorem user_pass_spec(
+  c: List(Nat),
+  o: Option(Pair(List(Nat), List(Nat)))
+): cred_ok(pfst(user_pass_cut(c, o)), psnd(user_pass_cut(c, o))) = true {
+  ⊢ cred_ok(pfst(user_pass_cut(c, o)), psnd(user_pass_cut(c, o))) = true from match o {
     None => Bool::and_intro(
       clean(userinfo_set, pct_encode(userinfo_set, c)),
       true,
@@ -937,13 +1118,22 @@ pub theorem authority_cut_spec(
   a: List(Nat),
   o: Option(Pair(List(Nat), List(Nat)))
 ): AuthSpec(sp, d, authority_cut(sp, d, a, o)) {
-  match o: AuthSpec(sp, d, authority_cut(sp, d, a, o)) {
-    None => host_port_cut_spec(sp, d, Nil, Nil, a, Refl, or_true_right(not(is_empty(a)), true, Refl), cut(58, a))
+  ⊢ AuthSpec(sp, d, authority_cut(sp, d, a, o)) from match o {
+    None => host_port_cut_spec(
+      sp,
+      d,
+      Nil,
+      Nil,
+      a,
+      Refl,
+      or_true_right(not(is_empty(a)), true, Refl),
+      cut(58, a)
+    )
     Some(p) => Bool::cases(
       (z: Bool) => AuthSpec(
         sp,
         d,
-        match z: Option(Authority) {
+        ⊢ Option(Authority) from match z {
           true => None
           false => host_port(sp, d, user_pass(p.fst).fst, user_pass(p.fst).snd, p.snd)
         }
@@ -964,14 +1154,21 @@ pub theorem authority_cut_spec(
   }
 }
 
-pub theorem authority_spec(sp: Bool, d: Option(Nat), a: List(Nat)): AuthSpec(sp, d, authority_of(sp, d, a)) {
+pub theorem authority_spec(
+  sp: Bool,
+  d: Option(Nat),
+  a: List(Nat)
+): AuthSpec(sp, d, authority_of(sp, d, a)) {
   authority_cut_spec(sp, d, a, rcut(64, a))
 }
 
 pub fn AuthPathSpec(sp: Bool, d: Option(Nat), o: Option(Pair(Authority, List(List(Nat))))): Prop {
-  match o: Prop {
+  ⊢ Prop from match o {
     None => True
-    Some(p) => And(auth_ok(sp, d, p.fst) = true, And(segs_ok(sp, p.snd) = true, implies(sp, not(is_empty_list(p.snd))) = true))
+    Some(p) => And(
+      auth_ok(sp, d, p.fst) = true,
+      And(segs_ok(sp, p.snd) = true, implies(sp, not(is_empty_list(p.snd))) = true)
+    )
   }
 }
 
@@ -984,21 +1181,21 @@ pub theorem with_path_spec(
   hs: segs_ok(sp, ss) = true,
   hne: implies(sp, not(is_empty_list(ss))) = true
 ): AuthPathSpec(sp, d, with_path(a, ss)) {
-  match a: (AuthSpec(sp, d, a)) -> AuthPathSpec(sp, d, with_path(a, ss)) {
+  (⊢ (AuthSpec(sp, d, a)) -> AuthPathSpec(sp, d, with_path(a, ss)) from match a {
     None => (e: True) => Trivial
     Some(x) => (e: auth_ok(sp, d, x) = true) => AndIntro(e, AndIntro(hs, hne))
-  }(ha)
+  })(ha)
 }
 
 pub theorem empty_path_segs(sp: Bool): segs_ok(sp, empty_path(sp)) = true {
-  match sp: segs_ok(sp, empty_path(sp)) = true {
+  ⊢ segs_ok(sp, empty_path(sp)) = true from match sp {
     true => Refl
     false => Refl
   }
 }
 
 pub theorem empty_path_ne(sp: Bool): implies(sp, not(is_empty_list(empty_path(sp)))) = true {
-  match sp: implies(sp, not(is_empty_list(empty_path(sp)))) = true {
+  ⊢ implies(sp, not(is_empty_list(empty_path(sp)))) = true from match sp {
     true => Refl
     false => Refl
   }
@@ -1011,7 +1208,7 @@ pub theorem auth_path_cut_spec(
   o: Option(Pair(List(Nat), List(Nat))),
   hc: CutSpec(47, nb(sp), l, o)
 ): AuthPathSpec(sp, d, auth_path_cut(sp, d, l, o)) {
-  match o: (CutSpec(47, nb(sp), l, o)) -> AuthPathSpec(sp, d, auth_path_cut(sp, d, l, o)) {
+  (⊢ (CutSpec(47, nb(sp), l, o)) -> AuthPathSpec(sp, d, auth_path_cut(sp, d, l, o)) from match o {
     None => (e: all_bytes(ne(47), l) = true) => with_path_spec(
       sp,
       d,
@@ -1034,7 +1231,7 @@ pub theorem auth_path_cut_spec(
         implies_true(sp)
       )
     )
-  }(hc)
+  })(hc)
 }
 
 pub theorem auth_path_spec(
@@ -1047,10 +1244,13 @@ pub theorem auth_path_spec(
 }
 
 pub fn TailOk(qset: (Nat) -> Bool, t: Tail): Prop {
-  match t: Prop {
+  ⊢ Prop from match t {
     MkTail(h, q, f) => And(
       opt_clean(qset, q) = true,
-      And(opt_clean(fragment_set, f) = true, And(all_bytes(ne(35), h) = true, all_bytes(ne(63), h) = true))
+      And(
+        opt_clean(fragment_set, f) = true,
+        And(all_bytes(ne(35), h) = true, all_bytes(ne(63), h) = true)
+      )
     )
   }
 }
@@ -1060,7 +1260,7 @@ pub fn any_byte(b: Nat): Bool {
 }
 
 pub theorem all_any(l: List(Nat)): all_bytes(any_byte, l) = true {
-  match l: all_bytes(any_byte, l) = true {
+  ⊢ all_bytes(any_byte, l) = true from match l {
     Nil => Refl
     Cons(b, t) => all_any(t)
   }
@@ -1076,13 +1276,13 @@ pub theorem tail_query_cut_spec(
   o: Option(Pair(List(Nat), List(Nat))),
   hc: CutSpec(63, ne(35), l, o)
 ): TailOk(qset, tail_query_cut(qset, l, f, o)) {
-  match o: (CutSpec(63, ne(35), l, o)) -> TailOk(qset, tail_query_cut(qset, l, f, o)) {
+  (⊢ (CutSpec(63, ne(35), l, o)) -> TailOk(qset, tail_query_cut(qset, l, f, o)) from match o {
     None => (e: all_bytes(ne(63), l) = true) => AndIntro(Refl, AndIntro(hf, AndIntro(h35, e)))
     Some(p) => (e: And(all_bytes(ne(63), p.fst) = true, And(all_bytes(ne(35), p.fst) = true, all_bytes(ne(35), p.snd) = true))) => AndIntro(
       enc_out_clean(qset, st, p.snd),
       AndIntro(hf, AndIntro(e.b.a, e.a))
     )
-  }(hc)
+  })(hc)
 }
 
 pub theorem tail_query_spec(
@@ -1103,7 +1303,7 @@ pub theorem tail_cut_spec(
   o: Option(Pair(List(Nat), List(Nat))),
   hc: CutSpec(35, any_byte, l, o)
 ): TailOk(qset, tail_cut(qset, l, o)) {
-  match o: (CutSpec(35, any_byte, l, o)) -> TailOk(qset, tail_cut(qset, l, o)) {
+  (⊢ (CutSpec(35, any_byte, l, o)) -> TailOk(qset, tail_cut(qset, l, o)) from match o {
     None => (e: all_bytes(ne(35), l) = true) => tail_query_spec(qset, st, l, None, Refl, e)
     Some(p) => (e: And(all_bytes(ne(35), p.fst) = true, And(all_bytes(any_byte, p.fst) = true, all_bytes(any_byte, p.snd) = true))) => tail_query_spec(
       qset,
@@ -1113,15 +1313,19 @@ pub theorem tail_cut_spec(
       enc_out_clean(fragment_set, fragment_stable(), p.snd),
       e.a
     )
-  }(hc)
+  })(hc)
 }
 
-pub theorem tail_spec(qset: (Nat) -> Bool, st: Stable(qset), l: List(Nat)): TailOk(qset, tail_of(qset, l)) {
+pub theorem tail_spec(
+  qset: (Nat) -> Bool,
+  st: Stable(qset),
+  l: List(Nat)
+): TailOk(qset, tail_of(qset, l)) {
   tail_cut_spec(qset, st, l, cut(35, l), cut_spec(35, any_byte, l, all_any(l)))
 }
 
 pub fn UrlSpec(o: Option(Url)): Prop {
-  match o: Prop {
+  ⊢ Prop from match o {
     None => True
     Some(u) => url_valid(u) = true
   }
@@ -1158,28 +1362,37 @@ pub theorem valid_of_parts(
   )
 }
 
-pub theorem query_of_clean(sp: Bool, q: Option(List(Nat)), h: opt_clean(match_qset(sp), q) = true): query_ok(sp, q) = true {
-  match q: (opt_clean(match_qset(sp), q) = true) -> query_ok(sp, q) = true {
+pub theorem query_of_clean(
+  sp: Bool,
+  q: Option(List(Nat)),
+  h: opt_clean(match_qset(sp), q) = true
+): query_ok(sp, q) = true {
+  (⊢ (opt_clean(match_qset(sp), q) = true) -> query_ok(sp, q) = true from match q {
     None => (e: true = true) => Refl
-    Some(x) => match sp: (opt_clean(match_qset(sp), Some(x)) = true) -> query_ok(sp, Some(x)) = true {
+    Some(x) => ⊢ (
+      opt_clean(match_qset(sp), Some(x)) = true
+    ) -> query_ok(sp, Some(x)) = true from match sp {
       true => (e: clean(special_query_set, x) = true) => e
       false => (e: clean(query_set, x) = true) => e
     }
-  }(h)
+  })(h)
 }
 
 pub fn match_qset(sp: Bool): (Nat) -> Bool {
-  match sp: (Nat) -> Bool {
+  ⊢ (Nat) -> Bool from match sp {
     true => special_query_set
     false => query_set
   }
 }
 
-pub theorem fragment_of_clean(f: Option(List(Nat)), h: opt_clean(fragment_set, f) = true): fragment_ok(f) = true {
-  match f: (opt_clean(fragment_set, f) = true) -> fragment_ok(f) = true {
+pub theorem fragment_of_clean(
+  f: Option(List(Nat)),
+  h: opt_clean(fragment_set, f) = true
+): fragment_ok(f) = true {
+  (⊢ (opt_clean(fragment_set, f) = true) -> fragment_ok(f) = true from match f {
     None => (e: true = true) => Refl
     Some(x) => (e: clean(fragment_set, x) = true) => e
-  }(h)
+  })(h)
 }
 
 pub theorem mk_spec(
@@ -1198,7 +1411,7 @@ pub theorem mk_spec(
   ap: Option(Pair(Authority, List(List(Nat)))),
   hap: AuthPathSpec(sp, dp, ap)
 ): UrlSpec(mk(s, ap, MkTail(h, q, f))) {
-  match ap: (AuthPathSpec(sp, dp, ap)) -> UrlSpec(mk(s, ap, MkTail(h, q, f))) {
+  (⊢ (AuthPathSpec(sp, dp, ap)) -> UrlSpec(mk(s, ap, MkTail(h, q, f))) from match ap {
     None => (e: True) => Trivial
     Some(x) => (e: And(auth_ok(sp, dp, x.fst) = true, And(segs_ok(sp, x.snd) = true, implies(sp, not(is_empty_list(x.snd))) = true))) => valid_of_parts(
       s,
@@ -1223,24 +1436,33 @@ pub theorem mk_spec(
             segs_ok(sp, x.snd),
             implies(Bool::or(sp, false), not(is_empty_list(x.snd))),
             e.b.a,
-            Eq::subst((z: Bool) => implies(z, not(is_empty_list(x.snd))) = true, Eq::sym(or_false_id(sp, false, Refl)), e.b.b)
+            Eq::subst(
+              (z: Bool) => implies(z, not(is_empty_list(x.snd))) = true,
+              Eq::sym(or_false_id(sp, false, Refl)),
+              e.b.b
+            )
           ),
-          Bool::and_intro(query_ok(sp, q), fragment_ok(f), query_of_clean(sp, q, hq), fragment_of_clean(f, hf))
+          Bool::and_intro(
+            query_ok(sp, q),
+            fragment_ok(f),
+            query_of_clean(sp, q, hq),
+            fragment_of_clean(f, hf)
+          )
         )
       )
     )
-  }(hap)
+  })(hap)
 }
 
 pub theorem map_bs_nb(l: List(Nat)): all_bytes(nb(true), List::map(backslash_to_slash, l)) = true {
-  match l: all_bytes(nb(true), List::map(backslash_to_slash, l)) = true {
+  ⊢ all_bytes(nb(true), List::map(backslash_to_slash, l)) = true from match l {
     Nil => Refl
     Cons(b, t) => all_bytes_cons(
       nb(true),
       backslash_to_slash(b),
       List::map(backslash_to_slash, t),
       Bool::cases(
-        (z: Bool) => not(Nat::eq(match z: Nat {
+        (z: Bool) => not(Nat::eq(⊢ Nat from match z {
               true => 47
               false => b
             }, 92)) = true,
@@ -1253,11 +1475,15 @@ pub theorem map_bs_nb(l: List(Nat)): all_bytes(nb(true), List::map(backslash_to_
   }
 }
 
-pub theorem drop_slashes_keeps(q: (Nat) -> Bool, l: List(Nat), h: all_bytes(q, l) = true): all_bytes(q, drop_slashes(l)) = true {
-  match l: (all_bytes(q, l) = true) -> all_bytes(q, drop_slashes(l)) = true {
+pub theorem drop_slashes_keeps(
+  q: (Nat) -> Bool,
+  l: List(Nat),
+  h: all_bytes(q, l) = true
+): all_bytes(q, drop_slashes(l)) = true {
+  (⊢ (all_bytes(q, l) = true) -> all_bytes(q, drop_slashes(l)) = true from match l {
     Nil => (e: true = true) => Refl
     Cons(b, t) => (e: all_bytes(q, Cons(b, t)) = true) => Bool::cases(
-      (z: Bool) => all_bytes(q, match z: List(Nat) {
+      (z: Bool) => all_bytes(q, ⊢ List(Nat) from match z {
           true => drop_slashes(t)
           false => Cons(b, t)
         }) = true,
@@ -1265,12 +1491,16 @@ pub theorem drop_slashes_keeps(q: (Nat) -> Bool, l: List(Nat), h: all_bytes(q, l
       (eb: Nat::eq(b, 47) = false) => e,
       (eb: Nat::eq(b, 47) = true) => drop_slashes_keeps(q, t, all_bytes_tail(q, b, t, e))
     )
-  }(h)
+  })(h)
 }
 
-pub theorem notfile_special(s: List(Nat), d: Nat, ek: scheme_kind(s) = Special(d)): is_file(s) = false {
+pub theorem notfile_special(
+  s: List(Nat),
+  d: Nat,
+  ek: scheme_kind(s) = Special(d)
+): is_file(s) = false {
   Eq::subst(
-    (k: SchemeKind) => (match k: Bool {
+    (k: SchemeKind) => (⊢ Bool from match k {
         Special(x) => false
         File => true
         NotSpecial => false
@@ -1282,7 +1512,7 @@ pub theorem notfile_special(s: List(Nat), d: Nat, ek: scheme_kind(s) = Special(d
 
 pub theorem notfile_plain(s: List(Nat), ek: scheme_kind(s) = NotSpecial): is_file(s) = false {
   Eq::subst(
-    (k: SchemeKind) => (match k: Bool {
+    (k: SchemeKind) => (⊢ Bool from match k {
         Special(x) => false
         File => true
         NotSpecial => false
@@ -1292,9 +1522,13 @@ pub theorem notfile_plain(s: List(Nat), ek: scheme_kind(s) = NotSpecial): is_fil
   )
 }
 
-pub theorem after_file(s: List(Nat), r: List(Nat), ek: scheme_kind(s) = File): parse_after_scheme(s, r) = None {
+pub theorem after_file(
+  s: List(Nat),
+  r: List(Nat),
+  ek: scheme_kind(s) = File
+): parse_after_scheme(s, r) = None {
   Eq::subst(
-    (k: SchemeKind) => (match k: Option(Url) {
+    (k: SchemeKind) => (⊢ Option(Url) from match k {
         Special(x) => parse_special(s, x, tail_of(special_query_set, r))
         File => None
         NotSpecial => parse_plain(s, tail_of(query_set, r))
@@ -1312,11 +1546,8 @@ pub theorem special_spec(
   t: Tail,
   ht: TailOk(special_query_set, t)
 ): UrlSpec(parse_special(s, d, t)) {
-  match t: (TailOk(special_query_set, t)) -> UrlSpec(parse_special(s, d, t)) {
-    MkTail(h, q, f) => (e: And(
-      opt_clean(special_query_set, q) = true,
-      And(opt_clean(fragment_set, f) = true, And(all_bytes(ne(35), h) = true, all_bytes(ne(63), h) = true))
-    )) => mk_spec(
+  (⊢ (TailOk(special_query_set, t)) -> UrlSpec(parse_special(s, d, t)) from match t {
+    MkTail(h, q, f) => (e: And(opt_clean(special_query_set, q) = true, And(opt_clean(fragment_set, f) = true, And(all_bytes(ne(35), h) = true, all_bytes(ne(63), h) = true)))) => mk_spec(
       s,
       true,
       Some(d),
@@ -1337,7 +1568,7 @@ pub theorem special_spec(
         drop_slashes_keeps(nb(true), List::map(backslash_to_slash, h), map_bs_nb(h))
       )
     )
-  }(ht)
+  })(ht)
 }
 
 pub theorem opaque_spec(
@@ -1358,7 +1589,7 @@ pub theorem opaque_spec(
 ): UrlSpec(parse_opaque(s, MkTail(Cons(b, rest), q, f))) {
   let o: List(Nat) := pct_encode(c0_control_set, Cons(b, rest))
   Bool::cases(
-    (z: Bool) => UrlSpec(match z: Option(Url) {
+    (z: Bool) => UrlSpec(⊢ Option(Url) from match z {
         true => None
         false => Some(MkUrl(s, None, Opaque(o), q, f))
       }),
@@ -1431,20 +1662,38 @@ pub theorem plain_slash_spec(
   hf: opt_clean(fragment_set, f) = true,
   rest: List(Nat)
 ): UrlSpec(plain_slash(s, rest, MkTail(h, q, f))) {
-  match rest: UrlSpec(plain_slash(s, rest, MkTail(h, q, f))) {
-    Nil => valid_of_parts(s, None, Segments(Cons(Nil, Nil)), q, f, false, None, hsp, hdp, hs, hnf, Bool::and_intro(
-      true,
-      v_pqf(false, None, Segments(Cons(Nil, Nil)), q, f),
-      Refl,
+  ⊢ UrlSpec(plain_slash(s, rest, MkTail(h, q, f))) from match rest {
+    Nil => valid_of_parts(
+      s,
+      None,
+      Segments(Cons(Nil, Nil)),
+      q,
+      f,
+      false,
+      None,
+      hsp,
+      hdp,
+      hs,
+      hnf,
       Bool::and_intro(
-        path_ok(false, false, Segments(Cons(Nil, Nil))),
-        v_qf(false, q, f),
+        true,
+        v_pqf(false, None, Segments(Cons(Nil, Nil)), q, f),
         Refl,
-        Bool::and_intro(query_ok(false, q), fragment_ok(f), query_of_clean(false, q, hq), fragment_of_clean(f, hf))
+        Bool::and_intro(
+          path_ok(false, false, Segments(Cons(Nil, Nil))),
+          v_qf(false, q, f),
+          Refl,
+          Bool::and_intro(
+            query_ok(false, q),
+            fragment_ok(f),
+            query_of_clean(false, q, hq),
+            fragment_of_clean(f, hf)
+          )
+        )
       )
-    ))
+    )
     Cons(b2, r2) => Bool::cases(
-      (z: Bool) => UrlSpec(match z: Option(Url) {
+      (z: Bool) => UrlSpec(⊢ Option(Url) from match z {
           true => mk(s, auth_path(false, None, r2), MkTail(h, q, f))
           false => Some(MkUrl(s, None, Segments(path_of(Nil, Cons(b2, r2))), q, f))
         }),
@@ -1505,12 +1754,20 @@ pub theorem plain_spec(
   t: Tail,
   ht: TailOk(query_set, t)
 ): UrlSpec(parse_plain(s, t)) {
-  match t: (TailOk(query_set, t)) -> UrlSpec(parse_plain(s, t)) {
-    MkTail(h, q, f) => (e: And(
-      opt_clean(query_set, q) = true,
-      And(opt_clean(fragment_set, f) = true, And(all_bytes(ne(35), h) = true, all_bytes(ne(63), h) = true))
-    )) => plain_hier_spec(s, ek, hs, q, f, e.a, e.b.a, h, e.b.b.a, e.b.b.b)
-  }(ht)
+  (⊢ (TailOk(query_set, t)) -> UrlSpec(parse_plain(s, t)) from match t {
+    MkTail(h, q, f) => (e: And(opt_clean(query_set, q) = true, And(opt_clean(fragment_set, f) = true, And(all_bytes(ne(35), h) = true, all_bytes(ne(63), h) = true)))) => plain_hier_spec(
+      s,
+      ek,
+      hs,
+      q,
+      f,
+      e.a,
+      e.b.a,
+      h,
+      e.b.b.a,
+      e.b.b.b
+    )
+  })(ht)
 }
 
 pub theorem plain_hier_spec(
@@ -1525,7 +1782,9 @@ pub theorem plain_hier_spec(
   h35: all_bytes(ne(35), h) = true,
   h63: all_bytes(ne(63), h) = true
 ): UrlSpec(parse_plain(s, MkTail(h, q, f))) {
-  match h: (all_bytes(ne(35), h) = true) -> (all_bytes(ne(63), h) = true) -> UrlSpec(parse_plain(s, MkTail(h, q, f))) {
+  (⊢ (
+    all_bytes(ne(35), h) = true
+  ) -> (all_bytes(ne(63), h) = true) -> UrlSpec(parse_plain(s, MkTail(h, q, f))) from match h {
     Nil => (e1: true = true) => (e2: true = true) => valid_of_parts(
       s,
       None,
@@ -1546,12 +1805,17 @@ pub theorem plain_hier_spec(
           path_ok(false, false, Opaque(Nil)),
           v_qf(false, q, f),
           Refl,
-          Bool::and_intro(query_ok(false, q), fragment_ok(f), query_of_clean(false, q, hq), fragment_of_clean(f, hf))
+          Bool::and_intro(
+            query_ok(false, q),
+            fragment_ok(f),
+            query_of_clean(false, q, hq),
+            fragment_of_clean(f, hf)
+          )
         )
       )
     )
     Cons(b, rest) => (e1: all_bytes(ne(35), Cons(b, rest)) = true) => (e2: all_bytes(ne(63), Cons(b, rest)) = true) => Bool::cases(
-      (z: Bool) => UrlSpec(match z: Option(Url) {
+      (z: Bool) => UrlSpec(⊢ Option(Url) from match z {
           false => parse_opaque(s, MkTail(Cons(b, rest), q, f))
           true => plain_slash(s, rest, MkTail(Cons(b, rest), q, f))
         }),
@@ -1586,19 +1850,34 @@ pub theorem plain_hier_spec(
         rest
       )
     )
-  }(h35, h63)
+  })(h35, h63)
 }
 
-pub theorem after_scheme_spec(s: List(Nat), r: List(Nat), hs: scheme_ok(s) = true): UrlSpec(parse_after_scheme(s, r)) {
+pub theorem after_scheme_spec(
+  s: List(Nat),
+  r: List(Nat),
+  hs: scheme_ok(s) = true
+): UrlSpec(parse_after_scheme(s, r)) {
   kind_cases(
     UrlSpec(parse_after_scheme(s, r)),
     scheme_kind(s),
     (d: Nat) => (ek: scheme_kind(s) = Special(d)) => Eq::subst(
       (o: Option(Url)) => UrlSpec(o),
       Eq::sym(after_special(s, d, r, ek)),
-      special_spec(s, d, ek, hs, tail_of(special_query_set, r), tail_spec(special_query_set, special_query_stable(), r))
+      special_spec(
+        s,
+        d,
+        ek,
+        hs,
+        tail_of(special_query_set, r),
+        tail_spec(special_query_set, special_query_stable(), r)
+      )
     ),
-    (ek: scheme_kind(s) = File) => Eq::subst((o: Option(Url)) => UrlSpec(o), Eq::sym(after_file(s, r, ek)), Trivial),
+    (ek: scheme_kind(s) = File) => Eq::subst(
+      (o: Option(Url)) => UrlSpec(o),
+      Eq::sym(after_file(s, r, ek)),
+      Trivial
+    ),
     (ek: scheme_kind(s) = NotSpecial) => Eq::subst(
       (o: Option(Url)) => UrlSpec(o),
       Eq::sym(after_plain(s, r, ek)),
@@ -1608,17 +1887,17 @@ pub theorem after_scheme_spec(s: List(Nat), r: List(Nat), hs: scheme_ok(s) = tru
 }
 
 pub fn SchemeSpec(o: Option(Pair(List(Nat), List(Nat)))): Prop {
-  match o: Prop {
+  ⊢ Prop from match o {
     None => True
     Some(p) => scheme_ok(p.fst) = true
   }
 }
 
 pub theorem scheme_cut_spec(o: Option(Pair(List(Nat), List(Nat)))): SchemeSpec(scheme_cut(o)) {
-  match o: SchemeSpec(scheme_cut(o)) {
+  ⊢ SchemeSpec(scheme_cut(o)) from match o {
     None => Trivial
     Some(p) => Bool::cases(
-      (z: Bool) => SchemeSpec(match z: Option(Pair(List(Nat), List(Nat))) {
+      (z: Bool) => SchemeSpec(⊢ Option(Pair(List(Nat), List(Nat))) from match z {
           true => Some(Pair { fst: lower(p.fst), snd: p.snd })
           false => None
         }),
@@ -1629,11 +1908,14 @@ pub theorem scheme_cut_spec(o: Option(Pair(List(Nat), List(Nat)))): SchemeSpec(s
   }
 }
 
-pub theorem parse_scheme_spec(o: Option(Pair(List(Nat), List(Nat))), h: SchemeSpec(o)): UrlSpec(parse_scheme(o)) {
-  match o: (SchemeSpec(o)) -> UrlSpec(parse_scheme(o)) {
+pub theorem parse_scheme_spec(
+  o: Option(Pair(List(Nat), List(Nat))),
+  h: SchemeSpec(o)
+): UrlSpec(parse_scheme(o)) {
+  (⊢ (SchemeSpec(o)) -> UrlSpec(parse_scheme(o)) from match o {
     None => (e: True) => Trivial
     Some(p) => (e: scheme_ok(p.fst) = true) => after_scheme_spec(p.fst, p.snd, e)
-  }(h)
+  })(h)
 }
 
 // Whatever the parser returns is valid.
@@ -1647,6 +1929,10 @@ pub theorem parse_valid(l: List(Nat), u: Url, e: parse_bytes(l) = Some(u)): url_
 
 // Parsing is idempotent: what the parser returns, serialized and parsed
 // again, is the same URL.
-pub theorem parse_idem(l: List(Nat), u: Url, e: parse_bytes(l) = Some(u)): parse_bytes(serialize(u)) = Some(u) {
+pub theorem parse_idem(
+  l: List(Nat),
+  u: Url,
+  e: parse_bytes(l) = Some(u)
+): parse_bytes(serialize(u)) = Some(u) {
   parse_serialize(u, parse_valid(l, u, e))
 }

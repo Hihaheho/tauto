@@ -1,0 +1,645 @@
+@ cases.typed-aliases-fields-and-returned-functions-keep-rows-1
+source = ```tauto
+
+struct Holder { read: () -> Text ! {} }
+fn alias(source: () -> Text ! {}): Text ! {} {
+  let read: () -> Text ! {} := source
+  read()
+}
+fn field(h: Holder): Text ! {} {
+  let read: () -> Text ! {} := h.read
+  read()
+}
+fn direct_field(h: Holder): Text ! {} { h.read() }
+fn make(): (() -> Text ! {}) ! {} { () => "ok" }
+fn returned(): Text ! {} { make()() }
+```
+rows = "ok"
+types = "ok"
+
+@ cases.open-rows-survive-aliases-and-generic-record-fields-1
+source = ```tauto
+
+struct View(!e) { read: () -> Text ! e }
+fn alias<!e>(source: () -> Text ! e): Text ! e {
+  let read: () -> Text ! e := source
+  read()
+}
+fn r#view<!e>(v: View(e)): Text ! e { v.read() }
+fn forwarded<!outer>(v: View(outer)): Text ! outer { r#view(v) }
+```
+rows = "ok"
+types = "ok"
+
+@ cases.generic-function-aliases-instantiate-callback-rows-1
+source = ```tauto
+
+effect ask(): Text
+fn apply<!e>(f: () -> Text ! e): Text ! e { f() }
+fn caller(): Text ! {ask} {
+  let run := apply
+  run(() => perform ask())
+}
+```
+rows = "ok"
+types = "ok"
+
+@ cases.effectful-computed-callee-is-not-erased-1
+source = ```tauto
+
+effect ask(): Text
+fn make(): (() -> Text ! {}) ! {ask} {
+  perform ask()
+  () => "ok"
+}
+fn caller(): Text ! {} { make()() }
+```
+rows = "error: `caller` may perform ask but its row is {}"
+types = "ok"
+inferred_rows.caller = ["ask"]
+
+@ cases.annotations-cannot-hide-effects-at-value-boundaries-1
+source = ```tauto
+effect ask(): Text
+fn bad(): Text ! {} { let read: () -> Text ! {} := () => perform ask()
+ read() }
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.annotations-cannot-hide-effects-at-value-boundaries-2
+source = ```tauto
+effect ask(): Text
+struct Holder { read: () -> Text ! {} }
+let h := Holder { read: () => perform ask() }
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.annotations-cannot-hide-effects-at-value-boundaries-3
+source = ```tauto
+effect ask(): Text
+fn bad(): (() -> Text ! {}) ! {} { () => perform ask() }
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.annotations-cannot-hide-effects-at-value-boundaries-4
+source = ```tauto
+effect ask(): Text
+fn use(read: () -> Text ! {}): Text ! {} { read() }
+let x := use(() => perform ask())
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.annotations-cannot-hide-effects-at-value-boundaries-5
+source = ```tauto
+effect ask(): Text
+fn bad(): Text ! {} { var read: () -> Text ! {} := () => "ok"
+ read := () => perform ask()
+ read() }
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.higher-order-parameter-contracts-are-contravariant-1
+source = ```tauto
+
+effect ask(): Text
+fn pure_only(f: () -> Text ! {}): Text ! {} { f() }
+fn bad(): Text ! {ask} {
+  let run: ((() -> Text ! {ask})) -> Text ! {ask} := pure_only
+  run(() => perform ask())
+}
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.untyped-mutable-callable-evidence-cannot-go-stale-1
+source = ```tauto
+
+effect ask(): Text
+fn bad(): Text ! {} {
+  var read := () => "ok"
+  let captured := () => read()
+  read := () => perform ask()
+  captured()
+}
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.untyped-mutable-callable-evidence-cannot-go-stale-2
+source = ```tauto
+
+effect ask(): Text
+fn bad(flag: Bool): Text ! {} {
+  var read := () => "ok"
+  if flag { read := () => perform ask() }
+  read()
+}
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.unknown-called-values-still-fail-closed-1
+source = ```tauto
+fn pick(): i64 { 1 }
+fn bad(): i64 ! {} { let read := pick()
+ read() }
+```
+rows = "error: cannot follow the effects of calling `read` in `bad`"
+
+@ cases.top-level-mutation-checks-the-callable-contract-1
+source = ```tauto
+
+effect ask(): Text
+var read: () -> Text ! {} := () => "ok"
+read := () => perform ask()
+perform show("value", read())
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.mutable-callable-arguments-require-invariant-rows-1
+source = ```tauto
+
+effect ask(): Text
+fn replace_read(&mut read: () -> Text ! {ask}): Unit ! {} {
+  read := () => perform ask()
+}
+fn caller(): Text ! {} {
+  var read: () -> Text ! {} := () => "ok"
+  replace_read(&mut read)
+  read()
+}
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.host-aliases-preserve-callback-capability-checks-1
+source = ```tauto
+
+effect ask(): Text
+extern { fn host(&read: () -> Text): Text }
+fn caller(): Text ! {ask} {
+  let run := host
+  run(&(() => perform ask()))
+}
+```
+rows = "error: a closure passed to an extern cannot perform ask, which may suspend"
+rows_javascript = "ok"
+
+@ cases.ambient-callback-rows-are-not-polymorphic-call-parameters-1
+source = ```tauto
+
+fn bad<!e>(run: (() -> Text ! e) ): Text ! {} { run() }
+```
+rows = "error: `bad` may perform |e but its row is {}"
+types = "ok"
+
+@ cases.ambient-callback-rows-are-not-polymorphic-call-parameters-2
+source = ```tauto
+
+fn bad<!e>(run: (() -> Text ! e) -> Text ! e): Text ! {} {
+  run(() => "ok")
+}
+```
+rows = "error: `bad` may perform |e but its row is {}"
+types = "ok"
+
+@ cases.repeated-generic-containers-do-not-hide-callback-contracts-1
+source = ```tauto
+
+effect ask(): Text
+struct Box(A: Type) { value: A }
+struct Pair(A: Type, B: Type) { first: A, second: B }
+struct Holder { read: () -> Text ! {} }
+fn use(p: Pair(Box(i64), Box(Holder))): Text ! {} { p.second.value.read() }
+let p := Pair { first: Box { value: 1 }, second: Box { value: Holder { read: () => perform ask() } } }
+let result := use(p)
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.top-level-loop-mutations-check-contracts-1
+source = ```tauto
+
+effect ask(): Text
+var read: () -> Text ! {} := () => "ok"
+while false { read := () => perform ask() }
+perform show("value", read())
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.host-callback-capabilities-cannot-be-erased-by-ascription-1
+source = ```tauto
+
+effect ask(): Text
+extern { fn host(read: () -> Text ! {ask}): Text }
+let run: (() -> Text ! {ask}) -> Text ! {} := host
+let result := run(() => perform ask())
+```
+rows = "error: cannot erase the callback capabilities of a host function value"
+rows_javascript = "error: cannot erase the callback capabilities of a host function value"
+
+@ cases.explicit-host-callback-rows-are-checked-1
+source = ```tauto
+
+effect ask(): Text
+extern { fn host(&read: () -> Text ! {}): Text }
+let result := host(&(() => perform ask()))
+```
+rows = "error: a closure passed to an extern cannot perform ask, which may suspend"
+rows_javascript = "error: a function value may perform ask but its type permits {}"
+
+@ cases.bounded-polymorphic-aliases-keep-their-constraints-1
+source = ```tauto
+
+fn direct_apply<!e: direct>(f: () -> Text ! e): Text ! e { f() }
+fn bad<!e>(f: () -> Text ! e): Text ! e {
+  let run: (() -> Text ! e) -> Text ! e := direct_apply
+  run(f)
+}
+```
+rows = "error: cannot erase the bounds of a polymorphic function value"
+types = "ok"
+
+@ cases.effect-results-cannot-forge-pure-callable-values-1
+source = ```tauto
+
+effect get(): (() -> Text ! {})
+effect ask(): Text
+let result := handle {
+  let read := perform get()
+  read()
+} with {
+  get(), k => k(() => perform ask())
+  return value => value
+}
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.generic-effect-answers-do-not-inherit-unvalidated-callback-rows-1
+source = ```tauto
+
+effect get<A>(value: A): A
+effect ask(): Text
+let result := handle {
+  let read := perform get(() => "ok")
+  read()
+} with {
+  get(value), k => k(() => perform ask())
+  return value => value
+}
+```
+rows = "error: cannot follow the effects of calling `read`"
+
+@ cases.recursive-function-aliases-keep-divergence-1
+source = ```tauto
+fn spin(): i64 ! {} { let again := spin
+ again() }
+```
+rows = "error: `spin` may perform Div but its row is {}"
+types = "ok"
+
+@ cases.recursive-function-aliases-keep-divergence-2
+source = ```tauto
+
+struct Holder { call: () -> i64 ! {} }
+fn spin(): i64 ! {} {
+  let holder := Holder { call: spin }
+  holder.call()
+}
+```
+rows = "error: a function value may perform Div but its type permits {}"
+types = "ok"
+
+@ cases.returned-function-cycles-keep-divergence-1
+source = ```tauto
+
+fn make(): (() -> i64 ! {}) ! {} { spin }
+fn spin(): i64 ! {} { make()() }
+```
+rows = "error: `make` may perform Div but its row is {}"
+types = "ok"
+
+@ cases.foreign-returned-callables-keep-host-callback-effects-1
+source = ```tauto
+
+effect ask(): Text
+extern { fn make(): (read: () -> Text ! {ask}) -> Text }
+let run := make()
+let result := run(() => perform ask())
+```
+rows = "error: a closure passed to an extern cannot perform ask, which may suspend"
+types = "ok"
+rows_javascript = "error: unhandled effect ask at the top level"
+
+@ cases.foreign-nominal-higher-order-callable-results-fail-closed-1
+source = ```tauto
+
+effect ask(): Text
+struct Holder { run: (read: () -> Text ! {ask}) -> Text ! {} }
+extern { fn make(): Holder }
+let holder := make()
+let result := holder.run(() => perform ask())
+```
+rows = "error: cannot follow the effects of calling `holder.run`"
+types = "ok"
+rows_javascript = "error: cannot follow the effects of calling `holder.run`"
+
+@ cases.pure-mutable-callback-contracts-can-be-inferred-and-preserved-1
+source = ```tauto
+
+fn offset(value: i64): i64 ! {} { value + 1 }
+fn apply(&read: (i64) -> i64 ! {}): i64 ! {} { read(1) }
+fn run(): i64 ! {} {
+  var read := offset
+  let captured := () => apply(&read)
+  read := (value) => value + 2
+  captured()
+}
+```
+rows = "ok"
+types = "ok"
+
+@ cases.inferred-mutable-record-callback-contracts-cannot-go-stale-1
+source = ```tauto
+
+effect ask(): Text
+struct Holder { read: () -> Text ! {ask} }
+fn bad(): Text ! {} {
+  var holder := Holder { read: () => "ok" }
+  let captured := () => holder.read()
+  holder := Holder { read: () => perform ask() }
+  captured()
+}
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.mutable-host-callbacks-require-an-explicit-persistent-row-1
+source = ```tauto
+
+extern { fn change(&mut read: () -> Text): Unit }
+fn run(): Text ! {} {
+  var read := () => "ok"
+  change(&mut read)
+  read()
+}
+```
+rows = "error: a mutable host callback needs an explicit effect row"
+types = "ok"
+rows_javascript = "error: a mutable host callback needs an explicit effect row"
+
+@ cases.generic-mutable-records-and-factory-results-keep-inferred-contracts-1
+source = ```tauto
+effect ask(): Text
+struct Box(A: Type) { value: A }
+fn bad(): Text ! {} {
+  var holder := Box { value: () => "ok" }
+  holder := Box { value: () => perform ask() }
+  holder.value()
+}
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.generic-mutable-records-and-factory-results-keep-inferred-contracts-2
+source = ```tauto
+effect ask(): Text
+struct Box(A: Type) { value: A }
+fn bad(): Text ! {} {
+  var make := () => Box { value: () => "ok" }
+  make := () => Box { value: () => perform ask() }
+  let holder := make()
+  holder.value()
+}
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.shared-nominal-callable-storage-keeps-invariant-effect-arguments-1
+source = ```tauto
+
+effect ask(): Text
+fn change(cell: Ref(() -> Text ! {ask})): Unit ! {} {
+  Ref::set(cell, () => perform ask())
+}
+fn caller(): Text ! {} {
+  let cell := Ref::new(() => "ok")
+  change(cell)
+  let read := Ref::get(cell)
+  read()
+}
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.enum-callable-return-annotations-are-not-trusted-without-evidence-1
+source = ```tauto
+
+effect ask(): Text
+fn make(): Option(() -> Text ! {}) ! {} { Some(() => perform ask()) }
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.spawned-bodies-allow-divergence-without-capturing-handlers-1
+source = ```tauto
+
+fn work(): u64 {
+  var n: u64 := 0
+  while n < 2 { n := n + 1 }
+  n
+}
+fn launch(): u64 ! {∀ T. spawn(T), wait} {
+  let task := perform spawn(() => work())
+  Task::join(task)
+}
+```
+rows = "ok"
+types = "ok"
+
+@ cases.spawned-bodies-allow-divergence-without-capturing-handlers-2
+source = ```tauto
+
+effect ask(): u64 resume 1
+fn launch(): u64 ! {∀ T. spawn(T), ask, wait} {
+  let task := perform spawn(() => perform ask())
+  Task::join(task)
+}
+```
+rows = "error: a function value may perform ask but its type permits {Div, argv, env, fs_canonicalize, fs_copy, fs_create_dir, fs_list_dir, fs_read, fs_read_bytes, fs_read_bytes_under, fs_read_link, fs_read_under, fs_remove, fs_rename, fs_stat, fs_temp_dir, fs_write, fs_write_bytes, fs_write_new, monotonic_clock, net, net_addr, net_resolve, permission, proc_close, proc_close_stdin, proc_read, proc_run, proc_spawn, proc_wait, proc_write, random, secure_random, shutdown_token, sleep, stderr, stdin_bytes, stdout, stdout_flush, tcp_accept, tcp_close, tcp_connect, tcp_listen, tcp_read, tcp_shutdown, tcp_unlisten, tcp_write, tls_accept, tls_close, tls_connect, tls_read, tls_shutdown, tls_write, wait, wall_clock}"
+types = "ok"
+
+@ cases.generic-function-aliases-instantiate-callback-rows-closed
+source = ```tauto
+
+effect ask(): Text
+fn apply<!e>(f: () -> Text ! e): Text ! e { f() }
+fn caller(): Text ! {} {
+  let run := apply
+  run(() => perform ask())
+}
+```
+rows = "error: `caller` may perform ask but its row is {}"
+types = "ok"
+
+@ cases.foreign-returned-callables-keep-host-callback-effects-pure
+source = ```tauto
+
+effect ask(): Text
+extern { fn make(): (read: () -> Text ! {ask}) -> Text }
+let run := make()
+let result := run(() => "ok")
+```
+rows = "ok"
+types = "ok"
+rows_javascript = "ok"
+
+@ cases.mutable-host-callbacks-require-an-explicit-persistent-row-explicit
+source = ```tauto
+
+extern { fn change(&mut read: () -> Text ! {}): Unit }
+fn run(): Text ! {} {
+  var read := () => "ok"
+  change(&mut read)
+  read()
+}
+```
+rows = "ok"
+types = "ok"
+rows_javascript = "ok"
+
+@ cases.shared-nominal-callable-storage-keeps-invariant-effect-arguments-pure
+source = ```tauto
+
+effect ask(): Text
+fn change(cell: Ref(() -> Text ! {})): Unit ! {} {
+  Ref::set(cell, () => "next")
+}
+fn caller(): Text ! {} {
+  let cell := Ref::new(() => "ok")
+  change(cell)
+  let read := Ref::get(cell)
+  read()
+}
+```
+rows = "ok"
+types = "ok"
+
+@ cases.spawned-bodies-allow-divergence-without-capturing-handlers-closed
+source = ```tauto
+
+fn work(): u64 {
+  var n: u64 := 0
+  while n < 2 { n := n + 1 }
+  n
+}
+fn launch(): u64 ! {} {
+  let task := perform spawn(() => work())
+  Task::join(task)
+}
+```
+rows = "error: `launch` may perform spawn but its row is {}"
+types = "ok"
+
+
+@ cases.escaping-continuation-performs-the-rest-of-the-body
+source = ```tauto
+
+effect pause(): Unit resume ω
+effect ask(): Text
+fn leak(): (() -> Text ! {}) ! {ask} {
+  handle { perform pause(); perform ask() } with {
+    pause(), k => () => k(#())()
+    return value => () => value
+  }
+}
+fn caller(): Text ! {} {
+  let f := handle { leak() } with { ask(), k => k("answered") }
+  f()
+}
+```
+rows = "error: a function value may perform ask but its type permits {}"
+types = "ok"
+
+@ cases.escaping-continuation-performs-the-arms-it-reinstalls
+source = ```tauto
+
+effect pause(): Unit resume ω
+effect tick(): Unit resume ω
+fn spin(): Unit ! {Div} { spin() }
+fn leak(): (() -> Unit ! {}) ! {Div} {
+  handle { perform pause(); perform tick(); () => #() } with {
+    pause(), k => () => k(#())()
+    tick(), k => { spin(); k(#()) }
+  }
+}
+```
+rows = "error: a function value may perform Div but its type permits {}"
+types = "ok"
+
+@ cases.escaping-continuation-after-the-last-operation-is-pure
+source = ```tauto
+
+effect pause(): Unit resume ω
+fn spin(): Unit ! {Div} { spin() }
+fn kept(): (() -> Unit ! {}) ! {Div} {
+  handle { spin(); perform pause(); () => #() } with {
+    pause(), k => { spin(); () => k(#())() }
+  }
+}
+```
+rows = "ok"
+types = "ok"
+
+@ cases.open-row-of-a-call-is-inferred-through-a-constructed-list
+source = ```tauto
+
+struct Answer(!e) { name: Text, run: (arg: Text) -> Result(Text, Text) ! {Div} ∪ e }
+fn loading<!e>(name: Text, run: () -> Result(Text, Text) ! {Div} ∪ e): Answer(e) {
+  Answer { name: name, run: (arg: Text) => run() }
+}
+struct App(!e) { resources: List(Answer(e)) }
+fn run_app<!e>(app: App(e)): Text ! {Div} ∪ e { "x" }
+fn now(): Result(Text, Text) ! {Div} { Ok("a") }
+fn main(): Text ! {Div} {
+  run_app(App { resources: Cons(loading("m", now), Nil) })
+}
+```
+rows = "ok"
+types = "ok"
+
+@ cases.effect-of-a-call-is-inferred-through-a-constructed-list
+source = ```tauto
+
+effect read_db(key: Text): Text
+struct Answer(!e) { name: Text, run: (arg: Text) -> Result(Text, Text) ! {Div} ∪ e }
+fn loading<!e>(name: Text, run: () -> Result(Text, Text) ! {Div} ∪ e): Answer(e) {
+  Answer { name: name, run: (arg: Text) => run() }
+}
+struct App(!e) { resources: List(Answer(e)) }
+fn run_app<!e>(app: App(e)): Text ! {Div} ∪ e { "x" }
+fn load(): Result(Text, Text) ! {Div, read_db} { Ok(perform read_db("k")) }
+fn main(): Text ! {Div} {
+  run_app(App { resources: Cons(loading("m", load), Nil) })
+}
+```
+rows = "error: `main` may perform read_db but its row is {Div}"
+types = "ok"
+
+@ cases.a-handle-without-a-return-arm-gives-its-body-value-too
+source = ```tauto
+effect ask(): u64
+fn leak(): ((u64) -> u64) {
+  handle { budget(steps: 1000) { (i) => perform ask() } } with { exceeded(info), k => (j) => 0 }
+}
+```
+rows = "error: cannot follow the effects of a function value required by its type"
+types = "ok"

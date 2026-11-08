@@ -95,7 +95,7 @@ fn answer(): Bool {
   let hidden := RustgenBinding { name: "value", ty: RustgenText }
   let visible := rustgen_closure_visible(Cons(first, Cons(hidden, Nil)), Nil)
   let inspect: (RustgenBinding) -> Bool := binding => rustgen_probe_binding(binding)
-  match visible: Bool {
+  ⊢ Bool from match visible {
     Nil => false
     Cons(binding, rest) => inspect(binding) && rustgen_captures_concrete(visible)
   }

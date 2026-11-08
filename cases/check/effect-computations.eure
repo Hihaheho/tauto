@@ -1,0 +1,101 @@
+// Functions with effects read as computation trees in proofs.
+
+@ cases.handler-proofs-example
+source = path`../../examples/handler-proofs.taut`
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+
+@ cases.a-wrong-handled-result-is-rejected
+source = ```tauto
+effect tick(n: Nat): Nat
+
+fn twice(x: Nat): Nat ! {tick} {
+  let a := perform tick(x)
+  let b := perform tick(a)
+  Succ(b)
+}
+
+fn count(x: Nat): Nat {
+  handle { twice(x) } with {
+    tick(n), k => k(Succ(n))
+  }
+}
+
+theorem right(x: Nat): count(x) = Succ(Succ(Succ(x))) { Refl }
+theorem wrong(x: Nat): count(x) = Succ(Succ(x)) { Refl }
+```
+checks.right = "ok"
+checks.wrong = "error: type mismatch"
+
+@ cases.a-call-in-a-smaller-row-is-forwarded
+source = ```tauto
+effect tick(n: Nat): Nat
+effect emit(x: Nat): Unit
+
+fn bump(x: Nat): Nat ! {tick} {
+  perform tick(x)
+}
+
+fn bump_emit(x: Nat): Unit ! {emit, tick} {
+  perform emit(bump(x))
+}
+
+fn emitted(x: Nat): Nat {
+  var last: Nat := Zero
+  handle { bump_emit(x) } with {
+    emit(y), k => {
+      last := y
+      k(Star)
+    }
+    tick(n), k => k(Succ(Succ(n)))
+  }
+  last
+}
+
+theorem emitted_is(x: Nat): emitted(x) = Succ(Succ(x)) { Refl }
+```
+checks_all = "ok"
+
+@ cases.an-effect-of-executable-types-is-not-read
+source = ```tauto
+effect ask(n: i64): i64
+
+fn asked(x: i64): i64 ! {ask} {
+  perform ask(x)
+}
+```
+checks.asked = "skipped"
+
+@ cases.a-function-that-may-diverge-is-not-read
+source = ```tauto
+effect tick(): Unit
+
+fn forever(): Unit ! {tick, Div} {
+  perform tick()
+  forever()
+}
+```
+checks.forever = "skipped"
+
+@ cases.a-use-of-a-skipped-function-says-why
+source = ```tauto
+effect tick(n: Nat): Nat
+
+fn bump(x: Nat) ! {tick} {
+  perform tick(x)
+}
+
+theorem uses_bump(x: Nat): bump(x) = bump(x) { Refl }
+```
+checks.bump = "skipped"
+checks.uses_bump = "error: `bump` is not defined in proofs: it is declared earlier, but the kernel did not check it: has effects; not usable in proofs: it has no result type"

@@ -13,7 +13,7 @@ pub(open) inductive UnicodeClasses: Type {
 }
 
 pub fn unicode_number(t: Text): Nat {
-  match text_parse_u64(t): Nat {
+  ⊢ Nat from match text_parse_u64(t) {
     None => 0
     Some(n) => n
   }
@@ -26,9 +26,9 @@ pub fn unicode_ranges(
   first: Option(Nat),
   done: Ordmap(Nat, Nat)
 ): Ordmap(Nat, Nat) {
-  match numbers: Ordmap(Nat, Nat) {
+  ⊢ Ordmap(Nat, Nat) from match numbers {
     Nil => done
-    Cons(n, rest) => match first: Ordmap(Nat, Nat) {
+    Cons(n, rest) => ⊢ Ordmap(Nat, Nat) from match first {
       None => unicode_ranges(rest, Some(unicode_number(n)), done)
       Some(start) => unicode_ranges(
         rest,
@@ -47,30 +47,33 @@ pub fn unicode_classes_of(alphanumeric: Text, whitespace: Text): UnicodeClasses 
 }
 
 pub fn unicode_in(ranges: Ordmap(Nat, Nat), c: Nat): Bool {
-  match Ordmap::floor(ranges, c, Ordmap::compare_nat): Bool {
+  ⊢ Bool from match Ordmap::floor(ranges, c, Ordmap::compare_nat) {
     None => false
-    Some(range) => match range: Bool {
+    Some(range) => ⊢ Bool from match range {
       Pair { fst: start, snd: last } => Nat::le(c, last)
     }
   }
 }
 
 pub fn unicode_is_alphanumeric(classes: UnicodeClasses, c: Nat): Bool {
-  match Nat::lt(c, 128): Bool {
+  ⊢ Bool from match Nat::lt(c, 128) {
     true => Bool::or(
       Bool::and(Nat::le(48, c), Nat::le(c, 57)),
-      Bool::or(Bool::and(Nat::le(65, c), Nat::le(c, 90)), Bool::and(Nat::le(97, c), Nat::le(c, 122)))
+      Bool::or(
+        Bool::and(Nat::le(65, c), Nat::le(c, 90)),
+        Bool::and(Nat::le(97, c), Nat::le(c, 122))
+      )
     )
-    false => match classes: Bool {
+    false => ⊢ Bool from match classes {
       UnicodeClassesWith(alphanumeric, whitespace) => unicode_in(alphanumeric, c)
     }
   }
 }
 
 pub fn unicode_is_whitespace(classes: UnicodeClasses, c: Nat): Bool {
-  match Nat::lt(c, 128): Bool {
+  ⊢ Bool from match Nat::lt(c, 128) {
     true => Bool::or(Nat::eq(c, 32), Bool::and(Nat::le(9, c), Nat::le(c, 13)))
-    false => match classes: Bool {
+    false => ⊢ Bool from match classes {
       UnicodeClassesWith(alphanumeric, whitespace) => unicode_in(whitespace, c)
     }
   }

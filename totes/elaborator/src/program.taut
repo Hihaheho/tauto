@@ -1,27 +1,28 @@
 import "elaborate.taut"
+import "mutual.taut"
+import "noconf.taut"
 import "../../surface/src/surface.taut"
 import "../../syntax/src/syntax.taut"
 import "../../kernel/src/data.taut"
 import "../../kernel/src/kernel.taut"
 import "../../kernel/src/term.taut"
+import "../../kernel/src/level.taut"
+import std::Text
 import std::Base
 
 pub fn elab_params(params: List(SurfaceNamed)): List(SurfaceParam) {
-  match params: List(SurfaceParam) {
+  ⊢ List(SurfaceParam) from match params {
     Nil => Nil
     Cons(p, rest) => Cons(SurfaceParamMk(Some(p.name), p.ty), elab_params(rest))
   }
 }
 pub fn elab_names(params: List(SurfaceNamed)): List(Text) {
-  match params: List(Text) {
+  ⊢ List(Text) from match params {
     Nil => Nil
     Cons(p, rest) => Cons(p.name, elab_names(rest))
   }
 }
 
-pub(open) inductive ElabDeclaration: Type {
-  Mk(name: Text, ty: KernelTerm, value: KernelTerm, transparent: Bool): ElabDeclaration
-}
 
 // Check the written signature, elaborate with that expected type, then ask the
 // independent kernel to accept the closed declaration. Every failure restores
@@ -30,10 +31,11 @@ pub fn elab_declaration_inner(
   k: Nat,
   &mut core: KernelCore,
   decl: SurfaceTheorem,
-  transparent: Bool
+  transparent: Bool,
+  imps: List(ElabBinding)
 ): ElabResult(ElabDeclaration) {
-  if decl.implicit != 0 { ElabErr("implicit parameters are unsupported") } else {
-    match decl.body: ElabResult(ElabDeclaration) {
+  if decl.implicit > List::length(decl.params) { ElabErr("invalid implicit parameters") } else {
+    ⊢ ElabResult(ElabDeclaration) from match decl.body {
       None => ElabErr("a declaration must supply its body; axioms are unsupported")
       Some(body) => {
         let signature := surface_term_mk(
@@ -41,17 +43,18 @@ pub fn elab_declaration_inner(
           decl.start,
           decl.end
         )
-        match elab_type(k, &mut core, Nil, signature): ElabResult(ElabDeclaration) {
+        ⊢ ElabResult(ElabDeclaration) from match elab_type(k, &mut core, imps, signature) {
           ElabErr(e) => ElabErr(e)
           ElabOk(ty) => {
             let value := surface_term_mk(SkLam(elab_names(decl.params), body), decl.start, decl.end)
-            match elab_term(k, &mut core, Nil, value, Some(ty)): ElabResult(ElabDeclaration) {
+            let me := ElabBinding::Mk("#self", KernelConst(decl.name), KernelLit(List::length(decl.params)))
+            ⊢ ElabResult(ElabDeclaration) from match elab_term(k, &mut core, Cons(me, Cons(elab_implicit_binding(decl.name, decl.implicit), imps)), value, Some(ty)) {
               ElabErr(e) => ElabErr(e)
-              ElabOk(t) => match kernel_execute(
+              ElabOk(t) => ⊢ ElabResult(ElabDeclaration) from match kernel_execute(
                 k,
                 &mut core,
                 KernelDeclare(decl.name, ty, Some(t.value), transparent)
-              ): ElabResult(ElabDeclaration) {
+              ) {
                 KernelAccepted => ElabOk(ElabDeclaration::Mk(decl.name, ty, t.value, transparent))
                 KernelRejected => ElabErr("kernel rejected the elaborated declaration")
                 KernelExhausted => ElabErr("kernel exhausted")
@@ -67,41 +70,752 @@ pub fn elab_declaration_checked(
   k: Nat,
   &mut core: KernelCore,
   decl: SurfaceTheorem,
-  transparent: Bool
+  transparent: Bool,
+  imps: List(ElabBinding)
 ): ElabResult(ElabDeclaration) {
   let saved := kernel_snapshot(core)
-  let result := elab_declaration_inner(k, &mut core, decl, transparent)
+  let result := elab_declaration_inner(k, &mut core, decl, transparent, imps)
   if core.exhausted {
     kernel_set_to(&mut core, saved)
     ElabErr("elaboration exhausted")
   } else {
-    match result: ElabResult(ElabDeclaration) {
+    ⊢ ElabResult(ElabDeclaration) from match result {
       ElabErr(e) => { kernel_set_to(&mut core, saved)
         ElabErr(e) }
       ElabOk(d) => ElabOk(d)
     }
   }
 }
+// One checked kernel command: a declaration with its body, or a single
+// inductive family with its parameter count, target sort, and constructors.
+pub(open) inductive ElabItem: Type {
+  ItemDeclaration(d: ElabDeclaration): ElabItem
+  // A `fn`: declared with its value, opaque, and then given that value.
+  ItemFunction(d: ElabDeclaration): ElabItem
+  ItemDeclarations(ds: List(ElabDeclaration)): ElabItem
+  ItemInductive(params: Nat, sort: KernelSort, families: List(KernelFamily)): ElabItem
+}
+
+pub fn elab_qualify(family: Text, name: Text): Text {
+  Text::concat_all(Cons(family, Cons("::", Cons(name, Nil))))
+}
+
+// The sort at the end of a family's (possibly indexed) arity, as written.
+pub fn elab_tail_sort(k: Nat, t: KernelTerm): Option(KernelSort) {
+  ⊢ Option(KernelSort) from match k {
+    Zero => None
+    Succ(j) => ⊢ Option(KernelSort) from match kernel_as_pi(t) {
+      Some(p) => elab_tail_sort(j, p.snd)
+      None => kernel_as_sort(t)
+    }
+  }
+}
+
+// Each constructor type is the family parameters, then its own arguments,
+// then its result, elaborated as one closed telescope.
+pub fn elab_constructors(
+  k: Nat,
+  &mut core: KernelCore,
+  env: List(ElabBinding),
+  decl: SurfaceInductive,
+  ctors: List(SurfaceCtor)
+): ElabResult(List(Pair(Text, KernelTerm))) {
+  ⊢ ElabResult(List(Pair(Text, KernelTerm))) from match ctors {
+    Nil => ElabOk(Nil)
+    Cons(c, rest) => if c.implicit != 0 { ElabErr("implicit constructor parameters are unsupported") } else {
+      let inner := surface_term_mk(SkPi(elab_params(c.params), c.result, None), decl.start, decl.end)
+      let whole := surface_term_mk(SkPi(elab_params(decl.params), inner, None), decl.start, decl.end)
+      ⊢ ElabResult(List(Pair(Text, KernelTerm))) from match elab_type(k, &mut core, env, whole) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(ty) => ⊢ ElabResult(List(Pair(Text, KernelTerm))) from match elab_constructors(k, &mut core, env, decl, rest) {
+          ElabErr(e) => ElabErr(e)
+          ElabOk(more) => ElabOk(Cons(Pair { fst: elab_qualify(decl.name, c.name), snd: ty }, more))
+        }
+      }
+    }
+  }
+}
+
+// The constructors, elaborated with the family name assumed at its arity.
+// The assumption is discarded before the kernel checks the family.
+pub fn elab_assumed_constructors(
+  k: Nat,
+  &mut core: KernelCore,
+  env: List(ElabBinding),
+  decl: SurfaceInductive,
+  ty: KernelTerm
+): ElabResult(List(Pair(Text, KernelTerm))) {
+  let before := kernel_snapshot(core)
+  let ctors := ⊢ ElabResult(List(Pair(Text, KernelTerm))) from match kernel_execute(k, &mut core, KernelDeclare(decl.name, ty, None, false)) {
+    KernelAccepted => elab_constructors(k, &mut core, env, decl, decl.constructors)
+    _ => ElabErr("cannot assume the inductive family")
+  }
+  kernel_set_to(&mut core, before)
+  ctors
+}
+
+// Positivity, universe, and result-shape checks are the kernel's alone.
+pub fn elab_declare_family(
+  k: Nat,
+  &mut core: KernelCore,
+  params: Nat,
+  sort: KernelSort,
+  family: KernelFamily
+): ElabResult(ElabItem) {
+  ⊢ ElabResult(ElabItem) from match kernel_execute(k, &mut core, KernelInductive(Cons(family, Nil), params, sort)) {
+    KernelAccepted => ElabOk(ItemInductive(params, sort, Cons(family, Nil)))
+    KernelRejected => ElabErr("kernel rejected the elaborated inductive")
+    KernelExhausted => ElabErr("kernel exhausted")
+  }
+}
+
+pub fn elab_inductive_inner(
+  k: Nat,
+  &mut core: KernelCore,
+  env: List(ElabBinding),
+  decl: SurfaceInductive
+): ElabResult(ElabItem) {
+  let arity := surface_term_mk(SkPi(elab_params(decl.params), decl.sort, None), decl.start, decl.end)
+  ⊢ ElabResult(ElabItem) from match elab_type(k, &mut core, env, arity) {
+    ElabErr(e) => ElabErr(e)
+    ElabOk(ty) => ⊢ ElabResult(ElabItem) from match elab_tail_sort(k, ty) {
+      None => ElabErr("an inductive family must end in a sort")
+      Some(sort) => ⊢ ElabResult(ElabItem) from match elab_assumed_constructors(k, &mut core, env, decl, ty) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(cs) => elab_declare_family(
+          k,
+          &mut core,
+          List::length(decl.params),
+          sort,
+          KernelFamily::Mk(decl.name, ty, cs)
+        )
+      }
+    }
+  }
+}
+
+pub fn elab_inductive_checked(
+  k: Nat,
+  &mut core: KernelCore,
+  env: List(ElabBinding),
+  decl: SurfaceInductive
+): ElabResult(ElabItem) {
+  let saved := kernel_snapshot(core)
+  let result := elab_inductive_inner(k, &mut core, env, decl)
+  if core.exhausted {
+    kernel_set_to(&mut core, saved)
+    ElabErr("elaboration exhausted")
+  } else {
+    ⊢ ElabResult(ElabItem) from match result {
+      ElabErr(e) => { kernel_set_to(&mut core, saved)
+        ElabErr(e) }
+      ElabOk(i) => ElabOk(i)
+    }
+  }
+}
+
+
+pub fn elab_named_params(names: List(Text), tys: List(Option(SurfaceTerm))): Option(List(SurfaceNamed)) {
+  ⊢ Option(List(SurfaceNamed)) from match names {
+    Nil => ⊢ Option(List(SurfaceNamed)) from match tys {
+      Nil => Some(Nil)
+      _ => None
+    }
+    Cons(n, rest) => ⊢ Option(List(SurfaceNamed)) from match tys {
+      Cons(t, more) => ⊢ Option(List(SurfaceNamed)) from match t {
+        None => None
+        Some(ty) => ⊢ Option(List(SurfaceNamed)) from match elab_named_params(rest, more) {
+          None => None
+          Some(ps) => Some(Cons(SurfaceNamedMk(n, ty), ps))
+        }
+      }
+      Nil => None
+    }
+  }
+}
+
+// A function's generics as parameters: each at its written type, or `Type`.
+pub fn elab_generic_params(names: List(Text), tys: List(SurfaceTerm)): List(SurfaceNamed) {
+  ⊢ List(SurfaceNamed) from match names {
+    Nil => Nil
+    Cons(n, rest) => ⊢ List(SurfaceNamed) from match tys {
+      Cons(t, more) => Cons(SurfaceNamedMk(n, t), elab_generic_params(rest, more))
+      Nil => Cons(SurfaceNamedMk(n, surface_term_mk(SkVar("Type"), 0, 0)), elab_generic_params(rest, Nil))
+    }
+  }
+}
+
+// How many leading parameters of a declaration are implicit, as a binding
+// that no source name can spell.
+pub fn elab_implicit_binding(name: Text, n: Nat): ElabBinding {
+  ElabBinding::Mk(Text::concat("#implicit ", name), KernelLit(n), KernelLit(n))
+}
+
+pub fn elab_stmt_implicits(stmt: SurfaceStmt): Option(Pair(Text, Nat)) {
+  ⊢ Option(Pair(Text, Nat)) from match stmt {
+    StDef(d) => Some(Pair { fst: d.name, snd: d.implicit })
+    StTheorem(d) => Some(Pair { fst: d.name, snd: d.implicit })
+    StFn(f) => Some(Pair { fst: f.name, snd: List::length(f.generics) })
+    _ => None
+  }
+}
+
+pub fn elab_has_effects(e: Option(List(Text))): Bool {
+  ⊢ Bool from match e {
+    None => false
+    Some(es) => true
+  }
+}
+
+pub fn elab_all_by_value(bs: List(Option(Bool))): Bool {
+  ⊢ Bool from match bs {
+    Nil => true
+    Cons(b, rest) => ⊢ Bool from match b {
+      None => elab_all_by_value(rest)
+      Some(x) => false
+    }
+  }
+}
+
+// A total `fn` of the proof language: explicit parameter and result types,
+// no generics, borrows, effects, or constraints. It is checked as an opaque
+// declaration with its body and then given that body as its value.
+pub fn elab_function_checked(k: Nat, &mut core: KernelCore, f: SurfaceFn, imps: List(ElabBinding)): ElabResult(ElabItem) {
+  if elab_has_effects(f.effects) || List::length(f.wheres) != 0 || elab_all_by_value(f.borrows) == false {
+    ElabErr("generic, borrowing, effectful, and constrained functions are unsupported")
+  } else {
+    ⊢ ElabResult(ElabItem) from match f.result {
+      None => ElabErr("a function must write its result type")
+      Some(result) => ⊢ ElabResult(ElabItem) from match elab_named_params(f.params, f.param_types) {
+        None => ElabErr("a function must write its parameter types")
+        Some(params) => {
+          let saved := kernel_snapshot(core)
+          let generics := elab_generic_params(f.generics, f.generic_types)
+          let decl := SurfaceTheoremMk(
+            f.name,
+            List::length(generics),
+            List::append(generics, params),
+            result,
+            Some(f.body),
+            f.start,
+            f.end
+          )
+          ⊢ ElabResult(ElabItem) from match elab_declaration_checked(k, &mut core, decl, false, imps) {
+            ElabErr(e) => ElabErr(e)
+            ElabOk(d) => ⊢ ElabResult(ElabItem) from match kernel_execute(k, &mut core, KernelSetValue(d.name, d.value)) {
+              KernelAccepted => ElabOk(ItemFunction(d))
+              _ => {
+                kernel_set_to(&mut core, saved)
+                ElabErr("kernel rejected the function's value")
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_as_item(r: ElabResult(ElabDeclaration)): ElabResult(ElabItem) {
+  ⊢ ElabResult(ElabItem) from match r {
+    ElabErr(e) => ElabErr(e)
+    ElabOk(d) => ElabOk(ItemDeclaration(d))
+  }
+}
+
+// A level-polymorphic `def` or `theorem` (see `elab_level`): its declaration,
+// whether it is transparent, and its level parameters.
+pub(open) inductive ElabTemplate: Type {
+  // An inductive template keeps its declaration in `ind`; `decl` then only names it.
+  Mk(decl: SurfaceTheorem, transparent: Bool, levels: List(Text), ind: Option(SurfaceInductive)): ElabTemplate
+}
+
+pub fn elab_is_level_type(t: SurfaceTerm): Bool {
+  ⊢ Bool from match t.kind {
+    SkVar(x) => x == "Level"
+    _ => false
+  }
+}
+
+// The leading implicit parameters typed `Level`.
+pub fn elab_level_params(params: List(SurfaceNamed), n: Nat): List(Text) {
+  ⊢ List(Text) from match n {
+    Zero => Nil
+    Succ(m) => ⊢ List(Text) from match params {
+      Nil => Nil
+      Cons(p, rest) => if elab_is_level_type(p.ty) { Cons(p.name, elab_level_params(rest, m)) } else { Nil }
+    }
+  }
+}
+
+pub fn elab_theorem_template(d: SurfaceTheorem, transparent: Bool): Option(ElabTemplate) {
+  ⊢ Option(ElabTemplate) from match elab_level_params(d.params, d.implicit) {
+    Nil => None
+    Cons(l, ls) => Some(ElabTemplate::Mk(d, transparent, Cons(l, ls), None))
+  }
+}
+
+pub fn elab_stmt_template(stmt: SurfaceStmt): Option(ElabTemplate) {
+  ⊢ Option(ElabTemplate) from match stmt {
+    StDef(d) => elab_theorem_template(d, true)
+    StTheorem(d) => elab_theorem_template(d, false)
+    StInductive(i) => ⊢ Option(ElabTemplate) from match elab_level_params(i.params, List::length(i.params)) {
+      Nil => None
+      Cons(l, ls) => Some(ElabTemplate::Mk(SurfaceTheoremMk(i.name, 0, Nil, i.sort, None, i.start, i.end), false, Cons(l, ls), Some(i)))
+    }
+    _ => None
+  }
+}
+
+pub fn elab_ctor_named_in(cs: List(SurfaceCtor), family: Text, name: Text): Bool {
+  ⊢ Bool from match cs {
+    Nil => false
+    Cons(c, rest) => elab_qualify(family, c.name) == name || elab_ctor_named_in(rest, family, name)
+  }
+}
+
+// Whether `name` is a constructor of an inductive template.
+pub fn elab_template_ctor(t: ElabTemplate, name: Text): Bool {
+  ⊢ Bool from match t.ind {
+    None => false
+    Some(i) => elab_ctor_named_in(i.constructors, i.name, name)
+  }
+}
+
+pub fn elab_ctor_markers(cs: List(SurfaceCtor), family: Text, n: Nat): List(ElabBinding) {
+  ⊢ List(ElabBinding) from match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(ElabBinding::Mk(elab_template_key(elab_qualify(family, c.name)), KernelLit(n), KernelConst(family)), elab_ctor_markers(rest, family, n))
+  }
+}
+
+// What tells the elaborator that a name is a template: the declaration, and
+// for an inductive each of its constructors, which names its family.
+pub fn elab_template_markers(t: ElabTemplate): List(ElabBinding) {
+  let n := List::length(t.levels)
+  let own := ElabBinding::Mk(elab_template_key(t.decl.name), KernelLit(n), KernelLit(0))
+  ⊢ List(ElabBinding) from match t.ind {
+    None => Cons(own, Nil)
+    Some(i) => Cons(own, elab_ctor_markers(i.constructors, i.name, n))
+  }
+}
+
+// The inductive template at the given levels, as an ordinary declaration.
+pub fn elab_inductive_at(i: SurfaceInductive, name: Text, n: Nat): SurfaceInductive {
+  SurfaceInductiveMk(name, elab_drop_named(i.params, n), i.sort, i.constructors, i.start, i.end)
+}
+
+pub fn elab_template_get(ts: List(ElabTemplate), name: Text): Option(ElabTemplate) {
+  ⊢ Option(ElabTemplate) from match ts {
+    Nil => None
+    Cons(t, rest) => if t.decl.name == name || elab_template_ctor(t, name) { Some(t) } else { elab_template_get(rest, name) }
+  }
+}
+
+pub fn elab_drop_named(xs: List(SurfaceNamed), n: Nat): List(SurfaceNamed) {
+  ⊢ List(SurfaceNamed) from match n {
+    Zero => xs
+    Succ(m) => ⊢ List(SurfaceNamed) from match xs {
+      Nil => Nil
+      Cons(x, rest) => elab_drop_named(rest, m)
+    }
+  }
+}
+
+pub fn elab_bind_levels(names: List(Text), ls: List(KernelLevel), env: List(ElabBinding)): List(ElabBinding) {
+  ⊢ List(ElabBinding) from match names {
+    Nil => env
+    Cons(n, rest) => ⊢ List(ElabBinding) from match ls {
+      Nil => env
+      Cons(l, more) => elab_bind_levels(rest, more, Cons(elab_level_binding(n, l), env))
+    }
+  }
+}
+
+// The template at the given levels, as an ordinary declaration named `name`,
+// with its level parameters bound in the environment.
+pub fn elab_template_at(tp: ElabTemplate, name: Text, ls: List(KernelLevel), imps: List(ElabBinding)): Pair(SurfaceTheorem, List(ElabBinding)) {
+  let n := List::length(tp.levels)
+  let d := tp.decl
+  Pair {
+    fst: SurfaceTheoremMk(name, d.implicit - n, elab_drop_named(d.params, n), d.ty, d.body, d.start, d.end),
+    snd: elab_bind_levels(tp.levels, ls, imps)
+  }
+}
+
+pub fn elab_variable_levels(names: List(Text)): List(KernelLevel) {
+  ⊢ List(KernelLevel) from match names {
+    Nil => Nil
+    Cons(n, rest) => Cons(KernelLevel::Mk(0, Cons(Pair { fst: n, snd: 0 }, Nil)), elab_variable_levels(rest))
+  }
+}
+
+pub fn elab_constant_levels(ns: List(Nat)): List(KernelLevel) {
+  ⊢ List(KernelLevel) from match ns {
+    Nil => Nil
+    Cons(n, rest) => Cons(KernelLevel::Mk(n, Nil), elab_constant_levels(rest))
+  }
+}
+
+pub fn elab_join_names(ns: List(Text)): List(Text) {
+  ⊢ List(Text) from match ns {
+    Nil => Nil
+    Cons(n, rest) => ⊢ List(Text) from match rest {
+      Nil => Cons(n, Nil)
+      _ => Cons(n, Cons(",", elab_join_names(rest)))
+    }
+  }
+}
+
+pub fn elab_has_request(acc: List(Pair(Text, List(KernelLevel))), name: Text): Bool {
+  ⊢ Bool from match acc {
+    Nil => false
+    Cons(r, rest) => elab_instance_name(r.fst, r.snd) == name || elab_has_request(rest, name)
+  }
+}
+
+pub fn elab_add_request(acc: List(Pair(Text, List(KernelLevel))), name: Text, ls: List(KernelLevel)): List(Pair(Text, List(KernelLevel))) {
+  if elab_has_request(acc, elab_instance_name(name, ls)) { acc } else { List::append(acc, Cons(Pair { fst: name, snd: ls }, Nil)) }
+}
+
+mutual {
+  // The calls of templates in a term, in the order they are elaborated.
+  pub fn elab_scan(k: Nat, ts: List(ElabTemplate), lv: List(ElabBinding), t: SurfaceTerm, acc: List(Pair(Text, List(KernelLevel)))): List(Pair(Text, List(KernelLevel))) {
+    ⊢ List(Pair(Text, List(KernelLevel))) from match k {
+      Zero => acc
+      Succ(j) => ⊢ List(Pair(Text, List(KernelLevel))) from match t.kind {
+        SkApp(head, args) => {
+          let here := ⊢ List(Pair(Text, List(KernelLevel))) from match head.kind {
+            SkVar(name) => ⊢ List(Pair(Text, List(KernelLevel))) from match elab_template_get(ts, name) {
+              None => acc
+              Some(tp) => ⊢ List(Pair(Text, List(KernelLevel))) from match elab_levels(j, lv, elab_take_surface(args, List::length(tp.levels))) {
+                None => acc
+                Some(ls) => elab_add_request(acc, tp.decl.name, ls)
+              }
+            }
+            _ => elab_scan(j, ts, lv, head, acc)
+          }
+          elab_scan_list(j, ts, lv, args, here)
+        }
+        SkPi(params, result, effects) => elab_scan(j, ts, lv, result, elab_scan_params(j, ts, lv, params, acc))
+        SkLam(params, body) => elab_scan(j, ts, lv, body, acc)
+        SkBlock(stmts) => elab_scan_stmts(j, ts, lv, stmts, acc)
+        SkIf(c, a, b) => {
+          let ab := elab_scan(j, ts, lv, a, elab_scan(j, ts, lv, c, acc))
+          ⊢ List(Pair(Text, List(KernelLevel))) from match b {
+            None => ab
+            Some(e) => elab_scan(j, ts, lv, e, ab)
+          }
+        }
+        SkMatch(scrutinee, motive, arms, binder) => {
+          let m := ⊢ List(Pair(Text, List(KernelLevel))) from match motive {
+            None => acc
+            Some(e) => elab_scan(j, ts, lv, e, acc)
+          }
+          elab_scan_arms(j, ts, lv, arms, elab_scan(j, ts, lv, scrutinee, m))
+        }
+        _ => acc
+      }
+    }
+  }
+
+  pub fn elab_scan_list(k: Nat, ts: List(ElabTemplate), lv: List(ElabBinding), xs: List(SurfaceTerm), acc: List(Pair(Text, List(KernelLevel)))): List(Pair(Text, List(KernelLevel))) {
+    ⊢ List(Pair(Text, List(KernelLevel))) from match k {
+      Zero => acc
+      Succ(j) => ⊢ List(Pair(Text, List(KernelLevel))) from match xs {
+        Nil => acc
+        Cons(x, rest) => elab_scan_list(j, ts, lv, rest, elab_scan(j, ts, lv, x, acc))
+      }
+    }
+  }
+
+  pub fn elab_scan_params(k: Nat, ts: List(ElabTemplate), lv: List(ElabBinding), ps: List(SurfaceParam), acc: List(Pair(Text, List(KernelLevel)))): List(Pair(Text, List(KernelLevel))) {
+    ⊢ List(Pair(Text, List(KernelLevel))) from match k {
+      Zero => acc
+      Succ(j) => ⊢ List(Pair(Text, List(KernelLevel))) from match ps {
+        Nil => acc
+        Cons(p, rest) => elab_scan_params(j, ts, lv, rest, elab_scan(j, ts, lv, p.ty, acc))
+      }
+    }
+  }
+
+  pub fn elab_scan_named(k: Nat, ts: List(ElabTemplate), lv: List(ElabBinding), ps: List(SurfaceNamed), acc: List(Pair(Text, List(KernelLevel)))): List(Pair(Text, List(KernelLevel))) {
+    ⊢ List(Pair(Text, List(KernelLevel))) from match k {
+      Zero => acc
+      Succ(j) => ⊢ List(Pair(Text, List(KernelLevel))) from match ps {
+        Nil => acc
+        Cons(p, rest) => elab_scan_named(j, ts, lv, rest, elab_scan(j, ts, lv, p.ty, acc))
+      }
+    }
+  }
+
+  pub fn elab_scan_arms(k: Nat, ts: List(ElabTemplate), lv: List(ElabBinding), arms: List(SurfaceArm), acc: List(Pair(Text, List(KernelLevel)))): List(Pair(Text, List(KernelLevel))) {
+    ⊢ List(Pair(Text, List(KernelLevel))) from match k {
+      Zero => acc
+      Succ(j) => ⊢ List(Pair(Text, List(KernelLevel))) from match arms {
+        Nil => acc
+        Cons(a, rest) => elab_scan_arms(j, ts, lv, rest, elab_scan(j, ts, lv, a.body, acc))
+      }
+    }
+  }
+
+  pub fn elab_scan_stmts(k: Nat, ts: List(ElabTemplate), lv: List(ElabBinding), stmts: List(SurfaceStmt), acc: List(Pair(Text, List(KernelLevel)))): List(Pair(Text, List(KernelLevel))) {
+    ⊢ List(Pair(Text, List(KernelLevel))) from match k {
+      Zero => acc
+      Succ(j) => ⊢ List(Pair(Text, List(KernelLevel))) from match stmts {
+        Nil => acc
+        Cons(s, rest) => {
+          let here := ⊢ List(Pair(Text, List(KernelLevel))) from match s {
+            StLet(name, ty, value, borrow, mutable) => {
+              let t := ⊢ List(Pair(Text, List(KernelLevel))) from match ty {
+                None => acc
+                Some(e) => elab_scan(j, ts, lv, e, acc)
+              }
+              elab_scan(j, ts, lv, value, t)
+            }
+            StExpr(e) => elab_scan(j, ts, lv, e, acc)
+            _ => acc
+          }
+          elab_scan_stmts(j, ts, lv, rest, here)
+        }
+      }
+    }
+  }
+
+  pub fn elab_scan_options(k: Nat, ts: List(ElabTemplate), lv: List(ElabBinding), xs: List(Option(SurfaceTerm)), acc: List(Pair(Text, List(KernelLevel)))): List(Pair(Text, List(KernelLevel))) {
+    ⊢ List(Pair(Text, List(KernelLevel))) from match k {
+      Zero => acc
+      Succ(j) => ⊢ List(Pair(Text, List(KernelLevel))) from match xs {
+        Nil => acc
+        Cons(x, rest) => ⊢ List(Pair(Text, List(KernelLevel))) from match x {
+          None => elab_scan_options(j, ts, lv, rest, acc)
+          Some(e) => elab_scan_options(j, ts, lv, rest, elab_scan(j, ts, lv, e, acc))
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_scan_ctors(k: Nat, ts: List(ElabTemplate), lv: List(ElabBinding), cs: List(SurfaceCtor), acc: List(Pair(Text, List(KernelLevel)))): List(Pair(Text, List(KernelLevel))) {
+  ⊢ List(Pair(Text, List(KernelLevel))) from match cs {
+    Nil => acc
+    Cons(c, rest) => elab_scan_ctors(k, ts, lv, rest, elab_scan(k, ts, lv, c.result, elab_scan_named(k, ts, lv, c.params, acc)))
+  }
+}
+
+pub fn elab_scan_inductive(k: Nat, ts: List(ElabTemplate), lv: List(ElabBinding), i: SurfaceInductive): List(Pair(Text, List(KernelLevel))) {
+  elab_scan_ctors(k, ts, lv, i.constructors, elab_scan(k, ts, lv, i.sort, elab_scan_named(k, ts, lv, i.params, Nil)))
+}
+
+pub fn elab_scan_theorem(k: Nat, ts: List(ElabTemplate), lv: List(ElabBinding), d: SurfaceTheorem): List(Pair(Text, List(KernelLevel))) {
+  let sig := elab_scan(k, ts, lv, d.ty, elab_scan_named(k, ts, lv, d.params, Nil))
+  ⊢ List(Pair(Text, List(KernelLevel))) from match d.body {
+    None => sig
+    Some(b) => elab_scan(k, ts, lv, b, sig)
+  }
+}
+
+// The instances a statement calls for: its signature first, then its body.
+// The requests other than of the template itself: an inductive names its own
+// family in its constructors, and that is the instance being declared.
+pub fn elab_other_requests(reqs: List(Pair(Text, List(KernelLevel))), name: Text): List(Pair(Text, List(KernelLevel))) {
+  ⊢ List(Pair(Text, List(KernelLevel))) from match reqs {
+    Nil => Nil
+    Cons(r, rest) => if r.fst == name { elab_other_requests(rest, name) } else { Cons(r, elab_other_requests(rest, name)) }
+  }
+}
+
+pub fn elab_scan_template(k: Nat, ts: List(ElabTemplate), lv: List(ElabBinding), tp: ElabTemplate): List(Pair(Text, List(KernelLevel))) {
+  ⊢ List(Pair(Text, List(KernelLevel))) from match tp.ind {
+    None => elab_scan_theorem(k, ts, lv, tp.decl)
+    Some(i) => elab_scan_inductive(k, ts, lv, i)
+  }
+}
+
+pub fn elab_stmt_requests(k: Nat, ts: List(ElabTemplate), lv: List(ElabBinding), stmt: SurfaceStmt): List(Pair(Text, List(KernelLevel))) {
+  ⊢ List(Pair(Text, List(KernelLevel))) from match ts {
+    Nil => Nil
+    _ => ⊢ List(Pair(Text, List(KernelLevel))) from match stmt {
+      StDef(d) => elab_scan_theorem(k, ts, lv, d)
+      StTheorem(d) => elab_scan_theorem(k, ts, lv, d)
+      StInductive(i) => elab_scan_inductive(k, ts, lv, i)
+      StFn(f) => {
+        let sig := elab_scan_options(k, ts, lv, f.param_types, Nil)
+        let res := ⊢ List(Pair(Text, List(KernelLevel))) from match f.result {
+          None => sig
+          Some(r) => elab_scan(k, ts, lv, r, sig)
+        }
+        elab_scan(k, ts, lv, f.body, res)
+      }
+      _ => Nil
+    }
+  }
+}
+
+// The instances a declaration calls for, each declared the first time, in the
+// order of their calls; the implicit counts extended by theirs.
+pub fn elab_instances(
+  k: Nat,
+  &mut core: KernelCore,
+  templates: List(ElabTemplate),
+  reqs: List(Pair(Text, List(KernelLevel))),
+  imps: List(ElabBinding)
+): ElabResult(Pair(List(ElabItem), List(ElabBinding))) {
+  ⊢ ElabResult(Pair(List(ElabItem), List(ElabBinding))) from match k {
+   Zero => ElabErr("instantiation exhausted")
+   Succ(j) => ⊢ ElabResult(Pair(List(ElabItem), List(ElabBinding))) from match reqs {
+    Nil => ElabOk(Pair { fst: Nil, snd: imps })
+    Cons(r, rest) => {
+      let name := elab_instance_name(r.fst, r.snd)
+      ⊢ ElabResult(Pair(List(ElabItem), List(ElabBinding))) from match kernel_global_get(core, name) {
+        Some(g) => elab_instances(j, &mut core, templates, rest, imps)
+        None => ⊢ ElabResult(Pair(List(ElabItem), List(ElabBinding))) from match elab_template_get(templates, r.fst) {
+          None => ElabErr("unknown level-polymorphic declaration")
+          Some(tp) => if List::length(r.snd) != List::length(tp.levels) { ElabErr("a call of a level-polymorphic declaration must write all its levels") } else {
+            // The instances its own body calls for come first, at its levels.
+            ⊢ ElabResult(Pair(List(ElabItem), List(ElabBinding))) from match elab_instances(j, &mut core, templates, elab_other_requests(elab_scan_template(j, templates, elab_bind_levels(tp.levels, r.snd, Nil), tp), tp.decl.name), imps) {
+             ElabErr(e) => ElabErr(e)
+             ElabOk(inner) => {
+            let at := elab_template_at(tp, name, r.snd, inner.snd)
+            // As the host declares an instance: opaque, a `def` then given its
+            // value; an inductive with its no-confusion.
+            let declared: ElabResult(List(ElabItem)) := ⊢ ElabResult(List(ElabItem)) from match tp.ind {
+             Some(ind) => ⊢ ElabResult(List(ElabItem)) from match elab_inductive_checked(j, &mut core, at.snd, elab_inductive_at(ind, name, List::length(tp.levels))) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(it) => ⊢ ElabResult(List(ElabItem)) from match it {
+                ItemInductive(np, sort, fs) => ⊢ ElabResult(List(ElabItem)) from match elab_no_confusion(j, &mut core, fs) {
+                  Nil => ElabOk(Cons(it, Nil))
+                  Cons(x, xs) => ElabOk(Cons(it, Cons(ItemDeclarations(Cons(x, xs)), Nil)))
+                }
+                _ => ElabOk(Cons(it, Nil))
+              }
+             }
+             None => ⊢ ElabResult(List(ElabItem)) from match elab_declaration_checked(j, &mut core, at.fst, false, at.snd) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(d) => if tp.transparent {
+                ⊢ ElabResult(List(ElabItem)) from match kernel_execute(j, &mut core, KernelSetValue(d.name, d.value)) {
+                  KernelAccepted => ElabOk(Cons(ItemFunction(d), Nil))
+                  _ => ElabErr("kernel rejected the instance's value")
+                }
+              } else { ElabOk(Cons(ItemDeclaration(d), Nil)) }
+             }
+            }
+            ⊢ ElabResult(Pair(List(ElabItem), List(ElabBinding))) from match declared {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(item) => {
+                let more: List(ElabBinding) := if at.fst.implicit == 0 { inner.snd } else { Cons(elab_implicit_binding(name, at.fst.implicit), inner.snd) }
+                ⊢ ElabResult(Pair(List(ElabItem), List(ElabBinding))) from match elab_instances(j, &mut core, templates, rest, more) {
+                  ElabErr(e) => ElabErr(e)
+                  ElabOk(p) => ElabOk(Pair { fst: List::append(inner.fst, List::append(item, p.fst)), snd: p.snd })
+                }
+              }
+            }
+             }
+            }
+          }
+        }
+      }
+    }
+  }
+  }
+}
+
+// The template checked once with its levels left as variables, in a kernel
+// that is then restored: a comparison that holds there holds at every level.
+pub fn elab_template_check(k: Nat, &mut core: KernelCore, templates: List(ElabTemplate), tp: ElabTemplate, imps: List(ElabBinding)): ElabResult(Bool) {
+  let saved := kernel_snapshot(core)
+  let vs := elab_variable_levels(tp.levels)
+  // The instances it calls for, at its variables, live only in this kernel.
+  let result := ⊢ ElabResult(Bool) from match elab_instances(k, &mut core, templates, elab_other_requests(elab_scan_template(k, templates, elab_bind_levels(tp.levels, vs, Nil), tp), tp.decl.name), imps) {
+    ElabErr(e) => ElabErr(e)
+    ElabOk(inner) => {
+      let at := elab_template_at(tp, elab_instance_name(tp.decl.name, vs), vs, List::append(elab_template_markers(tp), inner.snd))
+      ⊢ ElabResult(Bool) from match tp.ind {
+        None => ⊢ ElabResult(Bool) from match elab_declaration_checked(k, &mut core, at.fst, tp.transparent, at.snd) {
+          ElabErr(e) => ElabErr(e)
+          ElabOk(d) => ElabOk(true)
+        }
+        Some(ind) => ⊢ ElabResult(Bool) from match elab_inductive_checked(k, &mut core, at.snd, elab_inductive_at(ind, at.fst.name, List::length(tp.levels))) {
+          ElabErr(e) => ElabErr(e)
+          ElabOk(d) => ElabOk(true)
+        }
+      }
+    }
+  }
+  kernel_set_to(&mut core, saved)
+  result
+}
+
 pub fn elab_program(
   stmts: List(SurfaceStmt),
   k: Nat,
   &mut core: KernelCore
-): ElabResult(List(ElabDeclaration)) {
-  match stmts: ElabResult(List(ElabDeclaration)) {
+): ElabResult(List(ElabItem)) {
+  elab_program_in(stmts, k, &mut core, Nil, Nil)
+}
+
+// `imps` records the implicit parameter counts of the declarations so far.
+pub fn elab_program_in(
+  stmts: List(SurfaceStmt),
+  k: Nat,
+  &mut core: KernelCore,
+  imps0: List(ElabBinding),
+  templates: List(ElabTemplate)
+): ElabResult(List(ElabItem)) {
+  ⊢ ElabResult(List(ElabItem)) from match stmts {
     Nil => ElabOk(Nil)
-    Cons(stmt, rest) => {
-      let first := match stmt: ElabResult(ElabDeclaration) {
-        StDef(d) => elab_declaration_checked(k, &mut core, d, true)
-        StTheorem(d) => elab_declaration_checked(k, &mut core, d, false)
-        _ => ElabErr("only explicit def and theorem declarations are supported")
-      }
-      match first: ElabResult(List(ElabDeclaration)) {
+    Cons(stmt, rest) => ⊢ ElabResult(List(ElabItem)) from match elab_instances(k, &mut core, templates, elab_stmt_requests(k, templates, Nil, stmt), imps0) {
+     ElabErr(e) => ElabErr(e)
+     ElabOk(inst) => ⊢ ElabResult(List(ElabItem)) from match elab_stmt_template(stmt) {
+      Some(tp) => ⊢ ElabResult(List(ElabItem)) from match elab_template_check(k, &mut core, templates, tp, inst.snd) {
         ElabErr(e) => ElabErr(e)
-        ElabOk(d) => match elab_program(rest, k, &mut core): ElabResult(List(ElabDeclaration)) {
+        ElabOk(u) => ⊢ ElabResult(List(ElabItem)) from match elab_program_in(rest, k, &mut core, List::append(elab_template_markers(tp), inst.snd), Cons(tp, templates)) {
           ElabErr(e) => ElabErr(e)
-          ElabOk(ds) => ElabOk(Cons(d, ds))
+          ElabOk(ds) => ElabOk(List::append(inst.fst, ds))
         }
       }
+      None => {
+      let imps := inst.snd
+      let first := ⊢ ElabResult(ElabItem) from match stmt {
+        StDef(d) => elab_as_item(elab_declaration_checked(k, &mut core, d, true, imps))
+        StTheorem(d) => elab_as_item(elab_declaration_checked(k, &mut core, d, false, imps))
+        StInductive(i) => elab_inductive_checked(k, &mut core, imps, i)
+        StFn(f) => elab_function_checked(k, &mut core, f, imps)
+        StMutual(members, start, end) => ⊢ ElabResult(ElabItem) from match elab_mutual_inductives(members) {
+          None => ⊢ ElabResult(ElabItem) from match elab_group_fns(members) {
+            None => ElabErr("only mutual blocks of inductive declarations, or of functions that each match on a parameter, are supported")
+            Some(fns) => ⊢ ElabResult(ElabItem) from match elab_group_checked(k, &mut core, fns) {
+              ElabErr(e) => ElabErr(e)
+              ElabOk(ds) => ElabOk(ItemDeclarations(ds))
+            }
+          }
+          Some(decls) => elab_mutual_checked(k, &mut core, decls)
+        }
+        _ => ElabErr("only explicit def, theorem, fn, and inductive declarations are supported")
+      }
+      let more := ⊢ List(ElabBinding) from match elab_stmt_implicits(stmt) {
+        None => imps
+        Some(p) => if p.snd == 0 { imps } else { Cons(elab_implicit_binding(p.fst, p.snd), imps) }
+      }
+      let derived: List(ElabItem) := ⊢ List(ElabItem) from match first {
+        ElabOk(d) => ⊢ List(ElabItem) from match d {
+          ItemInductive(np, sort, fs) => ⊢ List(ElabItem) from match elab_no_confusion(k, &mut core, fs) {
+            Nil => Nil
+            Cons(x, xs) => Cons(ItemDeclarations(Cons(x, xs)), Nil)
+          }
+          _ => Nil
+        }
+        ElabErr(e) => Nil
+      }
+      ⊢ ElabResult(List(ElabItem)) from match first {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(d) => ⊢ ElabResult(List(ElabItem)) from match elab_program_in(rest, k, &mut core, more, templates) {
+          ElabErr(e) => ElabErr(e)
+          ElabOk(ds) => ElabOk(List::append(inst.fst, Cons(d, List::append(derived, ds))))
+        }
+      }
+      }
+     }
     }
   }
 }
@@ -109,17 +823,196 @@ pub fn elab_program(
 // Attributes and generation clauses are absent from Surface. This scan detects
 // them in the concrete tree so that elab_program rejects unsupported declarations.
 pub fn elab_unsupported(k: Nat, nodes: List(CstNode)): Bool {
-  match k: Bool {
+  ⊢ Bool from match k {
     Zero => true
-    Succ(j) => match nodes: Bool {
+    Succ(j) => ⊢ Bool from match nodes {
       Nil => false
-      Cons(
-        n,
-        rest
-      ) => n.name == "Attribute" || n.name == "Generates" || n.name == "Generated" || elab_unsupported(
+      Cons(n, rest) => n.name == "Attribute" || n.name == "Generates" || n.name == "Generated" || elab_unsupported(
         j,
         List::append(n.flat, rest)
       )
     }
   }
 }
+
+// A `mutual` block of inductive declarations only.
+pub fn elab_mutual_inductives(stmts: List(SurfaceStmt)): Option(List(SurfaceInductive)) {
+  ⊢ Option(List(SurfaceInductive)) from match stmts {
+    Nil => Some(Nil)
+    Cons(s, rest) => ⊢ Option(List(SurfaceInductive)) from match s {
+      StInductive(i) => ⊢ Option(List(SurfaceInductive)) from match elab_mutual_inductives(rest) {
+        None => None
+        Some(is) => Some(Cons(i, is))
+      }
+      _ => None
+    }
+  }
+}
+
+pub fn elab_arity_of(decl: SurfaceInductive): SurfaceTerm {
+  surface_term_mk(SkPi(elab_params(decl.params), decl.sort, None), decl.start, decl.end)
+}
+
+// Each family's arity; all have the same number of parameters and end in
+// the same sort, as one kernel command requires.
+pub fn elab_arities(
+  k: Nat,
+  &mut core: KernelCore,
+  decls: List(SurfaceInductive),
+  np: Nat,
+  sort: Option(KernelSort)
+): ElabResult(Pair(List(KernelTerm), KernelSort)) {
+  ⊢ ElabResult(Pair(List(KernelTerm), KernelSort)) from match decls {
+    Nil => ⊢ ElabResult(Pair(List(KernelTerm), KernelSort)) from match sort {
+      None => ElabErr("an empty mutual block")
+      Some(s) => ElabOk(Pair { fst: Nil, snd: s })
+    }
+    Cons(d, rest) => if List::length(d.params) != np {
+      ElabErr("the families of a mutual block must have the same parameters")
+    } else {
+      ⊢ ElabResult(Pair(List(KernelTerm), KernelSort)) from match elab_type(k, &mut core, Nil, elab_arity_of(d)) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(ty) => ⊢ ElabResult(Pair(List(KernelTerm), KernelSort)) from match elab_tail_sort(k, ty) {
+          None => ElabErr("an inductive family must end in a sort")
+          Some(s) => {
+            let same := ⊢ Bool from match sort {
+              None => true
+              Some(t) => elab_sort_eq(s, t)
+            }
+            if same == false { ElabErr("the families of a mutual block must end in the same sort") } else {
+              ⊢ ElabResult(Pair(List(KernelTerm), KernelSort)) from match elab_arities(k, &mut core, rest, np, Some(s)) {
+                ElabErr(e) => ElabErr(e)
+                ElabOk(more) => ElabOk(Pair { fst: Cons(ty, more.fst), snd: more.snd })
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn elab_assume_all(k: Nat, &mut core: KernelCore, decls: List(SurfaceInductive), tys: List(KernelTerm)): Bool {
+  ⊢ Bool from match decls {
+    Nil => true
+    Cons(d, rest) => ⊢ Bool from match tys {
+      Nil => false
+      Cons(t, more) => ⊢ Bool from match kernel_execute(k, &mut core, KernelDeclare(d.name, t, None, false)) {
+        KernelAccepted => elab_assume_all(k, &mut core, rest, more)
+        _ => false
+      }
+    }
+  }
+}
+
+pub fn elab_mutual_families(
+  k: Nat,
+  &mut core: KernelCore,
+  decls: List(SurfaceInductive),
+  tys: List(KernelTerm)
+): ElabResult(List(KernelFamily)) {
+  ⊢ ElabResult(List(KernelFamily)) from match decls {
+    Nil => ElabOk(Nil)
+    Cons(d, rest) => ⊢ ElabResult(List(KernelFamily)) from match tys {
+      Nil => ElabErr("a family has no arity")
+      Cons(t, more) => ⊢ ElabResult(List(KernelFamily)) from match elab_constructors(k, &mut core, Nil, d, d.constructors) {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(cs) => ⊢ ElabResult(List(KernelFamily)) from match elab_mutual_families(k, &mut core, rest, more) {
+          ElabErr(e) => ElabErr(e)
+          ElabOk(fs) => ElabOk(Cons(KernelFamily::Mk(d.name, t, cs), fs))
+        }
+      }
+    }
+  }
+}
+
+// The families of a mutual block: every family is assumed at its arity while
+// the constructors are elaborated, and the kernel checks the group as one.
+pub fn elab_mutual_checked(
+  k: Nat,
+  &mut core: KernelCore,
+  decls: List(SurfaceInductive)
+): ElabResult(ElabItem) {
+  let saved := kernel_snapshot(core)
+  let np := ⊢ Nat from match decls {
+    Nil => 0
+    Cons(d, rest) => List::length(d.params)
+  }
+  let result: ElabResult(ElabItem) := ⊢ ElabResult(ElabItem) from match elab_arities(k, &mut core, decls, np, None) {
+    ElabErr(e) => ElabErr(e)
+    ElabOk(ar) => {
+      let before := kernel_snapshot(core)
+      let fams: ElabResult(List(KernelFamily)) := if elab_assume_all(k, &mut core, decls, ar.fst) {
+        elab_mutual_families(k, &mut core, decls, ar.fst)
+      } else { ElabErr("cannot assume the inductive families") }
+      kernel_set_to(&mut core, before)
+      ⊢ ElabResult(ElabItem) from match fams {
+        ElabErr(e) => ElabErr(e)
+        ElabOk(fs) => ⊢ ElabResult(ElabItem) from match kernel_execute(k, &mut core, KernelInductive(fs, np, ar.snd)) {
+          KernelAccepted => ElabOk(ItemInductive(np, ar.snd, fs))
+          KernelRejected => ElabErr("kernel rejected the elaborated inductive")
+          KernelExhausted => ElabErr("kernel exhausted")
+        }
+      }
+    }
+  }
+  if core.exhausted {
+    kernel_set_to(&mut core, saved)
+    ElabErr("elaboration exhausted")
+  } else {
+    ⊢ ElabResult(ElabItem) from match result {
+      ElabErr(e) => { kernel_set_to(&mut core, saved)
+        ElabErr(e) }
+      ElabOk(i) => ElabOk(i)
+    }
+  }
+}
+
+// The library families the host's terms name without the source declaring
+// them: `Unit`, the motive the host gives the other families of a mutual
+// group. It is known to the kernel here, and never written out.
+pub fn elab_prelude(k: Nat, &mut core: KernelCore): Bool {
+  let ty0 := KernelType(KernelLevel::Mk(0, Nil))
+  let unit := KernelFamily::Mk("Unit", KernelSortTerm(ty0), Cons(Pair { fst: "Unit::Star", snd: KernelConst("Unit") }, Nil))
+  // `BelowPair(A, B)`, the pairs an aligned group of functions computes.
+  let pair := KernelFamily::Mk(
+    "BelowPair",
+    kernel_pi(KernelSortTerm(ty0), kernel_pi(KernelSortTerm(ty0), KernelSortTerm(ty0))),
+    Cons(
+      Pair {
+        fst: "BelowPair::Mk",
+        snd: kernel_pi(
+          KernelSortTerm(ty0),
+          kernel_pi(
+            KernelSortTerm(ty0),
+            kernel_pi(KernelBVar(1), kernel_pi(KernelBVar(1), elab_apps(KernelConst("BelowPair"), Cons(KernelBVar(3), Cons(KernelBVar(2), Nil)))))
+          )
+        )
+      },
+      Nil
+    )
+  )
+  // `Eq(A, a): (A) -> Prop`, for the equations of no-confusion.
+  let eq := KernelFamily::Mk(
+    "Eq",
+    kernel_pi(KernelSortTerm(ty0), kernel_pi(KernelBVar(0), kernel_pi(KernelBVar(1), KernelSortTerm(KernelProp)))),
+    Cons(
+      Pair {
+        fst: "Eq::Refl",
+        snd: kernel_pi(KernelSortTerm(ty0), kernel_pi(KernelBVar(0), elab_apps(KernelConst("Eq"), Cons(KernelBVar(1), Cons(KernelBVar(0), Cons(KernelBVar(0), Nil))))))
+      },
+      Nil
+    )
+  )
+  ⊢ Bool from match kernel_execute(k, &mut core, KernelInductive(Cons(unit, Nil), 0, ty0)) {
+    KernelAccepted => ⊢ Bool from match kernel_execute(k, &mut core, KernelInductive(Cons(pair, Nil), 2, ty0)) {
+      KernelAccepted => ⊢ Bool from match kernel_execute(k, &mut core, KernelInductive(Cons(eq, Nil), 2, KernelProp)) {
+        KernelAccepted => true
+        _ => false
+      }
+      _ => false
+    }
+    _ => false
+  }
+}
+

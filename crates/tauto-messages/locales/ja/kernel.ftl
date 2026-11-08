@@ -65,6 +65,7 @@ kernel-mutual-mixed = mutual ブロックに置けるのは帰納族だけか、
 kernel-mutual-plain-generics = `{ $name }` は match で定義されていないので、ブロック内の呼び出しは展開される。展開される関数はジェネリクスを持てない
 kernel-mutual-plain-cycle = `{ $name }` は match で定義されていない関数を通じて自身に到達する。mutual ブロックの再帰は match で定義された関数を通らなければならない
 kernel-mutual-plain-partial = `{ $name }` は match で定義されていないのでブロックはその呼び出しを展開するが、`{ $user }` はそれをすべての引数なしで使っている
+kernel-mutual-plain-too-large = match で定義されていない関数の呼び出しを展開するとブロックが { $growth } 倍の大きさになる。`{ $name }` が { $times } 回複製される。再帰呼び出しの結果を `{ $name }` に引数で渡せば、ブロックを呼ばなくなり展開されない
 kernel-mutual-result-type = mutual ブロックの関数には結果の型が要る
 kernel-mutual-param-typed = mutual ブロックのパラメータには型が要る
 kernel-mutual-no-effects = mutual ブロックの関数は作用を持たない。作用を持つ関数は実行可能なコードであり、互いを呼ぶのに `mutual` は要らない
@@ -84,6 +85,7 @@ kernel-not-kernel-term-text = カーネルの項ではない: テキスト (テ�
 kernel-not-kernel-term-kind = カーネルの項ではない: { $kind }
 kernel-block-value = 証明内のブロックはその値で終わる
 kernel-block-lets = 証明内のブロックは値の前に `let x: T := e` だけを置ける
+kernel-statement-discarded = この文の値は使われないので、型が検査されない
 kernel-let-unused = `{ $name }` は定義されているが使われていない
 kernel-mismatch = 型が一致しない: `{ $expected }` が期待されたが `{ $found }` だった
 kernel-mismatch-line =
@@ -139,7 +141,7 @@ kernel-deq-alias = 別名である
 kernel-deq-no-ctors = コンストラクタがない
 kernel-deq-proposition = 命題である
 kernel-deq-not-declared = `{ $name }` が宣言されていない
-kernel-deq-field = `{ $ctor }` のフィールド `{ $field }` の型 `{ $ty }` には決定可能な等価性がない (それを持つ型はソートの後に `fn T_beq, theorem T_beq_refl, theorem T_beq_sound, theorem T_deq` を挙げる)
+kernel-deq-field = `{ $ctor }` のフィールド `{ $field }` の型 `{ $ty }` には決定可能な等価性がない (それを持つ型はソートの後に `fn T::beq, theorem T::beq_refl, theorem T::beq_sound, theorem T::deq` を挙げる)
 kernel-deq-no-parse = 生成したテキストが構文解析できない
 kernel-deq-no-check = 生成した宣言が検査に通らない
 kernel-deq-not-generated = 生成されなかった
@@ -177,7 +179,7 @@ kernel-match-same-family-indices = ブロックの二つの関数が、添字が
 kernel-match-missing-case = `{ $name }` の場合がない
 kernel-match-same-family-function = ブロックの二つの関数が、関数型のフィールドを持つ同じ族に対して match している。これは未対応である
 kernel-match-not-compiled = match をコンパイルできなかった
-kernel-match-result-type = ここではこの match の型が分からないので、結果の型が要る: `match x: T {"{"} … {"}"}` (型が分かるのは、宣言の本体、アームの本体、型の分かる λ の本体、ほかの引数がパラメータの型を決める呼び出しの引数である)
+kernel-match-result-type = ここではこの match の型が分からないので、結果の型が要る: `⊢ T from match x {"{"} … {"}"}` (型が分かるのは、宣言の本体、アームの本体、型の分かる λ の本体、ほかの引数がパラメータの型を決める呼び出しの引数である)
 kernel-match-param-written = パラメータ `{ $name }` は `{ $written }` と書かれているが、ここでは `{ $given }` である
 kernel-field-not-inductive = `.` は帰納型の値に対して使う
 kernel-field-many-ctors = `{ $family }` には複数のコンストラクタがある。`.{ $name }` は match である
@@ -185,13 +187,12 @@ kernel-field-of-type = `{ $family }` は型で、フィールドは値から取�
 kernel-field-none = `{ $family }` にフィールド `{ $name }` はない
 kernel-field-depends = `{ $name }` の型がほかのフィールドに依存している
 kernel-ascribe-mismatch = `{ $have }` は `{ $want }` でも、その成分を持つ直積でもない
-kernel-product-not-pair = `{ $have }` は `{ $want }` に合わない：直積（`#(…)` や `A × B`）は名前で書いた `Pair` ではなく、`Pair` も直積ではない
 kernel-ascribe-no-member = `{ $product }` に型 `{ $member }` の成分はない
 kernel-ascribe-clash = 直積の二つの成分が型 `{ $member }` を持つので、成分を型で対応づけられない。成分を位置で（同じ順に）書くか、ラベル（`@x { $member }`）で見分ける
 kernel-ascribe-open = `{ $have }` と `{ $want }` は、どちらにも型変数が現れないときだけ、成分の型で対応づけられる。成分を同じ順に位置で書くか、それぞれにラベル（`@x T`）を付ける
-kernel-eq-no-deq = `==` は `{ $ty }` ではなく、`Nat`、`Bool`、`Text` か決定可能な等価性を持つ型に対して使う。帰納型はソートの後に `=> fn { $head }_beq, theorem { $head }_beq_refl, theorem { $head }_beq_sound, theorem { $head }_deq` を挙げるとそれを持つ
+kernel-eq-no-deq = `==` は `{ $ty }` ではなく、`Nat`、`Bool`、`Text` か決定可能な等価性を持つ型に対して使う。帰納型はソートの後に `=> fn { $head }::beq, theorem { $head }::beq_refl, theorem { $head }::beq_sound, theorem { $head }::deq` を挙げるとそれを持つ
 kernel-eq-type-open = `=` の両辺とも型を決められない。数値リテラル、`[]`、穴、λ、引数なしで書いた型パラメータのあるコンストラクタ（`Nil`、`None`）は型を決めない。`Eq(T, a, b)` と書く
-kernel-if-type-open = この `if` の枝のどちらも型を決められない。数値リテラル、`[]`、穴、λ、引数なしで書いた型パラメータのあるコンストラクタ（`Nil`、`None`）は型を決めない。型を書く: `match c: T {"{"} true => a  false => b {"}"}`
+kernel-if-type-open = この `if` の枝のどちらも型を決められない。数値リテラル、`[]`、穴、λ、引数なしで書いた型パラメータのあるコンストラクタ（`Nil`、`None`）は型を決めない。型を書く: `⊢ T from match c {"{"} true => a  false => b {"}"}`
 kernel-if-no-else = カーネルの項の `if` には `else` の枝が要る
 kernel-eq-not-declared = ここでの `==` は `{ $name }` だが、それは宣言されていない
 kernel-match-arm-goal = このアームのゴールは `{ $written }` ではなく `{ $computed }` である
@@ -281,6 +282,12 @@ kernel-ind-negative = `{ $families }` が `{ $term }` の中で負または入�
 kernel-implicit-nullary = `{ $name }` はパラメータを持たず、`()` なしで名指されている。呼ぶには `{ $name }()` と書く
 kernel-implicit-not-defined = `{ $name }` は定義されていない
 kernel-implicit-fewer-params = `{ $name }` のパラメータが暗黙のものより少ない
+kernel-implicit-named-unknown = `{ $name }` には暗黙のパラメータ `{ $field }` がない
+kernel-implicit-named-twice = 暗黙の引数 `{ $field }` が二度書かれている
+kernel-implicit-named-mismatch = `{ $name }` の暗黙の引数 `{ $field }` が、呼び出しから決まるものと食い違う
+kernel-implicit-named-none = 暗黙の引数を名前で書けるのは、暗黙のパラメータを持つ宣言の呼び出しだけ
+kernel-implicit-named-partial = 暗黙の引数を名前で書く呼び出しでは、`{ $name }` の明示の引数を { $count } 個すべて書く
+kernel-implicit-positional = `{ $name }` に明示のパラメータより多い引数が渡されている。暗黙の引数は `{ $name }(<x: v>, …)` と名前で書く
 kernel-implicit-no-match = `{ $name }` の暗黙の引数を推論できない: `{ $expected }` が `{ $found }` と一致しない
 kernel-implicit-cannot-infer = `{ $name }` の暗黙の引数をすべては推論できない
 kernel-implicit-generic = `{ $name }` のジェネリック `{ $generic }` を推論できない。引数も期待される型もそれを決めない。ジェネリクスを最初の引数として書く: `{ $name }({ $generics }, …)`
@@ -294,7 +301,7 @@ kernel-mut-field-family = `&mut { $name }.…` には、コンストラクタが
 kernel-mut-lends = `&mut` が貸すのは `var`、`&mut` パラメータ、またはそれらのフィールドである
 kernel-mut-argument = `&mut` は呼び出しの引数である
 kernel-mut-lambda = ラムダは状態を変えない
-kernel-mut-match-type = 状態を変える `match` には型が要る: `let x: T := match …` または `match e: T`
+kernel-mut-match-type = 状態を変える `match` には型が要る: `let x: T := match …` または `⊢ T from match e …`
 kernel-mut-var-type = `match` の中で変えるには `var { $name }` に型が要る: `var { $name }: T := …`
 kernel-mut-term = この項は証明言語の関数の中で状態を変えない
 kernel-mut-assign = `{ $name } :=` が代入するのは `var` か `&mut` パラメータである
@@ -328,3 +335,9 @@ kernel-pattern-unknown-implicit = `{ $name }` に `{ $implicit }` という名�
 kernel-nested-field-numbers = `{ $name }` が異なる個数のフィールドで書かれている
 kernel-nested-numeral-type = `{ $name }` は `Nat` ではない。数値パターンは自然数である
 kernel-nested-numeral-large = 数値パターン `{ $numeral }` は { $max } より大きい。{ $numeral } 重の `Succ` として読まれる。代わりに `Nat::eq` で比較する
+
+kernel-class-argument-arity = クラスの引数の数がパラメータ列と一致しない
+kernel-instance-first-order = インスタンス引数には第一階の構成子、リテラル、またはジェネリクスを指定する
+kernel-instance-ambiguous = インスタンスが一意に決まらない
+kernel-instance-resolution-cycle = インスタンス解決の制約が循環している
+kernel-instance-resolution-depth = インスタンス解決の入れ子が上限を超えている

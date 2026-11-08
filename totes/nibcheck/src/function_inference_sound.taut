@@ -22,7 +22,11 @@ pub theorem ck_infer_term_monomorphic_sound(
   declared: Ty,
   ctors: List(Pair(Text, Kind)),
   missing: env_find(env, name) = None,
-  found: Ordmap::get(leaf_functions(c), name, Ordmap::compare_text) = Some(SchemeMk(Nil, declared, Nil, ctors)),
+  found: Ordmap::get(
+    leaf_functions(c),
+    name,
+    Ordmap::compare_text
+  ) = Some(SchemeMk(Nil, declared, Nil, ctors)),
   clean: DiagnosticClean(
     ck_st(ck_infer_term_in(k, c, surface_term_mk(SkVar(name), start, end), env))
   )
@@ -33,13 +37,13 @@ pub theorem ck_infer_term_monomorphic_sound(
   surface_term_mk(SkVar(name), start, end),
   ck_val(ck_infer_term_in(k, c, surface_term_mk(SkVar(name), start, end), env))
 ) {
-  match k: MonomorphicFunctionTyping(
+  ⊢ MonomorphicFunctionTyping(
     ck_subst_of(c),
     env,
     leaf_functions(c),
     surface_term_mk(SkVar(name), start, end),
     ck_val(ck_infer_term_in(k, c, surface_term_mk(SkVar(name), start, end), env))
-  ) {
+  ) from match k {
     Zero => False::elim(
       diagnostic_error_impossible(
         c,
@@ -74,7 +78,11 @@ pub theorem ck_infer_monomorphic_sound(
   declared: Ty,
   ctors: List(Pair(Text, Kind)),
   missing: env_find(env, name) = None,
-  found: Ordmap::get(leaf_functions(c), name, Ordmap::compare_text) = Some(SchemeMk(Nil, declared, Nil, ctors)),
+  found: Ordmap::get(
+    leaf_functions(c),
+    name,
+    Ordmap::compare_text
+  ) = Some(SchemeMk(Nil, declared, Nil, ctors)),
   clean: DiagnosticClean(ck_st(ck_infer_in(k, c, surface_term_mk(SkVar(name), start, end), env)))
 ): MonomorphicFunctionTyping(
   ck_subst_of(c),

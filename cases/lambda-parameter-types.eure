@@ -1,0 +1,303 @@
+description = "A λ given to a function whose parameter type mentions a match or a generic function."
+
+@ cases.a-refl-arm-of-yn-cases-after-a-match
+files."main.tauto" = ```tauto
+import std::Nat
+
+fn walk(f: Nat, lim: Nat, n: Nat): Nat {
+  ⊢ Nat from match f {
+    Zero => n
+    Succ(g) => ⊢ Nat from match Nat::lt(n, lim) {
+      true => n
+      false => walk(g, lim, n)
+    }
+  }
+}
+
+theorem walk_n(f: Nat, lim: Nat, n: Nat): walk(f, lim, n) = n {
+  ⊢ walk(f, lim, n) = n from match f {
+    Zero => Refl
+    Succ(g) => Bool::cases(
+      (o: Bool) => (⊢ Nat from match o {
+        true => n
+        false => walk(g, lim, n)
+      }) = n,
+      Nat::lt(n, lim),
+      (e: Nat::lt(n, lim) = false) => walk_n(g, lim, n),
+      (e: Nat::lt(n, lim) = true) => Refl
+    )
+  }
+}
+```
+entry = "main.tauto"
+checks.walk = "checked"
+checks.walk_n = "checked"
+
+@ cases.a-match-under-an-arrow-in-a-motive
+files."main.tauto" = ```tauto
+import std::Nat
+theorem t(o: Bool, h: (⊢ Bool from match o {
+  true => true
+  false => false
+}) = true): o = true {
+  Bool::cases(
+    (p: Bool) => ((⊢ Bool from match p {
+      true => true
+      false => false
+    }) = true) -> (p = true),
+    o,
+    (e: o = false) => (h2: false = true) => h2,
+    (e: o = true) => (h2: true = true) => h2
+  )(h)
+}
+```
+entry = "main.tauto"
+checks.t = "checked"
+
+@ cases.a-written-parameter-type-is-compared-once-implicits-are-written
+files."main.tauto" = ```tauto
+import std::Nat
+
+inductive Box(A: Type): Type {
+  Mk(
+    f: (A) -> Bool,
+    r#law: ∀ a: A. (f(a) = true) -> (f(a) = true)
+  ): Box(A)
+}
+
+fn always<A>(a: A): Bool {
+  true
+}
+
+def b<A: Type>(): Box(A) := Box::Mk(
+  (a: A) => always(a),
+  (a: A, h: always(a) = true) => h
+)
+```
+entry = "main.tauto"
+checks.b = "checked"
+
+@ cases.a-wrong-written-parameter-type-under-a-generic-function
+files."main.tauto" = ```tauto
+import std::Nat
+
+inductive Box(A: Type): Type {
+  Mk(
+    f: (A) -> Bool,
+    r#law: ∀ a: A. (f(a) = true) -> (f(a) = true)
+  ): Box(A)
+}
+
+fn always<A>(a: A): Bool {
+  true
+}
+
+def b<A: Type>(): Box(A) := Box::Mk(
+  (a: A) => always(a),
+  (a: A, h: always(a) = false) => h
+)
+```
+entry = "main.tauto"
+checks.b = "error: the parameter `h` is written as"
+
+@ cases.a-written-parameter-type-follows-a-match-that-renames-what-it-names
+source = ```tauto
+inductive Yn: Type {
+  Yes: Yn
+  No: Yn
+}
+fn is_zero(n: Nat): Yn {
+  match n {
+    Zero => Yes
+    Succ(m) => No
+  }
+}
+fn pick(f: Nat, n: Nat): Nat {
+  match f {
+    Zero => n
+    Succ(f2) => pick(f2, Succ(n))
+  }
+}
+theorem bool_split(P: (Yn) -> Prop, o: Yn, a: (o = No) -> P(No), b: (o = Yes) -> P(Yes)): P(o) {
+  ⊢ P(o) from match o {
+    No => a(Refl)
+    Yes => b(Refl)
+  }
+}
+theorem t(f: Nat, n: Nat): pick(f, n) = pick(f, n) {
+  ⊢ pick(f, n) = pick(f, n) from match f {
+    Zero => Refl
+    Succ(f2) => bool_split(
+      (y: Yn) => pick(f2, Succ(n)) = pick(f2, Succ(n)),
+      is_zero(n),
+      (e: is_zero(n) = No) => t(f2, Succ(n)),
+      (e: is_zero(n) = Yes) => Refl
+    )
+  }
+}
+```
+checks."t" = "checked"
+
+@ cases.a-wrong-written-parameter-type-is-caught-after-a-match-renames
+source = ```tauto
+inductive Yn: Type {
+  Yes: Yn
+  No: Yn
+}
+fn is_zero(n: Nat): Yn {
+  match n {
+    Zero => Yes
+    Succ(m) => No
+  }
+}
+fn pick(f: Nat, n: Nat): Nat {
+  match f {
+    Zero => n
+    Succ(f2) => pick(f2, Succ(n))
+  }
+}
+theorem bool_split(P: (Yn) -> Prop, o: Yn, a: (o = No) -> P(No), b: (o = Yes) -> P(Yes)): P(o) {
+  ⊢ P(o) from match o {
+    No => a(Refl)
+    Yes => b(Refl)
+  }
+}
+theorem t(f: Nat, n: Nat): pick(f, n) = pick(f, n) {
+  ⊢ pick(f, n) = pick(f, n) from match f {
+    Zero => Refl
+    Succ(f2) => bool_split(
+      (y: Yn) => pick(f2, Succ(n)) = pick(f2, Succ(n)),
+      is_zero(n),
+      (e: is_zero(n) = Yes) => t(f2, Succ(n)),
+      e => Refl
+    )
+  }
+}
+```
+checks."t" = "error: the parameter `e` is written as"
+@ cases.a-written-type-follows-a-parameter-the-match-renames
+files."main.tauto" = ```tauto
+import std::Base
+import std::Data
+theorem walk(es: List(Nat), k: Nat, cmp: (Nat, Nat) -> Ordering): True {
+  ⊢ True from match es {
+    Nil => Trivial
+    Cons(p, rest) => Ordering::cases(
+      (c: Ordering) => True,
+      cmp(k, p),
+      (f: cmp(k, p) = Less) => walk(rest, k + 1, cmp),
+      (f: cmp(k, p) = Equal) => Trivial,
+      (f: cmp(k, p) = Greater) => walk(rest, k, cmp)
+    )
+  }
+}
+```
+checks.walk = "checked"
+entry = "main.tauto"
+
+@ cases.a-wrong-written-type-under-a-renamed-parameter-is-rejected
+files."main.tauto" = ```tauto
+import std::Base
+import std::Data
+theorem walk(es: List(Nat), k: Nat, cmp: (Nat, Nat) -> Ordering): True {
+  ⊢ True from match es {
+    Nil => Trivial
+    Cons(p, rest) => Ordering::cases(
+      (c: Ordering) => True,
+      cmp(k, p),
+      (f: cmp(k, p) = Greater) => walk(rest, k + 1, cmp),
+      (f: cmp(k, p) = Equal) => Trivial,
+      (f: cmp(k, p) = Greater) => walk(rest, k, cmp)
+    )
+  }
+}
+```
+checks.walk = "error: is written as"
+entry = "main.tauto"
+
+@ cases.a-later-written-type-names-an-earlier-parameter-in-a-match-arm
+source = ```tauto
+inductive T: Type {
+  A: T
+  V(i: Nat): T
+}
+theorem oc<A: Type>(
+  P: (Option(A)) -> Prop,
+  o: Option(A),
+  q: (o = None) -> P(None),
+  r: ∀ x: A. (o = Some(x)) -> P(Some(x))
+): P(o) {
+  ⊢ P(o) from match o {
+    None => q(Refl)
+    Some(x) => r(x, Refl)
+  }
+}
+fn get(i: Nat): Option(T) { None }
+theorem m(t: T): t = t {
+  ⊢ t = t from match t {
+    V(i) => oc(
+      (o: Option(T)) => V(i) = V(i),
+      get(i),
+      (e: get(i) = None) => Refl,
+      (y: T, e: get(i) = Some(y)) => Refl
+    )
+    A => Refl
+  }
+}
+```
+checks.m = "checked"
+
+@ cases.a-wrong-later-written-type-is-caught
+source = ```tauto
+theorem k(P: Prop, r: ∀ x: Nat. (x = x) -> P): P { r(Zero, Refl) }
+theorem m(): Zero = Zero {
+  k(Zero = Zero, (y: Nat, e: y = Succ(y)) => Refl)
+}
+```
+checks.m = "error: the parameter `e` is written as"
+
+@ cases.a-written-type-in-an-arm-reads-the-matched-value-as-the-constructor
+source = ```tauto
+inductive T: Type {
+  A: T
+  V(i: Nat): T
+  W(i: Nat): T
+}
+fn kind(t: T): Nat {
+  match t {
+    A => Zero
+    V(i) => i
+    W(i) => i
+  }
+}
+theorem m(t: T, n: Nat, h: kind(t) = n): kind(t) = n {
+  (⊢ (kind(t) = n) -> kind(t) = n from match t {
+    A => (h: Zero = n) => h
+    V(i) => (h: kind(t) = n) => h
+    _ => (h: kind(t) = n) => h
+  })(h)
+}
+```
+checks.m = "checked"
+
+@ cases.a-bare-nil-takes-its-generic-from-a-goal-the-match-reduced
+source = ```tauto
+inductive Mu(A: Type): Type {
+  Mk(a: A, n: Nat): Mu(A)
+}
+def Fr<A: Type>(c: Nat, m: Mu(A)): Prop := m = m
+theorem ret<A: Type>(c: Nat, v: A): Fr(c, Mu::Mk(v, c)) { Refl }
+fn each(c: Nat, ts: List(Nat)): Mu(List(Nat)) {
+  ⊢ Mu(List(Nat)) from match ts {
+    Nil => Mu::Mk(Nil, c)
+    Cons(t, rest) => each(c, rest)
+  }
+}
+theorem t(c: Nat, ts: List(Nat)): Fr(c, each(c, ts)) {
+  ⊢ Fr(c, each(c, ts)) from match ts {
+    Nil => ret(c, Nil)
+    Cons(x, rest) => t(c, rest)
+  }
+}
+```
+checks.t = "checked"

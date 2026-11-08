@@ -2,11 +2,37 @@
 // is taken by `Task::join`;
 // where its body runs is up to the handler of `spawn`.
 
-// A flag the host raises once and never lowers: the end of a task, or a
-// mutex's content handed to the one that asked for it. Only this file names
-// the type, so a program's own `Signal` never meets it, and only the externs
-// below make one.
-shared struct Signal {}
+// A flag raised once and never lowered: a task finishing, a mutex's content
+// being handed over, or a cancellation request. Only the externs make flags.
+pub shared struct Signal {}
+shared struct CancelSource {}
+
+module Signal {
+  extern {
+    fn fresh(): CancelSource
+    fn raise(s: CancelSource): Unit
+    fn listen(s: CancelSource): Signal
+    fn is_raised(s: Signal): Bool
+    fn either(a: Signal, b: Signal): Signal
+  }
+}
+
+// A request is a notification. A task acknowledges it by returning normally.
+pub shared struct Cancellation { source: CancelSource }
+pub shared struct CancelToken { signal: Signal }
+pub(open) enum Cancelled { Cancelled }
+
+module Cancellation {
+  pub fn new(): Cancellation { Cancellation { source: Signal::fresh() } }
+  pub fn token(c: Cancellation): CancelToken { CancelToken { signal: Signal::listen(c.source) } }
+  pub fn request(c: Cancellation): Unit { Signal::raise(c.source) }
+}
+
+module CancelToken {
+  pub fn signal(c: CancelToken): Signal { c.signal }
+  pub fn is_requested(c: CancelToken): Bool { Signal::is_raised(c.signal) }
+}
+
 // Waits until the signal is raised. Every wait between tasks is this one
 // effect, so a host may run many tasks on one thread and go on with the
 // others while one waits. It appears in a row, but the host alone answers
@@ -39,6 +65,7 @@ effect Host {
   stderr,
   stdin_bytes,
   stdout_flush,
+  shutdown_token,
   argv,
   wall_clock,
   monotonic_clock,
@@ -49,10 +76,14 @@ effect Host {
   fs_write,
   fs_read_bytes,
   fs_write_bytes,
+  fs_read_under,
+  fs_read_bytes_under,
   fs_create_dir,
   fs_list_dir,
   fs_remove,
   fs_stat,
+  fs_read_link,
+  fs_write_new,
   fs_rename,
   fs_copy,
   fs_canonicalize,
@@ -139,7 +170,7 @@ module Task {
     match ts {
       Nil => Nil
       Cons(t, rest) => {
-        let a := join(t)
+        let a := Task::join(t)
         Cons(a, join_all(rest))
       }
     }
@@ -151,10 +182,10 @@ module Task {
 pub fn par<A, B>(
   f: () -> A ! {Div, wait},
   g: () -> B ! {Div, wait}
-): Pair(A, B) ! {∀ T. spawn(T), wait} {
+): A × B ! {∀ T. spawn(T), wait} {
   let a := perform spawn(f)
   let b := perform spawn(g)
-  Pair { fst: Task::join(a), snd: Task::join(b) }
+  #(Task::join(a), Task::join(b))
 }
 
 // Any number of bodies at once: all are started before any is joined. As
@@ -313,9 +344,11 @@ module Semaphore {
 // pace of its receivers, and `Channel::recv` waits while it is empty. Values
 // come out in the order they went in. `slots` counts the free places and
 // `items` the values in the queue, plus one once the channel is closed.
-pub(open) shared struct Channel(
-  A: Type
-) { queue: Mutex(Fifo(A)), slots: Semaphore, items: Semaphore }
+pub(open) shared struct Channel(A: Type) {
+  queue: Mutex(Fifo(A)),
+  slots: Semaphore,
+  items: Semaphore
+}
 
 // Values are pushed on `back` and popped from `front`; when `front` runs
 // out, `back` is moved onto it in reverse.

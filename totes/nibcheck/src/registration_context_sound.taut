@@ -19,7 +19,7 @@ pub theorem ck_effect_param_frame_context(
   p: Option(SurfaceTerm),
   generics: Ordmap(Text, Ty)
 ): CkContextFrame(c, ck_effect_param(c, e, p, generics)) {
-  match p: CkContextFrame(c, ck_effect_param(c, e, p, generics)) {
+  ⊢ CkContextFrame(c, ck_effect_param(c, e, p, generics)) from match p {
     None => (ordinary => Refl)
     Some(x) => context_rewrap(
       c,
@@ -67,7 +67,7 @@ pub theorem ck_effect_params_frame_context(
   e: SurfaceEffect,
   generics: Ordmap(Text, Ty)
 ): CkContextFrame(c, ck_effect_params(ps, c, e, generics)) {
-  match ps: CkContextFrame(c, ck_effect_params(ps, c, e, generics)) {
+  ⊢ CkContextFrame(c, ck_effect_params(ps, c, e, generics)) from match ps {
     Nil => (ordinary => Refl)
     Cons(p, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => CkContextFrame(c, z),
@@ -90,7 +90,7 @@ pub theorem registration_quant_parsed_frame_context(
   q: Text,
   o: Option(Quant)
 ): CkContextFrame(c, registration_quant_parsed(c, e, q, o)) {
-  match o: CkContextFrame(c, registration_quant_parsed(c, e, q, o)) {
+  ⊢ CkContextFrame(c, registration_quant_parsed(c, e, q, o)) from match o {
     Some(x) => (ordinary => Refl)
     None => (ordinary => Refl)
   }
@@ -101,7 +101,7 @@ pub theorem registration_quant_resume_frame_context(
   e: SurfaceEffect,
   r#resume: Option(Text)
 ): CkContextFrame(c, registration_quant_resume(c, e, r#resume)) {
-  match r#resume: CkContextFrame(c, registration_quant_resume(c, e, r#resume)) {
+  ⊢ CkContextFrame(c, registration_quant_resume(c, e, r#resume)) from match r#resume {
     None => (ordinary => Refl)
     Some(q) => registration_quant_parsed_frame_context(c, e, q, quant_parse(q))
   }
@@ -123,7 +123,7 @@ pub theorem registration_effect_result_frame_context(
   generics: Ordmap(Text, Ty),
   o: Option(SurfaceTerm)
 ): CkContextFrame(c, registration_effect_result_k(c, generics, o)) {
-  match o: CkContextFrame(c, registration_effect_result_k(c, generics, o)) {
+  ⊢ CkContextFrame(c, registration_effect_result_k(c, generics, o)) from match o {
     None => (ordinary => Refl)
     Some(r) => context_rewrap(
       c,
@@ -239,7 +239,7 @@ pub theorem ck_register_ctors_context(
   is_struct: Bool,
   i: Nat
 ): CkContextFrame(c, ck_register_ctors(ctors, c, dname, i)) {
-  match ctors: CkContextFrame(c, ck_register_ctors(ctors, c, dname, i)) {
+  ⊢ CkContextFrame(c, ck_register_ctors(ctors, c, dname, i)) from match ctors {
     Nil => ordinary => Refl
     Cons(ctor, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkContextFrame(c, m),

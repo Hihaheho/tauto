@@ -42,7 +42,7 @@ pub theorem body_finish_after(
   ordered: CkDatasOrdered(ck_st(m)),
   present: DataBodyRegistered(ck_datas_of(ck_st(m)), source)
 ): DataBodyRegistered(ck_datas_of(ck_st(registration_finish_after(program, m))), source) {
-  match m: DataBodyRegistered(ck_datas_of(ck_st(registration_finish_after(program, m))), source) {
+  ⊢ DataBodyRegistered(ck_datas_of(ck_st(registration_finish_after(program, m))), source) from match m {
     mut1(ignored, next) => Eq::subst(
       (r: Mut1(Unit, Checker)) => DataBodyRegistered(ck_datas_of(ck_st(r)), source),
       Eq::sym(ck_rewrap1_id(ck_finish_datas(next, program))),
@@ -55,7 +55,7 @@ pub theorem body_finish_after_clean(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(registration_finish_after(program, m)))
 ): DiagnosticClean(ck_st(m)) {
-  match m: DiagnosticClean(ck_st(m)) {
+  ⊢ DiagnosticClean(ck_st(m)) from match m {
     mut1(ignored, next) => ck_finish_datas_errors(
       next,
       program,
@@ -74,7 +74,7 @@ pub theorem body_program_after_registered(
   fresh: UniqueDataNames(types_data_decls(program)),
   clean: DiagnosticClean(ck_st(registration_program_after(program, m)))
 ): DataBodyRegistered(ck_datas_of(ck_st(registration_program_after(program, m))), source) {
-  match m: DataBodyRegistered(ck_datas_of(ck_st(registration_program_after(program, m))), source) {
+  ⊢ DataBodyRegistered(ck_datas_of(ck_st(registration_program_after(program, m))), source) from match m {
     mut1(ignored, next) => body_finish_after(
       program,
       source,
@@ -138,7 +138,9 @@ pub theorem body_finish_after_context(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(registration_finish_after(program, m)))
 ): written_context(ck_st(registration_finish_after(program, m))) = written_context(ck_st(m)) {
-  match m: written_context(ck_st(registration_finish_after(program, m))) = written_context(ck_st(m)) {
+  ⊢ written_context(
+    ck_st(registration_finish_after(program, m))
+  ) = written_context(ck_st(m)) from match m {
     mut1(ignored, next) => Eq::trans(
       Eq::congr(
         (r: Mut1(Unit, Checker)) => written_context(ck_st(r)),
@@ -158,7 +160,9 @@ pub theorem body_program_after_context(
   ordinary: frame_under_borrow(ck_st(m)) = false,
   clean: DiagnosticClean(ck_st(registration_program_after(program, m)))
 ): written_context(ck_st(registration_program_after(program, m))) = written_context(ck_st(m)) {
-  match m: written_context(ck_st(registration_program_after(program, m))) = written_context(ck_st(m)) {
+  ⊢ written_context(
+    ck_st(registration_program_after(program, m))
+  ) = written_context(ck_st(m)) from match m {
     mut1(ignored, next) => Eq::trans(
       body_finish_after_context(program, ck_program_data(program, next), clean),
       ck_program_data_context(program, next, ordinary)
@@ -201,7 +205,7 @@ pub theorem body_program_after_clean(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(registration_program_after(program, m)))
 ): DiagnosticClean(ck_st(m)) {
-  match m: DiagnosticClean(ck_st(m)) {
+  ⊢ DiagnosticClean(ck_st(m)) from match m {
     mut1(ignored, next) => ck_program_data_errors(
       program,
       next,

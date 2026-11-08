@@ -354,6 +354,7 @@ fn ignored_credentials_are_not_read_or_copied() {
     ] {
         assert!(
             Command::new("git")
+                .args(["-c", "commit.gpgsign=false"])
                 .current_dir(&source)
                 .args(args)
                 .status()
@@ -525,6 +526,7 @@ fn ignored_active_workspace_config_cannot_change_snapshot_registry() {
     ] {
         assert!(
             Command::new("git")
+                .args(["-c", "commit.gpgsign=false"])
                 .current_dir(&source)
                 .args(args)
                 .status()

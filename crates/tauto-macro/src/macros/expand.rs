@@ -14,7 +14,7 @@ use super::node::Node;
 use super::origin::{EXPANSION_BASE, SpanMap};
 use super::scope::{self, scopes_of, split};
 use super::syn::Lower;
-use crate::eval::{Host, RunError, call_function};
+use crate::eval::{Host, RunError, call_bound_function};
 use tauto_message::{Message, msg};
 
 /// The built-in `include_text!`, which the reader replaces by the file's text before
@@ -88,24 +88,46 @@ pub struct Expansion {
     pub allocations: u64,
     /// The names made with `syn_ident_like`.
     pub captures: Vec<String>,
-    /// What the macro was given, for `tauto macro inspect`: the syntax's tree, or the judgement of a `Judgement`.
+    /// The judgement a `Judgement` macro was given; see `input_text`.
     pub input: String,
+    /// The syntax tree a macro was given; printed only when asked for, since it can be large.
+    pub input_tree: Option<Node>,
     pub output: String,
 }
 
+impl Expansion {
+    /// What the macro was given, for `tauto macro inspect`.
+    pub fn input_text(&self) -> String {
+        match &self.input_tree {
+            Some(tree) => format!("{tree:#?}"),
+            None => self.input.clone(),
+        }
+    }
+}
+
 pub struct Output {
+    /// The binding session of declarations evaluated during expansion.
+    pub bindings: tauto_surface::resolve::Resolver,
+    pub generated_executable: HashSet<crate::surface::Name>,
     pub stmts: Vec<Stmt>,
     pub files: Vec<Vec<Stmt>>,
-    pub errors: Vec<(String, Span)>,
+    pub errors: Vec<(Message, Span)>,
     /// Edits that answer an error, by where the error is.
     pub fixes: Vec<(Span, crate::surface::Fix)>,
     pub spans: SpanMap,
     pub expansions: Vec<Expansion>,
     /// `macro_warn`s: message, code, where.
-    pub warnings: Vec<(String, Span)>,
+    pub warnings: Vec<(Message, Span)>,
+    /// The names each file writes in a typed macro's argument (`${lem(n)}` in
+    /// `proof!`), which its import lists count as uses: the file, the name bound,
+    /// the name as written, and where.
+    pub written: Vec<(usize, crate::surface::Name, String, Span)>,
     pub literals: Vec<crate::syntax::LiteralUse>,
     /// The functions registered for syntaxes (`with fmt f, tokens g`).
     pub registrations: Vec<crate::syntax::Registration>,
+    /// The functions that run only while the program is expanded: the
+    /// functions of the macros and those only they reach ([`expansion_only`]).
+    pub expansion_only: HashSet<crate::surface::Name>,
 }
 
 /// Expands the macros of `files`, each one's statements as read (modules not
@@ -141,6 +163,7 @@ pub fn expand_files_in(
 /// first files are given the same goes on from it ([`expand_files_resuming`]).
 #[derive(Clone)]
 pub struct Saved {
+    bindings: tauto_surface::resolve::Resolver,
     files: usize,
     by_file: Vec<Vec<Stmt>>,
     done_ends: Vec<usize>,
@@ -150,10 +173,12 @@ pub struct Saved {
     lib: Option<Rc<Lib>>,
     spans: SpanMap,
     expansions: Vec<Expansion>,
-    errors: Vec<(String, Span)>,
+    errors: Vec<(Message, Span)>,
     fixes: Vec<(Span, crate::surface::Fix)>,
-    warnings: Vec<(String, Span)>,
+    warnings: Vec<(Message, Span)>,
+    written: Vec<(usize, crate::surface::Name, String, Span)>,
     typed_macros: HashMap<String, bool>,
+    effect_sets: crate::surface::effect_sets::Sets,
 }
 
 impl Saved {
@@ -175,8 +200,24 @@ pub fn expand_files_resuming(
     from: Option<Saved>,
     save_before: Option<usize>,
 ) -> (Output, Option<Saved>) {
+    expand_files_resuming_bound(files, opts, seeing, modules, from, save_before, None)
+}
+
+/// Expands a revision using the caller's reserved source identities.
+pub fn expand_files_resuming_bound(
+    files: Vec<Vec<Stmt>>,
+    opts: &Options,
+    seeing: Vec<HashMap<String, String>>,
+    modules: Vec<String>,
+    from: Option<Saved>,
+    save_before: Option<usize>,
+    bindings: Option<tauto_surface::resolve::Resolver>,
+) -> (Output, Option<Saved>) {
     let checker = opts.checker.clone();
     let mut e = Expander {
+        bindings: bindings.unwrap_or_else(|| {
+            tauto_surface::resolve::Resolver::new(tauto_surface::bindings::library_bindings())
+        }),
         checker,
         opts,
         seeing,
@@ -192,15 +233,26 @@ pub fn expand_files_resuming(
         errors: Vec::new(),
         fixes: Vec::new(),
         warnings: Vec::new(),
+        written: Vec::new(),
+        file_names: Vec::new(),
         file_steps: 0,
         file_expanded: false,
         elab_prefix: Vec::new(),
+        elab_module: Vec::new(),
+        call_module: Vec::new(),
+        call_bound: HashSet::new(),
+        typed_rounds: 0,
         attr_before: Vec::new(),
         typed_macros: HashMap::new(),
+        effect_sets: crate::surface::effect_sets::Sets::new(),
+        done_key: None,
+        step_texts: None,
+        in_call: 0,
     };
     let mut by_file = Vec::new();
     let mut first = 0;
     if let Some(s) = from {
+        e.bindings = s.bindings;
         first = s.files;
         by_file = s.by_file;
         e.done_ends = s.done_ends;
@@ -213,7 +265,9 @@ pub fn expand_files_resuming(
         e.errors = s.errors;
         e.fixes = s.fixes;
         e.warnings = s.warnings;
+        e.written = s.written;
         e.typed_macros = s.typed_macros;
+        e.effect_sets = s.effect_sets;
     }
     let mut saved = None;
     for (i, stmts) in files.into_iter().enumerate().skip(first) {
@@ -221,11 +275,21 @@ pub fn expand_files_resuming(
             saved = Some(e.save(&by_file));
         }
         e.file = i;
+        e.done_key = None;
         e.syntaxes.file = Some(i);
         e.file_steps = 0;
         e.file_expanded = false;
         e.checker.begin_file(i);
         let stmts = e.file(stmts);
+        e.forget_file_names();
+        // The library built for this file holds only the files before it, so the expansion
+        // saved before this file, which goes on to it again, keeps it too.
+        if save_before == Some(i)
+            && let (Some(s), Some(lib)) = (&mut saved, &e.lib)
+            && lib.built_for == i
+        {
+            s.lib = Some(lib.clone());
+        }
         by_file.push(stmts.clone());
         e.done.extend(stmts);
         e.done_ends.push(e.done.len());
@@ -235,7 +299,19 @@ pub fn expand_files_resuming(
     }
     e.errors.extend(std::mem::take(&mut e.syntaxes.errors));
     e.fixes.extend(std::mem::take(&mut e.syntaxes.fixes));
+    for registration in &mut e.syntaxes.registrations {
+        registration.function = e.bindings.global(&registration.function);
+    }
+    let macros: Vec<crate::surface::Name> = e
+        .macros
+        .values()
+        .map(|r| e.bindings.global(&r.function))
+        .collect();
+    let expansion_only = expansion_only(&e.done, &macros);
     let out = Output {
+        expansion_only,
+        bindings: e.bindings,
+        generated_executable: e.syntaxes.generated_executable,
         stmts: e.done,
         files: by_file,
         errors: e.errors,
@@ -243,19 +319,93 @@ pub fn expand_files_resuming(
         spans: e.spans,
         expansions: e.expansions,
         warnings: e.warnings,
+        written: e.written,
         literals: e.syntaxes.uses.into_inner(),
         registrations: e.syntaxes.registrations,
     };
     (out, saved)
 }
 
+/// The functions of `stmts` that run only while the program is expanded: the
+/// `macros` and the functions they reach that no other statement reaches. A
+/// program that runs does not need them, and what they call (`Syn::global`)
+/// has no meaning when it runs.
+pub fn expansion_only(
+    stmts: &[Stmt],
+    macros: &[crate::surface::Name],
+) -> HashSet<crate::surface::Name> {
+    use crate::surface::Name;
+    use crate::surface::walk::{Node, values_stmt};
+    if macros.is_empty() {
+        return HashSet::new();
+    }
+    fn fns<'a>(stmts: &'a [Stmt], out: &mut Vec<&'a crate::surface::FnDecl>) {
+        for s in stmts {
+            match s {
+                Stmt::Fn(f) => out.push(f),
+                Stmt::Module { items, .. } | Stmt::Mutual { items, .. } => fns(items, out),
+                Stmt::Attributed { stmt, .. } => fns(std::slice::from_ref(&**stmt), out),
+                _ => {}
+            }
+        }
+    }
+    let uses = |s: &Stmt| {
+        let mut out = Vec::new();
+        values_stmt(s, &mut |n| {
+            if let Node::Term(t) = n
+                && let TermKind::Var(name) = &*t.kind
+            {
+                out.push(name.clone());
+            }
+        });
+        out
+    };
+    let mut decls = Vec::new();
+    fns(stmts, &mut decls);
+    let called: HashMap<&Name, Vec<Name>> = decls
+        .iter()
+        .map(|f| (&f.name, uses(&Stmt::Fn((*f).clone()))))
+        .collect();
+    let reach = |from: Vec<Name>| {
+        let mut seen = HashSet::new();
+        let mut work = from;
+        while let Some(n) = work.pop() {
+            if let Some(c) = called.get(&n)
+                && seen.insert(n)
+            {
+                work.extend(c.iter().cloned());
+            }
+        }
+        seen
+    };
+    let expanded = reach(macros.to_vec());
+    // What runs: the statements that are not functions, and the functions no
+    // macro reaches (a library exports them).
+    let mut from: Vec<Name> = decls
+        .iter()
+        .filter(|f| !expanded.contains(&f.name))
+        .map(|f| f.name.clone())
+        .collect();
+    for s in stmts {
+        if !matches!(
+            s,
+            Stmt::Fn(_) | Stmt::Module { .. } | Stmt::Mutual { .. } | Stmt::Attributed { .. }
+        ) {
+            from.extend(uses(s));
+        }
+    }
+    let runs = reach(from);
+    expanded.into_iter().filter(|n| !runs.contains(n)).collect()
+}
+
 mod elab;
 mod step;
+pub use step::{keep_steps, set_sources};
 mod typed;
 
 #[derive(Clone)]
 struct Reg {
-    function: String,
+    function: crate::surface::Name,
     file: usize,
 }
 
@@ -281,10 +431,15 @@ enum Shape {
 
 #[derive(Clone)]
 struct Info {
+    function: crate::surface::Name,
     input: Input,
     shape: Shape,
     /// An attribute macro: it takes the declaration it is written before, as a second argument.
     decorated: bool,
+    /// A macro placed in a proof: its first argument is the goal and context
+    /// of the place it is called at, its second what is written in the call,
+    /// which is not checked.
+    placed: bool,
 }
 
 /// The files before the current one, checked: what a macro runs in.
@@ -292,7 +447,7 @@ struct Lib {
     program: Program,
     report: TypeReport,
     rows: RowReport,
-    problem: Option<String>,
+    problem: Option<Message>,
     /// The functions left out because they did not check, with why.
     left_out: Vec<(String, Message)>,
     /// Whether what the kernel accepts was extracted into it, or found not to be extractable.
@@ -303,11 +458,25 @@ struct Lib {
     built_for: usize,
 }
 
+impl Lib {
+    /// Looks up the declaration captured by the source macro registration.
+    fn function(
+        &self,
+        reference: &crate::surface::Name,
+    ) -> Option<(&crate::surface::Name, &crate::types::Scheme)> {
+        self.report.schemes.get_key_value(reference)
+    }
+}
+
 struct Expander<'o> {
+    bindings: tauto_surface::resolve::Resolver,
     checker: Arc<dyn super::checker::TypedChecker>,
     opts: &'o Options,
     /// What each file's short names mean, by file (`expand_files_seeing`).
     seeing: Vec<HashMap<String, String>>,
+    /// The short names the file being expanded gives its own declarations,
+    /// each with what it meant before.
+    file_names: Vec<(String, tauto_surface::bindings::SpellingState)>,
     /// The module of each file, by file; empty when not known.
     modules: Vec<String>,
     /// Where each file's statements end in `done`.
@@ -319,17 +488,37 @@ struct Expander<'o> {
     lib: Option<Rc<Lib>>,
     spans: SpanMap,
     expansions: Vec<Expansion>,
-    errors: Vec<(String, Span)>,
+    errors: Vec<(Message, Span)>,
     fixes: Vec<(Span, crate::surface::Fix)>,
-    warnings: Vec<(String, Span)>,
+    warnings: Vec<(Message, Span)>,
+    written: Vec<(usize, crate::surface::Name, String, Span)>,
     file_steps: u64,
     file_expanded: bool,
     /// The declarations before the one a typed macro is in, for `elab_*`.
     elab_prefix: Vec<Stmt>,
+    /// The modules, outermost first, of the declaration a macro runs in.
+    elab_module: Vec<String>,
+    /// The modules, outermost first, of the declaration whose untyped macro
+    /// calls are being expanded.
+    call_module: Vec<String>,
+    /// The names that declaration binds (`in_call_module`).
+    call_bound: HashSet<String>,
+    /// How many times a declaration has been expanded again because a
+    /// typed or placed macro left another call in its output.
+    typed_rounds: usize,
     attr_before: Vec<Stmt>,
     /// Whether each macro of an earlier file takes a judgement: its function
     /// reads the same in every later file.
     typed_macros: HashMap<String, bool>,
+    effect_sets: crate::surface::effect_sets::Sets,
+    /// A hash of `done`, for the steps kept (`step::keep_steps`); made again for each file.
+    done_key: Option<u64>,
+    /// What each tactic made for the declaration whose steps are being expanded, as text,
+    /// to be kept for the next reading of the same files (`step::keep_steps`).
+    step_texts: Option<Vec<String>>,
+    /// How many unexpanded macro calls the term being expanded is in the argument of: a
+    /// tactic called there is read by that macro, and one called outside them is an error.
+    in_call: usize,
 }
 
 enum Made {
@@ -338,9 +527,37 @@ enum Made {
 }
 
 impl Expander<'_> {
+    fn global_resolver(&self, macro_name: &str) -> crate::eval::ResolveGlobalFn {
+        let file = self.macros[macro_name].file;
+        let visible = self.seeing.get(file).cloned();
+        let bindings = self.bindings.clone();
+        Rc::new(move |spelling| {
+            let reference = match &visible {
+                Some(names) => match names.get(spelling).cloned().or_else(|| {
+                    spelling.rmatch_indices("::").find_map(|(at, _)| {
+                        names
+                            .get(&spelling[..at])
+                            .map(|owner| format!("{owner}{}", &spelling[at..]))
+                    })
+                }) {
+                    Some(qualified) => bindings.source_reference(&qualified),
+                    None => tauto_surface::identity::DeclRef::primitive(spelling)
+                        .or_else(|| {
+                            tauto_surface::identity::SortSymbol::parse(spelling)
+                                .map(tauto_surface::identity::DeclRef::of_sort)
+                        })
+                        .map(Into::into),
+                },
+                None => bindings.source_reference(spelling),
+            };
+            reference.and_then(|name| name.as_global().cloned()).ok_or_else(||
+                format!("macro.global: {spelling} is not a unique declaration visible in the macro definition"))
+        })
+    }
     /// What the expansion has left so far, with the files it made (`by_file`).
     fn save(&self, by_file: &[Vec<Stmt>]) -> Saved {
         Saved {
+            bindings: self.bindings.clone(),
             files: by_file.len(),
             by_file: by_file.to_vec(),
             done_ends: self.done_ends.clone(),
@@ -353,31 +570,45 @@ impl Expander<'_> {
             errors: self.errors.clone(),
             fixes: self.fixes.clone(),
             warnings: self.warnings.clone(),
+            written: self.written.clone(),
             typed_macros: self.typed_macros.clone(),
+            effect_sets: self.effect_sets.clone(),
         }
     }
 
-    /// Where `name`, a global the expansion of the last of `scopes` wrote,
-    /// comes from: the file of its macro, and what that file means by the
-    /// name when that is another name. The name is read as that file reads
-    /// it, not as the file of the call does.
-    pub(super) fn macro_sees(&self, scopes: &[u64], name: &str) -> Option<(usize, Option<String>)> {
-        let id = *scopes.iter().max()?;
-        let made = self
-            .expansions
-            .get(usize::try_from(id).ok()?.checked_sub(1)?)?;
-        let reg = self.macros.get(&made.macro_name)?;
-        let seen = self.seeing.get(reg.file).and_then(|s| s.get(name)).cloned();
-        Some((reg.file, seen))
-    }
-
     fn error(&mut self, code: &str, message: impl Into<Message>, at: Span) {
-        self.errors
-            .push((format!("{code}: {}", message.into()), at));
+        self.errors.push((
+            msg!("macro-coded", code = code, message = message.into()),
+            at,
+        ));
     }
 
     fn file(&mut self, stmts: Vec<Stmt>) -> Vec<Stmt> {
-        let mut stmts = self.syntaxes.declare_all(stmts);
+        let stmts = self.syntaxes.declare_all(stmts);
+        let (mut stmts, errors) = {
+            // The constructors of the files before this one: a pattern here
+            // that writes one alone is that constructor, not a module of the
+            // prelude with its name.
+            let mut ctors = std::collections::HashSet::new();
+            crate::surface::modules::declared_ctors(&self.done, &mut ctors);
+            crate::surface::modules::flatten_in_prelude(stmts, &ctors)
+        };
+        crate::surface::effect_sets::collect(&stmts, &mut self.effect_sets);
+        self.errors.extend(errors);
+        self.reserve_file_declarations(&mut stmts);
+        let declarations = self.bindings.declarations();
+        self.errors
+            .extend(crate::surface::effect_sets::expand_resolving(
+                &mut stmts,
+                &self.effect_sets,
+                &mut |name| {
+                    if let Some(spelling) = name.spelling()
+                        && let Some(reference) = declarations.effect(spelling)
+                    {
+                        *name = reference.clone().into();
+                    }
+                },
+            ));
         let mut kept = Vec::new();
         for s in stmts.drain(..) {
             if let Stmt::Macro {
@@ -395,10 +626,16 @@ impl Expander<'_> {
                         span,
                     );
                 } else {
+                    let function = self
+                        .seeing
+                        .get(self.file)
+                        .and_then(|visible| visible.get(&function))
+                        .cloned()
+                        .unwrap_or(function);
                     self.macros.insert(
                         name,
                         Reg {
-                            function,
+                            function: self.bindings.global(&function.into()),
                             file: self.file,
                         },
                     );
@@ -415,8 +652,7 @@ impl Expander<'_> {
         let mut stmts = self.stmts(stmts);
         if self.file_expanded {
             let ctors = ctor_names(self.done.iter().chain(&stmts));
-            stmts =
-                scope::resolve_seeing(stmts, &ctors, &|scopes, name| self.macro_sees(scopes, name));
+            stmts = scope::resolve(stmts, &ctors);
         }
         let mut stmts = self.step_pass(stmts);
         // Quoted inputs can be copied into several executable positions.
@@ -425,22 +661,148 @@ impl Expander<'_> {
         for stmt in &mut stmts {
             walk::stmt(stmt, &mut SurfaceTerm::freshen);
         }
+        self.reserve_file_declarations(&mut stmts);
         self.typed_pass(stmts)
+    }
+
+    /// The short names the file just expanded gave its own declarations
+    /// mean again what they meant before it.
+    fn forget_file_names(&mut self) {
+        while let Some((spelling, state)) = self.file_names.pop() {
+            self.bindings.restore_spelling(&spelling, state);
+        }
+    }
+
+    fn reserve_file_declarations(&mut self, stmts: &mut [Stmt]) {
+        // A file of `std` that declares a language's type (`Never` of
+        // `std/UInt.taut`) declares the type the prelude names, as the
+        // kernel reads it: every file writes it by that one name, so a file
+        // that does not import this one (`std/proof/Lang.taut`) means the
+        // same declaration, and so does the library a macro runs in.
+        if let Some(module) = self.modules.get(self.file).cloned() {
+            fn language_type(module: &str, statement: &mut Stmt) {
+                let reference = crate::surface::qualify::std_language_type(module, statement)
+                    .and_then(tauto_surface::bindings::library_reference);
+                match statement {
+                    Stmt::Inductive(d) if matches!(d.name, crate::surface::Name::Spelled(_)) => {
+                        if let Some(reference) = reference {
+                            d.name = reference;
+                        }
+                    }
+                    Stmt::Attributed { stmt, .. } => language_type(module, stmt),
+                    _ => {}
+                }
+            }
+            for statement in stmts.iter_mut() {
+                language_type(&module, statement);
+            }
+        }
+        if let Some(visible) = self.seeing.get(self.file) {
+            fn declarations<'a>(
+                statement: &'a Stmt,
+                out: &mut Vec<(&'a crate::surface::Name, bool)>,
+            ) {
+                match statement {
+                    Stmt::Fn(f) => out.push((&f.name, false)),
+                    Stmt::Theorem(d) | Stmt::Def(d) => out.push((&d.name, false)),
+                    Stmt::Struct(d) | Stmt::Enum(d) => out.push((&d.name, false)),
+                    Stmt::Inductive(d) => out.push((&d.name, false)),
+                    Stmt::Effect(d) => out.push((&d.name, true)),
+                    Stmt::Class(d) => out.push((&d.name, false)),
+                    Stmt::Module { items, .. } | Stmt::Mutual { items, .. } => {
+                        for item in items {
+                            declarations(item, out);
+                        }
+                    }
+                    Stmt::Attributed { stmt, .. } => declarations(stmt, out),
+                    _ => {}
+                }
+            }
+            let mut declared = Vec::new();
+            for statement in stmts.iter() {
+                declarations(statement, &mut declared);
+            }
+            for (name, effect) in declared {
+                if let Some(spelling) = name.spelling() {
+                    let full = if visible.values().any(|full| full == spelling) {
+                        Some(spelling.to_string())
+                    } else {
+                        visible.get(spelling).cloned().or_else(|| {
+                            spelling.rmatch_indices("::").find_map(|(at, _)| {
+                                visible
+                                    .get(&spelling[..at])
+                                    .map(|prefix| format!("{prefix}{}", &spelling[at..]))
+                            })
+                        })
+                    };
+                    // The file names its own declaration by the name it wrote
+                    // (`concat` for `concat::concat` of the file `concat`), before
+                    // a declaration of the prelude spelled the same. Only this
+                    // file does: once it is expanded, the name means again what
+                    // it meant before (`forget_file_names`), so a later file,
+                    // the standard library's among them, does not take it.
+                    if let Some(module) = self.modules.get(self.file)
+                        && let Some(short) = spelling
+                            .strip_prefix(module.as_str())
+                            .and_then(|rest| rest.strip_prefix("::"))
+                        && visible.get(short).is_none_or(|seen| seen == spelling)
+                    {
+                        self.file_names
+                            .push((short.to_string(), self.bindings.spelling_state(short)));
+                        if effect {
+                            self.bindings.reserve_source_effect(short, spelling);
+                        } else {
+                            self.bindings.reserve_source_declaration(short, spelling);
+                        }
+                    }
+                    if let Some(full) = full.filter(|full| full != spelling) {
+                        if effect {
+                            self.bindings.reserve_source_effect(spelling, &full);
+                        } else {
+                            self.bindings.reserve_source_declaration(spelling, &full);
+                        }
+                    }
+                }
+            }
+        }
+        self.bindings.reserve_declarations(stmts);
+        self.bindings.source_modules(&self.modules);
+    }
+
+    /// The source bindings visible in the file currently being expanded.
+    fn file_bindings(&self) -> tauto_surface::resolve::Resolver {
+        let mut declarations = self.bindings.declarations();
+        if let Some(visible) = self.seeing.get(self.file) {
+            for (spelling, qualified) in visible {
+                if let Some(crate::surface::Name::Global(reference)) =
+                    self.bindings.source_reference(qualified)
+                {
+                    declarations.source_alias(spelling, reference);
+                }
+            }
+        }
+        tauto_surface::resolve::Resolver::new(declarations)
     }
 
     /// `quote`s as the constructor calls that build them; `$` outside one is an error.
     fn quotes(&mut self, stmts: &mut [Stmt]) {
+        self.bindings.reserve_declarations(stmts);
+        self.bindings.source_modules(&self.modules);
+        let quotation = self.file_bindings();
+        self.syntaxes.bind_definitions(self.file, quotation.clone());
         let mut errors = Vec::new();
         for s in stmts.iter_mut() {
             walk::stmt(s, &mut |t| match &*t.kind {
                 TermKind::Quote { stmts, body } => {
-                    match super::quote::desugar(*stmts, body, t.span) {
+                    let mut body = body.clone();
+                    quotation.quote_globals(&mut body);
+                    match super::quote::desugar(*stmts, &body, t.span) {
                         Ok(new) => t.kind = new.kind.clone(),
-                        Err(e) => errors.push((e, t.span)),
+                        Err(e) => errors.push((e.into(), t.span)),
                     }
                 }
                 TermKind::Var(n) if n.starts_with('$') => {
-                    errors.push((msg!("macro-dollar-outside-quote").to_string(), t.span));
+                    errors.push((msg!("macro-dollar-outside-quote"), t.span));
                 }
                 _ => {}
             });
@@ -483,31 +845,98 @@ impl Expander<'_> {
     }
 
     fn roots(&mut self, s: &mut Stmt) {
-        if let Stmt::Mutual { items, .. } | Stmt::Module { items, .. } = s {
+        if let Stmt::Module { name, items, .. } = s {
+            self.call_module.push(name.clone());
+            let inner = std::mem::take(items);
+            *items = self.stmts(inner);
+            self.call_module.pop();
+            return;
+        }
+        if let Stmt::Mutual { items, .. } = s {
             let inner = std::mem::take(items);
             *items = self.stmts(inner);
             return;
         }
+        // The names the declaration binds are its own, wherever a macro's
+        // output takes them: they are not the module's declarations.
+        // A declaration of a module already written out keeps the module in
+        // its name (`Nat::via_calc`).
+        let written: Vec<String> = match &*s {
+            Stmt::Fn(f) => f.name.spelling().map(str::to_string),
+            Stmt::Theorem(d) | Stmt::Def(d) => d.name.spelling().map(str::to_string),
+            _ => None,
+        }
+        .and_then(|n| n.rsplit_once("::").map(|(m, _)| m.to_string()))
+        .map(|m| m.split("::").map(str::to_string).collect())
+        .unwrap_or_default();
+        let depth = self.call_module.len();
+        self.call_module.extend(written);
+        let outer = std::mem::replace(&mut self.call_bound, bound_names(s));
         walk::roots(s, &mut |t| self.term(t));
+        self.call_bound = outer;
+        self.call_module.truncate(depth);
     }
 
     fn term(&mut self, t: &mut SurfaceTerm) {
+        let mut expanded = false;
+        let mut waits = false;
         while let TermKind::MacroCall { .. } = &*t.kind {
-            // A typed macro waits for the declaration to be checked.
-            if self.is_typed(t) {
+            // A typed macro waits for the declaration to be checked, and a
+            // tactic in the argument of a call for the macro that makes its step.
+            if self.is_typed(t) || (self.in_call > 0 && self.is_tactic(t)) {
+                waits = true;
                 break;
             }
             match self.expr_call(t) {
-                Some(new) => *t = new,
+                Some(new) => {
+                    *t = new;
+                    expanded = true;
+                }
                 None => return,
             }
+        }
+        if expanded {
+            self.at_call_site(t);
         }
         if let TermKind::Block(stmts) = Arc::make_mut(&mut t.kind) {
             let inner = std::mem::take(stmts);
             *stmts = self.stmts(inner);
             return;
         }
+        self.in_call += usize::from(waits);
         walk::children(t, &mut |c| self.term(c));
+        self.in_call -= usize::from(waits);
+    }
+
+    /// A name the caller wrote in the input of a macro means what it means at
+    /// the call, as the declaration's own text does: inside `module M`, `add`
+    /// is `M::add`, and a name the caller's file declares or imports is that
+    /// declaration, whatever the file of the macro imports. A name the
+    /// declaration or the output binds keeps its binding, and a name the macro
+    /// made carries the scope of its expansion, so neither is read at the call.
+    fn at_call_site(&mut self, t: &mut SurfaceTerm) {
+        let saved = std::mem::replace(&mut self.elab_module, self.call_module.clone());
+        let mut names = self.module_names();
+        self.elab_module = saved;
+        let mut probe = Stmt::Expr(t.clone());
+        let mut bound = self.call_bound.clone();
+        bound.extend(bound_names(&mut probe));
+        names.retain(|short, _| !bound.contains(short));
+        elab::module_resolved(t, &names);
+        let mut pinned = Vec::new();
+        walk::term(t, &mut |u| {
+            if let TermKind::Var(crate::surface::Name::Spelled(spelling)) = &*u.kind
+                && split(spelling).1.is_empty()
+                && !bound.contains(spelling.as_str())
+                && let Some(name @ crate::surface::Name::Global(_)) =
+                    self.bindings.source_reference(spelling)
+            {
+                pinned.push((self.file, name.clone(), spelling.clone(), u.span));
+                u.kind = Arc::new(TermKind::Var(name));
+            }
+        });
+        // The caller wrote these names: an import that gives one is used.
+        self.written.extend(pinned);
     }
 
     fn expr_call(&mut self, t: &SurfaceTerm) -> Option<SurfaceTerm> {
@@ -542,13 +971,13 @@ impl Expander<'_> {
                         "macro-replace-word",
                         word = &r.word,
                         kind = &r.kind,
-                        name = &r.name
+                        name = r.name.to_string()
                     ),
                     r.at,
                 );
                 return vec![decl];
             }
-            if given.first() != Some(&(r.kind.clone(), r.name.clone())) {
+            if given.first() != Some(&(r.kind.clone(), r.name.to_string())) {
                 let decl_name = given
                     .first()
                     .map_or(msg!("macro-the-declaration"), |(k, n)| {
@@ -559,7 +988,7 @@ impl Expander<'_> {
                     msg!(
                         "macro-replace-other",
                         kind = &r.kind,
-                        name = &r.name,
+                        name = r.name.to_string(),
                         decl = decl_name
                     ),
                     r.at,
@@ -615,7 +1044,11 @@ impl Expander<'_> {
             (Some(r), None) => {
                 self.error(
                     "macro.replace",
-                    msg!("macro-replace-not-made", kind = &r.kind, name = &r.name),
+                    msg!(
+                        "macro-replace-not-made",
+                        kind = &r.kind,
+                        name = r.name.to_string()
+                    ),
                     r.at,
                 );
                 return vec![decl];
@@ -668,7 +1101,7 @@ impl Expander<'_> {
         span: Span,
         what: Message,
     ) -> bool {
-        let Some(why) = mismatch(&what.to_string(), &listed.items, made) else {
+        let Some(why) = mismatch(what, &listed.items, made) else {
             return true;
         };
         self.error("macro.generates", why, span);
@@ -735,7 +1168,7 @@ impl Expander<'_> {
             })
             .cloned()
             .collect();
-        let (_, program, report, left_out) = fit_library(stmts, Vec::new(), &HashSet::new());
+        let (_, program, report, left_out) = fit_library(&mut self.bindings, stmts, Vec::new());
         let left_out = explain_left_out(left_out, &self.done, &self.done_files());
         self.set_library(program, report, left_out, false);
     }
@@ -749,12 +1182,12 @@ impl Expander<'_> {
     /// A library built for an earlier file is used again when it holds the
     /// function: the function and what it calls are in the files before that
     /// one, and read the same in every later library.
-    pub(super) fn library_holding(&mut self, function: &str) {
+    pub(super) fn library_holding(&mut self, function: &crate::surface::Name) {
         self.library();
         if self
             .lib
             .as_ref()
-            .is_some_and(|l| l.built_for != self.file && !l.report.schemes.contains_key(function))
+            .is_some_and(|l| l.built_for != self.file && l.function(function).is_none())
         {
             self.lib = None;
             self.library();
@@ -773,27 +1206,13 @@ impl Expander<'_> {
         if self.lib.as_ref().is_some_and(|l| l.extracted.get()) {
             return;
         }
-        let Some(Ok(text)) = self.checker.executable(&self.done) else {
+        let mut checked_prefix = self.done.clone();
+        self.bindings.statements(&mut checked_prefix);
+        let Some(Ok(extracted)) = self.checker.executable(&checked_prefix, &self.done_ends) else {
             if let Some(lib) = &mut self.lib {
                 lib.extracted.set(true);
             }
             return;
-        };
-        // Its spans follow every file's, below those of the expansions.
-        let base = EXPANSION_BASE.saturating_sub(text.len() as u32 + 1);
-        let fits = self
-            .done
-            .iter()
-            .filter_map(stmt_range)
-            .all(|(_, hi)| hi <= base || hi > EXPANSION_BASE);
-        let extracted = match crate::surface::parse_program_unresolved_at(&text, base) {
-            Ok(p) if fits => p.stmts,
-            _ => {
-                if let Some(lib) = &mut self.lib {
-                    lib.extracted.set(true);
-                }
-                return;
-            }
         };
         let stmts: Vec<Stmt> = self
             .done
@@ -806,17 +1225,7 @@ impl Expander<'_> {
             })
             .cloned()
             .collect();
-        // A function the checker of executable code accepts as written is
-        // kept as written.
-        let (accepted, _, _, _) = fit_library(stmts.clone(), Vec::new(), &HashSet::new());
-        let accepted: HashSet<String> = accepted
-            .iter()
-            .filter_map(|s| match s {
-                Stmt::Fn(f) => Some(f.name.clone()),
-                _ => None,
-            })
-            .collect();
-        let (_, program, report, left_out) = fit_library(stmts, extracted, &accepted);
+        let (_, program, report, left_out) = fit_library(&mut self.bindings, stmts, extracted);
         let left_out = explain_left_out(left_out, &self.done, &self.done_files());
         self.set_library(program, report, left_out, true);
     }
@@ -833,7 +1242,7 @@ impl Expander<'_> {
             .first()
             .map(|e| e.message.clone())
             .or_else(|| program.errors.first().map(|(m, _)| m.clone()));
-        let report = report.with_prelude();
+        let report = report.with_prelude_for(&program);
         let rows = check_program_rows(&program);
         self.lib = Some(Rc::new(Lib {
             program,
@@ -853,7 +1262,7 @@ impl Expander<'_> {
         if self
             .lib
             .as_ref()
-            .is_some_and(|l| !l.report.schemes.contains_key(&function))
+            .is_some_and(|l| l.function(&function).is_none())
         {
             self.library_with_kernel();
         }
@@ -862,17 +1271,17 @@ impl Expander<'_> {
             this.error(code, m, at);
             None
         };
-        let Some(scheme) = lib.report.schemes.get(&function) else {
-            let m = match lib.left_out.iter().find(|(f, _)| *f == function) {
+        let Some((reference, scheme)) = lib.function(&function) else {
+            let m = match lib.left_out.iter().find(|(f, _)| f == function.as_str()) {
                 Some((_, why)) => msg!(
                     "macro-function-left-out",
-                    function = &function,
+                    function = function.as_str(),
                     name = name,
                     why = why.clone()
                 ),
                 None => msg!(
                     "macro-function-undefined",
-                    function = &function,
+                    function = function.as_str(),
                     name = name
                 ),
             };
@@ -882,19 +1291,24 @@ impl Expander<'_> {
             return fail(
                 self,
                 "macro.function",
-                msg!("macro-function-not-fn", function = &function),
+                msg!("macro-function-not-fn", function = function.as_str()),
             );
         };
-        let (param, decorated) = match params.as_slice() {
-            [p] => (p, false),
-            [p, Ty::Named(n, _)] if n == "SynStmt" => (p, true),
+        let (param, decorated, placed) = match params.as_slice() {
+            [p] => (p, false, false),
+            [p, Ty::Named(n, _)] if tauto_surface::bindings::is_library(&n, "SynStmt") => {
+                (p, true, false)
+            }
+            [Ty::Named(j, _), p] if tauto_surface::bindings::is_library(&j, "Judgement") => {
+                (p, false, true)
+            }
             _ => {
                 return fail(
                     self,
                     "macro.function",
                     msg!(
                         "macro-function-arity",
-                        function = &function,
+                        function = function.as_str(),
                         count = params.len()
                     ),
                 );
@@ -902,15 +1316,17 @@ impl Expander<'_> {
         };
         let input = match param.unborrowed() {
             Ty::Text => Input::Plaintext,
-            Ty::Named(n, _) if n == "Judgement" => Input::Judgement,
-            Ty::Named(n, _) if n == "SynExpr" => Input::Expr,
-            Ty::Named(n, _) if n == "ProofStep" => Input::Step,
+            Ty::Named(n, _) if tauto_surface::bindings::is_library(&n, "Judgement") => {
+                Input::Judgement
+            }
+            Ty::Named(n, _) if tauto_surface::bindings::is_library(&n, "SynExpr") => Input::Expr,
+            Ty::Named(n, _) if tauto_surface::bindings::is_library(&n, "ProofStep") => Input::Step,
             Ty::Named(n, _) => {
                 let found = self
                     .syntaxes
                     .map
                     .iter()
-                    .filter(|(sname, s)| s.start_type(sname).as_deref() == Some(n))
+                    .filter(|(_, s)| s.start_reference.as_ref() == Some(n))
                     .map(|(sname, _)| sname.clone())
                     .min();
                 match found {
@@ -919,7 +1335,11 @@ impl Expander<'_> {
                         return fail(
                             self,
                             "macro.function",
-                            msg!("macro-function-not-start", function = &function, ty = n),
+                            msg!(
+                                "macro-function-not-start",
+                                function = function.to_string(),
+                                ty = n.to_string()
+                            ),
                         );
                     }
                 }
@@ -930,18 +1350,18 @@ impl Expander<'_> {
                     "macro.function",
                     msg!(
                         "macro-function-not-tree",
-                        function = &function,
+                        function = function.as_str(),
                         ty = other.to_string()
                     ),
                 );
             }
         };
         let shape = match &**result {
-            Ty::Named(n, _) if n == "SynExpr" => Shape::Expr,
-            Ty::Named(n, _) if n == "Proved" => Shape::Proved,
+            Ty::Named(n, _) if tauto_surface::bindings::is_library(&n, "SynExpr") => Shape::Expr,
+            Ty::Named(n, _) if tauto_surface::bindings::is_library(&n, "Proved") => Shape::Proved,
             Ty::Named(n, args)
-                if n == "List"
-                    && matches!(args.as_slice(), [Ty::Named(m, _)] if m == "SynStmt") =>
+                if tauto_surface::bindings::is_library(&n, "List")
+                    && matches!(args.as_slice(), [Ty::Named(m, _)] if tauto_surface::bindings::is_library(&m, "SynStmt")) =>
             {
                 Shape::Stmts
             }
@@ -951,46 +1371,59 @@ impl Expander<'_> {
                     "macro.function",
                     msg!(
                         "macro-function-result",
-                        function = &function,
+                        function = function.as_str(),
                         ty = other.to_string()
                     ),
                 );
             }
         };
-        if let Some((_, row)) = lib.rows.functions.iter().find(|(n, _)| *n == function) {
+        if let Some((_, row)) = lib.rows.functions.iter().find(|(n, _)| n == reference) {
             for e in row {
                 if e.starts_with('?') {
                     return fail(
                         self,
                         "macro.unchecked_effect",
-                        msg!("macro-unchecked-effect", function = &function, effect = e),
+                        msg!(
+                            "macro-unchecked-effect",
+                            function = function.to_string(),
+                            effect = e.to_string()
+                        ),
                     );
                 }
-                if !matches!(e.as_str(), "macro_error" | "macro_warn" | "elab" | "Div") {
+                if !["macro_error", "macro_warn", "elab", "Div"]
+                    .iter()
+                    .any(|allowed| tauto_surface::bindings::is_library(e, allowed))
+                {
                     return fail(
                         self,
                         "macro.row",
-                        msg!("macro-row-effect", function = &function, effect = e),
+                        msg!(
+                            "macro-row-effect",
+                            function = function.to_string(),
+                            effect = e.to_string()
+                        ),
                     );
                 }
             }
         }
-        if let Some((path, why)) = row_error_reached(&lib.program, &lib.rows, &function) {
+        if let Some((path, why)) = row_error_reached(&lib.program, &lib.rows, reference) {
             return fail(
                 self,
                 "macro.row",
                 msg!(
                     "macro-row-reached",
-                    function = &function,
+                    function = function.as_str(),
                     path = path.join(" -> "),
                     why = why
                 ),
             );
         }
         Some(Info {
+            function: reference.clone(),
             input,
             shape,
             decorated,
+            placed,
         })
     }
 
@@ -1130,7 +1563,7 @@ impl Expander<'_> {
                     quote: false,
                     atoms: None,
                     spans: None,
-                    reflip: None,
+                    reflip: Some(u64::from(id)),
                 };
                 match lift.expr(arg) {
                     Ok(n) => ("tauto".to_string(), n),
@@ -1191,6 +1624,10 @@ impl Expander<'_> {
         };
         let mut args = vec![node];
         if let Some(decl) = decorated {
+            let mut declaration = decl.clone();
+            self.bindings
+                .clone()
+                .statements(std::slice::from_mut(&mut declaration));
             let mut scopes = call_scopes.clone();
             scopes.push(u64::from(id));
             let lift = crate::macros::syn::Lift {
@@ -1198,28 +1635,35 @@ impl Expander<'_> {
                 quote: false,
                 atoms: None,
                 spans: None,
-                reflip: None,
+                reflip: Some(u64::from(id)),
             };
-            match lift.stmt(decl) {
-                Ok(n) => args.push(n),
+            match lift.stmt(&declaration) {
+                Ok(mut n) => {
+                    if let Ok(written) = lift.stmt(decl) {
+                        retain_syntax_labels(&mut n, &written);
+                    }
+                    args.push(n);
+                }
                 Err(m) => {
                     self.error("macro.argument", m, t.span);
                     return None;
                 }
             }
         }
-        let input_text = format!("{:#?}", args[0]);
+        let input_tree = args[0].clone();
         let function = self.macros[&name].function.clone();
         let mut host = Host::new(self.opts.call_steps, self.opts.allocations);
+        host.resolve_global = Some(self.global_resolver(&name));
         if decorated.is_some() {
-            host.elab = Some(self.elab_for(id));
+            host.elab = Some(self.elab_for(id, &HashMap::new()));
         }
         // A macro that asks `syn_expand` is run again with the answer, so the
         // expansions it asks for are made while it is not running.
         let mut reserved = false;
         let ran = loop {
             let lib = self.lib.as_ref().expect("the library is built");
-            let ran = call_function(&lib.program, &lib.report, &function, &args, &mut host);
+            let ran =
+                call_bound_function(&lib.program, &lib.report, &info.function, &args, &mut host);
             let Err(RunError::NeedExpand(asked)) = ran else {
                 break ran;
             };
@@ -1241,7 +1685,7 @@ impl Expander<'_> {
                 self.expansions.push(Expansion {
                     id,
                     macro_name: name.clone(),
-                    function: function.clone(),
+                    function: function.to_string(),
                     kind: "untyped",
                     parent: None,
                     call: t.span,
@@ -1252,6 +1696,7 @@ impl Expander<'_> {
                     allocations: 0,
                     captures: Vec::new(),
                     input: String::new(),
+                    input_tree: None,
                     output: String::new(),
                 });
             }
@@ -1268,12 +1713,40 @@ impl Expander<'_> {
             } else {
                 t.span
             };
-            self.warnings.push((format!("{code}: {m}"), span));
+            self.warnings.push((format!("{code}: {m}").into(), span));
         }
         let (out, stats) = match ran {
             Ok(r) => r,
             Err(e) => {
                 self.run_error(&name, e, t.span);
+                // The call that failed still read its literal: keep which syntax it was, so
+                // that `tauto fmt` can lay the literal out although the macro rejects it.
+                let failed = Expansion {
+                    id,
+                    macro_name: name,
+                    function: function.to_string(),
+                    kind: if matches!(info.input, Input::Expr) {
+                        "untyped"
+                    } else {
+                        "syntax"
+                    },
+                    parent: parent.filter(|p| *p != 0),
+                    call: t.span,
+                    root: 0,
+                    syntax,
+                    text: lit.text.clone(),
+                    steps: 0,
+                    allocations: 0,
+                    captures: Vec::new(),
+                    input: String::new(),
+                    input_tree: Some(input_tree),
+                    output: String::new(),
+                };
+                if reserved {
+                    self.expansions[id as usize - 1] = failed;
+                } else {
+                    self.expansions.push(failed);
+                }
                 return None;
             }
         };
@@ -1343,7 +1816,7 @@ impl Expander<'_> {
         let record = Expansion {
             id,
             macro_name: name,
-            function,
+            function: function.to_string(),
             kind: if matches!(info.input, Input::Expr) {
                 "untyped"
             } else {
@@ -1360,7 +1833,8 @@ impl Expander<'_> {
             steps: stats.steps,
             allocations: stats.allocations,
             captures,
-            input: input_text,
+            input: String::new(),
+            input_tree: Some(input_tree),
             output: match &made {
                 Made::Expr(e) => crate::surface::print::print_term(e),
                 Made::Stmts(s) => crate::surface::print::print_stmts(s),
@@ -1431,7 +1905,7 @@ impl Expander<'_> {
                 } else {
                     at
                 };
-                self.errors.push((format!("{code}: {m}"), span));
+                self.errors.push((format!("{code}: {m}").into(), span));
             }
             RunError::Interrupted => self.error(
                 "macro.budget_exceeded",
@@ -1485,12 +1959,14 @@ fn lower_prelude(stmts: &mut [Stmt]) {
     let mut full: HashMap<String, String> = HashMap::new();
     for s in stmts.iter_mut() {
         crate::surface::walk::stmt(s, &mut |t| {
-            if let TermKind::Var(n) = &*t.kind {
+            if let TermKind::Var(n) = &*t.kind
+                && n.spelling().is_some()
+            {
                 if is_prelude(n) {
                     wanted.insert(short(n).to_string());
-                } else if short(n) != n {
+                } else if short(n) != n.as_str() {
                     full.entry(short(n).to_string())
-                        .or_insert_with(|| n.clone());
+                        .or_insert_with(|| n.to_string());
                 }
             }
         });
@@ -1498,24 +1974,29 @@ fn lower_prelude(stmts: &mut [Stmt]) {
     let renamed: HashMap<String, String> = stmts
         .iter()
         .filter_map(|s| match s {
-            Stmt::Fn(f) if wanted.contains(&f.name) && prelude.contains(&f.name) => {
+            Stmt::Fn(f)
+                if wanted.contains(f.name.as_str()) && prelude.contains(f.name.as_str()) =>
+            {
                 let to = full
-                    .get(&f.name)
+                    .get(f.name.as_str())
                     .cloned()
                     .unwrap_or_else(|| format!("{}#library", f.name));
-                Some((f.name.clone(), to))
+                Some((f.name.to_string(), to))
             }
             _ => None,
         })
         .collect();
     for s in stmts.iter_mut() {
         if let Stmt::Fn(f) = s
-            && let Some(to) = renamed.get(&f.name)
+            && f.name.spelling().is_some()
+            && let Some(to) = renamed.get(f.name.as_str())
         {
-            f.name = to.clone();
+            f.name = to.clone().into();
         }
         crate::surface::walk::stmt(s, &mut |t| {
-            if let TermKind::Var(n) = &*t.kind {
+            if let TermKind::Var(n) = &*t.kind
+                && n.spelling().is_some()
+            {
                 let to = if is_prelude(n) {
                     let s = short(n);
                     (prelude.contains(s) && (!own.contains(s) || renamed.contains_key(s)))
@@ -1524,7 +2005,7 @@ fn lower_prelude(stmts: &mut [Stmt]) {
                     renamed.get(short(n)).cloned()
                 };
                 if let Some(to) = to {
-                    t.kind = Arc::new(TermKind::Var(to));
+                    t.kind = Arc::new(TermKind::Var(to.into()));
                 }
             }
         });
@@ -1538,14 +2019,14 @@ fn lower_prelude(stmts: &mut [Stmt]) {
     fn pattern(p: &mut Pattern, lowered: &dyn Fn(&str) -> Option<String>) {
         match p {
             Pattern::Ctor { name, args } => {
-                if let Some(n) = lowered(name) {
-                    *name = n;
+                if let Some(n) = name.spelling().and_then(lowered) {
+                    *name = n.into();
                 }
                 args.iter_mut().for_each(|a| pattern(a, lowered));
             }
             Pattern::Record { name, fields } => {
-                if let Some(n) = lowered(name) {
-                    *name = n;
+                if let Some(n) = name.spelling().and_then(lowered) {
+                    *name = n.into();
                 }
                 fields.iter_mut().for_each(|(_, a)| pattern(a, lowered));
             }
@@ -1576,33 +2057,34 @@ fn lower_prelude(stmts: &mut [Stmt]) {
 /// `stmts`, with `extracted` (what extraction wrote of the proof language)
 /// for the names they declare in the kernel's language only, checked as
 /// executable code: what does not check is left out, with what then stops
-/// checking. A function of `accepted` is kept as written. The statements
+/// checking. Extracted declarations use their executable representation. The statements
 /// kept, as a program, its report, and what was left out with why.
 fn fit_library(
+    bindings: &mut tauto_surface::resolve::Resolver,
     mut stmts: Vec<Stmt>,
     extracted: Vec<Stmt>,
-    accepted: &HashSet<String>,
-) -> (Vec<Stmt>, Program, TypeReport, Vec<(String, String)>) {
+) -> (Vec<Stmt>, Program, TypeReport, Vec<(String, Message)>) {
     // Both are compared by the full names of what they declare (`Nat.max`
     // of `module Nat`).
     stmts = crate::surface::modules::resolve_in_prelude(stmts).0;
     let extracted = crate::surface::modules::resolve_in_prelude(extracted).0;
     lower_prelude(&mut stmts);
     crate::surface::qualify::sort_labelled_tuples(&mut stmts);
+    bindings.statements(&mut stmts);
     if !extracted.is_empty() {
         let names = |s: &Stmt| {
             let mut out = Vec::new();
-            crate::surface::qualify::declared(s, &mut |n| out.push(n.to_string()));
+            out.extend(
+                tauto_surface::bindings::declared_names(std::slice::from_ref(s))
+                    .into_iter()
+                    .cloned(),
+            );
             out
         };
-        let from_kernel: HashSet<String> = extracted.iter().flat_map(names).collect();
-        // What extraction made of a declaration stands for it, but for a
-        // function that checks as written.
-        stmts.retain(|s| match s {
-            Stmt::Fn(f) if accepted.contains(&f.name) => true,
-            _ => !names(s).iter().any(|n| from_kernel.contains(n)),
-        });
-        let own: HashSet<String> = stmts.iter().flat_map(names).collect();
+        let from_kernel: HashSet<crate::surface::Name> = extracted.iter().flat_map(names).collect();
+        // Every call uses the same representation as the extracted declaration.
+        stmts.retain(|s| !names(s).iter().any(|n| from_kernel.contains(n)));
+        let own: HashSet<crate::surface::Name> = stmts.iter().flat_map(names).collect();
         let mut with: Vec<Stmt> = extracted
             .into_iter()
             .filter(|s| !names(s).iter().any(|n| own.contains(n)))
@@ -1615,13 +2097,15 @@ fn fit_library(
         stmts: resolved,
         errors,
     };
+    bindings.statements(&mut program.stmts);
+    stmts = program.stmts.clone();
     let mut report = check_program(&program);
     let mut left_out = Vec::new();
     for _ in 0..64 {
         if report.errors.is_empty() {
             break;
         }
-        let at: Vec<(u32, String)> = report
+        let at: Vec<(u32, Message)> = report
             .errors
             .iter()
             .map(|e| (e.span.start, e.message.clone()))
@@ -1631,7 +2115,7 @@ fn fit_library(
             Some((lo, hi)) => {
                 let why = at.iter().find(|(a, _)| lo <= *a && *a < hi);
                 if let (Some((_, why)), Stmt::Fn(f)) = (why, s) {
-                    left_out.push((f.name.clone(), why.clone()));
+                    left_out.push((f.name.to_string(), why.clone()));
                 }
                 why.is_none()
             }
@@ -1663,24 +2147,25 @@ fn origin_expansion(spans: &SpanMap, span: Span) -> Option<u32> {
 /// executable code is shown with the one the executable code has.
 ///
 /// The reasons are the text of the checker of executable
-/// code (`tauto-nibcheck`), read here for `is not a constructor`, `does not
-/// fit` and `is not defined` by that text, because its errors are not messages.
+/// code (`tauto-nibcheck`), read here for `is not a constructor` and `is not
+/// defined` by that text, because those errors are not messages yet; a type
+/// that does not fit is read by its message.
 fn explain_left_out(
-    left_out: Vec<(String, String)>,
+    left_out: Vec<(String, Message)>,
     done: &[Stmt],
     files: &[(Option<&str>, &[Stmt])],
 ) -> Vec<(String, Message)> {
     let mut inductive_ctors = HashSet::new();
     for s in done {
         if let Stmt::Inductive(i) = s {
-            inductive_ctors.extend(i.constructors.iter().map(|c| c.name.clone()));
+            inductive_ctors.extend(i.constructors.iter().map(|c| c.name.to_string()));
         }
     }
-    let texts = left_out;
-    let mut left_out: Vec<(String, Message)> = texts
+    let texts: Vec<(String, String)> = left_out
         .iter()
-        .map(|(f, why)| (f.clone(), Message::text(why.clone())))
+        .map(|(f, why)| (f.clone(), why.to_string()))
         .collect();
+    let mut left_out = left_out;
     for ((_, text), (_, why)) in texts.iter().zip(left_out.iter_mut()) {
         // A pattern's reason names the constructor in backticks and may end
         // with a hint (`` `X` is not a constructor; did you mean `Y`? ``).
@@ -1724,7 +2209,7 @@ fn explain_left_out(
             crate::surface::modules::declared(stmts)
                 .into_iter()
                 .chain(stmts.iter().filter_map(|s| match s {
-                    Stmt::Fn(f) => Some(f.name.clone()),
+                    Stmt::Fn(f) => Some(f.name.to_string()),
                     _ => None,
                 }));
         for n in names.filter(|n| builtins.contains(n)) {
@@ -1735,8 +2220,11 @@ fn explain_left_out(
             declared.insert(n, full);
         }
     }
-    for ((name, text), (_, why)) in texts.iter().zip(left_out.iter_mut()) {
-        if !text.contains(" does not fit ") {
+    for ((name, _), (_, why)) in texts.iter().zip(left_out.iter_mut()) {
+        if !matches!(
+            why.id.as_ref(),
+            "nibcheck-mismatch" | "nibcheck-mismatch-lend" | "nibcheck-mismatch-number"
+        ) {
             continue;
         }
         let Some(f) = fns.get(name.as_str()) else {
@@ -1749,10 +2237,10 @@ fn explain_left_out(
         walk::term(&mut body, &mut |t| {
             if let TermKind::Var(n) = &*t.kind {
                 let short = crate::surface::qualify::short(n);
-                let full = if short != n && builtins.contains(short) {
+                let full = if short != n.as_str() && builtins.contains(short) {
                     // Written by its full name, as a file of the program
                     // declares it.
-                    Some(n.clone())
+                    Some(n.to_string())
                 } else {
                     declared.get(n.as_str()).cloned()
                 };
@@ -1849,14 +2337,20 @@ fn forbidden(stmts: &[Stmt]) -> Option<&'static str> {
 /// Each constructor with the constructors of its type, in order.
 fn ctor_families<'a>(
     stmts: impl Iterator<Item = &'a Stmt>,
-) -> std::collections::HashMap<String, Vec<String>> {
-    let bool_ctors = vec!["false".to_string(), "true".to_string()];
+) -> std::collections::HashMap<crate::surface::Name, Vec<crate::surface::Name>> {
+    let bool_ctors = vec![
+        tauto_surface::bindings::library_name("false"),
+        tauto_surface::bindings::library_name("true"),
+    ];
     let mut out = bool_ctors
         .iter()
         .map(|n| (n.clone(), bool_ctors.clone()))
         .collect();
-    fn add(s: &Stmt, out: &mut std::collections::HashMap<String, Vec<String>>) {
-        let names: Vec<String> = match s {
+    fn add(
+        s: &Stmt,
+        out: &mut std::collections::HashMap<crate::surface::Name, Vec<crate::surface::Name>>,
+    ) {
+        let names: Vec<crate::surface::Name> = match s {
             Stmt::Enum(d) | Stmt::Struct(d) => {
                 d.constructors.iter().map(|c| c.name.clone()).collect()
             }
@@ -1873,7 +2367,7 @@ fn ctor_families<'a>(
             out.insert(n.clone(), names.clone());
         }
     }
-    for s in kernel_prelude().iter().chain(&prelude().stmts).chain(stmts) {
+    for s in stmts {
         add(s, &mut out);
     }
     out
@@ -1881,11 +2375,14 @@ fn ctor_families<'a>(
 
 fn ctor_arities<'a>(
     stmts: impl Iterator<Item = &'a Stmt>,
-) -> std::collections::HashMap<String, usize> {
-    let mut out = [("false".to_string(), 0), ("true".to_string(), 0)]
-        .into_iter()
-        .collect();
-    fn add(s: &Stmt, out: &mut std::collections::HashMap<String, usize>) {
+) -> std::collections::HashMap<crate::surface::Name, usize> {
+    let mut out = [
+        (tauto_surface::bindings::library_name("false"), 0),
+        (tauto_surface::bindings::library_name("true"), 0),
+    ]
+    .into_iter()
+    .collect();
+    fn add(s: &Stmt, out: &mut std::collections::HashMap<crate::surface::Name, usize>) {
         match s {
             Stmt::Enum(d) | Stmt::Struct(d) => {
                 for c in &d.constructors {
@@ -1905,7 +2402,7 @@ fn ctor_arities<'a>(
             _ => {}
         }
     }
-    for s in kernel_prelude().iter().chain(&prelude().stmts).chain(stmts) {
+    for s in stmts {
         add(s, &mut out);
     }
     out
@@ -1915,22 +2412,22 @@ fn ctor_names<'a>(stmts: impl Iterator<Item = &'a Stmt>) -> HashSet<String> {
     let mut out = HashSet::new();
     let add = |s: &Stmt, out: &mut HashSet<String>| match s {
         Stmt::Enum(d) | Stmt::Struct(d) => {
-            out.insert(d.name.clone());
+            out.insert(d.name.to_string());
             for c in &d.constructors {
-                out.insert(c.name.clone());
+                out.insert(c.name.to_string());
                 out.insert(format!("{}::{}", d.name, c.name));
             }
         }
         Stmt::Inductive(i) => {
             for c in &i.constructors {
-                out.insert(c.name.clone());
+                out.insert(c.name.to_string());
                 out.insert(format!("{}::{}", i.name, c.name));
             }
         }
         Stmt::Mutual { items, .. } => {
             for s in items {
                 if let Stmt::Inductive(i) = s {
-                    out.extend(i.constructors.iter().map(|c| c.name.clone()));
+                    out.extend(i.constructors.iter().map(|c| c.name.to_string()));
                 }
             }
         }
@@ -1958,27 +2455,27 @@ fn kernel_prelude() -> &'static [Stmt] {
 fn row_error_reached(
     program: &Program,
     rows: &RowReport,
-    function: &str,
+    function: &crate::surface::Name,
 ) -> Option<(Vec<String>, String)> {
     if rows.errors.is_empty() {
         return None;
     }
-    let fns: HashMap<&str, &crate::surface::FnDecl> = program
+    let fns: HashMap<&crate::surface::Name, &crate::surface::FnDecl> = program
         .stmts
         .iter()
         .filter_map(|s| match s {
-            Stmt::Fn(f) => Some((f.name.as_str(), f)),
+            Stmt::Fn(f) => Some((&f.name, f)),
             _ => None,
         })
         .collect();
     let mut seen = HashSet::new();
-    let mut stack = vec![vec![function.to_string()]];
+    let mut stack = vec![vec![function.clone()]];
     while let Some(path) = stack.pop() {
         let here = path.last().expect("a path has a name").clone();
         if !seen.insert(here.clone()) {
             continue;
         }
-        let Some(f) = fns.get(here.as_str()) else {
+        let Some(f) = fns.get(&here) else {
             continue;
         };
         let (lo, hi) = (f.span.start, f.body.span.end.max(f.span.end));
@@ -1987,10 +2484,13 @@ fn row_error_reached(
             .iter()
             .find(|e| lo <= e.span.start && e.span.start < hi)
         {
-            return Some((path, e.message.clone()));
+            return Some((
+                path.iter().map(ToString::to_string).collect(),
+                e.message.clone(),
+            ));
         }
         for n in free_names_of(f) {
-            if fns.contains_key(n.as_str()) {
+            if fns.contains_key(&n) {
                 let mut next = path.clone();
                 next.push(n);
                 stack.push(next);
@@ -2003,15 +2503,68 @@ fn row_error_reached(
 /// The names the body of `f` uses that nothing inside it binds: a parameter, a
 /// `let`, a pattern variable, a λ parameter or a handler's variable hides a
 /// function of the same spelling, as it does where the function runs.
-pub fn free_names_of(f: &crate::surface::FnDecl) -> Vec<String> {
+pub fn free_names_of(f: &crate::surface::FnDecl) -> Vec<crate::surface::Name> {
     let mut body = f.body.clone();
-    let mut bound: Vec<String> = f.params.clone();
+    let mut bound: Vec<crate::surface::Name> = f.params.clone();
     let mut out = Vec::new();
     free_names_in(&mut body, &mut bound, &mut out);
     out
 }
 
-fn free_names_in(t: &mut SurfaceTerm, bound: &mut Vec<String>, out: &mut Vec<String>) {
+/// Every name `s` binds: its parameters, and the binders of its terms.
+fn bound_names(s: &mut Stmt) -> HashSet<String> {
+    let mut out: Vec<crate::surface::Name> = Vec::new();
+    match &*s {
+        Stmt::Fn(f) => out.extend(f.params.iter().cloned()),
+        Stmt::Theorem(d) | Stmt::Def(d) => out.extend(d.params.iter().map(|(n, _)| n.clone())),
+        _ => {}
+    }
+    walk::stmt(s, &mut |t| match &*t.kind {
+        TermKind::Lam { params, .. } => out.extend(params.iter().cloned()),
+        TermKind::Exists { binder, .. } => out.push(binder.clone()),
+        TermKind::Block(stmts) => {
+            for b in stmts {
+                match b {
+                    Stmt::Let { name, .. } | Stmt::Var { name, .. } => out.push(name.clone()),
+                    Stmt::Fn(f) => {
+                        out.push(f.name.clone());
+                        out.extend(f.params.iter().cloned());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        TermKind::Match { binder, arms, .. } => {
+            out.extend(binder.iter().cloned());
+            for a in arms {
+                crate::lin::pattern_names(&a.pattern, &mut out);
+            }
+        }
+        TermKind::Handle { handlers, .. } => {
+            for h in handlers {
+                match h {
+                    Handler::Return { pattern, .. } => crate::lin::pattern_names(pattern, &mut out),
+                    Handler::Operation { patterns, cont, .. } => {
+                        patterns
+                            .iter()
+                            .for_each(|p| crate::lin::pattern_names(p, &mut out));
+                        out.extend(cont.iter().cloned());
+                    }
+                }
+            }
+        }
+        _ => {}
+    });
+    out.iter()
+        .filter_map(|n| n.spelling().map(str::to_string))
+        .collect()
+}
+
+fn free_names_in(
+    t: &mut SurfaceTerm,
+    bound: &mut Vec<crate::surface::Name>,
+    out: &mut Vec<crate::surface::Name>,
+) {
     use crate::lin::pattern_names;
     if !matches!(
         &*t.kind,
@@ -2148,7 +2701,7 @@ fn free_names_in(t: &mut SurfaceTerm, bound: &mut Vec<String>, out: &mut Vec<Str
     }
 }
 
-fn stmt_range(s: &Stmt) -> Option<(u32, u32)> {
+pub(super) fn stmt_range(s: &Stmt) -> Option<(u32, u32)> {
     let span = match s {
         Stmt::Fn(f) => Span::new(f.span.start, f.body.span.end.max(f.span.end)),
         Stmt::Theorem(t) | Stmt::Def(t) => Span::new(
@@ -2167,4 +2720,42 @@ fn stmt_range(s: &Stmt) -> Option<(u32, u32)> {
         _ => return None,
     };
     Some((span.start, span.end))
+}
+
+// Binding supplies capabilities; the syntax value keeps the labels written
+// by its caller. Labels are data for macro diagnostics and generated names.
+fn retain_syntax_labels(bound: &mut Node, written: &Node) {
+    match (bound, written) {
+        (Node::Ctor(a, fields), Node::Ctor(b, original)) if a.as_str() == b.as_str() => {
+            if a.as_str() == "SynIdent" {
+                if let (Some((_, target)), Some((_, source))) = (
+                    fields
+                        .iter_mut()
+                        .find(|(label, _)| label.as_deref() == Some("name")),
+                    original
+                        .iter()
+                        .find(|(label, _)| label.as_deref() == Some("name")),
+                ) {
+                    *target = source.clone();
+                }
+            } else if fields.len() == original.len() {
+                for ((_, target), (_, source)) in fields.iter_mut().zip(original) {
+                    retain_syntax_labels(target, source);
+                }
+            }
+        }
+        (Node::List(items), Node::List(original)) if items.len() == original.len() => {
+            for (target, source) in items.iter_mut().zip(original) {
+                retain_syntax_labels(target, source);
+            }
+        }
+        (Node::Pair(items), Node::Pair(original)) => {
+            retain_syntax_labels(&mut items.0, &original.0);
+            retain_syntax_labels(&mut items.1, &original.1);
+        }
+        (Node::Option(Some(target)), Node::Option(Some(source))) => {
+            retain_syntax_labels(target, source)
+        }
+        _ => {}
+    }
 }

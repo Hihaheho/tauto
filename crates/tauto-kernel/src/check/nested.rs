@@ -8,6 +8,7 @@
 //! `_ =>`: it reaches every case no written arm matches, and stands for at
 //! least one.
 
+use crate::surface::Name;
 use crate::surface::{MatchArm, Pattern, SurfaceTerm, TermKind};
 
 use super::{Diagnostic, Kernel, err};
@@ -18,7 +19,7 @@ type T = SurfaceTerm;
 /// One arm on its way down the tree: the patterns the fields still have to
 /// match, by the name the field is bound to, and the arm's body.
 struct Row {
-    cols: Vec<(String, Pattern)>,
+    cols: Vec<(Name, Pattern)>,
     body: T,
     /// The row of the default arm `_ =>`, which every other row comes before.
     default: bool,
@@ -78,25 +79,25 @@ impl Kernel {
 
     /// The first name in `C<n: m>(…)` that is not an implicit argument of
     /// `C`, if any.
-    pub(super) fn unknown_implicit(&self, c: &str, args: &[Pattern]) -> Option<String> {
+    pub(super) fn unknown_implicit(&self, c: &Name, args: &[Pattern]) -> Option<String> {
         let (fam, j) = self.ctors.get(c)?;
         let ctor = &self.inds[fam].ctors[*j];
         let Some(Pattern::Record { name, fields }) = args.first() else {
             return None;
         };
-        if name != tauto_surface::IMPLICITS {
+        if name.spelling() != Some(tauto_surface::IMPLICITS) {
             return None;
         }
         let generics = &ctor.fields[..ctor.implicit.min(ctor.fields.len())];
         fields
             .iter()
-            .find(|(n, _)| !generics.contains(n))
+            .find(|(n, _)| !generics.iter().any(|g| g.as_str() == n))
             .map(|(n, _)| n.clone())
     }
 
     /// A constructor's fields as a pattern lists them: all of them, or only
     /// those after its generics (which then match anything).
-    pub(super) fn full_fields(&self, c: &str, args: Vec<Pattern>) -> Vec<Pattern> {
+    pub(super) fn full_fields(&self, c: &Name, args: Vec<Pattern>) -> Vec<Pattern> {
         let Some((fam, j)) = self.ctors.get(c) else {
             return args;
         };
@@ -106,7 +107,7 @@ impl Kernel {
         // goes to the generic of its name, and the others are not bound.
         let mut args = args;
         if let Some(Pattern::Record { name, fields }) = args.first()
-            && name == tauto_surface::IMPLICITS
+            && name.spelling() == Some(tauto_surface::IMPLICITS)
         {
             let named = fields.clone();
             args.remove(0);
@@ -116,14 +117,17 @@ impl Kernel {
                 .map(|g| {
                     named
                         .iter()
-                        .find(|(n, _)| n == g)
+                        .find(|(n, _)| n == g.as_str())
                         .map(|(_, p)| p.clone())
                         .unwrap_or(Pattern::Wild)
                 })
                 .collect();
             // A name that is not one of the generics is left for the arity
             // check to report: the pattern then has one argument too many.
-            if named.iter().any(|(n, _)| !generics.contains(n)) {
+            if named
+                .iter()
+                .any(|(n, _)| !generics.iter().any(|g| g.as_str() == n))
+            {
                 full.push(Pattern::Wild);
             }
             full.extend(args);
@@ -141,7 +145,9 @@ impl Kernel {
     fn is_nested(&self, p: &Pattern) -> bool {
         match p {
             Pattern::Ctor { args, .. } => args.iter().any(|a| match a {
-                Pattern::Record { name, fields } if name == tauto_surface::IMPLICITS => {
+                Pattern::Record { name, fields }
+                    if name.spelling() == Some(tauto_surface::IMPLICITS) =>
+                {
                     fields.iter().any(|(_, q)| self.as_ctor(q).is_some())
                 }
                 _ => self.as_ctor(a).is_some(),
@@ -150,12 +156,27 @@ impl Kernel {
         }
     }
 
-    fn as_ctor<'p>(&self, p: &'p Pattern) -> Option<(String, &'p [Pattern])> {
-        match p {
-            Pattern::Ctor { name, args } => Some((name.clone(), args.as_slice())),
-            Pattern::Bind(n) if self.ctors.contains_key(n) => Some((n.clone(), &[])),
-            _ => None,
-        }
+    /// `c(…)`, or a bare name that is a constructor.
+    fn as_ctor<'p>(&self, p: &'p Pattern) -> Option<(Name, &'p [Pattern])> {
+        let (name, args) = match p {
+            Pattern::Ctor { name, args } => (name, args.as_slice()),
+            Pattern::Bind(name) if self.pattern_constructor(name) => (name, &[][..]),
+            _ => return None,
+        };
+        let name = if let Name::Selection(selection) = name {
+            let mut candidates = selection
+                .candidates()
+                .iter()
+                .map(|reference| Name::Global(reference.clone()))
+                .filter(|reference| self.ctors.contains_key(reference));
+            match (candidates.next(), candidates.next()) {
+                (Some(reference), None) => reference,
+                _ => name.clone(),
+            }
+        } else {
+            name.clone()
+        };
+        Some((name, args))
     }
 
     /// The body that matches what the rows still have to match. `used` is
@@ -190,6 +211,11 @@ impl Kernel {
                     rows.into_iter().next().expect("a row")
                 }
             };
+            let origins = self
+                .ctor_site_origins
+                .get(&row.body.id())
+                .cloned()
+                .unwrap_or_else(|| vec![row.body.id()]);
             let mut body = row.body;
             for (name, p) in &row.cols {
                 if let Pattern::Bind(n) = p
@@ -197,6 +223,9 @@ impl Kernel {
                 {
                     body = self.subst(&body, n, &T::var(name, span));
                 }
+            }
+            if self.record_sites {
+                self.ctor_site_origins.insert(body.id(), origins);
             }
             return Ok(body);
         };
@@ -222,9 +251,9 @@ impl Kernel {
         col: usize,
         span: tauto_parol::Span,
         used: &mut bool,
-    ) -> Result<(String, Vec<MatchArm>), Diagnostic> {
+    ) -> Result<(Name, Vec<MatchArm>), Diagnostic> {
         let scrutinee = rows[0].cols[col].0.clone();
-        let mut groups: Vec<(String, Vec<Row>)> = Vec::new();
+        let mut groups: Vec<(Name, Vec<Row>)> = Vec::new();
         let mut defaults: Vec<Row> = Vec::new();
         for mut row in rows {
             if row.default {
@@ -238,7 +267,11 @@ impl Kernel {
             };
             if let Some(n) = self.unknown_implicit(&c, args) {
                 return err(
-                    msg!("kernel-pattern-unknown-implicit", name = &c, implicit = &n),
+                    msg!(
+                        "kernel-pattern-unknown-implicit",
+                        name = (&c).to_string(),
+                        implicit = &n
+                    ),
                     row.body.span,
                 );
             }
@@ -254,14 +287,17 @@ impl Kernel {
                 && first.cols.len() != row.cols.len() + args.len()
             {
                 return err(
-                    msg!("kernel-nested-field-numbers", name = &groups[at].0),
+                    msg!(
+                        "kernel-nested-field-numbers",
+                        name = (&groups[at].0).to_string()
+                    ),
                     row.body.span,
                 );
             }
             // The fields come first, so the tree splits them before the
             // fields of the constructors around them.
-            let mut cols: Vec<(String, Pattern)> =
-                args.into_iter().map(|a| (String::new(), a)).collect();
+            let mut cols: Vec<(Name, Pattern)> =
+                args.into_iter().map(|a| (Name::default(), a)).collect();
             cols.extend(row.cols);
             groups[at].1.push(Row {
                 cols,
@@ -298,8 +334,9 @@ impl Kernel {
                 );
             }
             for d in &defaults {
-                let mut cols: Vec<(String, Pattern)> =
-                    (0..width).map(|_| (String::new(), Pattern::Wild)).collect();
+                let mut cols: Vec<(Name, Pattern)> = (0..width)
+                    .map(|_| (Name::default(), Pattern::Wild))
+                    .collect();
                 cols.extend(d.cols.iter().cloned());
                 group.push(Row {
                     cols,
@@ -313,12 +350,12 @@ impl Kernel {
                     .iter()
                     .filter(|r| !r.default)
                     .map(|r| match &r.cols[k].1 {
-                        Pattern::Bind(n) if !self.ctors.contains_key(n) => Some(n.clone()),
+                        Pattern::Bind(n) if !self.pattern_constructor(n) => Some(n.clone()),
                         _ => None,
                     });
                 let first = binds.next().flatten();
                 let name = match first {
-                    Some(n) if binds.all(|b| b.as_deref() == Some(n.as_str())) => n,
+                    Some(n) if binds.all(|b| b.as_ref() == Some(&n)) => n,
                     _ => self.fresh_name("f"),
                 };
                 for r in &mut group {
@@ -326,7 +363,19 @@ impl Kernel {
                 }
                 names.push(name);
             }
+            let origins = group
+                .iter()
+                .flat_map(|row| {
+                    self.ctor_site_origins
+                        .get(&row.body.id())
+                        .cloned()
+                        .unwrap_or_else(|| vec![row.body.id()])
+                })
+                .collect();
             let body = self.tree(group, span, used)?;
+            if self.record_sites {
+                self.ctor_site_origins.insert(body.id(), origins);
+            }
             arms.push(MatchArm {
                 goal: None,
                 pattern: Pattern::Ctor {
@@ -385,12 +434,16 @@ fn numerals(p: &Pattern, span: tauto_parol::Span) -> Result<Pattern, Diagnostic>
                 span,
             );
         }
-        Pattern::Bool(b) => Pattern::Bind(b.to_string()),
+        Pattern::Bool(b) => Pattern::Bind(tauto_surface::bindings::library_name(if *b {
+            "true"
+        } else {
+            "false"
+        })),
         Pattern::Int(n) => {
-            let mut q = Pattern::Bind("Zero".into());
+            let mut q = Pattern::Bind(tauto_surface::bindings::library_name("Zero"));
             for _ in 0..*n {
                 q = Pattern::Ctor {
-                    name: "Succ".into(),
+                    name: tauto_surface::bindings::library_name("Succ"),
                     args: vec![q],
                 };
             }

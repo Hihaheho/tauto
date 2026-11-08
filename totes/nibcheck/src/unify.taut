@@ -8,7 +8,7 @@ import "ty.taut"
 // (`docs/design/self-host.md`「層 2：`ck_unify`（`src/unify_sound.taut`）」).
 
 pub fn ty_resolve_var(j: Nat, s: Ordmap(Nat, Ty), i: Nat, o: Option(Ty)): Ty {
-  match o: Ty {
+  ⊢ Ty from match o {
     Some(x) => ty_resolve_in(j, s, x)
     None => TyVar(i)
   }
@@ -20,7 +20,7 @@ pub theorem ty_option_cases<A: Type>(
   a: (o = None) -> P(None),
   b: ∀ x: A. (o = Some(x)) -> P(Some(x))
 ): P(o) {
-  match o: P(o) {
+  ⊢ P(o) from match o {
     None => a(Refl)
     Some(x) => b(x, Refl)
   }
@@ -31,7 +31,7 @@ pub theorem tyeq_list_refl(
   ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop,
   ts: List(Ty)
 ): TyEqList(s, ok, ts, ts) {
-  match ts: TyEqList(s, ok, ts, ts) {
+  ⊢ TyEqList(s, ok, ts, ts) from match ts {
     Nil => TyeqNil
     Cons(t, rest) => TyeqCons(TyeqRefl(t), tyeq_list_refl(s, ok, rest))
   }
@@ -58,7 +58,7 @@ pub theorem ty_resolve_list_step(
   hl: ResolveListEqAt(j, s, ok),
   ts: List(Ty)
 ): TyEqList(s, ok, ts, ty_resolve_list_in(Succ(j), s, ts)) {
-  match ts: TyEqList(s, ok, ts, ty_resolve_list_in(Succ(j), s, ts)) {
+  ⊢ TyEqList(s, ok, ts, ty_resolve_list_in(Succ(j), s, ts)) from match ts {
     Nil => TyeqNil
     Cons(t, rest) => TyeqCons(ht(t), hl(rest))
   }
@@ -72,7 +72,7 @@ pub theorem ty_resolve_step(
   hl: ResolveListEqAt(j, s, ok),
   t: Ty
 ): TyEq(s, ok, t, ty_resolve_in(Succ(j), s, t)) {
-  match t: TyEq(s, ok, t, ty_resolve_in(Succ(j), s, t)) {
+  ⊢ TyEq(s, ok, t, ty_resolve_in(Succ(j), s, t)) from match t {
     TyVar(i) => ty_option_cases(
       (o: Option(Ty)) => TyEq(s, ok, TyVar(i), ty_resolve_var(j, s, i, o)),
       Ordmap::get(s, i, Ordmap::compare_nat),
@@ -113,7 +113,7 @@ pub theorem ty_resolve_at(
   s: Ordmap(Nat, Ty),
   ok: (List(Pair(Text, Kind)), Ordmap(Text, Ty), Ty, Ty) -> Prop
 ): And(ResolveEqAt(k, s, ok), ResolveListEqAt(k, s, ok)) {
-  match k: And(ResolveEqAt(k, s, ok), ResolveListEqAt(k, s, ok)) {
+  ⊢ And(ResolveEqAt(k, s, ok), ResolveListEqAt(k, s, ok)) from match k {
     Zero => AndIntro((t: Ty) => TyeqRefl(t), (ts: List(Ty)) => tyeq_list_refl(s, ok, ts))
     Succ(j) => AndIntro(
       (t: Ty) => ty_resolve_step(
@@ -175,7 +175,7 @@ mutual {
     ys: List(Ty),
     h: TyEqList(s, ok, xs, ys)
   ): TyEqList(s2, ok2, xs, ys) {
-    match h: TyEqList(s2, ok2, xs, ys) {
+    ⊢ TyEqList(s2, ok2, xs, ys) from match h {
       TyeqNil => TyeqNil
       TyeqCons(x, y, xs1, ys1, h1, h2) => TyeqCons(
         tyeq_move(s, ok, s2, ok2, hs, hk, x, y, h1),
@@ -195,7 +195,7 @@ mutual {
     b: Ty,
     h: TyEq(s, ok, a, b)
   ): TyEq(s2, ok2, a, b) {
-    match h: TyEq(s2, ok2, a, b) {
+    ⊢ TyEq(s2, ok2, a, b) from match h {
       TyeqRefl(a1) => TyeqRefl(a1)
       TyeqSym(a1, b1, h1) => TyeqSym(tyeq_move(s, ok, s2, ok2, hs, hk, a1, b1, h1))
       TyeqTrans(a1, b1, c1, h1, h2) => TyeqTrans(
@@ -222,10 +222,7 @@ mutual {
         tyeq_move(s, ok, s2, ok2, hs, hk, x1, x2, hx)
       )
       TyeqAppNorm(f, x) => TyeqAppNorm(f, x)
-      TyeqPolyBody(x, y, gs, h1) => TyeqPolyBody(
-        gs,
-        tyeq_move(s, ok, s2, ok2, hs, hk, x, y, h1)
-      )
+      TyeqPolyBody(x, y, gs, h1) => TyeqPolyBody(gs, tyeq_move(s, ok, s2, ok2, hs, hk, x, y, h1))
       TyeqPoly(ta, tb, ga, gb, rigid, hq, hr, h1) => TyeqPoly(
         ga,
         gb,

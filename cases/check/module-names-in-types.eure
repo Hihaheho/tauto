@@ -1,0 +1,23 @@
+// A name written with its module (`Nat::add`, `M::two`) means the same
+// declaration in every place a term is written: a theorem's signature, a
+// type's parameters and a constructor's fields alike.
+
+@ cases.a-constructor-field-type-names-a-module-function
+imports = [path`../../std/Base.taut`]
+source = ```tauto
+module M {
+  pub fn two(): Nat { 2 }
+}
+
+inductive Le(a: Nat, b: Nat): Prop {
+  LeBy(d: Nat, e: b = Nat::add(a, d)): Le(a, b)
+}
+
+inductive AtTwo(n: Nat): Prop {
+  Here(e: n = M::two()): AtTwo(n)
+}
+
+theorem le_refl(a: Nat): Le(a, a) { LeBy(0, Refl) }
+theorem two_at_two(): AtTwo(2) { Here(Refl) }
+```
+checks_all = "ok"

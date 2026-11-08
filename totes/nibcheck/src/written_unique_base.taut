@@ -69,7 +69,7 @@ pub theorem written_unique_term<env: Datas, generics: Ordmap(
   t: Ty,
   ih: WrittenKindUnique(generics, partial, borrow, sk, t)
 ): t = other {
-  match meaning: t = other {
+  ⊢ t = other from match meaning {
     Mk(ctor_ast_occurrence, gs, Mode, borrowing, kind, value, begin, finish, inner) => ih(
       env,
       value,
@@ -86,7 +86,7 @@ pub theorem written_unique_name<env: Datas, generics: Ordmap(
   t: Ty,
   first: WrittenNameType(first_env, generics, name, partial, t)
 ): t = other {
-  match meaning: t = other {
+  ⊢ t = other from match meaning {
     WrittenKindName(gs, Mode, borrowing, spelling, value, Named) => Eq::trans(
       Eq::sym(written_name_mode_value(first)),
       written_name_mode_value(Named)
@@ -107,25 +107,11 @@ pub theorem written_unique_unit<env: Datas, generics: Ordmap(
     other
   )
 ): TyUnit = other {
-  match meaning: TyUnit = other {
+  ⊢ TyUnit = other from match meaning {
     WrittenKindUnit(ctor_ast_occurrence, gs, Mode, borrowing, begin, finish) => Refl
-    WrittenKindNamed(
-      ctor_ast_occurrence,
-      gs,
-      Mode,
-      borrowing,
-      name,
-      args,
-      types,
-      begin,
-      finish,
-      NotTuple,
-      not_info,
-      unbound,
-      SliceBorrowed,
-      arguments,
-      arity
-    ) => False::elim(NotTuple(Refl))
+    WrittenKindNamed(ctor_ast_occurrence, gs, Mode, borrowing, name, args, types, begin, finish, NotTuple, not_info, unbound, SliceBorrowed, arguments, arity) => False::elim(
+      NotTuple(Refl)
+    )
   }
 }
 pub theorem written_unique_info<env: Datas, generics: Ordmap(
@@ -144,52 +130,17 @@ pub theorem written_unique_info<env: Datas, generics: Ordmap(
   t: Ty,
   ih: WrittenTermUnique(generics, partial, false, arg, t)
 ): TyInfo(t) = other {
-  match meaning: TyInfo(t) = other {
-    WrittenKindInfo(
-      ctor_ast_occurrence,
-      gs,
-      Mode,
-      borrowing,
-      first,
-      value,
-      begin,
-      finish,
-      argument
-    ) => Eq::congr(TyInfo, ih(env, value, argument))
-    WrittenKindNamed(
-      ctor_ast_occurrence,
-      gs,
-      Mode,
-      borrowing,
-      name,
-      args,
-      types,
-      begin,
-      finish,
-      NotTuple,
-      not_info,
-      unbound,
-      SliceBorrowed,
-      arguments,
-      arity
-    ) => False::elim(not_info(Refl, Refl))
-    WrittenKindGeneric(
-      ctor_ast_occurrence,
-      gs,
-      Mode,
-      borrowing,
-      name,
-      first,
-      head,
-      value,
-      bound,
-      begin,
-      finish,
-      not_info,
-      Parameter,
-      constructor,
-      argument
-    ) => False::elim(not_info(Refl))
+  ⊢ TyInfo(t) = other from match meaning {
+    WrittenKindInfo(ctor_ast_occurrence, gs, Mode, borrowing, first, value, begin, finish, argument) => Eq::congr(
+      TyInfo,
+      ih(env, value, argument)
+    )
+    WrittenKindNamed(ctor_ast_occurrence, gs, Mode, borrowing, name, args, types, begin, finish, NotTuple, not_info, unbound, SliceBorrowed, arguments, arity) => False::elim(
+      not_info(Refl, Refl)
+    )
+    WrittenKindGeneric(ctor_ast_occurrence, gs, Mode, borrowing, name, first, head, value, bound, begin, finish, not_info, Parameter, constructor, argument) => False::elim(
+      not_info(Refl)
+    )
   }
 }
 pub theorem written_unique_borrow<env: Datas, generics: Ordmap(
@@ -200,7 +151,7 @@ pub theorem written_unique_borrow<env: Datas, generics: Ordmap(
   t: Ty,
   ih: WrittenTermUnique(generics, partial, true, body, t)
 ): TyBorrow(t, mutable) = other {
-  match meaning: TyBorrow(t, mutable) = other {
+  ⊢ TyBorrow(t, mutable) = other from match meaning {
     WrittenKindBorrow(gs, Mode, borrowing, r#mut, term, value, inner) => Eq::congr(
       (x: Ty) => TyBorrow(x, r#mut),
       ih(env, value, inner)
@@ -217,7 +168,7 @@ pub theorem written_unique_union<env: Datas, generics: Ordmap(
   types: List(Ty),
   ih: WrittenTermsUnique(generics, partial, parts, types)
 ): ty_union(types) = other {
-  match meaning: ty_union(types) = other {
+  ⊢ ty_union(types) = other from match meaning {
     WrittenKindUnion(gs, Mode, borrowing, terms, values, inner) => Eq::congr(
       ty_union,
       ih(env, values, inner)
@@ -239,7 +190,7 @@ pub theorem written_unique_product<env: Datas, generics: Ordmap(
   types: List(Ty),
   ih: WrittenTermsUnique(generics, partial, parts, types)
 ): Eq(Ty, ty_product(types), other) {
-  match meaning: Eq(Ty, ty_product(types), other) {
+  ⊢ Eq(Ty, ty_product(types), other) from match meaning {
     WrittenKindProduct(gs, mode, borrowing, terms, values, inner) => Eq::congr(
       ty_product,
       ih(env, values, inner)
@@ -254,7 +205,7 @@ pub theorem written_unique_tagged<env: Datas, generics: Ordmap(
   t: Ty,
   ih: WrittenTermUnique(generics, partial, false, body, t)
 ): ty_tagged(Cons(tag, Nil), t) = other {
-  match meaning: ty_tagged(Cons(tag, Nil), t) = other {
+  ⊢ ty_tagged(Cons(tag, Nil), t) = other from match meaning {
     WrittenKindTagged(gs, Mode, borrowing, label, term, value, inner) => Eq::congr(
       (x: Ty) => ty_tagged(Cons(label, Nil), x),
       ih(env, value, inner)

@@ -1,0 +1,114 @@
+// A row parameter that several arguments carry, `e` of `both<!e>(a: Answer(e),
+// b: Answer(e))`, is the row they fix together. A value of `Answer(e)` is
+// invariant in `e`, so an argument that is itself a call, `make(quiet)`, takes
+// the row the other arguments fix, not the one its own arguments alone would
+// give: each of its arguments is checked against that row. The fields of a
+// record are read the same way.
+
+@ cases.joined-row-parameter-of-arguments
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Os
+
+struct Answer(!e) { run: () -> i64 ! {Div} ∪ e }
+
+fn loud(): i64 ! {Div, stdout} {
+  perform stdout("loud ")
+  1
+}
+
+fn quiet(): i64 ! {Div} { 2 }
+
+fn make<!e>(f: () -> i64 ! {Div} ∪ e): Answer(e) { Answer { run: () => f() } }
+
+fn both<!e>(a: Answer(e), b: Answer(e)): i64 ! {Div} ∪ e { (a.run)() + (b.run)() }
+
+perform show("lq", both(make(loud), make(quiet)))
+perform show("ql", both(make(quiet), make(loud)))
+```
+stdout = "loud loud "
+shows = ["lq = 3", "ql = 3"]
+
+// The answers of a server: a list of resources and a list of functions in one
+// record, each made by a function from what it runs. One that performs a host
+// effect and one that performs nothing but `Div` share the record's row.
+@ cases.joined-row-parameter-of-record-fields
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Os
+import std::prelude::Shared
+
+struct Res(B: Type) { key: Text, show: (b: B) -> Text }
+struct Answer(!e) { name: Text, run: (arg: Text) -> Result(Text, Text) ! {Div} ∪ e }
+struct App(R: Shared, !e) { page: R, resources: List(Answer(e)), functions: List(Answer(e)) }
+
+fn loading<B, !e>(r: Res(B), run: () -> Result(B, Text) ! {Div} ∪ e): Answer(e) {
+  let show := r.show
+  Answer { name: r.key, run: (arg: Text) => match run() {
+    Ok(b) => Ok(show(b))
+    Err(m) => Err(m)
+  } }
+}
+
+fn answer<!e>(l: List(Answer(e)), name: Text): Text ! {Div} ∪ e {
+  match l {
+    Nil => "none"
+    Cons(a, rest) => if a.name == name {
+      match (a.run)("") {
+        Ok(t) => t
+        Err(m) => m
+      }
+    } else { answer(rest, name) }
+  }
+}
+
+fn run_app<R: Shared, !e>(a: App(R, e)): Text ! {Div} ∪ e {
+  concat(answer(a.resources, "motto"), concat(" ", answer(a.functions, "count")))
+}
+
+fn motto_now(): Result(Text, Text) ! {Div, stdout} {
+  perform stdout("reading ")
+  Ok("motto")
+}
+
+fn count_now(): Result(i64, Text) ! {Div} { Ok(3) }
+
+perform show("r", run_app(App {
+  page: 1,
+  resources: Cons(loading(Res { key: "motto", show: (t: Text) => t }, motto_now), Nil),
+  functions: Cons(loading(Res { key: "count", show: (n: i64) => Text::of_i64(n) }, count_now), Nil)
+}))
+```
+stdout = "reading "
+shows = ["r = \"motto 3\""]
+
+// The joined row is still the caller's to handle.
+@ cases.joined-row-parameter-is-still-handled
+source = ```tauto
+struct Answer(!e) { run: () -> i64 ! {Div} ∪ e }
+fn loud(): i64 ! {Div, stdout} {
+  perform stdout("loud ")
+  1
+}
+fn quiet(): i64 ! {Div} { 2 }
+fn make<!e>(f: () -> i64 ! {Div} ∪ e): Answer(e) { Answer { run: () => f() } }
+fn both<!e>(a: Answer(e), b: Answer(e)): i64 ! {Div} ∪ e { (a.run)() + (b.run)() }
+fn silent(): i64 ! {Div} { both(make(quiet), make(loud)) }
+perform show("s", silent())
+```
+rows = "error: `silent` may perform stdout but its row is {Div}"
+
+// A row the context writes out wins over the arguments, and an argument that
+// performs more than it is rejected where it is given.
+@ cases.joined-row-parameter-written-by-the-context
+source = ```tauto
+struct Answer(!e) { run: () -> i64 ! {Div} ∪ e }
+fn loud(): i64 ! {Div, stdout} {
+  perform stdout("loud ")
+  1
+}
+fn make<!e>(f: () -> i64 ! {Div} ∪ e): Answer(e) { Answer { run: () => f() } }
+fn run_quiet(a: Answer(!{})): i64 ! {Div} { (a.run)() }
+perform show("q", run_quiet(make(loud)))
+```
+rows = "error: a function value may perform stdout but its type permits {Div}"

@@ -124,6 +124,30 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// Calls function instance `inst` with `args`, runs every task it
+    /// starts to its end, and gives what the call answered.
+    pub fn run_fn(&mut self, inst: u32, args: Vec<Value>) -> R<Value> {
+        self.call_value(Value::Fn(inst), args)?;
+        let mut answer = None;
+        loop {
+            let v = self.run(0)?;
+            if self.switched {
+                self.switched = false;
+            } else {
+                match self.result.take() {
+                    None => answer = Some(v),
+                    Some(p) => p.finish(v),
+                }
+            }
+            if !self.next_task()? {
+                return match answer {
+                    Some(v) => Ok(v),
+                    None => fail(messages::DEADLOCK),
+                };
+            }
+        }
+    }
+
     pub fn run_top(&mut self) -> R<Value> {
         let Some(top) = self.p.top else {
             return Ok(Value::Unit);
@@ -175,7 +199,7 @@ impl<'a> Machine<'a> {
                 self.replied(id, reply)?;
             }
             let at = self.tasks.iter().position(|t| {
-                t.wait.as_ref().is_none_or(|s| s.raised.get())
+                t.wait.as_ref().is_none_or(|s| s.is_raised())
                     && t.asked.as_ref().is_none_or(|_| true)
             });
             if let Some(i) = at {
@@ -202,6 +226,14 @@ impl<'a> Machine<'a> {
                     _ => None,
                 })
                 .min();
+            // A request to end the run may still raise what a task waits for.
+            let outside = tauto_rt::shutdown::waiting();
+            let first = match (first, outside) {
+                (None, true) => {
+                    Some(std::time::Instant::now() + std::time::Duration::from_millis(10))
+                }
+                (f, _) => f,
+            };
             if self.jobs.is_empty() {
                 let Some(first) = first else {
                     return Ok(false);
@@ -477,7 +509,22 @@ impl<'a> Machine<'a> {
                     }
                     let args = self.pop_n(argc as usize);
                     let f = self.pop();
-                    self.call_value(f, args)?;
+                    let mut native = None;
+                    if let Value::Fn(inst) = f
+                        && let Some(n) = &p.native
+                        && n.has(inst)
+                        && self.budgets().is_empty()
+                    {
+                        match n.call(inst, &args, &mut self.fuel) {
+                            crate::native::Answer::Done(v) => native = Some(v),
+                            crate::native::Answer::Fail(m) => return fail(m),
+                            crate::native::Answer::Fallback => {}
+                        }
+                    }
+                    match native {
+                        Some(v) => self.stack.push(v),
+                        None => self.call_value(f, args)?,
+                    }
                 }
                 Op::TailSelf { inst, argc } => {
                     let args = self.pop_n(argc as usize);
@@ -520,6 +567,16 @@ impl<'a> Machine<'a> {
                             self.switched = true;
                         }
                         Out::Host(job) => self.request(job),
+                    }
+                }
+                Op::Extern { index, argc } => {
+                    let args = self.pop_n(argc as usize);
+                    match self.host.call_extern(index, args) {
+                        Ok(v) => self.stack.push(v),
+                        Err(message) => {
+                            let name = p.externs.get(index as usize).map_or("?", |n| n.as_str());
+                            return fail(format!("extern {name}: {message}"));
+                        }
                     }
                 }
                 Op::Prim { prim, argc } => {
@@ -715,22 +772,6 @@ impl<'a> Machine<'a> {
                 true
             }
             Pat::Literal(l) => equal(l, v)?,
-            Pat::Product(fields) => {
-                let inner = v.get()?;
-                let Value::Product(ms) = &inner else {
-                    return Ok(false);
-                };
-                for (i, f) in fields.iter().enumerate() {
-                    let part = match v {
-                        Value::Ref(p) => Value::Ref(Rc::new(p.child(Step::Index(i)))),
-                        _ => ms[i].clone(),
-                    };
-                    if !self.matches(f, &part, binds)? {
-                        return Ok(false);
-                    }
-                }
-                true
-            }
             Pat::Ctor { ctor, fields } => {
                 let inner = v.get()?;
                 let Value::Data(d) = &inner else {
@@ -875,7 +916,7 @@ impl<'a> Machine<'a> {
         if &*op == "wait" && args.len() == 1 {
             if let Value::Signal(s) = args[0].get()? {
                 self.stack.push(Value::Unit);
-                if !s.raised.get() {
+                if !s.is_raised() {
                     self.park(Some(s), None, false);
                     self.switched = true;
                 }
@@ -966,16 +1007,6 @@ impl<'a> Machine<'a> {
                     fields,
                 }))
             }
-            PrimOp::Product(picks) => {
-                let mut out = Vec::with_capacity(picks.len());
-                for (i, m) in picks {
-                    out.push(match m {
-                        None => args[*i].clone(),
-                        Some(j) => args[*i].at(&Step::Index(*j))?,
-                    });
-                }
-                Value::Product(Rc::new(out))
-            }
             PrimOp::Concat => {
                 let (a, b) = (args[0].as_text()?, args[1].as_text()?);
                 let mut s = String::with_capacity(a.len() + b.len());
@@ -1012,7 +1043,6 @@ impl<'a> Machine<'a> {
     fn unary(&self, op: &UnaryOp, v: Value) -> R<Value> {
         Ok(match op {
             UnaryOp::Not => Value::Bool(!v.as_bool()?),
-            UnaryOp::Member(i) => v.get()?.at(&Step::Index(*i))?.get()?,
             UnaryOp::Field(s) => v.get()?.at(s)?.get()?,
             UnaryOp::Shown => Value::Shown(Rc::from(show(&v)?)),
             UnaryOp::TempRef => temp_ref(v),

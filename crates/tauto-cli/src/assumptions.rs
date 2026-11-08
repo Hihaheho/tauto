@@ -40,7 +40,7 @@ pub fn command(args: &[String]) -> ExitCode {
     let graph = Graph::of(&report, &own);
     let mut rows = Vec::new();
     for e in &report.entries {
-        if e.file != own || only.is_some_and(|n| n != e.entry.name) {
+        if e.file != own || only.is_some_and(|n| n != e.entry.name.as_str()) {
             continue;
         }
         rows.push(Row::of(&e.entry.name, Some(&e.entry.verdict), &graph));
@@ -115,13 +115,15 @@ impl Row {
             return row;
         };
         match verdict {
-            Verdict::Checked { axioms } => row.axioms = axioms.to_vec(),
+            Verdict::Checked { axioms } => {
+                row.axioms = axioms.iter().map(ToString::to_string).collect()
+            }
             Verdict::Skipped(_) => row.status = "skipped",
             Verdict::Failed(_) => row.status = "failed",
             Verdict::Incomplete { holes, uses } => {
                 row.status = "incomplete";
                 row.holes = holes.iter().map(|h| format!("?{}", h.name)).collect();
-                row.uses = uses.clone();
+                row.uses = uses.iter().map(ToString::to_string).collect();
             }
         }
         row
@@ -200,12 +202,12 @@ impl Graph {
                 return;
             }
             Stmt::Extern { fns, .. } => {
-                self.externs.extend(fns.iter().map(|f| f.name.clone()));
+                self.externs.extend(fns.iter().map(|f| f.name.to_string()));
                 return;
             }
             Stmt::Fn(f) => {
                 if own {
-                    self.own.push(f.name.clone());
+                    self.own.push(f.name.to_string());
                 }
                 f.name.clone()
             }
@@ -218,7 +220,10 @@ impl Graph {
                 names.insert(base(n).to_string());
             }
         });
-        self.mentions.entry(name).or_default().extend(names);
+        self.mentions
+            .entry(name.to_string())
+            .or_default()
+            .extend(names);
     }
 
     /// The `extern` functions `name` reaches through the declarations it

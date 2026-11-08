@@ -1,0 +1,47 @@
+@ cases.resolved-macro-inputs-omit-the-syntax-name
+files."lib.taut" = `````tauto
+import std::prelude::Macro
+import std::prelude::Shared
+
+pub fn fmtwords_fmt(tokens: List(SynTok), width: u64): Option(Text) {
+  Some("alpha beta")
+}
+
+syntax!(fmtwords, ```par
+%start Word
+%%
+Word: Name Name;
+Name: /[a-z]+/;
+```, with(fmt: fmtwords_fmt)) => struct Word, fn parse
+
+pub macro fn render(input: fmtwords::Word): SynExpr {
+  quote { 0 }
+}
+`````
+files."main.taut" = `````tauto
+import "lib.taut"
+
+let a := render!(```fmtwords
+  alpha   beta
+  ```)
+let b := render!(```
+  alpha    beta
+  ```)
+let c := ```fmtwords
+  alpha    beta
+  ```
+`````
+entry = "main.taut"
+format_literals = `````tauto
+import "lib.taut"
+
+let a := render!(```
+  alpha beta
+  ```)
+let b := render!(```
+  alpha beta
+  ```)
+let c := ```fmtwords
+  alpha beta
+  ```
+`````

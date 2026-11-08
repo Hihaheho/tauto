@@ -284,3 +284,31 @@ fn the_tree_holds_every_token_in_order_and_names_only_the_grammars_nodes() {
         .collect();
     assert_eq!(names, ["Sum", "Equals", "Sum"]);
 }
+
+#[test]
+fn a_syntax_error_names_a_terminal_by_what_the_grammar_says_it_means() {
+    let text = format!(
+        "{}describe Equals the '=' that ends the left side\n",
+        include_str!("data/math.tables")
+    );
+    let t = Tables::read(&text).expect("tables");
+    let e = tauto_syntax::parse_ast("math", &t, "1 + 2").unwrap_err();
+    assert_eq!(e.message, tauto_syntax::EXPECTED_END);
+    assert_eq!(
+        e.args,
+        [
+            ("syntax".to_string(), "math".to_string()),
+            (
+                "expected".to_string(),
+                "the '=' that ends the left side".to_string()
+            ),
+        ]
+    );
+    // The names stay the names: tools list them as completions.
+    assert_eq!(e.expected, ["Equals"]);
+    let plain = Tables::read(include_str!("data/math.tables")).expect("tables");
+    let e = tauto_syntax::parse_ast("math", &plain, "1 + 2").unwrap_err();
+    assert_eq!(e.message, tauto_syntax::EXPECTED_END);
+    assert!(e.args.contains(&("expected".to_string(), "Equals".to_string())));
+    assert!(Tables::read(&text.replace("describe Equals", "describe Nope")).is_err());
+}

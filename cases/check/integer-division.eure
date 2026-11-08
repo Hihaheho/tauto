@@ -1,0 +1,75 @@
+@ cases.integer-division-is-written-with-a-named-function
+imports = [path`../../std/Int.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem nat_div(): Nat::div_nz(7, 2, Nat::ne_zero(2, Refl)) = 3 { Refl }
+theorem nat_rem(): Nat::rem_nz(7, 2, Nat::ne_zero(2, Refl)) = 1 { Refl }
+theorem tdiv_neg(): Int::tdiv_nz(-7, 2, Int::ne_zero(2, Refl)) = -3 { Refl }
+theorem tmod_neg(): Int::tmod_nz(-7, 2, Int::ne_zero(2, Refl)) = -1 { Refl }
+theorem fdiv_neg(): Int::fdiv_nz(-7, 2, Int::ne_zero(2, Refl)) = -4 { Refl }
+theorem fmod_neg(): Int::fmod_nz(-7, 2, Int::ne_zero(2, Refl)) = 1 { Refl }
+theorem fdiv_neg_divisor(): Int::fdiv_nz(7, -2, Int::ne_zero(-2, Refl)) = -4 { Refl }
+theorem fmod_neg_divisor(): Int::fmod_nz(7, -2, Int::ne_zero(-2, Refl)) = -1 { Refl }
+theorem tdiv_both_neg(): Int::tdiv_nz(-7, -2, Int::ne_zero(-2, Refl)) = 3 { Refl }
+theorem fdiv_exact(): Int::fdiv_nz(-6, 2, Int::ne_zero(2, Refl)) = -3 { Refl }
+theorem div_succ(n: Nat, k: Nat): Nat::div_nz(n, Succ(k), Nat::succ_ne_zero(k)) = Nat::div_nz(n, Succ(k), Nat::ne_zero(Succ(k), Refl)) { Refl }
+```
+
+checks."input/main.taut::nat_div" = "ok"
+checks."input/main.taut::nat_rem" = "ok"
+checks."input/main.taut::tdiv_neg" = "ok"
+checks."input/main.taut::tmod_neg" = "ok"
+checks."input/main.taut::fdiv_neg" = "ok"
+checks."input/main.taut::fmod_neg" = "ok"
+checks."input/main.taut::fdiv_neg_divisor" = "ok"
+checks."input/main.taut::fmod_neg_divisor" = "ok"
+checks."input/main.taut::tdiv_both_neg" = "ok"
+checks."input/main.taut::fdiv_exact" = "ok"
+checks."input/main.taut::div_succ" = "ok"
+
+@ cases.division-by-zero-is-the-effect-div-zero
+imports = [path`../../std/Int.taut`, path`../../std/UInt.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+pub fn half(n: Nat): Nat ! {DivZero} {
+  Nat::div(n, 2)
+}
+
+pub fn floor_div(x: Int, y: Int): Int ! {DivZero} {
+  Int::fdiv(x, y)
+}
+
+pub fn div_or_zero(a: Nat, b: Nat): Nat {
+  handle { Nat::div(a, b) } with {
+    DivZero(), k => 0
+  }
+}
+```
+
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+
+@ cases.integer-slash-in-a-proof-points-to-the-named-functions
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem half(): 7 / 2 = 3 { Refl }
+```
+
+checks_all = "ok"
+checks."input/main.taut::half" = "error: "
+@ cases.integer-slash-in-a-proof-points-to-the-named-functions.diagnostics[]
+file = "input/main.taut"
+name = "half"
+message = "`/` is the division of fractions, and the proofs do not define it on integers; write `Nat::div(a, b)`, `Nat::rem(a, b)`, `Int::tdiv`, `Int::tmod`, `Int::fdiv` or `Int::fmod` (and `U8::div`, `I32::tdiv`, … for the fixed widths), and `Rat::div` for fractions"
+span = "«7 / 2»"

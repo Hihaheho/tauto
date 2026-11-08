@@ -1,0 +1,46 @@
+// Extraction keeps declaration boundaries for private macro functions.
+
+@ cases.a-private-raw-named-macro-keeps-its-syntax-and-transitive-helpers
+extract = true
+backends = ["javascript", "rust"]
+entry = "main.taut"
+files."helpers.taut" = ````tauto
+import std::prelude::Macro
+import std::prelude::Shared
+import std::Text
+pub fn marker(): Text { "leaf" }
+pub fn leaf(value: SynExpr): SynExpr {
+  if marker() == "leaf" { value } else { quote { 0 } }
+}
+````
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+import "helpers.taut"
+fn pretty(tokens: List(SynTok), width: u64): Option(Text) ! {Div} { None }
+syntax!(r#view, ```par
+{{par:aif}}```, with(fmt: pretty)) => struct Aif, fn parse
+module Helper {
+  fn keep(value: SynExpr): SynExpr { leaf(value) }
+}
+macro fn r#view(value: view::Aif): SynExpr { Helper::keep(value.tauto_expr) }
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+perform show("value", view!(`${1} then ${2} else ${3}`))
+````
+shows = ["value = 1"]
+
+@ cases.an-unused-private-macro-is-erased-with-its-prefix
+extract = true
+backends = ["javascript", "rust"]
+entry = "main.taut"
+files."lib.taut" = ````tauto
+import std::prelude::Macro
+macro fn identity(value: SynExpr): SynExpr { value }
+pub fn neighbor(): u64 { 7 }
+````
+files."main.taut" = ````tauto
+import "lib.taut"
+perform show("value", neighbor())
+````
+shows = ["value = 7"]

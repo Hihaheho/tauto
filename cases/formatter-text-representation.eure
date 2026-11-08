@@ -1,0 +1,59 @@
+@ cases.prelude-text
+files."defs.taut" = ````tauto
+import std::prelude::Macro
+syntax!(word, ```par
+{{par:formatter_words}}```, with(fmt: word_fmt)) => struct Word, fn parse
+pub fn word_fmt(tokens: List(SynTok), width: u64): Option(Text) ! {Div} {
+  Some("first second")
+}
+````
+files."main.taut" = ```tauto
+import "defs.taut"
+let value := word`first    second`
+```
+entry = "main.taut"
+format_literals = ```tauto
+import "defs.taut"
+let value := word`first second`
+```
+
+@ cases.standard-text
+files."defs.taut" = ````tauto
+import std::prelude::Macro
+import std::Text
+syntax!(word, ```par
+{{par:formatter_words}}```, with(fmt: word_fmt)) => struct Word, fn parse
+pub fn word_fmt(tokens: List(SynTok), width: u64): Option(Text) ! {Div} {
+  Some("first second")
+}
+````
+files."main.taut" = ```tauto
+import "defs.taut"
+let value := word`first    second`
+```
+entry = "main.taut"
+format_literals = ```tauto
+import "defs.taut"
+let value := word`first second`
+```
+
+@ cases.unrelated-text-is-not-the-formatters-result-type
+files."defs.taut" = ````tauto
+import std::prelude::Macro
+struct Text { value: u64 }
+syntax!(word, ```par
+{{par:formatter_words}}```, with(fmt: word_fmt)) => struct Word, fn parse
+pub fn word_fmt(tokens: List(SynTok), width: u64): Option(Text) ! {Div} {
+  Some(Text { value: 0 })
+}
+````
+files."main.taut" = ```tauto
+import "defs.taut"
+let value := word`first    second`
+```
+entry = "main.taut"
+format_literals = ```tauto
+import "defs.taut"
+let value := word`first    second`
+```
+format_literals_warnings = ["the fmt function, makes Option(defs::Text)"]

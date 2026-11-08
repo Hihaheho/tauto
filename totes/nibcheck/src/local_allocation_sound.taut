@@ -17,7 +17,7 @@ import "types_match.taut"
 import "unify_sound.taut"
 
 pub fn LocalsAllocated(limit: Nat, env: List(Local)): Prop {
-  match env: Prop { Nil => True
+  ⊢ Prop from match env { Nil => True
     Cons(head, rest) => And(
       TypeAllocated(limit, expr_local_ty(head)),
       LocalsAllocated(limit, rest)
@@ -30,7 +30,7 @@ pub theorem locals_allocated_weaken(
   advanced: Nat::le(before, after) = true,
   h: LocalsAllocated(before, env)
 ): LocalsAllocated(after, env) {
-  match env: LocalsAllocated(after, env) { Nil => Trivial
+  ⊢ LocalsAllocated(after, env) from match env { Nil => Trivial
     Cons(head, rest) => AndIntro(
       type_allocated_weaken(expr_local_ty(head), before, after, advanced, And::left(h)),
       locals_allocated_weaken(rest, before, after, advanced, And::right(h))
@@ -43,7 +43,7 @@ pub theorem local_binding_allocated<env: List(
   limit: Nat,
   bounded: LocalsAllocated(limit, env)
 ): TypeAllocated(limit, expr_local_ty(local)) {
-  match binding: TypeAllocated(limit, expr_local_ty(local)) {
+  ⊢ TypeAllocated(limit, expr_local_ty(local)) from match binding {
     LocalBindingHere(found, rest) => And::left(bounded)
     LocalBindingLater(rest, key, found, head, different, tail) => local_binding_allocated(
       tail,
@@ -85,7 +85,7 @@ pub theorem ck_lookup_local_allocation(
 }
 pub fn allocation_scope_items(scope: Scope): List(Local) { scope.items }
 pub fn allocation_result_scope<A>(m: Mut2(A, Checker, Scope)): Scope {
-  match m: Scope { mut2(value, next, env) => env }
+  ⊢ Scope from match m { mut2(value, next, env) => env }
 }
 pub def ScopeAllocation<A: Type>(
   c: Checker,
@@ -108,7 +108,7 @@ pub theorem ck_bind_local_allocation(
   bounded: LocalsAllocated(ck_next_of(c), allocation_scope_items(env)),
   value: TypeAllocated(ck_next_of(c), ty)
 ): ScopeAllocation(c, ck_bind_local(c, env, name, ty, mutable, site)) {
-  match env: ScopeAllocation(c, ck_bind_local(c, env, name, ty, mutable, site)) {
+  ⊢ ScopeAllocation(c, ck_bind_local(c, env, name, ty, mutable, site)) from match env {
     ScopeMk(items) => AndIntro(
       AndIntro(Nat::le_refl(ck_next_of(c)), state),
       AndIntro(value, bounded)
@@ -131,14 +131,17 @@ pub theorem scope_allocation_bind<A: Type, B: Type>(
   k: (A, Checker, Scope) -> Mut2(B, Checker, Scope),
   m: Mut2(A, Checker, Scope),
   first: ScopeAllocation(c, m),
-  tail: ∀ value: A. ∀ next: Checker. ∀ env: Scope. ∀ advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true. ∀ state: CheckerAllocation(
+  tail: ∀ value: A. ∀ next: Checker. ∀ env: Scope. ∀ advanced: Nat::le(
+    ck_next_of(c),
+    ck_next_of(next)
+  ) = true. ∀ state: CheckerAllocation(
     next
   ). ∀ bounded: LocalsAllocated(
     ck_next_of(next),
     allocation_scope_items(env)
   ). ScopeAllocation(next, k(value, next, env))
 ): ScopeAllocation(c, pattern_bind(A, B, k, m)) {
-  match m: ScopeAllocation(c, pattern_bind(A, B, k, m)) {
+  ⊢ ScopeAllocation(c, pattern_bind(A, B, k, m)) from match m {
     mut2(value, next, env) => {
       let last: ScopeAllocation(
         next,

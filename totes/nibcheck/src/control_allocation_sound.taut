@@ -27,7 +27,7 @@ pub theorem argument_expected_allocation(
   expected: Option(Ty),
   hint: OptionTypeAllocated(ck_next_of(c), expected)
 ): AllocationAdvance(c, argument_expected(c, t, a, expected)) {
-  match expected: AllocationAdvance(c, argument_expected(c, t, a, expected)) {
+  ⊢ AllocationAdvance(c, argument_expected(c, t, a, expected)) from match expected {
     None => allocation_advance_return(c, Star, state)
     Some(p) => allocation_advance_rewrap(
       c,
@@ -61,7 +61,7 @@ pub theorem argument_return_allocation(
   returns: List(Ty),
   targets: TypeListAllocated(ck_next_of(c), returns)
 ): AllocationAdvance(c, argument_return(c, t, span, returns)) {
-  match returns: AllocationAdvance(c, argument_return(c, t, span, returns)) {
+  ⊢ AllocationAdvance(c, argument_return(c, t, span, returns)) from match returns {
     Nil => allocation_advance_rewrap(
       c,
       ck_error(c, "`return` outside a function", span),
@@ -108,7 +108,7 @@ pub theorem argument_budget_allocation(
   exceeded: List(Ty),
   targets: TypeListAllocated(ck_next_of(c), exceeded)
 ): AllocationAdvance(c, argument_budget(c, t, span, exceeded)) {
-  match exceeded: AllocationAdvance(c, argument_budget(c, t, span, exceeded)) {
+  ⊢ AllocationAdvance(c, argument_budget(c, t, span, exceeded)) from match exceeded {
     Nil => allocation_advance_return(c, Star, state)
     Cons(x, rest) => allocation_advance_bind(
       Bool,

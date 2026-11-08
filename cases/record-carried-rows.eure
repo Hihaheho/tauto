@@ -1,0 +1,151 @@
+// A record whose field holds a function with a row variable (`run: … ! {Div} ∪ e`)
+// carries that variable: a call specializes it, and the function the record holds
+// may perform the effects of the row it takes, under the handlers of the caller.
+// Every backend gives the same answer.
+
+@ cases.record-carried-row-performs-an-effect-of-its-caller
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Os
+
+effect log(m: Text): Unit resume 1
+
+struct Answer(!e) { name: Text, run: (arg: i64) -> i64 ! {Div} ∪ e }
+
+fn answering<!e>(name: Text, run: (a: i64) -> i64 ! {Div} ∪ e): Answer(e) {
+  Answer { name: name, run: (arg: i64) => run(arg) + 1 }
+}
+
+fn answer<!e>(l: List(Answer(e)), name: Text, arg: i64): i64 ! {Div} ∪ e {
+  match l {
+    Nil => 0
+    Cons(a, rest) => if a.name == name { (a.run)(arg) } else { answer(rest, name, arg) }
+  }
+}
+
+fn logged(n: i64): i64 ! {Div, log} {
+  perform log("logged ")
+  n * 2
+}
+
+let r := handle { answer(Cons(answering("a", logged), Cons(answering("b", logged), Nil)), "b", 4) } with {
+  log(m), k => {
+    perform stdout(m)
+    k(#())
+  }
+  return v => v
+}
+perform show("r", r)
+```
+stdout = "logged "
+shows = ["r = 9"]
+
+// The same record type, with its row variable taking a row that suspends at one
+// call and rows that do not at others: an operation that does not resume, and
+// no operation at all.
+@ cases.record-carried-row-takes-rows-of-every-tier
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Os
+
+effect log(m: Text): Unit resume 1
+effect fail(m: Text): i64 resume 0
+
+struct Answer(!e) { run: (arg: i64) -> i64 ! {Div} ∪ e }
+
+fn answer<!e>(a: Answer(e), arg: i64): i64 ! {Div} ∪ e { (a.run)(arg) }
+
+fn plain(n: i64): i64 ! {Div} { n }
+
+let p := answer(Answer { run: (n: i64) => plain(n) + 1 }, 1)
+perform show("p", p)
+
+let r := handle {
+  answer(Answer { run: (n: i64) => {
+    perform log("logged ")
+    n * 2
+  } }, 4)
+} with {
+  log(m), k => {
+    perform stdout(m)
+    k(#())
+  }
+  return v => v
+}
+perform show("r", r)
+
+let f := handle { answer(Answer { run: (n: i64) => perform fail("no") }, 4) } with {
+  fail(m) => 0 - 1
+  return v => v
+}
+perform show("f", f)
+```
+stdout = "logged "
+shows = ["p = 2", "r = 8", "f = -1"]
+
+// A borrowed record works the same.
+@ cases.borrowed-record-carried-row-performs-an-effect-of-its-caller
+backends = ["rust", "javascript"]
+source = ```tauto
+effect ask(n: i64): i64 resume 1
+struct Handlers(!e) { on_key: (k: i64) -> i64 ! e }
+fn dispatch<!e>(&h: Handlers(e), k: i64): i64 ! e { (h.on_key)(k) }
+let r := handle {
+  let h := Handlers { on_key: (k) => perform ask(k) + 1 }
+  dispatch(&h, 3)
+} with { ask(n), k => k(n * 10) }
+perform show("r", r)
+```
+shows = ["r = 31"]
+
+// A record that holds such records, `App(R, e)` with `List(Answer(e))`, carries
+// the variable on to them: the functions the inner records hold may perform an
+// effect of the caller, under its handlers.
+@ cases.record-carried-row-through-a-record-of-records
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Os
+import std::prelude::Shared
+
+effect read(key: Text): Text resume 1
+
+struct Answer(!e) { name: Text, run: (arg: Text) -> Result(Text, Text) ! {Div} ∪ e }
+struct App(R: Shared, !e) { page: R, resources: List(Answer(e)) }
+
+fn loading<!e>(key: Text, run: () -> Result(Text, Text) ! {Div} ∪ e): Answer(e) {
+  Answer { name: key, run: (arg: Text) => run() }
+}
+
+fn answer<!e>(l: List(Answer(e)), name: Text): Text ! {Div} ∪ e {
+  match l {
+    Nil => "none"
+    Cons(a, rest) => if a.name == name {
+      match (a.run)("") {
+        Ok(t) => t
+        Err(m) => m
+      }
+    } else { answer(rest, name) }
+  }
+}
+
+fn run_app<R: Shared, !e>(a: App(R, e)): Text ! {Div} ∪ e {
+  concat(answer(a.resources, "motto"), concat(" ", answer(a.resources, "none")))
+}
+
+fn motto_now(): Result(Text, Text) ! {Div, read} {
+  Ok(perform read("motto"))
+}
+
+let r := handle {
+  run_app(App { page: 1, resources: Cons(loading("motto", motto_now), Nil) })
+} with {
+  read(key), k => {
+    perform stdout("reading ")
+    k(concat(key, "!"))
+  }
+  return v => v
+}
+perform show("r", r)
+```
+stdout = "reading "
+shows = ["r = \"motto! none\""]

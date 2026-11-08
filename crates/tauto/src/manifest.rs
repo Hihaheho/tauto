@@ -5,6 +5,7 @@
 //! rust {
 //!   bridge = "bridge"
 //!   executor = "tokio"
+//!   stack-mb = 4096
 //!   bindings = ["bind/regex.eure"]
 //!   types { File = "std::fs::File" }
 //!   extern { file_open = "std::fs::File::open" }
@@ -31,7 +32,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tauto_message::msg;
+use tauto_message::{Message, msg};
 
 use eure_document::document::EureDocument;
 use eure_document::document::NodeId;
@@ -57,6 +58,9 @@ pub struct CheckSection {
     /// `slow`: files that may take longer, by path from the manifest's
     /// directory, each with its own limit.
     pub slow: BTreeMap<String, Duration>,
+    /// `axioms`: when written, the only axioms the files of this manifest may
+    /// depend on, by path from the manifest's directory.
+    pub axioms: Option<BTreeMap<String, Vec<String>>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -96,6 +100,10 @@ pub struct RustSection {
     /// Where the bodies of tasks run: `"tokio"` (the default: many tasks on
     /// each thread of a reactor) or `"threads"` (a thread for each task).
     pub executor: Option<String>,
+    /// `rust.stack-mb`: the stack of the program's threads in MiB, which the
+    /// generated `main` sets in place of the runtime's 1024. `TAUTO_STACK_MB`
+    /// at run time still wins over it.
+    pub stack_mb: Option<u32>,
     /// Optional function allowlist for the tauto-build Rust facade.
     pub exports: Option<Vec<String>>,
     /// Whether tauto-build also writes UniFFI exports of the facade.
@@ -151,6 +159,10 @@ pub struct Manifest {
     /// `trust { commands { bk { tote = "bikkuri", read = ["src"] } } }`. Only
     /// the project's own manifest is read for it, as for `trust_extern`.
     pub trust_commands: BTreeMap<String, CommandTrust>,
+    /// `run { file = "app/main.taut" }`: the program `tauto run` and
+    /// `tauto dev` run when they are given neither a file nor `--tote`, by
+    /// path from the manifest's directory.
+    pub run_file: Option<String>,
     pub file: PathBuf,
 }
 
@@ -191,7 +203,7 @@ pub enum Dependency {
 /// out of what was fetched. A Git dependency is found through the
 /// `Tauto::lock` of the project being read ([`crate::project`]), in the
 /// fetched totes; the network is never used.
-pub fn dependency_dir(dir: &Path, name: &str, dependency: &Dependency) -> Result<PathBuf, String> {
+pub fn dependency_dir(dir: &Path, name: &str, dependency: &Dependency) -> Result<PathBuf, Message> {
     match dependency {
         Dependency::Path(path) => {
             let target = dir.join(path);
@@ -204,8 +216,7 @@ pub fn dependency_dir(dir: &Path, name: &str, dependency: &Dependency) -> Result
                     name = name,
                     path = path.as_str(),
                     tree = tree.display().to_string()
-                )
-                .to_string());
+                ));
             }
             Ok(target)
         }
@@ -214,25 +225,42 @@ pub fn dependency_dir(dir: &Path, name: &str, dependency: &Dependency) -> Result
 }
 
 /// Reads `Tauto.eure` in `dir` alone: the bindings it names are not read.
-pub fn read(dir: &Path) -> Result<Manifest, String> {
+pub fn read(dir: &Path) -> Result<Manifest, Message> {
     let file = dir.join("Tauto.eure");
-    let text = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let text = std::fs::read_to_string(&file).map_err(|e| {
+        msg!(
+            "tauto-in-file",
+            file = file.display().to_string(),
+            error = e.to_string()
+        )
+    })?;
     let m = parse(&text, &file)?;
     check_sources(dir, &m)?;
     Ok(m)
 }
 
 /// Reads `Tauto.eure` in `dir`, and the bindings it names.
-pub fn load(dir: &Path) -> Result<Manifest, String> {
+pub fn load(dir: &Path) -> Result<Manifest, Message> {
     let file = dir.join("Tauto.eure");
-    let text = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let text = std::fs::read_to_string(&file).map_err(|e| {
+        msg!(
+            "tauto-in-file",
+            file = file.display().to_string(),
+            error = e.to_string()
+        )
+    })?;
     let mut m = parse(&text, &file)?;
     check_sources(dir, &m)?;
     let bindings = m.rust.bindings.clone();
     for b in bindings {
         let path = dir.join(&b);
-        let text =
-            std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let text = std::fs::read_to_string(&path).map_err(|e| {
+            msg!(
+                "tauto-in-file",
+                file = path.display().to_string(),
+                error = e.to_string()
+            )
+        })?;
         merge_bindings(&mut m.rust, &text, &path)?;
     }
     Ok(m)
@@ -242,8 +270,14 @@ pub fn load(dir: &Path) -> Result<Manifest, String> {
 /// `src` or inside it, and `src` has no entry of the module path an
 /// additional source names (a directory `src/proof` and the additional source
 /// `proof` would both name `tote::proof::...`).
-fn check_sources(dir: &Path, m: &Manifest) -> Result<(), String> {
-    let fail = |e: String| format!("{}: {e}", m.file.display());
+fn check_sources(dir: &Path, m: &Manifest) -> Result<(), Message> {
+    let fail = |e: Message| {
+        msg!(
+            "tauto-in-file",
+            file = m.file.display().to_string(),
+            error = e
+        )
+    };
     for source in &m.package.additional_sources {
         let path = Path::new(source);
         let normal = !source.is_empty()
@@ -251,19 +285,22 @@ fn check_sources(dir: &Path, m: &Manifest) -> Result<(), String> {
                 .components()
                 .all(|c| matches!(c, std::path::Component::Normal(_)));
         if !normal {
-            return Err(fail(
-                msg!("tauto-manifest-source-path", source = source.as_str()).to_string(),
-            ));
+            return Err(fail(msg!(
+                "tauto-manifest-source-path",
+                source = source.as_str()
+            )));
         }
         if dir.join(path).is_file() {
-            return Err(fail(
-                msg!("tauto-manifest-source-is-file", source = source.as_str()).to_string(),
-            ));
+            return Err(fail(msg!(
+                "tauto-manifest-source-is-file",
+                source = source.as_str()
+            )));
         }
         if path.starts_with(DEFAULT_SOURCE) {
-            return Err(fail(
-                msg!("tauto-manifest-source-in-src", source = source.as_str()).to_string(),
-            ));
+            return Err(fail(msg!(
+                "tauto-manifest-source-in-src",
+                source = source.as_str()
+            )));
         }
         let first = path
             .components()
@@ -271,20 +308,32 @@ fn check_sources(dir: &Path, m: &Manifest) -> Result<(), String> {
             .map(|c| c.as_os_str().to_string_lossy().into_owned())
             .unwrap_or_default();
         if dir.join(DEFAULT_SOURCE).join(&first).is_dir() {
-            return Err(fail(
-                msg!("tauto-manifest-source-collides", source = source.as_str()).to_string(),
-            ));
+            return Err(fail(msg!(
+                "tauto-manifest-source-collides",
+                source = source.as_str()
+            )));
         }
     }
     Ok(())
 }
 
 /// `Tauto.eure` alone, with its own `rust.types` and `rust.extern`.
-pub fn parse(text: &str, file: &Path) -> Result<Manifest, String> {
-    let doc = eure_reader::parse_to_document(text, &file.display().to_string())
-        .map_err(|e| format!("{}: {e}", file.display()))?;
+pub fn parse(text: &str, file: &Path) -> Result<Manifest, Message> {
+    let doc = eure_reader::parse_to_document(text, &file.display().to_string()).map_err(|e| {
+        msg!(
+            "tauto-in-file",
+            file = file.display().to_string(),
+            error = e.to_string()
+        )
+    })?;
     let root = doc.get_root_id();
-    let fail = |m: String| format!("{}: {m}", file.display());
+    let fail = |m: Message| {
+        msg!(
+            "tauto-in-file",
+            file = file.display().to_string(),
+            error = m
+        )
+    };
     let mut out = Manifest {
         file: file.to_path_buf(),
         ..Manifest::default()
@@ -297,17 +346,17 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, String> {
                         "name" => out.package.name = text_of(&doc, v).map_err(&fail)?,
                         "version" => out.package.version = text_of(&doc, v).map_err(&fail)?,
                         "sources" => {
-                            return Err(fail(msg!("tauto-manifest-sources-removed").to_string()));
+                            return Err(fail(msg!("tauto-manifest-sources-removed")));
                         }
                         "additional-sources" => {
                             out.package.additional_sources = list_of(&doc, v).map_err(&fail)?;
                         }
                         "prelude" => match &doc.node(v).content {
                             NodeValue::Primitive(P::Bool(b)) => out.package.no_prelude = !*b,
-                            _ => return Err(fail(msg!("tauto-manifest-prelude").to_string())),
+                            _ => return Err(fail(msg!("tauto-manifest-prelude"))),
                         },
                         other => {
-                            return Err(msg!("tauto-manifest-unknown-key", key = other).to_string());
+                            return Err(msg!("tauto-manifest-unknown-key", key = other));
                         }
                     }
                 }
@@ -320,15 +369,32 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, String> {
                         }
                         "slow" => {
                             for (path, node) in map(&doc, v).map_err(&fail)? {
-                                let secs = seconds_of(&doc, node)
-                                    .map_err(|e| fail(format!("check.slow.{path}: {e}")))?;
+                                let secs = seconds_of(&doc, node).map_err(|e| {
+                                    fail(msg!(
+                                        "tauto-in-key",
+                                        key = format!("check.slow.{path}"),
+                                        error = e
+                                    ))
+                                })?;
                                 out.check.slow.insert(path, secs);
                             }
                         }
+                        "axioms" => {
+                            let mut allowed = BTreeMap::new();
+                            for (path, node) in map(&doc, v).map_err(&fail)? {
+                                let names = list_of(&doc, node).map_err(|e| {
+                                    fail(msg!(
+                                        "tauto-in-key",
+                                        key = format!("check.axioms.{path}"),
+                                        error = e
+                                    ))
+                                })?;
+                                allowed.insert(path, names);
+                            }
+                            out.check.axioms = Some(allowed);
+                        }
                         other => {
-                            return Err(
-                                msg!("tauto-manifest-unknown-check-key", key = other).to_string()
-                            );
+                            return Err(msg!("tauto-manifest-unknown-check-key", key = other));
                         }
                     }
                 }
@@ -346,17 +412,15 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, String> {
                             "dir" => dir = value,
                             "project" => project = value,
                             other => {
-                                return Err(
-                                    msg!("tauto-manifest-unknown-key", key = other).to_string()
-                                );
+                                return Err(msg!("tauto-manifest-unknown-key", key = other));
                             }
                         }
                     }
                     if !totebag::valid_name(&dependency) {
-                        return Err(fail(
-                            msg!("tauto-manifest-not-tote-name", name = dependency.as_str())
-                                .to_string(),
-                        ));
+                        return Err(fail(msg!(
+                            "tauto-manifest-not-tote-name",
+                            name = dependency.as_str()
+                        )));
                     }
                     let found = match (path, git) {
                         (Some(path), None)
@@ -368,37 +432,31 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, String> {
                             let source = totebag::spec::GitSource {
                                 url,
                                 reference: reference.ok_or_else(|| {
-                                    fail(
-                                        msg!("tauto-manifest-no-ref", name = dependency.as_str())
-                                            .to_string(),
-                                    )
+                                    fail(msg!("tauto-manifest-no-ref", name = dependency.as_str()))
                                 })?,
                                 dir: dir.unwrap_or_default(),
                                 project,
                             };
                             source.check().map_err(|e| {
-                                fail(
-                                    msg!(
-                                        "tauto-dep-error",
-                                        name = dependency.as_str(),
-                                        error = e.to_string()
-                                    )
-                                    .to_string(),
-                                )
+                                fail(msg!(
+                                    "tauto-dep-error",
+                                    name = dependency.as_str(),
+                                    error = e.to_string()
+                                ))
                             })?;
                             Dependency::Git(source)
                         }
                         (None, None) => {
-                            return Err(fail(
-                                msg!("tauto-manifest-no-source", name = dependency.as_str())
-                                    .to_string(),
-                            ));
+                            return Err(fail(msg!(
+                                "tauto-manifest-no-source",
+                                name = dependency.as_str()
+                            )));
                         }
                         _ => {
-                            return Err(fail(
-                                msg!("tauto-manifest-path-and-git", name = dependency.as_str())
-                                    .to_string(),
-                            ));
+                            return Err(fail(msg!(
+                                "tauto-manifest-path-and-git",
+                                name = dependency.as_str()
+                            )));
                         }
                     };
                     out.dependencies.push((dependency, found));
@@ -410,15 +468,28 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, String> {
                         "extern" => out.trust_extern = list_of(&doc, v).map_err(&fail)?,
                         "commands" => {
                             for (name, node) in map(&doc, v).map_err(&fail)? {
-                                let grant = command_trust(&doc, node)
-                                    .map_err(|e| fail(format!("trust.commands.{name}: {e}")))?;
+                                let grant = command_trust(&doc, node).map_err(|e| {
+                                    fail(msg!(
+                                        "tauto-in-key",
+                                        key = format!("trust.commands.{name}"),
+                                        error = e
+                                    ))
+                                })?;
                                 out.trust_commands.insert(name, grant);
                             }
                         }
                         other => {
-                            return Err(
-                                msg!("tauto-manifest-unknown-trust-key", key = other).to_string()
-                            );
+                            return Err(msg!("tauto-manifest-unknown-trust-key", key = other));
+                        }
+                    }
+                }
+            }
+            "run" => {
+                for (k, v) in map(&doc, id).map_err(&fail)? {
+                    match k.as_str() {
+                        "file" => out.run_file = Some(text_of(&doc, v).map_err(&fail)?),
+                        other => {
+                            return Err(fail(msg!("tauto-manifest-unknown-run-key", key = other)));
                         }
                     }
                 }
@@ -426,13 +497,18 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, String> {
             "commands" => {
                 for (name, node) in map(&doc, id).map_err(&fail)? {
                     if !valid_name(&name) {
-                        return Err(fail(
-                            msg!("tauto-manifest-not-command-name", name = name.as_str())
-                                .to_string(),
-                        ));
+                        return Err(fail(msg!(
+                            "tauto-manifest-not-command-name",
+                            name = name.as_str()
+                        )));
                     }
-                    let command =
-                        command(&doc, node).map_err(|e| fail(format!("commands.{name}: {e}")))?;
+                    let command = command(&doc, node).map_err(|e| {
+                        fail(msg!(
+                            "tauto-in-key",
+                            key = format!("commands.{name}"),
+                            error = e
+                        ))
+                    })?;
                     out.commands.insert(name, command);
                 }
             }
@@ -458,9 +534,7 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, String> {
                             }
                         }
                         other => {
-                            return Err(
-                                msg!("tauto-manifest-unknown-js-key", key = other).to_string()
-                            );
+                            return Err(msg!("tauto-manifest-unknown-js-key", key = other));
                         }
                     }
                 }
@@ -472,18 +546,28 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, String> {
                         "executor" => {
                             let e = text_of(&doc, v).map_err(&fail)?;
                             if e != "threads" && e != "tokio" {
-                                return Err(fail(
-                                    msg!("tauto-manifest-executor", value = format!("{e:?}"))
-                                        .to_string(),
-                                ));
+                                return Err(fail(msg!(
+                                    "tauto-manifest-executor",
+                                    value = format!("{e:?}")
+                                )));
                             }
                             out.rust.executor = Some(e);
+                        }
+                        "stack-mb" => {
+                            let mb = match &doc.node(v).content {
+                                NodeValue::Primitive(P::Integer(n)) => {
+                                    n.to_string().parse::<u32>().ok().filter(|&n| n > 0)
+                                }
+                                _ => None,
+                            };
+                            out.rust.stack_mb =
+                                Some(mb.ok_or_else(|| fail(msg!("tauto-manifest-stack-mb")))?);
                         }
                         "bindings" => out.rust.bindings = list_of(&doc, v).map_err(&fail)?,
                         "exports" => out.rust.exports = Some(list_of(&doc, v).map_err(&fail)?),
                         "uniffi" => match &doc.node(v).content {
                             NodeValue::Primitive(P::Bool(b)) => out.rust.uniffi = *b,
-                            _ => return Err(fail(msg!("tauto-manifest-uniffi").to_string())),
+                            _ => return Err(fail(msg!("tauto-manifest-uniffi"))),
                         },
                         "types" => out.rust.types = entries(&doc, v, text, file, "types")?,
                         "extern" => out.rust.externs = entries(&doc, v, text, file, "extern")?,
@@ -493,13 +577,10 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, String> {
                                     "extern" => &mut out.rust.nonresuming_externs,
                                     "entries" => &mut out.rust.nonresuming_entries,
                                     other => {
-                                        return Err(fail(
-                                            msg!(
-                                                "tauto-manifest-unknown-nonresuming-key",
-                                                key = other
-                                            )
-                                            .to_string(),
-                                        ));
+                                        return Err(fail(msg!(
+                                            "tauto-manifest-unknown-nonresuming-key",
+                                            key = other
+                                        )));
                                     }
                                 };
                                 // Locate the assertion, not an earlier ordinary
@@ -511,28 +592,56 @@ pub fn parse(text: &str, file: &Path) -> Result<Manifest, String> {
                             out.rust.dependencies = dependencies(&doc, v, text, file)?;
                         }
                         other => {
-                            return Err(msg!("tauto-manifest-unknown-key", key = other).to_string());
+                            return Err(msg!("tauto-manifest-unknown-key", key = other));
                         }
                     }
                 }
             }
-            other => return Err(msg!("tauto-manifest-unknown-key", key = other).to_string()),
+            other => return Err(msg!("tauto-manifest-unknown-key", key = other)),
         }
     }
     if !out.package.name.is_empty() && !valid_name(&out.package.name) {
-        return Err(fail(
-            msg!("tauto-manifest-bad-tote-name", name = &out.package.name).to_string(),
-        ));
+        return Err(fail(msg!(
+            "tauto-manifest-bad-tote-name",
+            name = &out.package.name
+        )));
+    }
+    // `std` is the root of the standard library's modules (`std::List`): a tote
+    // that took it would have modules the library's cannot be told from.
+    if out.package.name == tauto_surface::surface::qualify::STD_ROOT {
+        return Err(fail(msg!(
+            "tauto-manifest-reserved-tote-name",
+            name = &out.package.name
+        )));
+    }
+    // `self` is the root of the modules under the importing file's own
+    // directory (`import self::b`): a tote that took it could not be imported.
+    if out.package.name == SELF_ROOT {
+        return Err(fail(msg!(
+            "tauto-manifest-self-tote-name",
+            name = &out.package.name
+        )));
     }
     Ok(out)
 }
 
 /// A bindings file (`tauto bind` writes them): a header naming where it came
 /// from, `types` and `extern`. A name bound by two files is an error.
-pub fn merge_bindings(rust: &mut RustSection, text: &str, file: &Path) -> Result<(), String> {
-    let doc = eure_reader::parse_to_document(text, &file.display().to_string())
-        .map_err(|e| format!("{}: {e}", file.display()))?;
-    let fail = |m: String| format!("{}: {m}", file.display());
+pub fn merge_bindings(rust: &mut RustSection, text: &str, file: &Path) -> Result<(), Message> {
+    let doc = eure_reader::parse_to_document(text, &file.display().to_string()).map_err(|e| {
+        msg!(
+            "tauto-in-file",
+            file = file.display().to_string(),
+            error = e.to_string()
+        )
+    })?;
+    let fail = |m: Message| {
+        msg!(
+            "tauto-in-file",
+            file = file.display().to_string(),
+            error = m
+        )
+    };
     let mut types = BTreeMap::new();
     let mut externs = BTreeMap::new();
     let mut marks = BTreeMap::new();
@@ -542,7 +651,7 @@ pub fn merge_bindings(rust: &mut RustSection, text: &str, file: &Path) -> Result
             "types" => types = entries(&doc, id, text, file, "types")?,
             "extern" => externs = entries(&doc, id, text, file, "extern")?,
             "usize" => marks = entries(&doc, id, text, file, "usize")?,
-            other => return Err(msg!("tauto-manifest-unknown-key", key = other).to_string()),
+            other => return Err(msg!("tauto-manifest-unknown-key", key = other)),
         }
     }
     for (into, from) in [
@@ -561,8 +670,7 @@ pub fn merge_bindings(rust: &mut RustSection, text: &str, file: &Path) -> Result
                         name = name.as_str(),
                         first = old.file.display().to_string(),
                         second = e.file.display().to_string()
-                    )
-                    .to_string());
+                    ));
                 }
                 None => {
                     into.insert(name, e);
@@ -573,26 +681,26 @@ pub fn merge_bindings(rust: &mut RustSection, text: &str, file: &Path) -> Result
     Ok(())
 }
 
-fn map(doc: &EureDocument, id: NodeId) -> Result<Vec<(String, NodeId)>, String> {
+fn map(doc: &EureDocument, id: NodeId) -> Result<Vec<(String, NodeId)>, Message> {
     match &doc.node(id).content {
         NodeValue::Map(m) => Ok(m
             .iter()
             .map(|(k, v)| (k.to_string().trim_matches('"').to_string(), *v))
             .collect()),
         NodeValue::Hole(_) => Ok(Vec::new()),
-        _ => Err(msg!("tauto-manifest-expected-block").to_string()),
+        _ => Err(msg!("tauto-manifest-expected-block")),
     }
 }
 
-fn text_of(doc: &EureDocument, id: NodeId) -> Result<String, String> {
+fn text_of(doc: &EureDocument, id: NodeId) -> Result<String, Message> {
     match &doc.node(id).content {
         NodeValue::Primitive(P::Text(t)) => Ok(t.as_str().to_string()),
-        _ => Err(msg!("tauto-manifest-expected-text").to_string()),
+        _ => Err(msg!("tauto-manifest-expected-text")),
     }
 }
 
 /// A positive, finite number of seconds, written as an integer or a decimal.
-fn seconds_of(doc: &EureDocument, id: NodeId) -> Result<Duration, String> {
+fn seconds_of(doc: &EureDocument, id: NodeId) -> Result<Duration, Message> {
     let secs = match &doc.node(id).content {
         NodeValue::Primitive(P::Integer(n)) => n.to_string().parse::<f64>().ok(),
         NodeValue::Primitive(P::F64(x)) => Some(*x),
@@ -602,13 +710,13 @@ fn seconds_of(doc: &EureDocument, id: NodeId) -> Result<Duration, String> {
     };
     match secs {
         Some(s) if s.is_finite() && s > 0.0 && s < 1e9 => Ok(Duration::from_secs_f64(s)),
-        _ => Err(msg!("tauto-manifest-expected-seconds").to_string()),
+        _ => Err(msg!("tauto-manifest-expected-seconds")),
     }
 }
 
-fn list_of(doc: &EureDocument, id: NodeId) -> Result<Vec<String>, String> {
+fn list_of(doc: &EureDocument, id: NodeId) -> Result<Vec<String>, Message> {
     let NodeValue::Array(items) = &doc.node(id).content else {
-        return Err(msg!("tauto-manifest-expected-texts").to_string());
+        return Err(msg!("tauto-manifest-expected-texts"));
     };
     items.iter().map(|i| text_of(doc, *i)).collect()
 }
@@ -641,11 +749,23 @@ fn entries(
     text: &str,
     file: &Path,
     section: &str,
-) -> Result<BTreeMap<String, Entry>, String> {
-    let fail = |m: String| format!("{}: {m}", file.display());
+) -> Result<BTreeMap<String, Entry>, Message> {
+    let fail = |m: Message| {
+        msg!(
+            "tauto-in-file",
+            file = file.display().to_string(),
+            error = m
+        )
+    };
     let mut out = BTreeMap::new();
     for (k, v) in map(doc, id).map_err(&fail)? {
-        let value = text_of(doc, v).map_err(|e| fail(format!("{section}.{k}: {e}")))?;
+        let value = text_of(doc, v).map_err(|e| {
+            fail(msg!(
+                "tauto-in-key",
+                key = format!("{section}.{k}"),
+                error = e
+            ))
+        })?;
         let line = line_of(text, section, &k);
         out.insert(
             k,
@@ -676,7 +796,7 @@ fn from_tote(file: &Path, path: &str) -> PathBuf {
 /// trusts (`trust { extern = [...] }`) are read, as only they may declare an
 /// `extern`. What the project's own manifest says wins; two dependencies that
 /// bind one name differently are an error.
-pub fn add_dependency_rust(m: &mut Manifest, dir: &Path) -> Result<(), String> {
+pub fn add_dependency_rust(m: &mut Manifest, dir: &Path) -> Result<(), Message> {
     let own: Vec<BTreeMap<String, Entry>> = vec![
         m.rust.types.clone(),
         m.rust.externs.clone(),
@@ -687,8 +807,13 @@ pub fn add_dependency_rust(m: &mut Manifest, dir: &Path) -> Result<(), String> {
     let mut stack: Vec<(PathBuf, Manifest)> = vec![(dir.to_path_buf(), m.clone())];
     while let Some((at, manifest)) = stack.pop() {
         for (name, dependency) in &manifest.dependencies {
-            let target = dependency_dir(&at, name, dependency)
-                .map_err(|e| format!("{}: {e}", manifest.package.name))?;
+            let target = dependency_dir(&at, name, dependency).map_err(|e| {
+                msg!(
+                    "tauto-in-key",
+                    key = manifest.package.name.as_str(),
+                    error = e
+                )
+            })?;
             let canonical = std::fs::canonicalize(&target).unwrap_or(target.clone());
             if !seen.insert(canonical) {
                 continue;
@@ -708,7 +833,7 @@ fn merge_dependency(
     own: &[BTreeMap<String, Entry>],
     dir: &Path,
     dep: &Manifest,
-) -> Result<(), String> {
+) -> Result<(), Message> {
     let mut rust = dep.rust.clone();
     if let Some(bridge) = rust.bridge.clone() {
         // An extern the dependency does not bind is its bridge crate's
@@ -760,8 +885,7 @@ fn merge_dependency(
                         first_at = format!("{}:{}", old.file.display(), old.line),
                         second = &e.value,
                         second_at = format!("{}:{}", e.file.display(), e.line)
-                    )
-                    .to_string());
+                    ));
                 }
                 None => {
                     into.insert(name, e);
@@ -774,7 +898,7 @@ fn merge_dependency(
 
 /// An extern type (`extern { type T }`) the tote in `dir` does not bind in
 /// `rust.types` is its bridge crate's type of the same name.
-fn bridge_types(rust: &mut RustSection, tote: &str, dir: &Path) -> Result<(), String> {
+fn bridge_types(rust: &mut RustSection, tote: &str, dir: &Path) -> Result<(), Message> {
     let ident = format!("{}_bridge", tote.replace('-', "_"));
     for (name, file, line) in crate::program::extern_type_names(dir)? {
         rust.types.entry(name.clone()).or_insert(Entry {
@@ -793,8 +917,14 @@ fn dependencies(
     id: NodeId,
     text: &str,
     file: &Path,
-) -> Result<BTreeMap<String, Entry>, String> {
-    let fail = |m: String| format!("{}: {m}", file.display());
+) -> Result<BTreeMap<String, Entry>, Message> {
+    let fail = |m: Message| {
+        msg!(
+            "tauto-in-file",
+            file = file.display().to_string(),
+            error = m
+        )
+    };
     let mut out = BTreeMap::new();
     for (k, v) in map(doc, id).map_err(&fail)? {
         let value = match &doc.node(v).content {
@@ -817,13 +947,10 @@ fn dependencies(
                             )
                         }
                         _ => {
-                            return Err(fail(
-                                msg!(
-                                    "tauto-manifest-dep-unsupported",
-                                    key = format!("dependencies.{k}.{name}")
-                                )
-                                .to_string(),
-                            ));
+                            return Err(fail(msg!(
+                                "tauto-manifest-dep-unsupported",
+                                key = format!("dependencies.{k}.{name}")
+                            )));
                         }
                     };
                     // A path is the declaring tote's, wherever Cargo builds
@@ -839,13 +966,10 @@ fn dependencies(
                 format!("{{ {} }}", parts.join(", "))
             }
             _ => {
-                return Err(fail(
-                    msg!(
-                        "tauto-manifest-dep-expected",
-                        key = format!("dependencies.{k}")
-                    )
-                    .to_string(),
-                ));
+                return Err(fail(msg!(
+                    "tauto-manifest-dep-expected",
+                    key = format!("dependencies.{k}")
+                )));
             }
         };
         let line = line_of(text, "dependencies", &k);
@@ -861,87 +985,89 @@ fn dependencies(
     Ok(out)
 }
 
-fn command(doc: &EureDocument, id: NodeId) -> Result<Command, String> {
+fn command(doc: &EureDocument, id: NodeId) -> Result<Command, Message> {
     let (mut main, mut about) = (None, None);
     for (k, v) in map(doc, id)? {
         let into = match k.as_str() {
             "main" => &mut main,
             "about" => &mut about,
-            other => return Err(msg!("tauto-manifest-command-key", key = other).to_string()),
+            other => return Err(msg!("tauto-manifest-command-key", key = other)),
         };
-        *into = Some(text_of(doc, v).map_err(|e| format!("{k}: {e}"))?);
+        *into =
+            Some(text_of(doc, v).map_err(|e| msg!("tauto-in-key", key = k.as_str(), error = e))?);
     }
-    let main = main.ok_or_else(|| msg!("tauto-manifest-command-main").to_string())?;
+    let main = main.ok_or_else(|| msg!("tauto-manifest-command-main"))?;
     let path = Path::new(&main);
     if !path
         .components()
         .all(|c| matches!(c, std::path::Component::Normal(_)))
         || !crate::program::is_source_file(path)
     {
-        return Err(msg!("tauto-manifest-command-main-path", main = main.as_str()).to_string());
+        return Err(msg!(
+            "tauto-manifest-command-main-path",
+            main = main.as_str()
+        ));
     }
-    let about = about.ok_or_else(|| msg!("tauto-manifest-command-about").to_string())?;
+    let about = about.ok_or_else(|| msg!("tauto-manifest-command-about"))?;
     if about.trim().is_empty() || about.contains('\n') {
-        return Err(msg!("tauto-manifest-command-about").to_string());
+        return Err(msg!("tauto-manifest-command-about"));
     }
     Ok(Command { main, about })
 }
 
 /// `{ tote = "bikkuri", read = ["src"], net = true }`: the keys of a
 /// permissions file but `all`, and the tote the grant belongs to.
-fn command_trust(doc: &EureDocument, id: NodeId) -> Result<CommandTrust, String> {
+fn command_trust(doc: &EureDocument, id: NodeId) -> Result<CommandTrust, Message> {
     let mut out = CommandTrust::default();
     let mut tote = None;
     for (k, v) in map(doc, id)? {
         match k.as_str() {
-            "tote" => tote = Some(text_of(doc, v).map_err(|e| format!("tote: {e}"))?),
+            "tote" => {
+                tote = Some(
+                    text_of(doc, v).map_err(|e| msg!("tauto-in-key", key = "tote", error = e))?,
+                )
+            }
             "read" | "write" | "env" | "net" | "run" | "clipboard" => {
                 let granted = match &doc.node(v).content {
                     NodeValue::Primitive(P::Bool(true)) => None,
                     NodeValue::Primitive(P::Bool(false)) => {
-                        return Err(
-                            msg!("tauto-manifest-trust-false", key = k.as_str()).to_string()
-                        );
+                        return Err(msg!("tauto-manifest-trust-false", key = k.as_str()));
                     }
                     NodeValue::Array(_) if k == "clipboard" => {
-                        return Err(msg!("tauto-manifest-trust-clipboard").to_string());
+                        return Err(msg!("tauto-manifest-trust-clipboard"));
                     }
                     NodeValue::Array(_) => {
-                        let names = list_of(doc, v).map_err(|e| format!("{k}: {e}"))?;
+                        let names = list_of(doc, v)
+                            .map_err(|e| msg!("tauto-in-key", key = k.as_str(), error = e))?;
                         if names.is_empty() {
-                            return Err(
-                                msg!("tauto-manifest-trust-empty", key = k.as_str()).to_string()
-                            );
+                            return Err(msg!("tauto-manifest-trust-empty", key = k.as_str()));
                         }
                         if let Some(bad) = names.iter().find(|n| n.is_empty() || n.contains(',')) {
                             return Err(msg!(
                                 "tauto-manifest-trust-bad-name",
                                 key = k.as_str(),
                                 name = format!("{bad:?}")
-                            )
-                            .to_string());
+                            ));
                         }
                         Some(names)
                     }
                     _ => {
-                        return Err(
-                            msg!("tauto-manifest-trust-expected", key = k.as_str()).to_string()
-                        );
+                        return Err(msg!("tauto-manifest-trust-expected", key = k.as_str()));
                     }
                 };
                 out.allow.push((k, granted));
             }
             "all" => {
-                return Err(msg!("tauto-manifest-trust-all").to_string());
+                return Err(msg!("tauto-manifest-trust-all"));
             }
             other => {
-                return Err(msg!("tauto-manifest-trust-key", key = other).to_string());
+                return Err(msg!("tauto-manifest-trust-key", key = other));
             }
         }
     }
-    out.tote = tote.ok_or_else(|| msg!("tauto-manifest-trust-tote").to_string())?;
+    out.tote = tote.ok_or_else(|| msg!("tauto-manifest-trust-tote"))?;
     if !totebag::valid_name(&out.tote) {
-        return Err(msg!("tauto-manifest-not-tote-name", name = &out.tote).to_string());
+        return Err(msg!("tauto-manifest-not-tote-name", name = &out.tote));
     }
     Ok(out)
 }
@@ -959,8 +1085,37 @@ fn valid_name(name: &str) -> bool {
 ///
 /// Every `check.slow` entry of that manifest names an existing file and a
 /// limit above the manifest's time limit; otherwise it is an error.
-pub fn time_limit(path: &Path) -> Result<Duration, String> {
+///
+/// `TAUTO_TIME_SCALE` multiplies the limit, for a loaded machine
+/// (`TAUTO_TIME_SCALE=3` gives 30 seconds where the manifest gives 10).
+///
+/// Embedded standard library files use the distribution's bundled policy.
+pub fn time_limit(path: &Path) -> Result<Duration, Message> {
+    let limit = written_time_limit(path)?;
+    Ok(match time_scale()? {
+        Some(scale) => limit.mul_f64(scale),
+        None => limit,
+    })
+}
+
+fn time_scale() -> Result<Option<f64>, Message> {
+    let Ok(text) = std::env::var("TAUTO_TIME_SCALE") else {
+        return Ok(None);
+    };
+    match text.trim().parse::<f64>() {
+        Ok(scale) if scale.is_finite() && scale > 0.0 => Ok(Some(scale)),
+        _ => Err(msg!("tauto-manifest-time-scale", value = text.as_str())),
+    }
+}
+
+fn written_time_limit(path: &Path) -> Result<Duration, Message> {
     let path = crate::program::canonical_path(path);
+    if crate::stdlib::text(&path).is_some() {
+        let file = Path::new(crate::stdlib::ROOT).join("Tauto.eure");
+        return checked_time_limit(&path, &file, bundled_check_policy()?, |listed| {
+            crate::stdlib::text(listed).is_some()
+        });
+    }
     let Some(file) = path
         .ancestors()
         .skip(1)
@@ -969,25 +1124,122 @@ pub fn time_limit(path: &Path) -> Result<Duration, String> {
     else {
         return Ok(DEFAULT_TIME_LIMIT);
     };
-    let text = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let text = std::fs::read_to_string(&file).map_err(|e| {
+        msg!(
+            "tauto-in-file",
+            file = file.display().to_string(),
+            error = e.to_string()
+        )
+    })?;
     let manifest = parse(&text, &file)?;
+    checked_time_limit(&path, &file, &manifest.check, Path::is_file)
+}
+
+/// The axioms the file `path` may depend on, when the nearest `Tauto.eure`
+/// above it writes `check.axioms`: those it lists for the file, none if it
+/// does not list the file. `None` when the manifest does not write it.
+/// Every listed path names an existing file; otherwise it is an error.
+pub fn allowed_axioms(path: &Path) -> Result<Option<Vec<String>>, Message> {
+    let path = crate::program::canonical_path(path);
+    let (file, check, exists): (PathBuf, CheckSection, fn(&Path) -> bool) =
+        if crate::stdlib::text(&path).is_some() {
+            (
+                Path::new(crate::stdlib::ROOT).join("Tauto.eure"),
+                bundled_check_policy()?.clone(),
+                |listed| crate::stdlib::text(listed).is_some(),
+            )
+        } else {
+            let Some(file) = path
+                .ancestors()
+                .skip(1)
+                .map(|dir| dir.join("Tauto.eure"))
+                .find(|f| f.is_file())
+            else {
+                return Ok(None);
+            };
+            let text = std::fs::read_to_string(&file).map_err(|e| {
+                msg!(
+                    "tauto-in-file",
+                    file = file.display().to_string(),
+                    error = e.to_string()
+                )
+            })?;
+            let check = parse(&text, &file)?.check;
+            (file, check, Path::is_file)
+        };
+    let Some(allowed) = check.axioms else {
+        return Ok(None);
+    };
     let dir = file.parent().unwrap_or(Path::new(""));
-    let default = manifest.check.time_limit.unwrap_or(DEFAULT_TIME_LIMIT);
+    let mut own = Vec::new();
+    for (name, names) in allowed {
+        let listed = dir.join(&name);
+        if !exists(&listed) {
+            return Err(msg!(
+                "tauto-in-file",
+                file = file.display().to_string(),
+                error = msg!("tauto-manifest-axioms-missing", path = name.as_str())
+            ));
+        }
+        if crate::program::canonical_path(&listed) == path {
+            own = names;
+        }
+    }
+    Ok(Some(own))
+}
+
+fn bundled_check_policy() -> Result<&'static CheckSection, Message> {
+    static POLICY: std::sync::OnceLock<Result<CheckSection, Message>> = std::sync::OnceLock::new();
+    POLICY
+        .get_or_init(|| {
+            let file = Path::new(crate::stdlib::ROOT).join("Tauto.eure");
+            let mut check = parse(include_str!("../../../Tauto.eure"), &file)?.check;
+            check.axioms = check.axioms.map(|allowed| {
+                allowed
+                    .into_iter()
+                    .filter_map(|(path, names)| {
+                        path.strip_prefix("std/")
+                            .map(|name| (name.to_string(), names))
+                    })
+                    .collect()
+            });
+            check.slow = check
+                .slow
+                .into_iter()
+                .filter_map(|(path, limit)| {
+                    path.strip_prefix("std/")
+                        .map(|name| (name.to_string(), limit))
+                })
+                .collect();
+            Ok(check)
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+fn checked_time_limit(
+    path: &Path,
+    file: &Path,
+    check: &CheckSection,
+    is_file: impl Fn(&Path) -> bool,
+) -> Result<Duration, Message> {
+    let dir = file.parent().unwrap_or(Path::new(""));
+    let default = check.time_limit.unwrap_or(DEFAULT_TIME_LIMIT);
     let mut own = None;
-    for (name, limit) in &manifest.check.slow {
+    for (name, limit) in &check.slow {
         let listed = dir.join(name);
-        if !listed.is_file() {
-            return Err(format!(
-                "{}: {}",
-                file.display(),
-                msg!("tauto-manifest-slow-missing", path = name.as_str())
+        if !is_file(&listed) {
+            return Err(msg!(
+                "tauto-in-file",
+                file = file.display().to_string(),
+                error = msg!("tauto-manifest-slow-missing", path = name.as_str())
             ));
         }
         if *limit <= default {
-            return Err(format!(
-                "{}: {}",
-                file.display(),
-                msg!(
+            return Err(msg!(
+                "tauto-in-file",
+                file = file.display().to_string(),
+                error = msg!(
                     "tauto-manifest-slow-not-slower",
                     path = name.as_str(),
                     limit = limit.as_secs_f64().to_string(),
@@ -1000,4 +1252,54 @@ pub fn time_limit(path: &Path) -> Result<Duration, String> {
         }
     }
     Ok(own.unwrap_or(default))
+}
+
+/// The name a tote has inside the language, as the first part of an import:
+/// the tote `query-flow` is `import query_flow::flow`. A tote's name has
+/// hyphens and no underscores, and a name in the language has underscores
+/// and no hyphens, so each spelling stays in its own place and the two map
+/// one to one.
+pub fn import_name_of_tote(tote: &str) -> String {
+    tote.replace('-', "_")
+}
+
+/// The root of an import of a file's own modules: `import self::b` in `a.taut`
+/// is `a/b.taut`.
+pub const SELF_ROOT: &str = "self";
+
+/// The tote that the first part of an import names: `query_flow` names the
+/// tote `query-flow`. The inverse of [`import_name_of_tote`].
+pub fn tote_of_import_name(name: &str) -> String {
+    name.replace('_', "-")
+}
+
+#[cfg(test)]
+mod stack_mb_tests {
+    use super::*;
+
+    fn rust_section(body: &str) -> Result<Manifest, Message> {
+        let text = format!(
+            "package {{\n  name = \"deep\"\n  version = \"0.1.0\"\n}}\nrust {{\n  {body}\n}}\n"
+        );
+        parse(&text, Path::new("Tauto.eure"))
+    }
+
+    #[test]
+    fn stack_mb_is_read() {
+        let m = rust_section("stack-mb = 4096").expect("a manifest");
+        assert_eq!(m.rust.stack_mb, Some(4096));
+        assert_eq!(rust_section("").expect("a manifest").rust.stack_mb, None);
+    }
+
+    #[test]
+    fn stack_mb_is_a_positive_integer() {
+        for bad in [
+            "stack-mb = 0",
+            "stack-mb = -1",
+            "stack-mb = \"4096\"",
+            "stack-mb = 1.5",
+        ] {
+            assert!(rust_section(bad).is_err(), "{bad} is not a stack size");
+        }
+    }
 }

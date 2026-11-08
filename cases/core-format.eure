@@ -1,0 +1,233 @@
+@ cases.a-long-call-is-broken-one-argument-per-line
+source = ```tauto
+theorem t(): A {
+  f(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, g(b, c))
+}
+```
+format = ```tauto
+theorem t(): A {
+  f(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+    g(b, c)
+  )
+}
+```
+@ cases.an-attribute-breaks-inside-the-macro-call-only
+source = ```tauto
+@m!(spec(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, b)) => inductive R, fn f
+fn f(): Nat { Zero }
+```
+format = ```tauto
+@m!(
+  spec(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+    b
+  )
+) => inductive R, fn f
+fn f(): Nat { Zero }
+```
+@ cases.short-lines-are-spaced-and-indented
+source = ```tauto
+fn f(x:Nat ,y: Nat): Nat {
+⊢ Nat from match x {
+      Zero => y
+  Succ(k) => k
+}
+}
+```
+format = ```tauto
+fn f(x:Nat, y: Nat): Nat {
+  ⊢ Nat from match x {
+    Zero => y
+    Succ(k) => k
+  }
+}
+```
+@ cases.a-broken-call-that-fits-is-joined
+source = ```tauto
+theorem t(): A {
+  f(
+    a,
+    b
+  )
+}
+```
+format = ```tauto
+theorem t(): A {
+  f(a, b)
+}
+```
+@ cases.comments-stay
+source = ```tauto
+// a
+theorem t(): A { // b
+  f(a, /* c */ b)
+}
+```
+format = ```tauto
+// a
+theorem t(): A { // b
+  f(a, /* c */ b)
+}
+```
+@ cases.text-literals-are-kept-as-written
+source = ```tauto
+theorem t(): A {
+  f("a, b\"", 'c, (d', plaintext`e) f`)
+}
+```
+format = ```tauto
+theorem t(): A {
+  f("a, b\"", 'c, (d', plaintext`e) f`)
+}
+```
+@ cases.unclosed-string
+source = ```tauto
+let a := 'abc
+```
+format_error = "an unclosed string"
+
+@ cases.syntax-literals-are-kept-as-written
+source = ````tauto
+theorem t(): nat!(`(${aaaaaaaaaaaaaaaaaaaa} + ${bbbbbbbbbbbbbbbbbbbb}) * ${cccccccccccccccccccc} = ${dddddddddddddddddddd}`) {
+  Refl(x)
+}
+syntax!(g, ```par
+S: "a" ;
+```) => fn parse
+theorem u(): nat!(<<`a ` b`>>) {
+  Refl(x)
+}
+````
+format = ````tauto
+theorem t(): nat!(`(${aaaaaaaaaaaaaaaaaaaa} + ${bbbbbbbbbbbbbbbbbbbb}) * ${cccccccccccccccccccc} = ${dddddddddddddddddddd}`) {
+  Refl(x)
+}
+syntax!(g, ```par
+S: "a" ;
+```) => fn parse
+theorem u(): nat!(<<`a ` b`>>) {
+  Refl(x)
+}
+````
+
+@ cases.a-long-arm-breaks-its-body-not-its-pattern
+source = ```tauto
+fn f(b: List(Nat)): Nat {
+  ⊢ Nat from match b {
+    Nil => Zero
+    Cons(y, ys) => Nat::add(Nat::add(Nat::mul(y, y), Nat::mul(y, y)), Nat::add(Nat::mul(y, y), Nat::mul(y, y)))
+  }
+}
+```
+format = ```tauto
+fn f(b: List(Nat)): Nat {
+  ⊢ Nat from match b {
+    Nil => Zero
+    Cons(y, ys) => Nat::add(
+      Nat::add(Nat::mul(y, y), Nat::mul(y, y)),
+      Nat::add(Nat::mul(y, y), Nat::mul(y, y))
+    )
+  }
+}
+```
+
+@ cases.pub-open-is-not-broken
+source = ```tauto
+pub(open) fn calc_parse(t: Text): Result(calc_Expr, SynDiag) { Syn::parse("calc", "de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791", t) }
+```
+format = ```tauto
+pub(open) fn calc_parse(t: Text): Result(
+  calc_Expr,
+  SynDiag
+) { Syn::parse("calc", "de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791", t) }
+```
+
+@ cases.a-long-record-literal-breaks-at-its-fields
+source = ```tauto
+let r := Request { method: method, url: target, headers: Host::paired_headers(headers), body: request_body }
+```
+format = ```tauto
+let r := Request {
+  method: method,
+  url: target,
+  headers: Host::paired_headers(headers),
+  body: request_body
+}
+```
+
+@ cases.nested-record-literals-settle-in-one-pass
+source = ```tauto
+fn nest(a: List(Nat), b: List(Nat)): Pair(Pair(List(Nat), List(Nat)), Pair(Pair(List(Nat), List(Nat)), Pair(List(Nat), List(Nat)))) {
+  Pair { fst: Pair { fst: Nil, snd: a }, snd: Pair { fst: Pair { fst: Nil, snd: List::map((x: Nat) => x, b) }, snd: Pair { fst: Pair { fst: Nil, snd: List::map((x: Nat) => x, a) }, snd: Pair { fst: Nil, snd: b } } } }
+}
+```
+format = ```tauto
+fn nest(
+  a: List(Nat),
+  b: List(Nat)
+): Pair(Pair(List(Nat), List(Nat)), Pair(Pair(List(Nat), List(Nat)), Pair(List(Nat), List(Nat)))) {
+  Pair {
+    fst: Pair { fst: Nil, snd: a },
+    snd: Pair {
+      fst: Pair { fst: Nil, snd: List::map((x: Nat) => x, b) },
+      snd: Pair {
+        fst: Pair { fst: Nil, snd: List::map((x: Nat) => x, a) },
+        snd: Pair { fst: Nil, snd: b }
+      }
+    }
+  }
+}
+```
+
+@ cases.a-long-effect-row-breaks-after-its-commas
+source = ```tauto
+fn f(g: () -> Nat ! {Div, stdout, stderr, argv, wall_clock, monotonic_clock, sleep, random, fs_read, fs_write}): Nat {
+  Zero
+}
+```
+format = ```tauto
+fn f(g: () -> Nat ! {Div, stdout, stderr, argv, wall_clock, monotonic_clock, sleep, random, fs_read, fs_write}): Nat {
+  Zero
+}
+```
+
+@ cases.an-unclosed-paren-is-an-error
+source = ```tauto
+let x := (1 +
+```
+format_error = "an unclosed `(`"
+
+@ cases.a-mismatched-bracket-is-an-error
+source = ```tauto
+let x := f(1]
+```
+format_error = "an unmatched `]`"
+
+@ cases.product-members-keep-the-order-they-are-written-in
+source = ```tauto
+fn f(p: Nat × @b Bool × @a Nat): Nat {
+  ⊢ Nat from match p {
+    #(x, @b y, @a w) => x
+  }
+}
+fn g(x: Nat, y: Bool): Bool × Nat { #(y, x) }
+```
+format = ```tauto
+fn f(p: Nat × @b Bool × @a Nat): Nat {
+  ⊢ Nat from match p {
+    #(x, @b y, @a w) => x
+  }
+}
+fn g(x: Nat, y: Bool): Bool × Nat { #(y, x) }
+```
+
+@ cases.an-import-list-is-kept-as-written
+source = ```tauto
+import std::Text { Text,concat }
+import "value.taut" { Value }
+```
+format = ```tauto
+import std::Text { Text, concat }
+import "value.taut" { Value }
+```

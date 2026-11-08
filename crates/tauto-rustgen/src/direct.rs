@@ -129,7 +129,7 @@ impl Workspace {
     fn rt_files(&self) -> Vec<(&str, &str)> {
         self.files
             .iter()
-            .filter(|(p, _)| p.starts_with("tauto-rt/"))
+            .filter(|(p, _)| p.starts_with("tauto-rt/") || p.starts_with("tauto-identity/"))
             .map(|(p, t)| (p.as_str(), t.as_str()))
             .collect()
     }

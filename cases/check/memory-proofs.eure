@@ -1,0 +1,209 @@
+@ cases.model
+source = path`../../meta/Memory.taut`
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+
+@ cases.unreachable-payload-is-collected
+imports = [path`../../meta/Memory.taut`]
+source = ```tauto
+def live0(n: Nat): Prop := n = Zero
+def no_root(n: Nat): Prop := False
+def no_edge(a: Nat, b: Nat): Prop := False
+fn rank0(n: Nat): Nat { Zero }
+
+theorem zero_count(): ZeroCount(Nat, live0, no_root, no_edge, Zero) {
+  AndIntro(h => h, u => hu => he => he)
+}
+theorem collected(): HeapDrain(Nat, no_root, no_edge, live0, RemoveLive(Nat, live0, Zero)) {
+  DrainFree(live0, RemoveLive(Nat, live0, Zero), Zero, Refl, zero_count(), DrainDone(RemoveLive(Nat, live0, Zero)))
+}
+theorem terminal(): HeapTerminal(Nat, RemoveLive(Nat, live0, Zero), no_root, no_edge) {
+  v => hv => False::elim(And::right(hv)(And::left(hv)))
+}
+theorem exact(n: Nat): Iff(RemoveLive(Nat, live0, Zero, n), HeapReach(Nat, live0, no_root, no_edge, n)) {
+  ranked_drain_exact(rank0, u => v => he => False::elim(he), collected(), terminal(), n)
+}
+```
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+
+@ cases.root-and-child-survive
+imports = [path`../../meta/Memory.taut`, path`../../std/WellFounded.taut`, path`../../std/Nat.taut`]
+source = ```tauto
+def all_live(n: Nat): Prop := True
+def root0(n: Nat): Prop := n = Zero
+def next_edge(a: Nat, b: Nat): Prop := b = Succ(a)
+fn rank(n: Nat): Nat { n }
+
+theorem increasing(u: Nat, v: Nat, h: next_edge(u, v)): NatLt(rank(u), rank(v)) {
+  Eq::subst(z => NatLt(u, z), Eq::sym(h), Nat::le_refl(u))
+}
+theorem held(v: Nat): Held(Nat, all_live, root0, next_edge, v) {
+  ⊢ Held(Nat, all_live, root0, next_edge, v) from match v {
+    Zero => HeldRoot(Refl)
+    Succ(k) => HeldEdge(k, Trivial, Refl)
+  }
+}
+theorem terminal(): HeapTerminal(Nat, all_live, root0, next_edge) {
+  v => hv => held(v)
+}
+theorem exact(n: Nat): Iff(all_live(n), HeapReach(Nat, all_live, root0, next_edge, n)) {
+  ranked_drain_exact(rank, increasing, DrainDone(Nat, root0, next_edge, all_live), terminal(), n)
+}
+```
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+
+@ cases.root-cannot-be-freed
+imports = [path`../../meta/Memory.taut`]
+source = ```tauto
+def live(n: Nat): Prop := True
+def root(n: Nat): Prop := True
+def edge(a: Nat, b: Nat): Prop := False
+
+theorem forged(): ZeroCount(Nat, live, root, edge, Zero) {
+  AndIntro(h => h, u => hu => he => he)
+}
+```
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+checks.forged = "error: type mismatch"
+
+@ cases.cyclic-terminal-heap-has-no-rank
+imports = [path`../../meta/Memory.taut`, path`../../std/WellFounded.taut`]
+source = ```tauto
+def live(n: Nat): Prop := True
+def root(n: Nat): Prop := False
+def edge(a: Nat, b: Nat): Prop := a = b
+
+theorem terminal(): HeapTerminal(Nat, live, root, edge) {
+  v => hv => HeldEdge(v, Trivial, Refl)
+}
+theorem no_rank(rank: (Nat) -> Nat,
+  increasing: ∀ u: Nat. ∀ v: Nat. (edge(u, v)) -> NatLt(rank(u), rank(v))): False {
+  ranked_edges_acyclic(edge, rank, increasing)(Zero, PathEdge(Nat, edge, Zero, Zero, Refl))
+}
+theorem no_reach<n: Nat>(h: HeapReach(Nat, live, root, edge, n)): False {
+  ⊢ False from match h {
+    ReachRoot(x, hl, hr) => hr
+    ReachEdge(x, y, hx, hy, he) => no_reach(hx)
+  }
+}
+```
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+
+@ cases.unreachable-chain-is-collected
+imports = [path`../../meta/Memory.taut`, path`../../std/WellFounded.taut`]
+source = ```tauto
+inductive Obj: Type {
+  Left: Obj
+  Right: Obj
+}
+inductive Edge: (Obj, Obj) -> Prop {
+  Link: Edge(Left, Right)
+}
+def Live(v: Obj): Prop := True
+def Root(v: Obj): Prop := False
+def AfterLeft(v: Obj): Prop := RemoveLive(Obj, Live, Left, v)
+def AfterBoth(v: Obj): Prop := RemoveLive(Obj, AfterLeft, Right, v)
+fn rank(v: Obj): Nat {
+  ⊢ Nat from match v {
+    Left => Zero
+    Right => Succ(Zero)
+  }
+}
+theorem increasing<u: Obj, v: Obj>(h: Edge(u, v)): NatLt(rank(u), rank(v)) {
+  ⊢ NatLt(rank(u), rank(v)) from match h {
+    Link => Refl
+  }
+}
+theorem no_incoming_left<u: Obj>(h: Edge(u, Left)): False {
+  ⊢ False from match h {
+  }
+}
+theorem right_zero<u: Obj>(h: Edge(u, Right), hl: AfterLeft(u)): False {
+  ⊢ False from match h {
+    Link => And::right(hl)(Refl)
+  }
+}
+theorem terminal_node(v: Obj, h: AfterBoth(v)): Held(Obj, AfterBoth, Root, Edge, v) {
+  ⊢ Held(Obj, AfterBoth, Root, Edge, v) from match v {
+    Left => False::elim(And::right(And::left(h))(Refl))
+    Right => False::elim(And::right(h)(Refl))
+  }
+}
+theorem drained(): HeapDrain(Obj, Root, Edge, Live, AfterBoth) {
+  DrainFree(Live, AfterBoth, Left, Trivial,
+    AndIntro(h => h, u => hu => he => no_incoming_left(he)),
+    DrainFree(AfterLeft, AfterBoth, Right,
+      AndIntro(Trivial, e => Obj::noconf(False, Right, Left, e)),
+      AndIntro(h => h, u => hu => he => right_zero(he, hu)),
+      DrainDone(Obj, Root, Edge, AfterBoth)))
+}
+theorem exact(v: Obj): Iff(AfterBoth(v), HeapReach(Obj, Live, Root, Edge, v)) {
+  ranked_drain_exact(rank, u => w => he => increasing(he), drained(), terminal_node, v)
+}
+```
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"

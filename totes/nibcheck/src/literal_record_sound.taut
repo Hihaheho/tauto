@@ -39,12 +39,12 @@ pub theorem literal_parsed_recorded(
   ty,
   finish_literals(ck_st(leaf_literal_parsed(c, value, span, ty, parsed)))
 ) {
-  match parsed: NaturalRecorded(
+  ⊢ NaturalRecorded(
     value,
     span,
     ty,
     finish_literals(ck_st(leaf_literal_parsed(c, value, span, ty, parsed)))
-  ) {
+  ) from match parsed {
     Some(magnitude) => NaturalRecorded::Mk(magnitude, equal, MemHere(finish_literals(c)))
     None => False::elim(diagnostic_error_impossible(c, cat2(value, " is too large"), span, clean))
   }
@@ -67,12 +67,12 @@ pub theorem literal_value_recorded(
   ck_val(literal_value_after(ty, m)),
   finish_literals(ck_st(literal_value_after(ty, m)))
 ) {
-  match m: NaturalRecorded(
+  ⊢ NaturalRecorded(
     value,
     span,
     ck_val(literal_value_after(ty, m)),
     finish_literals(ck_st(literal_value_after(ty, m)))
-  ) { mut1(ignored, next) => h(clean) }
+  ) from match m { mut1(ignored, next) => h(clean) }
 }
 pub theorem leaf_literal_after_recorded(
   c: Checker,
@@ -91,15 +91,7 @@ pub theorem leaf_literal_after_recorded(
     span,
     ty,
     leaf_literal_parsed(c, value, span, ty, text_parse_u64(value)),
-    accepted => literal_parsed_recorded(
-      c,
-      value,
-      span,
-      ty,
-      text_parse_u64(value),
-      Refl,
-      accepted
-    ),
+    accepted => literal_parsed_recorded(c, value, span, ty, text_parse_u64(value), Refl, accepted),
     clean
   )
 }
@@ -117,12 +109,12 @@ pub theorem literal_fresh_recorded(
   ck_val(literal_fresh_after(value, span, m)),
   finish_literals(ck_st(literal_fresh_after(value, span, m)))
 ) {
-  match m: NaturalRecorded(
+  ⊢ NaturalRecorded(
     value,
     span,
     ck_val(literal_fresh_after(value, span, m)),
     finish_literals(ck_st(literal_fresh_after(value, span, m)))
-  ) { mut1(ty, next) => leaf_literal_after_recorded(next, value, span, ty, clean) }
+  ) from match m { mut1(ty, next) => leaf_literal_after_recorded(next, value, span, ty, clean) }
 }
 pub theorem ck_nat_literal_recorded(
   c: Checker,

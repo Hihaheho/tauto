@@ -1,0 +1,15 @@
+import std::prelude::Macro
+
+syntax!(swp, ```par
+%start Pair
+%%
+Pair: Name Name;
+Name: /[\p{L}_][\p{L}\p{N}_]*/;
+```) => struct Pair, fn parse
+
+pub macro fn mk(p: swp::Pair): List(SynStmt) {
+  let a := Syn::ident(p.name)
+  quote stmts {
+    fn $a(): i64 { 1 }
+  }
+}

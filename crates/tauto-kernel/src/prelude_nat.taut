@@ -13,12 +13,12 @@ pub(open) inductive Bool: Type {
 
 module Nat {
   pub fn eq(a: Nat, b: Nat): Bool {
-    match a: Bool {
-      Zero => match b: Bool {
+    ⊢ Bool from match a {
+      Zero => ⊢ Bool from match b {
         Zero => true
         Succ(b2) => false
       }
-      Succ(a2) => match b: Bool {
+      Succ(a2) => ⊢ Bool from match b {
         Zero => false
         Succ(b2) => eq(a2, b2)
       }
@@ -29,9 +29,9 @@ module Nat {
   // `Nat::lt(a, Zero)` is `false`, and `Nat::le(Succ(a), Zero)` (`Nat::lt(Succ(a), Succ(Zero))`)
   // is `false` too, without knowing `a`.
   pub fn lt(a: Nat, b: Nat): Bool {
-    match b: Bool {
+    ⊢ Bool from match b {
       Zero => false
-      Succ(b2) => match a: Bool {
+      Succ(b2) => ⊢ Bool from match a {
         Zero => true
         Succ(a2) => lt(a2, b2)
       }
@@ -39,14 +39,14 @@ module Nat {
   }
 
   pub fn pred(n: Nat): Nat {
-    match n: Nat {
+    ⊢ Nat from match n {
       Zero => Zero
       Succ(k) => k
     }
   }
 
   pub fn sub(a: Nat, b: Nat): Nat {
-    match b: Nat {
+    ⊢ Nat from match b {
       Zero => a
       Succ(k) => pred(sub(a, k))
     }
@@ -57,9 +57,9 @@ module Nat {
   // one more in the quotient. (One recursive call per step, so the kernel's
   // reduction stays linear.)
   pub fn divmod(a: Nat, b: Nat, q: Nat, r: Nat): Pair(Nat, Nat) {
-    match a: Pair(Nat, Nat) {
+    ⊢ Pair(Nat, Nat) from match a {
       Zero => Pair { fst: q, snd: r }
-      Succ(a2) => match eq(Succ(r), b): Pair(Nat, Nat) {
+      Succ(a2) => ⊢ Pair(Nat, Nat) from match eq(Succ(r), b) {
         false => divmod(a2, b, q, Succ(r))
         true => divmod(a2, b, Succ(q), Zero)
       }
@@ -69,13 +69,13 @@ module Nat {
   // `a div b`, rounded down, for a `b` that `h` says is not 0. Dividing by 0
   // is the effect `DivZero` of `Nat::div` (`std/UInt.taut`), defined by this.
   pub fn div_nz(a: Nat, b: Nat, h: ¬(b = 0)): Nat {
-    match divmod(a, b, Zero, Zero): Nat {
+    ⊢ Nat from match divmod(a, b, Zero, Zero) {
       Pair { fst: q, snd: r } => q
     }
   }
 
   pub fn rem_nz(a: Nat, b: Nat, h: ¬(b = 0)): Nat {
-    match divmod(a, b, Zero, Zero): Nat {
+    ⊢ Nat from match divmod(a, b, Zero, Zero) {
       Pair { fst: q, snd: r } => r
     }
   }

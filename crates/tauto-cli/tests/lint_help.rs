@@ -59,7 +59,10 @@ fn help_after_a_command_shows_its_usage() {
     );
     let out = tauto(&["check", "--help"]);
     let shown = String::from_utf8_lossy(&out.stdout);
-    assert!(shown.starts_with("usage: tauto check FILE"), "{shown}");
+    assert!(
+        shown.starts_with("usage: tauto check [FILE|DIR]"),
+        "{shown}"
+    );
     assert!(!shown.contains("tauto goals"), "{shown}");
     let out = tauto(&["macro", "-h"]);
     let shown = String::from_utf8_lossy(&out.stdout);

@@ -17,7 +17,7 @@ pub fn InstanceRequirement(
   span: TySpan,
   arg: Option(Kind)
 ): Prop {
-  match arg: Prop {
+  ⊢ Prop from match arg {
     None => Mem(TyBound, instance_scalar_bound(g, value, span), finish_bounds(c))
     Some(kind) => Mem(
       TyCtorBound,
@@ -41,14 +41,14 @@ pub theorem instantiation_bound_recorded(
   span,
   arg
 ) {
-  match arg: InstanceRequirement(
+  ⊢ InstanceRequirement(
     ck_st(instantiation_bound(c, g, value, name, span, arg)),
     g,
     value,
     name,
     span,
     arg
-  ) {
+  ) from match arg {
     None => MemHere(TyBound, instance_scalar_bound(g, value, span), finish_bounds(c))
     Some(kind) => MemHere(
       TyCtorBound,
@@ -68,7 +68,7 @@ pub theorem instance_requirement_move(
   retained: RequirementState(c, next),
   recorded: InstanceRequirement(c, g, value, name, span, arg)
 ): InstanceRequirement(next, g, value, name, span, arg) {
-  match arg: InstanceRequirement(next, g, value, name, span, arg) {
+  ⊢ InstanceRequirement(next, g, value, name, span, arg) from match arg {
     None => And::left(retained)(instance_scalar_bound(g, value, span), recorded)
     Some(kind) => And::right(
       retained
@@ -136,17 +136,9 @@ pub theorem recorded_instantiation_move<gs: List(
   retained: RequirementState(c, next),
   h: RecordedInstantiation(c, ctors, name, span, gs, initial, result)
 ): RecordedInstantiation(next, ctors, name, span, gs, initial, result) {
-  match h: RecordedInstantiation(next, ctors, name, span, gs, initial, result) {
+  ⊢ RecordedInstantiation(next, ctors, name, span, gs, initial, result) from match h {
     RecordedInstantiationNil(map) => RecordedInstantiationNil(map)
-    RecordedInstantiationCons(
-      g,
-      value,
-      rest,
-      before,
-      after,
-      recorded,
-      tail
-    ) => RecordedInstantiationCons(
+    RecordedInstantiationCons(g, value, rest, before, after, recorded, tail) => RecordedInstantiationCons(
       g,
       value,
       rest,
@@ -215,7 +207,7 @@ pub fn instance_requirements_after_bound(
   initial: Ordmap(Text, Ty),
   m: Mut1(Unit, Checker)
 ): Mut1(Ordmap(Text, Ty), Checker) {
-  match m: Mut1(Ordmap(Text, Ty), Checker) {
+  ⊢ Mut1(Ordmap(Text, Ty), Checker) from match m {
     mut1(ignored, next) => ck_rewrap1(
       ck_instantiate_map_ctors(
         rest,
@@ -254,14 +246,14 @@ pub theorem instance_requirements_bound(
   initial,
   instance_requirements_after_bound(g, value, rest, ctors, name, span, initial, m)
 ) {
-  match m: InstantiationRequirements(
+  ⊢ InstantiationRequirements(
     Cons(g, rest),
     ctors,
     name,
     span,
     initial,
     instance_requirements_after_bound(g, value, rest, ctors, name, span, initial, m)
-  ) {
+  ) from match m {
     mut1(ignored, next) => instantiation_requirements_rewrap(
       Cons(g, rest),
       ctors,
@@ -332,7 +324,7 @@ pub fn instance_requirements_after_fresh(
   initial: Ordmap(Text, Ty),
   m: Mut1(Ty, Checker)
 ): Mut1(Ordmap(Text, Ty), Checker) {
-  match m: Mut1(Ordmap(Text, Ty), Checker) {
+  ⊢ Mut1(Ordmap(Text, Ty), Checker) from match m {
     mut1(value, next) => instance_requirements_after_bound(
       g,
       value,
@@ -362,14 +354,14 @@ pub theorem instance_requirements_fresh(
   initial,
   instance_requirements_after_fresh(g, rest, ctors, name, span, initial, m)
 ) {
-  match m: InstantiationRequirements(
+  ⊢ InstantiationRequirements(
     Cons(g, rest),
     ctors,
     name,
     span,
     initial,
     instance_requirements_after_fresh(g, rest, ctors, name, span, initial, m)
-  ) {
+  ) from match m {
     mut1(value, next) => instance_requirements_bound(
       g,
       value,
@@ -399,7 +391,14 @@ pub theorem instance_requirements_cons_unf(
   name: Text,
   span: TySpan,
   initial: Ordmap(Text, Ty)
-): ck_instantiate_map_ctors(Cons(g, rest), c, ctors, name, span, initial) = instance_requirements_after_fresh(g, rest, ctors, name, span, initial, ck_fresh(c)) { Refl }
+): ck_instantiate_map_ctors(
+  Cons(g, rest),
+  c,
+  ctors,
+  name,
+  span,
+  initial
+) = instance_requirements_after_fresh(g, rest, ctors, name, span, initial, ck_fresh(c)) { Refl }
 pub theorem ck_instantiate_map_requirements(
   gs: List(Pair(Text, Kind)),
   c: Checker,
@@ -415,14 +414,14 @@ pub theorem ck_instantiate_map_requirements(
   initial,
   ck_instantiate_map_ctors(gs, c, ctors, name, span, initial)
 ) {
-  match gs: InstantiationRequirements(
+  ⊢ InstantiationRequirements(
     gs,
     ctors,
     name,
     span,
     initial,
     ck_instantiate_map_ctors(gs, c, ctors, name, span, initial)
-  ) {
+  ) from match gs {
     Nil => RecordedInstantiationNil(initial)
     Cons(g, rest) => Eq::subst(
       (m: Mut1(Ordmap(Text, Ty), Checker)) => InstantiationRequirements(

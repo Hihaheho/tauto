@@ -249,7 +249,7 @@ pub(open) inductive Align: Type {
 }
 
 pub fn st_w(s: Style): Nat {
-  match s: Nat {
+  ⊢ Nat from match s {
     Mk(w) => w
   }
 }

@@ -10,7 +10,7 @@ pub theorem allocated_list_append(
   first: TypeListAllocated(limit, left),
   last: TypeListAllocated(limit, right)
 ): TypeListAllocated(limit, List::append(left, right)) {
-  match left: TypeListAllocated(limit, List::append(left, right)) {
+  ⊢ TypeListAllocated(limit, List::append(left, right)) from match left {
     Nil => last
     Cons(head, tail) => AndIntro(
       And::left(first),
@@ -28,7 +28,7 @@ pub theorem allocated_members_snoc(
   allocated_list_append(members, Cons(value, Nil), limit, original, AndIntro(item, Trivial))
 }
 pub fn allocated_insert_choice(head: Ty, tail: List(Ty), value: Ty, order: Ordering): List(Ty) {
-  match order: List(Ty) {
+  ⊢ List(Ty) from match order {
     Less => Cons(value, Cons(head, tail))
     Equal => Cons(head, tail)
     Greater => Cons(head, members_insert(tail, value))
@@ -44,7 +44,7 @@ pub theorem allocated_insert_choice_ok(
   inserted: TypeListAllocated(limit, members_insert(tail, value)),
   order: Ordering
 ): TypeListAllocated(limit, allocated_insert_choice(head, tail, value, order)) {
-  match order: TypeListAllocated(limit, allocated_insert_choice(head, tail, value, order)) {
+  ⊢ TypeListAllocated(limit, allocated_insert_choice(head, tail, value, order)) from match order {
     Less => AndIntro(item, original)
     Equal => original
     Greater => AndIntro(And::left(original), inserted)
@@ -57,7 +57,7 @@ pub theorem allocated_members_insert(
   original: TypeListAllocated(limit, members),
   item: TypeAllocated(limit, value)
 ): TypeListAllocated(limit, members_insert(members, value)) {
-  match members: TypeListAllocated(limit, members_insert(members, value)) {
+  ⊢ TypeListAllocated(limit, members_insert(members, value)) from match members {
     Nil => AndIntro(item, Trivial)
     Cons(head, tail) => allocated_insert_choice_ok(
       head,
@@ -79,7 +79,7 @@ mutual {
     input: TypeListAllocated(limit, types),
     original: TypeListAllocated(limit, members)
   ): TypeListAllocated(limit, members_add(types, members)) {
-    match types: TypeListAllocated(limit, members_add(types, members)) {
+    ⊢ TypeListAllocated(limit, members_add(types, members)) from match types {
       Nil => original
       Cons(head, tail) => allocated_members_add(
         tail,
@@ -107,7 +107,7 @@ mutual {
     full: TypeAllocated(limit, whole),
     original: TypeListAllocated(limit, existing)
   ): TypeListAllocated(limit, members_add_one(ty, whole, existing)) {
-    match ty: TypeListAllocated(limit, members_add_one(ty, whole, existing)) {
+    ⊢ TypeListAllocated(limit, members_add_one(ty, whole, existing)) from match ty {
       TyInt(width) => allocated_members_insert(existing, whole, limit, original, full)
       TyBool => allocated_members_insert(existing, whole, limit, original, full)
       TyText => allocated_members_insert(existing, whole, limit, original, full)
@@ -134,9 +134,9 @@ pub theorem allocated_union_of(
   limit: Nat,
   h: TypeListAllocated(limit, members)
 ): TypeAllocated(limit, ty_union_of(members)) {
-  match members: TypeAllocated(limit, ty_union_of(members)) {
+  ⊢ TypeAllocated(limit, ty_union_of(members)) from match members {
     Nil => Trivial
-    Cons(head, tail) => match tail: TypeAllocated(limit, ty_union_of(Cons(head, tail))) {
+    Cons(head, tail) => ⊢ TypeAllocated(limit, ty_union_of(Cons(head, tail))) from match tail {
       Nil => And::left(h)
       Cons(second, rest) => h
     }
@@ -161,7 +161,7 @@ mutual {
     input: TypeListAllocated(limit, types),
     original: TypeListAllocated(limit, members)
   ): TypeListAllocated(limit, product_members_add(types, members)) {
-    match types: TypeListAllocated(limit, product_members_add(types, members)) {
+    ⊢ TypeListAllocated(limit, product_members_add(types, members)) from match types {
       Nil => original
       Cons(head, tail) => allocated_product_members_add(
         tail,
@@ -189,7 +189,7 @@ mutual {
     full: TypeAllocated(limit, whole),
     original: TypeListAllocated(limit, existing)
   ): TypeListAllocated(limit, product_members_add_one(ty, whole, existing)) {
-    match ty: TypeListAllocated(limit, product_members_add_one(ty, whole, existing)) {
+    ⊢ TypeListAllocated(limit, product_members_add_one(ty, whole, existing)) from match ty {
       TyInt(width) => allocated_members_snoc(existing, whole, limit, original, full)
       TyBool => allocated_members_snoc(existing, whole, limit, original, full)
       TyText => allocated_members_snoc(existing, whole, limit, original, full)
@@ -216,9 +216,9 @@ pub theorem allocated_product_of(
   limit: Nat,
   h: TypeListAllocated(limit, members)
 ): TypeAllocated(limit, ty_product_of(members)) {
-  match members: TypeAllocated(limit, ty_product_of(members)) {
+  ⊢ TypeAllocated(limit, ty_product_of(members)) from match members {
     Nil => Trivial
-    Cons(head, tail) => match tail: TypeAllocated(limit, ty_product_of(Cons(head, tail))) {
+    Cons(head, tail) => ⊢ TypeAllocated(limit, ty_product_of(Cons(head, tail))) from match tail {
       Nil => And::left(h)
       Cons(second, rest) => h
     }
@@ -241,7 +241,7 @@ pub theorem allocated_tagged_with(
   limit: Nat,
   h: TypeAllocated(limit, ty)
 ): TypeAllocated(limit, ty_tagged_with(tags, ty)) {
-  match tags: TypeAllocated(limit, ty_tagged_with(tags, ty)) {
+  ⊢ TypeAllocated(limit, ty_tagged_with(tags, ty)) from match tags {
     Nil => h
     Cons(head, tail) => h
   }
@@ -252,7 +252,7 @@ pub theorem allocated_tagged(
   limit: Nat,
   h: TypeAllocated(limit, ty)
 ): TypeAllocated(limit, ty_tagged(tags, ty)) {
-  match ty: TypeAllocated(limit, ty_tagged(tags, ty)) {
+  ⊢ TypeAllocated(limit, ty_tagged(tags, ty)) from match ty {
     TyInt(width) => allocated_tagged_with(tags, TyInt(width), limit, h)
     TyBool => allocated_tagged_with(tags, TyBool, limit, h)
     TyText => allocated_tagged_with(tags, TyText, limit, h)
@@ -285,7 +285,7 @@ pub theorem allocated_apply(
   fn_type: TypeAllocated(limit, head),
   arg_type: TypeAllocated(limit, arg)
 ): TypeAllocated(limit, ty_apply(head, arg)) {
-  match head: TypeAllocated(limit, ty_apply(head, arg)) {
+  ⊢ TypeAllocated(limit, ty_apply(head, arg)) from match head {
     TyInt(width) => AndIntro(fn_type, arg_type)
     TyBool => AndIntro(fn_type, arg_type)
     TyText => AndIntro(fn_type, arg_type)

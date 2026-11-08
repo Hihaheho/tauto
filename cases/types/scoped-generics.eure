@@ -1,0 +1,1352 @@
+@ cases.let-uses-function-type-parameter
+source = ```tauto
+fn keep<A: Shared>(value: A): A {
+  let local: A := value
+  local
+}
+perform show("answer", keep("text"))
+```
+types = "ok"
+shows = ['answer = "text"']
+
+@ cases.var-uses-function-type-parameter
+source = ```tauto
+import std::prelude::Affine
+
+fn collect<A: Shared>(first: A, second: A): List(A) {
+  var values: Vec(A) := Vec::new()
+  Vec::push(&mut values, first)
+  Vec::push(&mut values, second)
+  Vec::into_list(values)
+}
+perform show("items", collect("a", "b"))
+```
+types = "ok"
+shows = ['items = Cons("a", Cons("b", Nil))']
+
+@ cases.var-reassignment-keeps-function-type-parameter
+source = ```tauto
+fn replace_local<A: Shared>(first: A, second: A): A {
+  var local: A := first
+  local := second
+  local
+}
+perform show("answer", replace_local("a", "b"))
+```
+types = "ok"
+shows = ['answer = "b"']
+
+@ cases.annotation-keeps-type-constructor-parameter
+source = ```tauto
+fn keep<F: (Shared) -> Shared, A: Shared>(value: F(A)): F(A) {
+  let local: F(A) := value
+  local
+}
+```
+types = "ok"
+
+@ cases.generic-shadows-nominal-type-in-annotations
+source = ```tauto
+struct A { number: i64 }
+fn keep<A: Shared>(value: A): A {
+  let local: A := value
+  var result: A := local
+  result
+}
+perform show("answer", keep("text"))
+```
+types = "ok"
+shows = ['answer = "text"']
+
+@ cases.nested-function-restores-outer-annotation-context
+source = ```tauto
+fn keep<A: Shared>(value: A): A {
+  fn inner<B: Shared>(other: B): B {
+    let local: B := other
+    local
+  }
+  let local: A := value
+  local
+}
+```
+types = "ok"
+
+@ cases.lambda-keeps-outer-annotation-context
+source = ```tauto
+fn keep<A: Shared>(value: A): A {
+  let get := () => {
+    let local: A := value
+    local
+  }
+  get()
+}
+perform show("answer", keep("text"))
+```
+types = "ok"
+shows = ['answer = "text"']
+
+@ cases.function-type-parameters-do-not-leak
+source = ```tauto
+struct A { number: i64 }
+fn keep<A: Shared>(value: A): A {
+  let local: A := value
+  local
+}
+fn nominal(value: A): A {
+  let local: A := value
+  local
+}
+let value: A := A { number: 7 }
+perform show("answer", nominal(value).number)
+```
+types = "ok"
+shows = ['answer = 7']
+
+@ cases.let-rejects-distinct-type-parameter
+source = ```tauto
+fn wrong<A: Shared, B: Shared>(value: B): Unit {
+  let local: A := value
+}
+```
+types = "error: `local`: B does not fit A"
+
+@ cases.var-rejects-concrete-element-for-type-parameter
+source = ```tauto
+fn wrong<A: Shared>(first: A): List(A) {
+  var values: Vec(A) := Vec::new()
+  Vec::push(&mut values, "wrong")
+  Vec::into_list(values)
+}
+```
+types = "error: an argument: Text does not fit A"
+
+@ cases.let-rejects-shadowed-nominal-type
+source = ```tauto
+struct A { number: i64 }
+fn wrong<A: Shared>(): Unit {
+  let local: A := A { number: 7 }
+}
+```
+types = "error: `local`: A does not fit A"
+
+@ cases.var-rejects-shadowed-nominal-type
+source = ```tauto
+struct A { number: i64 }
+fn wrong<A: Shared>(): Unit {
+  var local: A := A { number: 7 }
+}
+```
+types = "error: `local`: A does not fit A"
+
+@ cases.let-keeps-linear-generic-bound
+source = ```tauto
+fn needs_shared<B: Shared>(value: B): B { value }
+fn wrong<A: Linear>(value: A): A {
+  let local: A := value
+  needs_shared(local)
+}
+```
+types = "error: linear does not fit shared: A for a type parameter"
+
+@ cases.var-keeps-linear-generic-bound
+source = ```tauto
+fn wrong<A: Linear>(value: A): Unit {
+  var local: A := value
+}
+```
+types = "error: a var cannot hold a linear value: `local` is A"
+
+@ cases.nested-generic-bound-shadows-outer-bound
+source = ```tauto
+fn outer<A: Shared>(value: A): A {
+  fn inner<A: Linear>(other: A): Unit {
+    var local: A := other
+  }
+  value
+}
+```
+types = "error: a var cannot hold a linear value: `local` is A"
+
+@ cases.generic-container-annotation-is-invariant
+source = ```tauto
+fn wrong<A: Shared, B: Shared>(values: Vec(B)): Unit {
+  let local: Vec(A) := values
+}
+```
+types = "error: `local`: Vec(B) does not fit Vec(A)"
+@ cases.nested-same-kind-let-must-not-capture-outer-generic
+source = ```tauto
+fn outer<A: Shared>(value: A): Unit {
+  fn inner<A: Shared>(other: A): Unit {
+    let local: A := value
+  }
+}
+```
+types = "error: `local`: A does not fit A"
+compile_errors.rust = "front: `local`: A does not fit A"
+compile_errors.javascript = "front: `local`: A does not fit A"
+
+@ cases.nested-same-kind-var-must-not-capture-outer-generic
+source = ```tauto
+fn outer<A: Shared>(value: A): Unit {
+  fn inner<A: Shared>(other: A): Unit {
+    var local: A := value
+  }
+}
+```
+types = "error: `local`: A does not fit A"
+compile_errors.rust = "front: `local`: A does not fit A"
+compile_errors.javascript = "front: `local`: A does not fit A"
+
+@ cases.nested-shadow-own-parameter-and-capture
+source = ```tauto
+fn outer<A: Shared>(value: A): i64 {
+  fn inner<A: Shared>(other: A): i64 {
+    let local: A := other
+    perform show("captured", value)
+    perform show("own", local)
+    7
+  }
+  inner(9)
+}
+perform show("answer", outer("text"))
+```
+types = "ok"
+lin = "ok"
+shows = ['captured = "text"', 'own = 9', 'answer = 7']
+
+@ cases.nested-generic-instantiates-at-each-use
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A: Shared>(value: A): A {
+    let local: A := value
+    local
+  }
+  perform show("number", identity(7))
+  perform show("text", identity("text"))
+}
+outer()
+```
+types = "ok"
+lin = "ok"
+shows = ['number = 7', 'text = "text"']
+
+@ cases.nested-inferred-shadow-call-stays-valid
+source = ```tauto
+fn outer<A: Shared>(value: A): A {
+  fn inner<A: Shared>(other: A): A { other }
+  inner(value)
+}
+perform show("answer", outer("text"))
+```
+types = "ok"
+shows = ['answer = "text"']
+
+@ cases.nested-generic-affine-capture-is-borrowed
+source = ```tauto
+import std::prelude::Affine
+
+fn outer(): u64 {
+  var values := Vec::new()
+  Vec::push(&mut values, 7)
+  fn size<A: Shared>(marker: A): u64 {
+    let local: A := marker
+    Vec::len(&values)
+  }
+  let first := size("one")
+  let second := size(true)
+  first + second
+}
+perform show("size", outer())
+```
+types = "ok"
+lin = "ok"
+shows = ['size = 2']
+
+@ cases.nested-generic-cannot-move-affine-captured-var
+source = ```tauto
+fn outer(): Unit {
+  let text := "text"
+  var value := Buf::of(&text)
+  fn consume<A: Shared>(marker: A): Text {
+    let local: A := marker
+    Text::of(value)
+  }
+}
+```
+types = "ok"
+lin = "error: value is a var and cannot be moved out of a closure"
+
+@ cases.nested-generic-where-is-instantiated-per-call
+source = ```tauto
+fn outer(): Unit {
+  fn same<A: Shared>(left: A, right: A): Bool where DecEq(A) {
+    let local: A := left
+    local == right
+  }
+  perform show("number", same(7, 7))
+  perform show("text", same("a", "b"))
+}
+outer()
+```
+types = "ok"
+shows = ['number = true', 'text = false']
+
+@ cases.outer-constraint-does-not-constrain-inner-binder
+source = ```tauto
+fn outer<A: Shared>(value: A): Unit where DecEq(A) {
+  fn inner<A: Shared>(left: A, right: A): Bool {
+    let local: A := left
+    local == right
+  }
+}
+```
+types = "error: == needs PartialEq(A): add where PartialEq(A)"
+
+@ cases.nested-generic-dictionaries-follow-their-binders
+source = ```tauto
+class Render(A: Shared) { fn render(value: A): Text }
+instance Render(i64) { fn render(value: i64): Text { "number" } }
+instance Render(Text) { fn render(value: Text): Text { value } }
+fn outer<A: Shared>(value: A): Text where Render(A) {
+  fn inner<A: Shared>(item: A): Text where Render(A) {
+    let local: A := item
+    Render::render(local)
+  }
+  inner(value)
+}
+perform show("first", outer(7))
+perform show("second", outer("text"))
+```
+types = "ok"
+shows = ['first = "number"', 'second = "text"']
+
+@ cases.inner-dictionary-does-not-constrain-captured-outer-binder
+source = ```tauto
+class Render(A: Shared) { fn render(value: A): Text }
+fn outer<A: Shared>(value: A): Unit where Render(A) {
+  fn inner<A: Shared>(item: A): Text where Render(A) {
+    Render::render(value)
+  }
+}
+```
+types = "error: Render::render needs Render(A): add where Render(A)"
+
+@ cases.local-function-values-are-not-implicitly-generalized
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A: Shared>(value: A): A { value }
+  let alias := identity
+  let number: i64 := alias(7)
+  let text := alias("text")
+}
+```
+types = "error: an argument: Text does not fit i64"
+
+@ cases.nested-signatures-do-not-inherit-outer-generic-names
+source = ```tauto
+fn outer<A: Shared>(value: A): Unit {
+  fn inner<B: Shared>(other: B): A { value }
+}
+```
+types = "error: the result of `inner`: A does not fit A"
+
+@ cases.nested-same-name-capture-multiple-uses
+source = ```tauto
+fn outer<A: Shared>(value: A): A {
+  fn inner<A: Shared>(other: A): A {
+    perform show("captured", value)
+    let local: A := other
+    local
+  }
+  perform show("number", inner(1))
+  inner(value)
+}
+perform show("answer", outer("text"))
+```
+types = "ok"
+lin = "ok"
+shows = ['captured = "text"', 'number = 1', 'captured = "text"', 'answer = "text"']
+
+@ cases.captured-source-name-does-not-shadow-function-value-wrapper
+source = ```tauto
+fn outer<A: Shared>(a0: A): i64 {
+  fn inner<B: Shared>(x: B): B {
+    perform show("captured", a0)
+    x
+  }
+  let alias := inner
+  alias(7)
+}
+perform show("answer", outer("text"))
+```
+types = "ok"
+shows = ['captured = "text"', 'answer = 7']
+
+@ cases.local-function-value-keeps-generic-bound-edges
+source = ```tauto
+fn outer<A: Shared>(value: A): A {
+  fn echo<B: Shared>(other: B): B {
+    perform show("echo", other)
+    other
+  }
+  let alias := echo
+  alias(value)
+}
+perform show("answer", outer("text"))
+```
+types = "ok"
+shows = ['echo = "text"', 'answer = "text"']
+
+@ cases.generic-effect-parameters-are-owned-by-their-declaration
+source = ```tauto
+effect identity<A>(value: A): A
+let result := handle { perform identity(7) } with {
+  ∀ A. identity<A>(value), k => k(value)
+}
+perform show("answer", result)
+```
+types = "ok"
+shows = ['answer = 7']
+
+@ cases.named-owned-affine-capture-is-used-once
+source = ```tauto
+fn outer(): Unit {
+  let text := "text"
+  let value := Buf::of(&text)
+  fn consume(marker: i64): Text { Text::of(value) }
+  perform show("first", consume(1))
+  perform show("second", consume(2))
+}
+outer()
+```
+types = "ok"
+lin = "error: consume is used after move"
+compile_errors.rust = "front: consume is used after move"
+compile_errors.javascript = "front: consume is used after move"
+
+@ cases.generic-named-owned-affine-capture-is-used-once
+source = ```tauto
+fn outer(): Unit {
+  let text := "text"
+  let value := Buf::of(&text)
+  fn consume<A: Shared>(marker: A): Text {
+    let local: A := marker
+    Text::of(value)
+  }
+  perform show("first", consume(1))
+  perform show("second", consume("again"))
+}
+outer()
+```
+types = "ok"
+lin = "error: consume is used after move"
+compile_errors.rust = "front: consume is used after move"
+compile_errors.javascript = "front: consume is used after move"
+
+@ cases.named-owned-affine-capture-single-use
+source = ```tauto
+import std::prelude::Affine
+
+fn outer(): Text {
+  let text := "text"
+  let value := Buf::of(&text)
+  fn consume(marker: i64): Text { Text::of(value) }
+  consume(1)
+}
+perform show("answer", outer())
+```
+types = "ok"
+lin = "ok"
+shows = ['answer = "text"']
+
+@ cases.generic-named-owned-affine-capture-single-use
+source = ```tauto
+import std::prelude::Affine
+
+fn outer(): Text {
+  let text := "text"
+  let value := Buf::of(&text)
+  fn consume<A: Shared>(marker: A): Text {
+    let local: A := marker
+    Text::of(value)
+  }
+  consume(1)
+}
+perform show("answer", outer())
+```
+types = "ok"
+lin = "ok"
+shows = ['answer = "text"']
+
+@ cases.generic-named-borrowed-affine-capture-can-be-read-repeatedly
+source = ```tauto
+import std::prelude::Affine
+
+fn outer(&value: Buf): Unit {
+  fn read<A: Shared>(marker: A): Text {
+    let local: A := marker
+    Text::of(Buf::clone(&value))
+  }
+  perform show("first", read(1))
+  perform show("second", read("again"))
+}
+let text := "text"
+let value := Buf::of(&text)
+outer(&value)
+```
+types = "ok"
+lin = "ok"
+shows = ['first = "text"', 'second = "text"']
+
+@ cases.generic-named-mutable-cell-capture-stays-shared
+source = ```tauto
+fn outer(): i64 {
+  var count: i64 := 0
+  fn next<A: Shared>(marker: A): i64 {
+    let local: A := marker
+    count := count + 1
+    count
+  }
+  let first := next("one")
+  let second := next(true)
+  first + second
+}
+perform show("answer", outer())
+```
+types = "ok"
+lin = "ok"
+shows = ['answer = 3']
+
+@ cases.owned-outer-generic-capture-keeps-its-identity-and-kind
+source = ```tauto
+import std::prelude::Affine
+
+fn outer<A>(value: A): A {
+  fn inner<A: Shared>(marker: A) { value }
+  inner(1)
+}
+let text := "payload"
+let value := Buf::of(&text)
+let restored := outer(value)
+perform show("answer", Text::of(restored))
+```
+types = "ok"
+lin = "ok"
+shows = ['answer = "payload"']
+
+@ cases.local-generic-inferred-result-is-instantiated
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A: Shared>(value: A) { value }
+  let number: i64 := identity(7)
+  let text: Text := identity("text")
+  perform show("number", number)
+  perform show("text", text)
+}
+outer()
+```
+types = "ok"
+shows = ['number = 7', 'text = "text"']
+
+@ cases.local-generic-union-order-keeps-authoritative-type-arguments
+source = ```tauto
+fn outer(): Text {
+  fn observe<B: Shared, A: Shared>(known: B, input: B | A): B { known }
+  let number: i64 := 7
+  let input := if true { number } else { "unseen" }
+  observe("known", input)
+}
+perform show("answer", outer())
+```
+types = "ok"
+shows = ['answer = "known"']
+
+@ cases.recursive-local-inferred-result-rejects-wrong-self-argument
+source = ```tauto
+fn outer(): Unit {
+  fn bad<A: Shared>(value: A, recurse: Bool) {
+    if recurse { bad(7, false) } else { value }
+  }
+  let text: Text := bad("text", true)
+  perform show("answer", text)
+}
+outer()
+```
+types = "error: an argument: i64 does not fit A"
+compile_errors.rust = "front: an argument: i64 does not fit A"
+compile_errors.javascript = "front: an argument: i64 does not fit A"
+
+@ cases.recursive-local-alias-keeps-incomplete-self-signature
+source = ```tauto
+fn outer(): Unit {
+  fn bad<A: Shared>(value: A, again: Bool) {
+    let recurse := bad
+    if again { recurse(7, false) } else { value }
+  }
+  let text: Text := bad("text", true)
+  perform show("answer", text)
+}
+outer()
+```
+types = "error: an argument: i64 does not fit A"
+compile_errors.rust = "front: an argument: i64 does not fit A"
+compile_errors.javascript = "front: an argument: i64 does not fit A"
+
+@ cases.recursive-local-nested-helper-keeps-incomplete-self-signature
+source = ```tauto
+fn outer(): Unit {
+  fn bad<A: Shared>(value: A, again: Bool) {
+    fn helper<B: Shared>(replacement: B) { bad(replacement, false) }
+    if again { helper(7) } else { value }
+  }
+  let text: Text := bad("text", true)
+  perform show("answer", text)
+}
+outer()
+```
+types = "error: an argument: B does not fit A"
+compile_errors.rust = "front: an argument: B does not fit A"
+compile_errors.javascript = "front: an argument: B does not fit A"
+
+@ cases.inferred-local-self-keeps-its-own-binders
+source = ```tauto
+fn outer<A: Shared>(value: A): A {
+  fn repeat<A: Shared>(other: A, again: Bool) {
+    if again { repeat(other, false) } else { other }
+  }
+  repeat(value, false)
+}
+perform show("answer", outer("text"))
+```
+types = "ok"
+shows = ['answer = "text"']
+
+@ cases.written-local-self-instantiates-at-each-use
+source = ```tauto
+fn outer(): Text {
+  fn repeat<A: Shared>(value: A, again: Bool): A {
+    if again { let unused := repeat(7, false) }
+    value
+  }
+  repeat("text", false)
+}
+perform show("answer", outer())
+```
+types = "ok"
+shows = ['answer = "text"']
+
+@ cases.inferred-local-self-keeps-monomorphic-recursion-boundary
+source = ```tauto
+fn outer(): Unit {
+  fn repeat<A: Shared>(value: A, again: Bool) {
+    if again { let unused := repeat(7, false) }
+    value
+  }
+  let text: Text := repeat("text", false)
+}
+```
+types = "error: an argument: i64 does not fit A"
+compile_errors.rust = "front: an argument: i64 does not fit A"
+compile_errors.javascript = "front: an argument: i64 does not fit A"
+
+@ cases.inferred-local-self-keeps-where-evidence
+source = ```tauto
+fn outer<A: Shared>(value: A): A where DecEq(A) {
+  fn repeat<A: Shared>(other: A, again: Bool) where DecEq(A) {
+    if again {
+      let same := other == other
+      repeat(other, false)
+    } else { other }
+  }
+  repeat(value, false)
+}
+perform show("answer", outer("text"))
+```
+types = "ok"
+shows = ['answer = "text"']
+
+@ cases.inferred-local-self-keeps-constructor-bounds
+source = ```tauto
+fn outer<F: (Shared) -> Type, A: Shared>(value: F(A)): F(A) {
+  fn repeat<F: (Shared) -> Type, A: Shared>(other: F(A), again: Bool) {
+    if again { repeat(other, false) } else { other }
+  }
+  repeat(value, false)
+}
+```
+types = "ok"
+
+@ cases.inferred-local-self-keeps-user-class-evidence
+source = ```tauto
+class Render(A: Shared) { fn render(value: A): Text }
+instance Render(Text) { fn render(value: Text): Text { value } }
+fn outer<A: Shared>(value: A): Text where Render(A) {
+  fn repeat<A: Shared>(other: A, again: Bool) where Render(A) {
+    if again { repeat(other, false) } else { Render::render(other) }
+  }
+  repeat(value, false)
+}
+perform show("answer", outer("text"))
+```
+types = "ok"
+shows = ['answer = "text"']
+
+@ cases.named-owned-capture-keeps-declaration-binding
+source = ```tauto
+import std::prelude::Affine
+
+fn outer(): Text {
+  let original := "original"
+  let value := Buf::of(&original)
+  fn consume(): Text { Text::of(value) }
+  let shadow := "shadow"
+  let value := Buf::of(&shadow)
+  consume()
+}
+perform show("answer", outer())
+```
+types = "ok"
+lin = "ok"
+shows = ['answer = "original"']
+
+@ cases.named-shared-capture-keeps-declaration-binding
+source = ```tauto
+fn outer(): Text {
+  let value := "original"
+  fn read(): Text { value }
+  let value := "shadow"
+  perform show("first", read())
+  read()
+}
+perform show("answer", outer())
+```
+types = "ok"
+lin = "ok"
+shows = ['first = "original"', 'answer = "original"']
+
+@ cases.named-borrowed-capture-keeps-declaration-binding
+source = ```tauto
+fn outer(&value: Text): Text {
+  fn read(): Text { clone(value) }
+  let value := "shadow"
+  read()
+}
+perform show("answer", outer("original"))
+```
+types = "ok"
+lin = "ok"
+shows = ['answer = "original"']
+
+@ cases.named-mutable-capture-keeps-declaration-cell
+source = ```tauto
+fn outer(): Unit {
+  var value: i64 := 0
+  fn next(): i64 { value := value + 1; value }
+  {
+    var value: i64 := 100
+    perform show("first", next())
+    perform show("shadow", value)
+  }
+  perform show("second", next())
+}
+outer()
+```
+types = "ok"
+lin = "ok"
+shows = ['first = 1', 'shadow = 100', 'second = 2']
+
+@ cases.transitive-shared-capture-keeps-declaration-binding
+source = ```tauto
+fn outer(): Text {
+  let value := "original"
+  fn read(): Text { value }
+  let value := "shadow"
+  fn forward(): Text { read() }
+  forward()
+}
+perform show("answer", outer())
+```
+types = "ok"
+lin = "ok"
+shows = ['answer = "original"']
+
+@ cases.transitive-owned-capture-keeps-declaration-binding
+source = ```tauto
+import std::prelude::Affine
+
+fn outer(): Text {
+  let original := "original"
+  let value := Buf::of(&original)
+  fn take(): Buf { value }
+  let shadow := "shadow"
+  let value := Buf::of(&shadow)
+  fn forward(): Text { Text::of(take()) }
+  forward()
+}
+perform show("answer", outer())
+```
+types = "ok"
+lin = "ok"
+shows = ['answer = "original"']
+
+@ cases.late-kind-generic-helper-named
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A>(item: A): A { item }
+  let value := identity(factory())
+  fn consume() { value }
+  perform show("first", Text::of(consume()))
+  perform show("second", Text::of(consume()))
+}
+fn factory() {
+  let text := "text"
+  Buf::of(&text)
+}
+outer()
+```
+types = "error: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.rust = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.javascript = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+
+@ cases.late-kind-generic-helper-lambda
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A>(item: A): A { item }
+  let value := identity(factory())
+  let consume := () => value
+  perform show("first", Text::of(consume()))
+  perform show("second", Text::of(consume()))
+}
+fn factory() {
+  let text := "text"
+  Buf::of(&text)
+}
+outer()
+```
+types = "error: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.rust = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.javascript = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+
+@ cases.late-kind-direct-factory-named
+source = ```tauto
+fn outer(): Unit {
+  let value := factory()
+  fn consume() { value }
+  perform show("first", Text::of(consume()))
+  perform show("second", Text::of(consume()))
+}
+fn factory() {
+  let text := "text"
+  Buf::of(&text)
+}
+outer()
+```
+types = "error: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.rust = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.javascript = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+
+@ cases.late-kind-direct-factory-lambda
+source = ```tauto
+fn outer(): Unit {
+  let value := factory()
+  let consume := () => value
+  perform show("first", Text::of(consume()))
+  perform show("second", Text::of(consume()))
+}
+fn factory() {
+  let text := "text"
+  Buf::of(&text)
+}
+outer()
+```
+types = "error: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.rust = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.javascript = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+
+@ cases.capture-kind-control-late-shared-named
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A>(item: A): A { item }
+  let value := identity(factory())
+  fn consume() { value }
+  perform show("first", consume())
+  perform show("second", consume())
+}
+fn factory() {
+  let text := "text"
+  text
+}
+outer()
+```
+types = "ok"
+lin = "ok"
+shows = ['first = "text"', 'second = "text"']
+
+@ cases.capture-kind-control-late-shared-lambda
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A>(item: A): A { item }
+  let value := identity(factory())
+  let consume := () => value
+  perform show("first", consume())
+  perform show("second", consume())
+}
+fn factory() {
+  let text := "text"
+  text
+}
+outer()
+```
+types = "ok"
+lin = "ok"
+shows = ['first = "text"', 'second = "text"']
+
+@ cases.capture-kind-control-late-affine-once-named
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A>(item: A): A { item }
+  let value := identity(factory())
+  fn consume() { value }
+  perform show("first", Text::of(consume()))
+}
+fn factory() {
+  let text := "text"
+  Buf::of(&text)
+}
+outer()
+```
+types = "error: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.rust = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.javascript = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+
+@ cases.capture-kind-control-late-affine-once-lambda
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A>(item: A): A { item }
+  let value := identity(factory())
+  let consume := () => value
+  perform show("first", Text::of(consume()))
+}
+fn factory() {
+  let text := "text"
+  Buf::of(&text)
+}
+outer()
+```
+types = "error: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.rust = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.javascript = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+
+@ cases.capture-kind-control-annotated-affine-twice-named
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A>(item: A): A { item }
+  let value: Buf := identity(factory())
+  fn consume() { value }
+  perform show("first", Text::of(consume()))
+  perform show("second", Text::of(consume()))
+}
+fn factory() {
+  let text := "text"
+  Buf::of(&text)
+}
+outer()
+```
+types = "ok"
+lin = "error: consume is used after move"
+compile_errors.rust = "front: consume is used after move"
+compile_errors.javascript = "front: consume is used after move"
+
+@ cases.capture-kind-control-annotated-affine-twice-lambda
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A>(item: A): A { item }
+  let value: Buf := identity(factory())
+  let consume := () => value
+  perform show("first", Text::of(consume()))
+  perform show("second", Text::of(consume()))
+}
+fn factory() {
+  let text := "text"
+  Buf::of(&text)
+}
+outer()
+```
+types = "ok"
+lin = "error: consume is used after move"
+compile_errors.rust = "front: consume is used after move"
+compile_errors.javascript = "front: consume is used after move"
+
+@ cases.capture-kind-control-annotated-affine-once-named
+source = ```tauto
+import std::prelude::Affine
+
+fn outer(): Unit {
+  fn identity<A>(item: A): A { item }
+  let value: Buf := identity(factory())
+  fn consume() { value }
+  perform show("first", Text::of(consume()))
+}
+fn factory() {
+  let text := "text"
+  Buf::of(&text)
+}
+outer()
+```
+types = "ok"
+lin = "ok"
+shows = ['first = "text"']
+
+@ cases.capture-kind-control-annotated-affine-once-lambda
+source = ```tauto
+import std::prelude::Affine
+
+fn outer(): Unit {
+  fn identity<A>(item: A): A { item }
+  let value: Buf := identity(factory())
+  let consume := () => value
+  perform show("first", Text::of(consume()))
+}
+fn factory() {
+  let text := "text"
+  Buf::of(&text)
+}
+outer()
+```
+types = "ok"
+lin = "ok"
+shows = ['first = "text"']
+
+@ cases.late-kind-alias-named
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A>(item: A): A { item }
+  let value := identity(factory())
+  fn consume() { value }
+  let alias := consume
+  perform show("first", Text::of(alias()))
+  perform show("second", Text::of(alias()))
+}
+fn factory() { let text := "text"; Buf::of(&text) }
+outer()
+```
+types = "error: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.rust = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.javascript = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+
+@ cases.late-kind-alias-lambda
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A>(item: A): A { item }
+  let value := identity(factory())
+  let consume := () => value
+  let alias := consume
+  perform show("first", Text::of(alias()))
+  perform show("second", Text::of(alias()))
+}
+fn factory() { let text := "text"; Buf::of(&text) }
+outer()
+```
+types = "error: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.rust = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.javascript = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+
+@ cases.late-kind-shared-ascription-named
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A>(item: A): A { item }
+  let value := identity(factory())
+  fn consume() { value }
+  let alias: () -> Buf := consume
+  perform show("first", Text::of(alias()))
+  perform show("second", Text::of(alias()))
+}
+fn factory() { let text := "text"; Buf::of(&text) }
+outer()
+```
+types = "error: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.rust = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.javascript = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+
+@ cases.late-kind-shared-ascription-lambda
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A>(item: A): A { item }
+  let value := identity(factory())
+  let consume := () => value
+  let alias: () -> Buf := consume
+  perform show("first", Text::of(alias()))
+  perform show("second", Text::of(alias()))
+}
+fn factory() { let text := "text"; Buf::of(&text) }
+outer()
+```
+types = "error: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.rust = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.javascript = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+
+@ cases.late-kind-higher-order-named
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A>(item: A): A { item }
+  let value := identity(factory())
+  fn consume() { value }
+  fn duplicate(callback: () -> Buf): Unit {
+    perform show("first", Text::of(callback()))
+    perform show("second", Text::of(callback()))
+  }
+  duplicate(consume)
+}
+fn factory() { let text := "text"; Buf::of(&text) }
+outer()
+```
+types = "error: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.rust = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.javascript = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+
+@ cases.late-kind-higher-order-lambda
+source = ```tauto
+fn outer(): Unit {
+  fn identity<A>(item: A): A { item }
+  let value := identity(factory())
+  let consume := () => value
+  fn duplicate(callback: () -> Buf): Unit {
+    perform show("first", Text::of(callback()))
+    perform show("second", Text::of(callback()))
+  }
+  duplicate(consume)
+}
+fn factory() { let text := "text"; Buf::of(&text) }
+outer()
+```
+types = "error: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.rust = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+compile_errors.javascript = "front: capture `value` is inferred as affine after its function kind was fixed; add a type annotation to the captured binding"
+
+@ cases.unresolved-owned-capture-kind-needs-annotation
+source = ```tauto
+fn outer(): Unit {
+  let value := Vec::new()
+  fn consume() { value }
+}
+```
+types = "error: the kind of capture `value` is not determined; add a type annotation to the captured binding"
+compile_errors.rust = "front: the kind of capture `value` is not determined; add a type annotation to the captured binding"
+compile_errors.javascript = "front: the kind of capture `value` is not determined; add a type annotation to the captured binding"
+
+@ cases.unknown-function-signature-is-not-an-unknown-capture-kind
+source = ```tauto
+fn outer(): Unit {
+  let callback := (item) => item
+  fn consume() { callback }
+  let alias := consume()
+}
+```
+types = "ok"
+lin = "ok"
+
+@ cases.kind-range-observes-held-type-parameters
+source = ```tauto
+struct Phantom(A: Type) { callback: (A) -> i64 }
+linear struct LinearBox(A: Type) { item: A }
+```
+types = "ok"
+
+@ cases.linear-capture-dominates-unresolved-capture-kind
+source = ```tauto
+linear struct Token {}
+fn outer(token: Token): Unit {
+  let value := Vec::new()
+  fn consume() { Pair { fst: token, snd: value } }
+  let result := consume()
+}
+```
+types = "error: the type `A` of `Vec::new` is not determined here: give the value a type, as in `let x: T = ...`"
+
+@ cases.generic-named-owned-capture-keeps-declaration-binding
+source = ```tauto
+import std::prelude::Affine
+
+fn outer(): Text {
+  let original := "original"
+  let value := Buf::of(&original)
+  fn consume<A: Shared>(marker: A): Text { Text::of(value) }
+  let shadow := "shadow"
+  let value := Buf::of(&shadow)
+  consume(7)
+}
+perform show("answer", outer())
+```
+types = "ok"
+lin = "ok"
+shows = ['answer = "original"']
+
+
+@ cases.recursive-shared-capture-keeps-declaration-binding
+source = ```tauto
+fn outer(): Text {
+  let value := "original"
+  fn read(count: i64): Text {
+    if count == 0 { value } else {
+      let value := "shadow"
+      read(count - 1)
+    }
+  }
+  read(1)
+}
+perform show("answer", outer())
+```
+types = "ok"
+lin = "ok"
+rust_shows = ['answer = "original"']
+javascript_shows = ['answer = "original"']
+
+@ cases.transitive-generic-captures-keep-own-and-outer-identities
+source = ```tauto
+fn outer<A: Shared>(value: A): A {
+  fn first<A: Shared>(marker: A) { value }
+  fn forward<A: Shared>(marker: A) { first(marker) }
+  let number := forward(7)
+  forward(true)
+}
+perform show("answer", outer("original"))
+```
+types = "ok"
+lin = "ok"
+shows = ['answer = "original"']
+
+@ cases.nominal-owner-provenance-base
+source = ```tauto
+enum Reader { Read(Text) }
+enum Number { Read(i64) }
+let value: Reader := Read("original")
+```
+types = "ok"
+
+@ cases.reused-constructor-occurrence-owner-base
+source = ```tauto
+enum Reader { Read(Text) }
+enum Other { Read(Text) }
+let first: Reader := Read("original")
+let second: Other := Read("original")
+```
+types = "ok"
+
+@ cases.generic-union-results-use-the-callers-representation
+source = ```tauto
+fn choose<B: Shared, A: Shared>(first: B, second: A, pick: Bool): (B | A) {
+  if pick { first } else { second }
+}
+perform show("left", choose("known", 7, true))
+perform show("right", choose("known", 7, false))
+let alias := choose
+perform show("alias", alias("other", 8, false))
+```
+types = "ok"
+shows = ['left = "known"', 'right = 7', 'alias = 8']
+
+@ cases.local-generic-union-alias-keeps-authoritative-type-arguments
+source = ```tauto
+fn outer(): Text {
+  fn observe<B: Shared, A: Shared>(known: B, input: B | A): B { known }
+  let alias := observe
+  let number: i64 := 7
+  let input := if true { number } else { "unseen" }
+  alias("known", input)
+}
+perform show("answer", outer())
+```
+types = "ok"
+shows = ['answer = "known"']
+
+@ cases.generic-union-collapsed-members-cross-the-abi
+source = ```tauto
+fn choose<B: Shared, A: Shared>(first: B, second: A, pick: Bool): (B | A) {
+  if pick { first } else { second }
+}
+fn observe<B: Shared, A: Shared>(known: B, witness: A, input: B | A): B { known }
+perform show("left", choose("left", "right", true))
+perform show("right", choose("left", "right", false))
+perform show("answer", observe("known", "witness", "input"))
+```
+types = "ok"
+shows = ['left = "left"', 'right = "right"', 'answer = "known"']
+
+@ cases.generic-union-abi-keeps-caller-and-callee-parameters-distinct
+source = ```tauto
+fn outer<A: Shared, B: Shared>(left: A, right: B): (A | B) {
+  fn choose<B: Shared, A: Shared>(first: B, second: A): (B | A) {
+    if true { first } else { second }
+  }
+  choose(left, right)
+}
+perform show("answer", outer("known", 7))
+```
+types = "ok"
+shows = ['answer = "known"']
+
+@ cases.captured-generic-union-alias-adapts-arguments-and-results
+source = ```tauto
+fn outer<C: Shared>(captured: C): Unit {
+  fn choose<B: Shared, A: Shared>(known: B, witness: A, input: B | A, first: Bool): (B | A) {
+    perform show("captured", captured)
+    if first { known } else { input }
+  }
+  let alias := choose
+  let number: i64 := 7
+  let input := if true { number } else { "unseen" }
+  perform show("direct", choose("known", number, input, false))
+  perform show("alias", alias("known", number, input, true))
+}
+outer("kept")
+```
+types = "ok"
+shows = ['captured = "kept"', 'direct = 7', 'captured = "kept"', 'alias = "known"']
+
+
+@ cases.generic-union-forwarding-and-catch-keep-inferred-instantiations
+source = ```tauto
+fn forward<T: Shared>(value: T): T ! {} { value }
+fn choose(flag: Bool): (i64 | Text) ! {fail(Text)} {
+  let result: Result(i64, Text) := if flag { Ok(7) } else { Err("stopped") }
+  let number := raise(result)
+  if flag { number } else { "unseen" }
+}
+let value := if true { 7 } else { "kept" }
+perform show("forward", forward(value))
+perform show("ok", catch(() => choose(true)))
+perform show("bad", catch(() => choose(false)))
+```
+types = "ok"
+shows = ['forward = 7', 'ok = Ok(7)', 'bad = Err("stopped")']
+
+@ cases.generic-call-with-undetermined-type-argument
+source = ```tauto
+fn is_nil<A>(xs: List(A)): Bool {
+  match xs {
+    Nil => true
+    Cons(head, tail) => false
+  }
+}
+fn empty<A>(): List(A) { Nil }
+perform show("empty", is_nil(empty()))
+```
+types = "error: the type `A` of `is_nil` is not determined here: give the value a type, as in `let x: T = ...`"
+compile_errors.rust = "front: the type `A` of `is_nil` is not determined here: give the value a type, as in `let x: T = ...`"
+compile_errors.javascript = "front: the type `A` of `is_nil` is not determined here: give the value a type, as in `let x: T = ...`"
+
+@ cases.generic-call-with-annotated-type-argument
+source = ```tauto
+fn is_nil<A>(xs: List(A)): Bool {
+  match xs {
+    Nil => true
+    Cons(head, tail) => false
+  }
+}
+fn empty<A>(): List(A) { Nil }
+let none: List(Bool) := empty()
+perform show("empty", is_nil(none))
+```
+types = "ok"
+shows = ["empty = true"]

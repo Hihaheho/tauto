@@ -129,14 +129,18 @@ pub theorem registration_fields_unf(
   rest: List(SurfaceDataField),
   c: Checker,
   generics: Ordmap(Text, Ty)
-): ck_data_fields(Cons(field, rest), c, generics) = registration_fields_cons(field, rest, c, generics) { Refl }
+): ck_data_fields(
+  Cons(field, rest),
+  c,
+  generics
+) = registration_fields_cons(field, rest, c, generics) { Refl }
 
 pub theorem ck_data_fields_frame(
   fs: List(SurfaceDataField),
   c: Checker,
   generics: Ordmap(Text, Ty)
 ): CkReadFrame(c, ck_data_fields(fs, c, generics)) {
-  match fs: CkReadFrame(c, ck_data_fields(fs, c, generics)) {
+  ⊢ CkReadFrame(c, ck_data_fields(fs, c, generics)) from match fs {
     Nil => Refl
     Cons(field, rest) => Eq::subst(
       (z: Mut1(List(DataField), Checker)) => CkReadFrame(c, z),
@@ -216,14 +220,18 @@ pub theorem registration_ctors_unf(
   rest: List(SurfaceDataCtor),
   c: Checker,
   generics: Ordmap(Text, Ty)
-): ck_data_ctors(Cons(ctor, rest), c, generics) = registration_ctors_cons(ctor, rest, c, generics) { Refl }
+): ck_data_ctors(
+  Cons(ctor, rest),
+  c,
+  generics
+) = registration_ctors_cons(ctor, rest, c, generics) { Refl }
 
 pub theorem ck_data_ctors_frame(
   cs: List(SurfaceDataCtor),
   c: Checker,
   generics: Ordmap(Text, Ty)
 ): CkReadFrame(c, ck_data_ctors(cs, c, generics)) {
-  match cs: CkReadFrame(c, ck_data_ctors(cs, c, generics)) {
+  ⊢ CkReadFrame(c, ck_data_ctors(cs, c, generics)) from match cs {
     Nil => Refl
     Cons(ctor, rest) => Eq::subst(
       (z: Mut1(List(DataCtor), Checker)) => CkReadFrame(c, z),
@@ -241,7 +249,12 @@ pub theorem ck_data_ctors_frame(
 
 // Constructor registration changes only the constructor index, not declarations.
 pub fn registration_ctor_state(c: Checker, ctor: DataCtor, dname: Text, i: Nat): Checker {
-  let m := Ordmap::insert(c.datas.ctors, ctor.name, Pair { fst: dname, snd: i }, Ordmap::compare_text)
+  let m := Ordmap::insert(
+    c.datas.ctors,
+    ctor.name,
+    Pair { fst: dname, snd: i },
+    Ordmap::compare_text
+  )
   let m2 := Ordmap::insert(
     m,
     cat3(dname, ".", ctor.name),
@@ -261,7 +274,9 @@ pub theorem registration_ctor_state_decls(
   ctor: DataCtor,
   dname: Text,
   i: Nat
-): summary_decls(ck_datas_of(registration_ctor_state(c, ctor, dname, i))) = summary_decls(ck_datas_of(c)) { Refl }
+): summary_decls(
+  ck_datas_of(registration_ctor_state(c, ctor, dname, i))
+) = summary_decls(ck_datas_of(c)) { Refl }
 
 pub theorem registration_register_unf(
   ctor: DataCtor,
@@ -269,7 +284,14 @@ pub theorem registration_register_unf(
   c: Checker,
   dname: Text,
   i: Nat
-): ck_register_ctors(Cons(ctor, rest), c, dname, i) = ck_rewrap1(ck_register_ctors(rest, registration_ctor_state(c, ctor, dname, i), dname, i + 1)) { Refl }
+): ck_register_ctors(
+  Cons(ctor, rest),
+  c,
+  dname,
+  i
+) = ck_rewrap1(
+  ck_register_ctors(rest, registration_ctor_state(c, ctor, dname, i), dname, i + 1)
+) { Refl }
 
 pub theorem ck_register_ctors_decls(
   cs: List(DataCtor),
@@ -277,7 +299,7 @@ pub theorem ck_register_ctors_decls(
   dname: Text,
   i: Nat
 ): CkDeclsFrame(c, ck_register_ctors(cs, c, dname, i)) {
-  match cs: CkDeclsFrame(c, ck_register_ctors(cs, c, dname, i)) {
+  ⊢ CkDeclsFrame(c, ck_register_ctors(cs, c, dname, i)) from match cs {
     Nil => Refl
     Cons(ctor, rest) => Eq::trans(
       Eq::congr(
@@ -319,7 +341,7 @@ pub theorem registration_bind_ordered<A: Type, B: Type>(
   hm: CkDatasOrdered(ck_st(m)),
   hk: ∀ v: A. ∀ next: Checker. (CkDatasOrdered(next)) -> CkDatasOrdered(ck_st(k(v, next)))
 ): CkDatasOrdered(ck_st(frame_bind(k, m))) {
-  match m: CkDatasOrdered(ck_st(frame_bind(k, m))) {
+  ⊢ CkDatasOrdered(ck_st(frame_bind(k, m))) from match m {
     mut1(v, next) => hk(v, next, hm)
   }
 }
@@ -557,7 +579,12 @@ pub theorem registration_declare_unf(
   d: SurfaceData,
   is_struct: Bool,
   builtin: Bool
-): ck_declare_data(c, d, is_struct, builtin) = registration_declare(c, d, is_struct, builtin) { Refl }
+): ck_declare_data(
+  c,
+  d,
+  is_struct,
+  builtin
+) = registration_declare(c, d, is_struct, builtin) { Refl }
 
 pub theorem ck_declare_data_ordered(
   c: Checker,
@@ -588,7 +615,7 @@ pub theorem ck_effect_param_frame(
   p: Option(SurfaceTerm),
   generics: Ordmap(Text, Ty)
 ): CkReadFrame(c, ck_effect_param(c, e, p, generics)) {
-  match p: CkReadFrame(c, ck_effect_param(c, e, p, generics)) {
+  ⊢ CkReadFrame(c, ck_effect_param(c, e, p, generics)) from match p {
     None => Refl
     Some(x) => frame_rewrap(c, ck_written(c, x, generics), ck_written_frame(c, x, generics))
   }
@@ -652,7 +679,12 @@ pub theorem registration_effect_params_unf(
   c: Checker,
   e: SurfaceEffect,
   generics: Ordmap(Text, Ty)
-): ck_effect_params(Cons(p, rest), c, e, generics) = registration_effect_params_cons(p, rest, c, e, generics) { Refl }
+): ck_effect_params(
+  Cons(p, rest),
+  c,
+  e,
+  generics
+) = registration_effect_params_cons(p, rest, c, e, generics) { Refl }
 
 pub theorem ck_effect_params_frame(
   ps: List(Option(SurfaceTerm)),
@@ -660,7 +692,7 @@ pub theorem ck_effect_params_frame(
   e: SurfaceEffect,
   generics: Ordmap(Text, Ty)
 ): CkReadFrame(c, ck_effect_params(ps, c, e, generics)) {
-  match ps: CkReadFrame(c, ck_effect_params(ps, c, e, generics)) {
+  ⊢ CkReadFrame(c, ck_effect_params(ps, c, e, generics)) from match ps {
     Nil => Refl
     Cons(p, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => CkReadFrame(c, z),
@@ -683,7 +715,7 @@ pub fn registration_quant_parsed(
   q: Text,
   o: Option(Quant)
 ): Mut1(Quant, Checker) {
-  match o: Mut1(Quant, Checker) {
+  ⊢ Mut1(Quant, Checker) from match o {
     Some(x) => mut1(x, c)
     None => frame_return(
       QuantAtMostOne,
@@ -696,7 +728,7 @@ pub fn registration_quant_resume(
   e: SurfaceEffect,
   r#resume: Option(Text)
 ): Mut1(Quant, Checker) {
-  match r#resume: Mut1(Quant, Checker) {
+  ⊢ Mut1(Quant, Checker) from match r#resume {
     None => mut1(QuantAtMostOne, c)
     Some(q) => registration_quant_parsed(c, e, q, quant_parse(q))
   }
@@ -711,7 +743,7 @@ pub theorem registration_quant_parsed_frame(
   q: Text,
   o: Option(Quant)
 ): CkReadFrame(c, registration_quant_parsed(c, e, q, o)) {
-  match o: CkReadFrame(c, registration_quant_parsed(c, e, q, o)) {
+  ⊢ CkReadFrame(c, registration_quant_parsed(c, e, q, o)) from match o {
     Some(x) => Refl
     None => Refl
   }
@@ -721,7 +753,7 @@ pub theorem registration_quant_resume_frame(
   e: SurfaceEffect,
   r#resume: Option(Text)
 ): CkReadFrame(c, registration_quant_resume(c, e, r#resume)) {
-  match r#resume: CkReadFrame(c, registration_quant_resume(c, e, r#resume)) {
+  ⊢ CkReadFrame(c, registration_quant_resume(c, e, r#resume)) from match r#resume {
     None => Refl
     Some(q) => registration_quant_parsed_frame(c, e, q, quant_parse(q))
   }
@@ -742,7 +774,7 @@ pub fn registration_effect_result_k(
   generics: Ordmap(Text, Ty),
   o: Option(SurfaceTerm)
 ): Mut1(Ty, Checker) {
-  match o: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match o {
     None => mut1(TyUnit, c)
     Some(r) => ck_rewrap1(ck_written(c, r, generics))
   }
@@ -751,13 +783,17 @@ pub theorem registration_effect_result_unf(
   c: Checker,
   e: SurfaceEffect,
   generics: Ordmap(Text, Ty)
-): ck_effect_result(c, e, generics) = registration_effect_result_k(c, generics, registration_effect_result(e)) { Refl }
+): ck_effect_result(
+  c,
+  e,
+  generics
+) = registration_effect_result_k(c, generics, registration_effect_result(e)) { Refl }
 pub theorem registration_effect_result_frame(
   c: Checker,
   generics: Ordmap(Text, Ty),
   o: Option(SurfaceTerm)
 ): CkReadFrame(c, registration_effect_result_k(c, generics, o)) {
-  match o: CkReadFrame(c, registration_effect_result_k(c, generics, o)) {
+  ⊢ CkReadFrame(c, registration_effect_result_k(c, generics, o)) from match o {
     None => Refl
     Some(r) => frame_rewrap(c, ck_written(c, r, generics), ck_written_frame(c, r, generics))
   }
@@ -906,7 +942,7 @@ pub theorem registration_rewrap_ordered<A: Type>(
   Eq::subst((z: Mut1(A, Checker)) => CkDatasOrdered(ck_st(z)), Eq::sym(ck_rewrap1_id(m)), h)
 }
 pub fn registration_if(c: Checker, m: Mut1(Unit, Checker), take: Bool): Mut1(Unit, Checker) {
-  match take: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match take {
     true => ck_rewrap1(m)
     false => mut1(Star, c)
   }
@@ -918,7 +954,7 @@ pub theorem registration_if_ordered(
   ordered: CkDatasOrdered(c),
   hm: CkDatasOrdered(ck_st(m))
 ): CkDatasOrdered(ck_st(registration_if(c, m, take))) {
-  match take: CkDatasOrdered(ck_st(registration_if(c, m, take))) {
+  ⊢ CkDatasOrdered(ck_st(registration_if(c, m, take))) from match take {
     true => registration_rewrap_ordered(m, hm)
     false => ordered
   }
@@ -939,7 +975,7 @@ pub theorem ck_program_data_one_ordered(
   s: SurfaceStmt,
   ordered: CkDatasOrdered(c)
 ): CkDatasOrdered(ck_st(ck_program_data_one(c, s))) {
-  match s: CkDatasOrdered(ck_st(ck_program_data_one(c, s))) {
+  ⊢ CkDatasOrdered(ck_st(ck_program_data_one(c, s))) from match s {
     StLet(name, ty, value, borrow, mutable) => ordered
     StVar(name, ty, value, borrow) => ordered
     StModule(name, stmts, start, end) => ordered
@@ -985,19 +1021,22 @@ pub theorem registration_program_unf(
   s: SurfaceStmt,
   rest: List(SurfaceStmt),
   c: Checker
-): ck_program_data(Cons(s, rest), c) = frame_bind(
-    Unit,
-    Unit,
-    (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
-    ck_program_data_one(c, s)
-  ) { Refl }
+): ck_program_data(
+  Cons(s, rest),
+  c
+) = frame_bind(
+  Unit,
+  Unit,
+  (ignored: Unit, next: Checker) => ck_rewrap1(ck_program_data(rest, next)),
+  ck_program_data_one(c, s)
+) { Refl }
 
 pub theorem ck_program_data_ordered(
   ss: List(SurfaceStmt),
   c: Checker,
   ordered: CkDatasOrdered(c)
 ): CkDatasOrdered(ck_st(ck_program_data(ss, c))) {
-  match ss: CkDatasOrdered(ck_st(ck_program_data(ss, c))) {
+  ⊢ CkDatasOrdered(ck_st(ck_program_data(ss, c))) from match ss {
     Nil => ordered
     Cons(s, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkDatasOrdered(ck_st(z)),
@@ -1021,27 +1060,43 @@ pub theorem registration_prelude_StEffect_unf(
   e: SurfaceEffect,
   c: Checker,
   own: Ordmap(Text, Bool)
-): ck_prelude_data_one(c, StEffect(e), own) = registration_if(
-    c,
-    ck_declare_effect(c, e),
-    not(types_is_own(own, registration_effect_name(e)))
-  ) { Refl }
+): ck_prelude_data_one(
+  c,
+  StEffect(e),
+  own
+) = registration_if(
+  c,
+  ck_declare_effect(c, e),
+  not(types_is_own(own, registration_effect_name(e)))
+) { Refl }
 
 pub theorem registration_prelude_StStruct_unf(
   d: SurfaceData,
   c: Checker,
   own: Ordmap(Text, Bool)
-): ck_prelude_data_one(c, StStruct(d), own) = registration_if(
-    c,
-    ck_declare_data(c, d, true, data_is_opaque(registration_ctors(d))),
-    not(types_is_own(own, registration_name(d)))
-  ) { Refl }
+): ck_prelude_data_one(
+  c,
+  StStruct(d),
+  own
+) = registration_if(
+  c,
+  ck_declare_data(c, d, true, data_is_opaque(registration_ctors(d))),
+  not(types_is_own(own, registration_name(d)))
+) { Refl }
 
 pub theorem registration_prelude_StEnum_unf(
   d: SurfaceData,
   c: Checker,
   own: Ordmap(Text, Bool)
-): ck_prelude_data_one(c, StEnum(d), own) = registration_if(c, ck_declare_data(c, d, false, false), not(types_is_own(own, registration_name(d)))) { Refl }
+): ck_prelude_data_one(
+  c,
+  StEnum(d),
+  own
+) = registration_if(
+  c,
+  ck_declare_data(c, d, false, false),
+  not(types_is_own(own, registration_name(d)))
+) { Refl }
 
 pub theorem ck_prelude_data_one_ordered(
   c: Checker,
@@ -1049,7 +1104,7 @@ pub theorem ck_prelude_data_one_ordered(
   own: Ordmap(Text, Bool),
   ordered: CkDatasOrdered(c)
 ): CkDatasOrdered(ck_st(ck_prelude_data_one(c, s, own))) {
-  match s: CkDatasOrdered(ck_st(ck_prelude_data_one(c, s, own))) {
+  ⊢ CkDatasOrdered(ck_st(ck_prelude_data_one(c, s, own))) from match s {
     StLet(name, ty, value, borrow, mutable) => ordered
     StVar(name, ty, value, borrow) => ordered
     StModule(name, stmts, start, end) => ordered
@@ -1112,12 +1167,16 @@ pub theorem registration_prelude_unf(
   rest: List(SurfaceStmt),
   c: Checker,
   own: Ordmap(Text, Bool)
-): ck_prelude_data(Cons(s, rest), c, own) = frame_bind(
-    Unit,
-    Unit,
-    (ignored: Unit, next: Checker) => ck_rewrap1(ck_prelude_data(rest, next, own)),
-    ck_prelude_data_one(c, s, own)
-  ) { Refl }
+): ck_prelude_data(
+  Cons(s, rest),
+  c,
+  own
+) = frame_bind(
+  Unit,
+  Unit,
+  (ignored: Unit, next: Checker) => ck_rewrap1(ck_prelude_data(rest, next, own)),
+  ck_prelude_data_one(c, s, own)
+) { Refl }
 
 pub theorem ck_prelude_data_ordered(
   ss: List(SurfaceStmt),
@@ -1125,7 +1184,7 @@ pub theorem ck_prelude_data_ordered(
   own: Ordmap(Text, Bool),
   ordered: CkDatasOrdered(c)
 ): CkDatasOrdered(ck_st(ck_prelude_data(ss, c, own))) {
-  match ss: CkDatasOrdered(ck_st(ck_prelude_data(ss, c, own))) {
+  ⊢ CkDatasOrdered(ck_st(ck_prelude_data(ss, c, own))) from match ss {
     Nil => ordered
     Cons(s, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkDatasOrdered(ck_st(z)),
@@ -1151,7 +1210,7 @@ pub fn registration_finish_after(
   program: List(SurfaceStmt),
   m: Mut1(Unit, Checker)
 ): Mut1(Unit, Checker) {
-  match m: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match m {
     mut1(ignored, next) => ck_rewrap1(ck_finish_datas(next, program))
   }
 }
@@ -1159,7 +1218,7 @@ pub fn registration_program_after(
   program: List(SurfaceStmt),
   m: Mut1(Unit, Checker)
 ): Mut1(Unit, Checker) {
-  match m: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match m {
     mut1(ignored, next) => registration_finish_after(program, ck_program_data(program, next))
   }
 }
@@ -1169,14 +1228,19 @@ pub theorem registration_prepare_unf(
   prelude: List(SurfaceStmt),
   program: List(SurfaceStmt),
   own: Ordmap(Text, Bool)
-): ck_prepare_datas(c, prelude, program, own) = registration_program_after(program, ck_prelude_data(prelude, c, own)) { Refl }
+): ck_prepare_datas(
+  c,
+  prelude,
+  program,
+  own
+) = registration_program_after(program, ck_prelude_data(prelude, c, own)) { Refl }
 
 pub theorem registration_finish_after_ok(
   program: List(SurfaceStmt),
   m: Mut1(Unit, Checker),
   ordered: CkDatasOrdered(ck_st(m))
 ): CkSummaryOk(ck_st(registration_finish_after(program, m))) {
-  match m: CkSummaryOk(ck_st(registration_finish_after(program, m))) {
+  ⊢ CkSummaryOk(ck_st(registration_finish_after(program, m))) from match m {
     mut1(ignored, next) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkSummaryOk(ck_st(z)),
       Eq::sym(ck_rewrap1_id(ck_finish_datas(next, program))),
@@ -1189,7 +1253,7 @@ pub theorem registration_program_after_ok(
   m: Mut1(Unit, Checker),
   ordered: CkDatasOrdered(ck_st(m))
 ): CkSummaryOk(ck_st(registration_program_after(program, m))) {
-  match m: CkSummaryOk(ck_st(registration_program_after(program, m))) {
+  ⊢ CkSummaryOk(ck_st(registration_program_after(program, m))) from match m {
     mut1(ignored, next) => registration_finish_after_ok(
       program,
       ck_program_data(program, next),
@@ -1222,9 +1286,7 @@ pub theorem ck_prepare_new_summary_ok(
   prelude: List(SurfaceStmt),
   program: List(SurfaceStmt)
 ): CkSummaryOk(
-  ck_st(
-    ck_prepare_datas(checker_new(steps), prelude, program, types_own(program, Ordmap::empty()))
-  )
+  ck_st(ck_prepare_datas(checker_new(steps), prelude, program, types_own(program, Ordmap::empty())))
 ) {
   ck_prepare_datas_summary_ok(
     checker_new(steps),

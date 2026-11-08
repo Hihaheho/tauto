@@ -266,6 +266,7 @@ impl Contract {
                 "load_error" => ("load", Matcher::Error),
                 "macro_error" => ("macro", Matcher::Error),
                 "expands" | "trace" => ("macro", Matcher::Exact),
+                "extracted_nib" => ("extraction", Matcher::Pending),
                 "lint" => ("lint", Matcher::Exact),
                 "inferred_types" => ("types", Matcher::Exact),
                 "inferred_kinds" => ("types", Matcher::Pending),

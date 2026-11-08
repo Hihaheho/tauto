@@ -17,7 +17,7 @@ use super::{DslNote, DslToken};
 /// How many files' tokens, and how many libraries, are kept.
 const KEPT: usize = 8;
 
-type Opened = Rc<Result<Library<'static>, String>>;
+type Opened = Rc<Result<Library<'static>, tauto_message::Message>>;
 
 struct Tokens {
     path: PathBuf,
@@ -97,7 +97,7 @@ pub(super) fn library(path: &Path, text: &str, expanded: &Expanded, own: bool) -
     let dirs = vec![path.parent().unwrap_or(Path::new(".")).to_path_buf()];
     let open = |load: &dyn Fn() -> Result<tauto::program::Loaded, String>| {
         let loaded = tauto::syntax::with_search_dirs(dirs.clone(), load)?;
-        Library::open_lenient_owned(loaded.program, &loaded.registrations)
+        Library::open_lenient_owned(loaded.registration_program().clone(), &loaded.registrations)
     };
     let n = expanded.files.len().saturating_sub(1);
     if own || n == 0 {

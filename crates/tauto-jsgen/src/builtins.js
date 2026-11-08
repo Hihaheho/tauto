@@ -2,7 +2,13 @@ const identity=x=>x;
 const reference=(get,set)=>({ref:true,get,set});
 const unref=x=>{if(stableData.has(x))stableAggregate(x);return x?.ref?x.get():x;};
 const copyArray=Array,copyArrayPrototype=Array.prototype,copyArrayMap=Array.prototype.map;
-function copyValue(value) {return copyWithin(value,new WeakSet());}
+function copyValue(value) {
+    const retained=retainedGraphs.get(value);
+    if(retained){retained.owners++;return value;}
+    if(sharedData.has(value))return value;
+    if(retainedLeaves.has(value)){value.retain?.();return value;}
+    return copyWithin(value,new WeakSet());
+}
 function copyWithin(value,active) {
     // Keep per-occurrence copies/retains, without spending the host stack on
     // recursive data. Objects snapshot entries before visiting children;
@@ -14,28 +20,32 @@ function copyWithin(value,active) {
     };
     let result;
     copy:for(;;){
-        if(stableData.has(value))stableAggregate(value);
-        if(provenanceIsArray(value)&&!ordinaryArrayMethods(value))forgetStableData();
-        // Sharing a proof made before the intrinsics changed would trust them.
-        if(stableAggregate(value)&&(sharedData.has(value)||ordinaryArrayMethods(value.fields)))result=share(value);
-        else if(value?.copy)result=value.copy();
-        else if(value?.retain){value.retain();result=value;}
-        else if(!value||typeof value!=='object'||value.ref||value.shared||value.resource)result=value;
-        else if(Array.isArray(value)&&(Array!==copyArray||Object.getPrototypeOf(value)!==copyArrayPrototype||value.map!==copyArrayMap||Object.hasOwn(value,'constructor')||value.constructor!==copyArray||Array[Symbol.species]!==copyArray)){
-            if(active.has(value))throw new Error('cyclic JavaScript value cannot be copied');
-            active.add(value);
-            forgetStableData();
-            try{result=value.map(item=>copyWithin(item,active));}finally{active.delete(value);forgetStableData();}
-        }
-        else{
-            if(active.has(value))throw new Error('cyclic JavaScript value cannot be copied');
-            const array=Array.isArray(value),length=array?value.length:0,frame=array
-                ?{source:value,target:new Array(length),array:true,length,index:0}
-                :{source:value,target:{},array:false,entries:Object.entries(value),index:0};
-            const child=next(frame);
-            if(child){active.add(value);frame.key=child[0];parents.push(frame);value=child[1];continue;}
-            result=frame.target;
-            if(stableAggregate(value))stableData.add(result);
+        const retained=retainedGraphs.get(value);
+        if(retained){retained.owners++;result=value;}
+        else {
+            if(stableData.has(value))stableAggregate(value);
+            if(provenanceIsArray(value)&&!ordinaryArrayMethods(value))forgetStableData();
+            // Sharing a proof made before the intrinsics changed would trust them.
+            if(stableAggregate(value)&&(sharedData.has(value)||ordinaryArrayMethods(value.fields)))result=share(value);
+            else if(value?.copy)result=value.copy();
+            else if(value?.retain){value.retain();result=value;}
+            else if(!value||typeof value!=='object'||value.ref||value.shared||value.resource)result=value;
+            else if(Array.isArray(value)&&(Array!==copyArray||Object.getPrototypeOf(value)!==copyArrayPrototype||value.map!==copyArrayMap||Object.hasOwn(value,'constructor')||value.constructor!==copyArray||Array[Symbol.species]!==copyArray)){
+                if(active.has(value))throw new Error('cyclic JavaScript value cannot be copied');
+                active.add(value);
+                forgetStableData();
+                try{result=value.map(item=>copyWithin(item,active));}finally{active.delete(value);forgetStableData();}
+            }
+            else{
+                if(active.has(value))throw new Error('cyclic JavaScript value cannot be copied');
+                const array=Array.isArray(value),length=array?value.length:0,frame=array
+                    ?{source:value,target:new Array(length),array:true,length,index:0}
+                    :{source:value,target:{},array:false,entries:Object.entries(value),index:0};
+                const child=next(frame);
+                if(child){active.add(value);frame.key=child[0];parents.push(frame);value=child[1];continue;}
+                result=frame.target;
+                if(stableAggregate(value))stableData.add(result);
+            }
         }
         while(parents.length){
             const frame=parents[parents.length-1];
@@ -87,7 +97,7 @@ function exportBorrow(value){
             const {root,path}=value.projection,owner=root.wire??(root.retain?root:null);
             if(owner){const retained=copyValue(owner),ref=projectionRef(retained,path);ref.temporary=true;ref.retain=()=>retained.retain();ref.release=()=>retained.release();result=ref;}
             else result=value;
-        }else if(stableAggregate(value))result=value;
+        }else if(stableAggregate(value)||retainedGraphs.has(value))result=value;
         else if(value?.fields?.length){
             parents.push({value,fields:value.fields,index:0,changed:null});
             value=value.fields[0];continue;
@@ -132,16 +142,32 @@ function projectionRef(root,path) {
         return value;
     },replacement=>{
         const path=keys(),parents=[];let value=unref(root);
-        for(let i=path.length-1;i>=0;i--){const key=path[i],index=typeof key==='number'?key:value.names.indexOf(key);parents.push([value,index]);value=value.fields[index];}
+        for(let i=path.length-1;i>=0;i--){const key=path[i],index=typeof key==='number'?key:value.names.indexOf(key),child=value.fields[index];parents.push([value,index,child]);value=child;}
         for(let i=parents.length-1;i>=0;i--){
-            const [parent,index]=parents[i];
+            const [parent,index,previous]=parents[i];
+            if(retainedGraphs.has(parent)){
+                const fields=[];
+                for(let j=0;j<parent.fields.length;j++)Object.defineProperty(fields,j,{value:j===index?replacement:copyValue(parent.fields[j]),writable:true,enumerable:true,configurable:true});
+                replacement=generatedAggregate({...parent,fields},fields,ordinaryArrayMethods(fields));
+                if(i===0)dropValue(parent);
+                continue;
+            }
             if(sharedData.has(parent)){const fields=parent.fields.slice();fields[index]=replacement;replacement={...parent,fields};continue;}
+            if(retainedGraphs.has(previous))dropValue(previous);
             stableData.delete(parent);parent.fields[index]=replacement;replacement=parent;
         }
         root.set(replacement);
     });
     ref.projection={root,path};
     return ref;
+}
+function thawReference(ref){
+    const target=ref.get();
+    // A projection borrows an edge owned by its parent. Rebuilding that
+    // parent releases the edge; materializing the host copy must not do so.
+    const value=retainedGraphs.has(target)&&ref.projection?.path?copyValue(target):target;
+    const mutable=thaw(value);
+    if(mutable!==target)ref.set(mutable);
 }
 function placeRef(c,id,path,borrowed) {
     const slot=c.env[id];
@@ -180,8 +206,15 @@ function list(items){
     return out;
 }
 // A `Signal`: raised once, never lowered; a `wait` the host answers resumes when it is.
-function signal(){return {kind:'Signal',shared:true,raised:false,waiters:[]};}
+function signal(){return retainedLeaf({kind:'Signal',shared:true,raised:false,waiters:[]});}
 function raise(s){if(s.raised)return;s.raised=true;const ws=s.waiters;s.waiters=[];for(const w of ws)w();}
+function waitSignal(s,done){
+    const inputs=s.inputs??[s];
+    if(s.raised){done();return;}
+    const wake=()=>{for(const input of inputs)input.waiters=input.waiters.filter(w=>w!==wake);done();};
+    for(const input of inputs)input.waiters.push(wake);
+}
+
 function listItems(value){const out=[];for(let v=value;v.tag==='Cons';v=v.fields[1])out.push(v.fields[0]);return out;}
 function indexRef(v,i){return reference(()=>unref(v).items[Number(i)],x=>{unref(v).items[Number(i)]=x;});}
 function inRange(v,i){return i>=0n&&i<BigInt(unref(v).items.length);}
@@ -278,6 +311,7 @@ function builtin(name,args) {
             case 'Bytes::get':return done(n>=0n&&n<BigInt(a.bytes.length)?some(BigInt(a.bytes[Number(n)])):none());
             case 'Bytes::slice':{const end=vs[2];return done(n<0n||end<n||end>BigInt(a.bytes.length)?none():some(bytesValue(a.bytes.subarray(Number(n),Number(end)))));}
             case 'Bytes::concat':{const out=new Uint8Array(a.bytes.length+b.bytes.length);out.set(a.bytes);out.set(b.bytes,a.bytes.length);return done(bytesValue(out));}
+            case 'Syn::same_declaration':return done(a===b);
             case 'Bytes::eq':return done(a.bytes.length===b.bytes.length&&a.bytes.every((x,i)=>x===b.bytes[i]));
             case 'Bytes::of_text':return done(bytesValue(textEncoder.encode(a)));
             case 'Text::of_bytes':try{return done(some(utf8Decoder.decode(a.bytes)));}catch{return done(none());}
@@ -294,16 +328,16 @@ function builtin(name,args) {
             case 'Float::of_i64':case 'I64::of_float':case 'Float::of_text':case 'Text::of_float':case 'Float::bits':case 'Float::of_bits':case 'Float::is_nan':case 'Float::abs':case 'Float::floor':case 'Float::ceil':case 'Float::trunc':case 'Float::round':case 'Float::sqrt':case 'Float::cbrt':case 'Float::exp':case 'Float::ln':case 'Float::log2':case 'Float::log10':case 'Float::pow':case 'Float::sin':case 'Float::cos':case 'Float::tan':case 'Float::asin':case 'Float::acos':case 'Float::atan':case 'Float::atan2':case 'Float::sinh':case 'Float::cosh':case 'Float::tanh':return done(floatBuiltin(name,vs));
             case 'Float32::of_float':case 'Float::of_float32':case 'Float32::bits':case 'Float32::of_bits':case 'Float32::is_nan':case 'Float32::abs':case 'Float32::floor':case 'Float32::ceil':case 'Float32::trunc':case 'Float32::round':case 'Float32::sqrt':case 'Float32::cbrt':case 'Float32::exp':case 'Float32::ln':case 'Float32::log2':case 'Float32::log10':case 'Float32::pow':case 'Float32::sin':case 'Float32::cos':case 'Float32::tan':case 'Float32::asin':case 'Float32::acos':case 'Float32::atan':case 'Float32::atan2':case 'Float32::sinh':case 'Float32::cosh':case 'Float32::tanh':return done(pureBuiltin(name,vs));
             case 'words':return done(list(a.split(/\p{White_Space}+/u).filter(Boolean)));
-            case 'Ref::new':return done({kind:'Ref',shared:true,value:a});
+            case 'Ref::new':return done(retainedLeaf({kind:'Ref',shared:true,value:a}));
             case 'Ref::get':return done(copyValue(a.value));
             case 'Ref::set':a.value=vs[1];return done(null);
-            case 'Weak::of':return done({kind:'Weak',shared:true,target:new WeakRef(a)});
+            case 'Weak::of':return done(retainedLeaf({kind:'Weak',shared:true,target:new WeakRef(a)}));
             case 'Weak::get':{const r=a.target.deref();return done(r===undefined?none():some(r));}
-            case 'Atomic::new':return done({kind:'Atomic',shared:true,value:a});
+            case 'Atomic::new':return done(retainedLeaf({kind:'Atomic',shared:true,value:a}));
             case 'Atomic::load':return done(a.value);
             case 'Atomic::store':a.value=b;return done(null);
             case 'Atomic::fetch_add':{const old=a.value;a.value=BigInt.asUintN(64,old+b);return done(old);}
-            case 'Mutex::new':return done({kind:'Mutex',shared:true,value:a,full:true,waiting:[]});
+            case 'Mutex::new':return done(retainedLeaf({kind:'Mutex',shared:true,value:a,full:true,waiting:[]}));
             // A place in the mutex's line: its signal is raised when the content is handed to it.
             case 'Mutex::claim':{const s=signal();if(a.full&&!a.waiting.length){a.full=false;s.handed=a.value;a.value=undefined;raise(s);}else a.waiting.push(s);return done(s);}
             case 'Mutex::take_claimed':{const v=b.handed;b.handed=undefined;return done(v);}
@@ -317,6 +351,14 @@ function builtin(name,args) {
             case 'pending_spawn':{const promise=drive((d,t)=>a(d,[],t),c.host.show,c.host.externs,c.host.options);const p={kind:'Pending',resource:true,promise,ready:false};promise.then(()=>{p.ready=true;},()=>{p.ready=true;});return done(p);}
             // A task still running gets a turn before the answer, so a loop that polls lets it go on.
             case 'Pending::is_ready':if(!a.promise||a.ready)return done(true);return new Promise(resolve=>setTimeout(()=>resolve(more(()=>k(c,a.ready))),0));
+            case 'Signal::listen':return done(a);
+            case 'Signal::fresh':return done(signal());
+            case 'Signal::raise':raise(a);return done(null);
+            case 'Signal::is_raised':return done(a.raised);
+            case 'Signal::either':{
+                const inputs=[...new Set([...(a.inputs??[a]),...(b.inputs??[b])])];
+                return done({kind:'Signal',shared:true,inputs,get raised(){return inputs.some(s=>s.raised);}});
+            }
             case 'Pending::signal':{const s=signal();if(!a.promise||a.ready)raise(s);else a.promise.then(()=>raise(s),()=>raise(s));return done(s);}
             case 'Pending::take':return a.promise?a.promise.then(v=>more(()=>k(c,v))):done(a.value);
             case 'budget_value':return done({answer:'value',value:a});
@@ -327,10 +369,10 @@ function builtin(name,args) {
                 const f=c.host.options['os_'+name.slice(4)];if(!f)throw new Error('host does not provide os_'+name.slice(4));
                 forgetStableData();try{f(a);}finally{forgetStableData();}return done(null);
             }
-            case 'Os::read_file':case 'Os::write_file':case 'Os::read_bytes':case 'Os::write_bytes':case 'Os::create_dir':{
+            case 'Os::read_file':case 'Os::write_file':case 'Os::read_bytes':case 'Os::write_bytes':case 'Os::read_under':case 'Os::read_bytes_under':case 'Os::create_dir':{
                 const f=c.host.options['os_'+name.slice(4)];if(!f)throw new Error('host does not provide os_'+name.slice(4));
                 // Bytes cross as a Uint8Array of their own: the host may keep or change it.
-                const bytes=name==='Os::read_bytes',args=name==='Os::write_bytes'?[unref(vs[0]),unref(vs[1]).bytes.slice()]:vs.map(unref);
+                const bytes=name==='Os::read_bytes'||name==='Os::read_bytes_under',args=name==='Os::write_bytes'?[unref(vs[0]),unref(vs[1]).bytes.slice()]:vs.map(unref);
                 const back=v=>bytes?bytesValue(new Uint8Array(v??[])):(v??null);
                 try {
                     forgetStableData();let value;try{value=f(...args);}finally{forgetStableData();}
@@ -341,7 +383,7 @@ function builtin(name,args) {
                     return done(ok(back(value)));
                 }catch(e){return done(err(e.message??String(e)));}
             }
-            case 'Os::list_dir':case 'Os::remove':case 'Os::stat':case 'Os::move_path':case 'Os::copy_file':case 'Os::canonicalize':case 'Os::temp_dir':case 'Os::run':{
+            case 'Os::list_dir':case 'Os::remove':case 'Os::stat':case 'Os::read_link':case 'Os::write_new':case 'Os::move_path':case 'Os::copy_file':case 'Os::canonicalize':case 'Os::temp_dir':case 'Os::run':{
                 const f=c.host.options['os_'+name.slice(4)];if(!f)return done(err('host does not provide os_'+name.slice(4)));
                 let call;
                 if(name==='Os::run'){const flat=listItems(vs[3]).map(String);const env=[];for(let i=0;i+1<flat.length;i+=2)env.push([flat[i],flat[i+1]]);call=()=>f(unref(vs[0]),listItems(vs[1]).map(String),unref(vs[2]),env,unref(vs[4]).bytes.slice());}
@@ -350,6 +392,7 @@ function builtin(name,args) {
                 const back=r=>{
                     if(name==='Os::list_dir')return list([...r].map(String).sort((x,y)=>x<y?-1:x>y?1:0));
                     if(name==='Os::stat')return list(r===null||r===undefined?[]:[String(r.kind),String(r.size??0),String(r.modified_ms??0)]);
+                    if(name==='Os::read_link')return list(r===null||r===undefined?[]:[String(r)]);
                     if(name==='Os::canonicalize')return String(r);
                     if(name==='Os::temp_dir'){const dir=String(r);permissionGrantDir(c.host.options,dir);return dir;}
                     if(name==='Os::run')return pair(bytesValue(new Uint8Array(r.stdout??[])),list([r.status===null||r.status===undefined?'':String(r.status),String(r.stderr??'')]));
@@ -368,6 +411,7 @@ function builtin(name,args) {
                 const f=c.host.options.os_read_stdin;if(!f)throw new Error('host does not provide os_read_stdin');
                 return done(bytesValue(new Uint8Array(f(Number(unref(vs[0])))??[])));
             }
+            case 'Os::on_shutdown':{const f=c.host.options.os_on_shutdown;if(f)f(()=>raise(a));return done(null);}
             case 'Os::flush':{const f=c.host.options.os_flush;if(f)f();return done(null);}
             case 'Os::read_line':{
                 const f=c.host.options.os_read_line;if(!f)throw new Error('host does not provide os_read_line');

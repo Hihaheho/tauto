@@ -44,7 +44,7 @@ pub(open) inductive ScanDynState: Type {
 }
 
 pub fn scan_unit_in(k: Nat, a: Array(Nat), at: Nat, done: List(Text)): List(Text) {
-  match k: List(Text) {
+  ⊢ List(Text) from match k {
     Zero => List::reverse(done)
     Succ(k2) => scan_unit_in(k2, a, at + 1, Cons(text_code_point(Array::get_or(a, at, 0)), done))
   }
@@ -56,7 +56,7 @@ pub fn scan_dyn_states_in(
   at: Nat,
   done: List(ScanDynState)
 ): List(ScanDynState) {
-  match k: List(ScanDynState) {
+  ⊢ List(ScanDynState) from match k {
     Zero => List::reverse(done)
     Succ(k2) => scan_dyn_states_in(
       k2,
@@ -75,7 +75,7 @@ pub fn scan_dyn_states_in(
 }
 
 pub fn scan_bounds_in(k: Nat, a: Array(Nat), at: Nat): List(Nat) {
-  match k: List(Nat) {
+  ⊢ List(Nat) from match k {
     Zero => Nil
     Succ(k2) => Cons(Array::get_or(a, at, 0), scan_bounds_in(k2, a, at + 1))
   }
@@ -85,7 +85,7 @@ pub fn scan_dyn_at(a: Array(Nat), at: Nat): Pair(ScanDyn, Nat) {
   let len := Array::get_or(a, at + 3, 0)
   let r := at + 4 + len
   let ranged := Array::get_or(a, r, 0)
-  let after := match ranged: Nat {
+  let after := ⊢ Nat from match ranged {
     Zero => r + 1
     Succ(x) => r + 11
   }
@@ -105,13 +105,8 @@ pub fn scan_dyn_at(a: Array(Nat), at: Nat): Pair(ScanDyn, Nat) {
   }
 }
 
-pub fn scan_dyns_in(
-  k: Nat,
-  a: Array(Nat),
-  at: Nat,
-  done: List(ScanDyn)
-): Pair(List(ScanDyn), Nat) {
-  match k: Pair(List(ScanDyn), Nat) {
+pub fn scan_dyns_in(k: Nat, a: Array(Nat), at: Nat, done: List(ScanDyn)): Pair(List(ScanDyn), Nat) {
+  ⊢ Pair(List(ScanDyn), Nat) from match k {
     Zero => Pair { fst: List::reverse(done), snd: at }
     Succ(k2) => {
       let one := scan_dyn_at(a, at)
@@ -121,16 +116,16 @@ pub fn scan_dyns_in(
 }
 
 pub fn scan_held_start(k: Nat): List(ScanHeld) {
-  match k: List(ScanHeld) {
+  ⊢ List(ScanHeld) from match k {
     Zero => Nil
     Succ(k2) => Cons(ScanHeldNone, scan_held_start(k2))
   }
 }
 
 pub fn scan_held_at(held: List(ScanHeld), i: Nat): ScanHeld {
-  match held: ScanHeld {
+  ⊢ ScanHeld from match held {
     Nil => ScanHeldNone
-    Cons(h, rest) => match i: ScanHeld {
+    Cons(h, rest) => ⊢ ScanHeld from match i {
       Zero => h
       Succ(i2) => scan_held_at(rest, i2)
     }
@@ -138,9 +133,9 @@ pub fn scan_held_at(held: List(ScanHeld), i: Nat): ScanHeld {
 }
 
 pub fn scan_held_set(held: List(ScanHeld), i: Nat, v: ScanHeld): List(ScanHeld) {
-  match held: List(ScanHeld) {
+  ⊢ List(ScanHeld) from match held {
     Nil => Nil
-    Cons(h, rest) => match i: List(ScanHeld) {
+    Cons(h, rest) => ⊢ List(ScanHeld) from match i {
       Zero => Cons(v, rest)
       Succ(i2) => Cons(h, scan_held_set(rest, i2, v))
     }
@@ -148,9 +143,9 @@ pub fn scan_held_set(held: List(ScanHeld), i: Nat, v: ScanHeld): List(ScanHeld) 
 }
 
 pub fn scan_dyn_of(dyns: List(ScanDyn), token: Nat): Option(ScanDyn) {
-  match dyns: Option(ScanDyn) {
+  ⊢ Option(ScanDyn) from match dyns {
     Nil => None
-    Cons(d, rest) => match d.token == token: Option(ScanDyn) {
+    Cons(d, rest) => ⊢ Option(ScanDyn) from match d.token == token {
       true => Some(d)
       false => scan_dyn_of(rest, token)
     }
@@ -158,9 +153,9 @@ pub fn scan_dyn_of(dyns: List(ScanDyn), token: Nat): Option(ScanDyn) {
 }
 
 pub fn scan_dyn_state_at(states: List(ScanDynState), i: Nat): ScanDynState {
-  match states: ScanDynState {
+  ⊢ ScanDynState from match states {
     Nil => ScanDynState { kind: 0, min: 0, max: 0 }
-    Cons(s, rest) => match i: ScanDynState {
+    Cons(s, rest) => ⊢ ScanDynState from match i {
       Zero => s
       Succ(i2) => scan_dyn_state_at(rest, i2)
     }
@@ -169,19 +164,19 @@ pub fn scan_dyn_state_at(states: List(ScanDynState), i: Nat): ScanDynState {
 
 // One side of a range, from the five numbers at `at`; `None` below 0.
 pub fn scan_bound(b: Array(Nat), at: Nat, stored: Nat): Option(Nat) {
-  let a := match Array::get_or(b, at, 0): Nat {
+  let a := ⊢ Nat from match Array::get_or(b, at, 0) {
     Zero => Array::get_or(b, at + 1, 0)
     Succ(x) => stored
   }
-  let c := match Array::get_or(b, at + 3, 0): Nat {
+  let c := ⊢ Nat from match Array::get_or(b, at + 3, 0) {
     Zero => Array::get_or(b, at + 4, 0)
     Succ(x) => stored
   }
-  match Array::get_or(b, at + 2, 0): Option(Nat) {
+  ⊢ Option(Nat) from match Array::get_or(b, at + 2, 0) {
     Zero => Some(a)
-    Succ(op) => match op: Option(Nat) {
+    Succ(op) => ⊢ Option(Nat) from match op {
       Zero => Some(a + c)
-      Succ(other) => match c <= a: Option(Nat) {
+      Succ(other) => ⊢ Option(Nat) from match c <= a {
         true => Some(a - c)
         false => None
       }
@@ -191,11 +186,11 @@ pub fn scan_bound(b: Array(Nat), at: Nat, stored: Nat): Option(Nat) {
 
 // Whether a count fits what the entry asks of the state's value.
 pub fn scan_count_fits(d: ScanDyn, count: Nat, stored: Nat): Bool {
-  match d.ranged: Bool {
+  ⊢ Bool from match d.ranged {
     Zero => count == stored
-    Succ(x) => match scan_bound(d.bounds, 0, stored): Bool {
+    Succ(x) => ⊢ Bool from match scan_bound(d.bounds, 0, stored) {
       None => false
-      Some(lo) => match scan_bound(d.bounds, 5, stored): Bool {
+      Some(lo) => ⊢ Bool from match scan_bound(d.bounds, 5, stored) {
         None => false
         Some(hi) => lo <= count && count < hi
       }

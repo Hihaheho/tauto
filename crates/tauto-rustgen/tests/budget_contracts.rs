@@ -156,8 +156,12 @@ fn entries_name_selected_exports_not_arbitrary_functions() {
         .unwrap_err(),
         "unknown or unselected export missing",
     );
-    assert!(pkg.exports.iter().any(|export| export.name == "run"));
-    pkg.exports.retain(|export| export.name != "run");
+    assert!(
+        pkg.exports
+            .iter()
+            .any(|export| export.name.as_str() == "run")
+    );
+    pkg.exports.retain(|export| export.name.as_str() != "run");
     assert_error(
         resolve(&pkg, ENTRY).unwrap_err(),
         "unknown or unselected export run",
@@ -269,7 +273,7 @@ fn externs_need_both_binding_metadata_and_a_qualified_entry() {
             assert_eq!(
                 qualified.assumptions.iter().any(|a| {
                     a.kind == "extern"
-                        && a.name == "native_read"
+                        && a.name.as_str() == "native_read"
                         && a.contract == "closed-host-v1"
                         && a.at.starts_with(MANIFEST_FILE)
                 }),
@@ -421,7 +425,7 @@ fn run(): Held {
     assert!(
         !pkg.datas
             .iter()
-            .find(|data| data.name == "Held")
+            .find(|data| data.name.as_str() == "Held")
             .unwrap()
             .copy
     );
@@ -470,7 +474,7 @@ fn invalid_direct_bindings_do_not_report_suppressed_qualified_variants() {
     let mut pkg = package(source);
     pkg.exports
         .iter_mut()
-        .find(|e| e.name == "run")
+        .find(|e| e.name.as_str() == "run")
         .unwrap()
         .row
         .push("Div".into());

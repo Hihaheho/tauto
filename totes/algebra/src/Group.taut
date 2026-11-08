@@ -9,8 +9,8 @@ pub(open) inductive AlgebraGroup(
   inverse: (A) -> A
 ): Prop {
   Mk(
-    left: ∀ x: A. AlgebraEq(u, A, algebra_op(u, A, m)(inverse(x), x), algebra_unit(u, A, m)),
-    right: ∀ x: A. AlgebraEq(u, A, algebra_op(u, A, m)(x, inverse(x)), algebra_unit(u, A, m))
+    left: ∀ x: A. AlgebraEq(u, A, algebra_op(<u: u, A: A>, m)(inverse(x), x), algebra_unit(<u: u, A: A>, m)),
+    right: ∀ x: A. AlgebraEq(u, A, algebra_op(<u: u, A: A>, m)(x, inverse(x)), algebra_unit(<u: u, A: A>, m))
   ): AlgebraGroup(u, A, m, inverse)
 }
 
@@ -24,13 +24,9 @@ pub theorem algebra_inverse_left<u: Level, A: Type(
 ) -> A>(
   g: AlgebraGroup(u, A, m, inverse),
   x: A
-): AlgebraEq(u, A, algebra_op(u, A, m)(inverse(x), x), algebra_unit(u, A, m)) {
-  AlgebraGroup::ind(
-    u,
-    A,
-    m,
-    inverse,
-    witness => AlgebraEq(u, A, algebra_op(u, A, m)(inverse(x), x), algebra_unit(u, A, m)),
+): AlgebraEq(u, A, algebra_op(<u: u, A: A>, m)(inverse(x), x), algebra_unit(<u: u, A: A>, m)) {
+  AlgebraGroup::ind(<u: u, A: A, m: m, inverse: inverse>,
+    witness => AlgebraEq(u, A, algebra_op(<u: u, A: A>, m)(inverse(x), x), algebra_unit(<u: u, A: A>, m)),
     left => right => left(x),
     g
   )
@@ -46,13 +42,9 @@ pub theorem algebra_inverse_right<u: Level, A: Type(
 ) -> A>(
   g: AlgebraGroup(u, A, m, inverse),
   x: A
-): AlgebraEq(u, A, algebra_op(u, A, m)(x, inverse(x)), algebra_unit(u, A, m)) {
-  AlgebraGroup::ind(
-    u,
-    A,
-    m,
-    inverse,
-    witness => AlgebraEq(u, A, algebra_op(u, A, m)(x, inverse(x)), algebra_unit(u, A, m)),
+): AlgebraEq(u, A, algebra_op(<u: u, A: A>, m)(x, inverse(x)), algebra_unit(<u: u, A: A>, m)) {
+  AlgebraGroup::ind(<u: u, A: A, m: m, inverse: inverse>,
+    witness => AlgebraEq(u, A, algebra_op(<u: u, A: A>, m)(x, inverse(x)), algebra_unit(<u: u, A: A>, m)),
     left => right => right(x),
     g
   )
@@ -70,136 +62,76 @@ pub theorem algebra_cancel_left<u: Level, A: Type(
   a: A,
   b: A,
   c: A,
-  h: AlgebraEq(u, A, algebra_op(u, A, m)(a, b), algebra_op(u, A, m)(a, c))
+  h: AlgebraEq(u, A, algebra_op(<u: u, A: A>, m)(a, b), algebra_op(<u: u, A: A>, m)(a, c))
 ): AlgebraEq(u, A, b, c) {
   let step0: AlgebraEq(
     u,
     A,
     b,
-    algebra_op(u, A, m)(algebra_unit(u, A, m), b)
-  ) := algebra_sym(
-    u,
-    A,
-    algebra_op(u, A, m)(algebra_unit(u, A, m), b),
-    b,
-    algebra_left_unit(u, A, m, b)
+    algebra_op(<u: u, A: A>, m)(algebra_unit(<u: u, A: A>, m), b)
+  ) := algebra_sym(<u: u, A: A, a: algebra_op(<u: u, A: A>, m)(algebra_unit(<u: u, A: A>, m), b), b: b>,
+    algebra_left_unit(<u: u, A: A>, m, b)
   );
   let step1: AlgebraEq(
     u,
     A,
-    algebra_op(u, A, m)(algebra_unit(u, A, m), b),
-    algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), b)
-  ) := algebra_congr(
-    u,
-    u,
-    A,
-    A,
-    algebra_unit(u, A, m),
-    algebra_op(u, A, m)(inverse(a), a),
-    t => algebra_op(u, A, m)(t, b),
-    algebra_sym(
-      u,
-      A,
-      algebra_op(u, A, m)(inverse(a), a),
-      algebra_unit(u, A, m),
-      algebra_inverse_left(u, A, m, inverse, g, a)
+    algebra_op(<u: u, A: A>, m)(algebra_unit(<u: u, A: A>, m), b),
+    algebra_op(<u: u, A: A>, m)(algebra_op(<u: u, A: A>, m)(inverse(a), a), b)
+  ) := algebra_congr(<u: u, v: u, A: A, B: A, a: algebra_unit(<u: u, A: A>, m), b: algebra_op(<u: u, A: A>, m)(inverse(a), a)>,
+    t => algebra_op(<u: u, A: A>, m)(t, b),
+    algebra_sym(<u: u, A: A, a: algebra_op(<u: u, A: A>, m)(inverse(a), a), b: algebra_unit(<u: u, A: A>, m)>,
+      algebra_inverse_left(<u: u, A: A, m: m, inverse: inverse>, g, a)
     )
   );
   let step2: AlgebraEq(
     u,
     A,
-    algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), b),
-    algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, b))
-  ) := algebra_assoc(u, A, m, inverse(a), a, b);
+    algebra_op(<u: u, A: A>, m)(algebra_op(<u: u, A: A>, m)(inverse(a), a), b),
+    algebra_op(<u: u, A: A>, m)(inverse(a), algebra_op(<u: u, A: A>, m)(a, b))
+  ) := algebra_assoc(<u: u, A: A>, m, inverse(a), a, b);
   let step3: AlgebraEq(
     u,
     A,
-    algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, b)),
-    algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, c))
-  ) := algebra_congr(
-    u,
-    u,
-    A,
-    A,
-    algebra_op(u, A, m)(a, b),
-    algebra_op(u, A, m)(a, c),
-    t => algebra_op(u, A, m)(inverse(a), t),
+    algebra_op(<u: u, A: A>, m)(inverse(a), algebra_op(<u: u, A: A>, m)(a, b)),
+    algebra_op(<u: u, A: A>, m)(inverse(a), algebra_op(<u: u, A: A>, m)(a, c))
+  ) := algebra_congr(<u: u, v: u, A: A, B: A, a: algebra_op(<u: u, A: A>, m)(a, b), b: algebra_op(<u: u, A: A>, m)(a, c)>,
+    t => algebra_op(<u: u, A: A>, m)(inverse(a), t),
     h
   );
   let step4: AlgebraEq(
     u,
     A,
-    algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, c)),
-    algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), c)
-  ) := algebra_sym(
-    u,
-    A,
-    algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), c),
-    algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, c)),
-    algebra_assoc(u, A, m, inverse(a), a, c)
+    algebra_op(<u: u, A: A>, m)(inverse(a), algebra_op(<u: u, A: A>, m)(a, c)),
+    algebra_op(<u: u, A: A>, m)(algebra_op(<u: u, A: A>, m)(inverse(a), a), c)
+  ) := algebra_sym(<u: u, A: A, a: algebra_op(<u: u, A: A>, m)(algebra_op(<u: u, A: A>, m)(inverse(a), a), c), b: algebra_op(<u: u, A: A>, m)(inverse(a), algebra_op(<u: u, A: A>, m)(a, c))>,
+    algebra_assoc(<u: u, A: A>, m, inverse(a), a, c)
   );
   let step5: AlgebraEq(
     u,
     A,
-    algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), c),
-    algebra_op(u, A, m)(algebra_unit(u, A, m), c)
-  ) := algebra_congr(
-    u,
-    u,
-    A,
-    A,
-    algebra_op(u, A, m)(inverse(a), a),
-    algebra_unit(u, A, m),
-    t => algebra_op(u, A, m)(t, c),
-    algebra_inverse_left(u, A, m, inverse, g, a)
+    algebra_op(<u: u, A: A>, m)(algebra_op(<u: u, A: A>, m)(inverse(a), a), c),
+    algebra_op(<u: u, A: A>, m)(algebra_unit(<u: u, A: A>, m), c)
+  ) := algebra_congr(<u: u, v: u, A: A, B: A, a: algebra_op(<u: u, A: A>, m)(inverse(a), a), b: algebra_unit(<u: u, A: A>, m)>,
+    t => algebra_op(<u: u, A: A>, m)(t, c),
+    algebra_inverse_left(<u: u, A: A, m: m, inverse: inverse>, g, a)
   );
   let step6: AlgebraEq(
     u,
     A,
-    algebra_op(u, A, m)(algebra_unit(u, A, m), c),
+    algebra_op(<u: u, A: A>, m)(algebra_unit(<u: u, A: A>, m), c),
     c
-  ) := algebra_left_unit(u, A, m, c);
-  algebra_trans(
-    u,
-    A,
-    b,
-    algebra_op(u, A, m)(algebra_unit(u, A, m), b),
-    c,
+  ) := algebra_left_unit(<u: u, A: A>, m, c);
+  algebra_trans(<u: u, A: A, a: b, b: algebra_op(<u: u, A: A>, m)(algebra_unit(<u: u, A: A>, m), b), c: c>,
     step0,
-    algebra_trans(
-      u,
-      A,
-      algebra_op(u, A, m)(algebra_unit(u, A, m), b),
-      algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), b),
-      c,
+    algebra_trans(<u: u, A: A, a: algebra_op(<u: u, A: A>, m)(algebra_unit(<u: u, A: A>, m), b), b: algebra_op(<u: u, A: A>, m)(algebra_op(<u: u, A: A>, m)(inverse(a), a), b), c: c>,
       step1,
-      algebra_trans(
-        u,
-        A,
-        algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), b),
-        algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, b)),
-        c,
+      algebra_trans(<u: u, A: A, a: algebra_op(<u: u, A: A>, m)(algebra_op(<u: u, A: A>, m)(inverse(a), a), b), b: algebra_op(<u: u, A: A>, m)(inverse(a), algebra_op(<u: u, A: A>, m)(a, b)), c: c>,
         step2,
-        algebra_trans(
-          u,
-          A,
-          algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, b)),
-          algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, c)),
-          c,
+        algebra_trans(<u: u, A: A, a: algebra_op(<u: u, A: A>, m)(inverse(a), algebra_op(<u: u, A: A>, m)(a, b)), b: algebra_op(<u: u, A: A>, m)(inverse(a), algebra_op(<u: u, A: A>, m)(a, c)), c: c>,
           step3,
-          algebra_trans(
-            u,
-            A,
-            algebra_op(u, A, m)(inverse(a), algebra_op(u, A, m)(a, c)),
-            algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), c),
-            c,
+          algebra_trans(<u: u, A: A, a: algebra_op(<u: u, A: A>, m)(inverse(a), algebra_op(<u: u, A: A>, m)(a, c)), b: algebra_op(<u: u, A: A>, m)(algebra_op(<u: u, A: A>, m)(inverse(a), a), c), c: c>,
             step4,
-            algebra_trans(
-              u,
-              A,
-              algebra_op(u, A, m)(algebra_op(u, A, m)(inverse(a), a), c),
-              algebra_op(u, A, m)(algebra_unit(u, A, m), c),
-              c,
+            algebra_trans(<u: u, A: A, a: algebra_op(<u: u, A: A>, m)(algebra_op(<u: u, A: A>, m)(inverse(a), a), c), b: algebra_op(<u: u, A: A>, m)(algebra_unit(<u: u, A: A>, m), c), c: c>,
               step5,
               step6
             )
@@ -221,30 +153,17 @@ pub theorem algebra_inverse_unique<u: Level, A: Type(
   g: AlgebraGroup(u, A, m, inverse),
   a: A,
   candidate: A,
-  h: AlgebraEq(u, A, algebra_op(u, A, m)(a, candidate), algebra_unit(u, A, m))
+  h: AlgebraEq(u, A, algebra_op(<u: u, A: A>, m)(a, candidate), algebra_unit(<u: u, A: A>, m))
 ): AlgebraEq(u, A, candidate, inverse(a)) {
-  algebra_cancel_left(
-    u,
-    A,
-    m,
-    inverse,
+  algebra_cancel_left(<u: u, A: A, m: m, inverse: inverse>,
     g,
     a,
     candidate,
     inverse(a),
-    algebra_trans(
-      u,
-      A,
-      algebra_op(u, A, m)(a, candidate),
-      algebra_unit(u, A, m),
-      algebra_op(u, A, m)(a, inverse(a)),
+    algebra_trans(<u: u, A: A, a: algebra_op(<u: u, A: A>, m)(a, candidate), b: algebra_unit(<u: u, A: A>, m), c: algebra_op(<u: u, A: A>, m)(a, inverse(a))>,
       h,
-      algebra_sym(
-        u,
-        A,
-        algebra_op(u, A, m)(a, inverse(a)),
-        algebra_unit(u, A, m),
-        algebra_inverse_right(u, A, m, inverse, g, a)
+      algebra_sym(<u: u, A: A, a: algebra_op(<u: u, A: A>, m)(a, inverse(a)), b: algebra_unit(<u: u, A: A>, m)>,
+        algebra_inverse_right(<u: u, A: A, m: m, inverse: inverse>, g, a)
       )
     )
   )

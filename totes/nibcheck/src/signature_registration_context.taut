@@ -17,7 +17,7 @@ pub theorem ck_report_frame_context(
   message: Option(Text),
   span: TySpan
 ): CkContextFrame(c, ck_report(c, message, span)) {
-  match message: CkContextFrame(c, ck_report(c, message, span)) {
+  ⊢ CkContextFrame(c, ck_report(c, message, span)) from match message {
     None => ordinary => Refl
     Some(m) => ordinary => Refl
   }
@@ -27,7 +27,7 @@ pub theorem signature_result_k_frame_context(
   map: Ordmap(Text, Ty),
   p: Option(SurfaceTerm)
 ): CkContextFrame(c, signature_result_k(c, map, p)) {
-  match p: CkContextFrame(c, signature_result_k(c, map, p)) {
+  ⊢ CkContextFrame(c, signature_result_k(c, map, p)) from match p {
     None => ordinary => Refl
     Some(r) => context_rewrap(c, ck_written(c, r, map), ck_written_frame_context(c, r, map))
   }
@@ -51,7 +51,7 @@ pub theorem signature_pred_duplicate_frame_context(
   g: Text,
   dup: Bool
 ): CkContextFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) {
-  match dup: CkContextFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) {
+  ⊢ CkContextFrame(c, signature_pred_duplicate(c, w, preds, g, dup)) from match dup {
     true => ordinary => Refl
     false => ordinary => Refl
   }
@@ -63,7 +63,7 @@ pub theorem signature_pred_generic_frame_context(
   preds: List(Pair(Text, Text)),
   o: Option(Text)
 ): CkContextFrame(c, signature_pred_generic(c, w, name, preds, o)) {
-  match o: CkContextFrame(c, signature_pred_generic(c, w, name, preds, o)) {
+  ⊢ CkContextFrame(c, signature_pred_generic(c, w, name, preds, o)) from match o {
     None => ordinary => Refl
     Some(g) => signature_pred_duplicate_frame_context(
       c,
@@ -82,7 +82,7 @@ pub theorem signature_pred_missing_frame_context(
   preds: List(Pair(Text, Text)),
   missing: Bool
 ): CkContextFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) {
-  match missing: CkContextFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) {
+  ⊢ CkContextFrame(c, signature_pred_missing(c, w, gs, name, preds, missing)) from match missing {
     true => ordinary => Refl
     false => signature_pred_generic_frame_context(
       c,
@@ -138,7 +138,7 @@ pub theorem ck_where_preds_frame_context(
   name: Text,
   preds: List(Pair(Text, Text))
 ): CkContextFrame(c, ck_where_preds(ws, c, gs, name, preds)) {
-  match ws: CkContextFrame(c, ck_where_preds(ws, c, gs, name, preds)) {
+  ⊢ CkContextFrame(c, ck_where_preds(ws, c, gs, name, preds)) from match ws {
     Nil => ordinary => Refl
     Cons(w, rest) => Eq::subst(
       (z: Mut1(List(Pair(Text, Text)), Checker)) => CkContextFrame(c, z),
@@ -288,7 +288,7 @@ pub theorem signature_prelude_if_frame_context(
   f: SurfaceFn,
   take: Bool
 ): CkContextFrame(c, signature_prelude_if(c, f, take)) {
-  match take: CkContextFrame(c, signature_prelude_if(c, f, take)) {
+  ⊢ CkContextFrame(c, signature_prelude_if(c, f, take)) from match take {
     true => context_return(c, Star, ck_add_fn(c, f), ck_add_fn_frame_context(c, f))
     false => ordinary => Refl
   }
@@ -317,7 +317,7 @@ pub theorem ck_prelude_fns_each_frame_context(
   c: Checker,
   own: Ordmap(Text, Bool)
 ): CkContextFrame(c, ck_prelude_fns_each(fs, c, own)) {
-  match fs: CkContextFrame(c, ck_prelude_fns_each(fs, c, own)) {
+  ⊢ CkContextFrame(c, ck_prelude_fns_each(fs, c, own)) from match fs {
     Nil => ordinary => Refl
     Cons(f, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkContextFrame(c, z),
@@ -354,7 +354,7 @@ pub theorem ck_extern_fns_frame_context(
   fs: List(SurfaceFn),
   c: Checker
 ): CkContextFrame(c, ck_extern_fns(fs, c)) {
-  match fs: CkContextFrame(c, ck_extern_fns(fs, c)) {
+  ⊢ CkContextFrame(c, ck_extern_fns(fs, c)) from match fs {
     Nil => ordinary => Refl
     Cons(f, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkContextFrame(c, z),
@@ -374,7 +374,7 @@ pub theorem ck_prelude_fns_one_frame_context(
   s: SurfaceStmt,
   own: Ordmap(Text, Bool)
 ): CkContextFrame(c, ck_prelude_fns_one(c, s, own)) {
-  match s: CkContextFrame(c, ck_prelude_fns_one(c, s, own)) {
+  ⊢ CkContextFrame(c, ck_prelude_fns_one(c, s, own)) from match s {
     StLet(name, ty, value, borrow, mutable) => ordinary => Refl
     StVar(name, ty, value, borrow) => ordinary => Refl
     StModule(name, stmts, start, end) => ordinary => Refl
@@ -422,7 +422,7 @@ pub theorem ck_program_decl_frame_context(
   c: Checker,
   s: SurfaceStmt
 ): CkContextFrame(c, ck_program_decl(c, s)) {
-  match s: CkContextFrame(c, ck_program_decl(c, s)) {
+  ⊢ CkContextFrame(c, ck_program_decl(c, s)) from match s {
     StLet(name, ty, value, borrow, mutable) => ordinary => Refl
     StVar(name, ty, value, borrow) => ordinary => Refl
     StModule(name, stmts, start, end) => ordinary => Refl
@@ -509,7 +509,7 @@ pub theorem ck_prelude_fns_frame_context(
   c: Checker,
   own: Ordmap(Text, Bool)
 ): CkContextFrame(c, ck_prelude_fns(ss, c, own)) {
-  match ss: CkContextFrame(c, ck_prelude_fns(ss, c, own)) {
+  ⊢ CkContextFrame(c, ck_prelude_fns(ss, c, own)) from match ss {
     Nil => ordinary => Refl
     Cons(s, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkContextFrame(c, z),
@@ -559,7 +559,7 @@ pub theorem ck_program_decls_frame_context(
   ss: List(SurfaceStmt),
   c: Checker
 ): CkContextFrame(c, ck_program_decls(ss, c)) {
-  match ss: CkContextFrame(c, ck_program_decls(ss, c)) {
+  ⊢ CkContextFrame(c, ck_program_decls(ss, c)) from match ss {
     Nil => ordinary => Refl
     Cons(s, rest) => Eq::subst(
       (z: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => CkContextFrame(c, z),

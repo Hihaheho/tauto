@@ -11,19 +11,25 @@ use crate::macros::checker::TypedChecker;
 use crate::macros::node::Node;
 use crate::macros::scope;
 use crate::macros::syn::{Lift, Lower, OPEN_ATOM};
-use crate::surface::{Stmt, SurfaceTerm, print};
+use crate::surface::{Stmt, SurfaceTerm};
 use std::sync::Arc;
 
 type R<T> = Result<T, String>;
 
 pub struct ElabEnv {
     pub checker: Arc<dyn TypedChecker>,
+    pub atoms: std::cell::RefCell<HashMap<u64, crate::surface::Name>>,
+    /// The declarations before the one the macro is in.
     pub prefix: Vec<Stmt>,
+    /// The declarations of the enclosing modules by their names there, inner
+    /// modules winning.
+    pub module_names: HashMap<String, tauto_surface::identity::DeclRef>,
     /// The scope of the expansion the macro runs in, which lowering flips.
     pub scope: u64,
     pub ctors: HashSet<String>,
-    pub families: HashMap<String, Vec<String>>,
-    pub arities: HashMap<String, usize>,
+    pub bindings: tauto_surface::resolve::Resolver,
+    pub families: HashMap<crate::surface::Name, Vec<crate::surface::Name>>,
+    pub arities: HashMap<crate::surface::Name, usize>,
 }
 
 struct Parts<'n> {
@@ -70,8 +76,51 @@ fn parts(n: &Node) -> R<Parts<'_>> {
     })
 }
 
+/// Gives a name the macro read in an enclosing module, spelled as that
+/// module's own items spell it, its declaration there.
+pub(super) fn module_resolved(
+    t: &mut SurfaceTerm,
+    names: &HashMap<String, tauto_surface::identity::DeclRef>,
+) {
+    if names.is_empty() {
+        return;
+    }
+    crate::surface::walk::term(t, &mut |t| {
+        // A name the file did not know was set aside as a declaration of its
+        // own spelling; the module gives it the declaration it names there.
+        let spelling = match &*t.kind {
+            crate::surface::TermKind::Var(crate::surface::Name::Spelled(s)) => s.clone(),
+            crate::surface::TermKind::Var(crate::surface::Name::Global(r)) => {
+                r.display().to_string()
+            }
+            _ => return,
+        };
+        if let Some(reference) = names.get(spelling.as_str())
+            && !matches!(&*t.kind, crate::surface::TermKind::Var(crate::surface::Name::Global(r)) if r == reference)
+        {
+            t.kind = std::sync::Arc::new(crate::surface::TermKind::Var(
+                crate::surface::Name::Global(reference.clone()),
+            ));
+        }
+    });
+}
+
 impl ElabEnv {
-    fn lower(&self, n: &Node, atoms: &HashMap<u64, String>) -> R<SurfaceTerm> {
+    fn constructor_reference(&self, ident: &Node) -> R<Option<crate::surface::Name>> {
+        match ident.named("declaration").and_then(Node::as_option) {
+            Some(Some(Node::Declaration(reference))) => Ok(Some(reference.clone().into())),
+            Some(None) => {
+                let spelling = ident
+                    .named("name")
+                    .and_then(Node::as_text)
+                    .ok_or("a SynIdent name")?;
+                Ok(self.bindings.source_reference(spelling))
+            }
+            _ => Err("a SynIdent declaration reference".into()),
+        }
+    }
+
+    fn lower(&self, n: &Node, atoms: &HashMap<u64, crate::surface::Name>) -> R<SurfaceTerm> {
         let mut fresh = |at: u32| Span::new(at, at + 1);
         let mut lower = Lower {
             scope: self.scope,
@@ -83,12 +132,15 @@ impl ElabEnv {
         let term = lower.expr(n)?;
         let mut resolved = scope::resolve(vec![Stmt::Expr(term)], &self.ctors);
         match resolved.pop() {
-            Some(Stmt::Expr(t)) => Ok(t),
+            Some(Stmt::Expr(mut t)) => {
+                module_resolved(&mut t, &self.module_names);
+                Ok(t)
+            }
             _ => Err("a term".into()),
         }
     }
 
-    fn lift(&self, t: &SurfaceTerm, names: &HashMap<String, u64>) -> R<Node> {
+    fn lift(&self, t: &SurfaceTerm, names: &HashMap<crate::surface::Name, u64>) -> R<Node> {
         Lift {
             scopes: &[],
             quote: false,
@@ -99,16 +151,49 @@ impl ElabEnv {
         .expr(t)
     }
 
-    fn atoms(p: &Parts) -> (HashMap<u64, String>, HashMap<String, u64>) {
-        let by_atom = p.ctx.iter().map(|(a, n, _)| (*a, n.clone())).collect();
-        let by_name = p.ctx.iter().map(|(a, n, _)| (n.clone(), *a)).collect();
-        (by_atom, by_name)
+    fn atoms(
+        &self,
+        p: &Parts,
+    ) -> R<(
+        HashMap<u64, crate::surface::Name>,
+        HashMap<crate::surface::Name, u64>,
+    )> {
+        let mut known = self.atoms.borrow_mut();
+        let mut by_atom = HashMap::new();
+        let mut by_name = HashMap::new();
+        for (atom, display, _) in &p.ctx {
+            let reference = match known.get(atom) {
+                Some(reference) => reference.clone(),
+                None if *atom >= OPEN_ATOM => {
+                    let reference = crate::surface::Name::Local(
+                        tauto_surface::identity::LocalRef::fresh(display),
+                    );
+                    known.insert(*atom, reference.clone());
+                    reference
+                }
+                None => return Err("macro.unknown_atom: an atom is not one of the input's".into()),
+            };
+            if by_atom.insert(*atom, reference.clone()).is_some() {
+                return Err("macro.duplicate_atom: a context binds an atom once".into());
+            }
+            by_name.insert(reference, *atom);
+        }
+        Ok((by_atom, by_name))
     }
 
-    fn context(&self, p: &Parts, atoms: &HashMap<u64, String>) -> R<Vec<(String, SurfaceTerm)>> {
+    fn context(
+        &self,
+        p: &Parts,
+        atoms: &HashMap<u64, crate::surface::Name>,
+    ) -> R<Vec<(crate::surface::Name, SurfaceTerm)>> {
         p.ctx
             .iter()
-            .map(|(_, name, ty)| Ok((name.clone(), self.lower(ty, atoms)?)))
+            .map(|(atom, _, ty)| {
+                Ok((
+                    atoms.get(atom).ok_or("unknown context atom")?.clone(),
+                    self.lower(ty, atoms)?,
+                ))
+            })
             .collect()
     }
 
@@ -116,7 +201,7 @@ impl ElabEnv {
         &self,
         term: &SurfaceTerm,
         ty: &SurfaceTerm,
-        names: &HashMap<String, u64>,
+        names: &HashMap<crate::surface::Name, u64>,
         ctx_node: &Node,
     ) -> R<Node> {
         Ok(Node::Ctor(
@@ -137,8 +222,18 @@ impl ElabEnv {
         ))
     }
 
+    fn result(name: &str, fields: Vec<Node>) -> Node {
+        Node::Ctor(
+            crate::macros::node::ConstructorRef::resolved(
+                tauto_surface::bindings::library_name(&format!("Result::{name}")),
+                name.into(),
+            ),
+            fields.into_iter().map(|field| (None, field)).collect(),
+        )
+    }
+
     fn diag(message: String) -> Node {
-        Node::ctor(
+        Self::result(
             "Err",
             vec![Node::Ctor(
                 "SynDiag".into(),
@@ -147,6 +242,7 @@ impl ElabEnv {
                     (Some("at".into()), Node::Int(0)),
                     (Some("expected".into()), Node::List(Vec::new())),
                     (Some("code".into()), Node::text("macro.elab_check")),
+                    (Some("args".into()), Node::List(Vec::new())),
                 ],
             )],
         )
@@ -160,12 +256,12 @@ impl ElabEnv {
         match op {
             "Elab::defeq" => {
                 let (a, b) = (parts(arg(0)?)?, parts(arg(1)?)?);
-                let (atoms_a, _) = Self::atoms(&a);
-                let (atoms_b, _) = Self::atoms(&b);
+                let (atoms_a, _) = self.atoms(&a)?;
+                let (atoms_b, _) = self.atoms(&b)?;
                 let ta = self.lower(a.term, &atoms_a)?;
                 let tb = self.lower(b.term, &atoms_b)?;
                 if a.fragment != "Kernel" || b.fragment != "Kernel" {
-                    return Ok(Node::Bool(print::print_term(&ta) == print::print_term(&tb)));
+                    return Ok(Node::Bool(crate::surface::same_term_structure(&ta, &tb)));
                 }
                 let context = self.context(&a, &atoms_a)?;
                 let mut k = self.checker.elaborator(&self.prefix, &context)?;
@@ -173,7 +269,7 @@ impl ElabEnv {
             }
             "Elab::whnf" => {
                 let c = parts(arg(0)?)?;
-                let (atoms, names) = Self::atoms(&c);
+                let (atoms, names) = self.atoms(&c)?;
                 let t = self.lower(c.term, &atoms)?;
                 if c.fragment != "Kernel" {
                     return Ok(arg(0)?.clone());
@@ -187,7 +283,7 @@ impl ElabEnv {
             }
             "Elab::check" => {
                 let ctx = parts(arg(1)?)?;
-                let (atoms, names) = Self::atoms(&ctx);
+                let (atoms, names) = self.atoms(&ctx)?;
                 let e = self.lower(arg(0)?, &atoms)?;
                 if ctx.fragment != "Kernel" {
                     return Ok(Self::diag(msg!("macro-elab-check-kernel").to_string()));
@@ -205,7 +301,7 @@ impl ElabEnv {
                 };
                 let ctx_node = arg(1)?.named("ctx").ok_or("ctx")?;
                 match done {
-                    Ok((term, ty)) => Ok(Node::ctor(
+                    Ok((term, ty)) => Ok(Self::result(
                         "Ok",
                         vec![self.code(&term, &ty, &names, ctx_node)?],
                     )),
@@ -214,52 +310,71 @@ impl ElabEnv {
             }
             "Elab::global" => {
                 let name = arg(0)?.as_text().ok_or("a Text")?;
-                let k = self.checker.elaborator(&self.prefix, &[])?;
-                Ok(match k.type_of(name) {
-                    Some(ty) => {
+                let mut k = self.checker.elaborator(&self.prefix, &[])?;
+                let mut term = SurfaceTerm::var(name, Span::new(0, 1));
+                module_resolved(&mut term, &self.module_names);
+                Ok(match k.infer(&term) {
+                    Ok((term, ty)) => {
                         let none = HashMap::new();
-                        let term = SurfaceTerm::var(name, Span::new(0, 1));
                         Node::some(self.code(&term, &ty, &none, &Node::List(Vec::new()))?)
                     }
-                    None => Node::none(),
+                    Err(_) => Node::none(),
                 })
             }
             "Elab::resolve" => {
                 let id = arg(0)?;
-                let name = id
-                    .named("name")
-                    .and_then(Node::as_text)
-                    .ok_or("a SynIdent has a name")?;
+
                 let ctx = parts(arg(1)?)?;
-                let (atoms, names) = Self::atoms(&ctx);
-                let k = self
+                let (atoms, names) = self.atoms(&ctx)?;
+                let mut k = self
                     .checker
                     .elaborator(&self.prefix, &self.context(&ctx, &atoms)?)?;
-                Ok(match k.type_of(name) {
-                    Some(ty) => {
-                        let term = SurfaceTerm::var(name, Span::new(0, 1));
+                let term = self.lower(&Node::ctor("SynExpr::ExVar", vec![id.clone()]), &atoms)?;
+                Ok(match k.infer(&term) {
+                    Ok((term, ty)) => {
                         let ctx_node = arg(1)?.named("ctx").ok_or("ctx")?;
                         Node::some(self.code(&term, &ty, &names, ctx_node)?)
                     }
-                    None => Node::none(),
+                    Err(_) => Node::none(),
                 })
             }
-            "Elab::constructor_arity" => {
-                let name = arg(0)?.as_text().ok_or("a Text")?;
-                Ok(match self.arities.get(name) {
+            "Elab::constructor_arity" => Ok(
+                match self
+                    .constructor_reference(arg(0)?)?
+                    .and_then(|reference| self.arities.get(&reference))
+                {
                     Some(n) => Node::some(Node::Int(*n as i64)),
                     None => Node::none(),
-                })
-            }
-            "Elab::siblings" => {
-                let name = arg(0)?.as_text().ok_or("a Text")?;
-                Ok(match self.families.get(name) {
+                },
+            ),
+            "Elab::siblings" => Ok(
+                match self
+                    .constructor_reference(arg(0)?)?
+                    .and_then(|reference| self.families.get(&reference))
+                {
                     Some(all) => {
-                        Node::some(Node::List(all.iter().map(|n| Node::text(n)).collect()))
+                        let mut identifiers = Vec::new();
+                        for reference in all {
+                            let expression = self.lift(
+                                &SurfaceTerm::var(reference, Span::new(0, 1)),
+                                &HashMap::new(),
+                            )?;
+                            let Node::Ctor(_, fields) = expression else {
+                                return Err("a lifted identifier".into());
+                            };
+                            identifiers.push(
+                                fields
+                                    .into_iter()
+                                    .next()
+                                    .ok_or("a lifted identifier field")?
+                                    .1,
+                            );
+                        }
+                        Node::some(Node::List(identifiers))
                     }
                     None => Node::none(),
-                })
-            }
+                },
+            ),
             other => Err(msg!("macro-elab-unknown-op", op = other).to_string()),
         }
     }

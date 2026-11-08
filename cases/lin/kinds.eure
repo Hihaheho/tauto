@@ -4,18 +4,18 @@
 @ cases.a-struct-of-copies-is-copy
 source = ```nib
 struct P { x: i64, y: i64 }
-let a = P { x: 1, y: 2 }
-let b = a
-let c = a
+let a := P { x: 1, y: 2 }
+let b := a
+let c := a
 ```
 lin = "ok"
 
 @ cases.text-makes-shared
 source = ```nib
 struct Q { t: Text }
-let a = Q { t: "hi" }
-let b = a
-let c = a
+let a := Q { t: "hi" }
+let b := a
+let c := a
 ```
 lin = "ok"
 
@@ -26,32 +26,32 @@ types = "error: declared copy"
 @ cases.declared-affine-is-used-once
 source = ```nib
 affine struct F {}
-fn f(x: F) -> F { x }
-let a = F {}
-let b = f(a)
-let c = f(a)
+fn f(x: F): F { x }
+let a := F {}
+let b := f(a)
+let c := f(a)
 ```
 lin = "error: a is used after move"
 
 @ cases.declared-affine-may-be-dropped
 source = ```nib
 affine struct F {}
-fn g(x: F) -> i64 { 0 }
+fn g(x: F): i64 { 0 }
 ```
 lin = "ok"
 
 @ cases.linear-must-be-used
 source = ```nib
 linear struct H {}
-fn g(x: H) -> i64 { 0 }
+fn g(x: H): i64 { 0 }
 ```
 lin = "error: x is not used"
 
 @ cases.linear-used-on-one-path
 source = ```nib
 linear struct H {}
-fn consume(x: H) -> i64 { match x { H {} => 1 } }
-fn g(x: H, b: Bool) -> i64 { if b { consume(x) } else { 0 } }
+fn consume(x: H): i64 { match x { H {} => 1 } }
+fn g(x: H, b: Bool): i64 { if b { consume(x) } else { 0 } }
 ```
 lin = "error: used on some paths only"
 
@@ -59,95 +59,149 @@ lin = "error: used on some paths only"
 source = ```nib
 affine struct F {}
 struct W { f: F }
-fn keep(w: W) -> W { w }
-let a = W { f: F {} }
-let b = keep(a)
-let c = keep(a)
+fn keep(w: W): W { w }
+let a := W { f: F {} }
+let b := keep(a)
+let c := keep(a)
 ```
 lin = "error: used after move"
 
 @ cases.recursive-enum-is-shared
 source = ```nib
 enum L { Nil, Cons(i64, L) }
-let a: L = Cons(1, Nil)
-let b = a
-let c = a
+let a: L := Cons(1, Nil)
+let b := a
+let c := a
 ```
 lin = "ok"
 
 @ cases.generic-default-is-affine
-source = "fn twice<A>(x: A) -> Pair(A, A) { Pair { fst: x, snd: x } }"
+source = "fn twice<A>(x: A): Pair(A, A) { Pair { fst: x, snd: x } }"
 lin = "error: x is used after move"
 
 @ cases.generic-shared-may-dup
-source = "fn twice<A: shared>(x: A) -> Pair(A, A) { Pair { fst: x, snd: x } }"
+source = "fn twice<A: Shared>(x: A): Pair(A, A) { Pair { fst: x, snd: x } }"
 lin = "ok"
 
 @ cases.generic-default-may-drop
-source = "fn fst<A, B>(p: Pair(A, B)) -> A { match p { Pair { fst: a, snd: _ } => a } }"
+source = "fn fst<A, B>(p: Pair(A, B)): A { match p { Pair { fst: a, snd: _ } => a } }"
 lin = "ok"
 
 @ cases.generic-linear-may-not-drop
-source = "fn fst<A, B: linear>(p: Pair(A, B)) -> A { match p { Pair { fst: a, snd: b } => a } }"
+source = "fn fst<A, B: Linear>(p: Pair(A, B)): A { match p { Pair { fst: a, snd: b } => a } }"
 lin = "error: b is not used"
 
 @ cases.linear-does-not-fit-affine-bound
 source = ```nib
 linear struct H {}
-fn f<A>(x: A) -> A { x }
-let h = H {}
-let g = f(h)
+fn f<A>(x: A): A { x }
+let h := H {}
+let g := f(h)
 ```
 types = "error: linear does not fit affine"
 
 @ cases.closure-capturing-affine-is-affine
 source = ```nib
 affine struct F {}
-fn consume(x: F) -> i64 { 0 }
-let a = F {}
-let g = () => consume(a)
-let r = g()
-let s = g()
+fn consume(x: F): i64 { 0 }
+let a := F {}
+let g := () => consume(a)
+let r := g()
+let s := g()
 ```
 lin = "error: g is used after move"
+
+@ cases.closure-lending-what-it-captured-is-called-again
+source = ```nib
+affine struct F {}
+fn peek(&x: F): i64 { 1 }
+let a := F {}
+let g := () => peek(&a)
+perform show("sum", g() + g())
+```
+lin = "ok"
+shows = ["sum = 2"]
+
+@ cases.local-fn-lending-what-it-captured-is-lent-to-a-borrowed-parameter
+source = ```nib
+import std::prelude::Affine
+
+fn apply(&f: (i64) -> i64, x: i64): i64 {
+  let y := f(x)
+  f(y)
+}
+fn go(xs: Vec(i64)): i64 {
+  fn pick(i: i64): i64 { i + I64::of_u64(Vec::len(&xs)) }
+  apply(pick, 1) + pick(0)
+}
+var xs := Vec::new()
+Vec::push(&mut xs, 4)
+perform show("r", go(xs))
+```
+lin = "ok"
+shows = ["r = 4"]
+
+@ cases.closure-consuming-what-it-captured-is-not-lent
+source = ```nib
+fn apply(&f: (i64) -> i64, x: i64): i64 { f(x) }
+fn eat(xs: Vec(i64)): i64 { I64::of_u64(Vec::len(&xs)) }
+fn go(xs: Vec(i64)): i64 {
+  fn pick(i: i64): i64 { i + eat(xs) }
+  apply(pick, 1)
+}
+```
+lin = "error: pick consumes a value it captured, so it can be called only once and cannot be lent to a borrowed function parameter"
 
 @ cases.closure-capturing-affine-needs-affine-type
 source = ```nib
 affine struct F {}
-fn consume(x: F) -> i64 { 0 }
-fn run(f: () -> i64) -> i64 { f() }
-let a = F {}
-let r = run(() => consume(a))
+fn consume(x: F): i64 { 0 }
+fn run(f: () -> i64): i64 { f() }
+let a := F {}
+let r := run(() => consume(a))
 ```
 types = "error: affine closure where shared"
 
 @ cases.an-affine-function-type-takes-the-closure
 source = ```nib
 affine struct F {}
-fn consume(x: F) -> i64 { 0 }
-fn run(f: affine () -> i64) -> i64 { f() }
-let a = F {}
-let r = run(() => consume(a))
+fn consume(x: F): i64 { 0 }
+fn run(f: affine () -> i64): i64 { f() }
+let a := F {}
+let r := run(() => consume(a))
 ```
+lin = "ok"
+
+@ cases.an-affine-function-type-keeps-its-parameter-list
+source = ```nib
+affine struct F {}
+fn two(f: affine (i64, i64) -> i64): i64 { f(1, 2) }
+fn f(x: F): F {
+  let g: affine () -> F := () => x
+  g()
+}
+let r := two((a, b) => a)
+```
+types = "ok"
 lin = "ok"
 
 @ cases.a-type-met-again-at-other-arguments-holds-them
 source = ```nib
 affine struct F {}
-enum W<A> { Leaf(A), Node(W(F)) }
-fn keep(w: W(i64)) -> W(i64) { w }
-let a: W(i64) = Node(Leaf(F {}))
-let b = keep(a)
-let c = keep(a)
+enum W(A: Type) { Leaf(A), Node(W(F)) }
+fn keep(w: W(i64)): W(i64) { w }
+let a: W(i64) := Node(Leaf(F {}))
+let b := keep(a)
+let c := keep(a)
 ```
 lin = "error: used after move"
 
 @ cases.a-nested-type-of-copies-is-shared
 source = ```nib
-enum N<A> { End, More(A, N(Option(A))) }
-fn keep(n: N(i64)) -> N(i64) { n }
-let a: N(i64) = More(1, End)
-let b = keep(a)
-let c = keep(a)
+enum N(A: Type) { End, More(A, N(Option(A))) }
+fn keep(n: N(i64)): N(i64) { n }
+let a: N(i64) := More(1, End)
+let b := keep(a)
+let c := keep(a)
 ```
 lin = "ok"

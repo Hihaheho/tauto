@@ -35,7 +35,7 @@ pub theorem instance_presence_insert_other(
   ordered: Ordmap::ordered(m, Ordmap::compare_text),
   h: InstanceNamePresent(m, n)
 ): InstanceNamePresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
-  match h: InstanceNamePresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
+  ⊢ InstanceNamePresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) from match h {
     Mk(value, found) => InstanceNamePresent::Mk(
       value,
       Eq::trans(
@@ -67,7 +67,7 @@ pub theorem instance_presence_insert_k(
   ordered: Ordmap::ordered(m, Ordmap::compare_text),
   h: InstanceNamePresent(m, n)
 ): InstanceNamePresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
-  match o: InstanceNamePresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) {
+  ⊢ InstanceNamePresent(Ordmap::insert(m, k, v, Ordmap::compare_text), n) from match o {
     Equal => Eq::subst(
       (z: Text) => InstanceNamePresent(Ordmap::insert(m, k, v, Ordmap::compare_text), z),
       Eq::sym(Ordmap::compare_text_eq(n, k, eo)),
@@ -116,7 +116,7 @@ pub def InstantiationDomain(
   And(InstanceDomainExtends(initial, result), GenericNamesPresent(gs, result))
 )
 pub theorem instance_names_nil(map: Ordmap(Text, Ty)): GenericNamesPresent(Nil, map) {
-  g => member => match member: InstanceNamePresent(map, instantiation_name(g)) {
+  g => member => ⊢ InstanceNamePresent(map, instantiation_name(g)) from match member {
   }
 }
 pub theorem instance_domain_nil(
@@ -146,7 +146,7 @@ pub theorem instance_domain_cons_member(
   item: Pair(Text, Kind),
   member: Mem(Pair(Text, Kind), item, Cons(g, rest))
 ): InstanceNamePresent(result, instantiation_name(item)) {
-  match member: InstanceNamePresent(result, instantiation_name(item)) {
+  ⊢ InstanceNamePresent(result, instantiation_name(item)) from match member {
     MemHere(more) => And::left(
       And::right(tail)
     )(
@@ -208,7 +208,7 @@ pub theorem instance_value_bind<A: Type, B: Type>(
   predicate: (B) -> Prop,
   tail: ∀ value: A. ∀ next: Checker. predicate(ck_val(k(value, next)))
 ): predicate(ck_val(frame_bind(A, B, k, m))) {
-  match m: predicate(ck_val(frame_bind(A, B, k, m))) { mut1(value, next) => tail(value, next) }
+  ⊢ predicate(ck_val(frame_bind(A, B, k, m))) from match m { mut1(value, next) => tail(value, next) }
 }
 pub theorem instance_value_rewrap<A: Type>(
   m: Mut1(A, Checker),
@@ -335,11 +335,11 @@ pub theorem ck_instantiate_map_ctors_domain(
   map: Ordmap(Text, Ty),
   ordered: Ordmap::ordered(map, Ordmap::compare_text)
 ): InstantiationDomain(gs, map, ck_val(ck_instantiate_map_ctors(gs, c, ctors, name, span, map))) {
-  match gs: InstantiationDomain(
+  ⊢ InstantiationDomain(
     gs,
     map,
     ck_val(ck_instantiate_map_ctors(gs, c, ctors, name, span, map))
-  ) {
+  ) from match gs {
     Nil => instance_domain_nil(map, ordered)
     Cons(g, rest) => Eq::subst(
       (m: Mut1(Ordmap(Text, Ty), Checker)) => InstantiationDomain(Cons(g, rest), map, ck_val(m)),

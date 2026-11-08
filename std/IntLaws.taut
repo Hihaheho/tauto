@@ -2,6 +2,7 @@ import "Base.taut" { Nat }
 import "Int.taut" { Int }
 import "Nat.taut" { Nat }
 import "Tactic.taut" { nat_norm }
+import "Calc.taut" { calc }
 
 module Nat {
   // The laws of `Int`'s arithmetic (`std/Int::taut`). Every integer is
@@ -10,7 +11,7 @@ module Nat {
   // laws of `Int` follow from those of `Nat`.
 
   pub theorem sub_succ_succ(a: Nat, b: Nat): Succ(a) - Succ(b) = a - b {
-    match b: Succ(a) - Succ(b) = a - b {
+    ⊢ Succ(a) - Succ(b) = a - b from match b {
       Zero => Refl
       Succ(k) => Eq::congr(Nat::pred, sub_succ_succ(a, k))
     }
@@ -21,42 +22,44 @@ module Nat {
   }
 
   pub theorem add_cancel(a: Nat, b: Nat, c: Nat, h: add(a, c) = add(b, c)): a = b {
-    match c: a = b {
+    ⊢ a = b from match c {
       Zero => h
       Succ(k) => add_cancel(a, b, k, Eq::congr(Nat::pred, h))
     }
   }
 
   pub theorem mul_cancel(a: Nat, b: Nat, k: Nat, h: mul(a, Succ(k)) = mul(b, Succ(k))): a = b {
-    match a: a = b {
-      Zero => match b: Zero = b {
+    ⊢ a = b from match a {
+      Zero => ⊢ Zero = b from match b {
         Zero => Refl
         Succ(b2) => False::elim(
           zero_ne_succ(
             add(mul(b2, k), add(b2, k)),
-            calc Zero {
-              = mul(Zero, Succ(k)) from Eq::sym(mul_zero_left(Succ(k)))
-              = mul(Succ(b2), Succ(k)) from h
-              = Succ(add(mul(b2, k), add(b2, k))) from by nat_norm!(): mul(
+            calc!(```
+              $Zero
+              = $mul(Zero, Succ(k)) from $Eq::sym(mul_zero_left(Succ(k)))
+              = $mul(Succ(b2), Succ(k)) from $h
+              = $Succ(add(mul(b2, k), add(b2, k))) from $(by nat_norm!(): mul(
                 Succ(b2),
                 Succ(k)
-              ) = Succ(add(mul(b2, k), add(b2, k))) {}
-            }
+              ) = Succ(add(mul(b2, k), add(b2, k))) {})
+              ```)
           )
         )
       }
-      Succ(a2) => match b: Succ(a2) = b {
+      Succ(a2) => ⊢ Succ(a2) = b from match b {
         Zero => False::elim(
           zero_ne_succ(
             add(mul(a2, k), add(a2, k)),
-            calc Zero {
-              = mul(Zero, Succ(k)) from Eq::sym(mul_zero_left(Succ(k)))
-              = mul(Succ(a2), Succ(k)) from Eq::sym(h)
-              = Succ(add(mul(a2, k), add(a2, k))) from by nat_norm!(): mul(
+            calc!(```
+              $Zero
+              = $mul(Zero, Succ(k)) from $Eq::sym(mul_zero_left(Succ(k)))
+              = $mul(Succ(a2), Succ(k)) from $Eq::sym(h)
+              = $Succ(add(mul(a2, k), add(a2, k))) from $(by nat_norm!(): mul(
                 Succ(a2),
                 Succ(k)
-              ) = Succ(add(mul(a2, k), add(a2, k))) {}
-            }
+              ) = Succ(add(mul(a2, k), add(a2, k))) {})
+              ```)
           )
         )
         Succ(b2) => Eq::congr(
@@ -84,7 +87,7 @@ module Nat {
 module Int {
   // `Int::sub_nat` with its decision and the two differences apart.
   pub fn sub_with(l: Bool, p: Nat, q: Nat): Int {
-    match l: Int {
+    ⊢ Int from match l {
       false => IntOfNat(p)
       true => IntNegSucc(q - Succ(Zero))
     }
@@ -102,7 +105,7 @@ module Int {
     b: Nat,
     c: Nat
   ): sub_nat(Nat::add(a, c), Nat::add(b, c)) = sub_nat(a, b) {
-    match c: sub_nat(Nat::add(a, c), Nat::add(b, c)) = sub_nat(a, b) {
+    ⊢ sub_nat(Nat::add(a, c), Nat::add(b, c)) = sub_nat(a, b) from match c {
       Zero => Refl
       Succ(k) => Eq::trans(sub_succ(Nat::add(a, k), Nat::add(b, k)), sub_cancel(a, b, k))
     }
@@ -115,34 +118,35 @@ module Int {
     d: Nat,
     h: Nat::add(a, d) = Nat::add(c, b)
   ): sub_nat(a, b) = sub_nat(c, d) {
-    calc sub_nat(a, b) {
-      = sub_nat(Nat::add(a, d), Nat::add(b, d)) from Eq::sym(sub_cancel(a, b, d))
-      = sub_nat(Nat::add(c, b), Nat::add(b, d)) from Eq::congr(⟦sub_nat(□, Nat::add(b, d))⟧, h)
-      = sub_nat(
+    calc!(```
+      $sub_nat(a, b)
+      = $sub_nat(Nat::add(a, d), Nat::add(b, d)) from $Eq::sym(sub_cancel(a, b, d))
+      = $sub_nat(Nat::add(c, b), Nat::add(b, d)) from $Eq::congr(⟦sub_nat(□, Nat::add(b, d))⟧, h)
+      = $sub_nat(
         Nat::add(c, b),
         Nat::add(d, b)
-      ) from Eq::congr(⟦sub_nat(Nat::add(c, b), □)⟧, Nat::add_comm(b, d))
-      = sub_nat(c, d) from sub_cancel(c, d, b)
-    }
+      ) from $Eq::congr(⟦sub_nat(Nat::add(c, b), □)⟧, Nat::add_comm(b, d))
+      = $sub_nat(c, d) from $sub_cancel(c, d, b)
+      ```)
   }
 
   // The two parts of an integer: it is `pos(x) - negp(x)`.
   pub fn pos(x: Int): Nat {
-    match x: Nat {
+    ⊢ Nat from match x {
       IntOfNat(n) => n
       IntNegSucc(n) => Zero
     }
   }
 
   pub fn negp(x: Int): Nat {
-    match x: Nat {
+    ⊢ Nat from match x {
       IntOfNat(n) => Zero
       IntNegSucc(n) => Succ(n)
     }
   }
 
   pub theorem parts(x: Int): x = sub_nat(pos(x), negp(x)) {
-    match x: x = sub_nat(pos(x), negp(x)) {
+    ⊢ x = sub_nat(pos(x), negp(x)) from match x {
       IntOfNat(n) => Refl
       IntNegSucc(n) => Refl
     }
@@ -153,15 +157,18 @@ module Int {
     a: Nat,
     b: Nat
   ): Nat::add(a, negp(sub_nat(a, b))) = Nat::add(pos(sub_nat(a, b)), b) {
-    match a: Nat::add(a, negp(sub_nat(a, b))) = Nat::add(pos(sub_nat(a, b)), b) {
-      Zero => match b: Nat::add(Zero, negp(sub_nat(Zero, b))) = Nat::add(pos(sub_nat(Zero, b)), b) {
+    ⊢ Nat::add(a, negp(sub_nat(a, b))) = Nat::add(pos(sub_nat(a, b)), b) from match a {
+      Zero => ⊢ Nat::add(
+        Zero,
+        negp(sub_nat(Zero, b))
+      ) = Nat::add(pos(sub_nat(Zero, b)), b) from match b {
         Zero => Refl
         Succ(k) => Eq::trans(Nat::add_zero_left(Succ(k)), Eq::sym(Nat::add_zero_left(Succ(k))))
       }
-      Succ(a2) => match b: Nat::add(
+      Succ(a2) => ⊢ Nat::add(
         Succ(a2),
         negp(sub_nat(Succ(a2), b))
-      ) = Nat::add(pos(sub_nat(Succ(a2), b)), b) {
+      ) = Nat::add(pos(sub_nat(Succ(a2), b)), b) from match b {
         Zero => Refl
         Succ(b2) => by rewrite!(
           sub_succ(a2, b2)
@@ -190,18 +197,18 @@ module Int {
     x: Int,
     y: Int
   ): add(x, y) = sub_nat(Nat::add(pos(x), pos(y)), Nat::add(negp(x), negp(y))) {
-    match x: add(x, y) = sub_nat(Nat::add(pos(x), pos(y)), Nat::add(negp(x), negp(y))) {
-      IntOfNat(a) => match y: add(
+    ⊢ add(x, y) = sub_nat(Nat::add(pos(x), pos(y)), Nat::add(negp(x), negp(y))) from match x {
+      IntOfNat(a) => ⊢ add(
         IntOfNat(a),
         y
-      ) = sub_nat(Nat::add(a, pos(y)), Nat::add(Zero, negp(y))) {
+      ) = sub_nat(Nat::add(a, pos(y)), Nat::add(Zero, negp(y))) from match y {
         IntOfNat(b) => Refl
         IntNegSucc(b) => Eq::congr(⟦sub_nat(a, □)⟧, Eq::sym(Nat::add_zero_left(Succ(b))))
       }
-      IntNegSucc(a) => match y: add(
+      IntNegSucc(a) => ⊢ add(
         IntNegSucc(a),
         y
-      ) = sub_nat(Nat::add(Zero, pos(y)), Nat::add(Succ(a), negp(y))) {
+      ) = sub_nat(Nat::add(Zero, pos(y)), Nat::add(Succ(a), negp(y))) from match y {
         IntOfNat(b) => Eq::congr(⟦sub_nat(□, Succ(a))⟧, Eq::sym(Nat::add_zero_left(b)))
         IntNegSucc(b) => Eq::congr(⟦sub_nat(Zero, Succ(□))⟧, Eq::sym(Nat::add_succ_left(a, b)))
       }
@@ -348,12 +355,12 @@ module Int {
   }
 
   pub theorem neg_sub(a: Nat, b: Nat): neg(sub_nat(a, b)) = sub_nat(b, a) {
-    match a: neg(sub_nat(a, b)) = sub_nat(b, a) {
-      Zero => match b: neg(sub_nat(Zero, b)) = sub_nat(b, Zero) {
+    ⊢ neg(sub_nat(a, b)) = sub_nat(b, a) from match a {
+      Zero => ⊢ neg(sub_nat(Zero, b)) = sub_nat(b, Zero) from match b {
         Zero => Refl
         Succ(k) => Refl
       }
-      Succ(a2) => match b: neg(sub_nat(Succ(a2), b)) = sub_nat(b, Succ(a2)) {
+      Succ(a2) => ⊢ neg(sub_nat(Succ(a2), b)) = sub_nat(b, Succ(a2)) from match b {
         Zero => Refl
         Succ(b2) => Eq::trans(
           Eq::congr(neg, sub_succ(a2, b2)),
@@ -364,7 +371,7 @@ module Int {
   }
 
   pub theorem sub_self(a: Nat): sub_nat(a, a) = IntOfNat(Zero) {
-    match a: sub_nat(a, a) = IntOfNat(Zero) {
+    ⊢ sub_nat(a, a) = IntOfNat(Zero) from match a {
       Zero => Refl
       Succ(k) => Eq::trans(sub_succ(k, k), sub_self(k))
     }
@@ -412,20 +419,20 @@ module Int {
     Nat::add(Nat::mul(pos(x), pos(y)), Nat::mul(negp(x), negp(y))),
     Nat::add(Nat::mul(pos(x), negp(y)), Nat::mul(negp(x), pos(y)))
   ) {
-    match x: mul(
+    ⊢ mul(
       x,
       y
     ) = sub_nat(
       Nat::add(Nat::mul(pos(x), pos(y)), Nat::mul(negp(x), negp(y))),
       Nat::add(Nat::mul(pos(x), negp(y)), Nat::mul(negp(x), pos(y)))
-    ) {
-      IntOfNat(a) => match y: mul(
+    ) from match x {
+      IntOfNat(a) => ⊢ mul(
         IntOfNat(a),
         y
       ) = sub_nat(
         Nat::add(Nat::mul(a, pos(y)), Nat::mul(Zero, negp(y))),
         Nat::add(Nat::mul(a, negp(y)), Nat::mul(Zero, pos(y)))
-      ) {
+      ) from match y {
         IntOfNat(b) => sub_congr(
           Nat::mul(a, b),
           Zero,
@@ -446,13 +453,13 @@ module Int {
           )
         )
       }
-      IntNegSucc(a) => match y: mul(
+      IntNegSucc(a) => ⊢ mul(
         IntNegSucc(a),
         y
       ) = sub_nat(
         Nat::add(Nat::mul(Zero, pos(y)), Nat::mul(Succ(a), negp(y))),
         Nat::add(Nat::mul(Zero, negp(y)), Nat::mul(Succ(a), pos(y)))
-      ) {
+      ) from match y {
         IntOfNat(b) => Eq::trans(
           neg_of_nat(Nat::mul(Succ(a), b)),
           sub_congr(

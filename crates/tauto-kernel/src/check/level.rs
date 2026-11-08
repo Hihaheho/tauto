@@ -7,6 +7,7 @@
 //! variable stands for any natural number; one is bound by a declaration
 //! (`theorem id<u: Level, A: Type(u)>(a: A): A`) and never inside a term.
 
+use crate::surface::Name;
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -15,7 +16,7 @@ pub struct Level {
     /// The number, when it is above every variable's offset (else 0).
     c: u32,
     /// Each variable with the largest offset it is raised by.
-    vars: BTreeMap<String, u32>,
+    vars: BTreeMap<Name, u32>,
 }
 
 impl Level {
@@ -26,10 +27,10 @@ impl Level {
         }
     }
 
-    pub fn var(name: &str) -> Level {
+    pub fn var(name: impl Into<Name>) -> Level {
         Level {
             c: 0,
-            vars: BTreeMap::from([(name.to_string(), 0)]),
+            vars: BTreeMap::from([(name.into(), 0)]),
         }
     }
 
@@ -94,18 +95,20 @@ impl Level {
         (self.c > 0 && !self.vars.is_empty()).then_some(self.c)
     }
 
-    pub fn terms(&self) -> impl Iterator<Item = (&str, u32)> {
-        self.vars.iter().map(|(v, k)| (v.as_str(), *k))
+    /// Each variable with its offset.
+    pub fn terms(&self) -> impl Iterator<Item = (&Name, u32)> {
+        self.vars.iter().map(|(v, k)| (v, *k))
     }
 
-    pub fn variables(&self) -> impl Iterator<Item = &str> {
-        self.vars.keys().map(String::as_str)
+    /// The variables, in order.
+    pub fn variables(&self) -> impl Iterator<Item = &Name> {
+        self.vars.keys()
     }
 
     /// Each variable replaced by a level: the largest of the replacements
     /// raised by the offset.
     #[cfg(test)]
-    pub fn subst(&self, map: &BTreeMap<String, Level>) -> Option<Level> {
+    pub fn subst(&self, map: &BTreeMap<Name, Level>) -> Option<Level> {
         let mut out = Level::konst(self.c);
         for (v, k) in &self.vars {
             let by = map.get(v).cloned().unwrap_or_else(|| Level::var(v));
@@ -123,7 +126,7 @@ impl fmt::Display for Level {
         }
         for (v, k) in &self.vars {
             parts.push(if *k == 0 {
-                v.clone()
+                v.to_string()
             } else {
                 format!("{v} + {k}")
             });
@@ -182,12 +185,12 @@ mod tests {
 
     #[test]
     fn substituting_a_level() {
-        let map = BTreeMap::from([("u".to_string(), v().succ().unwrap())]);
+        let map = BTreeMap::from([(Name::from("u"), v().succ().unwrap())]);
         assert_eq!(
             u().succ().unwrap().subst(&map).unwrap(),
             v().plus(2).unwrap()
         );
-        let by_const = BTreeMap::from([("u".to_string(), Level::konst(2))]);
+        let by_const = BTreeMap::from([(Name::from("u"), Level::konst(2))]);
         assert_eq!(
             u().succ().unwrap().join(&v()).subst(&by_const).unwrap(),
             v().join(&Level::konst(3))

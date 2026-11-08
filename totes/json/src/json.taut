@@ -1,0 +1,503 @@
+import std::Base
+import std::prelude::Affine
+import std::prelude::Shared
+import text::text
+
+// JSON values (RFC 8259) and their text. A number is kept as the text it was
+// written as. Positions are UTF-8 bytes. Loops run over positions, so a long
+// string or array does not deepen the stack; only nesting does.
+
+pub(open) enum Json {
+  JNull
+  JBool(Bool)
+  JNum(Text)
+  JStr(Text)
+  JArr(List(Json))
+  JObj(List(Text × Json))
+}
+
+// --- Reading fields -------------------------------------------------------
+
+// The value of the first field `key` of an object; `None` for anything else.
+pub fn json_get(v: Json, key: Text): Option(Json) {
+  match v {
+    JObj(fields) => {
+      var rest := fields
+      var found: Option(Json) := None
+      var running := true
+      while running {
+        match rest {
+          Nil => {
+            running := false
+          }
+          Cons(#(k, x), more) => {
+            if text_same(k, key) {
+              found := Some(x)
+              running := false
+            } else {
+              rest := more
+            }
+          }
+        }
+      }
+      found
+    }
+    _ => None
+  }
+}
+
+// The field at the path `keys` of `v`.
+pub fn json_at(v: Json, keys: List(Text)): Option(Json) {
+  match keys {
+    Nil => Some(v)
+    Cons(k, rest) => match json_get(v, k) {
+      None => None
+      Some(x) => json_at(x, rest)
+    }
+  }
+}
+
+pub fn json_str(v: Option(Json)): Option(Text) {
+  match v {
+    Some(JStr(s)) => Some(s)
+    _ => None
+  }
+}
+
+pub fn json_num(v: Option(Json)): Option(Text) {
+  match v {
+    Some(JNum(n)) => Some(n)
+    _ => None
+  }
+}
+
+pub fn json_arr(v: Option(Json)): List(Json) {
+  match v {
+    Some(JArr(xs)) => xs
+    _ => Nil
+  }
+}
+
+// --- Parsing --------------------------------------------------------------
+
+pub(open) struct JsonError {
+  at: u64
+  message: Text
+}
+
+fn jbyte(t: Text, i: u64): u64 {
+  match Text::byte(t, i) {
+    None => 0
+    Some(b) => U64::of_u8(b)
+  }
+}
+
+fn jfail<A>(at: u64, message: Text): Result(A, JsonError) {
+  Err(JsonError { at: at, message: message })
+}
+
+fn skip_ws(t: Text, at: u64): u64 {
+  var i := at
+  var running := true
+  while running {
+    let b := jbyte(t, i)
+    if i < Text::len(t) && (b == 32 || b == 9 || b == 10 || b == 13) {
+      i := i + 1
+    } else {
+      running := false
+    }
+  }
+  i
+}
+
+// The value of the whole text `t`, with only white space around it.
+pub fn json_parse(t: Text): Result(Json, JsonError) {
+  match parse_value(t, skip_ws(t, 0)) {
+    Err(e) => Err(e)
+    Ok(#(v, next)) => {
+      let end := skip_ws(t, next)
+      if end == Text::len(t) {
+        Ok(v)
+      } else {
+        jfail(end, "trailing content")
+      }
+    }
+  }
+}
+
+fn literal(t: Text, at: u64, word: Text, v: Json): Result(Json × u64, JsonError) {
+  match Text::slice(t, at, at + Text::len(word)) {
+    Some(w) => if text_same(w, word) {
+      Ok(#(v, at + Text::len(word)))
+    } else {
+      jfail(at, "unexpected word")
+    }
+    None => jfail(at, "unexpected end")
+  }
+}
+
+fn parse_value(t: Text, at: u64): Result(Json × u64, JsonError) {
+  let b := jbyte(t, at)
+  if at >= Text::len(t) {
+    jfail(at, "unexpected end")
+  } else if b == 123 {
+    parse_object(t, at + 1)
+  } else if b == 91 {
+    parse_array(t, at + 1)
+  } else if b == 34 {
+    match parse_string(t, at + 1) {
+      Err(e) => Err(e)
+      Ok(#(s, next)) => Ok(#(JStr(s), next))
+    }
+  } else if b == 116 {
+    literal(t, at, "true", JBool(true))
+  } else if b == 102 {
+    literal(t, at, "false", JBool(false))
+  } else if b == 110 {
+    literal(t, at, "null", JNull)
+  } else {
+    parse_number(t, at)
+  }
+}
+
+fn is_number_byte(b: u64): Bool {
+  (b >= 48 && b <= 57) || b == 45 || b == 43 || b == 46 || b == 101 || b == 69
+}
+
+fn parse_number(t: Text, at: u64): Result(Json × u64, JsonError) {
+  var i := at
+  while i < Text::len(t) && is_number_byte(jbyte(t, i)) {
+    i := i + 1
+  }
+  if i == at {
+    jfail(at, "unexpected character")
+  } else {
+    Ok(#(JNum(lk_text_slice(t, at, i)), i))
+  }
+}
+
+pub fn lk_text_slice(t: Text, start: u64, end: u64): Text {
+  match Text::slice(t, start, end) {
+    None => ""
+    Some(s) => s
+  }
+}
+
+fn hex_digit(b: u64): Option(u64) {
+  if b >= 48 && b <= 57 {
+    Some(b - 48)
+  } else if b >= 97 && b <= 102 {
+    Some(b - 87)
+  } else if b >= 65 && b <= 70 {
+    Some(b - 55)
+  } else {
+    None
+  }
+}
+
+// The four hex digits at `at`.
+fn hex4(t: Text, at: u64): Option(u64) {
+  var n: u64 := 0
+  var i: u64 := 0
+  var ok := true
+  while ok && i < 4 {
+    match hex_digit(jbyte(t, at + i)) {
+      None => {
+        ok := false
+      }
+      Some(d) => {
+        n := n * 16 + d
+        i := i + 1
+      }
+    }
+  }
+  if ok && at + 4 <= Text::len(t) {
+    Some(n)
+  } else {
+    None
+  }
+}
+
+// A string's contents after its opening quote: the text and the position
+// after the closing quote.
+fn parse_string(t: Text, at: u64): Result(Text × u64, JsonError) {
+  var b := Buf::new()
+  var start := at
+  var i := at
+  var err: Option(JsonError) := None
+  var running := true
+  while running {
+    if i >= Text::len(t) {
+      err := Some(JsonError { at: i, message: "unterminated string" })
+      running := false
+    } else {
+      let c := jbyte(t, i)
+      if c == 34 {
+        Buf::push(&mut b, &lk_text_slice(t, start, i))
+        running := false
+      } else if c == 92 {
+        Buf::push(&mut b, &lk_text_slice(t, start, i))
+        let e := jbyte(t, i + 1)
+        if e == 117 {
+          match hex4(t, i + 2) {
+            None => {
+              err := Some(JsonError { at: i, message: "bad \\u escape" })
+              running := false
+            }
+            Some(hi) => if hi >= 55296 && hi < 56320 && jbyte(t, i + 6) == 92 && jbyte(t, i + 7) == 117 {
+              match hex4(t, i + 8) {
+                Some(lo) => if lo >= 56320 && lo < 57344 {
+                  Buf::push(&mut b, &text_code_point(Nat::of_u64(65536 + (hi - 55296) * 1024 + (lo - 56320))))
+                  i := i + 12
+                } else {
+                  Buf::push(&mut b, &text_code_point(65533))
+                  i := i + 6
+                }
+                None => {
+                  Buf::push(&mut b, &text_code_point(65533))
+                  i := i + 6
+                }
+              }
+            } else if hi >= 55296 && hi < 57344 {
+              Buf::push(&mut b, &text_code_point(65533))
+              i := i + 6
+            } else {
+              Buf::push(&mut b, &text_code_point(Nat::of_u64(hi)))
+              i := i + 6
+            }
+          }
+        } else {
+          let out := if e == 34 {
+            "\""
+          } else if e == 92 {
+            "\\"
+          } else if e == 47 {
+            "/"
+          } else if e == 98 {
+            text_code_point(8)
+          } else if e == 102 {
+            text_code_point(12)
+          } else if e == 110 {
+            "\n"
+          } else if e == 114 {
+            "\r"
+          } else if e == 116 {
+            "\t"
+          } else {
+            ""
+          }
+          if text_same(out, "") {
+            err := Some(JsonError { at: i, message: "bad escape" })
+            running := false
+          } else {
+            Buf::push(&mut b, &out)
+            i := i + 2
+          }
+        }
+        start := i
+      } else {
+        i := i + 1
+      }
+    }
+  }
+  let text := Text::of(b)
+  match err {
+    Some(e) => Err(e)
+    None => Ok(#(text, i + 1))
+  }
+}
+
+fn parse_array(t: Text, at: u64): Result(Json × u64, JsonError) {
+  var items: List(Json) := Nil
+  var i := skip_ws(t, at)
+  var result: Option(Result(Json × u64, JsonError)) := None
+  if jbyte(t, i) == 93 {
+    result := Some(Ok(#(JArr(Nil), i + 1)))
+  }
+  while pending(result) {
+    match parse_value(t, skip_ws(t, i)) {
+      Err(e) => {
+        result := Some(Err(e))
+      }
+      Ok(#(v, next)) => {
+        items := Cons(v, items)
+        let j := skip_ws(t, next)
+        let c := jbyte(t, j)
+        if c == 44 {
+          i := j + 1
+        } else if c == 93 {
+          result := Some(Ok(#(JArr(List::reverse(items)), j + 1)))
+        } else {
+          result := Some(jfail(j, "expected , or ]"))
+        }
+      }
+    }
+  }
+  match result {
+    Some(r) => r
+    None => jfail(i, "unterminated array")
+  }
+}
+
+fn parse_object(t: Text, at: u64): Result(Json × u64, JsonError) {
+  var fields: List(Text × Json) := Nil
+  var i := skip_ws(t, at)
+  var result: Option(Result(Json × u64, JsonError)) := None
+  if jbyte(t, i) == 125 {
+    result := Some(Ok(#(JObj(Nil), i + 1)))
+  }
+  while pending(result) {
+    let k := skip_ws(t, i)
+    if jbyte(t, k) != 34 {
+      result := Some(jfail(k, "expected a key"))
+    } else {
+      match parse_string(t, k + 1) {
+        Err(e) => {
+          result := Some(Err(e))
+        }
+        Ok(#(key, after)) => {
+          let colon := skip_ws(t, after)
+          if jbyte(t, colon) != 58 {
+            result := Some(jfail(colon, "expected :"))
+          } else {
+            match parse_value(t, skip_ws(t, colon + 1)) {
+              Err(e) => {
+                result := Some(Err(e))
+              }
+              Ok(#(v, next)) => {
+                fields := Cons(#(key, v), fields)
+                let j := skip_ws(t, next)
+                let c := jbyte(t, j)
+                if c == 44 {
+                  i := j + 1
+                } else if c == 125 {
+                  result := Some(Ok(#(JObj(List::reverse(fields)), j + 1)))
+                } else {
+                  result := Some(jfail(j, "expected , or }"))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  match result {
+    Some(r) => r
+    None => jfail(i, "unterminated object")
+  }
+}
+
+// --- Writing --------------------------------------------------------------
+
+pub fn json_text(v: Json): Text {
+  var b := Buf::new()
+  json_write(&mut b, v)
+  Text::of(b)
+}
+
+fn hex_char(n: u64): Text {
+  lk_text_slice("0123456789abcdef", n, n + 1)
+}
+
+pub fn json_write_string(&mut b: Buf, s: Text): Unit {
+  Buf::push(&mut b, &"\"")
+  var start: u64 := 0
+  var i: u64 := 0
+  while i < Text::len(s) {
+    let c := jbyte(s, i)
+    if c == 34 || c == 92 || c < 32 {
+      Buf::push(&mut b, &lk_text_slice(s, start, i))
+      let esc := if c == 34 {
+        "\\\""
+      } else if c == 92 {
+        "\\\\"
+      } else if c == 10 {
+        "\\n"
+      } else if c == 13 {
+        "\\r"
+      } else if c == 9 {
+        "\\t"
+      } else {
+        concat("\\u00", concat(hex_char(div(c, 16)), hex_char(mod(c, 16))))
+      }
+      Buf::push(&mut b, &esc)
+      start := i + 1
+    }
+    i := i + 1
+  }
+  Buf::push(&mut b, &lk_text_slice(s, start, i))
+  Buf::push(&mut b, &"\"")
+}
+
+pub fn json_write(&mut b: Buf, v: Json): Unit {
+  match v {
+    JNull => Buf::push(&mut b, &"null")
+    JBool(x) => if x {
+      Buf::push(&mut b, &"true")
+    } else {
+      Buf::push(&mut b, &"false")
+    }
+    JNum(n) => Buf::push(&mut b, &n)
+    JStr(s) => json_write_string(&mut b, s)
+    JArr(items) => {
+      Buf::push(&mut b, &"[")
+      var rest := items
+      var first := true
+      var running := true
+      while running {
+        match rest {
+          Nil => {
+            running := false
+          }
+          Cons(x, more) => {
+            if first {
+              first := false
+            } else {
+              Buf::push(&mut b, &",")
+            }
+            json_write(&mut b, x)
+            rest := more
+          }
+        }
+      }
+      Buf::push(&mut b, &"]")
+    }
+    JObj(fields) => {
+      Buf::push(&mut b, &"{")
+      var rest := fields
+      var first := true
+      var running := true
+      while running {
+        match rest {
+          Nil => {
+            running := false
+          }
+          Cons(#(k, x), more) => {
+            if first {
+              first := false
+            } else {
+              Buf::push(&mut b, &",")
+            }
+            json_write_string(&mut b, k)
+            Buf::push(&mut b, &":")
+            json_write(&mut b, x)
+            rest := more
+          }
+        }
+      }
+      Buf::push(&mut b, &"}")
+    }
+  }
+}
+
+pub fn text_same(a: Text, b: Text): Bool {
+  Text::compare(a, b) == 0
+}
+
+fn pending<A>(o: Option(A)): Bool {
+  match o {
+    None => true
+    Some(x) => false
+  }
+}

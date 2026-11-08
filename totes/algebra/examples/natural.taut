@@ -4,22 +4,18 @@ import std::Nat
 pub def natural_addition(): AlgebraMonoid(
   0,
   Nat
-) := AlgebraMonoid::Mk(
-  0,
-  Nat,
+) := AlgebraMonoid::Mk(<u: 0, A: Nat>,
   Zero,
   Nat::add,
   x => y => z => algebra_from_eq(Nat::add_assoc(x, y, z)),
   x => algebra_from_eq(Nat::add_zero_left(x)),
-  x => AlgebraRefl(0, Nat, x)
+  x => AlgebraRefl(<u: 0, A: Nat, a: x>)
 )
 
 pub def natural_multiplication(): AlgebraMonoid(
   0,
   Nat
-) := AlgebraMonoid::Mk(
-  0,
-  Nat,
+) := AlgebraMonoid::Mk(<u: 0, A: Nat>,
   Succ(Zero),
   Nat::mul,
   x => y => z => algebra_from_eq(Nat::mul_assoc(x, y, z)),
@@ -30,15 +26,15 @@ pub def natural_multiplication(): AlgebraMonoid(
 pub theorem addition_unit(): AlgebraEq(
   0,
   Nat,
-  algebra_unit(0, Nat, natural_addition),
+  algebra_unit(<u: 0, A: Nat>, natural_addition),
   Zero
-) { AlgebraRefl(0, Nat, Zero) }
+) { AlgebraRefl(<u: 0, A: Nat, a: Zero>) }
 pub theorem multiplication_unit(): AlgebraEq(
   0,
   Nat,
-  algebra_unit(0, Nat, natural_multiplication),
+  algebra_unit(<u: 0, A: Nat>, natural_multiplication),
   Succ(Zero)
-) { AlgebraRefl(0, Nat, Succ(Zero)) }
+) { AlgebraRefl(<u: 0, A: Nat, a: Succ(Zero)>) }
 
 pub def additive_zero_map(): AlgebraHom(
   0,
@@ -47,16 +43,10 @@ pub def additive_zero_map(): AlgebraHom(
   Nat,
   natural_addition,
   natural_addition
-) := AlgebraHom::Mk(
-  0,
-  0,
-  Nat,
-  Nat,
-  natural_addition,
-  natural_addition,
+) := AlgebraHom::Mk(<u: 0, v: 0, A: Nat, B: Nat, source: natural_addition, target: natural_addition>,
   x => Zero,
-  AlgebraRefl(0, Nat, Zero),
-  x => y => AlgebraRefl(0, Nat, Zero)
+  AlgebraRefl(<u: 0, A: Nat, a: Zero>),
+  x => y => AlgebraRefl(<u: 0, A: Nat, a: Zero>)
 )
 
 pub theorem compose_zero_identity(
@@ -64,29 +54,14 @@ pub theorem compose_zero_identity(
 ): AlgebraEq(
   0,
   Nat,
-  algebra_map(
-    0,
-    0,
-    Nat,
-    Nat,
-    natural_addition,
-    natural_addition,
-    algebra_compose(
-      0,
-      0,
-      0,
-      Nat,
-      Nat,
-      Nat,
-      natural_addition,
-      natural_addition,
-      natural_addition,
+  algebra_map(<u: 0, v: 0, A: Nat, B: Nat, source: natural_addition, target: natural_addition>,
+    algebra_compose(<u: 0, v: 0, w: 0, A: Nat, B: Nat, C: Nat, source: natural_addition, middle: natural_addition, target: natural_addition>,
       additive_zero_map,
-      algebra_identity(0, Nat, natural_addition)
+      algebra_identity(<u: 0, A: Nat>, natural_addition)
     )
   )(n),
   Zero
-) { AlgebraRefl(0, Nat, Zero) }
+) { AlgebraRefl(<u: 0, A: Nat, a: Zero>) }
 
 import "../src/Linear.taut"
 import "../src/Equality.taut"
@@ -97,10 +72,7 @@ import "../src/Semiring.taut"
 import std::Base
 
 pub theorem natural_semiring(): AlgebraSemiring(Nat, natural_addition, natural_multiplication) {
-  AlgebraSemiring::Mk(
-    Nat,
-    natural_addition,
-    natural_multiplication,
+  AlgebraSemiring::Mk(<R: Nat, addition: natural_addition, multiplication: natural_multiplication>,
     x => y => algebra_from_eq(Nat::add_comm(x, y)),
     x => y => z => algebra_from_eq(Nat::mul_add_distrib(x, y, z)),
     x => y => z => algebra_from_eq(Nat::mul_add_distrib_right(x, y, z)),
@@ -121,8 +93,7 @@ pub fn natural_matrix(
 pub theorem natural_rectangular_action(): AlgebraEq(
   0,
   Nat,
-  algebra_matrix_apply(
-    Nat,
+  algebra_matrix_apply(<R: Nat>,
     natural_addition,
     natural_multiplication,
     2,
@@ -132,14 +103,13 @@ pub theorem natural_rectangular_action(): AlgebraEq(
   )(AlgebraNext(1, AlgebraFirst(0))),
   9
 ) {
-  AlgebraRefl(0, Nat, 9)
+  AlgebraRefl(<u: 0, A: Nat, a: 9>)
 }
 
 pub theorem natural_rectangular_product(): AlgebraEq(
   0,
   Nat,
-  algebra_matrix_product(
-    Nat,
+  algebra_matrix_product(<R: Nat>,
     natural_addition,
     natural_multiplication,
     2,
@@ -150,23 +120,22 @@ pub theorem natural_rectangular_product(): AlgebraEq(
   )(AlgebraNext(1, AlgebraFirst(0)), AlgebraNext(3, AlgebraNext(2, AlgebraFirst(1)))),
   38
 ) {
-  AlgebraRefl(0, Nat, 38)
+  AlgebraRefl(<u: 0, A: Nat, a: 38>)
 }
 
 pub theorem natural_empty_sum(): AlgebraEq(
   0,
   Nat,
-  algebra_sum(Nat, natural_addition, 0, index => 7),
+  algebra_sum(<R: Nat>, natural_addition, 0, index => 7),
   0
 ) {
-  AlgebraRefl(0, Nat, 0)
+  AlgebraRefl(<u: 0, A: Nat, a: 0>)
 }
 
 pub theorem natural_empty_inner_product(): AlgebraEq(
   0,
   Nat,
-  algebra_matrix_product(
-    Nat,
+  algebra_matrix_product(<R: Nat>,
     natural_addition,
     natural_multiplication,
     1,
@@ -177,7 +146,7 @@ pub theorem natural_empty_inner_product(): AlgebraEq(
   )(AlgebraFirst(0), AlgebraFirst(0)),
   0
 ) {
-  AlgebraRefl(0, Nat, 0)
+  AlgebraRefl(<u: 0, A: Nat, a: 0>)
 }
 
 pub theorem natural_matrix_is_linear(
@@ -189,8 +158,7 @@ pub theorem natural_matrix_is_linear(
   natural_multiplication,
   columns,
   rows,
-  values => algebra_matrix_apply(
-    Nat,
+  values => algebra_matrix_apply(<R: Nat>,
     natural_addition,
     natural_multiplication,
     rows,
@@ -210,17 +178,16 @@ pub theorem natural_matrix_is_linear(
 pub theorem natural_finite_sum(): AlgebraEq(
   0,
   Nat,
-  algebra_sum(Nat, natural_addition, 5, index => algebra_fin_value(5, index)),
+  algebra_sum(<R: Nat>, natural_addition, 5, index => algebra_fin_value(5, index)),
   10
 ) {
-  AlgebraRefl(0, Nat, 10)
+  AlgebraRefl(<u: 0, A: Nat, a: 10>)
 }
 
 pub theorem natural_matrix_addition(): AlgebraEq(
   0,
   Nat,
-  algebra_matrix_add(
-    Nat,
+  algebra_matrix_add(<R: Nat>,
     natural_addition,
     2,
     3,
@@ -229,14 +196,13 @@ pub theorem natural_matrix_addition(): AlgebraEq(
   )(AlgebraNext(1, AlgebraFirst(0)), AlgebraNext(2, AlgebraNext(1, AlgebraFirst(0)))),
   8
 ) {
-  AlgebraRefl(0, Nat, 8)
+  AlgebraRefl(<u: 0, A: Nat, a: 8>)
 }
 
 pub theorem natural_matrix_scaling(): AlgebraEq(
   0,
   Nat,
-  algebra_matrix_scale(
-    Nat,
+  algebra_matrix_scale(<R: Nat>,
     natural_multiplication,
     2,
     3,
@@ -245,5 +211,5 @@ pub theorem natural_matrix_scaling(): AlgebraEq(
   )(AlgebraNext(1, AlgebraFirst(0)), AlgebraNext(2, AlgebraNext(1, AlgebraFirst(0)))),
   12
 ) {
-  AlgebraRefl(0, Nat, 12)
+  AlgebraRefl(<u: 0, A: Nat, a: 12>)
 }

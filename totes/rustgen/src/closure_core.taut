@@ -5,7 +5,7 @@ pub fn rustgen_closure_append(
   left: List(RustgenBinding),
   right: List(RustgenBinding)
 ): List(RustgenBinding) {
-  match left: List(RustgenBinding) {
+  ⊢ List(RustgenBinding) from match left {
     Nil => right
     Cons(binding, rest) => Cons(binding, rustgen_closure_append(rest, right))
   }
@@ -15,7 +15,7 @@ pub fn rustgen_closure_reverse(
   bindings: List(RustgenBinding),
   done: List(RustgenBinding)
 ): List(RustgenBinding) {
-  match bindings: List(RustgenBinding) {
+  ⊢ List(RustgenBinding) from match bindings {
     Nil => done
     Cons(binding, rest) => rustgen_closure_reverse(rest, Cons(binding, done))
   }
@@ -26,9 +26,9 @@ pub fn rustgen_closure_visible(
   locals: List(RustgenBinding),
   seen: List(RustgenBinding)
 ): List(RustgenBinding) {
-  match locals: List(RustgenBinding) {
+  ⊢ List(RustgenBinding) from match locals {
     Nil => Nil
-    Cons(binding, rest) => match rustgen_find(binding.name, seen): List(RustgenBinding) {
+    Cons(binding, rest) => ⊢ List(RustgenBinding) from match rustgen_find(binding.name, seen) {
       Some(ty) => rustgen_closure_visible(rest, seen)
       None => Cons(binding, rustgen_closure_visible(rest, Cons(binding, seen)))
     }
@@ -41,17 +41,17 @@ pub fn rustgen_closure_parameters(
   locals: List(RustgenBinding),
   done: List(RustgenBinding)
 ): RustgenResult(List(RustgenBinding)) {
-  match names: RustgenResult(List(RustgenBinding)) {
-    Nil => match types: RustgenResult(List(RustgenBinding)) {
+  ⊢ RustgenResult(List(RustgenBinding)) from match names {
+    Nil => ⊢ RustgenResult(List(RustgenBinding)) from match types {
       Nil => RustgenOk(rustgen_closure_reverse(done, Nil))
       Cons(ty, rest) => RustgenErr("closure parameter count differs")
     }
-    Cons(name, rest) => match types: RustgenResult(List(RustgenBinding)) {
+    Cons(name, rest) => ⊢ RustgenResult(List(RustgenBinding)) from match types {
       Nil => RustgenErr("closure parameter count differs")
-      Cons(ty, more) => match rustgen_find(
+      Cons(ty, more) => ⊢ RustgenResult(List(RustgenBinding)) from match rustgen_find(
         name,
         rustgen_closure_append(done, locals)
-      ): RustgenResult(List(RustgenBinding)) {
+      ) {
         Some(existing) => RustgenErr("duplicate or shadowed closure parameter")
         None => rustgen_closure_parameters(
           rest,
@@ -66,9 +66,9 @@ pub fn rustgen_closure_parameters(
 
 mutual {
   pub fn rustgen_capture_concrete(k: Nat, ty: RustgenType): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match ty: Bool {
+      Succ(j) => ⊢ Bool from match ty {
         RustgenVar(name) => false
         RustgenMeta(name) => false
         RustgenNumber(id, value) => false
@@ -83,9 +83,9 @@ mutual {
     }
   }
   pub fn rustgen_capture_types(k: Nat, types: List(RustgenType)): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => false
-      Succ(j) => match types: Bool {
+      Succ(j) => ⊢ Bool from match types {
         Nil => true
         Cons(ty, rest) => rustgen_capture_concrete(j, ty) && rustgen_capture_types(j, rest)
       }
@@ -93,7 +93,7 @@ mutual {
   }
 }
 pub fn rustgen_captures_concrete(locals: List(RustgenBinding)): Bool {
-  match locals: Bool {
+  ⊢ Bool from match locals {
     Nil => true
     Cons(binding, rest) => rustgen_capture_concrete(
       10000,
@@ -104,9 +104,9 @@ pub fn rustgen_captures_concrete(locals: List(RustgenBinding)): Bool {
 
 mutual {
   pub fn rustgen_contains_callable(k: Nat, ty: RustgenType): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => true
-      Succ(j) => match ty: Bool {
+      Succ(j) => ⊢ Bool from match ty {
         RustgenCallable(params, result) => true
         RustgenApply(name, args) => rustgen_contains_callables(j, args)
         RustgenVar(name) => false
@@ -121,9 +121,9 @@ mutual {
     }
   }
   pub fn rustgen_contains_callables(k: Nat, types: List(RustgenType)): Bool {
-    match k: Bool {
+    ⊢ Bool from match k {
       Zero => true
-      Succ(j) => match types: Bool {
+      Succ(j) => ⊢ Bool from match types {
         Nil => false
         Cons(ty, rest) => rustgen_contains_callable(j, ty) || rustgen_contains_callables(j, rest)
       }

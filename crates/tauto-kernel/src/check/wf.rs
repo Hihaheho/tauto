@@ -20,13 +20,14 @@
 //! the proofs left out of the calls.
 
 use super::{Diagnostic, Entry, Kernel, T, Verdict};
+use crate::surface::Name;
 use crate::surface::{FnDecl, Stmt, TheoremDecl};
 use crate::surface::{TermKind, walk};
 use std::sync::Arc;
 use tauto_message::{Message, msg};
 
-fn var(n: &str, sp: tauto_parol::Span) -> T {
-    T::var(n, sp)
+fn var(n: impl Into<Name>, sp: tauto_parol::Span) -> T {
+    T::new(TermKind::Var(n.into()), sp)
 }
 
 fn app(f: T, args: Vec<T>) -> T {
@@ -43,11 +44,11 @@ fn app(f: T, args: Vec<T>) -> T {
     )
 }
 
-fn pi(name: Option<&str>, domain: T, result: T) -> T {
+fn pi(name: Option<&Name>, domain: T, result: T) -> T {
     let span = result.span;
     T::new(
         TermKind::Pi {
-            params: vec![(name.map(String::from), domain)],
+            params: vec![(name.cloned(), domain)],
             result: Box::new(result),
             effects: None,
         },
@@ -55,7 +56,7 @@ fn pi(name: Option<&str>, domain: T, result: T) -> T {
     )
 }
 
-fn lam(names: &[String], body: T) -> T {
+fn lam(names: &[Name], body: T) -> T {
     names.iter().rev().fold(body, |acc, n| {
         let span = acc.span;
         T::new(
@@ -69,8 +70,8 @@ fn lam(names: &[String], body: T) -> T {
     })
 }
 
-fn primed(n: &str) -> String {
-    format!("{n}'")
+fn primed(n: &str) -> Name {
+    format!("{n}'").into()
 }
 
 impl Kernel {
@@ -107,18 +108,27 @@ impl Kernel {
         };
         if let Some(listed) = &f.generates {
             let made = [("theorem".to_string(), format!("{}::eq", f.name))];
-            let start = msg!("kernel-wf-list-mismatch", name = &f.name).to_string();
-            if let Some(why) = crate::generated::mismatch(&start, &listed.items, &made) {
+            let start = msg!("kernel-wf-list-mismatch", name = (&f.name).to_string());
+            if let Some(why) = crate::generated::mismatch(start, &listed.items, &made) {
                 let mut d = Diagnostic::new(why, Some(sp));
                 d.fix = Some(crate::generated::fix(listed, &made));
                 return Err(d);
             }
         }
+        let mut required = Vec::new();
         for needed in ["wf_fix", "wf_fix_eq", "wf_rel_lt", "wf_rel_wf"] {
-            if !self.globals.contains_key(needed) {
+            let Some(reference) = self
+                .resolver
+                .source_reference(needed)
+                .filter(|reference| self.globals.contains_key(reference))
+            else {
                 return fail(msg!("kernel-wf-needs", name = needed));
-            }
+            };
+            required.push(reference);
         }
+        let [wf_fix, wf_fix_eq, wf_rel_lt, wf_rel_wf] = required.as_slice() else {
+            unreachable!()
+        };
         if f.params.is_empty() {
             return fail(msg!("kernel-wf-no-param"));
         }
@@ -136,24 +146,31 @@ impl Kernel {
             }
         }
         let (x, a) = (f.params[0].clone(), types[0].clone());
-        let rest: Vec<(String, T)> = f.params[1..]
+        let rest: Vec<(Name, T)> = f.params[1..]
             .iter()
             .cloned()
             .zip(types[1..].iter().cloned())
             .collect();
         let generics: Vec<T> = f.generics.iter().map(|g| var(g, sp)).collect();
-        let step = format!("{}@step", f.name);
+        let step = self.resolver.generated(
+            &f.name,
+            tauto_surface::identity::Generation::WellFoundedStep,
+        );
+        let equation = self.resolver.generated(
+            &f.name,
+            tauto_surface::identity::Generation::WellFoundedEquation,
+        );
         let ih = "ih'".to_string();
         let lt = |y: &T, x: &T| -> T {
             app(
-                var("wf_rel_lt", sp),
+                var(wf_rel_lt, sp),
                 vec![a.clone(), w.clone(), y.clone(), x.clone()],
             )
         };
 
         // `t` with the parameters replaced: `x` by `new_x`, the later
         // parameters by `new_rest`.
-        let rename = |this: &mut Self, t: &T, new_x: &str, new_rest: &[String]| -> T {
+        let rename = |this: &mut Self, t: &T, new_x: &str, new_rest: &[Name]| -> T {
             let mut t = this.subst(t, &x, &var(new_x, sp));
             for ((p, _), q) in rest.iter().zip(new_rest) {
                 t = this.subst(&t, p, &var(q, sp));
@@ -162,10 +179,10 @@ impl Kernel {
         };
         // `∀ q: P[y/x, …]. B[y/x, …]` over the later parameters, for `y`.
         let tail = |this: &mut Self, y: &str| -> T {
-            let qs: Vec<String> = rest.iter().map(|(p, _)| primed(p)).collect();
+            let qs: Vec<Name> = rest.iter().map(|(p, _)| primed(p)).collect();
             let mut body = rename(this, result, y, &qs);
             for (i, (_, ty)) in rest.iter().enumerate().rev() {
-                let before: Vec<String> = qs[..i].to_vec();
+                let before: Vec<Name> = qs[..i].to_vec();
                 let mut domain = this.subst(ty, &x, &var(y, sp));
                 for ((p, _), q) in rest.iter().zip(&before) {
                     domain = this.subst(&domain, p, &var(q, sp));
@@ -193,9 +210,9 @@ impl Kernel {
                         Diagnostic::new(
                             msg!(
                                 "kernel-wf-call-arity",
-                                name = &f.name,
+                                name = (&f.name).to_string(),
                                 count = f.params.len(),
-                                param = &x
+                                param = (&x).to_string()
                             ),
                             Some(t.span),
                         )
@@ -208,7 +225,10 @@ impl Kernel {
             }
             TermKind::Var(n) if *n == f.name => {
                 bad.get_or_insert_with(|| {
-                    Diagnostic::new(msg!("kernel-wf-only-called", name = &f.name), Some(t.span))
+                    Diagnostic::new(
+                        msg!("kernel-wf-only-called", name = (&f.name).to_string()),
+                        Some(t.span),
+                    )
                 });
             }
             _ => {}
@@ -217,7 +237,7 @@ impl Kernel {
             return Err(d);
         }
 
-        let mut params = vec![x.clone(), ih.clone()];
+        let mut params = vec![x.clone(), crate::surface::Name::Spelled(ih.clone())];
         params.extend(rest.iter().map(|(p, _)| p.clone()));
         let mut param_types = vec![Some(a.clone()), Some(ih_ty)];
         param_types.extend(rest.iter().map(|(_, t)| Some(t.clone())));
@@ -226,6 +246,7 @@ impl Kernel {
             vis: Default::default(),
             generates: None,
             name: step.clone(),
+            generic_types: f.generic_types.clone(),
             generics: f.generics.clone(),
             rows: f.rows.clone(),
             bounds: f.bounds.clone(),
@@ -243,8 +264,8 @@ impl Kernel {
         };
 
         let motive = lam(&[primed(&x)], tail(self, &primed(&x)));
-        let relation = app(var("wf_rel_lt", sp), vec![a.clone(), w.clone()]);
-        let proof_wf = app(var("wf_rel_wf", sp), vec![a.clone(), w.clone()]);
+        let relation = app(var(wf_rel_lt, sp), vec![a.clone(), w.clone()]);
+        let proof_wf = app(var(wf_rel_wf, sp), vec![a.clone(), w.clone()]);
         let step_fn = app(var(&step, sp), generics.clone());
         let fixed = |extra: Vec<T>| -> T {
             let mut args = vec![
@@ -254,7 +275,7 @@ impl Kernel {
                 proof_wf.clone(),
             ];
             args.extend(extra);
-            app(var("wf_fix", sp), args)
+            app(var(wf_fix, sp), args)
         };
         let rest_vars: Vec<T> = rest.iter().map(|(p, _)| var(p, sp)).collect();
         let value = app(fixed(vec![step_fn.clone(), var(&x, sp)]), rest_vars.clone());
@@ -263,6 +284,7 @@ impl Kernel {
             vis: Default::default(),
             generates: None,
             name: f.name.clone(),
+            generic_types: f.generic_types.clone(),
             generics: f.generics.clone(),
             rows: f.rows.clone(),
             bounds: f.bounds.clone(),
@@ -279,14 +301,15 @@ impl Kernel {
             body: value,
         };
 
-        let qs: Vec<String> = rest.iter().map(|(p, _)| primed(p)).collect();
+        // The unfolding equation.
+        let qs: Vec<Name> = rest.iter().map(|(p, _)| primed(p)).collect();
         let recur = |ys: &str| -> T {
             let mut args = generics.clone();
             args.push(var(ys, sp));
             args.extend(qs.iter().map(|q| var(q, sp)));
             app(var(&f.name, sp), args)
         };
-        let mut names = vec![y.clone(), "r'".to_string()];
+        let mut names = vec![y.clone(), crate::surface::Name::Spelled("r'".to_string())];
         names.extend(qs.iter().cloned());
         let ih_value = lam(&names, recur(&y));
         let call_f = |args: Vec<T>| -> T {
@@ -301,7 +324,7 @@ impl Kernel {
         step_args.push(ih_value);
         step_args.extend(rest_vars.clone());
         let statement = app(
-            var("Eq", sp),
+            var(&tauto_surface::bindings::library_name("Eq"), sp),
             vec![
                 result.clone(),
                 call_f(f_args),
@@ -312,9 +335,9 @@ impl Kernel {
         let at_rest = app(value_at.clone(), rest_vars.clone());
         let z = "z'".to_string();
         let transport = lam(
-            std::slice::from_ref(&z),
+            std::slice::from_ref(&Name::from(&z)),
             app(
-                var("Eq", sp),
+                var(&tauto_surface::bindings::library_name("Eq"), sp),
                 vec![
                     result.clone(),
                     at_rest.clone(),
@@ -331,28 +354,27 @@ impl Kernel {
                 app(var(&step, sp), generics.clone()),
                 var(&x, sp),
             ];
-            app(var("wf_fix_eq", sp), args)
+            app(var(wf_fix_eq, sp), args)
         };
         let proof = app(
-            var("Eq::subst", sp),
+            var(&tauto_surface::bindings::library_name("Eq::subst"), sp),
             vec![
                 transport,
                 unfolding,
-                app(var("Refl", sp), vec![result.clone(), at_rest]),
+                app(
+                    var(&tauto_surface::bindings::library_name("Refl"), sp),
+                    vec![result.clone(), at_rest],
+                ),
             ],
         );
-        let mut eq_params: Vec<(String, T)> = f
-            .generics
-            .iter()
-            .map(|g| (g.clone(), var("Type", sp)))
-            .collect();
+        let mut eq_params: Vec<(Name, T)> = f.generic_parameters();
         eq_params.push((x.clone(), a.clone()));
         eq_params.extend(rest.iter().cloned());
         let eq = TheoremDecl {
             budget: None,
             vis: Default::default(),
             decreasing_by: None,
-            name: format!("{}::eq", f.name),
+            name: equation,
             implicit: f.generics.len(),
             params: eq_params,
             ty: statement,

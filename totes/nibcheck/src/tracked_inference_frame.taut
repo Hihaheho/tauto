@@ -408,10 +408,10 @@ pub theorem inference_class_method_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_class_method(j, c, term, env, span, base, name, cn, found)) {
-  match found: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     inference_class_method(j, c, term, env, span, base, name, cn, found)
-  ) {
+  ) from match found {
     true => tracked_run_read(
       c,
       ck_rewrap1(ck_lookup(c, cat3(cn, ".", name), env, span)),
@@ -480,7 +480,10 @@ pub theorem inference_field_base_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_field_base(j, c, term, env, span, base, name, r#class)) {
-  match r#class: TrackedRunFrame(c, inference_field_base(j, c, term, env, span, base, name, r#class)) {
+  ⊢ TrackedRunFrame(
+    c,
+    inference_field_base(j, c, term, env, span, base, name, r#class)
+  ) from match r#class {
     None => tracked_run_bind(
       Ty,
       Ty,
@@ -525,14 +528,13 @@ pub theorem inference_use_ck_app_in_tracked(
   env: List(Local),
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_app_in(k, c, term, function, arguments, env)
-) {
+): TrackedRunFrame(c, ck_app_in(k, c, term, function, arguments, env)) {
   And::left(
     And::right(
       And::right(
-        And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+        And::right(
+          And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+        )
       )
     )
   )(c, term, function, arguments, env, ordered)
@@ -546,10 +548,7 @@ pub theorem inference_use_ck_lambda_in_tracked(
   env: List(Local),
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_lambda_in(k, c, lam, borrows, env)
-) {
+): TrackedRunFrame(c, ck_lambda_in(k, c, lam, borrows, env)) {
   And::left(
     And::right(
       And::right(
@@ -558,7 +557,9 @@ pub theorem inference_use_ck_lambda_in_tracked(
             And::right(
               And::right(
                 And::right(
-                  And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+                  And::right(
+                    And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+                  )
                 )
               )
             )
@@ -597,12 +598,7 @@ pub theorem run_expect_after_frame_tracked(
   tracked_run_read(
     c,
     run_expect_after(c, a, b, span, what, fits),
-    frame_error_if_ok(
-      c,
-      ck_expect_message(ck_shown(c, a), ck_shown(c, b), what),
-      span,
-      not(fits)
-    ),
+    frame_error_if_ok(c, ck_expect_message(ck_shown(c, a), ck_shown(c, b), what), span, not(fits)),
     frame_error_if_ok_tracked(
       c,
       ck_expect_message(ck_shown(c, a), ck_shown(c, b), what),
@@ -657,7 +653,7 @@ pub theorem inference_bind_scope_frame_tracked<A: Type, B: Type>(
     next
   ). TrackedRunFrame(next, k(v, next, env))
 ): TrackedRunFrame(c, inference_bind_scope(k, m)) {
-  match m: TrackedRunFrame(c, inference_bind_scope(k, m)) {
+  ⊢ TrackedRunFrame(c, inference_bind_scope(k, m)) from match m {
     mut2(v, next, env) => {
       let h: TrackedRunFrame(next, k(v, next, env)) := hk(v, next, env, And::left(hm))
       AndIntro(
@@ -676,12 +672,11 @@ pub theorem inference_use_ck_block_in_tracked(
   last: Ty,
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedScopeFrame(
-  c,
-  ck_block_in(k, c, stmts, env, stopped, last)
-) {
+): TrackedScopeFrame(c, ck_block_in(k, c, stmts, env, stopped, last)) {
   And::left(
-    And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+    And::right(
+      And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+    )
   )(c, stmts, env, stopped, last, ordered)
 }
 
@@ -711,7 +706,7 @@ pub theorem argument_terms_frame_tracked(
   ). ∀ ordered: CkOrdered(next). TrackedRunFrame(next, ck_expect_args(rest, next, ps, args)),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, argument_terms(a, rest, c, p, more, args)) {
-  match args: TrackedRunFrame(c, argument_terms(a, rest, c, p, more, args)) {
+  ⊢ TrackedRunFrame(c, argument_terms(a, rest, c, p, more, args)) from match args {
     Nil => tracked_run_return(c, Star, ordered)
     Cons(at, atail) => tracked_run_bind(
       Unit,
@@ -742,7 +737,7 @@ pub theorem argument_params_frame_tracked(
   ). ∀ ordered: CkOrdered(next). TrackedRunFrame(next, ck_expect_args(rest, next, ps, args)),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, argument_params(a, rest, c, args, ps)) {
-  match ps: TrackedRunFrame(c, argument_params(a, rest, c, args, ps)) {
+  ⊢ TrackedRunFrame(c, argument_params(a, rest, c, args, ps)) from match ps {
     Nil => tracked_run_return(c, Star, ordered)
     Cons(p, more) => argument_terms_frame_tracked(a, rest, c, p, more, args, ih, ordered)
   }
@@ -755,7 +750,7 @@ pub theorem ck_expect_args_run_frame_tracked(
   args: List(SurfaceTerm),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, ck_expect_args(tys, c, ps, args)) {
-  match tys: TrackedRunFrame(c, ck_expect_args(tys, c, ps, args)) {
+  ⊢ TrackedRunFrame(c, ck_expect_args(tys, c, ps, args)) from match tys {
     Nil => tracked_run_return(c, Star, ordered)
     Cons(a, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => TrackedRunFrame(c, z),
@@ -789,7 +784,7 @@ pub theorem application_effect_arity_frame_tracked(
   bad: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, application_effect_arity(c, eff, types, args, span, ps, bad)) {
-  match bad: TrackedRunFrame(c, application_effect_arity(c, eff, types, args, span, ps, bad)) {
+  ⊢ TrackedRunFrame(c, application_effect_arity(c, eff, types, args, span, ps, bad)) from match bad {
     true => tracked_run_read(
       c,
       ck_rewrap1(
@@ -875,10 +870,10 @@ pub theorem application_effect_inst_frame_tracked(
   inst: Ty,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, application_effect_inst(c, eff, types, args, span, original, inst)) {
-  match inst: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     application_effect_inst(c, eff, types, args, span, original, inst)
-  ) {
+  ) from match inst {
     TyInt(pat_w) => tracked_run_return(c, original, ordered)
     TyBool => tracked_run_return(c, original, ordered)
     TyText => tracked_run_return(c, original, ordered)
@@ -934,7 +929,7 @@ pub theorem application_effect_found_frame_tracked(
   found: Option(EffectSig),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, application_effect_found(c, eff, types, args, span, found)) {
-  match found: TrackedRunFrame(c, application_effect_found(c, eff, types, args, span, found)) {
+  ⊢ TrackedRunFrame(c, application_effect_found(c, eff, types, args, span, found)) from match found {
     None => tracked_run_bind(
       Unit,
       Ty,
@@ -1014,10 +1009,7 @@ pub theorem inference_use_ck_handle_in_tracked(
   env: List(Local),
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_handle_in(k, c, body, handlers, env)
-) {
+): TrackedRunFrame(c, ck_handle_in(k, c, body, handlers, env)) {
   And::left(
     And::right(
       And::right(
@@ -1032,7 +1024,9 @@ pub theorem inference_use_ck_handle_in_tracked(
                         And::right(
                           And::right(
                             And::right(
-                              And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+                              And::right(
+                                And::right(And::right(And::right(And::right(And::right(ih)))))
+                              )
                             )
                           )
                         )
@@ -1095,7 +1089,7 @@ pub theorem argument_budget_frame_tracked(
   exceeded: List(Ty),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, argument_budget(c, t, span, exceeded)) {
-  match exceeded: TrackedRunFrame(c, argument_budget(c, t, span, exceeded)) {
+  ⊢ TrackedRunFrame(c, argument_budget(c, t, span, exceeded)) from match exceeded {
     Nil => tracked_run_return(c, Star, ordered)
     Cons(x, rest) => tracked_run_bind(
       Bool,
@@ -1130,10 +1124,7 @@ pub theorem inference_use_ck_match_expr_in_tracked(
   span: TySpan,
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_match_expr_in(k, c, scrutinee, arms, env, span)
-) {
+): TrackedRunFrame(c, ck_match_expr_in(k, c, scrutinee, arms, env, span)) {
   And::left(
     And::right(
       And::right(
@@ -1147,7 +1138,9 @@ pub theorem inference_use_ck_match_expr_in_tracked(
                       And::right(
                         And::right(
                           And::right(
-                            And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+                            And::right(
+                              And::right(And::right(And::right(And::right(And::right(ih)))))
+                            )
                           )
                         )
                       )
@@ -1172,10 +1165,7 @@ pub theorem inference_use_ck_record_in_tracked(
   span: TySpan,
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_record_in(k, c, name, fields, env, span)
-) {
+): TrackedRunFrame(c, ck_record_in(k, c, name, fields, env, span)) {
   And::left(
     And::right(
       And::right(
@@ -1211,7 +1201,7 @@ pub theorem inference_term_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_term(j, c, term, env, span, sk)) {
-  match sk: TrackedRunFrame(c, inference_term(j, c, term, env, span, sk)) {
+  ⊢ TrackedRunFrame(c, inference_term(j, c, term, env, span, sk)) from match sk {
     SkVar(name) => tracked_run_read(
       c,
       ck_rewrap1(ck_lookup(c, name, env, span)),
@@ -1806,14 +1796,7 @@ pub theorem inference_term_frame_tracked(
       tracked_rewrap(c, ck_fresh(c), ck_fresh_frame_tracked(c)),
       ordered
     )
-    SkStep(
-      pat_tactic,
-      pat_arg,
-      pat_call_start,
-      pat_call_end,
-      pat_before,
-      pat_arms
-    ) => tracked_run_bind(
+    SkStep(pat_tactic, pat_arg, pat_call_start, pat_call_end, pat_before, pat_arms) => tracked_run_bind(
       Unit,
       Ty,
       c,
@@ -1860,10 +1843,7 @@ pub theorem inference_step_ck_infer_term_in_frame_tracked(
   env: List(Local),
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  inference_step_ck_infer_term_in(j, c, term, env)
-) {
+): TrackedRunFrame(c, inference_step_ck_infer_term_in(j, c, term, env)) {
   inference_term_frame_tracked(
     j,
     c,
@@ -1881,21 +1861,19 @@ pub theorem pattern_return_frame_tracked<A: Type>(
   env: Scope,
   v: A,
   ordered: CkOrdered(c)
-): TrackedScopeFrame(
-  c,
-  mut2(v, c, env)
-) {
-  AndIntro(
-    ordered,
-    AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
-  )
+): TrackedScopeFrame(c, mut2(v, c, env)) {
+  AndIntro(ordered, AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c))))
 }
 pub theorem pattern_rewrap_frame_tracked<A: Type>(
   c: Checker,
   m: Mut2(A, Checker, Scope),
   h: TrackedScopeFrame(c, m)
 ): TrackedScopeFrame(c, pattern_rewrap(m)) {
-  Eq::subst((z: Mut2(A, Checker, Scope)) => TrackedScopeFrame(c, z), Eq::sym(pattern_rewrap_id(m)), h)
+  Eq::subst(
+    (z: Mut2(A, Checker, Scope)) => TrackedScopeFrame(c, z),
+    Eq::sym(pattern_rewrap_id(m)),
+    h
+  )
 }
 pub def PatternIH_pattern_tracked(
   k: Nat
@@ -1937,14 +1915,8 @@ pub theorem ck_bind_local_scope_frame_tracked(
   mutable: Bool,
   site: Nat,
   ordered: CkOrdered(c)
-): TrackedScopeFrame(
-  c,
-  ck_bind_local(c, env, name, ty, mutable, site)
-) {
-  AndIntro(
-    ordered,
-    AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
-  )
+): TrackedScopeFrame(c, ck_bind_local(c, env, name, ty, mutable, site)) {
+  AndIntro(ordered, AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c))))
 }
 
 pub theorem pattern_bind_name_frame_tracked(
@@ -1959,7 +1931,7 @@ pub theorem pattern_bind_name_frame_tracked(
   ih_ctor_pattern: PatternIH_ctor_pattern_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, pattern_bind_name(j, c, t, env, span, at, name, nullary)) {
-  match nullary: TrackedScopeFrame(c, pattern_bind_name(j, c, t, env, span, at, name, nullary)) {
+  ⊢ TrackedScopeFrame(c, pattern_bind_name(j, c, t, env, span, at, name, nullary)) from match nullary {
     true => pattern_rewrap_frame_tracked(
       c,
       ck_ctor_pattern_in(j, c, name, Nil, t, env, span, at),
@@ -1980,7 +1952,7 @@ pub theorem pattern_bind_one_frame_tracked<A: Type, B: Type>(
   hm: TrackedRunFrame(c, m),
   hk: ∀ v: A. ∀ next: Checker. ∀ ordered: CkOrdered(next). TrackedScopeFrame(next, k(v, next))
 ): TrackedScopeFrame(c, pattern_bind_one(k, m)) {
-  match m: TrackedScopeFrame(c, pattern_bind_one(k, m)) {
+  ⊢ TrackedScopeFrame(c, pattern_bind_one(k, m)) from match m {
     mut1(v, next) => {
       let h: TrackedScopeFrame(next, k(v, next)) := hk(v, next, And::left(hm))
       AndIntro(
@@ -2002,7 +1974,7 @@ pub theorem pattern_lift_frame_tracked<A: Type>(
   m: Mut1(A, Checker),
   h: TrackedRunFrame(c, m)
 ): TrackedScopeFrame(c, pattern_lift(env, m)) {
-  match m: TrackedScopeFrame(c, pattern_lift(env, m)) { mut1(v, next) => h }
+  ⊢ TrackedScopeFrame(c, pattern_lift(env, m)) from match m { mut1(v, next) => h }
 }
 pub theorem pattern_literal_after_frame_tracked(
   c: Checker,
@@ -2095,7 +2067,7 @@ pub theorem pattern_record_frame_tracked(
   ih_ctor_pattern: PatternIH_ctor_pattern_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, pattern_record(j, c, t, env, span, at, name, pos)) {
-  match pos: TrackedScopeFrame(c, pattern_record(j, c, t, env, span, at, name, pos)) {
+  ⊢ TrackedScopeFrame(c, pattern_record(j, c, t, env, span, at, name, pos)) from match pos {
     PositionalOk(args) => pattern_rewrap_frame_tracked(
       c,
       ck_ctor_pattern_in(j, c, name, args, t, env, span, at),
@@ -2127,7 +2099,7 @@ pub theorem pattern_step_frame_tracked(
   ih_ctor_pattern: PatternIH_ctor_pattern_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, pattern_step(j, c, t, env, span, at, p)) {
-  match p: TrackedScopeFrame(c, pattern_step(j, c, t, env, span, at, p)) {
+  ⊢ TrackedScopeFrame(c, pattern_step(j, c, t, env, span, at, p)) from match p {
     PtWild => pattern_return_frame_tracked(c, env, Star, ordered)
     PtBind(name) => pattern_bind_name_frame_tracked(
       j,
@@ -2241,7 +2213,7 @@ pub theorem pattern_ctor_arity_frame_tracked(
   same: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, pattern_ctor_arity(c, name, args, fields, span, same)) {
-  match same: TrackedRunFrame(c, pattern_ctor_arity(c, name, args, fields, span, same)) {
+  ⊢ TrackedRunFrame(c, pattern_ctor_arity(c, name, args, fields, span, same)) from match same {
     false => tracked_run_return(c, Some(fields), ordered)
     true => tracked_run_bind(
       Unit,
@@ -2313,10 +2285,10 @@ pub theorem pattern_ctor_same_frame_tracked(
   same: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, pattern_ctor_same(c, name, args, t, span, dc, targs, target, same)) {
-  match same: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     pattern_ctor_same(c, name, args, t, span, dc, targs, target, same)
-  ) {
+  ) from match same {
     false => pattern_ctor_arity_frame_tracked(
       c,
       name,
@@ -2439,7 +2411,7 @@ pub theorem pattern_ctor_lookup_frame_tracked(
   found: Option(Pair(Text, Nat)),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, pattern_ctor_lookup(c, name, args, t, span, found)) {
-  match found: TrackedRunFrame(c, pattern_ctor_lookup(c, name, args, t, span, found)) {
+  ⊢ TrackedRunFrame(c, pattern_ctor_lookup(c, name, args, t, span, found)) from match found {
     None => tracked_run_bind(
       Unit,
       Option(List(DataField)),
@@ -2528,10 +2500,10 @@ pub theorem pattern_fields_next_frame_tracked(
   ih_ctor_args: PatternIH_ctor_args_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, pattern_fields_next(j, c, name, args, t, env, span, at, borrowed, found)) {
-  match found: TrackedScopeFrame(
+  ⊢ TrackedScopeFrame(
     c,
     pattern_fields_next(j, c, name, args, t, env, span, at, borrowed, found)
-  ) {
+  ) from match found {
     None => pattern_return_frame_tracked(c, env, Star, ordered)
     Some(fields) => pattern_rewrap_frame_tracked(
       c,
@@ -2553,10 +2525,7 @@ pub theorem pattern_ctor_step_frame_tracked(
   borrowed: Option(Bool),
   ih_ctor_args: PatternIH_ctor_args_tracked(j),
   ordered: CkOrdered(c)
-): TrackedScopeFrame(
-  c,
-  pattern_ctor_step(j, c, name, args, t, env, span, at, borrowed)
-) {
+): TrackedScopeFrame(c, pattern_ctor_step(j, c, name, args, t, env, span, at, borrowed)) {
   pattern_bind_one_frame_tracked(
     Option(List(DataField)),
     Unit,
@@ -2606,10 +2575,10 @@ pub theorem pattern_args_fields_frame_tracked(
   ih_ctor_args: PatternIH_ctor_args_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, pattern_args_fields(j, c, p, rest, borrowed, env, span, at, fields)) {
-  match fields: TrackedScopeFrame(
+  ⊢ TrackedScopeFrame(
     c,
     pattern_args_fields(j, c, p, rest, borrowed, env, span, at, fields)
-  ) {
+  ) from match fields {
     Nil => pattern_return_frame_tracked(c, env, Star, ordered)
     Cons(field, more) => tracked_pattern_bind(
       Unit,
@@ -2642,10 +2611,7 @@ pub theorem pattern_args_step_frame_tracked(
   ih_ctor_args: PatternIH_ctor_args_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, pattern_args_step(j, c, fields, borrowed, env, span, at, args)) {
-  match args: TrackedScopeFrame(
-    c,
-    pattern_args_step(j, c, fields, borrowed, env, span, at, args)
-  ) {
+  ⊢ TrackedScopeFrame(c, pattern_args_step(j, c, fields, borrowed, env, span, at, args)) from match args {
     Nil => pattern_return_frame_tracked(c, env, Star, ordered)
     Cons(p, rest) => pattern_args_fields_frame_tracked(
       j,
@@ -2665,7 +2631,7 @@ pub theorem pattern_args_step_frame_tracked(
 }
 
 pub theorem pattern_all_tracked(k: Nat): PatternAll_tracked(k) {
-  match k: PatternAll_tracked(k) {
+  ⊢ PatternAll_tracked(k) from match k {
     Zero => AndIntro(
       c => p => t => env => span => at => ordered => AndIntro(
         ordered,
@@ -2774,7 +2740,7 @@ pub theorem handle_patterns_cons_frame_tracked(
   ). TrackedScopeFrame(next, ck_handle_patterns(rest, next, more, env, body)),
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, handle_patterns_cons(p, rest, c, inner, body, tys)) {
-  match tys: TrackedScopeFrame(c, handle_patterns_cons(p, rest, c, inner, body, tys)) {
+  ⊢ TrackedScopeFrame(c, handle_patterns_cons(p, rest, c, inner, body, tys)) from match tys {
     Nil => pattern_return_frame_tracked(c, inner, Star, ordered)
     Cons(t, more) => tracked_pattern_bind(
       Unit,
@@ -2802,7 +2768,7 @@ pub theorem ck_handle_patterns_frame_tracked(
   body: SurfaceTerm,
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, ck_handle_patterns(ps, c, tys, inner, body)) {
-  match ps: TrackedScopeFrame(c, ck_handle_patterns(ps, c, tys, inner, body)) {
+  ⊢ TrackedScopeFrame(c, ck_handle_patterns(ps, c, tys, inner, body)) from match ps {
     Nil => AndIntro(
       ordered,
       AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
@@ -2842,7 +2808,7 @@ pub theorem handle_cont_frame_tracked(
   cont: Option(Text),
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, handle_cont(c, inner, quant, eff, answer, result, body, cont)) {
-  match cont: TrackedScopeFrame(c, handle_cont(c, inner, quant, eff, answer, result, body, cont)) {
+  ⊢ TrackedScopeFrame(c, handle_cont(c, inner, quant, eff, answer, result, body, cont)) from match cont {
     None => pattern_return_frame_tracked(c, inner, Star, ordered)
     Some(k) => pattern_bind_one_frame_tracked(
       Unit,
@@ -2972,7 +2938,7 @@ pub theorem widen_store_frame_tracked(
   occurs: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, widen_store(c, rv, value, occurs)) {
-  match occurs: TrackedRunFrame(c, widen_store(c, rv, value, occurs)) {
+  ⊢ TrackedRunFrame(c, widen_store(c, rv, value, occurs)) from match occurs {
     false => tracked_run_return(c, Star, ordered)
     true => tracked_run_rewrap(
       c,
@@ -3006,7 +2972,7 @@ pub theorem widen_attempt_frame_tracked(
   success: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, widen_attempt(c, rv, wide, success)) {
-  match success: TrackedRunFrame(c, widen_attempt(c, rv, wide, success)) {
+  ⊢ TrackedRunFrame(c, widen_attempt(c, rv, wide, success)) from match success {
     true => widen_store_true_frame_tracked(c, rv, ck_resolve(c, wide), ordered)
     false => tracked_run_return(c, false, ordered)
   }
@@ -3024,12 +2990,17 @@ pub theorem widen_fn_allowed_frame_tracked(
   allowed: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) {
-  match allowed: TrackedRunFrame(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) {
+  ⊢ TrackedRunFrame(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) from match allowed {
     true => tracked_run_bind(
       Bool,
       Bool,
       c,
-      (success: Bool, c1: Checker) => widen_attempt(c1, rv, TyFn(pb, rb, kind_join(ka, kb)), success),
+      (success: Bool, c1: Checker) => widen_attempt(
+        c1,
+        rv,
+        TyFn(pb, rb, kind_join(ka, kb)),
+        success
+      ),
       ck_attempt_unify(c, TyFn(pa, ra, kind_join(ka, kb)), TyFn(pb, rb, kind_join(ka, kb))),
       ck_attempt_unify_run_frame_tracked(
         c,
@@ -3058,7 +3029,7 @@ pub theorem widen_fn_current_frame_tracked(
   current: Ty,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, widen_fn_current(c, pa, ra, ka, rv, current)) {
-  match current: TrackedRunFrame(c, widen_fn_current(c, pa, ra, ka, rv, current)) {
+  ⊢ TrackedRunFrame(c, widen_fn_current(c, pa, ra, ka, rv, current)) from match current {
     TyInt(w) => tracked_run_return(c, false, ordered)
     TyBool => tracked_run_return(c, false, ordered)
     TyText => tracked_run_return(c, false, ordered)
@@ -3098,7 +3069,7 @@ pub theorem widen_fn_arm_frame_tracked(
   arm: Ty,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, widen_fn_arm(c, current, rv, arm)) {
-  match arm: TrackedRunFrame(c, widen_fn_arm(c, current, rv, arm)) {
+  ⊢ TrackedRunFrame(c, widen_fn_arm(c, current, rv, arm)) from match arm {
     TyInt(w) => tracked_run_return(c, false, ordered)
     TyBool => tracked_run_return(c, false, ordered)
     TyText => tracked_run_return(c, false, ordered)
@@ -3149,7 +3120,7 @@ pub theorem widen_fits_if_frame_tracked(
   allowed: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, widen_fits_if(c, a, b, allowed)) {
-  match allowed: TrackedRunFrame(c, widen_fits_if(c, a, b, allowed)) {
+  ⊢ TrackedRunFrame(c, widen_fits_if(c, a, b, allowed)) from match allowed {
     true => tracked_run_rewrap(
       c,
       ck_attempt_fits(c, a, b),
@@ -3166,7 +3137,7 @@ pub theorem widen_borrow_current_frame_tracked(
   current: Ty,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, widen_borrow_current(c, a, rv, current)) {
-  match current: TrackedRunFrame(c, widen_borrow_current(c, a, rv, current)) {
+  ⊢ TrackedRunFrame(c, widen_borrow_current(c, a, rv, current)) from match current {
     TyInt(w) => tracked_run_return(c, false, ordered)
     TyBool => tracked_run_return(c, false, ordered)
     TyText => tracked_run_return(c, false, ordered)
@@ -3227,7 +3198,7 @@ pub theorem widen_borrow_arm_frame_tracked(
   arm: Ty,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, widen_borrow_arm(c, current, arm)) {
-  match arm: TrackedRunFrame(c, widen_borrow_arm(c, current, arm)) {
+  ⊢ TrackedRunFrame(c, widen_borrow_arm(c, current, arm)) from match arm {
     TyInt(w) => tracked_run_return(c, false, ordered)
     TyBool => tracked_run_return(c, false, ordered)
     TyText => tracked_run_return(c, false, ordered)
@@ -3276,7 +3247,7 @@ pub theorem widen_final_fits_frame_tracked(
   failed: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, widen_final_fits(c, a, current, rv, failed)) {
-  match failed: TrackedRunFrame(c, widen_final_fits(c, a, current, rv, failed)) {
+  ⊢ TrackedRunFrame(c, widen_final_fits(c, a, current, rv, failed)) from match failed {
     true => tracked_run_rewrap(
       c,
       ck_set_subst(c, rv, ty_union(Cons(current, Cons(ck_resolve(c, a), Nil)))),
@@ -3299,7 +3270,7 @@ pub theorem widen_after_arm_frame_tracked(
   failed: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, widen_after_arm(c, a, current, rv, failed)) {
-  match failed: TrackedRunFrame(c, widen_after_arm(c, a, current, rv, failed)) {
+  ⊢ TrackedRunFrame(c, widen_after_arm(c, a, current, rv, failed)) from match failed {
     true => tracked_run_bind(
       Bool,
       Unit,
@@ -3328,7 +3299,7 @@ pub theorem widen_after_current_frame_tracked(
   failed: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, widen_after_current(c, a, current, rv, failed)) {
-  match failed: TrackedRunFrame(c, widen_after_current(c, a, current, rv, failed)) {
+  ⊢ TrackedRunFrame(c, widen_after_current(c, a, current, rv, failed)) from match failed {
     true => tracked_run_bind(
       Bool,
       Unit,
@@ -3336,14 +3307,7 @@ pub theorem widen_after_current_frame_tracked(
       (success: Bool, c1: Checker) => widen_after_arm(c1, a, current, rv, not(success)),
       ck_widen_borrowed_arm(c, a, current),
       ck_widen_borrowed_arm_run_frame_tracked(c, a, current, ordered),
-      success => c1 => o_c1 => widen_after_arm_frame_tracked(
-        c1,
-        a,
-        current,
-        rv,
-        not(success),
-        o_c1
-      )
+      success => c1 => o_c1 => widen_after_arm_frame_tracked(c1, a, current, rv, not(success), o_c1)
     )
     false => tracked_run_return(c, Star, ordered)
   }
@@ -3357,7 +3321,7 @@ pub theorem widen_after_fn_frame_tracked(
   failed: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, widen_after_fn(c, a, current, rv, failed)) {
-  match failed: TrackedRunFrame(c, widen_after_fn(c, a, current, rv, failed)) {
+  ⊢ TrackedRunFrame(c, widen_after_fn(c, a, current, rv, failed)) from match failed {
     true => tracked_run_bind(
       Bool,
       Unit,
@@ -3431,7 +3395,7 @@ pub theorem handler_validate_after_frame_tracked(
   fits: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, handler_validate_after(c, arm, result, span, fits)) {
-  match fits: TrackedRunFrame(c, handler_validate_after(c, arm, result, span, fits)) {
+  ⊢ TrackedRunFrame(c, handler_validate_after(c, arm, result, span, fits)) from match fits {
     true => tracked_run_return(c, Star, ordered)
     false => tracked_run_rewrap(
       c,
@@ -3486,7 +3450,7 @@ pub theorem ck_handle_arm_result_run_frame_tracked(
   span: TySpan,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, ck_handle_arm_result(c, arm, result, variable, span)) {
-  match variable: TrackedRunFrame(c, ck_handle_arm_result(c, arm, result, variable, span)) {
+  ⊢ TrackedRunFrame(c, ck_handle_arm_result(c, arm, result, variable, span)) from match variable {
     Some(rv) => tracked_run_rewrap(
       c,
       ck_handle_widen(c, arm, result, rv),
@@ -3509,7 +3473,7 @@ pub theorem arm_finish_after_run_frame_tracked(
   out: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, arm_finish_after(c, eff, a, result, rv, span, out)) {
-  match out: TrackedRunFrame(c, arm_finish_after(c, eff, a, result, rv, span, out)) {
+  ⊢ TrackedRunFrame(c, arm_finish_after(c, eff, a, result, rv, span, out)) from match out {
     true => tracked_run_read(
       c,
       arm_finish_after(c, eff, a, result, rv, span, true),
@@ -4048,7 +4012,7 @@ pub theorem inference_handler_arity_frame_tracked(
     wrong
   )
 ) {
-  match wrong: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     inference_handler_arity(
       j,
@@ -4067,7 +4031,7 @@ pub theorem inference_handler_arity_frame_tracked(
       pa,
       wrong
     )
-  ) {
+  ) from match wrong {
     true => tracked_run_read(
       c,
       ck_rewrap1(
@@ -4211,7 +4175,7 @@ pub theorem inference_handler_signature_frame_tracked(
     signature
   )
 ) {
-  match signature: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     inference_handler_signature(
       j,
@@ -4229,7 +4193,7 @@ pub theorem inference_handler_signature_frame_tracked(
       body,
       signature
     )
-  ) {
+  ) from match signature {
     None => tracked_run_return(c, Star, ordered)
     Some(pa) => inference_handler_arity_frame_tracked(
       j,
@@ -4347,10 +4311,10 @@ pub theorem inference_budget_push_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_budget_push(j, c, body, handlers, env, budget_ty, answers)) {
-  match answers: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     inference_budget_push(j, c, body, handlers, env, budget_ty, answers)
-  ) {
+  ) from match answers {
     true => tracked_run_read(
       c,
       inference_set_exceeded(c, Cons(budget_ty, inference_exceeded(c))),
@@ -4369,7 +4333,7 @@ pub theorem inference_budget_pop_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_budget_pop(j, c, answers)) {
-  match answers: TrackedRunFrame(c, inference_budget_pop(j, c, answers)) {
+  ⊢ TrackedRunFrame(c, inference_budget_pop(j, c, answers)) from match answers {
     true => tracked_run_read(
       c,
       inference_set_exceeded(c, List::tail(inference_exceeded(c))),
@@ -4389,10 +4353,7 @@ pub theorem inference_use_ck_handle_first_in_tracked(
   env: List(Local),
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_handle_first_in(k, c, handlers, b, env)
-) {
+): TrackedRunFrame(c, ck_handle_first_in(k, c, handlers, b, env)) {
   And::left(
     And::right(
       And::right(
@@ -4408,7 +4369,9 @@ pub theorem inference_use_ck_handle_first_in_tracked(
                           And::right(
                             And::right(
                               And::right(
-                                And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+                                And::right(
+                                  And::right(And::right(And::right(And::right(And::right(ih)))))
+                                )
                               )
                             )
                           )
@@ -4436,10 +4399,7 @@ pub theorem inference_use_ck_handle_result_in_tracked(
   budget_ty: Ty,
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_handle_result_in(k, c, handlers, env, result, first, budget_ty)
-) {
+): TrackedRunFrame(c, ck_handle_result_in(k, c, handlers, env, result, first, budget_ty)) {
   And::left(
     And::right(
       And::right(
@@ -4632,10 +4592,7 @@ pub theorem inference_step_ck_handle_in_frame_tracked(
   env: List(Local),
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  inference_step_ck_handle_in(j, c, body, handlers, env)
-) {
+): TrackedRunFrame(c, inference_step_ck_handle_in(j, c, body, handlers, env)) {
   tracked_run_bind(
     Ty,
     Ty,
@@ -4684,10 +4641,7 @@ pub theorem inference_step_ck_infer_in_frame_tracked(
   env: List(Local),
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  inference_step_ck_infer_in(j, c, term, env)
-) {
+): TrackedRunFrame(c, inference_step_ck_infer_in(j, c, term, env)) {
   tracked_run_bind(
     Ty,
     Ty,
@@ -4735,7 +4689,7 @@ pub theorem inference_else_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_else(j, c, t, env, el)) {
-  match el: TrackedRunFrame(c, inference_else(j, c, t, env, el)) {
+  ⊢ TrackedRunFrame(c, inference_else(j, c, t, env, el)) from match el {
     None => tracked_run_return(c, TyUnit, ordered)
     Some(o) => tracked_run_bind(
       Ty,
@@ -4774,7 +4728,7 @@ pub theorem inference_guard_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_guard(j, c, env, guard)) {
-  match guard: TrackedRunFrame(c, inference_guard(j, c, env, guard)) {
+  ⊢ TrackedRunFrame(c, inference_guard(j, c, env, guard)) from match guard {
     None => tracked_run_return(c, Star, ordered)
     Some(g) => tracked_run_bind(
       Ty,
@@ -4812,7 +4766,7 @@ pub theorem inference_returned_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_returned(j, c, env, e)) {
-  match e: TrackedRunFrame(c, inference_returned(j, c, env, e)) {
+  ⊢ TrackedRunFrame(c, inference_returned(j, c, env, e)) from match e {
     None => tracked_run_return(c, Pair { fst: TyUnit, snd: TySpan { start: 0, end: 0 } }, ordered)
     Some(x) => tracked_run_bind(
       Ty,
@@ -4866,7 +4820,7 @@ pub theorem inference_list_ck_infer_each_in_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_list_ck_infer_each_in(j, c, env, ts)) {
-  match ts: TrackedRunFrame(c, inference_list_ck_infer_each_in(j, c, env, ts)) {
+  ⊢ TrackedRunFrame(c, inference_list_ck_infer_each_in(j, c, env, ts)) from match ts {
     Nil => tracked_run_return(c, Nil, ordered)
     Cons(t, rest) => tracked_run_bind(
       Ty,
@@ -4907,10 +4861,7 @@ pub theorem inference_use_ck_operands_in_tracked(
   env: List(Local),
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_operands_in(k, c, arguments, env)
-) {
+): TrackedRunFrame(c, ck_operands_in(k, c, arguments, env)) {
   And::left(
     And::right(
       And::right(
@@ -4954,7 +4905,7 @@ pub theorem inference_list_ck_operands_in_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_list_ck_operands_in(j, c, env, arguments)) {
-  match arguments: TrackedRunFrame(c, inference_list_ck_operands_in(j, c, env, arguments)) {
+  ⊢ TrackedRunFrame(c, inference_list_ck_operands_in(j, c, env, arguments)) from match arguments {
     Nil => tracked_run_return(c, Nil, ordered)
     Cons(a, rest) => tracked_run_bind(
       Ty,
@@ -5002,7 +4953,7 @@ pub theorem record_field_found_frame_tracked(
   found: Option(Ty),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, record_field_found(c, name, f, v, found)) {
-  match found: TrackedRunFrame(c, record_field_found(c, name, f, v, found)) {
+  ⊢ TrackedRunFrame(c, record_field_found(c, name, f, v, found)) from match found {
     Some(t) => tracked_run_rewrap(
       c,
       ck_expect(
@@ -5196,10 +5147,7 @@ pub theorem ck_record_field_check_run_frame_tracked(
   declared: List(DataField),
   seen: List(Text),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_record_field_check(c, name, f, v, declared, seen)
-) {
+): TrackedRunFrame(c, ck_record_field_check(c, name, f, v, declared, seen)) {
   Eq::subst(
     (z: Mut1(Bool, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(record_field_unf(c, name, f, v, declared, seen)),
@@ -5217,10 +5165,7 @@ pub theorem inference_use_ck_record_fields_in_tracked(
   seen: List(Text),
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_record_fields_in(k, c, name, fields, declared, env, seen)
-) {
+): TrackedRunFrame(c, ck_record_fields_in(k, c, name, fields, declared, env, seen)) {
   And::left(
     And::right(
       And::right(
@@ -5230,7 +5175,9 @@ pub theorem inference_use_ck_record_fields_in_tracked(
               And::right(
                 And::right(
                   And::right(
-                    And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+                    And::right(
+                      And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+                    )
                   )
                 )
               )
@@ -5253,10 +5200,10 @@ pub theorem inference_record_fields_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_record_fields(j, c, name, declared, env, seen, fields)) {
-  match fields: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     inference_record_fields(j, c, name, declared, env, seen, fields)
-  ) {
+  ) from match fields {
     Nil => tracked_run_return(c, seen, ordered)
     Cons(f, rest) => tracked_run_bind(
       Ty,
@@ -5350,10 +5297,7 @@ pub theorem inference_use_ck_handle_one_in_tracked(
   budget_ty: Ty,
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_handle_one_in(k, c, h, env, result, rv, budget_ty)
-) {
+): TrackedRunFrame(c, ck_handle_one_in(k, c, h, env, result, rv, budget_ty)) {
   And::left(
     And::right(
       And::right(
@@ -5373,7 +5317,9 @@ pub theorem inference_use_ck_handle_one_in_tracked(
                                   And::right(
                                     And::right(
                                       And::right(
-                                        And::right(And::right(And::right(And::right(And::right(ih)))))
+                                        And::right(
+                                          And::right(And::right(And::right(And::right(ih))))
+                                        )
                                       )
                                     )
                                   )
@@ -5405,10 +5351,7 @@ pub theorem inference_use_ck_handle_arms_in_tracked(
   budget_ty: Ty,
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_handle_arms_in(k, c, hs, env, result, rv, budget_ty)
-) {
+): TrackedRunFrame(c, ck_handle_arms_in(k, c, hs, env, result, rv, budget_ty)) {
   And::left(
     And::right(
       And::right(
@@ -5459,7 +5402,7 @@ pub theorem inference_handle_arms_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_handle_arms(j, c, env, result, rv, budget_ty, hs)) {
-  match hs: TrackedRunFrame(c, inference_handle_arms(j, c, env, result, rv, budget_ty, hs)) {
+  ⊢ TrackedRunFrame(c, inference_handle_arms(j, c, env, result, rv, budget_ty, hs)) from match hs {
     Nil => tracked_run_return(c, Star, ordered)
     Cons(h, rest) => tracked_run_bind(
       Unit,
@@ -5534,7 +5477,9 @@ pub theorem inference_use_ck_handle_arm_in_tracked(
                                     And::right(
                                       And::right(
                                         And::right(
-                                          And::right(And::right(And::right(And::right(And::right(ih)))))
+                                          And::right(
+                                            And::right(And::right(And::right(And::right(ih))))
+                                          )
                                         )
                                       )
                                     )
@@ -5568,7 +5513,7 @@ pub theorem inference_handle_one_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_handle_one(j, c, env, result, rv, budget_ty, h)) {
-  match h: TrackedRunFrame(c, inference_handle_one(j, c, env, result, rv, budget_ty, h)) {
+  ⊢ TrackedRunFrame(c, inference_handle_one(j, c, env, result, rv, budget_ty, h)) from match h {
     HdReturn(p, b) => tracked_run_return(c, Star, ordered)
     HdOperation(eff, binds, types, patterns, cont, guard, body) => tracked_run_rewrap(
       c,
@@ -5638,10 +5583,10 @@ pub theorem inference_handle_result_frame_tracked(
   c,
   inference_handle_result(j, c, handlers, env, result, first, budget_ty, variable)
 ) {
-  match variable: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     inference_handle_result(j, c, handlers, env, result, first, budget_ty, variable)
-  ) {
+  ) from match variable {
     None => tracked_run_return(c, Star, ordered)
     Some(rv) => tracked_run_bind(
       Unit,
@@ -5727,9 +5672,7 @@ pub theorem inference_step_ck_handle_result_in_frame_tracked(
 pub theorem inference_successor_ck_infer_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_infer_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_infer_in_tracked(Succ(j)) {
   c => term => env => ordered => Eq::subst(
     (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_infer_in(j, c, term, env)),
@@ -5739,9 +5682,7 @@ pub theorem inference_successor_ck_infer_in_tracked(
 pub theorem inference_successor_ck_infer_term_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_infer_term_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_infer_term_in_tracked(Succ(j)) {
   c => term => env => ordered => Eq::subst(
     (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_infer_term_in(j, c, term, env)),
@@ -5751,9 +5692,7 @@ pub theorem inference_successor_ck_infer_term_in_tracked(
 pub theorem inference_successor_ck_else_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_else_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_else_in_tracked(Succ(j)) {
   c => t => el => env => ordered => Eq::subst(
     (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_else_in(j, c, t, el, env)),
@@ -5763,9 +5702,7 @@ pub theorem inference_successor_ck_else_in_tracked(
 pub theorem inference_successor_ck_infer_each_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_infer_each_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_infer_each_in_tracked(Succ(j)) {
   c => ts => env => ordered => Eq::subst(
     (z: Mut1(List(Ty), Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_infer_each_in(j, c, ts, env)),
@@ -5775,9 +5712,7 @@ pub theorem inference_successor_ck_infer_each_in_tracked(
 pub theorem inference_successor_ck_guard_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_guard_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_guard_in_tracked(Succ(j)) {
   c => guard => env => ordered => Eq::subst(
     (z: Mut1(Unit, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_guard_in(j, c, guard, env)),
@@ -5787,9 +5722,7 @@ pub theorem inference_successor_ck_guard_in_tracked(
 pub theorem inference_successor_ck_returned_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_returned_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_returned_in_tracked(Succ(j)) {
   c => e => env => ordered => Eq::subst(
     (z: Mut1(Pair(Ty, TySpan), Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_returned_in(j, c, e, env)),
@@ -5813,7 +5746,7 @@ pub theorem pattern_params_cons_frame_tracked(
   ih: PatternParamsIH_tracked(rest),
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, pattern_params_cons(n, rest, c, env, site, tys)) {
-  match tys: TrackedScopeFrame(c, pattern_params_cons(n, rest, c, env, site, tys)) {
+  ⊢ TrackedScopeFrame(c, pattern_params_cons(n, rest, c, env, site, tys)) from match tys {
     Nil => AndIntro(
       ordered,
       AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
@@ -5843,7 +5776,7 @@ pub theorem ck_bind_params_scope_frame_tracked(
   site: Nat,
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, ck_bind_params(names, c, env, tys, site)) {
-  match names: TrackedScopeFrame(c, ck_bind_params(names, c, env, tys, site)) {
+  ⊢ TrackedScopeFrame(c, ck_bind_params(names, c, env, tys, site)) from match names {
     Nil => AndIntro(
       ordered,
       AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
@@ -6036,7 +5969,7 @@ pub theorem inference_function_type_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_function_type(j, c, f, scheme, env, ty)) {
-  match ty: TrackedRunFrame(c, inference_function_type(j, c, f, scheme, env, ty)) {
+  ⊢ TrackedRunFrame(c, inference_function_type(j, c, f, scheme, env, ty)) from match ty {
     TyInt(pat_w) => tracked_run_return(c, Star, ordered)
     TyBool => tracked_run_return(c, Star, ordered)
     TyText => tracked_run_return(c, Star, ordered)
@@ -6135,10 +6068,7 @@ pub theorem inference_step_ck_check_fn_in_frame_tracked(
   env: List(Local),
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  inference_step_ck_check_fn_in(j, c, f, scheme, env)
-) {
+): TrackedRunFrame(c, inference_step_ck_check_fn_in(j, c, f, scheme, env)) {
   inference_function_type_frame_tracked(
     j,
     c,
@@ -6154,9 +6084,7 @@ pub theorem inference_step_ck_check_fn_in_frame_tracked(
 pub theorem inference_successor_ck_check_fn_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_check_fn_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_check_fn_in_tracked(Succ(j)) {
   c => f => scheme => env => ordered => Eq::subst(
     (z: Mut1(Unit, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_check_fn_in(j, c, f, scheme, env)),
@@ -6176,10 +6104,10 @@ pub theorem inference_argument_hint_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_argument_hint(j, c, a, rest, known, env, i, expected, lambda)) {
-  match lambda: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     inference_argument_hint(j, c, a, rest, known, env, i, expected, lambda)
-  ) {
+  ) from match lambda {
     true => tracked_run_read(
       c,
       inference_set_hint(c, expected),
@@ -6198,7 +6126,7 @@ pub theorem argument_expected_frame_tracked(
   expected: Option(Ty),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, argument_expected(c, t, a, expected)) {
-  match expected: TrackedRunFrame(c, argument_expected(c, t, a, expected)) {
+  ⊢ TrackedRunFrame(c, argument_expected(c, t, a, expected)) from match expected {
     None => tracked_run_return(c, Star, ordered)
     Some(p) => tracked_run_rewrap(
       c,
@@ -6230,13 +6158,12 @@ pub theorem inference_use_ck_app_args_in_tracked(
   i: Nat,
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_app_args_in(k, c, arguments, known, env, i)
-) {
+): TrackedRunFrame(c, ck_app_args_in(k, c, arguments, known, env, i)) {
   And::left(
     And::right(
-      And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+      And::right(
+        And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+      )
     )
   )(c, arguments, known, env, i, ordered)
 }
@@ -6374,7 +6301,7 @@ pub theorem inference_arguments_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_arguments(j, c, known, env, i, arguments)) {
-  match arguments: TrackedRunFrame(c, inference_arguments(j, c, known, env, i, arguments)) {
+  ⊢ TrackedRunFrame(c, inference_arguments(j, c, known, env, i, arguments)) from match arguments {
     Nil => tracked_run_return(c, Nil, ordered)
     Cons(a, rest) => inference_argument_frame_tracked(
       j,
@@ -6408,9 +6335,7 @@ pub theorem inference_step_ck_app_args_in_frame_tracked(
 pub theorem inference_successor_ck_app_args_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_app_args_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_app_args_in_tracked(Succ(j)) {
   c => arguments => known => env => i => ordered => Eq::subst(
     (z: Mut1(List(Ty), Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_app_args_in(j, c, arguments, known, env, i)),
@@ -6426,15 +6351,14 @@ pub theorem inference_use_ck_app_call_in_tracked(
   env: List(Local),
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_app_call_in(k, c, term, function, arguments, env)
-) {
+): TrackedRunFrame(c, ck_app_call_in(k, c, term, function, arguments, env)) {
   And::left(
     And::right(
       And::right(
         And::right(
-          And::right(And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih))))))))
+          And::right(
+            And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+          )
         )
       )
     )
@@ -6451,10 +6375,10 @@ pub theorem operator_unary_number_frame_tracked(
   number: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, operator_unary_number(c, op, arguments, span, occurrence, a, number)) {
-  match number: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     operator_unary_number(c, op, arguments, span, occurrence, a, number)
-  ) {
+  ) from match number {
     true => tracked_run_bind(
       Unit,
       Ty,
@@ -6509,7 +6433,7 @@ pub theorem operator_unary_frame_tracked(
   negate: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, operator_unary(c, op, arguments, span, occurrence, a, negate)) {
-  match negate: TrackedRunFrame(c, operator_unary(c, op, arguments, span, occurrence, a, negate)) {
+  ⊢ TrackedRunFrame(c, operator_unary(c, op, arguments, span, occurrence, a, negate)) from match negate {
     true => tracked_run_bind(
       Unit,
       Ty,
@@ -6542,10 +6466,10 @@ pub theorem operator_failed_result_frame_tracked(
   arithmetic: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, operator_failed_result(c, op, a, b, arguments, span, arithmetic)) {
-  match arithmetic: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     operator_failed_result(c, op, a, b, arguments, span, arithmetic)
-  ) {
+  ) from match arithmetic {
     true => tracked_run_return(c, ck_shown(c, a), ordered)
     false => tracked_run_return(c, TyBool, ordered)
   }
@@ -6562,7 +6486,7 @@ pub theorem operator_div_frame_tracked(
   div: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, operator_div(c, op, a, b, arguments, span, occurrence, div)) {
-  match div: TrackedRunFrame(c, operator_div(c, op, a, b, arguments, span, occurrence, div)) {
+  ⊢ TrackedRunFrame(c, operator_div(c, op, a, b, arguments, span, occurrence, div)) from match div {
     true => tracked_run_bind(
       Unit,
       Ty,
@@ -6626,7 +6550,7 @@ pub theorem operator_compare_frame_tracked(
   cmp: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, operator_compare(c, op, a, b, arguments, span, occurrence, cmp)) {
-  match cmp: TrackedRunFrame(c, operator_compare(c, op, a, b, arguments, span, occurrence, cmp)) {
+  ⊢ TrackedRunFrame(c, operator_compare(c, op, a, b, arguments, span, occurrence, cmp)) from match cmp {
     true => tracked_run_bind(
       Unit,
       Ty,
@@ -6667,7 +6591,7 @@ pub theorem operator_eq_frame_tracked(
   eq: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, operator_eq(c, op, a, b, arguments, span, occurrence, eq)) {
-  match eq: TrackedRunFrame(c, operator_eq(c, op, a, b, arguments, span, occurrence, eq)) {
+  ⊢ TrackedRunFrame(c, operator_eq(c, op, a, b, arguments, span, occurrence, eq)) from match eq {
     true => tracked_run_bind(
       Unit,
       Ty,
@@ -6691,7 +6615,10 @@ pub theorem operator_eq_frame_tracked(
       arguments,
       span,
       occurrence,
-      Bool::or(Bool::or(Bool::or(Text::eq(op, "<"), Text::eq(op, ">")), Text::eq(op, "<=")), Text::eq(op, ">=")),
+      Bool::or(
+        Bool::or(Bool::or(Text::eq(op, "<"), Text::eq(op, ">")), Text::eq(op, "<=")),
+        Text::eq(op, ">=")
+      ),
       ordered
     )
   }
@@ -6708,10 +6635,10 @@ pub theorem operator_unified_frame_tracked(
   failed: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, operator_unified(c, op, a, b, arguments, span, occurrence, failed)) {
-  match failed: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     operator_unified(c, op, a, b, arguments, span, occurrence, failed)
-  ) {
+  ) from match failed {
     true => tracked_run_bind(
       Unit,
       Ty,
@@ -6725,28 +6652,12 @@ pub theorem operator_unified_frame_tracked(
         span,
         op_is_arithmetic(op)
       ),
-      ck_error(
-        c,
-        ck_operands_differ(c, op, a, b, arguments),
-        span
-      ),
+      ck_error(c, ck_operands_differ(c, op, a, b, arguments), span),
       tracked_run_read(
         c,
-        ck_error(
-          c,
-          ck_operands_differ(c, op, a, b, arguments),
-          span
-        ),
-        ck_error_frame(
-          c,
-          ck_operands_differ(c, op, a, b, arguments),
-          span
-        ),
-        ck_error_frame_tracked(
-          c,
-          ck_operands_differ(c, op, a, b, arguments),
-          span
-        ),
+        ck_error(c, ck_operands_differ(c, op, a, b, arguments), span),
+        ck_error_frame(c, ck_operands_differ(c, op, a, b, arguments), span),
+        ck_error_frame_tracked(c, ck_operands_differ(c, op, a, b, arguments), span),
         ordered
       ),
       ignored => c1 => o_c1 => operator_failed_result_frame_tracked(
@@ -6785,10 +6696,10 @@ pub theorem operator_binary_frame_tracked(
   boolean: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, operator_binary(c, op, a, b, arguments, span, occurrence, boolean)) {
-  match boolean: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     operator_binary(c, op, a, b, arguments, span, occurrence, boolean)
-  ) {
+  ) from match boolean {
     true => tracked_run_bind(
       Unit,
       Ty,
@@ -6865,10 +6776,7 @@ pub theorem ck_binary_run_frame_tracked(
   span: TySpan,
   occurrence: Option(TermOccurrence),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_binary(c, op, a, b, arguments, span, occurrence)
-) {
+): TrackedRunFrame(c, ck_binary(c, op, a, b, arguments, span, occurrence)) {
   Eq::subst(
     (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(operator_binary_unf(c, op, a, b, arguments, span, occurrence)),
@@ -6897,7 +6805,7 @@ pub theorem operator_more_frame_tracked(
   more: List(Ty),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, operator_more(c, op, arguments, span, occurrence, a, b, more)) {
-  match more: TrackedRunFrame(c, operator_more(c, op, arguments, span, occurrence, a, b, more)) {
+  ⊢ TrackedRunFrame(c, operator_more(c, op, arguments, span, occurrence, a, b, more)) from match more {
     Nil => tracked_run_rewrap(
       c,
       ck_binary(c, op, a, b, arguments, span, occurrence),
@@ -6923,7 +6831,7 @@ pub theorem operator_rest_frame_tracked(
   rest: List(Ty),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, operator_rest(c, op, arguments, span, occurrence, a, rest)) {
-  match rest: TrackedRunFrame(c, operator_rest(c, op, arguments, span, occurrence, a, rest)) {
+  ⊢ TrackedRunFrame(c, operator_rest(c, op, arguments, span, occurrence, a, rest)) from match rest {
     Nil => operator_unary_frame_tracked(
       c,
       op,
@@ -6957,7 +6865,7 @@ pub theorem operator_operands_frame_tracked(
   args: List(Ty),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, operator_operands(c, op, arguments, span, occurrence, args)) {
-  match args: TrackedRunFrame(c, operator_operands(c, op, arguments, span, occurrence, args)) {
+  ⊢ TrackedRunFrame(c, operator_operands(c, op, arguments, span, occurrence, args)) from match args {
     Nil => tracked_run_read(
       c,
       ck_rewrap1(ck_operator_bad(c, op, span)),
@@ -6986,10 +6894,7 @@ pub theorem ck_operator_of_run_frame_tracked(
   span: TySpan,
   occurrence: Option(TermOccurrence),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_operator_of(c, op, args, arguments, span, occurrence)
-) {
+): TrackedRunFrame(c, ck_operator_of(c, op, args, arguments, span, occurrence)) {
   Eq::subst(
     (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(operator_operands_unf(c, op, args, arguments, span, occurrence)),
@@ -7004,10 +6909,7 @@ pub theorem inference_use_ck_clone_of_in_tracked(
   span: TySpan,
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_clone_of_in(k, c, arguments, env, span)
-) {
+): TrackedRunFrame(c, ck_clone_of_in(k, c, arguments, env, span)) {
   And::left(
     And::right(
       And::right(
@@ -7015,7 +6917,9 @@ pub theorem inference_use_ck_clone_of_in_tracked(
           And::right(
             And::right(
               And::right(
-                And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
+                And::right(
+                  And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+                )
               )
             )
           )
@@ -7037,10 +6941,10 @@ pub theorem inference_app_clone_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_app_clone(j, c, term, function, arguments, env, name, clone)) {
-  match clone: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     inference_app_clone(j, c, term, function, arguments, env, name, clone)
-  ) {
+  ) from match clone {
     true => tracked_run_rewrap(
       c,
       ck_clone_of_in(j, c, arguments, env, span_of(term)),
@@ -7066,10 +6970,10 @@ pub theorem inference_app_operator_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_app_operator(j, c, term, function, arguments, env, name, operator)) {
-  match operator: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     inference_app_operator(j, c, term, function, arguments, env, name, operator)
-  ) {
+  ) from match operator {
     true => tracked_run_bind(
       List(Ty),
       Ty,
@@ -7123,10 +7027,10 @@ pub theorem inference_app_tuple_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_app_tuple(j, c, term, function, arguments, env, name, tuple)) {
-  match tuple: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     inference_app_tuple(j, c, term, function, arguments, env, name, tuple)
-  ) {
+  ) from match tuple {
     true => tracked_run_return(c, TyUnit, ordered)
     false => inference_app_operator_frame_tracked(
       j,
@@ -7154,10 +7058,10 @@ pub theorem inference_app_name_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_app_name(j, c, term, function, arguments, env, r#direct)) {
-  match r#direct: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     inference_app_name(j, c, term, function, arguments, env, r#direct)
-  ) {
+  ) from match r#direct {
     None => tracked_run_rewrap(
       c,
       ck_app_call_in(j, c, term, function, arguments, env),
@@ -7187,10 +7091,7 @@ pub theorem inference_step_ck_app_in_frame_tracked(
   env: List(Local),
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  inference_step_ck_app_in(j, c, term, function, arguments, env)
-) {
+): TrackedRunFrame(c, inference_step_ck_app_in(j, c, term, function, arguments, env)) {
   inference_app_name_frame_tracked(
     j,
     c,
@@ -7207,9 +7108,7 @@ pub theorem inference_step_ck_app_in_frame_tracked(
 pub theorem inference_successor_ck_app_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_app_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_app_in_tracked(Succ(j)) {
   c => term => function => arguments => env => ordered => Eq::subst(
     (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_app_in(j, c, term, function, arguments, env)),
@@ -7230,7 +7129,7 @@ pub theorem access_poly_frame_tracked(
   f: Ty,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, access_poly(c, function, original, f)) {
-  match f: TrackedRunFrame(c, access_poly(c, function, original, f)) {
+  ⊢ TrackedRunFrame(c, access_poly(c, function, original, f)) from match f {
     TyInt(pat_w) => tracked_run_return(c, original, ordered)
     TyBool => tracked_run_return(c, original, ordered)
     TyText => tracked_run_return(c, original, ordered)
@@ -7284,10 +7183,7 @@ pub theorem ck_poly_instance_run_frame_tracked(
   function: SurfaceTerm,
   f: Ty,
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_poly_instance(c, function, f)
-) {
+): TrackedRunFrame(c, ck_poly_instance(c, function, f)) {
   Eq::subst(
     (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(access_poly_unf(c, function, f)),
@@ -7303,7 +7199,7 @@ pub theorem application_fn_arity_frame_tracked(
   bad: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, application_fn_arity(c, term, arguments, args, ps, bad)) {
-  match bad: TrackedRunFrame(c, application_fn_arity(c, term, arguments, args, ps, bad)) {
+  ⊢ TrackedRunFrame(c, application_fn_arity(c, term, arguments, args, ps, bad)) from match bad {
     true => tracked_run_read(
       c,
       ck_rewrap1(
@@ -7384,7 +7280,7 @@ pub theorem application_fn_known_frame_tracked(
   known: Option(List(Ty)),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, application_fn_known(c, term, arguments, args, ps, r, known)) {
-  match known: TrackedRunFrame(c, application_fn_known(c, term, arguments, args, ps, r, known)) {
+  ⊢ TrackedRunFrame(c, application_fn_known(c, term, arguments, args, ps, r, known)) from match known {
     Some(kp) => tracked_run_return(c, r, ordered)
     None => tracked_run_bind(
       Unit,
@@ -7425,10 +7321,10 @@ pub theorem application_fn_frame_tracked(
   fr: Ty,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, application_fn(c, term, function, arguments, f, known, args, original, fr)) {
-  match fr: TrackedRunFrame(
+  ⊢ TrackedRunFrame(
     c,
     application_fn(c, term, function, arguments, f, known, args, original, fr)
-  ) {
+  ) from match fr {
     TyInt(pat_w) => tracked_run_bind(
       Unit,
       Ty,
@@ -7919,10 +7815,7 @@ pub theorem inference_step_ck_app_call_in_frame_tracked(
   env: List(Local),
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  inference_step_ck_app_call_in(j, c, term, function, arguments, env)
-) {
+): TrackedRunFrame(c, inference_step_ck_app_call_in(j, c, term, function, arguments, env)) {
   tracked_run_bind(
     Ty,
     Ty,
@@ -7979,9 +7872,7 @@ pub theorem inference_step_ck_app_call_in_frame_tracked(
 pub theorem inference_successor_ck_app_call_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_app_call_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_app_call_in_tracked(Succ(j)) {
   c => term => function => arguments => env => ordered => Eq::subst(
     (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_app_call_in(j, c, term, function, arguments, env)),
@@ -7991,9 +7882,7 @@ pub theorem inference_successor_ck_app_call_in_tracked(
 pub theorem inference_successor_ck_operands_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_operands_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_operands_in_tracked(Succ(j)) {
   c => arguments => env => ordered => Eq::subst(
     (z: Mut1(List(Ty), Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_operands_in(j, c, arguments, env)),
@@ -8010,7 +7899,7 @@ pub theorem inference_clone_rest_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_clone_rest(j, c, env, span, arg, rest)) {
-  match rest: TrackedRunFrame(c, inference_clone_rest(j, c, env, span, arg, rest)) {
+  ⊢ TrackedRunFrame(c, inference_clone_rest(j, c, env, span, arg, rest)) from match rest {
     Nil => tracked_run_bind(
       Ty,
       Ty,
@@ -8053,7 +7942,7 @@ pub theorem inference_clone_args_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_clone_args(j, c, env, span, arguments)) {
-  match arguments: TrackedRunFrame(c, inference_clone_args(j, c, env, span, arguments)) {
+  ⊢ TrackedRunFrame(c, inference_clone_args(j, c, env, span, arguments)) from match arguments {
     Nil => tracked_run_read(
       c,
       ck_rewrap1(ck_clone_bad(c, span)),
@@ -8081,9 +7970,7 @@ pub theorem inference_step_ck_clone_of_in_frame_tracked(
 pub theorem inference_successor_ck_clone_of_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_clone_of_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_clone_of_in_tracked(Succ(j)) {
   c => arguments => env => span => ordered => Eq::subst(
     (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_clone_of_in(j, c, arguments, env, span)),
@@ -8100,7 +7987,7 @@ pub theorem argument_hint_cons_frame_tracked(
   ). ∀ ordered: CkOrdered(next). TrackedRunFrame(next, ck_lambda_hint(rest, next, hs)),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, argument_hint_cons(p, rest, c, hs)) {
-  match hs: TrackedRunFrame(c, argument_hint_cons(p, rest, c, hs)) {
+  ⊢ TrackedRunFrame(c, argument_hint_cons(p, rest, c, hs)) from match hs {
     Nil => tracked_run_return(c, Star, ordered)
     Cons(h, more) => tracked_run_bind(
       Bool,
@@ -8124,7 +8011,7 @@ pub theorem ck_lambda_hint_run_frame_tracked(
   hs: List(Ty),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, ck_lambda_hint(ps, c, hs)) {
-  match ps: TrackedRunFrame(c, ck_lambda_hint(ps, c, hs)) {
+  ⊢ TrackedRunFrame(c, ck_lambda_hint(ps, c, hs)) from match ps {
     Nil => tracked_run_return(c, Star, ordered)
     Cons(p, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => TrackedRunFrame(c, z),
@@ -8148,7 +8035,7 @@ pub theorem access_hint_arity_frame_tracked(
   same: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, access_hint_arity(c, ps, hs, same)) {
-  match same: TrackedRunFrame(c, access_hint_arity(c, ps, hs, same)) {
+  ⊢ TrackedRunFrame(c, access_hint_arity(c, ps, hs, same)) from match same {
     true => tracked_run_rewrap(
       c,
       ck_lambda_hint(ps, c, hs),
@@ -8164,7 +8051,7 @@ pub theorem access_hint_type_frame_tracked(
   t: Ty,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, access_hint_type(c, ps, t)) {
-  match t: TrackedRunFrame(c, access_hint_type(c, ps, t)) {
+  ⊢ TrackedRunFrame(c, access_hint_type(c, ps, t)) from match t {
     TyInt(pat_w) => tracked_run_return(c, Star, ordered)
     TyBool => tracked_run_return(c, Star, ordered)
     TyText => tracked_run_return(c, Star, ordered)
@@ -8198,7 +8085,7 @@ pub theorem access_hint_frame_tracked(
   hint: Option(Ty),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, access_hint(c, ps, hint)) {
-  match hint: TrackedRunFrame(c, access_hint(c, ps, hint)) {
+  ⊢ TrackedRunFrame(c, access_hint(c, ps, hint)) from match hint {
     None => tracked_run_return(c, Star, ordered)
     Some(h) => access_hint_type_frame_tracked(c, ps, ty_unborrowed(ck_resolve(c, h)), ordered)
   }
@@ -8209,10 +8096,7 @@ pub theorem ck_lambda_hint_of_run_frame_tracked(
   hint: Option(Ty),
   ps: List(Ty),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_lambda_hint_of(c, hint, ps)
-) {
+): TrackedRunFrame(c, ck_lambda_hint_of(c, hint, ps)) {
   Eq::subst(
     (z: Mut1(Unit, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(access_hint_unf(c, hint, ps)),
@@ -8438,7 +8322,7 @@ pub theorem inference_lambda_kind_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_lambda_kind(j, c, lam, borrows, env, hint, sk)) {
-  match sk: TrackedRunFrame(c, inference_lambda_kind(j, c, lam, borrows, env, hint, sk)) {
+  ⊢ TrackedRunFrame(c, inference_lambda_kind(j, c, lam, borrows, env, hint, sk)) from match sk {
     SkVar(pat_name) => tracked_run_read(
       c,
       ck_rewrap1(ck_fresh(c)),
@@ -8703,14 +8587,7 @@ pub theorem inference_lambda_kind_frame_tracked(
       tracked_rewrap(c, ck_fresh(c), ck_fresh_frame_tracked(c)),
       ordered
     )
-    SkStep(
-      pat_tactic,
-      pat_arg,
-      pat_call_start,
-      pat_call_end,
-      pat_before,
-      pat_arms
-    ) => tracked_run_read(
+    SkStep(pat_tactic, pat_arg, pat_call_start, pat_call_end, pat_before, pat_arms) => tracked_run_read(
       c,
       ck_rewrap1(ck_fresh(c)),
       frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
@@ -8781,9 +8658,7 @@ pub theorem inference_step_ck_lambda_in_frame_tracked(
 pub theorem inference_successor_ck_lambda_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_lambda_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_lambda_in_tracked(Succ(j)) {
   c => lam => borrows => env => ordered => Eq::subst(
     (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_lambda_in(j, c, lam, borrows, env)),
@@ -8793,9 +8668,7 @@ pub theorem inference_successor_ck_lambda_in_tracked(
 pub theorem inference_successor_ck_record_fields_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_record_fields_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_record_fields_in_tracked(Succ(j)) {
   c => name => fields => declared => env => seen => ordered => Eq::subst(
     (z: Mut1(List(Text), Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_record_fields_in(j, c, name, fields, declared, env, seen)),
@@ -8866,7 +8739,7 @@ pub theorem inference_record_ctor_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_record_ctor(j, c, name, fields, env, span, ctor)) {
-  match ctor: TrackedRunFrame(c, inference_record_ctor(j, c, name, fields, env, span, ctor)) {
+  ⊢ TrackedRunFrame(c, inference_record_ctor(j, c, name, fields, env, span, ctor)) from match ctor {
     None => tracked_run_bind(
       Unit,
       Ty,
@@ -8945,10 +8818,7 @@ pub theorem inference_step_ck_record_in_frame_tracked(
   span: TySpan,
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  inference_step_ck_record_in(j, c, name, fields, env, span)
-) {
+): TrackedRunFrame(c, inference_step_ck_record_in(j, c, name, fields, env, span)) {
   inference_record_ctor_frame_tracked(
     j,
     c,
@@ -8965,9 +8835,7 @@ pub theorem inference_step_ck_record_in_frame_tracked(
 pub theorem inference_successor_ck_record_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_record_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_record_in_tracked(Succ(j)) {
   c => name => fields => env => span => ordered => Eq::subst(
     (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_record_in(j, c, name, fields, env, span)),
@@ -8980,7 +8848,7 @@ pub theorem access_join_frame_tracked(
   result: Option(Ty),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, access_join(c, b, result)) {
-  match result: TrackedRunFrame(c, access_join(c, b, result)) {
+  ⊢ TrackedRunFrame(c, access_join(c, b, result)) from match result {
     None => tracked_run_return(c, b, ordered)
     Some(r) => tracked_run_rewrap(c, ck_join(c, r, b), ck_join_run_frame_tracked(c, r, b, ordered))
   }
@@ -8991,10 +8859,7 @@ pub theorem ck_join_opt_run_frame_tracked(
   result: Option(Ty),
   b: Ty,
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_join_opt(c, result, b)
-) {
+): TrackedRunFrame(c, ck_join_opt(c, result, b)) {
   Eq::subst(
     (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(access_join_unf(c, result, b)),
@@ -9011,10 +8876,7 @@ pub theorem inference_use_ck_match_arms_in_tracked(
   result: Option(Ty),
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_match_arms_in(k, c, arms, s, env, result)
-) {
+): TrackedRunFrame(c, ck_match_arms_in(k, c, arms, s, env, result)) {
   And::left(
     And::right(
       And::right(
@@ -9052,7 +8914,7 @@ pub theorem inference_match_arms_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_match_arms(j, c, s, env, result, arms)) {
-  match arms: TrackedRunFrame(c, inference_match_arms(j, c, s, env, result, arms)) {
+  ⊢ TrackedRunFrame(c, inference_match_arms(j, c, s, env, result, arms)) from match arms {
     Nil => tracked_run_return(c, result, ordered)
     Cons(arm, rest) => inference_bind_scope_frame_tracked(
       Unit,
@@ -9178,9 +9040,7 @@ pub theorem inference_step_ck_match_arms_in_frame_tracked(
 pub theorem inference_successor_ck_match_arms_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_match_arms_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_match_arms_in_tracked(Succ(j)) {
   c => arms => s => env => result => ordered => Eq::subst(
     (z: Mut1(Option(Ty), Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_match_arms_in(j, c, arms, s, env, result)),
@@ -9194,7 +9054,7 @@ pub theorem inference_match_answer_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_match_answer(j, c, result)) {
-  match result: TrackedRunFrame(c, inference_match_answer(j, c, result)) {
+  ⊢ TrackedRunFrame(c, inference_match_answer(j, c, result)) from match result {
     None => tracked_run_return(c, TyNever, ordered)
     Some(t) => tracked_run_return(c, t, ordered)
   }
@@ -9209,10 +9069,7 @@ pub theorem inference_step_ck_match_expr_in_frame_tracked(
   span: TySpan,
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  inference_step_ck_match_expr_in(j, c, scrutinee, arms, env, span)
-) {
+): TrackedRunFrame(c, inference_step_ck_match_expr_in(j, c, scrutinee, arms, env, span)) {
   tracked_run_bind(
     Ty,
     Ty,
@@ -9264,9 +9121,7 @@ pub theorem inference_step_ck_match_expr_in_frame_tracked(
 pub theorem inference_successor_ck_match_expr_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_match_expr_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_match_expr_in_tracked(Succ(j)) {
   c => scrutinee => arms => env => span => ordered => Eq::subst(
     (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_match_expr_in(j, c, scrutinee, arms, env, span)),
@@ -9276,9 +9131,7 @@ pub theorem inference_successor_ck_match_expr_in_tracked(
 pub theorem inference_successor_ck_handle_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_handle_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_handle_in_tracked(Succ(j)) {
   c => body => handlers => env => ordered => Eq::subst(
     (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_handle_in(j, c, body, handlers, env)),
@@ -9294,7 +9147,7 @@ pub theorem inference_first_handler_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, inference_first_handler(j, c, b, env, returned)) {
-  match returned: TrackedRunFrame(c, inference_first_handler(j, c, b, env, returned)) {
+  ⊢ TrackedRunFrame(c, inference_first_handler(j, c, b, env, returned)) from match returned {
     None => tracked_run_return(c, b, ordered)
     Some(r) => inference_bind_scope_frame_tracked(
       Unit,
@@ -9352,9 +9205,7 @@ pub theorem inference_step_ck_handle_first_in_frame_tracked(
 pub theorem inference_successor_ck_handle_first_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_handle_first_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_handle_first_in_tracked(Succ(j)) {
   c => handlers => b => env => ordered => Eq::subst(
     (z: Mut1(Ty, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_handle_first_in(j, c, handlers, b, env)),
@@ -9364,9 +9215,7 @@ pub theorem inference_successor_ck_handle_first_in_tracked(
 pub theorem inference_successor_ck_handle_result_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_handle_result_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_handle_result_in_tracked(Succ(j)) {
   c => handlers => env => result => first => budget_ty => ordered => Eq::subst(
     (z: Mut1(Unit, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_handle_result_in(j, c, handlers, env, result, first, budget_ty)),
@@ -9386,9 +9235,7 @@ pub theorem inference_successor_ck_handle_result_in_tracked(
 pub theorem inference_successor_ck_handle_arms_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_handle_arms_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_handle_arms_in_tracked(Succ(j)) {
   c => hs => env => result => rv => budget_ty => ordered => Eq::subst(
     (z: Mut1(Unit, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_handle_arms_in(j, c, hs, env, result, rv, budget_ty)),
@@ -9408,9 +9255,7 @@ pub theorem inference_successor_ck_handle_arms_in_tracked(
 pub theorem inference_successor_ck_handle_one_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_handle_one_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_handle_one_in_tracked(Succ(j)) {
   c => h => env => result => rv => budget_ty => ordered => Eq::subst(
     (z: Mut1(Unit, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(inference_unf_ck_handle_one_in(j, c, h, env, result, rv, budget_ty)),
@@ -9420,9 +9265,7 @@ pub theorem inference_successor_ck_handle_one_in_tracked(
 pub theorem inference_successor_ck_handle_arm_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_handle_arm_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_handle_arm_in_tracked(Succ(j)) {
   c => env => result => rv => budget_ty => eff => binds => types => patterns => cont => guard => body => ordered => Eq::subst(
     (z: Mut1(Unit, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(
@@ -9464,9 +9307,7 @@ pub theorem inference_successor_ck_handle_arm_in_tracked(
 pub theorem inference_successor_ck_handle_body_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_handle_body_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_handle_body_in_tracked(Succ(j)) {
   c => env => result => rv => eff => params => answer => rigid => names => patterns => cont => guard => body => ordered => Eq::subst(
     (z: Mut1(Unit, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(
@@ -9507,121 +9348,91 @@ pub theorem inference_successor_ck_handle_body_in_tracked(
     )
   )
 }
-pub theorem inference_zero_ck_infer_in_tracked(): Inference_ck_infer_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_infer_in_tracked(): Inference_ck_infer_in_tracked(Zero) {
   c => term => env => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_infer_term_in_tracked(): Inference_ck_infer_term_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_infer_term_in_tracked(): Inference_ck_infer_term_in_tracked(Zero) {
   c => term => env => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_else_in_tracked(): Inference_ck_else_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_else_in_tracked(): Inference_ck_else_in_tracked(Zero) {
   c => t => el => env => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_infer_each_in_tracked(): Inference_ck_infer_each_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_infer_each_in_tracked(): Inference_ck_infer_each_in_tracked(Zero) {
   c => ts => env => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_guard_in_tracked(): Inference_ck_guard_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_guard_in_tracked(): Inference_ck_guard_in_tracked(Zero) {
   c => guard => env => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_stmt_in_tracked(): Inference_ck_stmt_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_stmt_in_tracked(): Inference_ck_stmt_in_tracked(Zero) {
   c => s => env => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_returned_in_tracked(): Inference_ck_returned_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_returned_in_tracked(): Inference_ck_returned_in_tracked(Zero) {
   c => e => env => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_check_fn_in_tracked(): Inference_ck_check_fn_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_check_fn_in_tracked(): Inference_ck_check_fn_in_tracked(Zero) {
   c => f => scheme => env => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_block_in_tracked(): Inference_ck_block_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_block_in_tracked(): Inference_ck_block_in_tracked(Zero) {
   c => stmts => env => stopped => last => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_app_args_in_tracked(): Inference_ck_app_args_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_app_args_in_tracked(): Inference_ck_app_args_in_tracked(Zero) {
   c => arguments => known => env => i => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_app_in_tracked(): Inference_ck_app_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_app_in_tracked(): Inference_ck_app_in_tracked(Zero) {
   c => term => function => arguments => env => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_app_call_in_tracked(): Inference_ck_app_call_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_app_call_in_tracked(): Inference_ck_app_call_in_tracked(Zero) {
   c => term => function => arguments => env => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_operands_in_tracked(): Inference_ck_operands_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_operands_in_tracked(): Inference_ck_operands_in_tracked(Zero) {
   c => arguments => env => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_clone_of_in_tracked(): Inference_ck_clone_of_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_clone_of_in_tracked(): Inference_ck_clone_of_in_tracked(Zero) {
   c => arguments => env => span => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_lambda_in_tracked(): Inference_ck_lambda_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_lambda_in_tracked(): Inference_ck_lambda_in_tracked(Zero) {
   c => lam => borrows => env => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
@@ -9635,41 +9446,31 @@ pub theorem inference_zero_ck_record_fields_in_tracked(): Inference_ck_record_fi
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_record_in_tracked(): Inference_ck_record_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_record_in_tracked(): Inference_ck_record_in_tracked(Zero) {
   c => name => fields => env => span => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_match_arms_in_tracked(): Inference_ck_match_arms_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_match_arms_in_tracked(): Inference_ck_match_arms_in_tracked(Zero) {
   c => arms => s => env => result => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_match_expr_in_tracked(): Inference_ck_match_expr_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_match_expr_in_tracked(): Inference_ck_match_expr_in_tracked(Zero) {
   c => scrutinee => arms => env => span => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_handle_in_tracked(): Inference_ck_handle_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_handle_in_tracked(): Inference_ck_handle_in_tracked(Zero) {
   c => body => handlers => env => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_handle_first_in_tracked(): Inference_ck_handle_first_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_handle_first_in_tracked(): Inference_ck_handle_first_in_tracked(Zero) {
   c => handlers => b => env => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
@@ -9683,33 +9484,25 @@ pub theorem inference_zero_ck_handle_result_in_tracked(): Inference_ck_handle_re
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_handle_arms_in_tracked(): Inference_ck_handle_arms_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_handle_arms_in_tracked(): Inference_ck_handle_arms_in_tracked(Zero) {
   c => hs => env => result => rv => budget_ty => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_handle_one_in_tracked(): Inference_ck_handle_one_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_handle_one_in_tracked(): Inference_ck_handle_one_in_tracked(Zero) {
   c => h => env => result => rv => budget_ty => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_handle_arm_in_tracked(): Inference_ck_handle_arm_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_handle_arm_in_tracked(): Inference_ck_handle_arm_in_tracked(Zero) {
   c => env => result => rv => budget_ty => eff => binds => types => patterns => cont => guard => body => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
   )
 }
-pub theorem inference_zero_ck_handle_body_in_tracked(): Inference_ck_handle_body_in_tracked(
-  Zero
-) {
+pub theorem inference_zero_ck_handle_body_in_tracked(): Inference_ck_handle_body_in_tracked(Zero) {
   c => env => result => rv => eff => params => answer => rigid => names => patterns => cont => guard => body => ordered => AndIntro(
     ordered,
     AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
@@ -9723,7 +9516,7 @@ pub theorem leaf_stmt_ty_frame_tracked(
   ty: Option(SurfaceTerm),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, leaf_stmt_ty(c, v, value, name, ty)) {
-  match ty: TrackedRunFrame(c, leaf_stmt_ty(c, v, value, name, ty)) {
+  ⊢ TrackedRunFrame(c, leaf_stmt_ty(c, v, value, name, ty)) from match ty {
     None => tracked_run_return(c, v, ordered)
     Some(tt) => tracked_run_bind(
       Ty,
@@ -9781,10 +9574,10 @@ pub theorem binding_let_if_frame_tracked(
   borrow: Bool,
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, binding_let_if(c, env, name, r#view, bm, resolved, value, borrow)) {
-  match borrow: TrackedScopeFrame(
+  ⊢ TrackedScopeFrame(
     c,
     binding_let_if(c, env, name, r#view, bm, resolved, value, borrow)
-  ) {
+  ) from match borrow {
     true => pattern_lift_frame_tracked(
       c,
       env,
@@ -9812,10 +9605,7 @@ pub theorem binding_let_after_frame_tracked(
   borrow: Bool,
   bm: Bool,
   ordered: CkOrdered(c)
-): TrackedScopeFrame(
-  c,
-  binding_let_after(c, env, name, t0, resolved, r#view, value, borrow, bm)
-) {
+): TrackedScopeFrame(c, binding_let_after(c, env, name, t0, resolved, r#view, value, borrow, bm)) {
   tracked_pattern_bind(
     Unit,
     Unit,
@@ -9864,10 +9654,7 @@ pub theorem binding_let_frame_tracked(
   borrow: Bool,
   bm: Bool,
   ordered: CkOrdered(c)
-): TrackedScopeFrame(
-  c,
-  binding_let(c, env, name, ty, v, value, borrow, bm)
-) {
+): TrackedScopeFrame(c, binding_let(c, env, name, ty, v, value, borrow, bm)) {
   pattern_bind_one_frame_tracked(
     Ty,
     Unit,
@@ -9910,10 +9697,7 @@ pub theorem ck_let_scope_frame_tracked(
   borrow: Bool,
   bm: Bool,
   ordered: CkOrdered(c)
-): TrackedScopeFrame(
-  c,
-  ck_let(c, env, name, ty, v, value, borrow, bm)
-) {
+): TrackedScopeFrame(c, ck_let(c, env, name, ty, v, value, borrow, bm)) {
   Eq::subst(
     (z: Mut2(Unit, Checker, Scope)) => TrackedScopeFrame(c, z),
     Eq::sym(binding_let_unf(c, env, name, ty, v, value, borrow, bm)),
@@ -9926,10 +9710,7 @@ pub theorem binding_scope_only_frame_tracked<A: Type>(
   m: Mut1(A, Scope),
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, binding_scope_only(c, m)) {
-  match m: TrackedScopeFrame(
-    c,
-    binding_scope_only(c, m)
-  ) {
+  ⊢ TrackedScopeFrame(c, binding_scope_only(c, m)) from match m {
     mut1(v, env) => AndIntro(
       ordered,
       AndIntro(item => member => member, AndIntro(Refl, obligation_state_refl(c)))
@@ -9943,7 +9724,7 @@ pub theorem binding_mark_frame_tracked(
   vb: Bool,
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, binding_mark(c, env, vb)) {
-  match vb: TrackedScopeFrame(c, binding_mark(c, env, vb)) {
+  ⊢ TrackedScopeFrame(c, binding_mark(c, env, vb)) from match vb {
     true => binding_scope_only_frame_tracked(c, ck_mark_view(env), ordered)
     false => pattern_return_frame_tracked(c, env, Star, ordered)
   }
@@ -9957,10 +9738,7 @@ pub theorem binding_var_after_frame_tracked(
   vb: Bool,
   t: Ty,
   ordered: CkOrdered(c)
-): TrackedScopeFrame(
-  c,
-  binding_var_after(c, env, name, value, vb, t)
-) {
+): TrackedScopeFrame(c, binding_var_after(c, env, name, value, vb, t)) {
   pattern_bind_one_frame_tracked(
     Unit,
     Unit,
@@ -10000,10 +9778,7 @@ pub theorem binding_var_frame_tracked(
   value: SurfaceTerm,
   vb: Bool,
   ordered: CkOrdered(c)
-): TrackedScopeFrame(
-  c,
-  binding_var(c, env, name, ty, v, value, vb)
-) {
+): TrackedScopeFrame(c, binding_var(c, env, name, ty, v, value, vb)) {
   pattern_bind_one_frame_tracked(
     Ty,
     Unit,
@@ -10024,10 +9799,7 @@ pub theorem ck_var_scope_frame_tracked(
   value: SurfaceTerm,
   vb: Bool,
   ordered: CkOrdered(c)
-): TrackedScopeFrame(
-  c,
-  ck_var(c, env, name, ty, v, value, vb)
-) {
+): TrackedScopeFrame(c, ck_var(c, env, name, ty, v, value, vb)) {
   Eq::subst(
     (z: Mut2(Unit, Checker, Scope)) => TrackedScopeFrame(c, z),
     Eq::sym(binding_var_unf(c, env, name, ty, v, value, vb)),
@@ -10044,7 +9816,7 @@ pub theorem binding_assign_borrow_frame_tracked(
   mutable: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, binding_assign_borrow(c, name, v, value, inner, mutable)) {
-  match mutable: TrackedRunFrame(c, binding_assign_borrow(c, name, v, value, inner, mutable)) {
+  ⊢ TrackedRunFrame(c, binding_assign_borrow(c, name, v, value, inner, mutable)) from match mutable {
     true => tracked_run_rewrap(
       c,
       ck_expect(c, v, inner, span_of(value), cat3("`", name, "`")),
@@ -10076,7 +9848,7 @@ pub theorem binding_assign_type_frame_tracked(
   t: Ty,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, binding_assign_type(c, name, v, value, t)) {
-  match t: TrackedRunFrame(c, binding_assign_type(c, name, v, value, t)) {
+  ⊢ TrackedRunFrame(c, binding_assign_type(c, name, v, value, t)) from match t {
     TyInt(pat_w) => tracked_run_read(
       c,
       ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
@@ -10345,7 +10117,7 @@ pub theorem binding_assign_mutable_frame_tracked(
   mutable: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, binding_assign_mutable(c, name, v, value, l, mutable)) {
-  match mutable: TrackedRunFrame(c, binding_assign_mutable(c, name, v, value, l, mutable)) {
+  ⊢ TrackedRunFrame(c, binding_assign_mutable(c, name, v, value, l, mutable)) from match mutable {
     true => tracked_run_rewrap(
       c,
       ck_expect(c, v, leaf_local_ty(l), span_of(value), cat3("`", name, "`")),
@@ -10378,7 +10150,7 @@ pub theorem binding_assign_view_frame_tracked(
   r#view: Bool,
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, binding_assign_view(c, name, v, value, l, r#view)) {
-  match r#view: TrackedRunFrame(c, binding_assign_view(c, name, v, value, l, r#view)) {
+  ⊢ TrackedRunFrame(c, binding_assign_view(c, name, v, value, l, r#view)) from match r#view {
     true => tracked_run_read(
       c,
       ck_rewrap1(ck_error(c, "a view var cannot be reassigned", span_of(value))),
@@ -10414,7 +10186,7 @@ pub theorem binding_assign_frame_tracked(
   found: Option(Local),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, binding_assign(c, name, v, value, found)) {
-  match found: TrackedRunFrame(c, binding_assign(c, name, v, value, found)) {
+  ⊢ TrackedRunFrame(c, binding_assign(c, name, v, value, found)) from match found {
     None => tracked_run_read(
       c,
       ck_rewrap1(ck_error(c, cat2(name, " is not defined"), span_of(value))),
@@ -10449,10 +10221,7 @@ pub theorem ck_assign_run_frame_tracked(
   v: Ty,
   value: SurfaceTerm,
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_assign(c, env, name, v, value)
-) {
+): TrackedRunFrame(c, ck_assign(c, env, name, v, value)) {
   Eq::subst(
     (z: Mut1(Unit, Checker)) => TrackedRunFrame(c, z),
     Eq::sym(binding_assign_unf(c, env, name, v, value)),
@@ -10467,10 +10236,7 @@ pub theorem inference_use_ck_check_fn_in_tracked(
   env: List(Local),
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_check_fn_in(k, c, f, scheme, env)
-) {
+): TrackedRunFrame(c, ck_check_fn_in(k, c, f, scheme, env)) {
   And::left(
     And::right(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))
   )(c, f, scheme, env, ordered)
@@ -10483,11 +10249,10 @@ pub theorem inference_use_ck_returned_in_tracked(
   env: List(Local),
   ordered: CkOrdered(c),
   ih: InferenceFrames_tracked(k)
-): TrackedRunFrame(
-  c,
-  ck_returned_in(k, c, e, env)
-) {
-  And::left(And::right(And::right(And::right(And::right(And::right(And::right(ih)))))))(c, e, env, ordered)
+): TrackedRunFrame(c, ck_returned_in(k, c, e, env)) {
+  And::left(
+    And::right(And::right(And::right(And::right(And::right(And::right(ih))))))
+  )(c, e, env, ordered)
 }
 
 pub theorem argument_return_frame_tracked(
@@ -10497,7 +10262,7 @@ pub theorem argument_return_frame_tracked(
   returns: List(Ty),
   ordered: CkOrdered(c)
 ): TrackedRunFrame(c, argument_return(c, t, span, returns)) {
-  match returns: TrackedRunFrame(c, argument_return(c, t, span, returns)) {
+  ⊢ TrackedRunFrame(c, argument_return(c, t, span, returns)) from match returns {
     Nil => tracked_run_read(
       c,
       ck_rewrap1(ck_error(c, "`return` outside a function", span)),
@@ -10542,7 +10307,7 @@ pub theorem inference_statement_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, inference_statement(j, c, env, s)) {
-  match s: TrackedScopeFrame(c, inference_statement(j, c, env, s)) {
+  ⊢ TrackedScopeFrame(c, inference_statement(j, c, env, s)) from match s {
     StLet(name, ty, value, borrow, bm) => pattern_bind_one_frame_tracked(
       Ty,
       Ty,
@@ -10986,9 +10751,7 @@ pub theorem inference_step_ck_stmt_in_frame_tracked(
 pub theorem inference_successor_ck_stmt_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_stmt_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_stmt_in_tracked(Succ(j)) {
   c => s => env => ordered => Eq::subst(
     (z: Mut2(Ty, Checker, Scope)) => TrackedScopeFrame(c, z),
     Eq::sym(inference_unf_ck_stmt_in(j, c, s, env)),
@@ -11004,7 +10767,7 @@ pub theorem inference_block_end_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, inference_block_end(j, c, env, last, stopped)) {
-  match stopped: TrackedScopeFrame(c, inference_block_end(j, c, env, last, stopped)) {
+  ⊢ TrackedScopeFrame(c, inference_block_end(j, c, env, last, stopped)) from match stopped {
     true => pattern_return_frame_tracked(c, env, TyNever, ordered)
     false => pattern_return_frame_tracked(c, env, last, ordered)
   }
@@ -11032,7 +10795,7 @@ pub theorem inference_block_frame_tracked(
   ih: InferenceFrames_tracked(j),
   ordered: CkOrdered(c)
 ): TrackedScopeFrame(c, inference_block(j, c, env, stopped, last, stmts)) {
-  match stmts: TrackedScopeFrame(c, inference_block(j, c, env, stopped, last, stmts)) {
+  ⊢ TrackedScopeFrame(c, inference_block(j, c, env, stopped, last, stmts)) from match stmts {
     Nil => inference_block_end_frame_tracked(j, c, env, last, stopped, ih, ordered)
     Cons(s, rest) => tracked_pattern_bind(
       Ty,
@@ -11078,9 +10841,7 @@ pub theorem inference_step_ck_block_in_frame_tracked(
 pub theorem inference_successor_ck_block_in_tracked(
   j: Nat,
   ih: InferenceFrames_tracked(j)
-): Inference_ck_block_in_tracked(
-  Succ(j)
-) {
+): Inference_ck_block_in_tracked(Succ(j)) {
   c => stmts => env => stopped => last => ordered => Eq::subst(
     (z: Mut2(Ty, Checker, Scope)) => TrackedScopeFrame(c, z),
     Eq::sym(inference_unf_ck_block_in(j, c, stmts, env, stopped, last)),
@@ -11088,7 +10849,7 @@ pub theorem inference_successor_ck_block_in_tracked(
   )
 }
 pub theorem inference_frames_tracked(k: Nat): InferenceFrames_tracked(k) {
-  match k: InferenceFrames_tracked(k) {
+  ⊢ InferenceFrames_tracked(k) from match k {
     Zero => AndIntro(
       inference_zero_ck_infer_in_tracked(),
       AndIntro(
@@ -11345,10 +11106,7 @@ pub theorem ck_check_fn_in_frame_tracked(
   scheme: Scheme,
   env: List(Local),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_check_fn_in(k, c, f, scheme, env)
-) {
+): TrackedRunFrame(c, ck_check_fn_in(k, c, f, scheme, env)) {
   inference_use_ck_check_fn_in_tracked(k, c, f, scheme, env, ordered, inference_frames_tracked(k))
 }
 
@@ -11360,10 +11118,7 @@ pub theorem ck_app_args_in_frame_tracked(
   env: List(Local),
   i: Nat,
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_app_args_in(k, c, arguments, known, env, i)
-) {
+): TrackedRunFrame(c, ck_app_args_in(k, c, arguments, known, env, i)) {
   inference_use_ck_app_args_in_tracked(
     k,
     c,
@@ -11384,10 +11139,7 @@ pub theorem ck_app_in_frame_tracked(
   arguments: List(SurfaceTerm),
   env: List(Local),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_app_in(k, c, term, function, arguments, env)
-) {
+): TrackedRunFrame(c, ck_app_in(k, c, term, function, arguments, env)) {
   inference_use_ck_app_in_tracked(
     k,
     c,
@@ -11408,10 +11160,7 @@ pub theorem ck_app_call_in_frame_tracked(
   arguments: List(SurfaceTerm),
   env: List(Local),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_app_call_in(k, c, term, function, arguments, env)
-) {
+): TrackedRunFrame(c, ck_app_call_in(k, c, term, function, arguments, env)) {
   inference_use_ck_app_call_in_tracked(
     k,
     c,
@@ -11430,10 +11179,7 @@ pub theorem ck_operands_in_frame_tracked(
   arguments: List(SurfaceTerm),
   env: List(Local),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_operands_in(k, c, arguments, env)
-) {
+): TrackedRunFrame(c, ck_operands_in(k, c, arguments, env)) {
   inference_use_ck_operands_in_tracked(k, c, arguments, env, ordered, inference_frames_tracked(k))
 }
 
@@ -11444,10 +11190,7 @@ pub theorem ck_clone_of_in_frame_tracked(
   env: List(Local),
   span: TySpan,
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_clone_of_in(k, c, arguments, env, span)
-) {
+): TrackedRunFrame(c, ck_clone_of_in(k, c, arguments, env, span)) {
   inference_use_ck_clone_of_in_tracked(
     k,
     c,
@@ -11466,10 +11209,7 @@ pub theorem ck_lambda_in_frame_tracked(
   borrows: List(Option(Bool)),
   env: List(Local),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_lambda_in(k, c, lam, borrows, env)
-) {
+): TrackedRunFrame(c, ck_lambda_in(k, c, lam, borrows, env)) {
   inference_use_ck_lambda_in_tracked(k, c, lam, borrows, env, ordered, inference_frames_tracked(k))
 }
 
@@ -11482,10 +11222,7 @@ pub theorem ck_record_fields_in_frame_tracked(
   env: List(Local),
   seen: List(Text),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_record_fields_in(k, c, name, fields, declared, env, seen)
-) {
+): TrackedRunFrame(c, ck_record_fields_in(k, c, name, fields, declared, env, seen)) {
   inference_use_ck_record_fields_in_tracked(
     k,
     c,
@@ -11507,10 +11244,7 @@ pub theorem ck_record_in_frame_tracked(
   env: List(Local),
   span: TySpan,
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_record_in(k, c, name, fields, env, span)
-) {
+): TrackedRunFrame(c, ck_record_in(k, c, name, fields, env, span)) {
   inference_use_ck_record_in_tracked(
     k,
     c,
@@ -11531,10 +11265,7 @@ pub theorem ck_match_arms_in_frame_tracked(
   env: List(Local),
   result: Option(Ty),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_match_arms_in(k, c, arms, s, env, result)
-) {
+): TrackedRunFrame(c, ck_match_arms_in(k, c, arms, s, env, result)) {
   inference_use_ck_match_arms_in_tracked(
     k,
     c,
@@ -11555,10 +11286,7 @@ pub theorem ck_match_expr_in_frame_tracked(
   env: List(Local),
   span: TySpan,
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_match_expr_in(k, c, scrutinee, arms, env, span)
-) {
+): TrackedRunFrame(c, ck_match_expr_in(k, c, scrutinee, arms, env, span)) {
   inference_use_ck_match_expr_in_tracked(
     k,
     c,
@@ -11578,10 +11306,7 @@ pub theorem ck_handle_in_frame_tracked(
   handlers: List(SurfaceHandler),
   env: List(Local),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_handle_in(k, c, body, handlers, env)
-) {
+): TrackedRunFrame(c, ck_handle_in(k, c, body, handlers, env)) {
   inference_use_ck_handle_in_tracked(
     k,
     c,
@@ -11600,10 +11325,7 @@ pub theorem ck_handle_first_in_frame_tracked(
   b: Ty,
   env: List(Local),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_handle_first_in(k, c, handlers, b, env)
-) {
+): TrackedRunFrame(c, ck_handle_first_in(k, c, handlers, b, env)) {
   inference_use_ck_handle_first_in_tracked(
     k,
     c,
@@ -11624,10 +11346,7 @@ pub theorem ck_handle_result_in_frame_tracked(
   first: Ty,
   budget_ty: Ty,
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_handle_result_in(k, c, handlers, env, result, first, budget_ty)
-) {
+): TrackedRunFrame(c, ck_handle_result_in(k, c, handlers, env, result, first, budget_ty)) {
   inference_use_ck_handle_result_in_tracked(
     k,
     c,
@@ -11650,10 +11369,7 @@ pub theorem ck_handle_arms_in_frame_tracked(
   rv: Option(Nat),
   budget_ty: Ty,
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_handle_arms_in(k, c, hs, env, result, rv, budget_ty)
-) {
+): TrackedRunFrame(c, ck_handle_arms_in(k, c, hs, env, result, rv, budget_ty)) {
   inference_use_ck_handle_arms_in_tracked(
     k,
     c,
@@ -11676,10 +11392,7 @@ pub theorem ck_handle_one_in_frame_tracked(
   rv: Option(Nat),
   budget_ty: Ty,
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_handle_one_in(k, c, h, env, result, rv, budget_ty)
-) {
+): TrackedRunFrame(c, ck_handle_one_in(k, c, h, env, result, rv, budget_ty)) {
   inference_use_ck_handle_one_in_tracked(
     k,
     c,
@@ -11791,10 +11504,7 @@ pub theorem ck_infer_frame_tracked(
   term: SurfaceTerm,
   env: List(Local),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_infer(c, term, env)
-) {
+): TrackedRunFrame(c, ck_infer(c, term, env)) {
   tracked_run_rewrap(
     c,
     ck_infer_in(ck_steps_of(c), c, term, env),
@@ -11808,10 +11518,7 @@ pub theorem ck_check_fn_frame_tracked(
   scheme: Scheme,
   env: List(Local),
   ordered: CkOrdered(c)
-): TrackedRunFrame(
-  c,
-  ck_check_fn(c, f, scheme, env)
-) {
+): TrackedRunFrame(c, ck_check_fn(c, f, scheme, env)) {
   tracked_run_rewrap(
     c,
     ck_check_fn_in(ck_steps_of(c), c, f, scheme, env),

@@ -1,0 +1,33 @@
+@ cases.canonical-rust-syntax-is-parsed
+imports = [path`../fixtures/rustgen-parser-macro.taut`, path`../../std/Base.taut`]
+source = ```tauto
+pub theorem parsed_0(): rustgen_model_accepts!(`#[derive(Clone)] enum E<T: Clone> { A(T), B } fn entry(mut x: i64) -> i64 { let mut y: i64 = 1i64; if (true) { (x + y) } else { 0i64 } }`) = true { Refl }
+pub theorem parsed_1(): rustgen_model_accepts!(`fn entry<'a>(mut x: &'a mut i64) -> () { let mut f: Box<dyn for<'b> FnMut(&'b mut i64) -> (()) + 'a> = (move |mut y| { () }); async move { () }; match (x) { &mut (mut y) if true => (), } }`) = true { Refl }
+pub theorem parsed_2(): rustgen_model_accepts!(`struct S { pub x: u64 } fn entry() -> u64 { let mut s: S = (S { x: 1u64 }); 'l0: loop { break 'l0 ((s).x); }; 0u64 }`) = true { Refl }
+pub theorem parsed_3(): rustgen_model_accepts!(`fn entry() -> f64 { f64::from_bits(9221120237041090561u64) }`) = true { Refl }
+```
+checks.parsed_0 = "ok"
+checks.parsed_1 = "ok"
+checks.parsed_2 = "ok"
+checks.parsed_3 = "ok"
+
+@ cases.unsafe-is-rejected
+imports = [path`../fixtures/rustgen-parser-macro.taut`, path`../../std/Base.taut`]
+source = ```tauto
+def invalid(): Bool := rustgen_model_accepts!(`unsafe fn entry() -> () { () }`)
+```
+macro_error = "macro.syntax_error"
+
+@ cases.function-keyword-is-lowercase
+imports = [path`../fixtures/rustgen-parser-macro.taut`, path`../../std/Base.taut`]
+source = ```tauto
+def invalid(): Bool := rustgen_model_accepts!(`Fn entry() -> () { () }`)
+```
+macro_error = "macro.syntax_error"
+
+@ cases.callable-trait-is-uppercase
+imports = [path`../fixtures/rustgen-parser-macro.taut`, path`../../std/Base.taut`]
+source = ```tauto
+def invalid(): Bool := rustgen_model_accepts!(`fn entry(mut f: Box<dyn fn() -> (())>) -> () { () }`)
+```
+macro_error = "macro.syntax_error"

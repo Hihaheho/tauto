@@ -1,0 +1,81 @@
+
+@ cases.virtual_imports_compile_original_files
+entry = "src/main.taut"
+files."lib/value.taut" = ```tauto
+fn value(): i64 { 21 }
+```
+files."src/main.taut" = ```tauto
+import "../lib/value.taut"
+fn answer(): i64 { value() + value() }
+```
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+differential = "rustgen"
+
+@ cases.unused_imported_proof_is_not_erased
+entry = "main.taut"
+files."proof.taut" = ```tauto
+theorem retained(A: Prop, a: A): A { a }
+```
+files."main.taut" = ```tauto
+import "proof.taut"
+fn answer(): i64 { 42 }
+```
+selfhost_entry = "answer"
+selfhost_compile_error = "unsupported declaration: StTheorem"
+differential = "rustgen"
+
+@ cases.resource_availability_does_not_expand_macro
+entry = "src/main.taut"
+files."Tauto.eure" = 'package { name="resource-fixture" }'
+files."data/日本語.txt" = "元のリソース\n"
+files."src/main.taut" = ```tauto
+fn answer(): Text { include_text!("../data/日本語.txt") }
+```
+selfhost_entry = "answer"
+selfhost_stdout = "元のリソース\n\n"
+differential = "rustgen"
+
+@ cases.missing_resource_retains_macro_contract
+entry = "src/main.taut"
+files."Tauto.eure" = 'package { name="resource-fixture" }'
+files."src/main.taut" = ```tauto
+fn answer(): Text { include_text!("../data/missing.txt") }
+```
+macro_error = "include.read"
+
+@ cases.resource_cannot_leave_tote_even_when_supplied
+entry = "app/src/main.taut"
+files."app/Tauto.eure" = 'package { name="resource-fixture" }'
+files."other/data.txt" = "outside"
+files."app/src/main.taut" = ```tauto
+fn answer(): Text { include_text!("../../other/data.txt") }
+```
+macro_error = "include.outside"
+
+@ cases.resource_cannot_leave_and_reenter_tote
+entry = "app/src/main.taut"
+files."app/Tauto.eure" = 'package { name="resource-fixture" }'
+files."app/data.txt" = "inside"
+files."app/src/main.taut" = ```tauto
+fn answer(): Text { include_text!("../../app/data.txt") }
+```
+macro_error = "include.outside"
+
+@ cases.resource_without_tote_stays_in_source_directory
+entry = "src/main.taut"
+files."data.txt" = "outside"
+files."src/main.taut" = ```tauto
+fn answer(): Text { include_text!("../data.txt") }
+```
+macro_error = "include.outside"
+
+@ cases.import_cycle_is_a_loader_diagnostic
+entry = "a.taut"
+files."a.taut" = ```tauto
+import "b.taut"
+```
+files."b.taut" = ```tauto
+import "a.taut"
+```
+load_error = "a.taut: imports itself through a cycle"

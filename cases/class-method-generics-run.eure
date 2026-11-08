@@ -1,0 +1,96 @@
+description = "Pure method-local telescopes retain type and value instantiations through extraction."
+
+@ cases.generic-method-through-runtime-dictionary
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+instance Identity(Nat) { fn apply<B>(owner: Nat, value: B): B { value } }
+fn apply<A, B>(owner: A, value: B): B where Identity(A) { Identity::apply(owner, value) }
+fn run_nat(value: Nat): Nat { apply(0, value) }
+fn run_bool(value: Bool): Bool { apply(0, value) }
+perform show("nat", run_nat(7))
+perform show("bool", run_bool(true))
+```
+shows = ["nat = 7", "bool = true"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["nat = 7", "bool = true"]
+javascript_shows = ["nat = 7", "bool = true"]
+
+@ cases.method-local-term-is-retained-at-runtime
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+inductive Tagged(n: Nat): Type { Mk: Tagged(n) }
+class Read(A: Type) { fn read<n: Nat>(owner: A, value: Tagged(n)): Nat }
+instance Read(Nat) { fn read<index: Nat>(owner: Nat, value: Tagged(index)): Nat { index } }
+fn read<A, n: Nat>(owner: A, value: Tagged(n)): Nat where Read(A) { Read::read(owner, value) }
+fn read_index(index: Nat): Nat { read(0, Tagged::Mk(index)) }
+perform show("index", read_index(7))
+```
+shows = ["index = 7"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["index = 7"]
+javascript_shows = ["index = 7"]
+
+@ cases.type-generic-method-on-value-indexed-class
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+inductive Tagged(A: Type, key: Nat): Type { Tag(owner: A): Tagged(A, key) }
+class IndexedIdentity(A: Type, key: Nat) { fn apply<B>(owner: Tagged(A, key), value: B): B }
+instance IndexedIdentity(Nat, 2) { fn apply<B>(owner: Tagged(Nat, 2), value: B): B { value } }
+fn apply<A, B, key: Nat>(owner: Tagged(A, key), value: B): B where IndexedIdentity(A, key) { IndexedIdentity::apply(owner, value) }
+fn owner(): Tagged(Nat, 2) { Tag(0) }
+fn run_nat(value: Nat): Nat { apply(owner(), value) }
+fn run_bool(value: Bool): Bool { apply(owner(), value) }
+perform show("nat", run_nat(11))
+perform show("bool", run_bool(true))
+```
+shows = ["nat = 11", "bool = true"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["nat = 11", "bool = true"]
+javascript_shows = ["nat = 11", "bool = true"]
+
+@ cases.polymorphic-class-keeps-unrelated-native-method
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+class Id(A: Type) { fn id(value: A): A }
+instance Id(Nat) { fn id(value: Nat): Nat { value } }
+let value: nat := 1
+perform show("direct", Id::id(value))
+class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+instance Identity(Nat) { fn apply<B>(owner: Nat, value: B): B { value } }
+fn apply<A, B>(owner: A, value: B): B where Identity(A) { Identity::apply(owner, value) }
+fn run_nat(value: Nat): Nat { apply(0, value) }
+perform show("polymorphic", run_nat(7))
+```
+shows = ["direct = 1", "polymorphic = 7"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["direct = 1", "polymorphic = 7"]
+javascript_shows = ["direct = 1", "polymorphic = 7"]
+
+@ cases.native-constrained-call-still-needs-checked-wrapper
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+class Identity(A: Type) { fn apply<B>(owner: A, value: B): B }
+instance Identity(Nat) { fn apply<B>(owner: Nat, value: B): B { value } }
+fn apply<A, B>(owner: A, value: B): B where Identity(A) { Identity::apply(owner, value) }
+perform show("nat", apply(0, 7))
+```
+load_error = "`apply` requires dependent-type constraints"
+
+@ cases.native-term-inference-still-needs-checked-wrapper
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+inductive Tagged(A: Type, key: Nat): Type { Tag(owner: A): Tagged(A, key) }
+class IndexedIdentity(A: Type, key: Nat) { fn apply<B>(owner: Tagged(A, key), value: B): B }
+instance IndexedIdentity(Nat, 2) { fn apply<B>(owner: Tagged(Nat, 2), value: B): B { value } }
+fn apply<A, B, key: Nat>(owner: Tagged(A, key), value: B): B where IndexedIdentity(A, key) { IndexedIdentity::apply(owner, value) }
+fn owner(): Tagged(Nat, 2) { Tag(0) }
+perform show("nat", apply(owner(), 11))
+```
+load_error = "native call cannot infer omitted term generics"

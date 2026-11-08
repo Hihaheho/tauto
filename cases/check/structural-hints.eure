@@ -1,0 +1,156 @@
+@ cases.a-recursive-call-with-the-arguments-in-another-order-says-where-to-pass-the-part-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn two(a: Nat, b: Nat): Nat {
+  ⊢ Nat from match a {
+    Zero => b
+    Succ(k) => two(a, k)
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::two" = "error: "
+@ cases.a-recursive-call-with-the-arguments-in-another-order-says-where-to-pass-the-part-0.diagnostics[]
+file = "input/main.taut"
+name = "two"
+message = "`two(a, k)` is not structural: `two` matches on its parameter `a`, so the argument for `a` is a part of the value matched here (a field, a field of a field matched in the arm, a function-typed field applied to all its arguments, or a part matched in the arm written as the arm's constructor), and `a` is not. `k` is a part of `a`, but this call passes it for `b`; pass it for `a`, as in `two(k, a)` (the arguments are in the order of the parameters)"
+span = "Succ(k) => «two(a, k)»"
+
+@ cases.a-recursive-call-that-puts-its-part-in-a-later-place-shows-the-swapped-call-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn plus_acc(n: Nat, t: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => t
+    Succ(k) => plus_acc(Succ(t), k)
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::plus_acc" = "error: "
+@ cases.a-recursive-call-that-puts-its-part-in-a-later-place-shows-the-swapped-call-0.diagnostics[]
+file = "input/main.taut"
+name = "plus_acc"
+message = "`plus_acc(Succ(t), k)` is not structural: `plus_acc` matches on its parameter `n`, so the argument for `n` is a part of the value matched here (a field, a field of a field matched in the arm, a function-typed field applied to all its arguments, or a part matched in the arm written as the arm's constructor), and `Succ(t)` is not. `k` is a part of `n`, but this call passes it for `t`; pass it for `n`, as in `plus_acc(k, Succ(t))` (the arguments are in the order of the parameters)"
+span = "Succ(k) => «plus_acc(Succ(t), k)»"
+
+@ cases.a-recursive-call-on-a-part-of-another-parameter-names-decreasing-by-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn sum_to(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => m
+    Succ(k) => ⊢ Nat from match m {
+      Zero => n
+      Succ(j) => sum_to(n, j)
+    }
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::sum_to" = "error: "
+@ cases.a-recursive-call-on-a-part-of-another-parameter-names-decreasing-by-0.diagnostics[]
+file = "input/main.taut"
+name = "sum_to"
+message = "`sum_to(n, j)` is not structural: `sum_to` matches on its parameter `n`, so the argument for `n` is a part of the value matched here (a field, a field of a field matched in the arm, a function-typed field applied to all its arguments, or a part matched in the arm written as the arm's constructor), and `n` is not. If the recursion is on `m`, which this call changes, name it after the result type: `decreasing_by m`, and match on it in the body (a well-founded measure is `decreasing_by measure(f)`, on the first parameter)"
+span = "Succ(j) => «sum_to(n, j)»"
+
+@ cases.a-recursive-call-on-the-matched-parameter-itself-makes-no-progress-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn spin(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(k) => spin(n)
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::spin" = "error: "
+@ cases.a-recursive-call-on-the-matched-parameter-itself-makes-no-progress-0.diagnostics[]
+file = "input/main.taut"
+name = "spin"
+message = "`spin(n)` is not structural: `spin` matches on its parameter `n`, so the argument for `n` is a part of the value matched here (a field, a field of a field matched in the arm, a function-typed field applied to all its arguments, or a part matched in the arm written as the arm's constructor), and `n` is not. Every argument of this call is the parameter's own, so the call does not get smaller; give it an argument that is a part of `n`"
+span = "Succ(k) => «spin(n)»"
+
+@ cases.a-recursive-call-on-a-constant-asks-for-a-variable-of-the-pattern-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn stuck(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(k) => stuck(Zero)
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::stuck" = "error: "
+@ cases.a-recursive-call-on-a-constant-asks-for-a-variable-of-the-pattern-0.diagnostics[]
+file = "input/main.taut"
+name = "stuck"
+message = "`stuck(Zero)` is not structural: `stuck` matches on its parameter `n`, so the argument for `n` is a part of the value matched here (a field, a field of a field matched in the arm, a function-typed field applied to all its arguments, or a part matched in the arm written as the arm's constructor), and `Zero` is not. Pass a variable bound by a pattern of the `match` on `n` (a field of the value) for `n`"
+span = "Succ(k) => «stuck(Zero)»"
+
+@ cases.a-recursive-call-of-a-function-with-a-where-passes-a-later-argument-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::prelude::Ord
+
+inductive Walk(K: Type): (K, List(K)) -> Prop {
+  WHere(c: K): Walk(K, c, Nil)
+  WStep(a: K, i: K, vs: List(K), p: Walk(K, i, vs)): Walk(K, a, Cons(a, vs))
+}
+
+theorem step<K>(vs: List(K), ih: (vs = vs) -> True): True { ih(Refl) }
+
+theorem down<K>(b: K, vs: List(K), p: Walk(K, b, vs), a: K, h: vs = vs, e: vs = vs): True where Ord(K) {
+  ⊢ True from match p {
+    WHere(c) => Trivial
+    WStep(c, i, vs0, p0) => step(vs0, (e0: vs0 = vs0) => down(i, vs0, p0, a, e0, e0))
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::Walk" = "ok"
+checks."input/main.taut::step" = "ok"
+checks."input/main.taut::down" = "ok"
+
+@ cases.a-recursive-call-of-a-function-with-a-where-on-the-same-value-is-rejected-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::prelude::Ord
+
+inductive Walk(K: Type): (K, List(K)) -> Prop {
+  WHere(c: K): Walk(K, c, Nil)
+  WStep(a: K, i: K, vs: List(K), p: Walk(K, i, vs)): Walk(K, a, Cons(a, vs))
+}
+
+theorem stay<K>(b: K, vs: List(K), p: Walk(K, b, vs), h: vs = vs): True where Ord(K) {
+  ⊢ True from match p {
+    WHere(c) => Trivial
+    WStep(c, i, vs0, p0) => stay(b, vs, p, h)
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::Walk" = "ok"
+checks."input/main.taut::stay" = "error: "
+@ cases.a-recursive-call-of-a-function-with-a-where-on-the-same-value-is-rejected-0.diagnostics[]
+file = "input/main.taut"
+name = "stay"
+message = "`stay(K, inst@Ord0, inst@Ord0@laws, b, vs, p, h)` is not structural: `stay` matches on its parameter `p`, so the argument for `p` is a part of the value matched here (a field, a field of a field matched in the arm, a function-typed field applied to all its arguments, or a part matched in the arm written as the arm's constructor), and `p` is not. Every argument of this call is the parameter's own, so the call does not get smaller; give it an argument that is a part of `p`"
+span = "WStep(c, i, vs0, p0) => «stay(b, vs, p, h)»"

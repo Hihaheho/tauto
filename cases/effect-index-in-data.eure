@@ -1,0 +1,31 @@
+// A record's field writes an effect indexed by the record's generic.
+
+@ cases.a-field-row-is-read-at-the-record-argument
+source = ```nib
+import std::prelude::Shared
+
+effect wait_on<A: Shared>(a: A): Unit
+struct Opts(A: Shared) { run: () -> A ! {wait_on(A)} }
+fn drive<A: Shared>(body: () -> A ! {wait_on(A)}): A {
+  handle { body() } with {
+    wait_on<A>(a), k => k(#())
+    return v => v
+  }
+}
+fn go<A: Shared>(o: Opts(A)): A {
+  drive(() => { let answer := (o.run)(); answer })
+}
+let o: Opts(u64) := Opts { run: () => { perform wait_on((5: u64)); 5 } }
+go(o)
+```
+lin = "ok"
+
+@ cases.a-field-cannot-perform-another-instance
+source = ```nib
+import std::prelude::Shared
+
+effect wait_on<A: Shared>(a: A): Unit
+struct Opts(A: Shared) { run: () -> A ! {wait_on(A)} }
+let o: Opts(u64) := Opts { run: () => { perform wait_on((1: i64)); 5 } }
+```
+rows = "error: a function value may perform wait_on(i64) but its type permits {wait_on(u64)}"

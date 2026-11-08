@@ -1,0 +1,294 @@
+description = "Types of one name in two files are extracted apart: each file's constructor builds its own type."
+
+// Two files each declare `Cut` with a constructor `Mk`, one private and one
+// open, and each uses its own. The function that builds each struct is
+// written in the module of that struct, so the program has one for each file.
+@ cases.two-files-declare-a-constructor-of-one-name
+extract = true
+entry = "main.taut"
+files."left.taut" = ```tauto
+import std::Base
+inductive Cut: Type { Mk(value: Nat, extra: Nat): Cut }
+pub fn left(): Nat {
+  let cut := Cut::Mk(1, 10)
+  ⊢ Nat from match cut { Cut::Mk(value, extra) => value }
+}
+```
+files."right.taut" = ```tauto
+import std::Base
+pub(open) inductive Cut: Type { Mk(value: Nat, extra: Nat, third: Nat): Cut }
+pub fn right(): Nat {
+  let cut := Cut::Mk(2, 20, 200)
+  ⊢ Nat from match cut { Cut::Mk(value, extra, third) => value }
+}
+```
+files."main.taut" = ```tauto
+import "left.taut"
+import "right.taut"
+perform show("value", left() + right())
+```
+shows = ["value = 3"]
+rust_shows = ["value = 3"]
+javascript_shows = ["value = 3"]
+
+// Code that runs matches a constructor two types of one file and the
+// prelude's `BelowPair` name `Mk`: a value taken from a field of a matched
+// list has the list's element type, whose constructor the pattern is.
+@ cases.a-field-of-a-matched-value-has-the-field-type
+extract = true
+entry = "main.taut"
+files."d.taut" = ```tauto
+import std::Base
+pub(open) inductive Draw: Type {
+  Fill(x: Nat): Draw
+  ClipPop: Draw
+}
+pub(open) inductive Item: Type { Mk(id: Nat, d: Draw): Item }
+pub(open) inductive DisplayList: Type { Mk(items: List(Item)): DisplayList }
+```
+files."main.taut" = ```tauto
+import std::Base
+import std::prelude::Affine
+import "d.taut"
+fn paint(&mut px: Vec(u32), l: List(Item)): Unit {
+  match l {
+    Nil => #()
+    Cons(it, rest) => {
+      match it {
+        Mk(id, d) => match d {
+          Fill(x) => {
+            Vec::push(&mut px, 1)
+            paint(&mut px, rest)
+          }
+          ClipPop => paint(&mut px, rest)
+        }
+      }
+    }
+  }
+}
+fn main(): Unit {
+  var v: Vec(u32) := Vec::new()
+  paint(&mut v, Cons(Item::Mk(0, Fill(1)), Cons(Item::Mk(1, ClipPop), Nil)))
+  perform show("n", Vec::len(&v))
+}
+main()
+```
+shows = ["n = 1"]
+rust_shows = ["n = 1"]
+javascript_shows = ["n = 1"]
+
+@ cases.source-roundtrip-keeps-constructor-owners-apart
+extract_source = true
+extract = true
+entry = "main.taut"
+files."left.taut" = ```tauto
+import std::Base
+inductive Cut: Type { Mk(value: Nat, extra: Nat): Cut }
+pub fn left(): Nat {
+  let cut := Cut::Mk(1, 10)
+  ⊢ Nat from match cut { Cut::Mk(value, extra) => value }
+}
+```
+files."right.taut" = ```tauto
+import std::Base
+pub(open) inductive Cut: Type { Mk(value: Nat, extra: Nat, third: Nat): Cut }
+pub fn right(): Nat {
+  let cut := Cut::Mk(2, 20, 200)
+  ⊢ Nat from match cut { Cut::Mk(value, extra, third) => value }
+}
+```
+files."main.taut" = ```tauto
+import "left.taut"
+import "right.taut"
+perform show("value", left() + right())
+```
+shows = ["value = 3"]
+rust_shows = ["value = 3"]
+javascript_shows = ["value = 3"]
+
+@ cases.source-roundtrip-selects-runtime-constructors
+extract = true
+extract_source = true
+backends = ["rust", "javascript"]
+source = ```tauto
+enum Left { Same(i64), Empty, Wildcard { n: i64 } }
+enum Right { Same(Text), Empty, Wildcard { text: Text } }
+
+fn left_value(x: Left): i64 {
+  match x { Same(n) => n, Empty => 0, Wildcard { n } => n }
+}
+fn right_value(x: Right): Text {
+  match x { Same(text) => text, Empty => "empty", Wildcard { text } => text }
+}
+fn make_left(): Left { Same(21) }
+fn make_right(): Right { Same("日本語") }
+let a: Left := Same(42)
+let b: Right := Same("right")
+let empty_left: Left := Empty
+let empty_right: Right := Empty
+let record_left: Left := Wildcard { n: 7 }
+let record_right: Right := Wildcard { text: "record" }
+perform show("a", left_value(a))
+perform show("b", right_value(b))
+perform show("function_left", left_value(make_left()))
+perform show("function_right", right_value(make_right()))
+perform show("arg_left", left_value(Same(12)))
+perform show("arg_right", right_value(Same("argument")))
+perform show("empty_left", left_value(empty_left))
+perform show("empty_right", right_value(empty_right))
+perform show("record_left", left_value(record_left))
+perform show("record_right", right_value(record_right))
+perform show("qualified_left", left_value(Left::Same(13)))
+perform show("qualified_right", right_value(Right::Same("qualified")))
+```
+shows = ["a = 42", "b = \"right\"", "function_left = 21", "function_right = \"日本語\"", "arg_left = 12", "arg_right = \"argument\"", "empty_left = 0", "empty_right = \"empty\"", "record_left = 7", "record_right = \"record\"", "qualified_left = 13", "qualified_right = \"qualified\""]
+
+@ cases.source-roundtrip-distinguishes-type-from-same-named-constructor
+extract = true
+extract_source = true
+backends = ["rust", "javascript"]
+source = ```tauto
+enum Item { Item(Text) }
+fn contents(value: Item): Text {
+  match value { Item(text) => text }
+}
+let value: Item := Item("kept")
+perform show("value", contents(value))
+```
+shows = ["value = \"kept\""]
+
+@ cases.source-roundtrip-keeps-handler-pattern-owners
+extract = true
+extract_source = true
+backends = ["rust", "javascript"]
+source = ```tauto
+enum Left { Same(i64) }
+enum Right { Same(i64) }
+effect choose(value: Left): Right
+let answer: i64 := handle { perform choose(Left::Same(7)) } with {
+  choose(Same(n)), k => k(Right::Same(n + 1))
+  choose(_), k => k(Right::Same(0))
+  return Same(m) => m
+}
+perform show("answer", answer)
+```
+shows = ["answer = 8"]
+
+@ cases.source-roundtrip-keeps-pair-distinct-from-product
+extract = true
+extract_source = true
+backends = ["rust", "javascript"]
+source = ```tauto
+fn first(value: Pair(i64, i64)): i64 { value.fst }
+let pair: Pair(i64, i64) := Pair { fst: 20, snd: 22 }
+perform show("first", first(pair))
+```
+shows = ["first = 20"]
+
+@ cases.source-roundtrip-preserves-partial-proof-record-patterns
+extract = true
+extract_source = true
+backends = ["rust", "javascript"]
+source = ```tauto
+inductive Box: Type { Mk(first: Nat, second: Nat): Box }
+fn first(value: Box): Nat {
+  ⊢ Nat from match value { Box { first: n } => n }
+}
+perform show("first", first(Box { first: 20, second: 22 }))
+```
+shows = ["first = 20"]
+
+@ cases.a-runtime-body-keeps-its-definition-file-constructor
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/library.taut" = ```tauto
+pub fn three(): Nat {
+  let value := Some(3)
+  perform show("inside", 0)
+  match value { Some(number) => number, None => 0 }
+}
+```
+files."app/src/main.taut" = ```tauto
+import lib::library
+enum Piece { Whole(Nat), Some }
+fn tag(piece: Piece): Nat { match piece { Whole(number) => number, Some => 7 } }
+perform show("three", three())
+perform show("tag", tag(Some))
+```
+shows = ["inside = 0", "three = 3", "tag = 7"]
+rust_shows = ["inside = 0", "three = 3", "tag = 7"]
+javascript_shows = ["inside = 0", "three = 3", "tag = 7"]
+
+@ cases.imported-fully-qualified-constructor-keeps-its-reference
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/tree.taut" = ```tauto
+pub(open) inductive Tree: Type { Mk(children: List(Tree)): Tree }
+pub(open) inductive Span: Type { Mk(start: Nat): Span }
+```
+files."app/src/other.taut" = ```tauto
+pub(open) inductive Tree: Type { Leaf: Tree }
+```
+files."app/src/main.taut" = ```tauto
+import "tree.taut"
+import "other.taut"
+mutual {
+  fn size(tree: app::src::tree::Tree): Nat {
+    ⊢ Nat from match tree { Mk(children) => Succ(sizes(children)) }
+  }
+  fn sizes(trees: List(app::src::tree::Tree)): Nat {
+    ⊢ Nat from match trees { Nil => 0, Cons(tree, rest) => size(tree) + sizes(rest) }
+  }
+}
+perform show("size", size(app::src::tree::Tree { children: Cons(app::src::tree::Tree { children: Nil }, Nil) }))
+```
+shows = ["size = 2"]
+rust_shows = ["size = 2"]
+javascript_shows = ["size = 2"]
+
+@ cases.shared-fuel-recursion-preserves-constructor-selections
+extract = true
+source = ```tauto
+pub(open) inductive Left: Type { Mk(value: Nat): Left }
+pub(open) inductive Right: Type { Mk(value: Nat): Right }
+mutual {
+  fn left(fuel: Nat): Left {
+    ⊢ Left from match fuel {
+      Zero => Mk(1)
+      Succ(rest) => ⊢ Left from match right(rest) { Mk(value) => Mk(value + 1) }
+    }
+  }
+  fn right(steps: Nat): Right {
+    ⊢ Right from match steps {
+      Zero => Mk(2)
+      Succ(smaller) => ⊢ Right from match left(smaller) { Mk(value) => Mk(value + 1) }
+    }
+  }
+}
+theorem left_result(): left(3) = Left::Mk(5) { Refl }
+theorem right_result(): right(3) = Right::Mk(4) { Refl }
+perform show("left", match left(3) { Mk(value) => value })
+perform show("right", match right(3) { Mk(value) => value })
+```
+shows = ["left = 5", "right = 4"]
+rust_shows = ["left = 5", "right = 4"]
+javascript_shows = ["left = 5", "right = 4"]
+
+@ cases.dependent-families-preserve-equal-constructor-spellings
+extract = true
+source = ```tauto
+inductive Left: (Nat) -> Type { Mk(value: Nat): Left(1) }
+inductive Right: (Nat) -> Type { Mk(value: Nat): Right(1) }
+fn left(item: Left(1)): Nat { ⊢ Nat from match item { Mk(value) => value } }
+fn right(item: Right(1)): Nat { ⊢ Nat from match item { Mk(value) => value } }
+fn result(): Nat { left(Left::Mk(4)) + right(Right::Mk(7)) }
+theorem sum(): result() = 11 { Refl }
+perform show("sum", result())
+```
+shows = ["sum = 11"]
+rust_shows = ["sum = 11"]
+javascript_shows = ["sum = 11"]

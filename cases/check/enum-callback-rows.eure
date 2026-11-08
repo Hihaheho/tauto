@@ -1,0 +1,568 @@
+@ cases.concrete-payload
+source = ```tauto
+effect ask(): Text direct
+enum Reader { Read(() -> Text ! {ask}) }
+fn read(value: Reader): Text ! {ask} {
+  match value { Read(callback) => callback() }
+}
+let result := handle { read(Read(() => perform ask())) } with {
+  ask(), k => k("handled")
+  return text => text
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = \"handled\""]
+
+@ cases.generic-row-and-alternatives
+source = ```tauto
+effect ask(): Text direct
+enum Reader(!e) { Read(() -> Text ! e), Empty }
+fn read<!e: direct>(value: Reader(e)): Text ! e {
+  match value { Read(callback) => callback(), Empty => "empty" }
+}
+let result := handle { read(Read(() => perform ask())) } with {
+  ask(), k => k("generic")
+  return text => text
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = \"generic\""]
+// Effect-only enum parameters do not have a Rust data representation.
+rust = "skip: eval-only"
+
+@ cases.generic-type-payload
+source = ```tauto
+effect ask(): Text direct
+enum Box(A: Type) { Held(A), Empty }
+fn read(value: Box(() -> Text ! {ask})): Text ! {ask} {
+  match value { Held(callback) => callback(), Empty => "empty" }
+}
+let result := handle { read(Held(() => perform ask())) } with {
+  ask(), k => k("typed")
+  return text => text
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = \"typed\""]
+
+@ cases.nested-constructor-pattern
+source = ```tauto
+effect ask(): Text direct
+enum Reader { Read(() -> Text ! {ask}) }
+enum Wrapper { Wrapped(Reader) }
+fn read(value: Wrapper): Text ! {ask} {
+  match value { Wrapped(Read(callback)) => callback() }
+}
+let result := handle { read(Wrapped(Read(() => perform ask()))) } with {
+  ask(), k => k("nested")
+  return text => text
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = \"nested\""]
+
+@ cases.named-variant-payload
+source = ```tauto
+effect ask(): Text direct
+enum Reader { Read { callback: () -> Text ! {ask} }, Empty }
+fn read(value: Reader): Text ! {ask} {
+  match value { Read { callback } => callback(), Empty => "empty" }
+}
+let result := handle { read(Read { callback: () => perform ask() }) } with {
+  ask(), k => k("named")
+  return text => text
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = \"named\""]
+
+@ cases.qualified-constructor-alias
+source = ```tauto
+effect ask(): Text direct
+enum Reader(!e) { Read(() -> Text ! e) }
+fn read<!e: direct>(value: Reader(e)): Text ! e {
+  match value { Read(callback) => callback() }
+}
+let make := Reader::Read
+let result := handle { read(make(() => perform ask())) } with {
+  ask(), k => k("alias")
+  return text => text
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = \"alias\""]
+backend_known_failure.rust = "unsupported: the constructor `Reader::Read` used as a function"
+backend_known_failure.javascript = "unsupported: the constructor `Reader::Read` used as a function"
+backend_known_failure.vm = "unsupported: the constructor `Reader::Read` used as a function"
+
+@ cases.constructor-does-not-hide-effects
+source = ```tauto
+effect ask(): Text direct
+enum Reader { Read(() -> Text ! {}) }
+let value := Read(() => perform ask())
+```
+types = "ok"
+rows = "error: a function value may perform ask but its type permits {}"
+
+@ cases.generic-ascription-does-not-hide-effects
+source = ```tauto
+effect ask(): Text direct
+enum Box(A: Type) { Held(A), Empty }
+let value: Box(() -> Text ! {}) := Held(() => perform ask())
+```
+types = "ok"
+rows = "error: a function value may perform ask but its type permits {}"
+
+@ cases.return-does-not-hide-effects
+source = ```tauto
+effect ask(): Text direct
+enum Reader { Read(() -> Text ! {}) }
+fn make(): Reader ! {} { Read(() => perform ask()) }
+```
+types = "ok"
+rows = "error: a function value may perform ask but its type permits {}"
+
+@ cases.direct-bound-is-preserved
+source = ```tauto
+effect ask(): Text resume 1
+enum Reader(!e) { Read(() -> Text ! e) }
+fn read<!e: direct>(value: Reader(e)): Text ! e {
+  match value { Read(callback) => callback() }
+}
+let result := handle { read(Read(() => perform ask())) } with {
+  ask(), k => k("not direct")
+  return text => text
+}
+```
+types = "ok"
+rows = "error: ask is not direct but e is direct"
+
+@ cases.once-bound-is-preserved
+source = ```tauto
+effect ask(): Text resume ω
+enum Reader(!e) { Read(() -> Text ! e) }
+fn read<!e: <=1>(value: Reader(e)): Text ! e {
+  match value { Read(callback) => callback() }
+}
+let result := handle { read(Read(() => perform ask())) } with {
+  ask(), k => k("first")
+  return text => text
+}
+```
+types = "ok"
+rows = "error: ask resumes ω but e is <=1"
+
+@ cases.unknown-generic-answer-stays-unknown
+source = ```tauto
+effect get<A>(value: A): A
+enum Box(A: Type) { Held(A) }
+let result := handle {
+  let value := perform get(Held(() => "ok"))
+  match value { Held(callback) => callback() }
+} with {
+  ∀ A. get<A>(value), k => k(value)
+  return text => text
+}
+```
+types = "ok"
+rows = "error: cannot follow the effects of calling `callback`"
+
+@ cases.inferred-mutable-enum-contract
+source = ```tauto
+effect ask(): Text direct
+enum Reader(!e) { Read(() -> Text ! e) }
+var value := Read(() => "pure")
+value := Read(() => perform ask())
+```
+types = "ok"
+rows = "error: a function value may perform ask but its type permits {}"
+
+@ cases.constructor-owner-from-expected-type
+source = ```tauto
+effect ask(): Text direct
+enum Reader { Read(() -> Text ! {ask}) }
+enum Number { Read(u64) }
+fn read(value: Reader): Text ! {ask} {
+  match value { Read(callback) => callback() }
+}
+let value: Reader := Read(() => perform ask())
+let result := handle { read(value) } with {
+  ask(), k => k("owner")
+  return text => text
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = \"owner\""]
+
+@ cases.ambiguous-constructor-contract-is-checked
+source = ```tauto
+effect ask(): Text direct
+enum Reader { Read(() -> Text ! {}) }
+enum Number { Read(u64) }
+let value: Reader := Read(() => perform ask())
+```
+types = "ok"
+rows = "error: a function value may perform ask but its type permits {}"
+
+@ cases.named-variant-does-not-use-a-same-named-struct-contract
+source = ```tauto
+effect ask(): Text direct
+enum Reader { Entry { callback: () -> Text ! {} } }
+struct Entry { callback: () -> Text ! {ask} }
+fn read(value: Reader): Text ! {} {
+  match value { Entry { callback } => callback() }
+}
+let value: Reader := Entry { callback: () => perform ask() }
+let result := handle { read(value) } with {
+  ask(), k => k("hidden")
+  return text => text
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "error: a function value may perform ask but its type permits {}"
+
+@ cases.qualified-struct-pattern-keeps-fields
+source = ```tauto
+struct Holder { callback: () -> Text ! {} }
+let holder := Holder { callback: () => "qualified" }
+let result := match holder { Holder::Holder { callback } => callback() }
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = \"qualified\""]
+
+@ cases.same-named-enum-variant-does-not-hide-effects
+source = ```tauto
+effect ask(): Text direct
+enum Reader { Reader { callback: () -> Text ! {} }, Empty }
+let value: Reader := Reader { callback: () => perform ask() }
+```
+types = "ok"
+rows = "error: a function value may perform ask but its type permits {}"
+
+@ cases.recursive-enum-keeps-scalar-arguments
+source = ```tauto
+enum Tree(A: Type) { Leaf(A, () -> Text ! {}), Branch(Tree(A), Tree(A)) }
+let value: Tree(u64) := Leaf(1, () => "Leaf")
+let result := match value {
+  Leaf(number, callback) => callback()
+  Branch(left, right) => "branch"
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = \"Leaf\""]
+
+@ cases.expanding-recursion-does-not-expand-contracts
+source = ```tauto
+struct Pair(A: Type, B: Type) { first: A, second: B }
+enum Grow(A: Type) { Next(Grow(Pair(A, A))), Callback(() -> Text ! {}) }
+fn identity(value: Grow(u64)): Grow(u64) ! {} { value }
+```
+types = "ok"
+rows = "ok"
+// This case checks bounded analysis, not an expanding Rust data representation;
+// with no runtime assertion, no backend runs it.
+
+@ cases.distinct-ambient-rows-stay-distinct
+source = ```tauto
+enum Reader(!e) { Read(() -> Text ! e) }
+fn convert<!e, !f>(value: Reader(e)): Reader(f) ! {} { value }
+```
+// A row argument is no argument to the types (`row-arguments.eure`): the
+// row check keeps the two rows apart.
+types = "ok"
+rows = "error: a function value may perform |e but its type permits {|f}"
+
+@ cases.ambient-row-is-forwarded
+source = ```tauto
+effect ask(): Text direct
+enum Reader(!e) { Read(() -> Text ! e) }
+fn read<!e: direct>(value: Reader(e)): Text ! e {
+  match value { Read(callback) => callback() }
+}
+fn forward<!e: direct>(value: Reader(e)): Text ! e { read(value) }
+let result := handle { forward(Read(() => perform ask())) } with {
+  ask(), k => k("forwarded")
+  return text => text
+}
+perform show("value", result)
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = \"forwarded\""]
+// Effect-only enum parameters do not have a Rust data representation.
+rust = "skip: eval-only"
+
+@ cases.host-result-keeps-generic-callback-boundaries
+source = ```tauto
+effect ask(): Text resume ω
+struct Holder(A: Type) { run: (A) -> Text ! {} }
+extern { fn make(): Holder(() -> Text ! {ask}) }
+let holder := make()
+let result := holder.run(() => perform ask())
+```
+types = "ok"
+rows = "error: cannot follow the effects of calling `holder.run`"
+
+@ cases.distinct-symbolic-rows-are-inferred-independently
+// The row analysis is independent of the value type checker's generic inference.
+source = ```tauto
+enum Reader(!e) { Read(() -> Text ! e) }
+struct Inputs(!a, !b) { first: Reader(a), second: Reader(b) }
+fn read<!e: direct>(value: Reader(e)): Text ! e {
+  match value { Read(callback) => callback() }
+}
+fn second<!a: direct, !b: direct>(value: Inputs(a, b)): Text ! b {
+  read(value.second)
+}
+fn forward<!x: direct, !y: direct>(value: Inputs(x, y)): Text ! y {
+  second(value)
+}
+```
+rows = "ok"
+
+// Functions in the type arguments of a generic type keep their written
+// row: what is put in must fit it, and what is taken out performs it.
+@ cases.a-list-of-functions-keeps-their-row
+source = ```nib
+import std::prelude::Os
+
+fn hi(): i64 ! {stdout} {
+  perform stdout("hi")
+  1
+}
+fn run_all(fs: List(() -> i64 ! {stdout})): i64 ! {stdout} {
+  match fs {
+    Nil => 0
+    Cons(f, rest) => f() + run_all(rest)
+  }
+}
+perform show("n", run_all([() => 2, hi, hi]))
+```
+backends = ["rust", "javascript"]
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["n = 4"]
+
+@ cases.a-list-of-functions-refuses-a-function-outside-its-row
+source = ```nib
+fn bad(): i64 ! {stderr} {
+  perform stderr("x")
+  1
+}
+fn run_all(fs: List(() -> i64 ! {stdout})): i64 ! {stdout} {
+  match fs {
+    Nil => 0
+    Cons(f, rest) => f() + run_all(rest)
+  }
+}
+let n := run_all([() => 2, bad])
+```
+rows = "error: may perform stderr but its type permits {stdout}"
+
+@ cases.a-function-taken-from-a-list-performs-its-row
+source = ```nib
+fn first(fs: List(() -> i64 ! {stdout})): i64 ! {stderr} {
+  match fs {
+    Nil => 0
+    Cons(f, rest) => f()
+  }
+}
+```
+rows = "error: may perform stdout"
+
+@ cases.a-hashmap-of-functions-keeps-their-row
+source = ```nib
+import std::prelude::Affine
+import std::prelude::Os
+
+fn hi(): i64 ! {stdout} {
+  perform stdout("hi")
+  1
+}
+fn call(&m: HashMap(i64, () -> i64 ! {stdout}), k: i64): i64 ! {stdout} {
+  match HashMap::get(&m, &k) {
+    None => 0
+    Some(f) => f()
+  }
+}
+var m: HashMap(i64, () -> i64 ! {stdout}) := HashMap::new()
+let old := HashMap::insert(&mut m, 1, hi)
+perform show("n", call(&m, 1))
+```
+backends = ["rust", "javascript"]
+types = "ok"
+rows = "ok"
+shows = ["n = 1"]
+
+@ cases.a-hashmap-of-pure-functions
+source = ```nib
+import std::prelude::Affine
+
+fn find(&m: HashMap(u64, (x: i64) -> i64), w: u64): Option((x: i64) -> i64) {
+  match HashMap::get(&m, &w) {
+    None => None
+    Some(f) => Some(f)
+  }
+}
+var m: HashMap(u64, (x: i64) -> i64) := HashMap::new()
+let old := HashMap::insert(&mut m, 1, (x: i64) => x + 1)
+match find(&m, 1) {
+  None => perform show("n", 0)
+  Some(f) => perform show("n", f(41))
+}
+```
+backends = ["rust", "javascript"]
+types = "ok"
+rows = "ok"
+shows = ["n = 42"]
+
+@ cases.a-callable-field-read-out-of-a-hashmap-keeps-its-row
+source = ```nib
+import std::prelude::Affine
+import std::prelude::Os
+
+fn hi(): i64 ! {stdout} {
+  perform stdout("hi")
+  1
+}
+affine struct Watcher { run: () -> i64 ! {stdout} }
+fn call(&m: HashMap(u64, Option(Watcher)), k: u64): i64 ! {stdout} {
+  let f := match HashMap::get(&m, &k) {
+    None => None
+    Some(o) => match o {
+      None => None
+      Some(w) => Some(w.run)
+    }
+  }
+  match f {
+    None => 0
+    Some(g) => g()
+  }
+}
+var m: HashMap(u64, Option(Watcher)) := HashMap::new()
+let old := HashMap::insert(&mut m, 1, Some(Watcher { run: hi }))
+perform show("n", call(&m, 1))
+```
+types = "ok"
+rows = "ok"
+shows = ["n = 1"]
+
+@ cases.a-mutex-callback-is-given-what-the-mutex-holds
+source = ```nib
+import std::prelude::Affine
+import std::prelude::Os
+import std::prelude::Par
+
+fn hi(): i64 ! {stdout} {
+  perform stdout("hi")
+  1
+}
+affine struct Watcher { run: () -> i64 ! {stdout} }
+fn call(held: Mutex(HashMap(u64, Watcher)), k: u64): i64 ! {stdout, wait} {
+  let f := {
+    let g := Mutex::lock(held)
+    let &m := MutexGuard::get(&g)
+    match HashMap::get(&m, &k) {
+      None => None
+      Some(w) => Some(w.run)
+    }
+  }
+  match f {
+    None => 0
+    Some(g) => g()
+  }
+}
+var m: HashMap(u64, Watcher) := HashMap::new()
+let old := HashMap::insert(&mut m, 1, Watcher { run: hi })
+perform show("n", call(Mutex::new(m), 1))
+```
+types = "ok"
+rows = "ok"
+shows = ["n = 1"]
+
+@ cases.a-none-branch-does-not-hide-the-other-branchs-row
+source = ```nib
+fn hi(): i64 ! {stdout} {
+  perform stdout("hi")
+  1
+}
+fn call(b: Bool): i64 ! {} {
+  let f := if b { None } else { Some(hi) }
+  match f {
+    None => 0
+    Some(g) => g()
+  }
+}
+perform show("n", call(false))
+```
+types = "ok"
+rows = "error: may perform stdout"
+
+@ cases.a-hashmap-of-pure-functions-refuses-an-effectful-one
+source = ```nib
+var m: HashMap(u64, (x: i64) -> i64) := HashMap::new()
+let old := HashMap::insert(&mut m, 1, (x: i64) => {
+  perform stdout("x")
+  x
+})
+```
+rows = "error: may perform stdout but its type permits {}"
+
+@ cases.a-ref-of-a-function-refuses-a-function-outside-its-row
+source = ```nib
+fn bad(): i64 ! {stderr} {
+  perform stderr("x")
+  1
+}
+fn hi(): i64 ! {stdout} { 1 }
+let r: Ref(() -> i64 ! {stdout}) := Ref::new(hi)
+Ref::set(r, bad)
+```
+rows = "error: may perform stderr but its type permits {stdout}"
+
+@ cases.a-ref-of-a-function-keeps-its-row
+source = ```nib
+import std::prelude::Os
+import std::prelude::Par
+
+fn hi(): i64 ! {stdout} {
+  perform stdout("hi")
+  1
+}
+let r: Ref(() -> i64 ! {stdout}) := Ref::new(hi)
+let f := Ref::get(r)
+perform show("n", f())
+```
+backends = ["rust", "javascript"]
+rows = "ok"
+shows = ["n = 1"]

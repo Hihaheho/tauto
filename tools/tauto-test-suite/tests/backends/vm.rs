@@ -21,7 +21,8 @@ fn build_machine(base: &Path) -> Result<PathBuf, String> {
     tauto::manifest::add_dependency_rust(&mut manifest, &tote)?;
     let package = tauto_nir::compile_loaded_with_observer(&loaded, false, false, |_| {})
         .map_err(|e| format!("{e:?}"))?;
-    let bindings = tauto_rustgen::Bindings::resolve(&package, Some(&manifest), None)?;
+    // The bridge (`totes/vm/bridge`) answers the externs of `native.taut`.
+    let bindings = tauto_rustgen::Bindings::resolve(&package, Some(&manifest), Some("vm_bridge"))?;
     let options = tauto_rustgen::Options::from_manifest(&manifest);
     let ws = tauto_rustgen::workspace(
         "vm",
@@ -63,10 +64,7 @@ fn unsupported(case: &RustCase, message: &str) -> String {
     if let Some(s) = declared_failure(case, "unsupported", message) {
         return s;
     }
-    if case.explicit_backend("vm") {
-        return status("fail", &format!("unexpected unsupported: {message}"));
-    }
-    status("todo", &format!("uncovered compiler capability: {message}"))
+    status("fail", &format!("unexpected unsupported: {message}"))
 }
 
 fn run_case(case: &RustCase, machine: &Result<PathBuf, String>, work: &Path) -> String {
@@ -76,7 +74,7 @@ fn run_case(case: &RustCase, machine: &Result<PathBuf, String>, work: &Path) -> 
             let (stage, message) = match error {
                 tauto_nir::CompileError::Front(m) => ("front", m),
                 tauto_nir::CompileError::Build(m) => ("build", m),
-                tauto_nir::CompileError::Unsupported(u) => ("unsupported", u.what),
+                tauto_nir::CompileError::Unsupported(u) => ("unsupported", u.what.to_string()),
             };
             if stage == "unsupported" {
                 return unsupported(case, &message);
@@ -89,7 +87,13 @@ fn run_case(case: &RustCase, machine: &Result<PathBuf, String>, work: &Path) -> 
         Ok(b) => b,
         Err(what) => return unsupported(case, &what),
     };
-    if let Err(e) = case.check_compiled("vm") {
+    // The machine compiles the bytecode when it runs it, so a declared
+    // `unsupported` failure shows only then.
+    let unsupported_at_run = case
+        .backend_known_failure
+        .get("vm")
+        .is_some_and(|w| w.starts_with("unsupported: "));
+    if !unsupported_at_run && let Err(e) = case.check_compiled("vm") {
         return status("fail", &e);
     }
     if !case.expects_runtime() {
@@ -111,7 +115,9 @@ fn run_case(case: &RustCase, machine: &Result<PathBuf, String>, work: &Path) -> 
         .into_iter()
         .map(String::from)
         .collect();
-    let steps = (permissions.div != Grant::All).then_some(tauto_rt::DEFAULT_STEP_LIMIT);
+    // A case's `budget` is the session's step limit, as `--steps` says it.
+    let steps = (permissions.div != Grant::All)
+        .then_some(case.budget.unwrap_or(tauto_rt::DEFAULT_STEP_LIMIT));
     let (shows, stdout, stderr, exit) = if missing.is_empty() {
         let machine = match machine {
             Ok(m) => m,
@@ -128,6 +134,12 @@ fn run_case(case: &RustCase, machine: &Result<PathBuf, String>, work: &Path) -> 
         let stderr = format!("{}\n", tauto_rt::permissions::missing_message(&missing));
         (Vec::new(), String::new(), stderr, 2)
     };
+    // What the machine's compiler cannot compile yet.
+    if exit == 3
+        && let Some(what) = stderr.strip_prefix("not supported by the vm backend: ")
+    {
+        return unsupported(case, what.trim_end());
+    }
     if case.backend_known_failure.contains_key("vm") {
         if exit != 0 {
             return match case.check_limitation("vm", "runtime", &stderr) {
@@ -140,12 +152,6 @@ fn run_case(case: &RustCase, machine: &Result<PathBuf, String>, work: &Path) -> 
             "fail",
             "known failure succeeded; expected precise runtime failure",
         );
-    }
-    // What the machine's compiler cannot compile yet.
-    if exit == 3
-        && let Some(what) = stderr.strip_prefix("not supported by the vm backend: ")
-    {
-        return unsupported(case, what.trim_end());
     }
     match case.check_output("vm", &shows, &stdout, &stderr, Some(exit)) {
         Ok(()) => checked(case, "output checked"),

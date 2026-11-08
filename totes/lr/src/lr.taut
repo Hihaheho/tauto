@@ -63,9 +63,9 @@ pub fn lr_cells_in(
   rp: Nat,
   done: List(Nat)
 ): List(Nat) × Nat {
-  match fuel: List(Nat) × Nat {
+  ⊢ List(Nat) × Nat from match fuel {
     Zero => #(done, rp)
-    Succ(f) => match filled < total: List(Nat) × Nat {
+    Succ(f) => ⊢ List(Nat) × Nat from match filled < total {
       false => #(done, rp)
       true => lr_cells_in(
         f,
@@ -81,14 +81,14 @@ pub fn lr_cells_in(
 
 // `k` symbols from `at`, put before `done` last first.
 pub fn lr_symbols_onto(k: Nat, a: Array(Nat), at: Nat, done: List(LrSym)): List(LrSym) {
-  match k: List(LrSym) {
+  ⊢ List(LrSym) from match k {
     Zero => done
     Succ(k2) => lr_symbols_onto(
       k2,
       a,
       at + 2,
       Cons(
-        match scan_number(a, at): LrSym {
+        ⊢ LrSym from match scan_number(a, at) {
           Zero => LrN(scan_number(a, at + 1))
           Succ(other) => LrT(scan_number(a, at + 1))
         },
@@ -105,7 +105,7 @@ pub fn lr_productions_in(
   pp: Nat,
   done: List(LrProduction)
 ): List(LrProduction) × Nat {
-  match k: List(LrProduction) × Nat {
+  ⊢ List(LrProduction) × Nat from match k {
     Zero => #(done, pp)
     Succ(k2) => lr_productions_in(
       k2,
@@ -136,7 +136,7 @@ pub fn lr_tables_from(
   let actions := lr_cells_in(states * terminals, states * terminals, ac, 0, 0, Nil)
   let gotos := lr_cells_in(states * non_terminals, states * non_terminals, go, 0, 0, Nil)
   let productions := lr_productions_in(scan_number(pr, 0), pr, 1, Nil)
-  match scan_within(
+  ⊢ Option(LrTables) from match scan_within(
     4,
     m
   ) && scan_within(
@@ -145,7 +145,7 @@ pub fn lr_tables_from(
   ) && scan_within(
     (actions: Nat),
     ac
-  ) && scan_within((gotos: Nat), go) && scan_within((productions: Nat), pr): Option(LrTables) {
+  ) && scan_within((gotos: Nat), go) && scan_within((productions: Nat), pr) {
     false => None
     true => Some(
       LrTables {
@@ -187,19 +187,19 @@ pub fn lr_tokens(&t: LrTables, tokens: List(ScanToken), length: Nat): List(LlkTo
 }
 
 pub fn lr_top(states: List(Nat)): Nat {
-  match states: Nat {
+  ⊢ Nat from match states {
     Nil => 0
     Cons(s, rest) => s
   }
 }
 
 pub fn lr_sym_eq(a: LrSym, b: LrSym): Bool {
-  match a: Bool {
-    LrT(x) => match b: Bool {
+  ⊢ Bool from match a {
+    LrT(x) => ⊢ Bool from match b {
       LrT(y) => x == y
       LrN(y) => false
     }
-    LrN(x) => match b: Bool {
+    LrN(x) => ⊢ Bool from match b {
       LrT(y) => false
       LrN(y) => x == y
     }
@@ -209,11 +209,11 @@ pub fn lr_sym_eq(a: LrSym, b: LrSym): Bool {
 // What is left of the stack `syms` (top first) when a production's right
 // side (`pops`, last first) is on top of it; `None` when it is not.
 pub fn lr_pop(pops: List(LrSym), syms: List(LrSym)): Option(List(LrSym)) {
-  match pops: Option(List(LrSym)) {
+  ⊢ Option(List(LrSym)) from match pops {
     Nil => Some(syms)
-    Cons(p, more) => match syms: Option(List(LrSym)) {
+    Cons(p, more) => ⊢ Option(List(LrSym)) from match syms {
       Nil => None
-      Cons(s, rest) => match lr_sym_eq(p, s): Option(List(LrSym)) {
+      Cons(s, rest) => ⊢ Option(List(LrSym)) from match lr_sym_eq(p, s) {
         true => lr_pop(more, rest)
         false => None
       }
@@ -222,9 +222,9 @@ pub fn lr_pop(pops: List(LrSym), syms: List(LrSym)): Option(List(LrSym)) {
 }
 
 pub fn lr_drop<A>(k: Nat, xs: List(A)): List(A) {
-  match k: List(A) {
+  ⊢ List(A) from match k {
     Zero => xs
-    Succ(k2) => match xs: List(A) {
+    Succ(k2) => ⊢ List(A) from match xs {
       Nil => Nil
       Cons(x, rest) => lr_drop(k2, rest)
     }
@@ -234,9 +234,9 @@ pub fn lr_drop<A>(k: Nat, xs: List(A)): List(A) {
 // The first `k` of `xs` before `done`, last first: the children of a reduce,
 // in order, from the node numbers on the stack.
 pub fn lr_take_onto(k: Nat, xs: List(Nat), done: List(Nat)): List(Nat) {
-  match k: List(Nat) {
+  ⊢ List(Nat) from match k {
     Zero => done
-    Succ(k2) => match xs: List(Nat) {
+    Succ(k2) => ⊢ List(Nat) from match xs {
       Nil => done
       Cons(x, rest) => lr_take_onto(k2, rest, Cons(x, done))
     }
@@ -249,9 +249,9 @@ pub fn lr_action(&t: LrTables, state: Nat, terminal: Nat): Nat {
 
 // The terminals the state has an action for, from `k - 1` down, before `done`.
 pub fn lr_expected_in(k: Nat, &t: LrTables, state: Nat, done: List(Nat)): List(Nat) {
-  match k: List(Nat) {
+  ⊢ List(Nat) from match k {
     Zero => done
-    Succ(k2) => match lr_action(t, state, k2) == 0: List(Nat) {
+    Succ(k2) => ⊢ List(Nat) from match lr_action(t, state, k2) == 0 {
       true => lr_expected_in(k2, t, state, done)
       false => lr_expected_in(k2, t, state, Cons(k2, done))
     }
@@ -279,7 +279,7 @@ pub(open) inductive LrNext: Type {
 }
 
 pub fn lr_stuck_at(tokens: List(LlkTok), expected: List(Nat)): LrNext {
-  match tokens: LrNext {
+  ⊢ LrNext from match tokens {
     Nil => LrEnd(LrStuck(LlkError { at: None, expected: expected }))
     Cons(token, rest) => LrEnd(LrStuck(LlkError { at: Some(token.start), expected: expected }))
   }
@@ -292,7 +292,7 @@ pub fn lr_broken(): LrNext {
 }
 
 pub fn lr_step(&t: LrTables, c: LrConf): LrNext {
-  match c: LrNext {
+  ⊢ LrNext from match c {
     Mk(tokens, states, syms, kids, nodes, count) => lr_act(
       t,
       tokens,
@@ -320,11 +320,11 @@ pub fn lr_act(
   arg: Nat,
   kind: Nat
 ): LrNext {
-  match kind: LrNext {
+  ⊢ LrNext from match kind {
     Zero => lr_stuck_at(tokens, lr_expected_in(t.terminals, t, lr_top(states), Nil))
-    Succ(k) => match k: LrNext {
+    Succ(k) => ⊢ LrNext from match k {
       Zero => lr_shift(tokens, states, syms, kids, nodes, count, arg)
-      Succ(k2) => match k2: LrNext {
+      Succ(k2) => ⊢ LrNext from match k2 {
         Zero => lr_reduce(
           t,
           tokens,
@@ -361,7 +361,7 @@ pub fn lr_shift(
   count: Nat,
   to: Nat
 ): LrNext {
-  match tokens: LrNext {
+  ⊢ LrNext from match tokens {
     Nil => lr_broken()
     Cons(token, more) => lr_shift_at(
       token,
@@ -388,7 +388,7 @@ pub fn lr_shift_at(
   to: Nat,
   at_end: Bool
 ): LrNext {
-  match at_end: LrNext {
+  ⊢ LrNext from match at_end {
     true => lr_broken()
     false => LrGo(
       LrConf {
@@ -416,7 +416,7 @@ pub fn lr_reduce(
   p: Nat,
   found: Option(LrProduction)
 ): LrNext {
-  match found: LrNext {
+  ⊢ LrNext from match found {
     None => lr_broken()
     Some(prod) => lr_reduce_pop(
       t,
@@ -443,7 +443,7 @@ pub fn lr_reduce_pop(
   prod: LrProduction,
   left: Option(List(LrSym))
 ): LrNext {
-  match left: LrNext {
+  ⊢ LrNext from match left {
     None => lr_broken()
     Some(rest) => lr_goto(
       tokens,
@@ -475,7 +475,7 @@ pub fn lr_goto(
   lhs: Nat,
   go: Nat
 ): LrNext {
-  match go: LrNext {
+  ⊢ LrNext from match go {
     Zero => lr_broken()
     Succ(to) => LrGo(
       LrConf {
@@ -502,7 +502,7 @@ pub fn lr_accept(
   p: Nat,
   found: Option(LrProduction)
 ): LrNext {
-  match found: LrNext {
+  ⊢ LrNext from match found {
     None => lr_broken()
     Some(prod) => lr_accept_pop(t, tokens, kids, nodes, count, p, prod, lr_pop(prod.pops, syms))
   }
@@ -518,9 +518,9 @@ pub fn lr_accept_pop(
   prod: LrProduction,
   left: Option(List(LrSym))
 ): LrNext {
-  match left: LrNext {
+  ⊢ LrNext from match left {
     None => lr_broken()
-    Some(rest) => match rest: LrNext {
+    Some(rest) => ⊢ LrNext from match rest {
       Cons(s, more) => lr_broken()
       Nil => lr_accept_at(
         kids,
@@ -542,7 +542,7 @@ pub fn lr_accept_at(
   prod: LrProduction,
   ok: Bool
 ): LrNext {
-  match ok: LrNext {
+  ⊢ LrNext from match ok {
     false => lr_broken()
     true => LrEnd(
       LrBuilt(
@@ -559,9 +559,9 @@ pub fn lr_accept_at(
 
 // At most `fuel` steps of the parser. The first error ends it.
 pub fn lr_run(fuel: Nat, &t: LrTables, c: LrConf): LrRun {
-  match fuel: LrRun {
+  ⊢ LrRun from match fuel {
     Zero => LrStuck(LlkError { at: None, expected: Nil })
-    Succ(f) => match lr_step(t, c): LrRun {
+    Succ(f) => ⊢ LrRun from match lr_step(t, c) {
       LrGo(next) => lr_run(f, t, next)
       LrEnd(r) => r
     }
@@ -588,7 +588,7 @@ pub(open) inductive LrWork: Type {
 }
 
 pub fn lr_works_onto(kids: List(Nat), rest: List(LrWork)): List(LrWork) {
-  match kids: List(LrWork) {
+  ⊢ List(LrWork) from match kids {
     Nil => rest
     Cons(k, more) => Cons(LrWNode(k), lr_works_onto(more, rest))
   }
@@ -603,18 +603,18 @@ pub fn lr_walk(
   work: List(LrWork),
   &mut events: Stack(LlkEvent)
 ): Unit {
-  match fuel: Unit {
+  ⊢ Unit from match fuel {
     Zero => #()
-    Succ(f) => match work: Unit {
+    Succ(f) => ⊢ Unit from match work {
       Nil => #()
-      Cons(w, rest) => match w: Unit {
+      Cons(w, rest) => ⊢ Unit from match w {
         LrWClose => {
           Stack::push(&mut events, LlkClose)
           lr_walk(f, nodes, rest, &mut events)
         }
-        LrWNode(i) => match Array::get(nodes, i): Unit {
+        LrWNode(i) => ⊢ Unit from match Array::get(nodes, i) {
           None => lr_walk(f, nodes, rest, &mut events)
-          Some(node) => match node: Unit {
+          Some(node) => ⊢ Unit from match node {
             LrLeaf(token) => {
               llk_trivia_onto(token.trivia, &mut events)
               Stack::push(&mut events, LlkToken(token.token_type, token.start, token.end))
@@ -632,9 +632,9 @@ pub fn lr_walk(
 }
 
 pub fn lr_end_trivia(tokens: List(LlkTok)): List(ScanToken) {
-  match tokens: List(ScanToken) {
+  ⊢ List(ScanToken) from match tokens {
     Nil => Nil
-    Cons(token, rest) => match token.token_type == 0: List(ScanToken) {
+    Cons(token, rest) => ⊢ List(ScanToken) from match token.token_type == 0 {
       true => token.trivia
       false => lr_end_trivia(rest)
     }
@@ -650,7 +650,7 @@ pub fn lr_events_of(
   r: LrRun,
   &mut events: Stack(LlkEvent)
 ): LlkResult {
-  match r: LlkResult {
+  ⊢ LlkResult from match r {
     LrStuck(e) => LlkFailed(e)
     LrBuilt(nodes, Root) => {
       Stack::push(&mut events, LlkOpen(t.non_terminals))

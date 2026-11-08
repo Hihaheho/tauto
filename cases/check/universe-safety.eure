@@ -1,0 +1,36 @@
+@ cases.changing-recursive-levels-exhausts-a-budget-not-the-stack
+source = ```tauto
+inductive Rising(u: Level): Type(u) { Rise(x: Rising(u + 1)): Rising(u) }
+```
+diagnostics = [{ message => "specialization budget exceeded" }]
+
+@ cases.constructor-binders-cannot-capture-level-names
+source = ```tauto
+inductive Shadow(u: Level): Type { Mk(u: Nat): Shadow(u) }
+```
+diagnostics = [{ message => "cannot shadow" }]
+
+@ cases.lambda-and-local-binders-cannot-capture-level-names
+source = ```tauto
+theorem shadow<u: Level>(): (Nat) -> Nat { u => u }
+```
+diagnostics = [{ message => "cannot shadow" }]
+
+@ cases.lambda-and-local-binders-cannot-capture-level-names-2
+source = ```tauto
+theorem shadow<u: Level>(): Nat { let u: Nat := 3; u }
+```
+diagnostics = [{ message => "cannot shadow" }]
+
+@ cases.repeated-level-binders-are-rejected-before-erasure
+source = ```tauto
+inductive Repeated(u: Level, u: Level): Type { Mk: Repeated(u, u) }
+```
+diagnostics = [{ message => "cannot shadow" }]
+
+@ cases.polymorphic-constructor-patterns-have-an-explicit-boundary
+source = ```tauto
+inductive Boxed(u: Level, A: Type(u)): Type(u) { Mk(x: A): Boxed(u, A) }
+theorem get(b: Boxed(0, Nat)): Nat { match b { Mk(x) => x } }
+```
+diagnostics = [{ message => "matching universe-polymorphic constructors is not supported" }]

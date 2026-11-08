@@ -139,8 +139,13 @@ fn field_tok(f: &FieldRef) -> Rs {
     }
 }
 
-fn op_const(name: &str) -> Ident {
-    id(&format!("OP_{name}"))
+/// The operation constant `OP_name`.
+pub(crate) fn op_const(operation: &tauto_nir::OpDef) -> Ident {
+    if tauto::bindings::is_library(&operation.name, operation.name.as_str()) {
+        id(&format!("OP_{}", operation.name))
+    } else {
+        id(&format!("OP_declaration_{}", operation.id))
+    }
 }
 
 pub(crate) fn clone_each(names: impl IntoIterator<Item = Ident>) -> Rs {
@@ -313,6 +318,7 @@ impl Gen<'_> {
     fn place_as(&self, p: &Place, write: bool) -> Rs {
         let x = lid(&p.local);
         let mut s = match p.local.repr {
+            Repr::Plain if self.lazy.contains(&p.local.id) => quote!((*#x)),
             Repr::Ref | Repr::RefMut | Repr::FnRef => quote!((*#x)),
             _ => quote!(#x),
         };
@@ -329,6 +335,13 @@ impl Gen<'_> {
 
     fn read(&self, l: &Local, how: Use) -> Rs {
         let x = lid(l);
+        if l.repr == Repr::Plain && self.lazy.contains(&l.id) {
+            return match how {
+                Use::Move => quote!(tauto_rt::unrc(#x)),
+                Use::Copy | Use::Clone => quote!((*#x).clone()),
+                Use::Place => quote!((*#x)),
+            };
+        }
         match (l.repr, how) {
             (Repr::Plain, Use::Clone) => quote!(#x.clone()),
             (Repr::Plain, _) => quote!(#x),
@@ -341,6 +354,20 @@ impl Gen<'_> {
             (Repr::FnRef, Use::Clone) => quote!((*#x).clone()),
             (Repr::RefMut, _) | (Repr::FnRef, _) => quote!(&mut *#x),
             (Repr::BorrowClosure, _) => quote!(#x),
+        }
+    }
+
+    /// A read of a local held as its shared cell, and how it is read.
+    fn lazy_read<'e>(&self, e: &'e Expr) -> Option<(&'e Local, Use)> {
+        match &e.kind {
+            ExprKind::Read { local, how }
+                if local.repr == Repr::Plain
+                    && self.lazy.contains(&local.id)
+                    && matches!(how, Use::Move | Use::Clone) =>
+            {
+                Some((local, *how))
+            }
+            _ => None,
         }
     }
 
@@ -423,6 +450,10 @@ impl Gen<'_> {
                 } else {
                     quote!(false)
                 }
+            }
+            ExprKind::Declaration(slot) => {
+                let symbol = id(&format!("TAUTO_DECLARATION_{slot}"));
+                quote!(#symbol.clone())
             }
             ExprKind::Text(s) => {
                 let s = lit(s);
@@ -514,50 +545,6 @@ impl Gen<'_> {
                 let v = self.ctor(ctor, fields, fx);
                 charged(fx, 1 + fields.len() as u64, v)
             }
-            ExprKind::Product { members, picks } => {
-                let names: Vec<Rs> = (0..members.len())
-                    .map(|i| {
-                        let n = id(&format!("product_member_{i}"));
-                        quote!(#n)
-                    })
-                    .collect();
-                let lets: Vec<Rs> = members
-                    .iter()
-                    .zip(&names)
-                    .map(|(m, n)| {
-                        let m = self.expr(m, fx);
-                        quote!(let #n = #m;)
-                    })
-                    .collect();
-                let picked = comma(picks.iter().map(|(i, j)| {
-                    let n = &names[*i];
-                    match j {
-                        Some(j) => {
-                            let j = num(*j as u64);
-                            quote!(#n.0.#j)
-                        }
-                        None => quote!(#n),
-                    }
-                }));
-                quote!({ #(#lets)* tauto_rt::Product((#picked,)) })
-            }
-            ExprKind::Member { value, index, how } => {
-                let i = num(*index as u64);
-                let access = match how {
-                    Use::Move => {
-                        let v = self.expr(value, fx);
-                        quote!((#v).0.#i)
-                    }
-                    _ => {
-                        let b = self.field_base(value, fx);
-                        quote!(#b.0.#i)
-                    }
-                };
-                match how {
-                    Use::Clone => quote!(#access.clone()),
-                    _ => access,
-                }
-            }
             ExprKind::Field {
                 base,
                 field,
@@ -593,6 +580,9 @@ impl Gen<'_> {
             }
             ExprKind::Block(b) => self.block(b, fx),
             ExprKind::Closure(c) => {
+                if let Some(target) = self.forwarding_callback(c) {
+                    return quote!(&mut *#target);
+                }
                 let s = self.closure_raw(c, fx);
                 let s = if c.borrowed { s } else { charged(fx, 1, s) };
                 if c.borrowed && fx.m && c.fn_ty.tier == Tier::O {
@@ -748,7 +738,15 @@ impl Gen<'_> {
                 let Ty::Fn(ft) = &e.ty else {
                     return self.expr(f, fx);
                 };
-                let inner = self.expr(f, fx);
+                let mut inner = self.expr(f, fx);
+                if let Ty::Fn(from) = &f.ty {
+                    if from.tier < ft.tier {
+                        inner = self.lift_fn_value(inner, from, ft.tier);
+                    }
+                    if from.kind == ft.kind {
+                        return inner;
+                    }
+                }
                 let tys = ft.params.iter().map(|t| self.ty(t)).collect();
                 let (params, args) = pass_on(tys, quote!(ev: &Ev<'_>));
                 let (params, args) = (comma(params), comma(args));
@@ -855,10 +853,8 @@ impl Gen<'_> {
         }
     }
 
-    /// A function value of `from`, made into one of the higher tier `to`
-    /// that a function item's parameter declares: a parameter is
-    /// contravariant in its effects, so the item may be handed a function
-    /// that performs fewer of them than it is ready for.
+    /// A function value of `from`, represented in the higher tier `to`.
+    /// The destination contract permits the effects of the source value.
     fn lift_fn_value(&self, value: Rs, from: &FnTy, to: Tier) -> Rs {
         let lifted = FnTy {
             tier: to,
@@ -977,6 +973,13 @@ impl Gen<'_> {
             let args = comma(targs.iter().map(|t| self.ty(t)));
             return quote!(#name::<#args>);
         };
+        let tier = self.pkg.fns[inst].tier;
+        if tier < ft.tier {
+            let mut actual = ft.clone();
+            actual.tier = tier;
+            let value = self.fn_value(inst, targs, &Ty::Fn(actual.clone()));
+            return self.lift_fn_value(value, &actual, ft.tier);
+        }
         let (params, call) = self.fn_item_call(inst, targs, ft, ft.tier == Tier::O);
         let closure = quote!(move |#params| #call);
         if ft.tier == Tier::O {
@@ -1005,7 +1008,7 @@ impl Gen<'_> {
     /// A constructor without fields, of a type a `static` can hold.
     fn shared_nullary(&self, e: &Expr) -> bool {
         matches!(&e.kind, ExprKind::Ctor { ctor, fields }
-            if fields.is_empty() && ctor.nullary && !ctor.linear && matches!(ctor.data, DataRef::Gen(_)))
+            if fields.is_empty() && ctor.nullary && !ctor.linear && matches!(&ctor.data, DataRef::Gen(d) if self.data(d).is_none_or(|d| self.phantom_params(d).is_empty())))
             && self.plain_ty(&e.ty)
     }
 
@@ -1022,7 +1025,6 @@ impl Gen<'_> {
             Ty::Result(a, b) | Ty::Pair(a, b) | Ty::HashMap(a, b) => {
                 self.plain_ty(a) && self.plain_ty(b)
             }
-            Ty::Product(ms) => ms.iter().all(|(_, m)| self.plain_ty(m)),
             Ty::Data(name, args) => {
                 self.data(name).is_some_and(|d| !d.view) && args.iter().all(|a| self.plain_ty(a))
             }
@@ -1119,6 +1121,63 @@ impl Gen<'_> {
         }
     }
 
+    fn forwarding_callback(&self, c: &ClosureNode) -> Option<Rs> {
+        if !c.borrowed
+            || c.fn_ty.tier != Tier::S
+            || !c.clones.is_empty()
+            || !c.owned_refs.is_empty()
+            || !c.refs.is_empty()
+            || c.params
+                .iter()
+                .any(|(_, t)| !self.borrow_type(t, &mut std::collections::BTreeSet::new()))
+        {
+            return None;
+        }
+        let mut aliases = c.params.iter().map(|(l, _)| l.id).collect::<Vec<_>>();
+        let mut body = &c.body;
+        while let ExprKind::Block(block) = &body.kind {
+            for stmt in &block.stmts {
+                let Stmt::Let { local, init, .. } = stmt else {
+                    return None;
+                };
+                let ExprKind::Ref(place) = &init.kind else {
+                    return None;
+                };
+                if local.repr != Repr::Ref || !place.path.is_empty() {
+                    return None;
+                }
+                let index = aliases.iter().position(|id| *id == place.local.id)?;
+                aliases[index] = local.id;
+            }
+            body = block.tail.as_deref()?;
+        }
+        let ExprKind::Call(call) = &body.kind else {
+            return None;
+        };
+        let Callee::Local(target) = &call.callee else {
+            return None;
+        };
+        if target.repr != Repr::FnRef
+            || call.tier != Tier::S
+            || call.tick != Tick::None
+            || !call.targs.is_empty()
+            || call.args.len() != c.params.len()
+            || body.ty != c.ret
+        {
+            return None;
+        }
+        for ((arg, id), (_, ty)) in call.args.iter().zip(aliases).zip(&c.params) {
+            if arg.ty != *ty
+                || !matches!(&arg.kind, ExprKind::Read { local, how }
+                if local.id == id && matches!(how, Use::Clone | Use::Move))
+            {
+                return None;
+            }
+        }
+        let target = lid(target);
+        Some(quote!(#target))
+    }
+
     pub(crate) fn closure_raw(&mut self, c: &ClosureNode, _outer: &mut Fx) -> Rs {
         if c.fn_ty.tier == Tier::M {
             return self.closure_m(c);
@@ -1213,6 +1272,15 @@ impl Gen<'_> {
                 _ => self.expr(f, fx),
             };
             let s = match c.indirect.get(idx) {
+                Some(Indirect::Shared) if self.lazy_read(f).is_some() => {
+                    // The cell the local came from goes back in as it is.
+                    let (local, how) = self.lazy_read(f).unwrap();
+                    let x = lid(local);
+                    match how {
+                        Use::Move => quote!(tauto_rt::relink(#x)),
+                        _ => quote!(tauto_rt::relink(#x.clone())),
+                    }
+                }
                 Some(Indirect::Shared) if self.shared_nullary(f) => {
                     // `Nil` at the end of every list: one `Rc` per thread.
                     let ty = self.ty(&f.ty);
@@ -1228,15 +1296,20 @@ impl Gen<'_> {
             vals.push((name.clone(), s));
         }
         match &c.data {
-            DataRef::Option => match c.name.as_str() {
-                "None" => quote!(None),
+            DataRef::Option => match tauto::bindings::is_library(&c.name, "None") {
+                true => quote!(None),
                 _ => {
                     let v = &vals[0].1;
                     quote!(Some(#v))
                 }
             },
             DataRef::Result => {
-                let (n, v) = (id(&c.name), &vals[0].1);
+                let n = id(if tauto::bindings::is_library(&c.name, "Ok") {
+                    "Ok"
+                } else {
+                    "Err"
+                });
+                let v = &vals[0].1;
                 quote!(#n(#v))
             }
             DataRef::Pair => {
@@ -1252,13 +1325,10 @@ impl Gen<'_> {
                 let (a, b) = (&slots[0], &slots[1]);
                 quote!((#a, #b))
             }
-            DataRef::Product => {
-                let vals = comma(vals.iter().map(|(_, s)| s.clone()));
-                quote!(tauto_rt::Product((#vals,)))
-            }
             DataRef::Gen(d) => {
                 let def = self.data(d);
                 let linear = c.linear;
+                let phantom = def.is_some_and(|d| !self.phantom_params(d).is_empty());
                 let is_struct = def.is_some_and(|d| d.is_struct);
                 let path = self.ctor_path(d, &c.name, is_struct);
                 let named = c.fields.iter().any(|f| f.is_some());
@@ -1274,15 +1344,21 @@ impl Gen<'_> {
                         let d = lit(d);
                         parts.push(quote!(bomb: tauto_rt::Bomb::new(#d)));
                     }
+                    if phantom {
+                        parts.push(quote!(phantom: std::marker::PhantomData));
+                    }
                     let parts = comma(parts);
                     quote!(#path { #parts })
-                } else if vals.is_empty() && !linear {
+                } else if vals.is_empty() && !linear && !phantom {
                     if is_struct { quote!(#path {}) } else { path }
                 } else {
                     let mut parts: Vec<Rs> = vals.into_iter().map(|(_, s)| s).collect();
                     if linear {
                         let d = lit(d);
                         parts.push(quote!(tauto_rt::Bomb::new(#d)));
+                    }
+                    if phantom {
+                        parts.push(quote!(std::marker::PhantomData));
                     }
                     let parts = comma(parts);
                     quote!(#path(#parts))
@@ -1292,8 +1368,8 @@ impl Gen<'_> {
     }
 
     /// `Name` of a struct, `Name::Variant` of an enum.
-    pub(crate) fn ctor_path(&self, data: &str, ctor: &str, is_struct: bool) -> Rs {
-        let name = Gen::data_name(data);
+    pub(crate) fn ctor_path(&self, data: &Name, ctor: &str, is_struct: bool) -> Rs {
+        let name = Gen::data_name(self.pkg, data);
         if is_struct {
             quote!(#name)
         } else {
@@ -1388,7 +1464,7 @@ impl Gen<'_> {
                 let targs = match &e.ty {
                     Ty::Result(t, _)
                         if c.targs.is_empty()
-                            && (f.source == "catch" || f.source.starts_with("catch@")) =>
+                            && tauto::bindings::is_library_instance(&f.source, "catch") =>
                     {
                         vec![(**t).clone()]
                     }
@@ -1546,7 +1622,7 @@ impl Gen<'_> {
                 let a0 = &args[0];
                 quote!((#a0).clone())
             }
-            "Vec::into_list" | "words" | "Os::args" | "Os::list_dir" | "Os::stat" | "Os::run"
+            "Vec::into_list" | "words" | "Os::args" | "Os::list_dir" | "Os::stat" | "Os::read_link" | "Os::run"
             | "Os::fetch" | "Os::resolve" | "Os::tcp_listen" | "Os::tcp_accept"
             | "Os::tcp_connect" | "Os::child_spawn" | "Os::child_wait" | "Os::tls_accept"
             | "Os::tls_connect" | "Array::of_list" | "Array::to_list" | "Bytes::of_list"
@@ -1613,7 +1689,7 @@ impl Gen<'_> {
     }
 
     fn perform(&mut self, p: &PerformNode, fx: &mut Fx) -> Rs {
-        let opc = op_const(&self.pkg.ops[p.op].name);
+        let opc = op_const(&self.pkg.ops[p.op]);
         let at = self.loc(p.span);
         let args: Vec<Rs> = p.args.iter().map(|a| self.expr(a, fx)).collect();
         let payload = self.boxed_payload(&p.args, &args);
@@ -1644,7 +1720,21 @@ impl Gen<'_> {
         if let Some(result) = self.array_get_match(m, fx) {
             return result;
         }
-        let scrut = self.expr(&m.scrut, fx);
+        let scrut = match self.lazy_read(&m.scrut) {
+            // A match that binds nothing reads its scrutinee in place, so a
+            // local held as its cell is not taken out of it.
+            Some((local, Use::Move))
+                if m.arms.iter().all(|a| {
+                    let mut names = Vec::new();
+                    collect_binds(&a.pat, &mut names);
+                    names.is_empty()
+                }) =>
+            {
+                let x = lid(local);
+                quote!((*#x))
+            }
+            _ => self.expr(&m.scrut, fx),
+        };
         let scrut = cell_free_scrutinee(m, scrut);
         self.match_on(m, scrut, fx)
     }
@@ -1669,7 +1759,7 @@ impl Gen<'_> {
             arms.push(quote!(_ => tauto_rt::no_arm(#at)));
         }
         let arms = comma(arms);
-        quote!(match #scrut { #arms })
+        quote!(match (#scrut) { #arms })
     }
 
     /// A Rust expression that is true when `scrut` (a reference) has the
@@ -1682,7 +1772,10 @@ impl Gen<'_> {
         } else {
             join(conj, quote!(&&))
         };
-        quote!(match #scrut { #pat => #cond, _ => false })
+        // The arm body is parenthesized: a body that begins with a block-like
+        // expression (a nested `match … {}`) would otherwise end at its `}`,
+        // and rustc would read the rest of the conjunction as the next arm.
+        quote!(match #scrut { #pat => (#cond), _ => false })
     }
 
     fn pat_shape(&mut self, p: &Pat, conj: &mut Vec<Rs>) -> Rs {
@@ -1761,27 +1854,31 @@ impl Gen<'_> {
     /// the drop bomb of a linear value that the arm defuses.
     fn ctor_pattern(&mut self, ctor: &CtorRef, subs: Vec<Rs>, bomb: Option<Ident>) -> Rs {
         match &ctor.data {
-            DataRef::Option => match ctor.name.as_str() {
-                "None" => quote!(None),
+            DataRef::Option => match tauto::bindings::is_library(&ctor.name, "None") {
+                true => quote!(None),
                 _ => {
                     let s = &subs[0];
                     quote!(Some(#s))
                 }
             },
             DataRef::Result => {
-                let (n, s) = (id(&ctor.name), &subs[0]);
+                let n = id(if tauto::bindings::is_library(&ctor.name, "Ok") {
+                    "Ok"
+                } else {
+                    "Err"
+                });
+                let s = &subs[0];
                 quote!(#n(#s))
             }
             DataRef::Pair => {
                 let (a, b) = (&subs[0], &subs[1]);
                 quote!((#a, #b))
             }
-            DataRef::Product => {
-                let subs = comma(subs);
-                quote!(tauto_rt::Product((#subs,)))
-            }
             DataRef::Gen(d) => {
                 let is_struct = self.data(d).is_some_and(|d| d.is_struct);
+                let phantom = self
+                    .data(d)
+                    .is_some_and(|d| !self.phantom_params(d).is_empty());
                 let path = self.ctor_path(d, &ctor.name, is_struct);
                 let named = ctor.fields.iter().any(|f| f.is_some());
                 if named {
@@ -1803,9 +1900,12 @@ impl Gen<'_> {
                         None if ctor.linear => parts.push(quote!(..)),
                         None => {}
                     }
+                    if phantom && !(bomb.is_none() && ctor.linear) {
+                        parts.push(quote!(..));
+                    }
                     let parts = comma(parts);
                     quote!(#path { #parts })
-                } else if subs.is_empty() && !ctor.linear {
+                } else if subs.is_empty() && !ctor.linear && !phantom {
                     if is_struct { quote!(#path {}) } else { path }
                 } else {
                     let mut parts = subs;
@@ -1813,6 +1913,9 @@ impl Gen<'_> {
                         Some(b) => parts.push(quote!(#b)),
                         None if ctor.linear => parts.push(quote!(..)),
                         None => {}
+                    }
+                    if phantom && !(bomb.is_none() && ctor.linear) {
+                        parts.push(quote!(..));
                     }
                     let parts = comma(parts);
                     quote!(#path(#parts))
@@ -1863,6 +1966,10 @@ impl Gen<'_> {
                             out.prologue.push(match (l.repr, indirect) {
                                 (Repr::Ref, _) => quote!(let #x = &**#b;),
                                 (Repr::RefMut, _) => quote!(let #x = &mut **#b;),
+                                (Repr::Plain, Indirect::Shared) if !by_ref => {
+                                    self.lazy.insert(l.id);
+                                    quote!(let mut #x = #b;)
+                                }
                                 (_, Indirect::Shared) => quote!(let mut #x = tauto_rt::unrc(#b);),
                                 _ => quote!(let mut #x = tauto_rt::unbox(#b);),
                             });
@@ -1871,6 +1978,9 @@ impl Gen<'_> {
                             match (l.repr, indirect) {
                                 (Repr::Ref, _) => out.guard_lets.push(quote!(let #x = &**#b;)),
                                 (Repr::RefMut, _) => {}
+                                (Repr::Plain, Indirect::Shared) if !by_ref => {
+                                    out.guard_lets.push(quote!(let mut #x = #b.clone();))
+                                }
                                 (_, Indirect::Shared) => {
                                     out.guard_lets.push(quote!(let mut #x = (*#b).clone();))
                                 }
@@ -1987,7 +2097,7 @@ impl Gen<'_> {
         let l = self.label();
         let mut s = Rs::new();
         for arm in &h.aborts {
-            let opc = op_const(&self.pkg.ops[arm.op].name);
+            let opc = op_const(&self.pkg.ops[arm.op]);
             let tup = self.payload_ty(&arm.params);
             let mut out = PatOut::default();
             let pats: Vec<Rs> = arm
@@ -2032,7 +2142,7 @@ impl Gen<'_> {
         }));
         let mut body = Rs::new();
         for op in &ops {
-            let opc = op_const(&self.pkg.ops[*op].name);
+            let opc = op_const(&self.pkg.ops[*op]);
             let mine: Vec<&OpArm> = arms.iter().filter(|a| a.op == *op).collect();
             let tup = self.payload_ty(&mine[0].params);
             let mut tries = Rs::new();
@@ -2174,7 +2284,7 @@ impl Gen<'_> {
         }
         let mut groups = Rs::new();
         for op in &ops {
-            let opc = op_const(&self.pkg.ops[*op].name);
+            let opc = op_const(&self.pkg.ops[*op]);
             let mine: Vec<&OpArm> = h
                 .aborts
                 .iter()
@@ -2251,9 +2361,14 @@ impl Gen<'_> {
         let bt = self.answer_ty(&h.body_ty);
         let run = quote!(
             {
-                #outer
-                let ev0 = ev.clone();
-                let h = tauto_rt::o::Rec::<'_, #bt, #r>::new(#handler);
+                // The clones move into the handler. They are made in a block
+                // of their own so that the body (and `pre`, whose arms may
+                // read the same locals) borrows the originals, not the clones.
+                let h = {
+                    #outer
+                    let ev0 = ev.clone();
+                    tauto_rt::o::Rec::<'_, #bt, #r>::new(#handler)
+                };
                 h.call(tauto_rt::o::pin(async { #pre #body }))
             }
         );
@@ -2304,7 +2419,7 @@ impl Gen<'_> {
     }
 }
 
-fn collect_binds(p: &Pat, out: &mut Vec<Local>) {
+pub(crate) fn collect_binds(p: &Pat, out: &mut Vec<Local>) {
     match p {
         Pat::Bind(l, _) => out.push(l.clone()),
         Pat::Ctor { fields, .. } => fields.iter().for_each(|f| collect_binds(f, out)),

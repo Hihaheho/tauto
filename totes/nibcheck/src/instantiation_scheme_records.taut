@@ -68,14 +68,14 @@ pub theorem instance_predicate_from_name(
   span,
   finish_pending_items(ck_st(ck_pend_preds(ps, c, map, what, span)))
 ) {
-  match named: InstancePredicateRecorded(
+  ⊢ InstancePredicateRecorded(
     inference_assume(c),
     p,
     map,
     what,
     span,
     finish_pending_items(ck_st(ck_pend_preds(ps, c, map, what, span)))
-  ) {
+  ) from match named {
     Mk(ty, found) => InstancePredicateRecorded::Mk(
       ty,
       found,
@@ -137,10 +137,10 @@ pub fn instance_scheme_after_preds(
   map: Ordmap(Text, Ty),
   m: Mut1(Unit, Checker)
 ): Mut1(Ty, Checker) {
-  match m: Mut1(
+  ⊢ Mut1(
     Ty,
     Checker
-  ) { mut1(ignored, next) => mut1(ty_substitute(instantiation_scheme_ty(scheme), map), next) }
+  ) from match m { mut1(ignored, next) => mut1(ty_substitute(instantiation_scheme_ty(scheme), map), next) }
 }
 pub theorem instance_scheme_preds_recorded(
   c: Checker,
@@ -159,13 +159,13 @@ pub theorem instance_scheme_preds_recorded(
     finish_pending_items(ck_st(m))
   )
 ): SchemeInstanceRecorded(c, name, scheme, span, instance_scheme_after_preds(scheme, map, m)) {
-  match m: SchemeInstanceRecorded(
+  ⊢ SchemeInstanceRecorded(
     c,
     name,
     scheme,
     span,
     instance_scheme_after_preds(scheme, map, m)
-  ) {
+  ) from match m {
     mut1(ignored, next) => SchemeInstanceRecorded::Mk(map, covered, Refl, predicates)
   }
 }
@@ -175,7 +175,7 @@ pub fn instance_scheme_after_map(
   span: TySpan,
   m: Mut1(Ordmap(Text, Ty), Checker)
 ): Mut1(Ty, Checker) {
-  match m: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match m {
     mut1(map, next) => instance_scheme_after_preds(
       scheme,
       map,
@@ -196,13 +196,13 @@ pub theorem instance_scheme_map_recorded(
     instantiation_scheme_preds(scheme)
   )
 ): SchemeInstanceRecorded(c, name, scheme, span, instance_scheme_after_map(name, scheme, span, m)) {
-  match m: SchemeInstanceRecorded(
+  ⊢ SchemeInstanceRecorded(
     c,
     name,
     scheme,
     span,
     instance_scheme_after_map(name, scheme, span, m)
-  ) {
+  ) from match m {
     mut1(map, next) => instance_scheme_preds_recorded(
       c,
       name,
@@ -242,19 +242,24 @@ pub theorem instance_scheme_records_unf(
   name: Text,
   scheme: Scheme,
   span: TySpan
-): ck_instantiate_scheme(c, name, scheme, span) = instance_scheme_after_map(
+): ck_instantiate_scheme(
+  c,
+  name,
+  scheme,
+  span
+) = instance_scheme_after_map(
+  name,
+  scheme,
+  span,
+  ck_instantiate_map_ctors(
+    instantiation_scheme_generics(scheme),
+    c,
+    instantiation_scheme_ctors(scheme),
     name,
-    scheme,
     span,
-    ck_instantiate_map_ctors(
-      instantiation_scheme_generics(scheme),
-      c,
-      instantiation_scheme_ctors(scheme),
-      name,
-      span,
-      Ordmap::empty()
-    )
-  ) { Refl }
+    Ordmap::empty()
+  )
+) { Refl }
 pub theorem ck_instantiate_scheme_records(
   c: Checker,
   name: Text,

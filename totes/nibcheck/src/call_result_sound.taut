@@ -17,11 +17,13 @@ pub def CallHintFits(
   args: List(Ty)
 ): Prop := ∀ ps: List(
   Ty
-). ∀ result: Ty. ∀ kind: Kind. ∀ shape: ty_unborrowed(ck_resolve(c, f)) = TyFn(ps, result, kind). ArgumentTypes(c, args, ps)
+). ∀ result: Ty. ∀ kind: Kind. ∀ shape: ty_unborrowed(
+  ck_resolve(c, f)
+) = TyFn(ps, result, kind). ArgumentTypes(c, args, ps)
 // A known parameter hint means every argument has been checked against it.
 // The theorems below take this as a hypothesis; no theorem in totes/ proves it.
 pub fn KnownCallArguments(c: Checker, known: Option(List(Ty)), f: Ty, args: List(Ty)): Prop {
-  match known: Prop {
+  ⊢ Prop from match known {
     None => True
     Some(ps) => CallHintFits(c, f, args)
   }
@@ -43,12 +45,7 @@ pub theorem call_function_shape_sound(
   ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(ck_app_result(c, term, function, arguments, f, known, args)))
 ): CallResult(c, f, args, ck_app_result(c, term, function, arguments, f, known, args)) {
-  match known: CallResult(
-    c,
-    f,
-    args,
-    ck_app_result(c, term, function, arguments, f, known, args)
-  ) {
+  ⊢ CallResult(c, f, args, ck_app_result(c, term, function, arguments, f, known, args)) from match known {
     None => ck_app_result_function_sound(
       c,
       term,
@@ -165,7 +162,7 @@ pub theorem call_result_shape_sound(
   ordered: CkOrdered(c),
   clean: DiagnosticClean(ck_st(ck_app_result(c, term, function, arguments, f, known, args)))
 ): CallResult(c, f, args, ck_app_result(c, term, function, arguments, f, known, args)) {
-  match fr: CallResult(c, f, args, ck_app_result(c, term, function, arguments, f, known, args)) {
+  ⊢ CallResult(c, f, args, ck_app_result(c, term, function, arguments, f, known, args)) from match fr {
     TyInt(w) => False::elim(
       call_invalid_impossible(
         c,

@@ -325,7 +325,7 @@ fn run(): i64 {
         let run = package
             .exports
             .iter()
-            .find(|export| export.name == "run")
+            .find(|export| export.name.as_str() == "run")
             .unwrap()
             .inst;
         single_budget_call(&mut package.fns[run].body).targs = arguments;
@@ -355,7 +355,7 @@ fn run(): u64 {
     let run = package
         .exports
         .iter()
-        .find(|export| export.name == "run")
+        .find(|export| export.name.as_str() == "run")
         .unwrap()
         .inst;
     let argument = &mut single_budget_call(&mut package.fns[run].body).args[0];
@@ -386,7 +386,7 @@ fn run(): u64 {
         let mut package = tauto_nir::compile_with(source, true).unwrap();
         let mut changed = false;
         for function in &mut package.fns {
-            if function.source == "offset" {
+            if function.source.as_str() == "offset" {
                 let original = function.body.clone();
                 function.body.kind = ExprKind::Block(Block {
                     stmts: vec![Stmt::While {

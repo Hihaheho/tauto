@@ -8,25 +8,25 @@ enum Shape { Circle(i64), Rect(i64, i64), Empty }
 struct P { x: i64, y: i64 }
 struct Unit {}
 enum Tree { Leaf, Node(Tree, i64, Tree) }
-fn area(s: Shape) -> i64 {
+fn area(s: Shape): i64 {
   match s {
     Circle(r) => 3 * r * r
     Rect(w, h) => w * h
     Empty => 0
   }
 }
-fn sum(t: Tree) -> i64 {
+fn sum(t: Tree): i64 {
   match t {
     Leaf => 0
     Node(l, v, r) => sum(l) + v + sum(r)
   }
 }
-fn depth(t: &Tree) -> i64 {
+fn depth(t: &Tree): i64 {
   match t {
     Leaf => 0
     Node(l, v, r) => {
-      let a = depth(l)
-      let b = depth(r)
+      let a := depth(l)
+      let b := depth(r)
       if a > b { a + 1 } else { b + 1 }
     }
   }
@@ -36,7 +36,7 @@ perform show("b", area(Rect(3, 4)))
 perform show("c", Empty)
 perform show("p", P { x: 1, y: 2 })
 perform show("u", Unit {})
-let t = Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Leaf))
+let t := Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Leaf))
 perform show("t", t)
 perform show("d", depth(&t))
 perform show("s", sum(t))
@@ -66,32 +66,32 @@ shows = [
 
 @ cases.lists-closures-loops
 source = ```nib
-fn map(xs: List(i64), f: (i64) -> i64) -> List(i64) {
+fn map(xs: List(i64), f: (i64) -> i64): List(i64) {
   match xs {
     Nil => Nil
     Cons(h, t) => Cons(f(h), map(t, f))
   }
 }
-fn len(xs: &List(i64)) -> i64 {
+fn len(xs: &List(i64)): i64 {
   match xs {
     Nil => 0
     Cons(h, t) => 1 + len(t)
   }
 }
-fn adder(n: i64) -> (i64) -> i64 { (x) => x + n }
-let xs = Cons(1, Cons(2, Cons(3, Nil)))
-let ys = map(xs, adder(10))
+fn adder(n: i64): (i64) -> i64 { (x) => x + n }
+let xs := Cons(1, Cons(2, Cons(3, Nil)))
+let ys := map(xs, adder(10))
 perform show("ys", ys)
 perform show("len", len(&ys))
 perform show("xs", xs)
-var total = 0
-var i = 0
+var total := 0
+var i := 0
 while i < 5 {
   total := total + i
   i := i + 1
 }
 perform show("total", total)
-let f = adder(1)
+let f := adder(1)
 perform show("f", f(f(1)))
 ```
 rust_shows = [
@@ -104,35 +104,35 @@ rust_shows = [
 
 @ cases.direct-handlers
 source = ```nib
-effect get: () -> i64 direct
-effect put: (n: i64) -> () direct
-fn counter() -> i64 ! {get, put} {
+effect get(): i64 direct
+effect put(n: i64): Unit direct
+fn counter(): i64 ! {get, put} {
   perform put(perform get() + 1)
   perform get()
 }
-let r = handle { counter() } with {
+let r := handle { counter() } with {
   get(), k => k(41)
-  put(n), k => k(())
+  put(n), k => k(#())
 }
 perform show("r", r)
-let s = handle {
+let s := handle {
   perform show("inner", 1)
   2
 } with {
-  show(name, v), k => {
+  ∀ A. show<A>(name, v), k => {
     perform show("wrapped", name)
-    k(())
+    k(#())
   }
 }
 perform show("s", s)
-effect stop: () -> Never resume 0
-fn guard(n: i64) -> i64 ! {stop} { if n > 3 { perform stop() } else { n } }
-let t = handle { guard(2) + guard(10) } with {
+effect stop(): Never resume 0
+fn guard(n: i64): i64 ! {stop} { if n > 3 { perform stop() } else { n } }
+let t := handle { guard(2) + guard(10) } with {
   stop() => 99
   return v => v + 1000
 }
 perform show("t", t)
-let u = handle { guard(1) } with {
+let u := handle { guard(1) } with {
   stop() => 99
   return v => v + 1000
 }
@@ -148,36 +148,36 @@ shows = [
 
 @ cases.generics-and-patterns
 source = ```nib
-fn id<A>(x: A) -> A { x }
-fn pair<A, B>(a: A, b: B) -> Pair(A, B) { Pair { fst: a, snd: b } }
-fn apply<A, B>(f: (A) -> B, x: A) -> B { f(x) }
-fn compose<A, B, C>(f: (A) -> B, g: (B) -> C) -> (A) -> C { (x) => g(f(x)) }
-fn fold<A, B>(xs: List(A), z: B, f: (B, A) -> B) -> B {
+fn id<A>(x: A): A { x }
+fn pair<A, B>(a: A, b: B): Pair(A, B) { Pair { fst: a, snd: b } }
+fn apply<A, B>(f: (A) -> B, x: A): B { f(x) }
+fn compose<A, B, C>(f: (A) -> B, g: (B) -> C): (A) -> C { (x) => g(f(x)) }
+fn fold<A, B>(xs: List(A), z: B, f: (B, A) -> B): B {
   match xs {
     Nil => z
     Cons(h, t) => fold(t, f(z, h), f)
   }
 }
-fn classify(n: i64) -> Text {
+fn classify(n: i64): Text {
   match n {
     0 => "zero"
     1 => "one"
     k if k < 0 => "neg"
-    _ => "many"
+    other => "many"
   }
 }
-fn greet(s: Text) -> i64 {
+fn greet(s: Text): i64 {
   match s {
     "hi" => 1
     "bye" => 2
-    _ => 0
+    other => 0
   }
 }
 perform show("id", id(5))
 perform show("idt", id("t"))
 perform show("pair", pair(1, "a"))
 perform show("apply", apply((x) => x * 2, 21))
-let h = compose((x) => x + 1, (y) => y * 10)
+let h := compose((x) => x + 1, (y) => y * 10)
 perform show("compose", h(4))
 perform show("fold", fold(Cons(1, Cons(2, Cons(3, Nil))), 0, (a, b) => a + b))
 perform show("c0", classify(0))
@@ -187,8 +187,8 @@ perform show("c9", classify(9))
 perform show("g1", greet("hi"))
 perform show("g2", greet("bye"))
 perform show("g3", greet("x"))
-var n = 0
-let bump = () => { n := n + 1 }
+var n := 0
+let bump := () => { n := n + 1 }
 bump()
 bump()
 perform show("n", n)
@@ -212,32 +212,34 @@ rust_shows = [
 
 @ cases.vec-buf-map
 source = ```nib
-fn show_all(&v: Vec(i64)) -> i64 ! {out_of_bounds, Div} {
-  var i: u64 = 0
-  var s = 0
-  while i < vec_len(&v) {
-    let &x = vec_index(&v, i)
+import std::prelude::Affine
+
+fn show_all(&v: Vec(i64)): i64 ! {out_of_bounds, Div} {
+  var i: u64 := 0
+  var s := 0
+  while i < Vec::len(&v) {
+    let &x := Vec::index(&v, i)
     s := s + x
     i := i + 1
   }
   s
 }
-var items = vec_new()
-vec_push(&mut items, 5)
-vec_push(&mut items, 7)
+var items := Vec::new()
+Vec::push(&mut items, 5)
+Vec::push(&mut items, 7)
 perform show("sum", handle { show_all(&items) } with { out_of_bounds() => 0 })
 perform show("items", items)
-var b = buf_new()
-buf_push(&mut b, "ab")
-buf_push(&mut b, "cd")
-let t = text_of(b)
+var b := Buf::new()
+Buf::push(&mut b, "ab")
+Buf::push(&mut b, "cd")
+let t := Text::of(b)
 perform show("t", t)
-var m = hashmap_new()
-hashmap_insert(&mut m, "a", 1)
-hashmap_insert(&mut m, "b", 2)
-let r = handle { hashmap_index(&m, "b") } with { missing() => 0 }
+var m := HashMap::new()
+HashMap::insert(&mut m, "a", 1)
+HashMap::insert(&mut m, "b", 2)
+let r := handle { HashMap::index(&m, "b") } with { missing() => 0 }
 perform show("r", r)
-let miss = handle { hashmap_index(&m, "zz") } with { missing() => 0 - 1 }
+let miss := handle { HashMap::index(&m, "zz") } with { missing() => 0 - 1 }
 perform show("miss", miss)
 perform show("m", m)
 ```
@@ -250,23 +252,39 @@ shows = [
   "m = HashMap{\"a\": 1, \"b\": 2}",
 ]
 
+@ cases.a-struct-may-hold-a-hashmap
+source = ```nib
+import std::prelude::Affine
+
+affine struct Index { map: HashMap(u64, u64) }
+var ix := Index { map: HashMap::new() }
+match HashMap::insert(&mut ix.map, 1, 2) {
+  Some(old) => #()
+  None => #()
+}
+perform show("found", match HashMap::get(&ix.map, &1) { Some(v) => v, None => 0 })
+```
+shows = [
+  "found = 2",
+]
+
 @ cases.linear-and-borrowed-enums
 source = ```nib
 linear struct Handle { id: i64 }
-fn open(n: i64) -> Handle { Handle { id: n } }
-fn close(h: Handle) -> i64 {
+fn open(n: i64): Handle { Handle { id: n } }
+fn close(h: Handle): i64 {
   match h {
     Handle { id } => id
   }
 }
-let h = open(3)
+let h := open(3)
 perform show("closed", close(h))
 affine struct Box2 { v: i64 }
-fn unbox(b: Box2) -> i64 { match b { Box2 { v } => v } }
+fn unbox(b: Box2): i64 { match b { Box2 { v } => v } }
 perform show("u", unbox(Box2 { v: 8 }))
 enum E { A(i64), B(Text) }
-fn f(e: &E) -> i64 { match e { A(n) => n, B(t) => 0 } }
-let e = A(4)
+fn f(e: &E): i64 { match e { A(n) => n, B(t) => 0 } }
+let e := A(4)
 perform show("f", f(&e))
 perform show("f2", f(&B("z")))
 ```
@@ -279,35 +297,35 @@ shows = [
 
 @ cases.fail-raise-catch-and-forwarding
 source = ```nib
-fn safe_div(a: i64, b: i64) -> Result(i64, Text) {
+fn safe_div(a: i64, b: i64): Result(i64, Text) {
   if b == 0 { Err("div0") } else { Ok(div(a, b)) }
 }
-fn compute(a: i64, b: i64) -> i64 ! {fail} {
+fn compute(a: i64, b: i64): i64 ! {fail(Text)} {
   raise(safe_div(a, b)) + 1
 }
-let ok = catch(() => compute(10, 2))
-let bad = catch(() => compute(1, 0))
+let ok := catch(() => compute(10, 2))
+let bad := catch(() => compute(1, 0))
 perform show("ok", ok)
 perform show("bad", bad)
-fn first(r: Result(i64, Text)) -> i64 {
+fn first(r: Result(i64, Text)): i64 {
   match r { Ok(v) => v, Err(e) => 0 }
 }
 perform show("first", first(ok))
-let nested = catch(() => {
-  let a = raise(safe_div(8, 2))
-  let b = raise(safe_div(a, 0))
+let nested := catch(() => {
+  let a := raise(safe_div(8, 2))
+  let b := raise(safe_div(a, 0))
   a + b
 })
 perform show("nested", nested)
-effect warn: (m: Text) -> () direct
-fn work() -> i64 ! {warn} {
+effect warn(m: Text): Unit direct
+fn work(): i64 ! {warn} {
   perform warn("one")
   perform warn("two")
   5
 }
-let w = handle { handle { work() } with { warn(m), k => { perform show("inner", m); k(()) } } } with { warn(m), k => k(()) }
+let w := handle { handle { work() } with { warn(m), k => { perform show("inner", m); k(#()) } } } with { warn(m), k => k(#()) }
 perform show("w", w)
-let w2 = handle { handle { work() } with { warn(m), k => { perform warn(m); k(()) } } } with { warn(m), k => { perform show("outer", m); k(()) } }
+let w2 := handle { handle { work() } with { warn(m), k => { perform warn(m); k(#()) } } } with { warn(m), k => { perform show("outer", m); k(#()) } }
 perform show("w2", w2)
 ```
 shows = [
@@ -325,18 +343,18 @@ shows = [
 
 @ cases.a-union-from-a-handler
 source = ```nib
-effect stop: () -> Never resume 0
-fn f(n: i64) -> (i64 | Text) ! {stop} {
+effect stop(): Never resume 0
+fn f(n: i64): (i64 | Text) ! {stop} {
   if n > 2 { perform stop() } else { n }
 }
-fn g(n: i64) -> (i64 | Text) {
+fn g(n: i64): (i64 | Text) {
   handle { f(n) } with {
     stop() => "none"
   }
 }
 perform show("a", g(1))
 perform show("b", g(5))
-fn h(x: i64 | Text) -> Text {
+fn h(x: i64 | Text): Text {
   match x {
     n => "other"
   }
@@ -349,11 +367,11 @@ shows = [
 
 @ cases.a-handler-answers-each-ask
 source = ```nib
-effect ask: (n: i64) -> i64
-fn total() -> i64 ! {ask} {
+effect ask(n: i64): i64
+fn total(): i64 ! {ask} {
   perform ask(1) + perform ask(2) + perform ask(3)
 }
-let r = handle { total() } with {
+let r := handle { total() } with {
   ask(n), k => k(n * 10)
   return v => v + 100
 }
@@ -361,19 +379,38 @@ perform show("r", r)
 ```
 shows = ["r = 160"]
 
+@ cases.a-resuming-arm-passes-a-field-to-a-reading-function
+// `count` only reads its list, so the backend passes it by reference; the
+// call in the arm that resumes must pass a reference too.
+source = ```nib
+struct Bag { items: List(i64), n: i64 }
+effect give(b: Bag): i64
+fn count(xs: List(i64)): i64 {
+  match xs {
+    Nil => 0
+    Cons(_, t) => 1 + count(t)
+  }
+}
+let r := handle { perform give(Bag { items: Cons(1, Cons(2, Nil)), n: 3 }) } with {
+  give(b), k => k(count(b.items) + b.n)
+}
+perform show("r", r)
+```
+shows = ["r = 5"]
+
 @ cases.an-arm-wraps-k-and-counts
 source = ```nib
-effect ask: (n: i64) -> i64
-effect log: (t: Text) -> () direct
-fn total() -> i64 ! {ask, log} {
+effect ask(n: i64): i64
+effect log(t: Text): Unit direct
+fn total(): i64 ! {ask, log} {
   perform log("start")
-  let a = perform ask(1)
+  let a := perform ask(1)
   perform log("mid")
-  let b = perform ask(2)
+  let b := perform ask(2)
   a + b
 }
-var count = 0
-let r = handle { total() } with {
+var count := 0
+let r := handle { total() } with {
   ask(n), k => {
     count := count + 1
     k(n * 10) + 1
@@ -387,18 +424,18 @@ shows = ["log = \"start\"", "log = \"mid\"", "r = 32", "count = 2"]
 
 @ cases.a-state-handler-passes-k-in-a-function
 source = ```nib
-effect get: () -> i64
-effect put: (s: i64) -> ()
-fn incr() -> i64 ! {get, put} {
-  let s = perform get()
+effect get(): i64
+effect put(s: i64): Unit
+fn incr(): i64 ! {get, put} {
+  let s := perform get()
   perform put(s + 1)
-  let t = perform get()
+  let t := perform get()
   perform put(t + 10)
   perform get()
 }
-let run = handle { incr() } with {
+let run := handle { incr() } with {
   get(), k => (s) => k(s)(s)
-  put(s2), k => (s) => k(())(s2)
+  put(s2), k => (s) => k(#())(s2)
   return v => (s) => v
 }
 perform show("state", run(5))
@@ -407,13 +444,13 @@ shows = ["state = 16"]
 
 @ cases.a-resume-zero-effect-through-a-handler
 source = ```nib
-effect ask: (n: i64) -> i64
-effect fail: (m: Text) -> Never resume 0
-fn f(n: i64) -> i64 ! {ask, fail} {
-  let a = perform ask(n)
+effect ask(n: i64): i64
+effect fail(m: Text): Never resume 0
+fn f(n: i64): i64 ! {ask, fail} {
+  let a := perform ask(n)
   if a > 25 { perform fail("big") } else { a }
 }
-let r = handle {
+let r := handle {
   handle { f(1) + f(2) + f(3) } with {
     ask(n), k => k(n * 10)
   }
@@ -421,7 +458,7 @@ let r = handle {
   fail(m) => 0 - 1
 }
 perform show("r", r)
-let r2 = handle { f(1) + f(2) } with {
+let r2 := handle { f(1) + f(2) } with {
   ask(n), k => k(n * 10)
   fail(m) => 0 - 1
 }
@@ -431,52 +468,54 @@ shows = ["r = -1", "r2 = 30"]
 
 @ cases.a-borrow-in-a-function-that-suspends
 source = ```nib
-effect yield: (n: i64) -> () resume <=1
-fn gen(&v: Vec(i64)) -> () ! {yield, Div} {
-  var i = 0
-  while i < vec_len(&v) {
+import std::prelude::Affine
+
+effect yield(n: i64): Unit resume <=1
+fn gen(&v: Vec(i64)): Unit ! {yield, Div} {
+  var i := 0
+  while i < Vec::len(&v) {
     handle {
-      perform yield(vec_index(&v, i))
+      perform yield(Vec::index(&v, i))
     } with {
-      out_of_bounds() => ()
+      out_of_bounds() => #()
     }
     i := i + 1
   }
 }
-fn sum_all(&v: Vec(i64)) -> i64 ! {Div} {
-  var total = 0
+fn sum_all(&v: Vec(i64)): i64 ! {Div} {
+  var total := 0
   handle { gen(&v) } with {
     yield(n), k => {
       total := total + n
-      k(())
+      k(#())
     }
   }
   total
 }
-var v = vec_new()
-vec_push(&mut v, 3)
-vec_push(&mut v, 4)
-vec_push(&mut v, 5)
+var v := Vec::new()
+Vec::push(&mut v, 3)
+Vec::push(&mut v, 4)
+Vec::push(&mut v, 5)
 perform show("sum", sum_all(&v))
 ```
 shows = ["sum = 12"]
 
 @ cases.an-arm-that-drops-k
 source = ```nib
-effect stop: (n: i64) -> Never resume <=1
-fn search(n: i64) -> i64 ! {stop, Div} {
-  var i = 0
+effect stop(n: i64): Never resume <=1
+fn search(n: i64): i64 ! {stop, Div} {
+  var i := 0
   while i < n {
     if i * i > 50 { perform stop(i) }
     i := i + 1
   }
   0 - 1
 }
-let r = handle { search(100) } with {
+let r := handle { search(100) } with {
   stop(n), k => n * 1000
 }
 perform show("r", r)
-let r2 = handle { search(5) } with {
+let r2 := handle { search(5) } with {
   stop(n), k => n * 1000
 }
 perform show("r2", r2)
@@ -485,16 +524,16 @@ shows = ["r = 8000", "r2 = -1"]
 
 @ cases.handlers-nest
 source = ```nib
-effect tick: () -> i64 resume <=1
-fn step() -> i64 ! {tick} { perform tick() }
-fn run() -> i64 ! {tick} {
-  let a = handle { step() + step() } with {
+effect tick(): i64 resume <=1
+fn step(): i64 ! {tick} { perform tick() }
+fn run(): i64 ! {tick} {
+  let a := handle { step() + step() } with {
     tick(), k => k(1)
     return v => v * 2
   }
   a + step()
 }
-let r = handle { run() } with {
+let r := handle { run() } with {
   tick(), k => k(100)
 }
 perform show("r", r)
@@ -503,13 +542,13 @@ shows = ["r = 104"]
 
 @ cases.a-text-answer
 source = ```nib
-effect ask: () -> Text resume 1
+effect ask(): Text resume 1
 enum Msg { Hello(Text), Bye }
-fn greet() -> Msg ! {ask} {
-  let n = perform ask()
+fn greet(): Msg ! {ask} {
+  let n := perform ask()
   if n == "x" { Bye } else { Hello(n) }
 }
-let m = handle { greet() } with {
+let m := handle { greet() } with {
   ask(), k => k("bob")
 }
 match m {
@@ -521,16 +560,16 @@ shows = ["hello = \"bob\""]
 
 @ cases.a-generic-function-that-suspends
 source = ```nib
-effect ask: (n: i64) -> i64
-fn pick<A>(x: A, n: i64) -> A ! {ask} {
-  let k = perform ask(n)
+effect ask(n: i64): i64
+fn pick<A>(x: A, n: i64): A ! {ask} {
+  let k := perform ask(n)
   x
 }
-let r = handle { pick(5, 1) + pick(7, 2) } with {
+let r := handle { pick(5, 1) + pick(7, 2) } with {
   ask(n), k => k(n)
 }
 perform show("r", r)
-let t = handle { pick("hi", 1) } with {
+let t := handle { pick("hi", 1) } with {
   ask(n), k => k(n)
 }
 perform show("t", t)
@@ -539,20 +578,20 @@ shows = ["r = 12", "t = \"hi\""]
 
 @ cases.an-affine-value-is-dropped-with-k
 source = ```nib
-effect ask: (n: i64) -> i64
+effect ask(n: i64): i64
 affine struct Tok {}
-fn use_tok(t: Tok) -> () { }
-fn work() -> i64 ! {ask} {
-  let t = Tok {}
-  let a = perform ask(1)
+fn use_tok(t: Tok): Unit { }
+fn work(): i64 ! {ask} {
+  let t := Tok {}
+  let a := perform ask(1)
   use_tok(t)
   a
 }
-let r = handle { work() } with {
+let r := handle { work() } with {
   ask(n), k => k(n + 1)
 }
 perform show("r", r)
-let r2 = handle { work() } with {
+let r2 := handle { work() } with {
   ask(n), k => 77
 }
 perform show("r2", r2)
@@ -561,18 +600,18 @@ shows = ["r = 2", "r2 = 77"]
 
 @ cases.a-handler-in-a-function-that-suspends
 source = ```nib
-effect ask: (n: i64) -> i64
-fn work(n: i64) -> i64 ! {ask} {
+effect ask(n: i64): i64
+fn work(n: i64): i64 ! {ask} {
   handle { perform ask(n) * 2 } with {
     ask(m), k => k(m + 1000)
   }
 }
-fn outer() -> i64 ! {ask} {
-  let x = work(1)
-  let y = perform ask(5)
+fn outer(): i64 ! {ask} {
+  let x := work(1)
+  let y := perform ask(5)
   x + y
 }
-let r = handle { outer() } with {
+let r := handle { outer() } with {
   ask(n), k => k(n)
 }
 perform show("r", r)
@@ -581,13 +620,13 @@ shows = ["r = 2007"]
 
 @ cases.resume-1-and-resume-0-handlers
 source = ```nib
-effect ask: (n: i64) -> i64 resume 1
-effect fail: (m: Text) -> Never resume 0
-fn work() -> i64 ! {ask, fail} {
-  let a = perform ask(1)
+effect ask(n: i64): i64 resume 1
+effect fail(m: Text): Never resume 0
+fn work(): i64 ! {ask, fail} {
+  let a := perform ask(1)
   if a > 5 { perform fail("too big") } else { a }
 }
-let r = handle {
+let r := handle {
   handle { work() } with {
     fail(m) => 0 - 1
   }
@@ -595,7 +634,7 @@ let r = handle {
   ask(n), k => k(n * 9)
 }
 perform show("r", r)
-fn safe() -> i64 {
+fn safe(): i64 {
   handle { work() } with {
     ask(n), k => k(n)
     fail(m) => 0 - 2
@@ -607,11 +646,11 @@ shows = ["r = -1", "safe = 1"]
 
 @ cases.a-budget-with-a-value
 source = ```nib
-fn spin() -> i64 {
+fn spin(): i64 {
   while true { }
   0
 }
-let d = handle { budget(steps: 50) { spin() } } with {
+let d := handle { budget(steps: 50) { spin() } } with {
   exceeded(info), k => k(0 - 1)
 }
 perform show("d", d)
@@ -620,12 +659,12 @@ shows = ["d = -1"]
 
 @ cases.more-steps-and-a-show-once
 source = ```nib
-fn count(n: i64) -> i64 {
-  var i = 0
+fn count(n: i64): i64 {
+  var i := 0
   while i < n { i := i + 1 }
   i
 }
-let d = handle {
+let d := handle {
   budget(steps: 40) {
     perform show("start", 0)
     count(100)
@@ -639,12 +678,12 @@ shows = ["start = 0", "d = 100"]
 
 @ cases.unbounded-continues
 source = ```nib
-fn count(n: i64) -> i64 {
-  var i = 0
+fn count(n: i64): i64 {
+  var i := 0
   while i < n { i := i + 1 }
   i
 }
-let d = handle { budget(steps: 10) { count(1000) } } with {
+let d := handle { budget(steps: 10) { count(1000) } } with {
   exceeded(info), k => info.unbounded()
 }
 perform show("d", d)
@@ -653,13 +692,13 @@ shows = ["d = 1000"]
 
 @ cases.an-arm-counts-the-stops
 source = ```nib
-fn count(n: i64) -> i64 {
-  var i = 0
+fn count(n: i64): i64 {
+  var i := 0
   while i < n { i := i + 1 }
   i
 }
-var stops = 0
-let d = handle { budget(steps: 50) { count(100) } } with {
+var stops := 0
+let d := handle { budget(steps: 50) { count(100) } } with {
   exceeded(info), k => {
     stops := stops + 1
     info.more(50)
@@ -672,14 +711,14 @@ shows = ["d = 100", "stopped = true"]
 
 @ cases.recursion-under-a-budget
 source = ```nib
-fn fib(n: i64) -> i64 ! {Div} {
+fn fib(n: i64): i64 ! {Div} {
   if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
 }
-let d = handle { budget(steps: 100) { fib(25) } } with {
+let d := handle { budget(steps: 100) { fib(25) } } with {
   exceeded(info), k => k(0 - 7)
 }
 perform show("d", d)
-let e = handle { budget(steps: 10000000) { fib(10) } } with {
+let e := handle { budget(steps: 10000000) { fib(10) } } with {
   exceeded(info), k => k(0 - 7)
 }
 perform show("e", e)
@@ -688,15 +727,15 @@ shows = ["d = -7", "e = 55"]
 
 @ cases.budgets-nest
 source = ```nib
-fn loopn(n: i64) -> i64 {
-  var i = 0
+fn loopn(n: i64): i64 {
+  var i := 0
   while i < n { i := i + 1 }
   i
 }
-fn inner() -> i64 ! {Exceeded} {
+fn inner(): i64 ! {Exceeded} {
   budget(steps: 20) { loopn(1000) }
 }
-let r = handle {
+let r := handle {
   handle { budget(steps: 100000) { inner() } } with {
     exceeded(info), k => info.more(10)
   }
@@ -709,17 +748,17 @@ shows = ["r = 1000"]
 
 @ cases.a-budget-over-a-suspending-body
 source = ```nib
-effect ask: () -> i64
-fn work(n: i64) -> i64 ! {ask, Div} {
-  var i = 0
-  var s = 0
+effect ask(): i64
+fn work(n: i64): i64 ! {ask, Div} {
+  var i := 0
+  var s := 0
   while i < n {
     s := s + perform ask()
     i := i + 1
   }
   s
 }
-let r = handle {
+let r := handle {
   handle { budget(steps: 30) { work(100) } } with {
     exceeded(info), k => info.more(30)
   }
@@ -732,43 +771,43 @@ shows = ["r = 200"]
 
 @ cases.m-nondeterminism-loops-and-recursion
 source = ```nib
-effect choose: () -> Bool resume ω
-effect fail: () -> Never resume 0
+effect choose(): Bool resume ω
+effect fail(): Never resume 0
 
-fn pick(n: i64) -> i64 ! {choose, Div} {
-  var acc = 0
-  var i = 0
+fn pick(n: i64): i64 ! {choose, Div} {
+  var acc := 0
+  var i := 0
   while i < n {
-    let b = perform choose()
+    let b := perform choose()
     if b { acc := acc + i }
     i := i + 1
   }
   acc
 }
 
-fn rec(n: i64) -> i64 ! {choose, Div} {
+fn rec(n: i64): i64 ! {choose, Div} {
   if n <= 0 { 0 } else {
-    let b = perform choose()
+    let b := perform choose()
     (if b { n } else { 0 }) + rec(n - 1)
   }
 }
 
-let all = handle { pick(3) } with {
+let all := handle { pick(3) } with {
   choose(), k => k(true) + k(false)
 }
 perform show("all", all)
 
-let r = handle { rec(4) } with {
+let r := handle { rec(4) } with {
   choose(), k => k(true) + k(false)
 }
 perform show("r", r)
 
-let first = handle { rec(3) } with {
+let first := handle { rec(3) } with {
   choose(), k => k(true)
 }
 perform show("first", first)
 
-let two = handle {
+let two := handle {
   handle { perform choose() } with {
     choose(), k => if k(true) { false } else { true }
     return v => v
@@ -782,22 +821,22 @@ shows = ["all = 12", "r = 80", "first = 6", "two = false"]
 
 @ cases.m-with-one-shot-and-abort-effects
 source = ```nib
-effect ask: () -> i64 resume ω
-effect tick: (n: i64) -> () resume 1
-effect fail: (e: Text) -> Never resume 0
+effect ask(): i64 resume ω
+effect tick(n: i64): Unit resume 1
+effect fail(e: Text): Never resume 0
 
-fn work(n: i64) -> i64 ! {ask, tick, fail} {
+fn work(n: i64): i64 ! {ask, tick, fail} {
   perform tick(n)
-  let a = perform ask()
+  let a := perform ask()
   if a > 100 { perform fail("too big") }
   perform tick(a)
   a + n
 }
 
-let r = handle {
+let r := handle {
   handle { work(1) + work(2) } with {
     tick(n), k => { perform show("tick", n)
-      k(()) }
+      k(#()) }
   }
 } with {
   ask(), k => k(10) + k(20)
@@ -806,9 +845,9 @@ let r = handle {
 }
 perform show("r", r)
 
-let s = handle {
+let s := handle {
   handle { work(5) } with {
-    tick(n), k => k(())
+    tick(n), k => k(#())
   }
 } with {
   ask(), k => k(200) + k(1)
@@ -820,59 +859,59 @@ shows = ["tick = 1", "tick = 10", "tick = 2", "tick = 10", "tick = 20", "tick = 
 
 @ cases.m-data-and-return-arm
 source = ```nib
-effect choose: () -> Bool resume ω
-effect fail: (e: Text) -> Never resume 0
+effect choose(): Bool resume ω
+effect fail(e: Text): Never resume 0
 enum L { Nil, Cons(i64, L) }
 struct P { x: i64, y: Text }
 
-fn gen(n: i64) -> L ! {choose, Div} {
+fn gen(n: i64): L ! {choose, Div} {
   if n <= 0 { Nil } else {
-    let b = perform choose()
-    let rest = gen(n - 1)
+    let b := perform choose()
+    let rest := gen(n - 1)
     if b { Cons(n, rest) } else { rest }
   }
 }
 
-fn len(xs: L) -> i64 {
+fn len(xs: L): i64 {
   match xs {
     Nil => 0
     Cons(_, t) => 1 + len(t)
   }
 }
 
-fn sum(xs: L) -> i64 {
+fn sum(xs: L): i64 {
   match xs {
     Nil => 0
     Cons(h, t) => h + sum(t)
   }
 }
 
-let total = handle { len(gen(3)) } with {
+let total := handle { len(gen(3)) } with {
   choose(), k => k(true) + k(false)
 }
 perform show("total", total)
 
-let s = handle { sum(gen(4)) } with {
+let s := handle { sum(gen(4)) } with {
   choose(), k => k(true) + k(false)
   return v => v * 2
 }
 perform show("s", s)
 
-fn pp(n: i64) -> P ! {choose} {
-  let b = perform choose()
+fn pp(n: i64): P ! {choose} {
+  let b := perform choose()
   P { x: if b { n } else { 0 - n }, y: "p" }
 }
-let q = handle {
-  let p = pp(3)
-  let r = pp(4)
+let q := handle {
+  let p := pp(3)
+  let r := pp(4)
   p.x * r.x
 } with {
   choose(), k => k(true) + k(false)
 }
 perform show("q", q)
 
-let t = handle {
-  let b = perform choose()
+let t := handle {
+  let b := perform choose()
   if b { perform fail("no") } else { 5 }
 } with {
   choose(), k => k(true) + k(false)
@@ -880,9 +919,9 @@ let t = handle {
 }
 perform show("t", t)
 
-let u = handle {
-  let b = perform choose()
-  let c = perform choose()
+let u := handle {
+  let b := perform choose()
+  let c := perform choose()
   if b && c { 1 } else { if b || c { 10 } else { 100 } }
 } with {
   choose(), k => k(true) + k(false)
@@ -893,61 +932,61 @@ shows = ["total = 12", "s = 160", "q = 0", "t = 105", "u = 121"]
 
 @ cases.m-inside-a-and-o-functions
 source = ```nib
-effect choose: () -> Bool resume ω
-effect fail: (e: Text) -> Never resume 0
-effect get: () -> i64 resume 1
+effect choose(): Bool resume ω
+effect fail(e: Text): Never resume 0
+effect get(): i64 resume 1
 
-fn early(n: i64) -> i64 ! {choose} {
-  let b = perform choose()
+fn early(n: i64): i64 ! {choose} {
+  let b := perform choose()
   if b { return n }
   n * 100
 }
 
-fn inA(n: i64) -> i64 ! {fail} {
-  let r = handle { early(n) + early(n + 1) } with {
+fn inA(n: i64): i64 ! {fail} {
+  let r := handle { early(n) + early(n + 1) } with {
     choose(), k => k(true) + k(false)
   }
   if r > 1000 { perform fail("big") }
   r
 }
 
-fn inO(n: i64) -> i64 ! {get} {
-  let r = handle { early(n) + perform get() } with {
+fn inO(n: i64): i64 ! {get} {
+  let r := handle { early(n) + perform get() } with {
     choose(), k => k(true) + k(false)
   }
   r + perform get()
 }
 
-let a = handle { inA(1) } with { fail(e) => 0 - 1 }
+let a := handle { inA(1) } with { fail(e) => 0 - 1 }
 perform show("a", a)
-let a2 = handle { inA(50) } with { fail(e) => 0 - 1 }
+let a2 := handle { inA(50) } with { fail(e) => 0 - 1 }
 perform show("a2", a2)
-let o = handle { inO(2) } with { get(), k => k(7) }
+let o := handle { inO(2) } with { get(), k => k(7) }
 perform show("o", o)
 
-let d = handle {
+let d := handle {
   handle {
-    let x = perform choose()
+    let x := perform choose()
     perform show("x", x)
     x
   } with {
-    show(l, s), k => { k(()) }
+    ∀ A. show<A>(l, s), k => { k(#()) }
   }
 } with {
   choose(), k => if k(true) { k(false) } else { false }
 }
 perform show("d", d)
 
-fn count(n: i64) -> i64 ! {choose, Div} {
-  var i = 0
-  var c = 0
+fn count(n: i64): i64 ! {choose, Div} {
+  var i := 0
+  var c := 0
   while i < n {
     i := i + 1
     if perform choose() { c := c + 1 }
   }
   c
 }
-let w = handle { count(4) } with {
+let w := handle { count(4) } with {
   choose(), k => k(true) + k(false)
 }
 perform show("w", w)
@@ -956,9 +995,9 @@ shows = ["a = 606", "a2 = -1", "o = 223", "d = false", "w = 20"]
 
 @ cases.m-closure-through-a-row-variable
 source = ```nib
-effect choose: () -> Bool resume ω
-fn apply<e>(f: () -> i64 ! {|e}) -> i64 ! {|e} { f() }
-let r = handle { apply(() => if perform choose() { 1 } else { 2 }) } with {
+effect choose(): Bool resume ω
+fn apply<!e>(f: () -> i64 ! e): i64 ! e { f() }
+let r := handle { apply(() => if perform choose() { 1 } else { 2 }) } with {
   choose(), k => k(true) + k(false)
 }
 perform show("r", r)
@@ -967,21 +1006,21 @@ shows = ["r = 3"]
 
 @ cases.m-closures-called-twice
 source = ```nib
-effect choose: () -> Bool resume ω
-fn apply<e>(f: () -> i64 ! {|e}) -> i64 ! {|e} { f() }
-fn twice<e>(f: (i64) -> i64 ! {|e}, x: i64) -> i64 ! {|e} { f(f(x)) }
-fn mk(n: i64) -> i64 ! {choose} {
+effect choose(): Bool resume ω
+fn apply<!e>(f: () -> i64 ! e): i64 ! e { f() }
+fn twice<!e>(f: (i64) -> i64 ! e, x: i64): i64 ! e { f(f(x)) }
+fn mk(n: i64): i64 ! {choose} {
   twice(x => if perform choose() { x + n } else { x * 2 }, 1)
 }
-let r = handle { apply(() => if perform choose() { 1 } else { 2 }) } with {
+let r := handle { apply(() => if perform choose() { 1 } else { 2 }) } with {
   choose(), k => k(true) + k(false)
 }
 perform show("r", r)
-let s = handle { mk(10) } with {
+let s := handle { mk(10) } with {
   choose(), k => k(true) + k(false)
 }
 perform show("s", s)
-let p = handle { twice(x => x + 1, 5) } with {
+let p := handle { twice(x => x + 1, 5) } with {
   choose(), k => k(true) + k(false)
 }
 perform show("p", p)
@@ -990,60 +1029,64 @@ shows = ["r = 3", "s = 59", "p = 7"]
 
 @ cases.views-vec-get-and-get-mut
 source = ```nib
-var v = vec_new()
-vec_push(&mut v, 1)
-vec_push(&mut v, 2)
-match vec_get(&v, 1) {
+import std::prelude::Affine
+
+var v := Vec::new()
+Vec::push(&mut v, 1)
+Vec::push(&mut v, 2)
+match Vec::get(&v, 1) {
   Some(x) => perform show("x", x)
-  None => ()
+  None => #()
 }
-match vec_get_mut(&mut v, 0) {
+match Vec::get_mut(&mut v, 0) {
   Some(x) => { x := 7 }
-  None => ()
+  None => #()
 }
-match vec_get(&v, 0) {
+match Vec::get(&v, 0) {
   Some(x) => perform show("y", x)
-  None => ()
+  None => #()
 }
-var m = hashmap_new()
-hashmap_insert(&mut m, "a", 1)
-match hashmap_get(&m, &"a") {
+var m := HashMap::new()
+HashMap::insert(&mut m, "a", 1)
+match HashMap::get(&m, &"a") {
   Some(x) => perform show("m", x)
-  None => ()
+  None => #()
 }
 ```
 shows = ["x = 2", "y = 7", "m = 1"]
 
 @ cases.arrays-are-shared-and-read-by-index
 source = ```nib
-fn second<A: shared>(a: Array(A)) -> Option(A) {
-  array_get(a, 1)
+import std::prelude::Shared
+
+fn second<A: Shared>(a: Array(A)): Option(A) {
+  Array::get(a, 1)
 }
-let a = array_of_list(Cons("x", Cons("y", Cons("z", Nil))))
-let b = a
-perform show("len", array_len(a))
+let a := Array::of_list(Cons("x", Cons("y", Cons("z", Nil))))
+let b := a
+perform show("len", Array::len(a))
 perform show("second", second(b))
-perform show("past", array_get(a, 3))
-perform show("list", array_to_list(a))
+perform show("past", Array::get(a, 3))
+perform show("list", Array::to_list(a))
 ```
 shows = ["len = 3", "second = Some(\"y\")", "past = None", "list = Cons(\"x\", Cons(\"y\", Cons(\"z\", Nil)))"]
 
 @ cases.modules-qualified-and-inner-names
 source = ```nib
 module M {
-  fn one() -> i64 { 1 }
-  fn two() -> i64 { one() + one() }
-  module N { fn three() -> i64 { two() + one() } }
+  fn one(): i64 { 1 }
+  fn two(): i64 { one() + one() }
+  module N { fn three(): i64 { two() + one() } }
 }
-perform show("a", M.two())
-perform show("b", M.N.three())
+perform show("a", M::two())
+perform show("b", M::N::three())
 ```
 shows = ["a = 2", "b = 3"]
 
 @ cases.a-program-list-shadows-the-prelude-list
 source = ```nib
 enum List { Nil, Cons(i64, List) }
-fn sum(xs: List) -> i64 {
+fn sum(xs: List): i64 {
   match xs {
     Nil => 0
     Cons(x, r) => x + sum(r)
@@ -1053,18 +1096,36 @@ perform show("s", sum(Cons(1, Cons(2, Nil))))
 ```
 shows = ["s = 3"]
 
+@ cases.a-program-option-and-list-are-not-the-prelude-ones
+source = ```nib
+import std::prelude::Classes
+
+enum List { Nil, Cons(i64, List) }
+enum Option(A: Type) { None, Some(A) }
+fn first(xs: List): Option(i64) {
+  match xs {
+    Nil => None
+    Cons(x, r) => Some(x)
+  }
+}
+perform show("l", Cons(1, Nil))
+perform show("f", first(Cons(1, Nil)))
+perform show("j", join(std::prelude::Cons(1, std::prelude::Cons(2, std::prelude::Nil)), ","))
+```
+shows = ["l = Cons(1, Nil)", "f = Some(1)", "j = \"1,2\""]
+
 @ cases.cons-onto-a-var-list
 source = ```nib
-fn build(n: i64) -> List(i64) {
-  var xs: List(i64) = Nil
-  var i = 0
+fn build(n: i64): List(i64) {
+  var xs: List(i64) := Nil
+  var i := 0
   while i < n {
     xs := Cons(i, xs)
     i := i + 1
   }
   xs
 }
-fn len(xs: List(i64)) -> i64 {
+fn len(xs: List(i64)): i64 {
   match xs {
     Nil => 0
     Cons(x, r) => 1 + len(r)
@@ -1076,8 +1137,8 @@ shows = ["len = 5"]
 
 @ cases.a-local-function-that-mentions-nothing-outside
 source = ```nib
-fn outer(x: i64) -> i64 {
-  fn go(n: i64) -> i64 { div(n * (n + 1), 2) }
+fn outer(x: i64): i64 {
+  fn go(n: i64): i64 { div(n * (n + 1), 2) }
   go(x)
 }
 perform show("sum", outer(4))
@@ -1087,14 +1148,14 @@ shows = ["sum = 10"]
 @ cases.a-pattern-inside-a-recursive-field
 source = ```nib
 enum Tree { Leaf, Node(Tree, i64, Tree) }
-fn by_value(t: Tree) -> i64 {
+fn by_value(t: Tree): i64 {
   match t {
     Node(Node(a, x, b), y, Leaf) => x + y
     Node(Leaf, y, _) => y
     _ => 0
   }
 }
-fn deep(t: &Tree) -> i64 {
+fn deep(t: &Tree): i64 {
   match t {
     Node(Node(Node(_, z, _), x, _), y, _) => z * 100 + x * 10 + y
     Node(Node(_, x, r), y, _) => x * 10 + y
@@ -1102,8 +1163,8 @@ fn deep(t: &Tree) -> i64 {
     Leaf => 0
   }
 }
-let small = Node(Node(Leaf, 1, Leaf), 2, Leaf)
-let big = Node(Node(Node(Leaf, 3, Leaf), 1, Leaf), 2, Leaf)
+let small := Node(Node(Leaf, 1, Leaf), 2, Leaf)
+let big := Node(Node(Node(Leaf, 3, Leaf), 1, Leaf), 2, Leaf)
 perform show("value", by_value(small))
 perform show("deep3", deep(&big))
 perform show("deep2", deep(&small))
@@ -1114,19 +1175,19 @@ shows = ["value = 3", "deep3 = 312", "deep2 = 12", "leaf = 0"]
 @ cases.a-guard-reads-a-name-from-a-recursive-field
 source = ```nib
 enum Tree { Leaf, Node(Tree, i64, Tree) }
-fn sum(t: &Tree) -> i64 {
+fn sum(t: &Tree): i64 {
   match t {
     Leaf => 0
     Node(l, v, r) => sum(l) + v + sum(r)
   }
 }
-fn heavy_left(t: &Tree) -> i64 {
+fn heavy_left(t: &Tree): i64 {
   match t {
     Node(l, y, _) if sum(l) > 0 => y
     _ => 0
   }
 }
-let t = Node(Node(Leaf, 1, Leaf), 2, Leaf)
+let t := Node(Node(Leaf, 1, Leaf), 2, Leaf)
 perform show("heavy", heavy_left(&t))
 perform show("none", heavy_left(&Node(Leaf, 5, Leaf)))
 ```
@@ -1134,24 +1195,24 @@ shows = ["heavy = 2", "none = 0"]
 
 @ cases.a-closure-that-performs-a-resume-once-effect
 source = ```nib
-effect ask: (n: i64) -> i64 resume 1
-fn twice(f: (i64) -> i64 ! {ask}, x: i64) -> i64 ! {ask} { f(f(x)) }
-fn go(base: i64, label: Text) -> i64 ! {ask} {
-  let g = (y: i64) => perform ask(y + base)
-  let a = twice(g, 1)
+effect ask(n: i64): i64 resume 1
+fn twice(f: (i64) -> i64 ! {ask}, x: i64): i64 ! {ask} { f(f(x)) }
+fn go(base: i64, label: Text): i64 ! {ask} {
+  let g := (y: i64) => perform ask(y + base)
+  let a := twice(g, 1)
   a + g(2)
 }
-let r = handle { go(5, "x") } with { ask(n), k => k(n + 1) }
+let r := handle { go(5, "x") } with { ask(n), k => k(n + 1) }
 perform show("r", r)
 ```
 shows = ["r = 21"]
 
 @ cases.a-shared-closure-is-used-twice
 source = ```nib
-fn twice(f: (i64) -> i64, x: i64) -> i64 { f(f(x)) }
-fn go(base: i64) -> i64 {
-  let g = (y: i64) => y + base
-  let a = twice(g, 1)
+fn twice(f: (i64) -> i64, x: i64): i64 { f(f(x)) }
+fn go(base: i64): i64 {
+  let g := (y: i64) => y + base
+  let a := twice(g, 1)
   a + g(2)
 }
 perform show("r", go(5))
@@ -1160,35 +1221,37 @@ shows = ["r = 18"]
 
 @ cases.a-borrowing-closure-performs-an-effect-across-an-await
 source = ```nib
-effect ask: (n: i64) -> i64 resume 1
-fn run(xs: Vec(i64), scale: i64) -> Vec(i64) ! {ask} {
-  var total = vec_new()
-  let tag = 7
-  vec_each(&xs, (&x: i64) => { let n = perform ask(x * scale); vec_push(&mut total, n + tag) })
+import std::prelude::Affine
+
+effect ask(n: i64): i64 resume 1
+fn run(xs: Vec(i64), scale: i64): Vec(i64) ! {ask} {
+  var total := Vec::new()
+  let tag := 7
+  Vec::each(&xs, (&x: i64) => { let n := perform ask(x * scale); Vec::push(&mut total, n + tag) })
   total
 }
-fn apply(&f: (i64) -> i64 ! {ask}, x: i64) -> i64 ! {ask} { f(f(x)) }
-fn go() -> i64 ! {ask} {
-  var xs = vec_new()
-  vec_push(&mut xs, 1)
-  vec_push(&mut xs, 2)
-  vec_push(&mut xs, 3)
-  let t = run(xs, 2)
-  let base = 100
-  let r = apply((y: i64) => perform ask(y + base), 1)
-  r + i64_of_u64(vec_len(&t))
+fn apply(&f: (i64) -> i64 ! {ask}, x: i64): i64 ! {ask} { f(f(x)) }
+fn go(): i64 ! {ask} {
+  var xs := Vec::new()
+  Vec::push(&mut xs, 1)
+  Vec::push(&mut xs, 2)
+  Vec::push(&mut xs, 3)
+  let t := run(xs, 2)
+  let base := 100
+  let r := apply((y: i64) => perform ask(y + base), 1)
+  r + I64::of_u64(Vec::len(&t))
 }
-let r = handle { go() } with { ask(n), k => k(n * 10) }
+let r := handle { go() } with { ask(n), k => k(n * 10) }
 perform show("r", r)
 ```
 shows = ["r = 11103"]
 
 @ cases.walk-a-list-with-a-running-flag
 source = ```nib
-fn count(xs: List(i64)) -> i64 {
-  var rest = xs
-  var n = 0
-  var running = true
+fn count(xs: List(i64)): i64 {
+  var rest := xs
+  var n := 0
+  var running := true
   while running {
     match rest {
       Nil => {
@@ -1202,8 +1265,8 @@ fn count(xs: List(i64)) -> i64 {
   }
   n
 }
-fn build(n: i64) -> List(i64) { if n == 0 { Nil } else { Cons(n, build(n - 1)) } }
-let xs = build(100)
+fn build(n: i64): List(i64) { if n == 0 { Nil } else { Cons(n, build(n - 1)) } }
+let xs := build(100)
 perform show("n", count(xs))
 perform show("again", count(xs))
 ```
@@ -1211,8 +1274,8 @@ shows = ["n = 5050", "again = 5050"]
 
 @ cases.a-local-fn-captures-a-parameter
 source = ```nib
-fn go(base: i64) -> i64 {
-  fn add(x: i64) -> i64 { x + base }
+fn go(base: i64): i64 {
+  fn add(x: i64): i64 { x + base }
   add(1) + add(2)
 }
 perform show("r", go(10))
@@ -1221,97 +1284,148 @@ shows = ["r = 23"]
 
 @ cases.a-borrowing-closure-assigns-a-var
 source = ```nib
-effect ask: (n: i64) -> i64 resume 1
-fn run(xs: Vec(i64)) -> i64 ! {ask} {
-  var total = 0
-  vec_each(&xs, (&x: i64) => { let n = perform ask(x)
+import std::prelude::Affine
+
+effect ask(n: i64): i64 resume 1
+fn run(xs: Vec(i64)): i64 ! {ask} {
+  var total := 0
+  Vec::each(&xs, (&x: i64) => { let n := perform ask(x)
     total := total + n })
   total
 }
-fn go() -> i64 ! {ask} {
-  var xs = vec_new()
-  vec_push(&mut xs, 1)
-  vec_push(&mut xs, 2)
-  vec_push(&mut xs, 3)
+fn go(): i64 ! {ask} {
+  var xs := Vec::new()
+  Vec::push(&mut xs, 1)
+  Vec::push(&mut xs, 2)
+  Vec::push(&mut xs, 3)
   run(xs)
 }
-let r = handle { go() } with { ask(n), k => k(n * 10) }
+let r := handle { go() } with { ask(n), k => k(n * 10) }
 perform show("r", r)
 ```
 shows = ["r = 60"]
 
 @ cases.a-borrowing-closure-assigns-without-reading
 source = ```nib
-effect ask: (n: i64) -> i64 resume 1
-fn run(xs: Vec(i64)) -> i64 ! {ask} {
-  var last = 0
-  var seen = false
-  vec_each(&xs, (&x: i64) => { last := perform ask(x)
+import std::prelude::Affine
+
+effect ask(n: i64): i64 resume 1
+fn run(xs: Vec(i64)): i64 ! {ask} {
+  var last := 0
+  var seen := false
+  Vec::each(&xs, (&x: i64) => { last := perform ask(x)
     seen := true })
   if seen { last } else { 0 - 1 }
 }
-fn go() -> i64 ! {ask} {
-  var xs = vec_new()
-  vec_push(&mut xs, 1)
-  vec_push(&mut xs, 2)
+fn go(): i64 ! {ask} {
+  var xs := Vec::new()
+  Vec::push(&mut xs, 1)
+  Vec::push(&mut xs, 2)
   run(xs)
 }
-let r = handle { go() } with { ask(n), k => k(n + 40) }
+let r := handle { go() } with { ask(n), k => k(n + 40) }
 perform show("r", r)
 ```
 shows = ["r = 42"]
 
 @ cases.a-borrowing-closure-calls-a-captured-function
 source = ```nib
-effect ask: (n: i64) -> i64 resume 1
-fn run(xs: Vec(i64), f: (i64) -> i64) -> i64 ! {ask} {
-  var total = 0
-  vec_each(&xs, (&x: i64) => { let n = perform ask(f(x))
+import std::prelude::Affine
+
+effect ask(n: i64): i64 resume 1
+fn run(xs: Vec(i64), f: (i64) -> i64): i64 ! {ask} {
+  var total := 0
+  Vec::each(&xs, (&x: i64) => { let n := perform ask(f(x))
     total := total + n })
   total
 }
-fn go() -> i64 ! {ask} {
-  var xs = vec_new()
-  vec_push(&mut xs, 1)
-  vec_push(&mut xs, 2)
-  vec_push(&mut xs, 3)
-  let k = 100
+fn go(): i64 ! {ask} {
+  var xs := Vec::new()
+  Vec::push(&mut xs, 1)
+  Vec::push(&mut xs, 2)
+  Vec::push(&mut xs, 3)
+  let k := 100
   run(xs, (y) => y * k)
 }
-let r = handle { go() } with { ask(n), k => k(n + 1) }
+let r := handle { go() } with { ask(n), k => k(n + 1) }
 perform show("r", r)
 ```
 shows = ["r = 603"]
 
 @ cases.a-borrowing-closure-calls-a-borrowed-function
 source = ```nib
-effect ask: (n: i64) -> i64 resume 1
-fn run(xs: Vec(i64), &f: (i64) -> i64 ! {ask}) -> i64 ! {ask} {
-  var total = 0
-  vec_each(&xs, (&x: i64) => { total := total + f(x) })
+import std::prelude::Affine
+
+effect ask(n: i64): i64 resume 1
+fn run(xs: Vec(i64), &f: (i64) -> i64 ! {ask}): i64 ! {ask} {
+  var total := 0
+  Vec::each(&xs, (&x: i64) => { total := total + f(x) })
   total
 }
-fn go() -> i64 ! {ask} {
-  var xs = vec_new()
-  vec_push(&mut xs, 1)
-  vec_push(&mut xs, 2)
+fn go(): i64 ! {ask} {
+  var xs := Vec::new()
+  Vec::push(&mut xs, 1)
+  Vec::push(&mut xs, 2)
   run(xs, (y) => perform ask(y))
 }
-let r = handle { go() } with { ask(n), k => k(n + 5) }
+let r := handle { go() } with { ask(n), k => k(n + 5) }
 perform show("r", r)
 ```
 shows = ["r = 13"]
 
+@ cases.a-divergent-callback-inside-a-multi-shot-handler
+source = ```nib
+effect ask(n: i64): i64 resume ω
+fn twice(&f: (i64) -> i64 ! {Div}, x: i64): i64 { f(f(x)) }
+fn f2(): i64 {
+  handle {
+    perform ask(1) + (handle { budget(steps: 45) { twice((l) => l + 1, 33) } } with {
+      exceeded(info), k => info.unbounded()
+    })
+  } with { ask(n), k => k(n) }
+}
+perform show("v", f2())
+```
+shows = ["v = 36"]
+
+@ cases.a-divergent-callback-runs-out-inside-a-multi-shot-handler
+source = ```nib
+effect ask(n: i64): i64 resume ω
+fn count(n: i64): i64 {
+  var i := 0
+  while i < n { i := i + 1 }
+  i
+}
+fn twice(&f: (i64) -> i64 ! {Div}, x: i64): i64 { f(f(x)) }
+fn more(): i64 {
+  handle {
+    perform ask(1) + (handle { budget(steps: 10) { twice((l) => count(l + 20), 0) } } with {
+      exceeded(info), k => info.more(10)
+    })
+  } with { ask(n), k => k(n) }
+}
+fn stop(): i64 {
+  handle {
+    perform ask(1) + (handle { budget(steps: 10) { twice((l) => count(l + 20), 0) } } with {
+      exceeded(info), k => k(100)
+    })
+  } with { ask(n), k => k(n) }
+}
+perform show("more", more())
+perform show("stop", stop())
+```
+shows = ["more = 41", "stop = 101"]
+
 @ cases.a-local-fn-assigns-a-captured-var
 source = ```nib
-fn go(n: i64) -> i64 {
-  var total = 0
-  fn bump(by: i64) -> i64 {
-    total := total + by
+fn go(n: i64): i64 {
+  var total := 0
+  fn bump(r#by: i64): i64 {
+    total := total + r#by
     total
   }
-  let a = bump(n)
-  let b = bump(n * 2)
+  let a := bump(n)
+  let b := bump(n * 2)
   total + a + b
 }
 perform show("r", go(5))
@@ -1320,21 +1434,23 @@ shows = ["r = 35"]
 
 @ cases.a-local-fn-reads-a-text-and-a-vec
 source = ```nib
-fn go(label: Text) -> i64 {
-  var xs = vec_new()
-  vec_push(&mut xs, 4)
-  vec_push(&mut xs, 5)
-  fn describe(k: i64) -> Text {
-    let n = vec_len(&xs)
+import std::prelude::Affine
+
+fn go(label: Text): i64 {
+  var xs := Vec::new()
+  Vec::push(&mut xs, 4)
+  Vec::push(&mut xs, 5)
+  fn describe(k: i64): Text {
+    let n := Vec::len(&xs)
     perform show("seen", n)
     label
   }
-  let a = describe(1)
-  vec_push(&mut xs, 6)
-  let b = describe(2)
+  let a := describe(1)
+  Vec::push(&mut xs, 6)
+  let b := describe(2)
   perform show("a", a)
   perform show("b", b)
-  i64_of_u64(vec_len(&xs))
+  I64::of_u64(Vec::len(&xs))
 }
 perform show("r", go("x"))
 ```
@@ -1342,14 +1458,14 @@ shows = ["seen = 2", "seen = 3", "a = \"x\"", "b = \"x\"", "r = 3"]
 
 @ cases.local-fns-call-each-other-with-captures
 source = ```nib
-fn go(base: i64) -> i64 {
-  var calls = 0
-  fn leaf(x: i64) -> i64 {
+fn go(base: i64): i64 {
+  var calls := 0
+  fn leaf(x: i64): i64 {
     calls := calls + 1
     x + base
   }
-  fn twice(x: i64) -> i64 { leaf(leaf(x)) }
-  let r = twice(1)
+  fn twice(x: i64): i64 { leaf(leaf(x)) }
+  let r := twice(1)
   r * 100 + calls
 }
 perform show("r", go(10))
@@ -1358,47 +1474,49 @@ shows = ["r = 2102"]
 
 @ cases.a-local-fn-performs-an-effect
 source = ```nib
-effect ask: (n: i64) -> i64 resume 1
-fn go(base: i64) -> i64 ! {ask} {
-  var seen = 0
-  fn query(x: i64) -> i64 ! {ask} {
+effect ask(n: i64): i64 resume 1
+fn go(base: i64): i64 ! {ask} {
+  var seen := 0
+  fn query(x: i64): i64 ! {ask} {
     seen := seen + 1
     perform ask(x + base)
   }
-  let a = query(1)
-  let b = query(2)
+  let a := query(1)
+  let b := query(2)
   a + b + seen
 }
-let r = handle { go(100) } with { ask(n), k => k(n * 2) }
+let r := handle { go(100) } with { ask(n), k => k(n * 2) }
 perform show("r", r)
 ```
 shows = ["r = 408"]
 
 @ cases.a-borrowing-closure-calls-a-local-fn-that-captures
 source = ```nib
-effect ask: (n: i64) -> i64 resume 1
-fn run(xs: Vec(i64), scale: i64) -> i64 ! {ask} {
-  var total = 0
-  fn add(x: i64) -> i64 { x * scale }
-  vec_each(&xs, (&x: i64) => { total := total + perform ask(add(x)) })
+import std::prelude::Affine
+
+effect ask(n: i64): i64 resume 1
+fn run(xs: Vec(i64), scale: i64): i64 ! {ask} {
+  var total := 0
+  fn add(x: i64): i64 { x * scale }
+  Vec::each(&xs, (&x: i64) => { total := total + perform ask(add(x)) })
   total
 }
-fn go() -> i64 ! {ask} {
-  var xs = vec_new()
-  vec_push(&mut xs, 1)
-  vec_push(&mut xs, 2)
+fn go(): i64 ! {ask} {
+  var xs := Vec::new()
+  Vec::push(&mut xs, 1)
+  Vec::push(&mut xs, 2)
   run(xs, 3)
 }
-let r = handle { go() } with { ask(n), k => k(n + 1) }
+let r := handle { go() } with { ask(n), k => k(n + 1) }
 perform show("r", r)
 ```
 shows = ["r = 11"]
 
 @ cases.a-local-fn-in-a-closure-body
 source = ```nib
-fn go(base: i64) -> i64 {
-  let f = (k: i64) => {
-    fn inner(x: i64) -> i64 { x + k + base }
+fn go(base: i64): i64 {
+  let f := (k: i64) => {
+    fn inner(x: i64): i64 { x + k + base }
     inner(1)
   }
   f(10) + f(20)
@@ -1409,9 +1527,9 @@ shows = ["r = 232"]
 
 @ cases.a-local-fn-that-captures-is-passed-as-a-value
 source = ```nib
-fn apply(f: (i64) -> i64, x: i64) -> i64 { f(x) }
-fn go(base: i64) -> i64 {
-  fn add(x: i64) -> i64 { x + base }
+fn apply(f: (i64) -> i64, x: i64): i64 { f(x) }
+fn go(base: i64): i64 {
+  fn add(x: i64): i64 { x + base }
   apply(add, 1) + apply(add, 2)
 }
 perform show("r", go(10))
@@ -1420,31 +1538,31 @@ shows = ["r = 23"]
 
 @ cases.a-local-fn-that-captures-is-returned
 source = ```nib
-fn make(base: i64) -> (i64) -> i64 {
-  fn add(x: i64) -> i64 { x + base }
+fn make(base: i64): (i64) -> i64 {
+  fn add(x: i64): i64 { x + base }
   add
 }
-let f = make(10)
+let f := make(10)
 perform show("r", f(1) + f(2))
 ```
 shows = ["r = 23"]
 
 @ cases.an-escaping-closure-calls-a-local-fn-that-captures
 source = ```nib
-fn make(base: i64) -> (i64) -> i64 {
-  fn add(x: i64) -> i64 { x + base }
+fn make(base: i64): (i64) -> i64 {
+  fn add(x: i64): i64 { x + base }
   (y) => add(y) * 2
 }
-let f = make(10)
+let f := make(10)
 perform show("r", f(1) + f(2))
 ```
 shows = ["r = 46"]
 
 @ cases.a-local-fn-that-captures-a-text-is-passed-as-a-value
 source = ```nib
-fn apply(f: (i64) -> Text, x: i64) -> Text { f(x) }
-fn go(label: Text) -> Text {
-  fn show_it(x: i64) -> Text { label }
+fn apply(f: (i64) -> Text, x: i64): Text { f(x) }
+fn go(label: Text): Text {
+  fn show_it(x: i64): Text { label }
   apply(show_it, 1)
 }
 perform show("r", go("hi"))
@@ -1453,23 +1571,23 @@ shows = ["r = \"hi\""]
 
 @ cases.a-local-fn-that-performs-an-effect-is-passed-as-a-value
 source = ```nib
-effect ask: (n: i64) -> i64 resume 1
-fn apply(f: (i64) -> i64 ! {ask}, x: i64) -> i64 ! {ask} { f(x) }
-fn go(base: i64) -> i64 ! {ask} {
-  fn query(x: i64) -> i64 ! {ask} { perform ask(x + base) }
+effect ask(n: i64): i64 resume 1
+fn apply(f: (i64) -> i64 ! {ask}, x: i64): i64 ! {ask} { f(x) }
+fn go(base: i64): i64 ! {ask} {
+  fn query(x: i64): i64 ! {ask} { perform ask(x + base) }
   apply(query, 1) + apply(query, 2)
 }
-let r = handle { go(100) } with { ask(n), k => k(n * 2) }
+let r := handle { go(100) } with { ask(n), k => k(n * 2) }
 perform show("r", r)
 ```
 shows = ["r = 406"]
 
 @ cases.a-local-fn-that-captures-another-is-passed-as-a-value
 source = ```nib
-fn apply(f: (i64) -> i64, x: i64) -> i64 { f(x) }
-fn go(base: i64, scale: i64) -> i64 {
-  fn add(x: i64) -> i64 { x + base }
-  fn both(x: i64) -> i64 { add(x) * scale }
+fn apply(f: (i64) -> i64, x: i64): i64 { f(x) }
+fn go(base: i64, scale: i64): i64 {
+  fn add(x: i64): i64 { x + base }
+  fn both(x: i64): i64 { add(x) * scale }
   apply(both, 1) + apply(both, 2)
 }
 perform show("r", go(10, 3))
@@ -1478,30 +1596,32 @@ shows = ["r = 69"]
 
 @ cases.a-local-fn-that-captures-a-vec-is-passed-as-a-borrowed-function
 source = ```nib
-fn apply(&f: (i64) -> i64, x: i64) -> i64 { let y = f(x)
+import std::prelude::Affine
+
+fn apply(&f: (i64) -> i64, x: i64): i64 { let y := f(x)
   f(y) }
-fn go(k: i64, xs: Vec(i64)) -> i64 {
-  fn pick(i: i64) -> i64 { i + i64_of_u64(vec_len(&xs)) + k }
+fn go(k: i64, xs: Vec(i64)): i64 {
+  fn pick(i: i64): i64 { i + I64::of_u64(Vec::len(&xs)) + k }
   apply(pick, 1) + apply(pick, 2)
 }
-var xs = vec_new()
-vec_push(&mut xs, 4)
-vec_push(&mut xs, 5)
+var xs := Vec::new()
+Vec::push(&mut xs, 4)
+Vec::push(&mut xs, 5)
 perform show("r", go(10, xs))
 ```
 shows = ["r = 51"]
 
 @ cases.a-local-fn-that-assigns-a-var-is-passed-as-a-borrowed-function
 source = ```nib
-fn apply(&f: (i64) -> i64, x: i64) -> i64 { let y = f(x)
+fn apply(&f: (i64) -> i64, x: i64): i64 { let y := f(x)
   f(y) }
-fn go() -> i64 {
-  var total = 0
-  fn bump(by: i64) -> i64 {
-    total := total + by
+fn go(): i64 {
+  var total := 0
+  fn bump(r#by: i64): i64 {
+    total := total + r#by
     total
   }
-  let a = apply(bump, 1)
+  let a := apply(bump, 1)
   a * 100 + total
 }
 perform show("r", go())
@@ -1510,11 +1630,13 @@ shows = ["r = 202"]
 
 @ cases.a-local-fn-that-borrows-a-parameter-is-passed-as-a-value
 source = ```nib
-fn apply(f: (&Vec(i64)) -> i64, v: Vec(i64)) -> i64 { f(&v) }
-fn go(k: i64) -> i64 {
-  fn total(&xs: Vec(i64)) -> i64 { i64_of_u64(vec_len(&xs)) + k }
-  var v = vec_new()
-  vec_push(&mut v, 1)
+import std::prelude::Affine
+
+fn apply(f: (&Vec(i64)) -> i64, v: Vec(i64)): i64 { f(&v) }
+fn go(k: i64): i64 {
+  fn total(&xs: Vec(i64)): i64 { I64::of_u64(Vec::len(&xs)) + k }
+  var v := Vec::new()
+  Vec::push(&mut v, 1)
   apply(total, v)
 }
 perform show("r", go(10))
@@ -1523,11 +1645,11 @@ shows = ["r = 11"]
 
 @ cases.a-local-fn-that-loops-is-passed-as-a-value
 source = ```nib
-fn apply(f: (i64) -> i64 ! {Div}, x: i64) -> i64 ! {Div} { f(x) }
-fn go(step: i64) -> i64 ! {Div} {
-  fn count(n: i64) -> i64 ! {Div} {
-    var i = 0
-    var s = 0
+fn apply(f: (i64) -> i64 ! {Div}, x: i64): i64 ! {Div} { f(x) }
+fn go(step: i64): i64 ! {Div} {
+  fn count(n: i64): i64 ! {Div} {
+    var i := 0
+    var s := 0
     while i < n {
       s := s + step
       i := i + 1
@@ -1542,8 +1664,8 @@ shows = ["r = 12"]
 
 @ cases.a-var-closure-called-in-place
 source = ```nib
-var total = 0
-let add = (x) => { total := total + x }
+var total := 0
+let add := (x) => { total := total + x }
 add(5)
 add(6)
 perform show("total", total)
@@ -1552,68 +1674,288 @@ rust_shows = ["total = 11"]
 
 @ cases.tasks-share-an-atomic-and-a-mutex
 source = ```nib
-fn bump(a: Atomic, n: u64) -> u64 {
-  var i: u64 = 0
+import std::prelude::Affine
+import std::prelude::Par
+
+fn bump(a: Atomic, n: u64): u64 {
+  var i: u64 := 0
   while i < n {
-    let before = atomic_fetch_add(a, 1)
+    let before := Atomic::fetch_add(a, 1)
     i := i + 1
   }
   n
 }
-let total = atomic_new(0)
-let m = mutex_new(vec_new())
-let r = run_eager(() => {
-  let a = perform spawn(() => bump(total, 1000))
-  let b = perform spawn(() => bump(total, 2000))
-  let c = perform spawn(() => {
-    mutex_with(m, (&mut v) => vec_push(&mut v, 1))
+let total := Atomic::new(0)
+let m := Mutex::new(Vec::new())
+let r := {
+  let a := perform spawn(() => bump(total, 1000))
+  let b := perform spawn(() => bump(total, 2000))
+  let c := perform spawn(() => {
+    {
+      var g := Mutex::lock(m)
+      let &mut v := MutexGuard::get_mut(&mut g)
+      Vec::push(&mut v, 1)
+    }
     3
   })
-  task_join(a) + task_join(b) + task_join(c)
-})
-let n = mutex_with(m, (&mut v) => vec_len(&v))
+  Task::join(a) + Task::join(b) + Task::join(c)
+}
+let n := {
+  let g := Mutex::lock(m)
+  let &v := MutexGuard::get(&g)
+  Vec::len(&v)
+}
 perform show("r", r)
-perform show("total", atomic_load(total))
+perform show("total", Atomic::load(total))
 perform show("n", n)
 ```
 shows = ["r = 3003", "total = 3000", "n = 1"]
 
+@ cases.a-task-uses-a-name-its-match-arm-bound
+source = ```nib
+import std::prelude::Os
+import std::prelude::Par
+
+let r: Result(Text, Text) := Ok("hello")
+match r {
+  Ok(s) => {
+    let n := {
+      let t := perform spawn(() => Text::len(s))
+      perform sleep(1)
+      Task::join(t)
+    }
+    perform show("n", n)
+  }
+  Err(e) => perform show("e", e)
+}
+```
+shows = ["n = 5"]
+
+@ cases.spawn-all-runs-any-number-of-tasks
+source = ```nib
+import std::prelude::Par
+
+fn bump(a: Atomic, n: u64): u64 {
+  var i: u64 := 0
+  while i < n {
+    let before := Atomic::fetch_add(a, 1)
+    i := i + 1
+  }
+  n
+}
+let total := Atomic::new(0)
+let xs := spawn_all([() => bump(total, 1000), () => bump(total, 2000), () => bump(total, 3000)])
+perform show("xs", xs)
+perform show("total", Atomic::load(total))
+```
+shows = ["xs = Cons(1000, Cons(2000, Cons(3000, Nil)))", "total = 6000"]
+
+@ cases.a-bounded-channel-holds-back-a-faster-sender
+source = ```nib
+fn produce(ch: Channel(u64), n: u64): u64 {
+  var i: u64 := 0
+  while i < n {
+    i := i + 1
+    Channel::send(ch, i)
+  }
+  Channel::close(ch)
+  n
+}
+fn consume(ch: Channel(u64)): u64 {
+  var sum: u64 := 0
+  var open := true
+  while open {
+    match Channel::recv(ch) {
+      Some(v) => { sum := sum + v }
+      None => { open := false }
+    }
+  }
+  sum
+}
+let ch := Channel::new(2)
+let r := {
+  let t := perform spawn(() => produce(ch, 100))
+  let u := perform spawn(() => consume(ch))
+  Task::join(t) + Task::join(u)
+}
+perform show("r", r)
+```
+// The evaluator runs a body at its `spawn`, so the sender would wait on a
+// full channel before the receiver starts.
+rust_shows = ["r = 5150"]
+javascript_shows = ["r = 5150"]
+
+@ cases.a-semaphore-bounds-the-tasks-inside
+source = ```nib
+import std::prelude::Par
+
+fn guarded(s: Semaphore, inside: Mutex(u64), most: Mutex(u64)): u64 {
+  Semaphore::acquire(s)
+  let now := {
+    var g := Mutex::lock(inside)
+    let &mut n := MutexGuard::get_mut(&mut g)
+    n := n + 1
+    n + 0
+  }
+  {
+    var g := Mutex::lock(most)
+    let &mut m := MutexGuard::get_mut(&mut g)
+    if now > m { m := now } else { #() }
+  }
+  var i: u64 := 0
+  while i < 1000 { i := i + 1 }
+  {
+    var g := Mutex::lock(inside)
+    let &mut n := MutexGuard::get_mut(&mut g)
+    n := n - 1
+  }
+  Semaphore::release(s)
+  1
+}
+let s := Semaphore::new(2)
+let inside := Mutex::new(0)
+let most := Mutex::new(0)
+let xs := {
+  let a := perform spawn(() => guarded(s, inside, most))
+  let b := perform spawn(() => guarded(s, inside, most))
+  let c := perform spawn(() => guarded(s, inside, most))
+  let d := perform spawn(() => guarded(s, inside, most))
+  let e := perform spawn(() => guarded(s, inside, most))
+  let f := perform spawn(() => guarded(s, inside, most))
+  [Task::join(a), Task::join(b), Task::join(c), Task::join(d), Task::join(e), Task::join(f)]
+}
+perform show("xs", xs)
+let ok := {
+  let g := Mutex::lock(most)
+  let &m := MutexGuard::get(&g)
+  m <= 2
+}
+perform show("at most two", ok)
+```
+shows = ["xs = Cons(1, Cons(1, Cons(1, Cons(1, Cons(1, Cons(1, Nil))))))", "at most two = true"]
+
+// Each task sleeps, and the host goes on with the others meanwhile: on the
+// reactor the tasks share a few threads (`docs/design/host-effects.md`「時間のかかる答え」).
+@ cases.many-tasks-sleep-at-once
+backends = ["rust", "javascript"]
+source = ```nib
+import std::prelude::Os
+import std::prelude::Par
+
+fn start(n: u64, done: Atomic): List(Task(u64)) ! {∀ T. spawn(T), sleep} {
+  if n == 0 {
+    Nil
+  } else {
+    let t := perform spawn(() => {
+      perform sleep(1)
+      let before := Atomic::fetch_add(done, 1)
+      n
+    })
+    Cons(t, start(n - 1, done))
+  }
+}
+fn sum(ts: List(Task(u64))): u64 ! {wait} {
+  match ts {
+    Nil => 0
+    Cons(t, rest) => {
+      let v := Task::join(t)
+      v + sum(rest)
+    }
+  }
+}
+let done := Atomic::new(0)
+let total := sum(start(2000, done))
+perform show("total", total)
+perform show("done", Atomic::load(done))
+```
+shows = ["total = 2001000", "done = 2000"]
+
+// The bodies of `spawn_all` and `par` may wait for each other.
+@ cases.spawn-all-bodies-take-turns-at-a-mutex
+source = ```nib
+import std::prelude::Os
+import std::prelude::Par
+
+let m := Mutex::new(0)
+fn add(m: Mutex(u64), n: u64): u64 ! {wait} {
+  let v := Mutex::take(m)
+  Mutex::put(m, v + n)
+  n
+}
+let r := spawn_all(Cons(() => add(m, 1), Cons(() => add(m, 2), Cons(() => add(m, 3), Nil))))
+let p := par(() => add(m, 10), () => add(m, 20))
+perform show("r", r)
+perform show("p", p.fst + p.snd)
+perform show("m", Mutex::take(m))
+```
+shows = ["r = Cons(1, Cons(2, Cons(3, Nil)))", "p = 30", "m = 36"]
+
+// `rust.executor = "threads"`: a thread for each task, whose waits block it.
+// The evaluator runs each task to its end at its `spawn`, where the consumer
+// would wait for values the producer has not sent yet.
+@ cases.tasks-on-threads-wait-for-each-other
+tote = path`../../examples/rust/threads`
+backends = ["rust"]
+rust_shows = ["r = 5150", "slept = true"]
+
+@ cases.task-poll-waits-for-nothing
+source = ```nib
+import std::prelude::Par
+
+fn wait(t: Task(u64), polls: u64): u64 ! {Div} {
+  match Task::poll(t) {
+    Finished(v) => v
+    Running(t) => wait(t, polls + 1)
+  }
+}
+let r := {
+  let t := perform spawn(() => {
+    var i: u64 := 0
+    while i < 10000 { i := i + 1 }
+    i
+  })
+  wait(t, 0)
+}
+perform show("r", r)
+```
+shows = ["r = 10000"]
+
 @ cases.a-function-that-only-reads-a-tree-takes-it-by-reference
 source = ```nib
 enum Tree { Leaf, Node(Tree, i64, Tree) }
-fn insert(t: Tree, x: i64) -> Tree {
+fn insert(t: Tree, x: i64): Tree {
   match t {
     Leaf => Node(Leaf, x, Leaf)
     Node(l, v, r) => if x < v { Node(insert(l, x), v, r) } else { Node(l, v, insert(r, x)) }
   }
 }
-fn has(t: Tree, x: i64) -> i64 {
+fn has(t: Tree, x: i64): i64 {
   match t {
     Leaf => 0
     Node(l, v, r) => if x == v { 1 } else if x < v { has(l, x) } else { has(r, x) }
   }
 }
-fn size(t: Tree) -> i64 {
+fn size(t: Tree): i64 {
   match t {
     Leaf => 0
     Node(l, v, r) => size(l) + 1 + size(r)
   }
 }
-fn left(t: Tree) -> Tree {
+fn left(t: Tree): Tree {
   match t {
     Leaf => Leaf
     Node(l, v, r) => l
   }
 }
-fn pair(a: Tree, b: Tree) -> i64 { size(a) * 10 + size(b) }
-fn root(t: Tree) -> i64 {
+fn pair(a: Tree, b: Tree): i64 { size(a) * 10 + size(b) }
+fn root(t: Tree): i64 {
   match t {
     Leaf => 0
     Node(l, v, r) => v
   }
 }
-let t = insert(insert(insert(insert(Leaf, 5), 2), 8), 3)
-let u = t
+let t := insert(insert(insert(insert(Leaf, 5), 2), 8), 3)
+let u := t
 perform show("has3", has(t, 3))
 perform show("has4", has(t, 4))
 perform show("size", size(t))
@@ -1624,3 +1966,185 @@ perform show("temp", size(insert(t, 9)))
 perform show("root", root(t) + root(left(t)))
 ```
 shows = ["has3 = 1", "has4 = 0", "size = 4", "same twice = 44", "size of left = 2", "shared = 8", "temp = 5", "root = 7"]
+
+@ cases.a-struct-that-holds-a-ref
+source = ```nib
+import std::prelude::Par
+
+shared struct Slot(T: Shared) { id: i64, cell: Ref(T) }
+let s := Slot { id: 1, cell: Ref::new(5) }
+let t := s
+Ref::set(t.cell, 7)
+perform show("id", s.id)
+perform show("cell", Ref::get(s.cell))
+```
+shows = ["id = 1", "cell = 7"]
+
+@ cases.a-closure-that-does-not-suspend-passed-where-one-may
+source = ```nib
+import std::prelude::Par
+
+effect ask(): i64 resume <=1
+struct Job { owner: i64, run: () -> Unit ! {ask, Div} }
+fn call(f: () -> Unit ! {ask, Div}): Unit ! {ask, Div} {
+  f()
+}
+fn keep(owner: i64): Job ! {ask} {
+  Job { owner: perform ask(), run: () => { let n := perform ask() } }
+}
+fn go(log: Ref(i64)): Unit ! {ask, Div} {
+  call(() => Ref::set(log, 7))
+  let j := keep(1)
+  let f := j.run
+  f()
+  Ref::set(log, Ref::get(log) + j.owner)
+}
+let log := Ref::new(0)
+handle { go(log) } with {
+  ask(), k => k(3)
+}
+perform show("log", Ref::get(log))
+```
+shows = ["log = 10"]
+
+@ cases.a-memory-budget-stops-allocation
+description = "budget(memory: n) counts the cells its body allocates; a body that allocates more performs exceeded"
+source = ```nib
+enum L { Nil, Cons(i64, L) }
+fn build(n: i64, acc: L): L ! {Div} {
+  if n == 0 { acc } else { build(n - 1, Cons(n, acc)) }
+}
+fn len(l: L): i64 ! {Div} {
+  match l { Nil => 0, Cons(_, t) => 1 + len(t) }
+}
+let d := handle { budget(steps: 1000000, memory: 50) { len(build(1000, Nil)) } } with {
+  exceeded(info), k => k(0 - 1)
+}
+perform show("d", d)
+let e := handle { budget(memory: 50) { len(build(10, Nil)) } } with {
+  exceeded(info), k => k(0 - 1)
+}
+perform show("e", e)
+```
+shows = ["d = -1", "e = 10"]
+
+@ cases.more-memory-resumes-the-body
+description = "info.more(m) gives a stopped memory budget m more cells"
+source = ```nib
+enum L { Nil, Cons(i64, L) }
+fn build(n: i64, acc: L): L ! {Div} {
+  if n == 0 { acc } else { build(n - 1, Cons(n, acc)) }
+}
+fn len(l: L): i64 ! {Div} {
+  match l { Nil => 0, Cons(_, t) => 1 + len(t) }
+}
+var stops := 0
+let f := handle { budget(memory: 50) { len(build(100, Nil)) } } with {
+  exceeded(info), k => {
+    stops := stops + 1
+    info.more(50)
+  }
+}
+perform show("f", f)
+perform show("stopped", stops > 0)
+```
+shows = ["f = 100", "stopped = true"]
+
+// Secret words (`std/prelude/Secret.taut`): a secret shows as `Secret`, and
+// the content leaves only through `expose`.
+@ cases.secret-words
+source = ```nib
+import std::prelude::Secret
+
+let k := secret(U64::of_nat(200))
+let m := secret(U64::of_nat(55))
+let y := Ct::u64_select(Ct::u64_lt(m, k), Ct::u64_add(k, m), m)
+let wrap := Ct::u32_add(secret(U32::of_u64(4294967295)), secret(U32::of_u64(2)))
+let byte := Ct::u8_xor(secret(U8::of_u64(240)), secret(U8::of_u64(15)))
+let both := Ct::bool_and(Ct::u8_eq(byte, secret(U8::of_u64(255))), Ct::bool_not(Ct::u64_eq(k, m)))
+perform show("y", expose(y))
+perform show("wrap", expose(wrap))
+perform show("byte", expose(byte))
+perform show("both", expose(both))
+perform show("hidden", y)
+```
+shows = ["y = 255", "wrap = 1", "byte = 255", "both = true", "hidden = Secret"]
+compile_errors.javascript = "generate: secret words, which it cannot run in constant time"
+backend_known_failure.vm = "unsupported: the builtin Ct::bool_and"
+
+// A secret that is only carried, not computed on, runs on every backend.
+@ cases.a-carried-secret-runs-everywhere
+source = ```nib
+import std::prelude::Secret
+import std::prelude::Shared
+
+let k := secret(Bytes::of_text("key"))
+perform show("hidden", k)
+perform show("len", Bytes::len(expose(k)))
+```
+shows = ["hidden = Secret", "len = 3"]
+
+@ cases.row-generic-only-in-data-argument
+description = "A generic given only to a data type's row parameter (`App(R, e)`) is erased from the function's Rust generics, as it is from the data type, so a call from a closure leaves no Rust type parameter to infer"
+source = ```nib
+enum Route { Home, About }
+shared struct App(R: Shared, !e) {
+  hooks: List(() -> i64 ! e),
+  score: (R) -> i64
+}
+fn page_at<R: Shared, !e>(a: App(R, e), r: R): i64 { (a.score)(r) }
+fn apply_to(f: (Route) -> i64, r: Route): i64 { f(r) }
+fn run_app<R: Shared, !e>(a: App(R, e), r: R, g: ((R) -> i64, R) -> i64): i64 ! e {
+  g((p: R) => page_at(a, p), r)
+}
+fn score(r: Route): i64 { match r { Home => 1, About => 2 } }
+let a: App(Route, !{}) := App { hooks: Nil, score: score }
+perform show("v", run_app(a, About, apply_to))
+```
+shows = ["v = 2"]
+
+@ cases.a-closure-lent-in-parentheses-is-lent-as-the-closure-alone
+source = ```nib
+fn lend<A, !e>(&body: () -> A ! {Div} ∪ e): A ! {Div} ∪ e {
+  body()
+}
+let n := lend(&(() => 2))
+perform show("n", n)
+```
+shows = ["n = 2"]
+
+@ cases.a-named-closure-is-lent-at-the-tier-its-body-gave-it
+source = ```nib
+effect tick(): u64 resume <=1
+fn lend<A, !e>(&body: () -> A ! {tick} ∪ e): A ! {Div} ∪ e {
+  handle { body() } with {
+    tick(), k => k(1)
+    return v => v
+  }
+}
+fn work(): u64 ! {tick} {
+  perform tick()
+}
+let body := () => work() + 1
+perform show("n", lend(&body))
+```
+shows = ["n = 2"]
+
+@ cases.a-nested-pattern-tests-boxed-fields-in-order
+source = ```nib
+enum Node { Tok(Text), Group(Text, Items, Text) }
+enum Nodes { NodesOf(Node, Nodes), NoNodes }
+enum Items { ItemsOf(Nodes, Items), NoItems }
+fn kind(n: Node): Text {
+  match n {
+    Group(open, ItemsOf(NodesOf(Tok("x"), NoNodes), NoItems), close) => open
+    Group(_, _, close) => close
+    Tok(t) => t
+  }
+}
+perform show("hit", kind(Group("(", ItemsOf(NodesOf(Tok("x"), NoNodes), NoItems), ")")))
+perform show("lit", kind(Group("(", ItemsOf(NodesOf(Tok("y"), NoNodes), NoItems), ")")))
+perform show("more", kind(Group("(", ItemsOf(NodesOf(Tok("x"), NodesOf(Tok("x"), NoNodes)), NoItems), ")")))
+perform show("tok", kind(Tok("t")))
+```
+shows = ["hit = \"(\"", "lit = \")\"", "more = \")\"", "tok = \"t\""]

@@ -39,8 +39,12 @@ pub theorem signature_finish_preds_type(
   params: List(Ty),
   result: Ty,
   m: Mut1(List(Pair(Text, Text)), Checker)
-): signature_scheme_ty(ck_val(signature_finish_preds(g, params, result, m))) = TyFn(params, result, KindShared) {
-  match m: signature_scheme_ty(ck_val(signature_finish_preds(g, params, result, m))) = TyFn(params, result, KindShared) {
+): signature_scheme_ty(
+  ck_val(signature_finish_preds(g, params, result, m))
+) = TyFn(params, result, KindShared) {
+  ⊢ signature_scheme_ty(
+    ck_val(signature_finish_preds(g, params, result, m))
+  ) = TyFn(params, result, KindShared) from match m {
     mut1(preds, next) => Refl
   }
 }
@@ -69,8 +73,12 @@ pub theorem signature_finish_report_type(
   params: List(Ty),
   result: Ty,
   m: Mut1(Unit, Checker)
-): signature_scheme_ty(ck_val(signature_finish_report(f, g, params, result, m))) = TyFn(params, result, KindShared) {
-  match m: signature_scheme_ty(ck_val(signature_finish_report(f, g, params, result, m))) = TyFn(params, result, KindShared) {
+): signature_scheme_ty(
+  ck_val(signature_finish_report(f, g, params, result, m))
+) = TyFn(params, result, KindShared) {
+  ⊢ signature_scheme_ty(
+    ck_val(signature_finish_report(f, g, params, result, m))
+  ) = TyFn(params, result, KindShared) from match m {
     mut1(ignored, next) => signature_finish_preds_type(
       g,
       params,
@@ -172,13 +180,13 @@ pub theorem signature_answer_after_sound(
   f,
   signature_scheme_ty(ck_val(signature_answer_after(f, g, params, m)))
 ) {
-  match m: SignatureBody(
+  ⊢ SignatureBody(
     env,
     signature_map(g),
     partial,
     f,
     signature_scheme_ty(ck_val(signature_answer_after(f, g, params, m)))
-  ) {
+  ) from match m {
     mut1(result, next) => Eq::subst(
       (t: Ty) => SignatureBody(env, signature_map(g), partial, f, t),
       Eq::sym(
@@ -311,13 +319,13 @@ pub theorem signature_parameters_finish_sound(
   f,
   signature_scheme_ty(ck_val(signature_parameters_finish(f, g, m)))
 ) {
-  match m: SignatureBody(
+  ⊢ SignatureBody(
     ck_datas_of(c),
     signature_map(g),
     frame_constructor_position(c),
     f,
     signature_scheme_ty(ck_val(signature_parameters_finish(f, g, m)))
-  ) {
+  ) from match m {
     mut1(params, next) => signature_answer_after_sound(
       ck_datas_of(c),
       frame_constructor_position(c),

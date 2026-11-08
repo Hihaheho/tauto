@@ -18,9 +18,9 @@ fn ctors(stmts: &[Stmt], out: &mut HashSet<String>) {
     for s in stmts {
         match s {
             Stmt::Struct(d) | Stmt::Enum(d) => {
-                out.extend(d.constructors.iter().map(|c| c.name.clone()))
+                out.extend(d.constructors.iter().map(|c| c.name.to_string()))
             }
-            Stmt::Inductive(d) => out.extend(d.constructors.iter().map(|c| c.name.clone())),
+            Stmt::Inductive(d) => out.extend(d.constructors.iter().map(|c| c.name.to_string())),
             Stmt::Mutual { items, .. } | Stmt::Module { items, .. } => ctors(items, out),
             _ => {}
         }
@@ -320,10 +320,10 @@ fn expected_lift(source: &str) -> String {
 }
 
 /// The variables the tote makes atoms of (`mc_atoms`).
-fn atoms() -> std::collections::HashMap<String, u64> {
+fn atoms() -> std::collections::HashMap<tauto::surface::Name, u64> {
     [("x", 11), ("a", 12), ("n", 13), ("f", 14)]
         .into_iter()
-        .map(|(k, v)| (k.to_string(), v))
+        .map(|(k, v)| (k.into(), v))
         .collect()
 }
 
@@ -367,7 +367,7 @@ fn expected_lift_atoms(source: &str) -> String {
 
 fn expected_lift_with(
     source: &str,
-    atoms: Option<std::collections::HashMap<String, u64>>,
+    atoms: Option<std::collections::HashMap<tauto::surface::Name, u64>>,
 ) -> String {
     std::panic::catch_unwind(move || {
         let Ok(p) = parse_program_at(source, 0) else {

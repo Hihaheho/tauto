@@ -21,7 +21,6 @@ enum TypeKey {
     Float32,
     Fn(Vec<TypeKey>, Box<TypeKey>, Kind),
     Union(Vec<TypeKey>),
-    Product(Vec<TypeKey>),
     Tagged(BTreeSet<String>, Box<TypeKey>),
     Named(String, Vec<TypeKey>),
     Param(Option<String>, Kind),
@@ -89,9 +88,6 @@ impl<'a> Lowerer<'a> {
                 }
                 self.union_id(members)
             }
-            TTy::Product(ts) => {
-                Ty::Product(ts.iter().map(|t| (t.to_string(), self.conv(t))).collect())
-            }
             TTy::Tagged(_, t) => self.conv(t),
             TTy::Named(n, args) => {
                 // A row parameter has no runtime representation.
@@ -102,32 +98,48 @@ impl<'a> Lowerer<'a> {
                     .filter(|(i, _)| !rows.contains(i))
                     .map(|(_, x)| self.conv(x))
                     .collect();
+                if matches!(n, Name::Global(_)) && !tauto::bindings::is_library(n, n.as_str()) {
+                    return Ty::Data(n.clone(), a);
+                }
                 match (n.as_str(), a.len()) {
                     ("Buf", 0) => Ty::Buf,
                     ("Vec", 1) => Ty::Vec(Box::new(a.remove(0))),
                     ("Array", 1) => Ty::Array(Box::new(a.remove(0))),
-                    ("Ref", 1)
-                    | ("Weak", 1)
-                    | ("Mutex", 1)
-                    | ("MutexGuard", 1)
-                    | ("Atomic", 0)
-                    | ("Bytes", 0)
-                    | ("Pending", 1)
-                    | ("Secret", 1)
-                    | ("Signal", 0) => Ty::Std(n.clone(), a),
+                    ("SynDeclaration", 0) => Ty::Std(StdType::SynDeclaration, a),
+                    ("Ref", 1) => Ty::Std(StdType::Ref, a),
+                    ("Weak", 1) => Ty::Std(StdType::Weak, a),
+                    ("Mutex", 1) => Ty::Std(StdType::Mutex, a),
+                    ("MutexGuard", 1) => Ty::Std(StdType::MutexGuard, a),
+                    ("Atomic", 0) => Ty::Std(StdType::Atomic, a),
+                    ("Bytes", 0) => Ty::Std(StdType::Bytes, a),
+                    ("Pending", 1) => Ty::Std(StdType::Pending, a),
+                    ("Secret", 1) => Ty::Std(StdType::Secret, a),
+                    ("Signal", 0) => Ty::Std(StdType::Signal, a),
+                    ("CancelSource", 0)
+                        if !self
+                            .program_declares(&tauto::bindings::library_name("CancelSource")) =>
+                    {
+                        Ty::Std(StdType::CancelSource, a)
+                    }
                     ("HashMap", 2) => {
                         let v = a.pop().unwrap();
                         Ty::HashMap(Box::new(a.pop().unwrap()), Box::new(v))
                     }
                     ("Slice", 1) => Ty::Slice(Box::new(a.remove(0))),
-                    ("Option", 1) if !self.program_declares("Option") => {
+                    ("Option", 1)
+                        if !self.program_declares(&tauto::bindings::library_name("Option")) =>
+                    {
                         Ty::Option(Box::new(a.remove(0)))
                     }
-                    ("Result", 2) if !self.program_declares("Result") => {
+                    ("Result", 2)
+                        if !self.program_declares(&tauto::bindings::library_name("Result")) =>
+                    {
                         let e = a.pop().unwrap();
                         Ty::Result(Box::new(a.pop().unwrap()), Box::new(e))
                     }
-                    ("Pair", 2) if !self.program_declares("Pair") => {
+                    ("Pair", 2)
+                        if !self.program_declares(&tauto::bindings::library_name("Pair")) =>
+                    {
                         let b = a.pop().unwrap();
                         Ty::Pair(Box::new(a.pop().unwrap()), Box::new(b))
                     }
@@ -187,11 +199,10 @@ impl<'a> Lowerer<'a> {
                 keys.sort();
                 TypeKey::Union(keys)
             }
-            TTy::Product(ts) => TypeKey::Product(many(ts)),
             TTy::Tagged(tags, t) => {
                 TypeKey::Tagged(tags.clone(), Box::new(self.stable_type_key(t)))
             }
-            TTy::Named(n, args) => TypeKey::Named(n.clone(), many(args)),
+            TTy::Named(n, args) => TypeKey::Named(n.to_string(), many(args)),
             TTy::Param(p, k) => TypeKey::Param(self.param_name(p).map(str::to_string), *k),
             TTy::Info(t) => TypeKey::Info(Box::new(self.stable_type_key(t))),
             TTy::Borrow(t, m) => TypeKey::Borrow(Box::new(self.stable_type_key(t)), *m),
@@ -211,25 +222,30 @@ impl<'a> Lowerer<'a> {
 
     /// The positions of a data type's generics that only its fields' effect
     /// rows mention.
-    pub fn row_parameters(&self, name: &str) -> Vec<usize> {
+    pub fn row_parameters(&self, name: &Name) -> Vec<usize> {
         self.row_params.get(name).cloned().unwrap_or_default()
     }
 
     /// Refuses a constructor of an extern type (`extern { type T }`): only
     /// extern functions make its values.
-    pub fn refuse_extern_type(&mut self, ctor: &str) {
-        let host = self.program.stmts.iter().any(|s| {
-            matches!(s, Stmt::Struct(d) if d.host && d.constructors.iter().any(|c| c.name == ctor))
-        });
-        let m = format!("error: {ctor} is an extern type; only extern functions make its values");
-        if host && !self.build_errors.contains(&m) {
+    pub fn refuse_extern_type(&mut self, ctor: &Name) {
+        let Some(owner) = self.program.stmts.iter().find_map(|s| match s {
+            Stmt::Struct(d) if d.host && d.constructors.iter().any(|c| &c.name == ctor) => {
+                Some(&d.name)
+            }
+            _ => None,
+        }) else {
+            return;
+        };
+        let m = format!("{owner} is an extern type; only extern functions make its values");
+        if !self.build_errors.contains(&m) {
             self.build_errors.push(m);
         }
     }
 
-    pub fn program_declares(&self, name: &str) -> bool {
+    pub fn program_declares(&self, name: &Name) -> bool {
         self.program.stmts.iter().any(|s| match s {
-            Stmt::Struct(d) | Stmt::Enum(d) => d.name == name,
+            Stmt::Struct(d) | Stmt::Enum(d) => &d.name == name,
             _ => false,
         })
     }
@@ -304,16 +320,9 @@ impl<'a> Lowerer<'a> {
             }
             // A `Pending` is taken once (it can hold a thread's result), a guard is
             // the one holder of a lock.
-            Ty::Std(n, _) => (n != "Pending" && n != "MutexGuard").then_some(Use::Clone),
+            Ty::Std(n, _) => (!n.taken_once()).then_some(Use::Clone),
             Ty::Fn(f) => f.kind.dup().then_some(Use::Clone),
             Ty::Option(a) => self.dup_use(a),
-            Ty::Product(ms) => {
-                let mut all_copy = true;
-                for (_, m) in ms {
-                    all_copy &= self.dup_use(m)? == Use::Copy;
-                }
-                Some(if all_copy { Use::Copy } else { Use::Clone })
-            }
             Ty::Result(a, b) | Ty::Pair(a, b) => {
                 let (x, y) = (self.dup_use(a)?, self.dup_use(b)?);
                 Some(if x == Use::Copy && y == Use::Copy {
@@ -360,15 +369,19 @@ impl<'a> Lowerer<'a> {
             self.rc_datas = self.shared_datas();
         }
         let datas: &Datas = &self.types.datas;
-        let mut names: Vec<&String> = datas.decls.keys().collect();
+        let mut names: Vec<&Name> = datas.decls.keys().collect();
         names.sort();
         // Most syntax types belong only to compile-time macros. Start with
         // that exclusion, then retain the transitive dependencies of runtime
         // declarations (including generated ASTs and parser result types).
-        let mut macro_only: HashSet<&str> = names
+        let mut macro_only: HashSet<Name> = names
             .iter()
-            .filter(|n| n.starts_with("Syn") && !self.program_declares(n))
-            .map(|n| n.as_str())
+            .filter(|n| {
+                n.starts_with("Syn")
+                    && tauto::bindings::is_library(n, n.as_str())
+                    && !self.program_declares(n)
+            })
+            .map(|n| (*n).clone())
             .collect();
         loop {
             let before = macro_only.len();
@@ -378,39 +391,48 @@ impl<'a> Lowerer<'a> {
                     .iter()
                     .any(|c| c.fields.iter().any(|(_, t)| mentions_any(t, &macro_only)));
                 if holds && !self.program_declares(n) {
-                    macro_only.insert(n.as_str());
+                    macro_only.insert((*n).clone());
                 }
             }
             if macro_only.len() == before {
                 break;
             }
         }
-        let mut runtime: HashSet<&str> = names
+        let mut occurrences = HashSet::new();
+        for statement in &self.program.stmts {
+            tauto::surface::walk::stmt(&mut statement.clone(), &mut |term| {
+                occurrences.insert(term.id());
+            });
+        }
+        let mut runtime: HashSet<Name> = names
             .iter()
             .filter(|n| {
                 self.program_declares(n)
+                    || self.types.terms.iter().any(|(site, ty)| {
+                        occurrences.contains(site)
+                            && mentions_any(ty, &HashSet::from([(**n).clone()]))
+                    })
                     || self.fns.iter().any(|(name, f)| {
                         f.origin == Origin::Program
-                            && self
-                                .types
-                                .scheme(name)
-                                .is_some_and(|s| mentions_any(&s.ty, &HashSet::from([n.as_str()])))
+                            && self.types.scheme(name).is_some_and(|s| {
+                                mentions_any(&s.ty, &HashSet::from([(**n).clone()]))
+                            })
                     })
             })
-            .map(|n| n.as_str())
+            .map(|n| (*n).clone())
             .collect();
         loop {
             let before = runtime.len();
             for candidate in &names {
-                let singleton = HashSet::from([candidate.as_str()]);
+                let singleton = HashSet::from([(*candidate).clone()]);
                 if names.iter().any(|n| {
-                    runtime.contains(n.as_str())
+                    runtime.contains(*n)
                         && datas.decls[*n]
                             .constructors
                             .iter()
                             .any(|c| c.fields.iter().any(|(_, t)| mentions_any(t, &singleton)))
                 }) {
-                    runtime.insert(candidate.as_str());
+                    runtime.insert((*candidate).clone());
                 }
             }
             if before == runtime.len() {
@@ -424,11 +446,14 @@ impl<'a> Lowerer<'a> {
             if d.builtin {
                 continue;
             }
-            if matches!(name.as_str(), "Option" | "Result" | "Pair") && !self.program_declares(name)
+            if (tauto::bindings::is_library(&name, "Option")
+                || tauto::bindings::is_library(&name, "Result")
+                || tauto::bindings::is_library(&name, "Pair"))
+                && !self.program_declares(name)
             {
                 continue;
             }
-            if macro_only.contains(name.as_str()) {
+            if macro_only.contains(name) {
                 continue;
             }
             out.push(name.clone());
@@ -444,7 +469,7 @@ impl<'a> Lowerer<'a> {
 
     /// Whether the values of data `name` are shared, so that its fields
     /// behind an indirection are behind an `Rc`.
-    fn shares(&self, name: &str) -> bool {
+    fn shares(&self, name: &Name) -> bool {
         let d = &self.types.datas.decls[name];
         let linear = TTy::Named(
             d.name.clone(),
@@ -495,7 +520,7 @@ impl<'a> Lowerer<'a> {
 
     /// An estimate of the words a value of `t` takes inline; `env` gives
     /// the arguments of the data whose field `t` is.
-    fn words(&self, t: &Ty, env: &[(&String, &Ty)], seen: &mut Vec<String>) -> usize {
+    fn words(&self, t: &Ty, env: &[(&String, &Ty)], seen: &mut Vec<Name>) -> usize {
         match t {
             Ty::Int(Width::Nat) => 2,
             Ty::Int(_) | Ty::Bool | Ty::Unit | Ty::Never | Ty::Float | Ty::Float32 => 1,
@@ -504,7 +529,6 @@ impl<'a> Lowerer<'a> {
             Ty::Option(a) | Ty::BudgetAnswer(a) => 1 + self.words(a, env, seen),
             Ty::Result(a, b) => 1 + self.words(a, env, seen).max(self.words(b, env, seen)),
             Ty::Pair(a, b) => self.words(a, env, seen) + self.words(b, env, seen),
-            Ty::Product(ms) => ms.iter().map(|(_, t)| self.words(t, env, seen)).sum(),
             Ty::Info(a) => self.words(a, env, seen),
             Ty::Param(p) => match env.iter().find(|(g, _)| *g == p) {
                 Some((_, a)) => self.words(a, &[], seen),
@@ -556,9 +580,9 @@ impl<'a> Lowerer<'a> {
     /// (`Rc`), so a clone of it, and a `match` on one, take a step and not
     /// the whole structure. A program that fills it with an affine or linear
     /// value keeps the owned (`Box`) cells.
-    fn shared_datas(&self) -> HashSet<String> {
+    fn shared_datas(&self) -> HashSet<Name> {
         let datas = &self.types.datas;
-        let mut candidates: HashSet<String> = datas
+        let mut candidates: HashSet<Name> = datas
             .decls
             .iter()
             .filter(|(_, d)| {
@@ -574,7 +598,9 @@ impl<'a> Lowerer<'a> {
                                 .collect(),
                         ))
                         .is_none()
-                    && !(matches!(d.name.as_str(), "Option" | "Result" | "Pair")
+                    && !((tauto::bindings::is_library(&d.name, "Option")
+                        || tauto::bindings::is_library(&d.name, "Result")
+                        || tauto::bindings::is_library(&d.name, "Pair"))
                         && !self.program_declares(&d.name))
             })
             .map(|(n, _)| n.clone())
@@ -589,7 +615,7 @@ impl<'a> Lowerer<'a> {
                 _ => true,
             }
         }
-        fn visit(datas: &Datas, t: &TTy, candidates: &mut HashSet<String>) {
+        fn visit(datas: &Datas, t: &TTy, candidates: &mut HashSet<Name>) {
             match t {
                 TTy::Named(n, args) => {
                     if args.iter().any(|a| concrete(a) && !datas.kind(a).dup()) {
@@ -623,7 +649,7 @@ impl<'a> Lowerer<'a> {
         candidates
     }
 
-    fn data_def(&mut self, name: &str) -> R<DataDef> {
+    fn data_def(&mut self, name: &Name) -> R<DataDef> {
         let d: Data = self.types.datas.decls[name].clone();
         let params = |k: Kind| -> TTy {
             TTy::Named(
@@ -665,8 +691,7 @@ impl<'a> Lowerer<'a> {
                 }
                 if nested_m {
                     return Err(Unsupported {
-                        what: msg!("nir-field-resumes-more-than-once", data = d.name.as_str())
-                            .to_string(),
+                        what: msg!("nir-field-resumes-more-than-once", data = d.name.as_str()),
                         span: None,
                     });
                 }
@@ -674,8 +699,7 @@ impl<'a> Lowerer<'a> {
                     let tier = self.field_tier(row);
                     if tier == Tier::M {
                         return Err(Unsupported {
-                            what: msg!("nir-field-resumes-more-than-once", data = d.name.as_str())
-                                .to_string(),
+                            what: msg!("nir-field-resumes-more-than-once", data = d.name.as_str()),
                             span: None,
                         });
                     }
@@ -700,7 +724,7 @@ impl<'a> Lowerer<'a> {
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| !rows.contains(i))
-                .map(|(_, g)| g.clone())
+                .map(|(_, g)| g.to_string())
                 .collect(),
             kind,
             is_struct: d.is_struct,
@@ -719,7 +743,7 @@ impl<'a> Lowerer<'a> {
 
     /// Whether a value of type `t` holds a value of `owner` without an
     /// indirection (so the field needs one).
-    fn inline_reaches(&self, t: &TTy, owner: &str, seen: &mut HashSet<String>) -> bool {
+    fn inline_reaches(&self, t: &TTy, owner: &Name, seen: &mut HashSet<(Name, Vec<TTy>)>) -> bool {
         self.reaches(t, owner, seen, &[])
     }
 
@@ -728,8 +752,8 @@ impl<'a> Lowerer<'a> {
     fn reaches(
         &self,
         t: &TTy,
-        owner: &str,
-        seen: &mut HashSet<String>,
+        owner: &Name,
+        seen: &mut HashSet<(Name, Vec<TTy>)>,
         env: &[(&ParamId, &TTy)],
     ) -> bool {
         match t {
@@ -738,7 +762,11 @@ impl<'a> Lowerer<'a> {
                 .find(|(g, _)| *g == p.id())
                 .is_some_and(|(_, arg)| self.reaches(arg, owner, seen, &[])),
             TTy::Named(n, args) => {
-                if matches!(n.as_str(), "Option" | "Result" | "Pair") && !self.program_declares(n) {
+                if (tauto::bindings::is_library(&n, "Option")
+                    || tauto::bindings::is_library(&n, "Result")
+                    || tauto::bindings::is_library(&n, "Pair"))
+                    && !self.program_declares(n)
+                {
                     return args.iter().any(|a| self.reaches(a, owner, seen, env));
                 }
                 if n == owner {
@@ -747,7 +775,7 @@ impl<'a> Lowerer<'a> {
                 let Some(d) = self.types.datas.decls.get(n) else {
                     return false;
                 };
-                if d.builtin || !seen.insert(format!("{n}{args:?}")) {
+                if d.builtin || !seen.insert((n.clone(), args.clone())) {
                     return false;
                 }
                 // The arguments are in terms of the enclosing data's own.
@@ -771,25 +799,39 @@ impl<'a> Lowerer<'a> {
                 })
             }
             TTy::Union(ts) => ts.iter().any(|t| self.reaches(t, owner, seen, env)),
-            // A product holds its members in place.
-            TTy::Product(ts) => ts.iter().any(|t| self.reaches(t, owner, seen, env)),
             TTy::Tagged(_, t) => self.reaches(t, owner, seen, env),
             _ => false,
         }
     }
 
-    pub fn ctor_ref(&self, name: &str) -> Option<CtorRef> {
+    /// A constructor by name.
+    pub fn ctor_ref(&self, name: &Name) -> Option<CtorRef> {
         self.ctor_ref_in(name, None)
     }
 
-    pub fn ctor_ref_in(&self, name: &str, ty: Option<&TTy>) -> Option<CtorRef> {
+    pub fn ctor_ref_in(&self, name: &Name, ty: Option<&TTy>) -> Option<CtorRef> {
         let (d, i) = self.types.datas.resolve_ctor(name, ty).ok()?;
         let decl = &self.types.datas.decls[d];
         let c = &decl.constructors[*i];
         let data = match d.as_str() {
-            "Option" if !self.program_declares("Option") => DataRef::Option,
-            "Result" if !self.program_declares("Result") => DataRef::Result,
-            "Pair" if !self.program_declares("Pair") => DataRef::Pair,
+            "Option"
+                if tauto::bindings::is_library(&d, "Option")
+                    && !self.program_declares(&tauto::bindings::library_name("Option")) =>
+            {
+                DataRef::Option
+            }
+            "Result"
+                if tauto::bindings::is_library(&d, "Result")
+                    && !self.program_declares(&tauto::bindings::library_name("Result")) =>
+            {
+                DataRef::Result
+            }
+            "Pair"
+                if tauto::bindings::is_library(&d, "Pair")
+                    && !self.program_declares(&tauto::bindings::library_name("Pair")) =>
+            {
+                DataRef::Pair
+            }
             _ => DataRef::Gen(d.clone()),
         };
         let (indirect, linear) = match self.data_index.get(d) {
@@ -816,17 +858,18 @@ impl<'a> Lowerer<'a> {
     /// The field types of constructor `ctor` of the type `ty`.
     /// The rows written on the function types of a constructor's fields:
     /// `None` for a field that is not a function or has no written row.
-    pub fn ctor_field_rows(&self, ctor: &str, ty: &TTy) -> Vec<Option<Row>> {
+    pub fn ctor_field_rows(&self, ctor: &Name, ty: &TTy) -> Vec<Option<Row>> {
         match self.types.datas.resolve_ctor(ctor, Some(ty)) {
             Ok((d, i)) => self.field_rows(d, *i),
             Err(_) => Vec::new(),
         }
     }
 
-    fn field_terms(&self, data: &str, ctor: usize) -> Vec<SurfaceTerm> {
+    /// The field types of a constructor as the program writes them.
+    fn field_terms(&self, data: &Name, ctor: usize) -> Vec<SurfaceTerm> {
         for s in &self.program.stmts {
             if let Stmt::Struct(d) | Stmt::Enum(d) = s
-                && d.name == data
+                && &d.name == data
                 && let Some(c) = d.constructors.get(ctor)
             {
                 return c.fields.iter().map(|(_, t)| t.clone()).collect();
@@ -835,10 +878,10 @@ impl<'a> Lowerer<'a> {
         Vec::new()
     }
 
-    fn field_rows(&self, data: &str, ctor: usize) -> Vec<Option<Row>> {
+    fn field_rows(&self, data: &Name, ctor: usize) -> Vec<Option<Row>> {
         for s in &self.program.stmts {
             if let Stmt::Struct(d) | Stmt::Enum(d) = s
-                && d.name == data
+                && &d.name == data
                 && let Some(c) = d.constructors.get(ctor)
             {
                 return c
@@ -856,6 +899,73 @@ impl<'a> Lowerer<'a> {
     pub fn named_field_tier(&self, base: &TTy, name: &str) -> Option<Tier> {
         self.named_field_row(base, name)
             .map(|row| self.field_tier(&row))
+    }
+
+    /// The tier of the function in the field `name` of a value of type `base`
+    /// whose field is a type parameter of its data (a record without a name),
+    /// from the tier the lowered type `lowered` of the value gives that
+    /// parameter's argument.
+    pub fn argument_field_tier(&self, base: &TTy, lowered: &Ty, name: &str) -> Option<Tier> {
+        let TTy::Named(data, _) = base.unborrowed() else {
+            return None;
+        };
+        let d = self.types.datas.decls.get(data)?;
+        let params = d.parameters();
+        let field = d
+            .constructors
+            .iter()
+            .find_map(|c| c.fields.iter().find(|(n, _)| n.as_deref() == Some(name)))?;
+        let TTy::Param(p, _) = &field.1 else {
+            return None;
+        };
+        let k = params.iter().position(|x| x == p)?;
+        let mut lowered = lowered;
+        while let Ty::Ref(i) | Ty::RefMut(i) = lowered {
+            lowered = i;
+        }
+        match lowered {
+            Ty::Data(_, args) if args.len() == params.len() => match &args[k] {
+                Ty::Fn(f) => Some(f.tier),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The type the program writes for the field `name` of a value of type
+    /// `base`, for reading the rows of the functions in its type arguments
+    /// (`Option((Text) -> Located ! {e})`). A data type that carries a row
+    /// reads its fields' row variables as that row, which the written term
+    /// does not say, so it gives none.
+    pub fn named_field_term(&self, base: &TTy, name: &str) -> Option<SurfaceTerm> {
+        let TTy::Named(data, _) = base.unborrowed() else {
+            return None;
+        };
+        if self.carried.contains_key(data) {
+            return None;
+        }
+        self.program.stmts.iter().find_map(|s| match s {
+            Stmt::Struct(d) | Stmt::Enum(d) if d.name == *data => {
+                d.constructors.iter().find_map(|c| {
+                    c.fields
+                        .iter()
+                        .find_map(|(n, t)| (n.as_deref() == Some(name)).then(|| t.clone()))
+                })
+            }
+            _ => None,
+        })
+    }
+
+    /// The field types the program writes for constructor `ctor` of `ty`,
+    /// read as `named_field_term` reads one.
+    pub fn ctor_field_terms(&self, ctor: &Name, ty: &TTy) -> Vec<SurfaceTerm> {
+        match self.types.datas.resolve_ctor(ctor, Some(ty)) {
+            Ok((d, i)) if !self.carried.contains_key(d) => {
+                let (d, i) = (d.clone(), *i);
+                self.field_terms(&d, i)
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// The row written on the function type of the field `name` of a value
@@ -881,15 +991,15 @@ impl<'a> Lowerer<'a> {
 
     /// The row of a field's function as the program writes it, with its row
     /// variables read as the tier `data` carries (`Lowerer::carried`).
-    fn carried_field_row(&self, data: &str, effects: Vec<String>) -> Row {
+    fn carried_field_row(&self, data: &Name, effects: Vec<Name>) -> Row {
         let Some(&tier) = self.carried.get(data) else {
             return effects.into_iter().collect();
         };
         effects
             .into_iter()
             .map(|e| {
-                if e.starts_with('|') {
-                    super::carried_row(tier)
+                if e.row_variable().is_some() {
+                    Name::from(super::carried_row(tier))
                 } else {
                     e
                 }
@@ -903,7 +1013,7 @@ impl<'a> Lowerer<'a> {
         self.row_tier(row, &HashMap::new())
     }
 
-    pub fn ctor_fields(&self, ctor: &str, ty: &TTy) -> Vec<TTy> {
+    pub fn ctor_fields(&self, ctor: &Name, ty: &TTy) -> Vec<TTy> {
         let Ok((d, i)) = self.types.datas.resolve_ctor(ctor, Some(ty)) else {
             return Vec::new();
         };
@@ -978,14 +1088,44 @@ pub(crate) fn set_fn_tier(t: &mut Ty, tier: Tier) {
     }
 }
 
-fn mentions_any(t: &TTy, names: &HashSet<&str>) -> bool {
+fn mentions_any(t: &TTy, names: &HashSet<Name>) -> bool {
     match t {
-        TTy::Named(n, args) => {
-            names.contains(n.as_str()) || args.iter().any(|a| mentions_any(a, names))
-        }
+        TTy::Named(n, args) => names.contains(n) || args.iter().any(|a| mentions_any(a, names)),
         TTy::Fn(ps, r, _) => ps.iter().any(|p| mentions_any(p, names)) || mentions_any(r, names),
         TTy::Union(ts) => ts.iter().any(|a| mentions_any(a, names)),
-        TTy::Tagged(_, a) | TTy::Info(a) | TTy::Borrow(a, _) => mentions_any(a, names),
+        TTy::Tagged(_, a) | TTy::Info(a) | TTy::Borrow(a, _) | TTy::Poly(_, a) => {
+            mentions_any(a, names)
+        }
+        TTy::App(head, argument) => mentions_any(head, names) || mentions_any(argument, names),
         _ => false,
     }
+}
+
+#[cfg(test)]
+mod reference_dependency_tests {
+    use super::*;
+
+    #[test]
+    fn runtime_type_dependencies_compare_declarations_not_displays() {
+        let first = Name::Global(tauto::identity::DeclRef::fresh("SynPayload"));
+        let second = Name::Global(tauto::identity::DeclRef::fresh("SynPayload"));
+        let ty = TTy::Union(vec![TTy::Named(first.clone(), vec![])]);
+        assert!(mentions_any(&ty, &HashSet::from([first])));
+        assert!(!mentions_any(&ty, &HashSet::from([second])));
+    }
+}
+
+/// Whether a function in the type arguments of the written type `t` has a
+/// row written on it, which gives it a tier its checked type does not say.
+pub(crate) fn written_args_have_rows(t: &SurfaceTerm) -> bool {
+    let t = match &*t.kind {
+        TermKind::Borrow { term, .. } => term,
+        _ => t,
+    };
+    let TermKind::App { arguments, .. } = &*t.kind else {
+        return false;
+    };
+    arguments
+        .iter()
+        .any(|a| pi_effects(a).is_some_and(|e| !e.is_empty()) || written_args_have_rows(a))
 }

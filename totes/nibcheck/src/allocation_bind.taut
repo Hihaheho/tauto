@@ -17,11 +17,14 @@ pub theorem allocation_advance_bind<A: Type, B: Type>(
   m: Mut1(A, Checker),
   first: AllocationAdvance(c, m),
   ordered: CkOrdered(ck_st(m)),
-  tail: ∀ value: A. ∀ next: Checker. ∀ advanced: Nat::le(ck_next_of(c), ck_next_of(next)) = true. ∀ state: CheckerAllocation(
+  tail: ∀ value: A. ∀ next: Checker. ∀ advanced: Nat::le(
+    ck_next_of(c),
+    ck_next_of(next)
+  ) = true. ∀ state: CheckerAllocation(
     next
   ). ∀ order: CkOrdered(next). AllocationAdvance(next, k(value, next))
 ): AllocationAdvance(c, frame_bind(A, B, k, m)) {
-  match m: AllocationAdvance(c, frame_bind(A, B, k, m)) {
+  ⊢ AllocationAdvance(c, frame_bind(A, B, k, m)) from match m {
     mut1(value, next) => allocation_advance_start(
       c,
       next,

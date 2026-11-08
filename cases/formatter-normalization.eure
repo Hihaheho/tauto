@@ -1,0 +1,311 @@
+@ cases.nested-match-arms
+source = `````tauto
+fn f(x: Bool): Nat {
+  match x {
+    true => {
+      match x {
+        true => 1
+        false => 2
+      }
+    }
+    false => 0
+  }
+}
+`````
+format = `````tauto
+fn f(x: Bool): Nat {
+  match x {
+    true => match x {
+      true => 1
+      false => 2
+    }
+    false => 0
+  }
+}
+`````
+differential = "fmt"
+
+@ cases.if-arm-and-else-if
+source = `````tauto
+fn f(x: Bool): Nat {
+  match x {
+    true => {
+      if x { 1 } else {
+        if x { 2 } else { 3 }
+      }
+    }
+    false => 0
+  }
+}
+`````
+format = `````tauto
+fn f(x: Bool): Nat {
+  match x {
+    true => if x { 1 } else if x { 2 } else { 3 }
+    false => 0
+  }
+}
+`````
+differential = "fmt"
+
+@ cases.bindings-and-while-keep-their-blocks
+source = `````tauto
+fn f(x: Bool): Nat {
+  match x {
+    true => {
+      let y := 1
+      if x { y } else { 2 }
+    }
+    false => {
+      while x {
+        break
+      }
+    }
+  }
+}
+`````
+format = `````tauto
+fn f(x: Bool): Nat {
+  match x {
+    true => {
+      let y := 1
+      if x { y } else { 2 }
+    }
+    false => {
+      while x {
+        break
+      }
+    }
+  }
+}
+`````
+differential = "fmt"
+
+@ cases.comments-keep-boundary-blocks
+source = `````tauto
+fn f(x: Bool): Nat {
+  match x {
+    true => {
+      // keep this boundary
+      match x {
+        true => 1
+        false => 2
+      }
+    }
+    false => {
+      if x { 3 } else { 4 }
+      // keep the closing boundary
+    }
+  }
+}
+`````
+format = `````tauto
+fn f(x: Bool): Nat {
+  match x {
+    true => {
+      // keep this boundary
+      match x {
+        true => 1
+        false => 2
+      }
+    }
+    false => {
+      if x { 3 } else { 4 }
+      // keep the closing boundary
+    }
+  }
+}
+`````
+differential = "fmt"
+
+@ cases.quote-and-macro-input-keep-blocks
+source = `````tauto
+macro fn q(e: SynExpr): SynExpr { quote {
+  match x {
+    true => {
+      match y {
+          true => 1
+          false => 2
+        }
+    }
+    false => 0
+  }
+} }
+let x := q!(match z {
+  true => {
+    if y { 1 } else { 2 }
+  }
+  false => 0
+})
+`````
+format = `````tauto
+macro fn q(e: SynExpr): SynExpr { quote {
+    match x {
+      true => {
+        match y {
+          true => 1
+          false => 2
+        }
+      }
+      false => 0
+    }
+  } }
+let x := q!(match z {
+  true => {
+    if y { 1 } else { 2 }
+  }
+  false => 0
+})
+`````
+differential = "fmt"
+
+@ cases.block-literal-attaches-to-call
+source = `````tauto
+fn f() {
+  let reward := view!(
+    ```view
+  $t <span>
+    ${text_dyn(t, () => token.value)}
+  </span>
+  ```
+  )
+}
+`````
+format = `````tauto
+fn f() {
+  let reward := view!(```view
+    $t <span>
+      ${text_dyn(t, () => token.value)}
+    </span>
+    ```)
+}
+`````
+differential = "fmt"
+
+@ cases.anonymous-block-literal-preserves-leading-spaces
+source = `````tauto
+fn f() {
+  view!(
+    ```
+    $t <span />
+  ```
+  )
+}
+`````
+format = `````tauto
+fn f() {
+  view!(```
+      $t <span />
+    ```)
+}
+`````
+differential = "fmt"
+
+@ cases.empty-and-long-fences
+source = `````tauto
+fn f() {
+  m!(
+    ````
+    ````
+  )
+}
+`````
+format = `````tauto
+fn f() {
+  m!(````
+    ````)
+}
+`````
+differential = "fmt"
+
+@ cases.explicit-arm-goals
+source = `````tauto
+fn f(x: Bool): Nat {
+  ⊢ Nat from match x {
+    true => ⊢ Nat from {
+      match x {
+        true => 1
+        false => 2
+      }
+    }
+    false => 0
+  }
+}
+`````
+format = `````tauto
+fn f(x: Bool): Nat {
+  ⊢ Nat from match x {
+    true => ⊢ Nat from match x {
+      true => 1
+      false => 2
+    }
+    false => 0
+  }
+}
+`````
+differential = "fmt"
+
+@ cases.semicolons-keep-the-boundary-block
+source = `````tauto
+fn f(x: Bool): Nat {
+  match x {
+    true => {
+      if x { 1 } else { 2 };
+    }
+    false => 0
+  }
+}
+`````
+format = `````tauto
+fn f(x: Bool): Nat {
+  match x {
+    true => {
+      if x { 1 } else { 2 };
+    }
+    false => 0
+  }
+}
+`````
+differential = "fmt"
+
+@ cases.quantifier-binders-stay-one-parameter
+description = "The commas of `∀ x: A, y: A.` separate binders of one parameter's type, so a broken parameter list keeps them on one line."
+source = `````tauto
+pub theorem t<A>(h: ∀ x: A, y: A. x = y, a: A, b: A, c: A, d: A, e: A, f: A, g: A, ok: A, ok2: A): a = a {
+  Eq::Refl
+}
+`````
+format = `````tauto
+pub theorem t<A>(
+  h: ∀ x: A, y: A. x = y,
+  a: A,
+  b: A,
+  c: A,
+  d: A,
+  e: A,
+  f: A,
+  g: A,
+  ok: A,
+  ok2: A
+): a = a {
+  Eq::Refl
+}
+`````
+differential = "fmt"
+
+@ cases.one-item-group-stays-whole
+description = "A group of one item that cannot break (`Option(A)`) is not broken, a later group breaks instead: breaking it would only move the item to a line of its own."
+source = `````tauto
+class Ord2(A: Type) {
+  theorem swap<a: Option(A), b: Option(A)>(): Ord::compare(a, b) = Less ↔ Ord::compare(b, a) = Greater
+}
+`````
+format = `````tauto
+class Ord2(A: Type) {
+  theorem swap<a: Option(A), b: Option(A)>(): Ord::compare(
+    a,
+    b
+  ) = Less ↔ Ord::compare(b, a) = Greater
+}
+`````
+differential = "fmt"

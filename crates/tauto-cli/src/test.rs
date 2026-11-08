@@ -182,7 +182,7 @@ fn performs_test(path: &Path) -> Result<bool, String> {
     use tauto::surface::walk::{Node, values_stmt};
     let loaded = tauto::program::load(path)?;
     if let Some((error, _)) = loaded.program.errors.first() {
-        return Err(error.clone());
+        return Err(error.to_string());
     }
     let own = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
     let mut found = false;
@@ -194,7 +194,7 @@ fn performs_test(path: &Path) -> Result<bool, String> {
             values_stmt(stmt, &mut |node| {
                 if let Node::Term(term) = node
                     && let tauto::surface::TermKind::Perform { effect, .. } = &*term.kind
-                    && effect == "test"
+                    && tauto::bindings::is_library(effect, "test")
                 {
                     found = true;
                 }

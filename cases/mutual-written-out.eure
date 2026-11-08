@@ -1,0 +1,91 @@
+description = "A `mutual` block's functions not defined by a `match`: those that reach a `match` of the block are written out at their calls, the others are ordinary functions, and a write-out that grows the block too much is an error."
+
+@ cases.functions_that_do_not_reach_the_block_are_not_written_out
+source = ```tauto
+fn plus(n: Nat, m: Nat): Nat {
+  match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
+  }
+}
+inductive Tree: Type {
+  Leaf: Tree
+  Node(l: Tree, r: Tree): Tree
+}
+mutual {
+  fn size(t: Tree): Nat {
+    match t {
+      Leaf => one()
+      Node(l, r) => both(l, r)
+    }
+  }
+  fn both(a: Tree, b: Tree): Nat { add_one(plus(size(a), size(b))) }
+  fn add_one(x: Nat): Nat { plus(x, one()) }
+  fn one(): Nat { Succ(Zero) }
+}
+theorem t(): size(Node(Leaf, Node(Leaf, Leaf))) = 5 {
+  Refl
+}
+```
+checks."size" = "checked"
+checks."both" = "checked"
+checks."add_one" = "checked"
+checks."one" = "checked"
+checks."t" = "checked"
+
+@ cases.a_function_that_does_not_reach_the_block_may_have_generics
+source = ```tauto
+inductive Tree: Type {
+  Leaf: Tree
+  Node(l: Tree, r: Tree): Tree
+}
+mutual {
+  fn count(t: Tree): Nat {
+    match t {
+      Leaf => first(Succ(Zero), Leaf)
+      Node(l, r) => Succ(count(l))
+    }
+  }
+  fn first<A, B>(a: A, b: B): A { a }
+}
+theorem t(): count(Node(Leaf, Leaf)) = 2 {
+  Refl
+}
+```
+checks."count" = "checked"
+checks."first" = "checked"
+checks."t" = "checked"
+
+@ cases.a_write_out_that_multiplies_copies_is_an_error
+source = ```tauto
+fn plus(n: Nat, m: Nat): Nat {
+  match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
+  }
+}
+inductive Tree: Type {
+  Leaf: Tree
+  Node(l: Tree, r: Tree): Tree
+}
+mutual {
+  fn f(t: Tree): Nat {
+    match t {
+      Leaf => Zero
+      Node(l, r) => h10(l, r)
+    }
+  }
+  fn h0(a: Tree, b: Tree): Nat { plus(f(a), f(b)) }
+  fn h1(a: Tree, b: Tree): Nat { plus(h0(a, b), h0(b, a)) }
+  fn h2(a: Tree, b: Tree): Nat { plus(h1(a, b), h1(b, a)) }
+  fn h3(a: Tree, b: Tree): Nat { plus(h2(a, b), h2(b, a)) }
+  fn h4(a: Tree, b: Tree): Nat { plus(h3(a, b), h3(b, a)) }
+  fn h5(a: Tree, b: Tree): Nat { plus(h4(a, b), h4(b, a)) }
+  fn h6(a: Tree, b: Tree): Nat { plus(h5(a, b), h5(b, a)) }
+  fn h7(a: Tree, b: Tree): Nat { plus(h6(a, b), h6(b, a)) }
+  fn h8(a: Tree, b: Tree): Nat { plus(h7(a, b), h7(b, a)) }
+  fn h9(a: Tree, b: Tree): Nat { plus(h8(a, b), h8(b, a)) }
+  fn h10(a: Tree, b: Tree): Nat { plus(h9(a, b), h9(b, a)) }
+}
+```
+checks."f" = "error: writing out the calls of the functions not defined by a match would make the block 160 times as large: `h0` would be copied 1024 times. Pass the results of the recursive calls to `h0` as arguments, so that it no longer calls the block and is not written out"

@@ -1,0 +1,30 @@
+// A function of the A tier (aborts only) handed to a parameter whose row
+// suspends is made into one of the O tier (resumes at most once; see
+// docs/design/rust-backend.md, "層の決定と単相化"); an abort it meets
+// reaches the `resume 0` arm.
+@ cases.abort-fn-to-suspending-parameter
+backends = ["rust", "javascript"]
+source = ```tauto
+effect ask(): i64
+effect stop(): Never resume 0
+fn both<!h>(a: () -> i64 ! h, b: () -> i64 ! h): i64 ! h { a() + b() }
+fn f(k: () -> i64 ! {stop}, j: () -> i64 ! {ask}): i64 ! {stop, ask} { both(k, j) }
+fn early(): i64 ! {stop} { perform stop() }
+fn one(): i64 ! {stop} { 1 }
+fn asked(): i64 ! {ask} { perform ask() }
+perform show("a", handle { handle { f(one, asked) } with {
+  ask(), k => k(10)
+  return v => v
+} } with {
+  stop() => 7
+  return v => v
+})
+perform show("b", handle { handle { f(early, asked) } with {
+  ask(), k => k(10)
+  return v => v
+} } with {
+  stop() => 7
+  return v => v
+})
+```
+shows = ["a = 11", "b = 7"]

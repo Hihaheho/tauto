@@ -4,11 +4,12 @@
 //! wrappers use nominal data types; no representation cast is exposed to Nib.
 use super::*;
 use std::collections::BTreeMap;
-use tauto_parol::Span;
 
 mod boundary;
 mod calls;
+mod computation;
 mod patterns;
+mod references;
 mod runtime;
 
 const ERASED: &str = "TautoErasedUnit#r0";
@@ -19,21 +20,23 @@ const FUN: &str = "TautoErasedFunction#r0";
 
 pub(super) struct Lowered {
     pub text: String,
-    pub functions: HashSet<String>,
-    pub families: HashSet<String>,
-    pub exports: HashSet<String>,
-    pub total: HashSet<String>,
-    pub protected: HashSet<String>,
+    pub statements: Vec<Stmt>,
+    pub functions: HashSet<Name>,
+    pub families: HashSet<Name>,
+    pub exports: HashSet<Name>,
+    pub effects: HashSet<Name>,
+    pub total: HashSet<Name>,
+    pub protected: HashSet<Name>,
 }
 
 pub(super) fn lower(
     input: &crate::read::ExtractionInput,
     roots: &[PathBuf],
     std: &StdNames,
-) -> Result<Option<Lowered>, String> {
+) -> Result<Option<Lowered>, Message> {
     let checked = &input.checked;
     let mut functions = BTreeMap::new();
-    fn gather(stmts: &[Stmt], path: &Path, fs: &mut BTreeMap<String, (PathBuf, FnDecl)>) {
+    fn gather(stmts: &[Stmt], path: &Path, fs: &mut BTreeMap<Name, (PathBuf, FnDecl)>) {
         for s in stmts {
             match s {
                 Stmt::Fn(f) => {
@@ -45,7 +48,7 @@ pub(super) fn lower(
         }
     }
     gather(
-        &crate::check::kernel_prelude()?.stmts,
+        &bound_kernel_prelude()?.stmts,
         Path::new("prelude"),
         &mut functions,
     );
@@ -66,7 +69,7 @@ pub(super) fn lower(
                         requested.insert(n.clone());
                     }
                     if let Some(n) = dotted(t) {
-                        requested.insert(n);
+                        requested.insert(n.into());
                     }
                 });
             }
@@ -93,7 +96,7 @@ pub(super) fn lower(
         .map(|(n, _)| n.clone())
         .collect();
     let mut family_refs = BTreeMap::new();
-    fn family_dependencies(stmts: &[Stmt], out: &mut BTreeMap<String, HashSet<String>>) {
+    fn family_dependencies(stmts: &[Stmt], out: &mut BTreeMap<Name, HashSet<Name>>) {
         for stmt in stmts {
             match stmt {
                 Stmt::Inductive(i) => {
@@ -118,7 +121,7 @@ pub(super) fn lower(
     for (_, stmts) in &input.sources {
         family_dependencies(stmts, &mut family_refs);
     }
-    fn data(stmts: &[Stmt], out: &mut BTreeMap<String, InductiveDecl>) {
+    fn data(stmts: &[Stmt], out: &mut BTreeMap<Name, InductiveDecl>) {
         for stmt in stmts {
             match stmt {
                 Stmt::Inductive(i) => {
@@ -130,10 +133,19 @@ pub(super) fn lower(
         }
     }
     let mut declarations = BTreeMap::new();
-    data(&crate::check::kernel_prelude()?.stmts, &mut declarations);
+    data(&bound_kernel_prelude()?.stmts, &mut declarations);
     for (_, stmts) in &input.sources {
         data(stmts, &mut declarations);
     }
+    // A checked class dictionary carries executable method closures. Its
+    // parameter telescope is erased only after the kernel selected evidence.
+    constrained.extend(
+        checked
+            .classes
+            .iter()
+            .filter(|name| declarations.contains_key(*name))
+            .cloned(),
+    );
     loop {
         let before = constrained.len();
         for (name, refs) in &family_refs {
@@ -147,7 +159,7 @@ pub(super) fn lower(
     }
     let mut dependencies = BTreeMap::new();
     let mut affected = constrained.clone();
-    let mut contracts: BTreeMap<String, HashSet<usize>> = BTreeMap::new();
+    let mut contracts: BTreeMap<Name, HashSet<usize>> = BTreeMap::new();
     fn callable_contracts(info: &crate::check::BoundaryType, out: &mut HashSet<usize>) {
         if matches!(&*info.ty.kind, TermKind::Pi { .. }) {
             out.insert(info.id);
@@ -172,6 +184,40 @@ pub(super) fn lower(
                 .copied()
                 .unwrap_or(sig.params.len());
             let offset = arity.saturating_sub(f.params.len());
+            let source_generic_roles = sig.source_generic_roles(f);
+            if source_generic_roles.iter().any(|role| *role != Role::Type) {
+                // A value generic alone does not require an erased sum: it
+                // can be an ordinary typed Nib parameter. Keep dependent
+                // lowering whenever a telescope type refers to a term binder.
+                // Proof domains count too: they can determine omitted values
+                // whose checked application metadata must be retained.
+                let terms: HashSet<_> = f
+                    .generics
+                    .iter()
+                    .zip(&source_generic_roles)
+                    .chain(
+                        f.params
+                            .iter()
+                            .zip(sig.params.get(offset..arity).unwrap_or_default()),
+                    )
+                    .filter(|(_, role)| **role != Role::Type)
+                    .map(|(name, _)| name.clone())
+                    .collect();
+                let generic_types = f.generic_parameters();
+                let dependent = generic_types
+                    .iter()
+                    .map(|(_, ty)| ty)
+                    .chain(f.param_types.iter().flatten())
+                    .chain(f.result.iter())
+                    .any(|ty| {
+                        crate::check::free_vars(ty)
+                            .iter()
+                            .any(|name| terms.contains(name))
+                    });
+                if dependent {
+                    affected.insert(name.clone());
+                }
+            }
             let roles = sig.params.get(offset..arity).unwrap_or_default();
             let parameters = f.param_types.iter().zip(roles).filter_map(|(ty, role)| {
                 if *role == Role::Value {
@@ -187,7 +233,7 @@ pub(super) fn lower(
                 crate::surface::walk::term(&mut ty, &mut |term| {
                     callable |= matches!(&*term.kind, TermKind::Pi { .. });
                     erased_domain |= matches!(&*term.kind, TermKind::Var(n)
-                        if n == "Type" || n == "Prop" || n == "=" || checked.props.contains(n));
+                        if n.sort_symbol().is_some() || tauto_surface::bindings::is_library(n, "=") || checked.props.contains(n));
                 });
                 if callable && erased_domain {
                     affected.insert(name.clone());
@@ -239,7 +285,7 @@ pub(super) fn lower(
             break;
         }
     }
-    let seeds: Vec<_> = functions
+    let mut seeds: Vec<_> = functions
         .iter()
         .filter(|(n, (p, _))| {
             affected.contains(*n)
@@ -253,10 +299,43 @@ pub(super) fn lower(
         })
         .map(|(n, _)| n.clone())
         .collect();
-    if seeds.is_empty() && constrained.is_empty() {
+    seeds.sort_by(|a, b| a.as_str().cmp(b.as_str()).then(a.cmp(b)));
+    // Generated proof records need no runtime representation unless a checked
+    // executable function reaches them. Only source data declarations can
+    // require a representation independently of those functions.
+    if seeds.is_empty()
+        && !constrained
+            .iter()
+            .any(|name| declarations.contains_key(name))
+    {
         return Ok(None);
     }
+    let mut reachable = seeds.clone();
+    let mut seen = HashSet::new();
+    let mut computations = false;
+    while let Some(name) = reachable.pop() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        if let Some((_, f)) = functions.get(&name) {
+            computations |= f.effects.as_ref().is_some_and(|row| !row.is_empty());
+            let mut body = f.body.clone();
+            crate::surface::walk::term(&mut body, &mut |t| {
+                computations |= matches!(
+                    &*t.kind,
+                    TermKind::Handle { .. } | TermKind::Perform { .. }
+                ) || matches!(&*t.kind, TermKind::Block(stmts) if stmts.iter().any(|s| matches!(s, Stmt::Var { .. })));
+            });
+        }
+        if let Some(deps) = dependencies.get(&name) {
+            reachable.extend(deps.iter().cloned());
+        }
+    }
     let mut e = Eraser {
+        references: Default::default(),
+        computations,
+        effect_tags: BTreeMap::new(),
+        native_effects: HashSet::new(),
         applications: calls::Applications::new(checked),
         checked,
         std,
@@ -285,10 +364,25 @@ pub(super) fn lower(
             wrappers.push(w);
         }
     }
+    if computations {
+        for effect in e.effect_tags.keys().cloned().collect::<Vec<_>>() {
+            e.native_effect(&effect)?;
+        }
+    }
     let mut text = format!(
         "shared enum {VALUE} {{\n  {NAT}(nat)\n  {BOOL}(Bool)\n  TautoErasedI64#r0(i64)\n  TautoErasedText#r0(Text)\n  {ERASED}\n  {FUN}(nat, (List({VALUE})) -> {VALUE} ! {{Div}})\n"
     );
-    for (name, (variant, fields)) in &e.ctors {
+    if computations {
+        let _ = writeln!(
+            text,
+            "  {}(nat, List({VALUE}), {VALUE})\n  {}(nat, {VALUE})",
+            computation::REQUEST,
+            computation::HANDLER
+        );
+    }
+    let mut ordered_ctors: Vec<_> = e.ctors.iter().collect();
+    ordered_ctors.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()).then(a.cmp(b)));
+    for (name, (variant, fields)) in ordered_ctors {
         let _ = name;
         if *fields == 0 {
             let _ = writeln!(text, "  {variant}");
@@ -299,11 +393,20 @@ pub(super) fn lower(
     text.push_str("}\n");
     text.push_str(&format!("\nfn TautoErasedGetNat#r0(v: {VALUE}): nat {{ match v {{ {NAT}(n) => n\n _ => extract_unreachable() }} }}\nfn TautoErasedGetBool#r0(v: {VALUE}): Bool {{ match v {{ {BOOL}(b) => b\n _ => extract_unreachable() }} }}"));
     text.push_str(&format!("\nfn TautoErasedGetI64#r0(v: {VALUE}): i64 {{ match v {{ TautoErasedI64#r0(n) => n\n _ => extract_unreachable() }} }}\nfn TautoErasedGetText#r0(v: {VALUE}): Text {{ match v {{ TautoErasedText#r0(t) => t\n _ => extract_unreachable() }} }}\n"));
-    text.push_str(&runtime::definitions());
+    text.push_str(&runtime::definitions(computations));
+    if computations {
+        text.push_str(&computation::definitions());
+        e.total
+            .extend(computation::HELPERS.iter().map(|n| Name::from(*n)));
+        e.forbidden
+            .extend(computation::HELPERS.iter().map(|n| n.to_string()));
+        e.forbidden
+            .extend([computation::REQUEST.into(), computation::HANDLER.into()]);
+    }
     e.total
-        .extend(runtime::FUNCTIONS.iter().map(|name| (*name).to_string()));
+        .extend(runtime::FUNCTIONS.iter().map(|name| Name::from(*name)));
     e.forbidden
-        .extend(runtime::FUNCTIONS.iter().map(|name| (*name).to_string()));
+        .extend(runtime::FUNCTIONS.iter().map(|name| name.to_string()));
     e.forbidden.insert(ERASED.into());
     e.total.extend([
         "TautoErasedGetI64#r0".into(),
@@ -343,8 +446,27 @@ pub(super) fn lower(
         "TautoErasedGetI64#r0".into(),
         "TautoErasedGetText#r0".into(),
     ]);
+    let (statements, generated) = e.references.statements(&text)?;
+    let total = e
+        .total
+        .into_iter()
+        .map(|name| {
+            if let Name::Spelled(label) = &name {
+                generated.get(label).cloned().unwrap_or(name)
+            } else {
+                name
+            }
+        })
+        .collect();
+    let protected = e
+        .forbidden
+        .into_iter()
+        .filter_map(|label| generated.get(&label).cloned())
+        .collect();
     Ok(Some(Lowered {
         text,
+        statements,
+        effects: e.effect_tags.keys().cloned().collect(),
         functions: e
             .emitted
             .into_iter()
@@ -352,33 +474,38 @@ pub(super) fn lower(
             .collect(),
         families: constrained,
         exports: e.exports,
-        total: e.total,
-        protected: e.forbidden,
+        total,
+        protected,
     }))
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Binding {
     Value,
+    Mutable {
+        ty: String,
+        pack: String,
+        unpack: String,
+    },
     Erased,
 }
 
 #[derive(Clone, Default)]
 struct Scope {
-    bindings: HashMap<String, Binding>,
+    bindings: HashMap<Name, Binding>,
 }
 
 impl Scope {
-    fn contains(&self, name: &str) -> bool {
+    fn contains(&self, name: &Name) -> bool {
         self.bindings.contains_key(name)
     }
-    fn is_erased(&self, name: &str) -> bool {
+    fn is_erased(&self, name: &Name) -> bool {
         matches!(self.bindings.get(name), Some(Binding::Erased))
     }
-    fn insert(&mut self, name: String) {
+    fn insert(&mut self, name: Name) {
         self.bindings.insert(name, Binding::Value);
     }
-    fn extend(&mut self, names: impl IntoIterator<Item = String>) {
+    fn extend(&mut self, names: impl IntoIterator<Item = Name>) {
         for name in names {
             self.insert(name);
         }
@@ -394,30 +521,34 @@ impl Scope {
             _ => {}
         }
     }
-    fn erase(&mut self, name: String) {
+    fn erase(&mut self, name: Name) {
         self.bindings.insert(name, Binding::Erased);
     }
 }
 
 struct Eraser<'a> {
+    references: references::References,
+    computations: bool,
+    effect_tags: BTreeMap<Name, usize>,
+    native_effects: HashSet<Name>,
     applications: calls::Applications,
     checked: &'a Checked,
     std: &'a StdNames,
-    functions: BTreeMap<String, (PathBuf, FnDecl)>,
-    emitted: HashSet<String>,
+    functions: BTreeMap<Name, (PathBuf, FnDecl)>,
+    emitted: HashSet<Name>,
     definitions: Vec<String>,
-    ctors: BTreeMap<String, (String, usize)>,
-    families: HashSet<String>,
+    ctors: BTreeMap<Name, (String, usize)>,
+    families: HashSet<Name>,
     next: usize,
-    names: BTreeMap<String, String>,
+    names: BTreeMap<Name, String>,
     opaque: BTreeMap<usize, String>,
-    exports: HashSet<String>,
-    total: HashSet<String>,
+    exports: HashSet<Name>,
+    total: HashSet<Name>,
     forbidden: HashSet<String>,
-    declarations: BTreeMap<String, InductiveDecl>,
-    constrained: HashSet<String>,
+    declarations: BTreeMap<Name, InductiveDecl>,
+    constrained: HashSet<Name>,
     bridges: BTreeMap<String, (String, String)>,
-    active_bridges: HashSet<String>,
+    active_bridges: HashSet<Name>,
 }
 
 impl Eraser<'_> {
@@ -425,7 +556,7 @@ impl Eraser<'_> {
         self.next += 1;
         format!("TautoErased{suffix}{}#r0", self.next)
     }
-    fn name(&mut self, name: &str) -> String {
+    fn name(&mut self, name: &Name) -> String {
         if let Some(n) = self.names.get(name) {
             return n.clone();
         }
@@ -433,7 +564,7 @@ impl Eraser<'_> {
         self.names.insert(name.into(), n.clone());
         n
     }
-    fn ctor(&mut self, name: &str) -> Result<String, String> {
+    fn ctor(&mut self, name: &Name) -> Result<String, Message> {
         if let Some((n, _)) = self.ctors.get(name) {
             return Ok(n.clone());
         }
@@ -452,7 +583,7 @@ impl Eraser<'_> {
         self.ctors.insert(name.into(), (variant.clone(), fields));
         Ok(variant)
     }
-    fn function(&mut self, name: &str) -> Result<String, String> {
+    fn function(&mut self, name: &Name) -> Result<String, Message> {
         let generated = self.name(name);
         if !self.emitted.insert(name.into()) {
             return Ok(generated);
@@ -466,24 +597,24 @@ impl Eraser<'_> {
             unreachable!("record sugar preserves function declarations")
         };
         crate::surface::walk::strip_recursion_proofs(&mut f);
-        if f.effects.as_ref().is_some_and(|r| !r.is_empty()) {
-            return Err(format!(
-                "dependent extraction: effectful body {name} needs a boundary adapter"
-            ));
-        }
         let sig = &self.checked.signatures[name];
         let offset = self
             .arity(name)
             .checked_sub(f.params.len())
             .ok_or("dependent extraction: parameter roles")?;
         let mut locals = Scope::default();
-        for name in &f.generics {
-            locals.erase(name.clone());
-        }
         let mut params = Vec::new();
+        for (name, role) in f.generics.iter().zip(sig.source_generic_roles(&f)) {
+            if role == Role::Value {
+                params.push(format!("{}: {VALUE}", self.symbol(name)));
+                locals.insert(name.clone());
+            } else {
+                locals.erase(name.clone());
+            }
+        }
         for (n, role) in f.params.iter().zip(&sig.params[offset..]) {
             if *role == Role::Value {
-                params.push(format!("{}: {VALUE}", raw(n)));
+                params.push(format!("{}: {VALUE}", self.symbol(n)));
                 locals.insert(n.clone());
             } else {
                 locals.erase(n.clone());
@@ -502,7 +633,7 @@ impl Eraser<'_> {
                 }
                 match types[offset + k].as_ref() {
                     Some(info) => match self.boundary(info)? {
-                        Some((_, _, unpack)) => native.push(unpack.replace("$v", &raw(n))),
+                        Some((_, _, unpack)) => native.push(unpack.replace("$v", &self.symbol(n))),
                         None => {
                             supported = false;
                             break;
@@ -529,17 +660,35 @@ impl Eraser<'_> {
             "fn {generated}({}): {VALUE} {{ {body} }}\n",
             params.join(", ")
         ));
-        self.total.insert(generated.clone());
+        self.total.insert(generated.clone().into());
         Ok(generated)
     }
-    fn expr(&mut self, t: &SurfaceTerm, locals: &Scope) -> Result<String, String> {
+    fn expr(&mut self, t: &SurfaceTerm, locals: &Scope) -> Result<String, Message> {
+        if self.computations {
+            self.computation(t, locals)
+        } else {
+            self.expr_value(t, locals)
+        }
+    }
+    fn expr_value(&mut self, t: &SurfaceTerm, locals: &Scope) -> Result<String, Message> {
+        // Surface unit is the empty Tuple application; the checked value
+        // is the Unit constructor, not a callable global named Tuple.
+        if is_unit(t) {
+            return self.global(
+                &crate::bindings::library_name("Star"),
+                &[],
+                locals,
+                t,
+                false,
+            );
+        }
         match &*t.kind {
             TermKind::Nat(n) => Ok(format!("{NAT}({n})")),
             TermKind::Bool(b) => Ok(format!("{BOOL}({b})")),
             TermKind::Text(t) => Ok(format!("TautoErasedText#r0({})", text_literal(t))),
             TermKind::Var(n) if locals.is_erased(n) => Ok(ERASED.into()),
-            TermKind::Var(n) if locals.contains(n) => Ok(raw(n)),
-            TermKind::Var(n) => self.global(n, &[], locals, t.span, false),
+            TermKind::Var(n) if locals.contains(n) => Ok(self.symbol(n)),
+            TermKind::Var(n) => self.global(n, &[], locals, t, false),
             TermKind::App {
                 function,
                 arguments,
@@ -547,16 +696,18 @@ impl Eraser<'_> {
                 if let TermKind::Var(n) = &*function.kind
                     && !locals.contains(n)
                 {
-                    return self.global(n, arguments, locals, t.span, true);
+                    return self.global(n, arguments, locals, t, true);
                 }
                 let f = self.expr(function, locals)?;
                 let callee = match &*function.kind {
-                    TermKind::Var(name) => Some(name.as_str()),
+                    TermKind::Var(name) => Some(name),
                     _ => None,
                 };
-                let omitted = self.omitted(t.span, arguments.len(), callee)?.unwrap_or(0);
-                let mut args = vec![ERASED.to_string(); omitted];
-                for arg in arguments {
+                let inserted = self
+                    .inserted(t.id(), arguments.len(), callee)?
+                    .unwrap_or_default();
+                let mut args = Vec::new();
+                for arg in inserted.iter().chain(arguments) {
                     args.push(self.expr(arg, locals)?);
                 }
                 Ok(format!("TautoErasedApply#r0({f}, [{}])", args.join(", ")))
@@ -570,7 +721,7 @@ impl Eraser<'_> {
                 let mut inner = locals.clone();
                 inner.extend(keep.iter().cloned());
                 let b = self.expr(body, &inner)?;
-                Ok(self.closure(&keep, &b))
+                self.closure_in(&keep, &b, &inner)
             }
             TermKind::Block(stmts) => {
                 let mut inner = locals.clone();
@@ -585,7 +736,7 @@ impl Eraser<'_> {
                                 continue;
                             }
                             let v = self.expr(value, &inner)?;
-                            out.push(format!("let {}: {VALUE} := {v}", raw(name)));
+                            out.push(format!("let {}: {VALUE} := {v}", self.symbol(name)));
                             inner.insert(name.clone());
                         }
                         Stmt::Expr(e) => out.push(self.expr(e, &inner)?),
@@ -610,16 +761,11 @@ impl Eraser<'_> {
                 ))
             }
             TermKind::Field { base, name } => {
-                if let Some(global) = dotted(t)
-                    && self.checked.signatures.contains_key(&global)
-                {
-                    return self.global(&global, &[], locals, t.span, false);
-                }
                 let mut owners: Vec<_> = self
                     .checked
                     .records
                     .iter()
-                    .filter(|(_, (_, ns))| ns.contains(name))
+                    .filter(|(_, (_, ns))| ns.iter().any(|field| field.as_str() == name))
                     .map(|(f, (c, ns))| (f.clone(), c.clone(), ns.clone()))
                     .collect();
                 owners.sort();
@@ -647,7 +793,7 @@ impl Eraser<'_> {
                         .iter()
                         .zip(&sig.params[skip..])
                         .filter(|(_, r)| **r == Role::Value)
-                        .map(|(n, _)| if n == name { "selected" } else { "_" })
+                        .map(|(n, _)| if n.as_str() == name { "selected" } else { "_" })
                         .collect();
                     let result = if fields.contains(&"selected") {
                         "selected"
@@ -666,9 +812,9 @@ impl Eraser<'_> {
                 arms.push("_ => extract_unreachable()".into());
                 Ok(format!("match ({value}) {{\n{}\n}}", arms.join("\n")))
             }
-            _ => Err(format!(
-                "dependent extraction: unsupported term {}",
-                show(t)
+            _ => Err(msg!(
+                "tauto-extract-dependent-unsupported-term",
+                term = show(t)
             )),
         }
     }

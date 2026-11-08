@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*", "tools/tauto-test-suite"]
+members = ["crates/*", "tools/tauto-test-suite", "totes/lsp/bridge", "totes/fmtcmd/bridge", "totes/vm/bridge", "totes/initcmd/bridge", "tools/lsp-bench"]
 default-members = ["crates/*"]
 resolver = "3"
 
@@ -14,6 +14,12 @@ query-flow = "=0.18.0"
 # The Rust backend writes its output as token streams (quote), then formats it.
 proc-macro2 = "=1.0.107"
 quote = "=1.0.47"
+# The JIT (crates/tauto-jit): every Cranelift crate at one version.
+cranelift-codegen = "=0.137.0"
+cranelift-frontend = "=0.137.0"
+cranelift-jit = "=0.137.0"
+cranelift-module = "=0.137.0"
+cranelift-native = "=0.137.0"
 eure-document = { git = "https://github.com/Hihaheho/eure", rev = "5b7afb885604f12e4713265c1b9e19681b2bc00b" }
 eure-reader = { git = "https://github.com/Hihaheho/eure", rev = "5b7afb885604f12e4713265c1b9e19681b2bc00b" }
 eure-schema = { git = "https://github.com/Hihaheho/eure", rev = "5b7afb885604f12e4713265c1b9e19681b2bc00b" }
@@ -42,8 +48,15 @@ opt-level = 3
 [profile.dev.package.tauto-surface]
 opt-level = 3
 
-# The build scripts of tauto-cli-totes and totebag-index check and build totes
-# with the compiler; it runs at the same speed as `tauto check`, so the
+[profile.dev.package.tauto-identity]
+opt-level = 3
+
+# Proof-cache reference keys use the syntax crate's SHA-256 implementation.
+[profile.dev.package.tauto-syntax]
+opt-level = 3
+
+# The build scripts of the tauto-cli-tote-* crates, tauto-analyzer and totebag-index
+# check and build totes with the compiler; it runs at the same speed as `tauto check`, so the
 # per-file time limits mean the same thing there.
 [profile.dev.build-override]
 opt-level = 3

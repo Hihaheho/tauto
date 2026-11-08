@@ -4,6 +4,7 @@ pub mod identity;
 pub mod inductive_data;
 pub mod macros;
 pub mod nibstd;
+pub mod records;
 pub mod suggest;
 pub mod surface;
 pub mod syntax;
@@ -14,3 +15,8 @@ pub mod diagnostic;
 /// arguments written by name (`C<n: m>(…)`), as its first argument. It holds
 /// `@`, so no source can name it.
 pub const IMPLICITS: &str = "@implicits";
+
+pub mod bindings;
+pub mod resolve;
+
+pub mod source_names;

@@ -1,0 +1,181 @@
+import std::Int
+import std::Base
+import "mval.taut"
+import "machine.taut"
+import std::List
+import std::Text
+
+// Native code for some of the program's functions (`docs/design/jit.md`). The
+// `tauto` command compiles it before the machine starts; a machine started on
+// its own has none.
+//
+// The machine of `machine.taut` stays as its proofs know it: the shell gives
+// each such function a body that asks the host `vm_native` (`vm_native_program`)
+// and answers that request here (`vm_native_answer`). Outside every `budget`
+// the native code runs, with the same steps and the same errors; inside one,
+// or when the native code gives up, the function's own body runs.
+//
+// The arguments go one at a time, then the run, then the answer: each extern
+// takes and gives only numbers and `Bool`.
+extern {
+  // Whether function `f` has native code.
+  fn vm_native_has(f: u64): Bool
+  // Forgets the arguments given so far.
+  fn vm_native_begin(): Bool
+  // The next argument: an integer of magnitude `mag`, negative when `neg`;
+  // `false` and `true` are 0 and 1, `#()` is 0.
+  fn vm_native_arg(neg: Bool, mag: u64): Bool
+  // Runs `f` with the arguments given, with `left` steps when `limited`: 0 when
+  // it answered, 1 when the steps ran out, 2 when a number got too large, 3 on a
+  // division by zero, 4 when the machine runs the call itself.
+  fn vm_native_run(f: u64, limited: Bool, left: u64): u64
+  // The steps left after the run.
+  fn vm_native_left(): u64
+  // The answer: its magnitude, and whether it is negative.
+  fn vm_native_mag(): u64
+  fn vm_native_neg(): Bool
+  // What `f` answers: 0 an integer, 1 a `Bool`, 2 `#()`.
+  fn vm_native_kind(f: u64): u64
+}
+
+// Gives the arguments; `false` when one is not a number, `Bool` or `#()`.
+pub fn m_native_args(args: List(MVal)): Bool {
+  match args {
+    Nil => true
+    Cons(a, rest) => {
+      let given: Bool := match a {
+        MvInt(i) => match i {
+          IntOfNat(k) => vm_native_arg(false, U64::of_nat(k))
+          IntNegSucc(k) => vm_native_arg(true, U64::of_nat(Succ(k)))
+        }
+        MvBool(b) => vm_native_arg(false, if b { 1 } else { 0 })
+        MvUnit => vm_native_arg(false, 0)
+        _ => false
+      }
+      if given { m_native_args(rest) } else { false }
+    }
+  }
+}
+
+// The answer of the last run of `f`.
+pub fn m_native_value(f: u64): MVal {
+  let kind := vm_native_kind(f)
+  let mag := vm_native_mag()
+  if kind == 0 {
+    if vm_native_neg() {
+      MvInt(IntNegSucc(Nat::of_u64(mag - 1)))
+    } else {
+      MvInt(IntOfNat(Nat::of_u64(mag)))
+    }
+  } else if kind == 1 {
+    MvBool(mag == 1)
+  } else {
+    MvUnit
+  }
+}
+
+// The program with each function that has native code asking the host for it.
+// Its own body moves to the end of the functions, where `vm_native_answer` finds it.
+pub fn vm_native_program(p: MProgram): MProgram {
+  match p {
+    Mprogram(fns, ctors, main) => Mprogram(
+      List::append(vm_native_fns(fns, 0, List::length(fns), 0), vm_native_moved(fns, 0)),
+      ctors,
+      main
+    )
+  }
+}
+
+pub fn vm_native_fns(fns: List(MFn), f: Nat, n: Nat, j: Nat): List(MFn) {
+  match fns {
+    Nil => Nil
+    Cons(g, rest) => if vm_native_has(U64::of_nat(f)) {
+      match g {
+        Mfn(arity, slots, body) => Cons(
+          Mfn(arity, slots, vm_native_body(f, Nat::add(n, j), arity)),
+          vm_native_fns(rest, Succ(f), n, Succ(j))
+        )
+      }
+    } else {
+      Cons(g, vm_native_fns(rest, Succ(f), n, j))
+    }
+  }
+}
+
+pub fn vm_native_moved(fns: List(MFn), f: Nat): List(MFn) {
+  match fns {
+    Nil => Nil
+    Cons(g, rest) => if vm_native_has(U64::of_nat(f)) {
+      Cons(g, vm_native_moved(rest, Succ(f)))
+    } else {
+      vm_native_moved(rest, Succ(f))
+    }
+  }
+}
+
+// Asks `vm_native` with the function, where its own body is, and the arguments.
+pub fn vm_native_body(f: Nat, own: Nat, arity: Nat): MCode {
+  McPush(
+    MvInt(IntOfNat(f)),
+    McPush(MvInt(IntOfNat(own)), vm_native_loads(0, arity, McAsk("vm_native", Succ(Succ(arity)), McRet)))
+  )
+}
+
+pub fn vm_native_loads(i: Nat, left: Nat, k: MCode): MCode {
+  match left {
+    Zero => k
+    Succ(r) => McLoad(i, vm_native_loads(Succ(i), r, k))
+  }
+}
+
+pub fn vm_native_nat(v: MVal): Nat {
+  match v {
+    MvInt(i) => match i {
+      IntOfNat(k) => k
+      IntNegSucc(k) => 0
+    }
+    _ => 0
+  }
+}
+
+// The answer to `vm_native`: the machine goes on from `s`, the request's state.
+pub fn vm_native_answer(p: MProgram, args: List(MVal), s: MState): MStep {
+  match args {
+    Cons(fv, more) => match more {
+      Cons(ov, rest) => match s {
+        Mstate(k, slots, st, fr, cx) => {
+          let id := U64::of_nat(vm_native_nat(fv))
+          let own := vm_native_nat(ov)
+          let begun := vm_native_begin()
+          let status: u64 := if m_has_budget(fr) {
+            4
+          } else if m_native_args(rest) {
+            match cx_left(cx) {
+              None => vm_native_run(id, false, 0)
+              Some(n) => vm_native_run(id, true, U64::of_nat(n))
+            }
+          } else {
+            4
+          }
+          let cx2: MCx := match cx_left(cx) {
+            None => cx
+            Some(n) => if status == 4 { cx } else { cx_set_left(cx, Some(Nat::of_u64(vm_native_left()))) }
+          }
+          if status == 0 {
+            MstepNext(Mstate(k, slots, Cons(m_native_value(id), st), fr, cx2))
+          } else if status == 1 {
+            MstepError(m_step_limit())
+          } else if status == 2 {
+            MstepError(m_too_large())
+          } else if status == 3 {
+            MstepError(m_division_by_zero())
+          } else {
+            m_enter(p, own, rest, fr, cx)
+          }
+        }
+      }
+      Nil => MstepError(m_internal())
+    }
+    Nil => MstepError(m_internal())
+  }
+}

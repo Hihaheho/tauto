@@ -30,7 +30,7 @@ pub theorem handle_patterns_cons_frame_checked(
   ). CkScopeChecked(next, ck_handle_patterns(rest, next, more, env, body)),
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, handle_patterns_cons(p, rest, c, inner, body, tys)) {
-  match tys: CkScopeChecked(c, handle_patterns_cons(p, rest, c, inner, body, tys)) {
+  ⊢ CkScopeChecked(c, handle_patterns_cons(p, rest, c, inner, body, tys)) from match tys {
     Nil => pattern_return_frame_checked(c, inner, Star, ordered)
     Cons(t, more) => pattern_bind_frame_checked(
       Unit,
@@ -58,7 +58,7 @@ pub theorem ck_handle_patterns_frame_checked(
   body: SurfaceTerm,
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, ck_handle_patterns(ps, c, tys, inner, body)) {
-  match ps: CkScopeChecked(c, ck_handle_patterns(ps, c, tys, inner, body)) {
+  ⊢ CkScopeChecked(c, ck_handle_patterns(ps, c, tys, inner, body)) from match ps {
     Nil => AndIntro(ordered, (clean_errors => clean_errors))
     Cons(p, rest) => Eq::subst(
       (z: Mut2(Unit, Checker, Scope)) => CkScopeChecked(c, z),
@@ -95,7 +95,7 @@ pub theorem handle_cont_frame_checked(
   cont: Option(Text),
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, handle_cont(c, inner, quant, eff, answer, result, body, cont)) {
-  match cont: CkScopeChecked(c, handle_cont(c, inner, quant, eff, answer, result, body, cont)) {
+  ⊢ CkScopeChecked(c, handle_cont(c, inner, quant, eff, answer, result, body, cont)) from match cont {
     None => pattern_return_frame_checked(c, inner, Star, ordered)
     Some(k) => pattern_bind_one_frame_checked(
       Unit,

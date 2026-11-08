@@ -13,12 +13,12 @@ pub(open) inductive AlgebraHom(
 ): Type(max(u, v)) {
   Mk(
     map: (A) -> B,
-    unit: AlgebraEq(v, B, map(algebra_unit(u, A, source)), algebra_unit(v, B, target)),
+    unit: AlgebraEq(v, B, map(algebra_unit(<u: u, A: A>, source)), algebra_unit(<u: v, A: B>, target)),
     mul: ∀ x: A. ∀ y: A. AlgebraEq(
       v,
       B,
-      map(algebra_op(u, A, source)(x, y)),
-      algebra_op(v, B, target)(map(x), map(y))
+      map(algebra_op(<u: u, A: A>, source)(x, y)),
+      algebra_op(<u: v, A: B>, target)(map(x), map(y))
     )
   ): AlgebraHom(u, v, A, B, source, target)
 }
@@ -43,16 +43,16 @@ pub def algebra_hom_elim<u: Level, v: Level>(): ∀ A: Type(
   ) -> B. ∀ unit: AlgebraEq(
     v,
     B,
-    map(algebra_unit(u, A, source)),
-    algebra_unit(v, B, target)
+    map(algebra_unit(<u: u, A: A>, source)),
+    algebra_unit(<u: v, A: B>, target)
   ). ∀ mul: (
     ∀ x: A. ∀ y: A. AlgebraEq(
       v,
       B,
-      map(algebra_op(u, A, source)(x, y)),
-      algebra_op(v, B, target)(map(x), map(y))
+      map(algebra_op(<u: u, A: A>, source)(x, y)),
+      algebra_op(<u: v, A: B>, target)(map(x), map(y))
     )
-  ). motive(AlgebraHom::Mk(u, v, A, B, source, target, map, unit, mul))
+  ). motive(AlgebraHom::Mk(<u: u, v: v, A: A, B: B, source: source, target: target>, map, unit, mul))
 ) -> (
   ∀ h: AlgebraHom(u, v, A, B, source, target). motive(h)
 ) := recursor(AlgebraHom(u, v), max(u, v))
@@ -78,7 +78,7 @@ pub def algebra_map<u: Level, v: Level, A: Type(
   B,
   source,
   target,
-  h2 => AlgebraFunction(u, v, A, B),
+  h2 => AlgebraFunction(<u: u, v: v>, A, B),
   map => unit => mul => map,
   h
 )
@@ -98,21 +98,15 @@ pub theorem algebra_map_unit<u: Level, v: Level, A: Type(
 ): AlgebraEq(
   v,
   B,
-  algebra_map(u, v, A, B, source, target, h)(algebra_unit(u, A, source)),
-  algebra_unit(v, B, target)
+  algebra_map(<u: u, v: v, A: A, B: B, source: source, target: target>, h)(algebra_unit(<u: u, A: A>, source)),
+  algebra_unit(<u: v, A: B>, target)
 ) {
-  AlgebraHom::ind(
-    u,
-    v,
-    A,
-    B,
-    source,
-    target,
+  AlgebraHom::ind(<u: u, v: v, A: A, B: B, source: source, target: target>,
     h2 => AlgebraEq(
       v,
       B,
-      algebra_map(u, v, A, B, source, target, h2)(algebra_unit(u, A, source)),
-      algebra_unit(v, B, target)
+      algebra_map(<u: u, v: v, A: A, B: B, source: source, target: target>, h2)(algebra_unit(<u: u, A: A>, source)),
+      algebra_unit(<u: v, A: B>, target)
     ),
     map => unit => mul => unit,
     h
@@ -136,31 +130,21 @@ pub theorem algebra_map_mul<u: Level, v: Level, A: Type(
 ): AlgebraEq(
   v,
   B,
-  algebra_map(u, v, A, B, source, target, h)(algebra_op(u, A, source)(x, y)),
-  algebra_op(
-    v,
-    B,
+  algebra_map(<u: u, v: v, A: A, B: B, source: source, target: target>, h)(algebra_op(<u: u, A: A>, source)(x, y)),
+  algebra_op(<u: v, A: B>,
     target
-  )(algebra_map(u, v, A, B, source, target, h)(x), algebra_map(u, v, A, B, source, target, h)(y))
+  )(algebra_map(<u: u, v: v, A: A, B: B, source: source, target: target>, h)(x), algebra_map(<u: u, v: v, A: A, B: B, source: source, target: target>, h)(y))
 ) {
-  AlgebraHom::ind(
-    u,
-    v,
-    A,
-    B,
-    source,
-    target,
+  AlgebraHom::ind(<u: u, v: v, A: A, B: B, source: source, target: target>,
     h2 => AlgebraEq(
       v,
       B,
-      algebra_map(u, v, A, B, source, target, h2)(algebra_op(u, A, source)(x, y)),
-      algebra_op(
-        v,
-        B,
+      algebra_map(<u: u, v: v, A: A, B: B, source: source, target: target>, h2)(algebra_op(<u: u, A: A>, source)(x, y)),
+      algebra_op(<u: v, A: B>,
         target
       )(
-        algebra_map(u, v, A, B, source, target, h2)(x),
-        algebra_map(u, v, A, B, source, target, h2)(y)
+        algebra_map(<u: u, v: v, A: A, B: B, source: source, target: target>, h2)(x),
+        algebra_map(<u: u, v: v, A: A, B: B, source: source, target: target>, h2)(y)
       )
     ),
     map => unit => mul => mul(x, y),
@@ -179,16 +163,10 @@ pub def algebra_identity<u: Level, A: Type(
   A,
   m,
   m
-) := AlgebraHom::Mk(
-  u,
-  u,
-  A,
-  A,
-  m,
-  m,
+) := AlgebraHom::Mk(<u: u, v: u, A: A, B: A, source: m, target: m>,
   x => x,
-  AlgebraRefl(u, A, algebra_unit(u, A, m)),
-  x => y => AlgebraRefl(u, A, algebra_op(u, A, m)(x, y))
+  AlgebraRefl(<u: u, A: A, a: algebra_unit(<u: u, A: A>, m)>),
+  x => y => AlgebraRefl(<u: u, A: A, a: algebra_op(<u: u, A: A>, m)(x, y)>)
 )
 
 pub def algebra_compose<u: Level, v: Level, w: Level, A: Type(
@@ -216,105 +194,47 @@ pub def algebra_compose<u: Level, v: Level, w: Level, A: Type(
   C,
   source,
   target
-) := AlgebraHom::Mk(
-  u,
-  w,
-  A,
-  C,
-  source,
-  target,
-  x => algebra_map(v, w, B, C, middle, target, g)(algebra_map(u, v, A, B, source, middle, f)(x)),
-  algebra_trans(
-    w,
-    C,
-    algebra_map(
-      v,
-      w,
-      B,
-      C,
-      middle,
-      target,
+) := AlgebraHom::Mk(<u: u, v: w, A: A, B: C, source: source, target: target>,
+  x => algebra_map(<u: v, v: w, A: B, B: C, source: middle, target: target>, g)(algebra_map(<u: u, v: v, A: A, B: B, source: source, target: middle>, f)(x)),
+  algebra_trans(<u: w, A: C, a: algebra_map(<u: v, v: w, A: B, B: C, source: middle, target: target>,
       g
-    )(algebra_map(u, v, A, B, source, middle, f)(algebra_unit(u, A, source))),
-    algebra_map(v, w, B, C, middle, target, g)(algebra_unit(v, B, middle)),
-    algebra_unit(w, C, target),
-    algebra_congr(
-      v,
-      w,
-      B,
-      C,
-      algebra_map(u, v, A, B, source, middle, f)(algebra_unit(u, A, source)),
-      algebra_unit(v, B, middle),
-      algebra_map(v, w, B, C, middle, target, g),
-      algebra_map_unit(u, v, A, B, source, middle, f)
+    )(algebra_map(<u: u, v: v, A: A, B: B, source: source, target: middle>, f)(algebra_unit(<u: u, A: A>, source))), b: algebra_map(<u: v, v: w, A: B, B: C, source: middle, target: target>, g)(algebra_unit(<u: v, A: B>, middle)), c: algebra_unit(<u: w, A: C>, target)>,
+    algebra_congr(<u: v, v: w, A: B, B: C, a: algebra_map(<u: u, v: v, A: A, B: B, source: source, target: middle>, f)(algebra_unit(<u: u, A: A>, source)), b: algebra_unit(<u: v, A: B>, middle)>,
+      algebra_map(<u: v, v: w, A: B, B: C, source: middle, target: target>, g),
+      algebra_map_unit(<u: u, v: v, A: A, B: B, source: source, target: middle>, f)
     ),
-    algebra_map_unit(v, w, B, C, middle, target, g)
+    algebra_map_unit(<u: v, v: w, A: B, B: C, source: middle, target: target>, g)
   ),
-  x => y => algebra_trans(
-    w,
-    C,
-    algebra_map(
-      v,
-      w,
-      B,
-      C,
-      middle,
-      target,
+  x => y => algebra_trans(<u: w, A: C, a: algebra_map(<u: v, v: w, A: B, B: C, source: middle, target: target>,
       g
-    )(algebra_map(u, v, A, B, source, middle, f)(algebra_op(u, A, source)(x, y))),
-    algebra_map(
-      v,
-      w,
-      B,
-      C,
-      middle,
-      target,
+    )(algebra_map(<u: u, v: v, A: A, B: B, source: source, target: middle>, f)(algebra_op(<u: u, A: A>, source)(x, y))), b: algebra_map(<u: v, v: w, A: B, B: C, source: middle, target: target>,
       g
     )(
-      algebra_op(
-        v,
-        B,
+      algebra_op(<u: v, A: B>,
         middle
       )(
-        algebra_map(u, v, A, B, source, middle, f)(x),
-        algebra_map(u, v, A, B, source, middle, f)(y)
+        algebra_map(<u: u, v: v, A: A, B: B, source: source, target: middle>, f)(x),
+        algebra_map(<u: u, v: v, A: A, B: B, source: source, target: middle>, f)(y)
       )
-    ),
-    algebra_op(
-      w,
-      C,
+    ), c: algebra_op(<u: w, A: C>,
       target
     )(
-      algebra_map(v, w, B, C, middle, target, g)(algebra_map(u, v, A, B, source, middle, f)(x)),
-      algebra_map(v, w, B, C, middle, target, g)(algebra_map(u, v, A, B, source, middle, f)(y))
-    ),
-    algebra_congr(
-      v,
-      w,
-      B,
-      C,
-      algebra_map(u, v, A, B, source, middle, f)(algebra_op(u, A, source)(x, y)),
-      algebra_op(
-        v,
-        B,
+      algebra_map(<u: v, v: w, A: B, B: C, source: middle, target: target>, g)(algebra_map(<u: u, v: v, A: A, B: B, source: source, target: middle>, f)(x)),
+      algebra_map(<u: v, v: w, A: B, B: C, source: middle, target: target>, g)(algebra_map(<u: u, v: v, A: A, B: B, source: source, target: middle>, f)(y))
+    )>,
+    algebra_congr(<u: v, v: w, A: B, B: C, a: algebra_map(<u: u, v: v, A: A, B: B, source: source, target: middle>, f)(algebra_op(<u: u, A: A>, source)(x, y)), b: algebra_op(<u: v, A: B>,
         middle
       )(
-        algebra_map(u, v, A, B, source, middle, f)(x),
-        algebra_map(u, v, A, B, source, middle, f)(y)
-      ),
-      algebra_map(v, w, B, C, middle, target, g),
-      algebra_map_mul(u, v, A, B, source, middle, f, x, y)
+        algebra_map(<u: u, v: v, A: A, B: B, source: source, target: middle>, f)(x),
+        algebra_map(<u: u, v: v, A: A, B: B, source: source, target: middle>, f)(y)
+      )>,
+      algebra_map(<u: v, v: w, A: B, B: C, source: middle, target: target>, g),
+      algebra_map_mul(<u: u, v: v, A: A, B: B, source: source, target: middle>, f, x, y)
     ),
-    algebra_map_mul(
-      v,
-      w,
-      B,
-      C,
-      middle,
-      target,
+    algebra_map_mul(<u: v, v: w, A: B, B: C, source: middle, target: target>,
       g,
-      algebra_map(u, v, A, B, source, middle, f)(x),
-      algebra_map(u, v, A, B, source, middle, f)(y)
+      algebra_map(<u: u, v: v, A: A, B: B, source: source, target: middle>, f)(x),
+      algebra_map(<u: u, v: v, A: A, B: B, source: source, target: middle>, f)(y)
     )
   )
 )
@@ -337,17 +257,11 @@ pub theorem algebra_identity_right<u: Level, v: Level, A: Type(
 ): AlgebraEq(
   v,
   B,
-  algebra_map(
-    u,
-    v,
-    A,
-    B,
-    source,
-    target,
-    algebra_compose(u, v, v, A, B, B, source, target, target, f, algebra_identity(v, B, target))
+  algebra_map(<u: u, v: v, A: A, B: B, source: source, target: target>,
+    algebra_compose(<u: u, v: v, w: v, A: A, B: B, C: B, source: source, middle: target, target: target>, f, algebra_identity(<u: v, A: B>, target))
   )(x),
-  algebra_map(u, v, A, B, source, target, f)(x)
-) { AlgebraRefl(v, B, algebra_map(u, v, A, B, source, target, f)(x)) }
+  algebra_map(<u: u, v: v, A: A, B: B, source: source, target: target>, f)(x)
+) { AlgebraRefl(<u: v, A: B, a: algebra_map(<u: u, v: v, A: A, B: B, source: source, target: target>, f)(x)>) }
 
 pub theorem algebra_identity_left<u: Level, v: Level, A: Type(
   u
@@ -365,17 +279,11 @@ pub theorem algebra_identity_left<u: Level, v: Level, A: Type(
 ): AlgebraEq(
   v,
   B,
-  algebra_map(
-    u,
-    v,
-    A,
-    B,
-    source,
-    target,
-    algebra_compose(u, u, v, A, A, B, source, source, target, algebra_identity(u, A, source), f)
+  algebra_map(<u: u, v: v, A: A, B: B, source: source, target: target>,
+    algebra_compose(<u: u, v: u, w: v, A: A, B: A, C: B, source: source, middle: source, target: target>, algebra_identity(<u: u, A: A>, source), f)
   )(x),
-  algebra_map(u, v, A, B, source, target, f)(x)
-) { AlgebraRefl(v, B, algebra_map(u, v, A, B, source, target, f)(x)) }
+  algebra_map(<u: u, v: v, A: A, B: B, source: source, target: target>, f)(x)
+) { AlgebraRefl(<u: v, A: B, a: algebra_map(<u: u, v: v, A: A, B: B, source: source, target: target>, f)(x)>) }
 
 pub theorem algebra_compose_assoc<u: Level, v: Level, w: Level, t: Level, A: Type(
   u
@@ -405,72 +313,23 @@ pub theorem algebra_compose_assoc<u: Level, v: Level, w: Level, t: Level, A: Typ
 ): AlgebraEq(
   t,
   D,
-  algebra_map(
-    u,
-    t,
-    A,
-    D,
-    ma,
-    md,
-    algebra_compose(
-      u,
-      w,
-      t,
-      A,
-      C,
-      D,
-      ma,
-      mc,
-      md,
-      algebra_compose(u, v, w, A, B, C, ma, mb, mc, f, g),
+  algebra_map(<u: u, v: t, A: A, B: D, source: ma, target: md>,
+    algebra_compose(<u: u, v: w, w: t, A: A, B: C, C: D, source: ma, middle: mc, target: md>,
+      algebra_compose(<u: u, v: v, w: w, A: A, B: B, C: C, source: ma, middle: mb, target: mc>, f, g),
       h
     )
   )(x),
-  algebra_map(
-    u,
-    t,
-    A,
-    D,
-    ma,
-    md,
-    algebra_compose(
-      u,
-      v,
-      t,
-      A,
-      B,
-      D,
-      ma,
-      mb,
-      md,
+  algebra_map(<u: u, v: t, A: A, B: D, source: ma, target: md>,
+    algebra_compose(<u: u, v: v, w: t, A: A, B: B, C: D, source: ma, middle: mb, target: md>,
       f,
-      algebra_compose(v, w, t, B, C, D, mb, mc, md, g, h)
+      algebra_compose(<u: v, v: w, w: t, A: B, B: C, C: D, source: mb, middle: mc, target: md>, g, h)
     )
   )(x)
 ) {
-  AlgebraRefl(
-    t,
-    D,
-    algebra_map(
-      u,
-      t,
-      A,
-      D,
-      ma,
-      md,
-      algebra_compose(
-        u,
-        w,
-        t,
-        A,
-        C,
-        D,
-        ma,
-        mc,
-        md,
-        algebra_compose(u, v, w, A, B, C, ma, mb, mc, f, g),
+  AlgebraRefl(<u: t, A: D, a: algebra_map(<u: u, v: t, A: A, B: D, source: ma, target: md>,
+      algebra_compose(<u: u, v: w, w: t, A: A, B: C, C: D, source: ma, middle: mc, target: md>,
+        algebra_compose(<u: u, v: v, w: w, A: A, B: B, C: C, source: ma, middle: mb, target: mc>, f, g),
         h
       )
-    )(x)
-  )
+    )(x)>)
 }

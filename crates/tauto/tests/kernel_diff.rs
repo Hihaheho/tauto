@@ -302,7 +302,7 @@ fn mutate(r: &mut Rng, t: &Tm) -> Tm {
 fn accepted(entries: &[tauto::check::FileEntry], name: &str) -> bool {
     entries
         .iter()
-        .find(|e| e.entry.name == name)
+        .find(|e| e.entry.name.as_str() == name)
         .is_some_and(|e| matches!(e.entry.verdict, Verdict::Checked { .. }))
 }
 

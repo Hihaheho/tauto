@@ -25,15 +25,10 @@ import std::prelude::Std { List, Option, Ordering }
 pub(open) inductive OrdmapLaw(K: Type, cmp: (K, K) -> Ordering): Prop {
   Mk(
     same: ∀ a: K. cmp(a, a) = Equal,
-    equal_is_eq: ∀ a: K,
-    b: K. (cmp(a, b) = Equal) -> (a = b),
-    flip_less: ∀ a: K,
-    b: K. (cmp(a, b) = Less) -> (cmp(b, a) = Greater),
-    flip_greater: ∀ a: K,
-    b: K. (cmp(a, b) = Greater) -> (cmp(b, a) = Less),
-    less_trans: ∀ a: K,
-    b: K,
-    c: K. (cmp(a, b) = Less) -> (cmp(b, c) = Less) -> (cmp(a, c) = Less)
+    equal_is_eq: ∀ a: K, b: K. (cmp(a, b) = Equal) -> (a = b),
+    flip_less: ∀ a: K, b: K. (cmp(a, b) = Less) -> (cmp(b, a) = Greater),
+    flip_greater: ∀ a: K, b: K. (cmp(a, b) = Greater) -> (cmp(b, a) = Less),
+    less_trans: ∀ a: K, b: K, c: K. (cmp(a, b) = Less) -> (cmp(b, c) = Less) -> (cmp(a, c) = Less)
   ): OrdmapLaw(K, cmp)
 }
 
@@ -43,7 +38,7 @@ module Ordmap {
     w: OrdmapLaw(K, cmp),
     a: K
   ): cmp(a, a) = Equal {
-    match w: cmp(a, a) = Equal {
+    ⊢ cmp(a, a) = Equal from match w {
       Mk(s, _, _, _, _) => s(a)
     }
   }
@@ -55,7 +50,7 @@ module Ordmap {
     b: K,
     e: cmp(a, b) = Equal
   ): a = b {
-    match w: a = b {
+    ⊢ a = b from match w {
       Mk(_, q, _, _, _) => q(a, b, e)
     }
   }
@@ -67,7 +62,7 @@ module Ordmap {
     b: K,
     e: cmp(a, b) = Less
   ): cmp(b, a) = Greater {
-    match w: cmp(b, a) = Greater {
+    ⊢ cmp(b, a) = Greater from match w {
       Mk(_, _, fl, _, _) => fl(a, b, e)
     }
   }
@@ -79,7 +74,7 @@ module Ordmap {
     b: K,
     e: cmp(a, b) = Greater
   ): cmp(b, a) = Less {
-    match w: cmp(b, a) = Less {
+    ⊢ cmp(b, a) = Less from match w {
       Mk(_, _, _, fg, _) => fg(a, b, e)
     }
   }
@@ -93,7 +88,7 @@ module Ordmap {
     e1: cmp(a, b) = Less,
     e2: cmp(b, c) = Less
   ): cmp(a, c) = Less {
-    match w: cmp(a, c) = Less {
+    ⊢ cmp(a, c) = Less from match w {
       Mk(_, _, _, _, t) => t(a, b, c, e1, e2)
     }
   }
@@ -126,10 +121,10 @@ module Ordmap {
 
   // The entries in a list: the value of the first entry with the key.
   pub fn list_get<K, V>(es: List(K × V), k: K, cmp: (K, K) -> Ordering): Option(V) {
-    match es: Option(V) {
+    ⊢ Option(V) from match es {
       Nil => None
-      Cons(e, rest) => match e: Option(V) {
-        #(ek, ev) => match cmp(k, ek): Option(V) {
+      Cons(e, rest) => ⊢ Option(V) from match e {
+        #(ek, ev) => ⊢ Option(V) from match cmp(k, ek) {
           Less => list_get(rest, k, cmp)
           Equal => Some(ev)
           Greater => list_get(rest, k, cmp)
@@ -140,10 +135,10 @@ module Ordmap {
 
   // `es` with `v` at `k`: before the first key after `k`, or in place of `k`.
   pub fn list_insert<K, V>(es: List(K × V), k: K, v: V, cmp: (K, K) -> Ordering): List(K × V) {
-    match es: List(K × V) {
+    ⊢ List(K × V) from match es {
       Nil => Cons(#(k, v), Nil)
-      Cons(e, rest) => match e: List(K × V) {
-        #(ek, ev) => match cmp(k, ek): List(K × V) {
+      Cons(e, rest) => ⊢ List(K × V) from match e {
+        #(ek, ev) => ⊢ List(K × V) from match cmp(k, ek) {
           Less => Cons(#(k, v), Cons(#(ek, ev), rest))
           Equal => Cons(#(k, v), rest)
           Greater => Cons(#(ek, ev), list_insert(rest, k, v, cmp))
@@ -154,9 +149,9 @@ module Ordmap {
 
   // `cmp(k, ek)` is `o` for every key `ek` of `es`.
   pub fn keys<K, V>(es: List(K × V), k: K, o: Ordering, cmp: (K, K) -> Ordering): Prop {
-    match es: Prop {
+    ⊢ Prop from match es {
       Nil => True
-      Cons(e, rest) => match e: Prop {
+      Cons(e, rest) => ⊢ Prop from match e {
         #(ek, ev) => cmp(k, ek) = o ∧ keys(rest, k, o, cmp)
       }
     }
@@ -164,9 +159,9 @@ module Ordmap {
 
   // Every key is before the keys after it.
   pub fn sorted<K, V>(es: List(K × V), cmp: (K, K) -> Ordering): Prop {
-    match es: Prop {
+    ⊢ Prop from match es {
       Nil => True
-      Cons(e, rest) => match e: Prop {
+      Cons(e, rest) => ⊢ Prop from match e {
         #(ek, ev) => keys(rest, ek, Less, cmp) ∧ sorted(rest, cmp)
       }
     }
@@ -184,11 +179,11 @@ module Ordmap {
     e: cmp(k, ek) = Equal
   ): list_get(Cons(#(ek, ev), rest), k, cmp) = Some(ev) {
     Ordering::cases(
-      (x: Ordering) => match x: Option(V) {
+      (x: Ordering) => (⊢ Option(V) from match x {
         Less => list_get(rest, k, cmp)
         Equal => Some(ev)
         Greater => list_get(rest, k, cmp)
-      } = Some(ev),
+      }) = Some(ev),
       cmp(k, ek),
       (h: cmp(k, ek) = Less) => False::elim(less_ne_equal(Eq::trans(Eq::sym(h), e))),
       (h: cmp(k, ek) = Equal) => Refl,
@@ -207,11 +202,11 @@ module Ordmap {
     e: cmp(k, ek) = o
   ): list_get(Cons(#(ek, ev), rest), k, cmp) = list_get(rest, k, cmp) {
     Ordering::cases(
-      (x: Ordering) => match x: Option(V) {
+      (x: Ordering) => (⊢ Option(V) from match x {
         Less => list_get(rest, k, cmp)
         Equal => Some(ev)
         Greater => list_get(rest, k, cmp)
-      } = list_get(rest, k, cmp),
+      }) = list_get(rest, k, cmp),
       cmp(k, ek),
       (h: cmp(k, ek) = Less) => Refl,
       (h: cmp(k, ek) = Equal) => False::elim(ne(Eq::trans(Eq::sym(e), h))),
@@ -229,11 +224,11 @@ module Ordmap {
     e: cmp(k, ek) = Less
   ): list_insert(Cons(#(ek, ev), rest), k, v, cmp) = Cons(#(k, v), Cons(#(ek, ev), rest)) {
     Ordering::cases(
-      (x: Ordering) => match x: List(K × V) {
+      (x: Ordering) => (⊢ List(K × V) from match x {
         Less => Cons(#(k, v), Cons(#(ek, ev), rest))
         Equal => Cons(#(k, v), rest)
         Greater => Cons(#(ek, ev), list_insert(rest, k, v, cmp))
-      } = Cons(#(k, v), Cons(#(ek, ev), rest)),
+      }) = Cons(#(k, v), Cons(#(ek, ev), rest)),
       cmp(k, ek),
       (h: cmp(k, ek) = Less) => Refl,
       (h: cmp(k, ek) = Equal) => False::elim(equal_ne_less(Eq::trans(Eq::sym(h), e))),
@@ -251,11 +246,11 @@ module Ordmap {
     e: cmp(k, ek) = Equal
   ): list_insert(Cons(#(ek, ev), rest), k, v, cmp) = Cons(#(k, v), rest) {
     Ordering::cases(
-      (x: Ordering) => match x: List(K × V) {
+      (x: Ordering) => (⊢ List(K × V) from match x {
         Less => Cons(#(k, v), Cons(#(ek, ev), rest))
         Equal => Cons(#(k, v), rest)
         Greater => Cons(#(ek, ev), list_insert(rest, k, v, cmp))
-      } = Cons(#(k, v), rest),
+      }) = Cons(#(k, v), rest),
       cmp(k, ek),
       (h: cmp(k, ek) = Less) => False::elim(less_ne_equal(Eq::trans(Eq::sym(h), e))),
       (h: cmp(k, ek) = Equal) => Refl,
@@ -273,11 +268,11 @@ module Ordmap {
     e: cmp(k, ek) = Greater
   ): list_insert(Cons(#(ek, ev), rest), k, v, cmp) = Cons(#(ek, ev), list_insert(rest, k, v, cmp)) {
     Ordering::cases(
-      (x: Ordering) => match x: List(K × V) {
+      (x: Ordering) => (⊢ List(K × V) from match x {
         Less => Cons(#(k, v), Cons(#(ek, ev), rest))
         Equal => Cons(#(k, v), rest)
         Greater => Cons(#(ek, ev), list_insert(rest, k, v, cmp))
-      } = Cons(#(ek, ev), list_insert(rest, k, v, cmp)),
+      }) = Cons(#(ek, ev), list_insert(rest, k, v, cmp)),
       cmp(k, ek),
       (h: cmp(k, ek) = Less) => False::elim(less_ne_greater(Eq::trans(Eq::sym(h), e))),
       (h: cmp(k, ek) = Equal) => False::elim(equal_ne_greater(Eq::trans(Eq::sym(h), e))),
@@ -289,7 +284,7 @@ module Ordmap {
     t: OrdmapTree(K, V),
     d: List(K × V)
   ): tree_entries(t, d) = List::append(tree_entries(t, Nil), d) {
-    match t: tree_entries(t, d) = List::append(tree_entries(t, Nil), d) {
+    ⊢ tree_entries(t, d) = List::append(tree_entries(t, Nil), d) from match t {
       OrdmapLeaf => Refl
       OrdmapNode(l, k, v, r, h) => Eq::trans(
         Eq::trans(
@@ -314,7 +309,7 @@ module Ordmap {
     cmp: (K, K) -> Ordering,
     h: keys(List::append(a, b), x, o, cmp)
   ): keys(a, x, o, cmp) {
-    match a: keys(a, x, o, cmp) {
+    ⊢ keys(a, x, o, cmp) from match a {
       Nil => Trivial
       Cons(e, rest) => match e {
         #(ek, ev) => AndIntro(And::left(h), keys_append_left(rest, b, x, o, cmp, And::right(h)))
@@ -330,7 +325,7 @@ module Ordmap {
     cmp: (K, K) -> Ordering,
     h: keys(List::append(a, b), x, o, cmp)
   ): keys(b, x, o, cmp) {
-    match a: keys(b, x, o, cmp) {
+    ⊢ keys(b, x, o, cmp) from match a {
       Nil => h
       Cons(e, rest) => match e {
         #(ek, ev) => keys_append_right(rest, b, x, o, cmp, And::right(h))
@@ -347,7 +342,7 @@ module Ordmap {
     e: cmp(b, a) = Less,
     h: keys(ys, a, Less, cmp)
   ): keys(ys, b, Less, cmp) {
-    match ys: keys(ys, b, Less, cmp) {
+    ⊢ keys(ys, b, Less, cmp) from match ys {
       Nil => Trivial
       Cons(y, rest) => match y {
         #(yk, yv) => AndIntro(
@@ -367,7 +362,7 @@ module Ordmap {
     e: cmp(b, a) = Greater,
     h: keys(ys, a, Greater, cmp)
   ): keys(ys, b, Greater, cmp) {
-    match ys: keys(ys, b, Greater, cmp) {
+    ⊢ keys(ys, b, Greater, cmp) from match ys {
       Nil => Trivial
       Cons(y, rest) => match y {
         #(yk, yv) => AndIntro(
@@ -401,12 +396,12 @@ module Ordmap {
     ys: List(K × V),
     h: sorted(List::append(xs, Cons(#(nk, nv), ys)), cmp)
   ): keys(xs, nk, Greater, cmp) ∧ sorted(xs, cmp) ∧ keys(ys, nk, Less, cmp) ∧ sorted(ys, cmp) {
-    match xs: keys(
+    ⊢ keys(
       xs,
       nk,
       Greater,
       cmp
-    ) ∧ sorted(xs, cmp) ∧ keys(ys, nk, Less, cmp) ∧ sorted(ys, cmp) {
+    ) ∧ sorted(xs, cmp) ∧ keys(ys, nk, Less, cmp) ∧ sorted(ys, cmp) from match xs {
       Nil => AndIntro(Trivial, AndIntro(Trivial, h))
       Cons(x, rest) => match x {
         #(xk, xv) => AndIntro(
@@ -440,7 +435,7 @@ module Ordmap {
     cmp: (K, K) -> Ordering,
     h: keys(ys, k, o, cmp)
   ): list_get(ys, k, cmp) = None {
-    match ys: list_get(ys, k, cmp) = None {
+    ⊢ list_get(ys, k, cmp) = None from match ys {
       Nil => Refl
       Cons(y, rest) => match y {
         #(yk, yv) => Eq::trans(
@@ -458,19 +453,19 @@ module Ordmap {
     cmp: (K, K) -> Ordering,
     n: list_get(ys, k, cmp) = None
   ): list_get(List::append(xs, ys), k, cmp) = list_get(xs, k, cmp) {
-    match xs: list_get(List::append(xs, ys), k, cmp) = list_get(xs, k, cmp) {
+    ⊢ list_get(List::append(xs, ys), k, cmp) = list_get(xs, k, cmp) from match xs {
       Nil => n
       Cons(x, rest) => match x {
         #(xk, xv) => Ordering::cases(
-          (c: Ordering) => match c: Option(V) {
+          (c: Ordering) => (⊢ Option(V) from match c {
             Less => list_get(List::append(rest, ys), k, cmp)
             Equal => Some(xv)
             Greater => list_get(List::append(rest, ys), k, cmp)
-          } = match c: Option(V) {
+          }) = (⊢ Option(V) from match c {
             Less => list_get(rest, k, cmp)
             Equal => Some(xv)
             Greater => list_get(rest, k, cmp)
-          },
+          }),
           cmp(k, xk),
           (e: cmp(k, xk) = Less) => list_get_append_none(rest, ys, k, cmp, n),
           (e: cmp(k, xk) = Equal) => Refl,
@@ -489,7 +484,7 @@ module Ordmap {
     cmp: (K, K) -> Ordering,
     h: keys(xs, k, o, cmp)
   ): list_get(List::append(xs, ys), k, cmp) = list_get(ys, k, cmp) {
-    match xs: list_get(List::append(xs, ys), k, cmp) = list_get(ys, k, cmp) {
+    ⊢ list_get(List::append(xs, ys), k, cmp) = list_get(ys, k, cmp) from match xs {
       Nil => Refl
       Cons(x, rest) => match x {
         #(xk, xv) => Eq::trans(
@@ -510,15 +505,15 @@ module Ordmap {
     e: list_get(a, j, cmp) = list_get(b, j, cmp)
   ): list_get(Cons(#(xk, xv), a), j, cmp) = list_get(Cons(#(xk, xv), b), j, cmp) {
     Ordering::cases(
-      (c: Ordering) => match c: Option(V) {
+      (c: Ordering) => (⊢ Option(V) from match c {
         Less => list_get(a, j, cmp)
         Equal => Some(xv)
         Greater => list_get(a, j, cmp)
-      } = match c: Option(V) {
+      }) = (⊢ Option(V) from match c {
         Less => list_get(b, j, cmp)
         Equal => Some(xv)
         Greater => list_get(b, j, cmp)
-      },
+      }),
       cmp(j, xk),
       (q: cmp(j, xk) = Less) => e,
       (q: cmp(j, xk) = Equal) => Refl,
@@ -541,23 +536,23 @@ module Ordmap {
     v,
     cmp
   ) = List::append(list_insert(xs, k, v, cmp), Cons(#(nk, nv), ys)) {
-    match xs: list_insert(
+    ⊢ list_insert(
       List::append(xs, Cons(#(nk, nv), ys)),
       k,
       v,
       cmp
-    ) = List::append(list_insert(xs, k, v, cmp), Cons(#(nk, nv), ys)) {
+    ) = List::append(list_insert(xs, k, v, cmp), Cons(#(nk, nv), ys)) from match xs {
       Nil => list_insert_less(nk, nv, ys, k, v, cmp, e)
       Cons(x, rest) => match x {
         #(xk, xv) => Ordering::cases(
-          (c: Ordering) => match c: List(K × V) {
+          (c: Ordering) => (⊢ List(K × V) from match c {
             Less => Cons(#(k, v), Cons(#(xk, xv), List::append(rest, Cons(#(nk, nv), ys))))
             Equal => Cons(#(k, v), List::append(rest, Cons(#(nk, nv), ys)))
             Greater => Cons(
               #(xk, xv),
               list_insert(List::append(rest, Cons(#(nk, nv), ys)), k, v, cmp)
             )
-          } = List::append(match c: List(K × V) {
+          }) = List::append(⊢ List(K × V) from match c {
             Less => Cons(#(k, v), Cons(#(xk, xv), rest))
             Equal => Cons(#(k, v), rest)
             Greater => Cons(#(xk, xv), list_insert(rest, k, v, cmp))
@@ -582,12 +577,12 @@ module Ordmap {
     cmp: (K, K) -> Ordering,
     h: keys(xs, k, Greater, cmp)
   ): list_insert(List::append(xs, ys), k, v, cmp) = List::append(xs, list_insert(ys, k, v, cmp)) {
-    match xs: list_insert(
+    ⊢ list_insert(
       List::append(xs, ys),
       k,
       v,
       cmp
-    ) = List::append(xs, list_insert(ys, k, v, cmp)) {
+    ) = List::append(xs, list_insert(ys, k, v, cmp)) from match xs {
       Nil => Refl
       Cons(x, rest) => match x {
         #(xk, xv) => Eq::trans(
@@ -611,11 +606,11 @@ module Ordmap {
     ea: cmp(a, k) = Less,
     h: keys(es, a, Less, cmp)
   ): keys(list_insert(es, k, v, cmp), a, Less, cmp) {
-    match es: keys(list_insert(es, k, v, cmp), a, Less, cmp) {
+    ⊢ keys(list_insert(es, k, v, cmp), a, Less, cmp) from match es {
       Nil => AndIntro(ea, Trivial)
       Cons(x, rest) => match x {
         #(xk, xv) => Ordering::cases(
-          (c: Ordering) => keys(match c: List(K × V) {
+          (c: Ordering) => keys(⊢ List(K × V) from match c {
             Less => Cons(#(k, v), Cons(#(xk, xv), rest))
             Equal => Cons(#(k, v), rest)
             Greater => Cons(#(xk, xv), list_insert(rest, k, v, cmp))
@@ -640,11 +635,11 @@ module Ordmap {
     v: V,
     h: sorted(es, cmp)
   ): sorted(list_insert(es, k, v, cmp), cmp) {
-    match es: sorted(list_insert(es, k, v, cmp), cmp) {
+    ⊢ sorted(list_insert(es, k, v, cmp), cmp) from match es {
       Nil => AndIntro(Trivial, Trivial)
       Cons(x, rest) => match x {
         #(xk, xv) => Ordering::cases(
-          (c: Ordering) => sorted(match c: List(K × V) {
+          (c: Ordering) => sorted(⊢ List(K × V) from match c {
             Less => Cons(#(k, v), Cons(#(xk, xv), rest))
             Equal => Cons(#(k, v), rest)
             Greater => Cons(#(xk, xv), list_insert(rest, k, v, cmp))
@@ -683,11 +678,11 @@ module Ordmap {
     k: K,
     v: V
   ): list_get(list_insert(es, k, v, cmp), k, cmp) = Some(v) {
-    match es: list_get(list_insert(es, k, v, cmp), k, cmp) = Some(v) {
+    ⊢ list_get(list_insert(es, k, v, cmp), k, cmp) = Some(v) from match es {
       Nil => list_get_equal(k, v, Nil, k, cmp, law_same(cmp, w, k))
       Cons(x, rest) => match x {
         #(xk, xv) => Ordering::cases(
-          (c: Ordering) => list_get(match c: List(K × V) {
+          (c: Ordering) => list_get(⊢ List(K × V) from match c {
             Less => Cons(#(k, v), Cons(#(xk, xv), rest))
             Equal => Cons(#(k, v), rest)
             Greater => Cons(#(xk, xv), list_insert(rest, k, v, cmp))
@@ -731,11 +726,11 @@ module Ordmap {
     ne: ¬(o = Equal),
     ej: cmp(j, k) = o
   ): list_get(list_insert(es, k, v, cmp), j, cmp) = list_get(es, j, cmp) {
-    match es: list_get(list_insert(es, k, v, cmp), j, cmp) = list_get(es, j, cmp) {
+    ⊢ list_get(list_insert(es, k, v, cmp), j, cmp) = list_get(es, j, cmp) from match es {
       Nil => list_get_skip(o, ne, k, v, Nil, j, cmp, ej)
       Cons(x, rest) => match x {
         #(xk, xv) => Ordering::cases(
-          (c: Ordering) => list_get(match c: List(K × V) {
+          (c: Ordering) => list_get(⊢ List(K × V) from match c {
             Less => Cons(#(k, v), Cons(#(xk, xv), rest))
             Equal => Cons(#(k, v), rest)
             Greater => Cons(#(xk, xv), list_insert(rest, k, v, cmp))
@@ -817,15 +812,15 @@ module Ordmap {
     k: K,
     s: sorted(tree_entries(t, Nil), cmp)
   ): tree_get(t, k, cmp) = list_get(tree_entries(t, Nil), k, cmp) {
-    match t: tree_get(t, k, cmp) = list_get(tree_entries(t, Nil), k, cmp) {
+    ⊢ tree_get(t, k, cmp) = list_get(tree_entries(t, Nil), k, cmp) from match t {
       OrdmapLeaf => Refl
       OrdmapNode(l, nk, nv, r, h) => Eq::trans(
         Ordering::cases(
-          (c: Ordering) => match c: Option(V) {
+          (c: Ordering) => (⊢ Option(V) from match c {
             Less => tree_get(l, k, cmp)
             Equal => Some(nv)
             Greater => tree_get(r, k, cmp)
-          } = list_get(List::append(tree_entries(l, Nil), Cons(#(nk, nv), tree_entries(r, Nil))), k, cmp),
+          }) = list_get(List::append(tree_entries(l, Nil), Cons(#(nk, nv), tree_entries(r, Nil))), k, cmp),
           cmp(k, nk),
           (q: cmp(k, nk) = Less) => Eq::trans(
             tree_get_entries(cmp, w, l, k, And::left(And::right(node_split(cmp, w, l, nk, nv, r, h, s)))),
@@ -928,14 +923,14 @@ module Ordmap {
     v: V,
     s: sorted(tree_entries(t, Nil), cmp)
   ): tree_entries(tree_insert(t, k, v, cmp), Nil) = list_insert(tree_entries(t, Nil), k, v, cmp) {
-    match t: tree_entries(
+    ⊢ tree_entries(
       tree_insert(t, k, v, cmp),
       Nil
-    ) = list_insert(tree_entries(t, Nil), k, v, cmp) {
+    ) = list_insert(tree_entries(t, Nil), k, v, cmp) from match t {
       OrdmapLeaf => Refl
       OrdmapNode(l, nk, nv, r, h) => Eq::trans(
         Ordering::cases(
-          (c: Ordering) => tree_entries(match c: OrdmapTree(K, V) {
+          (c: Ordering) => tree_entries(⊢ OrdmapTree(K, V) from match c {
             Less => balance(tree_insert(l, k, v, cmp), nk, nv, r)
             Equal => OrdmapNode(l, k, v, r, h)
             Greater => balance(l, nk, nv, tree_insert(r, k, v, cmp))
@@ -1049,7 +1044,9 @@ module Ordmap {
     sorted(tree_entries(tree(m), Nil), cmp)
   }
 
-  pub theorem empty_ordered<K: Type, V: Type>(cmp: (K, K) -> Ordering): ordered(empty(K, V), cmp) {
+  pub theorem empty_ordered<K: Type, V: Type>(
+    cmp: (K, K) -> Ordering
+  ): ordered(empty(<K: K, V: V>), cmp) {
     Trivial
   }
 
@@ -1075,7 +1072,7 @@ module Ordmap {
     k: K,
     v: V,
     s: ordered(m, cmp)
-  ): get(insert(m, k, v, cmp), k, cmp) = Some(v) {
+  ): Ordmap::get(insert(m, k, v, cmp), k, cmp) = Some(v) {
     Eq::trans(
       tree_get_entries(
         cmp,
@@ -1102,7 +1099,7 @@ module Ordmap {
     ne: ¬(o = Equal),
     ej: cmp(j, k) = o,
     s: ordered(m, cmp)
-  ): get(insert(m, k, v, cmp), j, cmp) = get(m, j, cmp) {
+  ): Ordmap::get(insert(m, k, v, cmp), j, cmp) = Ordmap::get(m, j, cmp) {
     Eq::trans(
       tree_get_entries(
         cmp,
@@ -1122,7 +1119,7 @@ module Ordmap {
   }
 
   pub theorem select_equal(x: Bool, y: Bool, e: select(x, y) = Equal): x = false ∧ y = false {
-    match x: x = false ∧ y = false {
+    ⊢ x = false ∧ y = false from match x {
       false => match y {
         false => AndIntro(Refl, Refl)
         true => False::elim(greater_ne_equal(e))
@@ -1132,7 +1129,7 @@ module Ordmap {
   }
 
   pub theorem select_less(x: Bool, y: Bool, e: select(x, y) = Less): x = true {
-    match x: x = true {
+    ⊢ x = true from match x {
       false => match y {
         false => False::elim(equal_ne_less(e))
         true => False::elim(greater_ne_less(e))
@@ -1142,7 +1139,7 @@ module Ordmap {
   }
 
   pub theorem select_greater(x: Bool, y: Bool, e: select(x, y) = Greater): x = false ∧ y = true {
-    match x: x = false ∧ y = true {
+    ⊢ x = false ∧ y = true from match x {
       false => match y {
         false => False::elim(equal_ne_greater(e))
         true => AndIntro(Refl, Refl)
@@ -1152,7 +1149,7 @@ module Ordmap {
   }
 
   pub theorem select_of_true(x: Bool, y: Bool, h: x = true): select(x, y) = Less {
-    match x: select(x, y) = Less {
+    ⊢ select(x, y) = Less from match x {
       false => False::elim(false_ne_true(h))
       true => Refl
     }
@@ -1164,7 +1161,7 @@ module Ordmap {
     hx: x = false,
     hy: y = true
   ): select(x, y) = Greater {
-    match x: select(x, y) = Greater {
+    ⊢ select(x, y) = Greater from match x {
       false => match y {
         false => False::elim(false_ne_true(hy))
         true => Refl
@@ -1237,7 +1234,7 @@ module Ordmap {
     k: Nat,
     v: V,
     s: ordered(m, compare_nat)
-  ): get(insert(m, k, v, compare_nat), k, compare_nat) = Some(v) {
+  ): Ordmap::get(insert(m, k, v, compare_nat), k, compare_nat) = Some(v) {
     get_insert_same(compare_nat, compare_nat_law(), m, k, v, s)
   }
 }

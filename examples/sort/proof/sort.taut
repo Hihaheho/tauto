@@ -11,9 +11,9 @@ pub fn le<A>(
 ): Prop where Ord(A) { (∀ h: Ord::compare(a, b) = Greater. False) }
 
 pub fn sorted<A>(l: List(A)): Prop where Ord(A) {
-  match l: Prop {
+  ⊢ Prop from match l {
     Nil => True
-    Cons(x, t) => match t: Prop {
+    Cons(x, t) => ⊢ Prop from match t {
       Nil => True
       Cons(y, u) => And(le(x, y), sorted(t))
     }
@@ -28,7 +28,7 @@ pub(open) inductive Perm(A: Type): (List(A)) -> (List(A)) -> Prop {
 }
 
 pub theorem perm_refl<A>(l: List(A)): Perm(A, l, l) {
-  match l: Perm(A, l, l) {
+  ⊢ Perm(A, l, l) from match l {
     Nil => PermNil
     Cons(x, t) => PermSkip(perm_refl(t))
   }
@@ -62,9 +62,9 @@ pub theorem le_of_greater<A>(
 }
 
 pub theorem insert_perm<A>(x: A, l: List(A)): Perm(A, Cons(x, l), insert(x, l)) where Ord(A) {
-  match l: Perm(A, Cons(x, l), insert(x, l)) {
+  ⊢ Perm(A, Cons(x, l), insert(x, l)) from match l {
     Nil => perm_refl(Cons(x, Nil))
-    Cons(y, t) => match Ord::compare(x, y): Perm(A, Cons(x, Cons(y, t)), insert(x, Cons(y, t))) {
+    Cons(y, t) => ⊢ Perm(A, Cons(x, Cons(y, t)), insert(x, Cons(y, t))) from match Ord::compare(x, y) {
       Less => ⊢ Perm(A, Cons(x, Cons(y, t)), Cons(x, Cons(y, t))) from perm_refl(Cons(x, Cons(y, t)))
       Equal => ⊢ Perm(A, Cons(x, Cons(y, t)), Cons(x, Cons(y, t))) from perm_refl(Cons(x, Cons(y, t)))
       Greater => ⊢ Perm(A, Cons(x, Cons(y, t)), Cons(y, insert(x, t))) from PermTrans(
@@ -76,7 +76,7 @@ pub theorem insert_perm<A>(x: A, l: List(A)): Perm(A, Cons(x, l), insert(x, l)) 
 }
 
 pub theorem sort_perm<A>(l: List(A)): Perm(A, l, sort(l)) where Ord(A) {
-  match l: Perm(A, l, sort(l)) {
+  ⊢ Perm(A, l, sort(l)) from match l {
     Nil => PermNil
     Cons(x, t) => PermTrans(PermSkip(sort_perm(t)), insert_perm(x, sort(t)))
   }
@@ -89,9 +89,9 @@ pub theorem insert_after<A>(
   hyx: le(y, x),
   h: sorted(Cons(y, l))
 ): sorted(Cons(y, insert(x, l))) where Ord(A) {
-  match l: sorted(Cons(y, insert(x, l))) {
+  ⊢ sorted(Cons(y, insert(x, l))) from match l {
     Nil => AndIntro(hyx, Trivial)
-    Cons(z, t) => match Ord::compare(x, z) eqn e: sorted(Cons(y, insert(x, Cons(z, t)))) {
+    Cons(z, t) => ⊢ sorted(Cons(y, insert(x, Cons(z, t)))) from match Ord::compare(x, z) eqn e {
       Less => AndIntro(hyx, AndIntro(le_of_less(x, z, e), And::right(h)))
       Equal => AndIntro(hyx, AndIntro(le_of_equal(x, z, e), And::right(h)))
       Greater => AndIntro(And::left(h), insert_after(t, z, x, le_of_greater(x, z, e), And::right(h)))
@@ -100,9 +100,9 @@ pub theorem insert_after<A>(
 }
 
 pub theorem insert_sorted<A>(x: A, l: List(A), h: sorted(l)): sorted(insert(x, l)) where Ord(A) {
-  match l: sorted(insert(x, l)) {
+  ⊢ sorted(insert(x, l)) from match l {
     Nil => Trivial
-    Cons(y, t) => match Ord::compare(x, y) eqn e: sorted(insert(x, Cons(y, t))) {
+    Cons(y, t) => ⊢ sorted(insert(x, Cons(y, t))) from match Ord::compare(x, y) eqn e {
       Less => AndIntro(le_of_less(x, y, e), h)
       Equal => AndIntro(le_of_equal(x, y, e), h)
       Greater => insert_after(t, y, x, le_of_greater(x, y, e), h)
@@ -111,7 +111,7 @@ pub theorem insert_sorted<A>(x: A, l: List(A), h: sorted(l)): sorted(insert(x, l
 }
 
 pub theorem sort_sorted<A>(l: List(A)): sorted(sort(l)) where Ord(A) {
-  match l: sorted(sort(l)) {
+  ⊢ sorted(sort(l)) from match l {
     Nil => Trivial
     Cons(x, t) => {
       let h: sorted(sort(t)) := sort_sorted(t)

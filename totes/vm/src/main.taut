@@ -1,10 +1,13 @@
 import "builtins.taut"
+import "compile.taut"
 import "machine.taut"
 import "mval.taut"
 import "wire.taut"
+import "native.taut"
 import std::Int
 import std::Text
 import std::prelude::Os
+import std::prelude::Par
 import std::Base
 import std::prelude::Secret
 import std::Secret
@@ -81,6 +84,206 @@ pub fn vm_io_unit(r: Result(Unit, IoError)): MVal {
   }
 }
 
+pub fn vm_u64(v: MVal): u64 {
+  U64::of_nat(m_as_nat(v))
+}
+
+pub fn vm_stream(v: MVal): TcpStream {
+  TcpStream { id: vm_u64(v), local: "", peer: "" }
+}
+
+// A deadline as the machine holds an `Option(i64)`.
+pub fn vm_deadline(v: MVal): Option(i64) {
+  match v {
+    MvData(c, fields) => if Nat::eq(c, 0) { Some(vm_i64(m_as_int(vm_arg(fields, 0)))) } else {
+      None
+    }
+    _ => None
+  }
+}
+
+// The texts of a `List(Text)` as the machine holds it; `fuel` bounds its length.
+pub fn vm_text_items(fuel: Nat, v: MVal): List(Text) {
+  match fuel {
+    Zero => Nil
+    Succ(f) => match v {
+      MvData(c, fields) => if Nat::eq(c, 5) {
+        Cons(m_as_text(vm_arg(fields, 0)), vm_text_items(f, vm_arg(fields, 1)))
+      } else {
+        Nil
+      }
+      _ => Nil
+    }
+  }
+}
+
+pub fn vm_pairs(ts: List(Text)): List(Pair(Text, Text)) {
+  match ts {
+    Cons(name, Cons(value, rest)) => Cons(Pair { fst: name, snd: value }, vm_pairs(rest))
+    _ => Nil
+  }
+}
+
+pub fn vm_stdio(modes: List(Text), i: Nat): Stdio {
+  match List::nth(modes, i) {
+    Some(m) => if Text::eq(m, "1") { StdioInherit } else { StdioPiped }
+    None => StdioPiped
+  }
+}
+
+// What the machine's `Os::*` answers with a deadline: `Ok(Some(v))`, `Ok(None)` when the
+// deadline passed, or the error's message.
+pub fn vm_timed(r: Result(MVal, IoError)): MVal {
+  match r {
+    Ok(v) => m_ok(m_some(v))
+    Err(TimedOut) => m_ok(m_none())
+    Err(e) => m_errv(MvText(io_message(e)))
+  }
+}
+
+pub fn vm_stream_answer(r: Result(TcpStream, IoError)): MVal {
+  vm_timed(
+    match r {
+      Ok(s) => Ok(
+        m_list(
+          Cons(MvText(Text::of_u64(s.id)), Cons(MvText(s.local), Cons(MvText(s.peer), Nil)))
+        )
+      )
+      Err(e) => Err(e)
+    }
+  )
+}
+
+// Where the deadline of a request that waits (`m_waits`) is among its arguments.
+pub fn vm_deadline_at(name: Text): Nat {
+  if Text::eq(name, "Os::tcp_read") {
+    2
+  } else if Text::eq(name, "Os::child_read") {
+    3
+  } else {
+    1
+  }
+}
+
+// Asks the host `name` with the deadline `d` (nanoseconds of `monotonic_clock`) in place of
+// the program's own.
+pub fn vm_waiting(name: Text, args: List(MVal), d: Option(i64)): MVal ! {Host} {
+  let a := vm_arg(args, 0)
+  let b := vm_arg(args, 1)
+  let c := vm_arg(args, 2)
+  if Text::eq(name, "Os::tcp_accept") {
+    vm_stream_answer(perform tcp_accept(TcpListener { id: vm_u64(a), address: "" }, d))
+  } else if Text::eq(name, "Os::tcp_connect") {
+    vm_stream_answer(perform tcp_connect(m_as_text(a), d))
+  } else if Text::eq(name, "Os::tcp_read") {
+    vm_timed(
+      match perform tcp_read(vm_stream(a), vm_u64(b), d) {
+        Ok(bs) => Ok(MvBytes(bs))
+        Err(e) => Err(e)
+      }
+    )
+  } else if Text::eq(name, "Os::tcp_write") {
+    vm_timed(
+      match perform tcp_write(vm_stream(a), m_as_bytes(b), d) {
+        Ok(u) => Ok(MvUnit)
+        Err(e) => Err(e)
+      }
+    )
+  } else if Text::eq(name, "Os::child_read") {
+    let which := if Nat::eq(m_as_nat(b), 2) { ChildStderr } else { ChildStdout }
+    vm_timed(
+      match perform proc_read(Child { id: vm_u64(a) }, which, vm_u64(c), d) {
+        Ok(bs) => Ok(MvBytes(bs))
+        Err(e) => Err(e)
+      }
+    )
+  } else if Text::eq(name, "Os::child_wait") {
+    vm_timed(
+      match perform proc_wait(Child { id: vm_u64(a) }, d) {
+        Ok(Some(code)) => Ok(m_list(Cons(MvText(Text::of_u64(code)), Nil)))
+        Ok(None) => Ok(m_list(Nil))
+        Err(e) => Err(e)
+      }
+    )
+  } else {
+    m_errv(MvText(Text::concat("internal: the host does not wait for ", name)))
+  }
+}
+
+// Whether the answer says the deadline passed (`Ok(None)`).
+pub fn vm_timed_out(v: MVal): Bool {
+  match v {
+    MvData(c, fields) => if Nat::eq(c, 2) {
+      match vm_arg(fields, 0) {
+        MvData(d, inner) => Nat::eq(d, 1)
+        _ => false
+      }
+    } else {
+      false
+    }
+    _ => false
+  }
+}
+
+// A request that waits which the machine asked (`MstepStart`): its answer goes to the
+// machine's pending `pending`.
+pub struct VmJob { pending: Nat, name: Text, args: List(MVal) }
+
+// What `vm_poll` found: the requests still waiting, and whether any answered.
+pub struct VmPolled { jobs: List(VmJob), answered: Bool, cx: MCx }
+
+// Asks each waiting request again, waiting for it until `until` at most (its own deadline
+// when that comes first; one already past still takes what is there), and gives the machine
+// the answers. The shell runs on one thread, so a request waits in turns like this: the
+// machine's other tasks go on between them.
+pub fn vm_poll(jobs: List(VmJob), cx: MCx, until: i64): VmPolled ! {Host} {
+  match jobs {
+    Nil => VmPolled { jobs: Nil, answered: false, cx: cx }
+    Cons(j, rest) => {
+      let own := vm_deadline(vm_arg(j.args, vm_deadline_at(j.name)))
+      let d := match own {
+        Some(o) => if o < until { o } else { until }
+        None => until
+      }
+      let answer := vm_waiting(j.name, j.args, Some(d))
+      let still := if vm_timed_out(answer) {
+        match own {
+          None => true
+          Some(o) => perform monotonic_clock() < o
+        }
+      } else {
+        false
+      }
+      match vm_poll(rest, cx, until) {
+        VmPolled { jobs: left, answered, cx: cx2 } => if still {
+          VmPolled { jobs: Cons(j, left), answered: answered, cx: cx2 }
+        } else {
+          VmPolled { jobs: left, answered: true, cx: m_fulfill(cx2, j.pending, answer) }
+        }
+      }
+    }
+  }
+}
+
+pub fn vm_poll_state(jobs: List(VmJob), st: MState): Pair(List(VmJob), MState) ! {Host} {
+  match jobs {
+    Nil => Pair { fst: Nil, snd: st }
+    _ => match st {
+      Mstate(MkCode, slots, stack, fr, cx) => match vm_poll(jobs, cx, perform monotonic_clock()) {
+        VmPolled { jobs: left, answered, cx: cx2 } => Pair {
+          fst: left,
+          snd: Mstate(MkCode, slots, stack, fr, cx2),
+        }
+      }
+    }
+  }
+}
+
+// How long a turn of waiting for the started requests is, in nanoseconds.
+pub fn vm_turn(): i64 {
+  10000000
+}
+
 // The host's answer to the request `name`, or `None` when the shell cannot make it. The
 // shell asks its own host by the standard effects, which check what it was allowed
 // itself: a request the program's permissions would refuse is refused there.
@@ -100,6 +303,15 @@ pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(M
   } else if Text::eq(name, "Os::check") {
     // The host's own check, so a denial comes back as `Denied`.
     Some(vm_text_option(perform permission(m_as_text(a), m_as_text(b))))
+  } else if Text::eq(name, "Os::resolve") {
+    // The standard handler wraps the requested host in `http://` and `/`.
+    // Delegate that request to this shell's own network effect and permissions.
+    let url := m_as_text(a)
+    let host := Text::slice_or_empty(url, 7, Nat::sub(Text::len(url), 1))
+    match perform net_resolve(host) {
+      Ok(addresses) => Some(m_ok(m_list(vm_texts(addresses))))
+      Err(error) => Some(m_errv(MvText(io_message(error))))
+    }
   } else if Text::eq(name, "Os::read_file") {
     match perform fs_read(m_as_text(a)) {
       Ok(t) => Some(m_ok(MvText(t)))
@@ -114,6 +326,16 @@ pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(M
     }
   } else if Text::eq(name, "Os::write_bytes") {
     Some(vm_io_unit(perform fs_write_bytes(m_as_text(a), m_as_bytes(b))))
+  } else if Text::eq(name, "Os::read_under") {
+    match perform fs_read_under(m_as_text(a), m_as_text(b)) {
+      Ok(t) => Some(m_ok(MvText(t)))
+      Err(e) => Some(m_errv(MvText(io_message(e))))
+    }
+  } else if Text::eq(name, "Os::read_bytes_under") {
+    match perform fs_read_bytes_under(m_as_text(a), m_as_text(b)) {
+      Ok(bs) => Some(m_ok(MvBytes(bs)))
+      Err(e) => Some(m_errv(MvText(io_message(e))))
+    }
   } else if Text::eq(name, "Os::create_dir") {
     Some(vm_io_unit(perform fs_create_dir(m_as_text(a))))
   } else if Text::eq(name, "Os::list_dir") {
@@ -127,10 +349,25 @@ pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(M
     match perform fs_stat(m_as_text(a)) {
       Ok(None) => Some(m_ok(m_list(Nil)))
       Ok(Some(st)) => Some(
-        m_ok(m_list(Cons(MvText(vm_kind_name(st.kind)), Cons(MvText(Text::of_u64(st.size)), Cons(MvText(Text::of_u64(st.modified_ms)), Nil)))))
+        m_ok(
+          m_list(
+            Cons(
+              MvText(vm_kind_name(st.kind)),
+              Cons(MvText(Text::of_u64(st.size)), Cons(MvText(Text::of_u64(st.modified_ms)), Nil))
+            )
+          )
+        )
       )
       Err(e) => Some(m_errv(MvText(io_message(e))))
     }
+  } else if Text::eq(name, "Os::read_link") {
+    match perform fs_read_link(m_as_text(a)) {
+      Ok(None) => Some(m_ok(m_list(Nil)))
+      Ok(Some(target)) => Some(m_ok(m_list(Cons(MvText(target), Nil))))
+      Err(e) => Some(m_errv(MvText(io_message(e))))
+    }
+  } else if Text::eq(name, "Os::write_new") {
+    Some(vm_io_unit(perform fs_write_new(m_as_text(a), m_as_text(b))))
   } else if Text::eq(name, "Os::move_path") {
     Some(vm_io_unit(perform fs_rename(m_as_text(a), m_as_text(b))))
   } else if Text::eq(name, "Os::copy_file") {
@@ -168,6 +405,51 @@ pub fn vm_host(name: Text, args: List(MVal), program_args: List(Text)): Option(M
       Ok(s) => Some(m_ok(MvBytes(expose(s))))
       Err(e) => Some(m_errv(MvText(io_message(e))))
     }
+  } else if Bool::or(Text::eq(name, "Os::tcp_connect"), Text::eq(name, "Os::tcp_write")) {
+    Some(vm_waiting(name, args, vm_deadline(vm_arg(args, vm_deadline_at(name)))))
+  } else if Text::eq(name, "Os::child_write") {
+    Some(vm_io_unit(perform proc_write(Child { id: vm_u64(a) }, m_as_bytes(b))))
+  } else if Text::eq(name, "Os::tcp_listen") {
+    match perform tcp_listen(m_as_text(a)) {
+      Ok(l) => Some(m_ok(m_list(Cons(MvText(Text::of_u64(l.id)), Cons(MvText(l.address), Nil)))))
+      Err(e) => Some(m_errv(MvText(io_message(e))))
+    }
+  } else if Text::eq(name, "Os::tcp_shutdown") {
+    let how := match m_as_nat(b) {
+      Zero => ShutdownRead
+      Succ(Zero) => ShutdownWrite
+      _ => ShutdownBoth
+    }
+    Some(vm_io_unit(perform tcp_shutdown(vm_stream(a), how)))
+  } else if Text::eq(name, "Os::tcp_close") {
+    perform tcp_close(vm_stream(a))
+    Some(MvUnit)
+  } else if Text::eq(name, "Os::tcp_unlisten") {
+    perform tcp_unlisten(TcpListener { id: vm_u64(a), address: "" })
+    Some(MvUnit)
+  } else if Text::eq(name, "Os::child_spawn") {
+    let process := Process {
+      program: m_as_text(a),
+      args: vm_text_items(1000000, b),
+      dir: m_as_text(vm_arg(args, 2)),
+      env: vm_pairs(vm_text_items(1000000, vm_arg(args, 3))),
+      stdin: m_as_bytes(vm_arg(args, 4)),
+    }
+    let modes := vm_text_items(3, vm_arg(args, 5))
+    let io := ProcessIo {
+      stdin: vm_stdio(modes, 0),
+      stdout: vm_stdio(modes, 1),
+      stderr: vm_stdio(modes, 2),
+    }
+    match perform proc_spawn(process, io) {
+      Ok(c) => Some(m_ok(m_list(Cons(MvText(Text::of_u64(c.id)), Nil))))
+      Err(e) => Some(m_errv(MvText(io_message(e))))
+    }
+  } else if Text::eq(name, "Os::child_close_stdin") {
+    Some(vm_io_unit(perform proc_close_stdin(Child { id: vm_u64(a) })))
+  } else if Text::eq(name, "Os::child_close") {
+    perform proc_close(Child { id: vm_u64(a) })
+    Some(MvUnit)
   } else if Text::eq(name, "Os::status") {
     match w_number(Text::bytes(m_as_text(a)), 0, false) {
       None => Some(MvInt(IntOfNat(0)))
@@ -204,24 +486,81 @@ pub fn vm_exit(code: Int): Unit {
 }
 
 // Runs the machine to its end, in runs of at most 100000 instructions. LIMIT is the
-// host's limit of steps as `vm` was given it, for the message when it runs out.
+// host's limit of steps as `vm` was given it, for the message when it runs out. JOBS are
+// the requests that wait which the shell started (`MstepStart`): between runs, and while
+// every task waits, it gives the machine the answers that came.
+// The signals of the program's `shutdown_token`s still waiting for a request to end the run,
+// and the shell's own token that brings it: the shell asks its host for one the first time
+// the program does, so until then a request ends the shell as it would end the program.
+pub struct VmShutdown { token: Option(CancelToken), watch: List(Nat) }
+
+pub fn vm_shutdown_add(sd: VmShutdown, id: Nat): VmShutdown {
+  let token := match sd.token {
+    Some(t) => t
+    None => perform shutdown_token()
+  }
+  VmShutdown { token: Some(token), watch: Cons(id, sd.watch) }
+}
+
+pub fn vm_shutdown_raise(ids: List(Nat), cx: MCx): MCx {
+  match ids {
+    Nil => cx
+    Cons(id, rest) => vm_shutdown_raise(rest, m_raise(cx, id, None))
+  }
+}
+
+// Raises the waiting signals once the request has come.
+pub fn vm_shutdown_fire(sd: VmShutdown, cx: MCx): Pair(VmShutdown, MCx) {
+  match sd.token {
+    Some(t) => if CancelToken::is_requested(t) {
+      Pair { fst: VmShutdown { token: sd.token, watch: Nil }, snd: vm_shutdown_raise(sd.watch, cx) }
+    } else {
+      Pair { fst: sd, snd: cx }
+    }
+    None => Pair { fst: sd, snd: cx }
+  }
+}
+
+pub fn vm_shutdown_state(sd: VmShutdown, st: MState): Pair(VmShutdown, MState) {
+  match st {
+    Mstate(MkCode, slots, stack, fr, cx) => match vm_shutdown_fire(sd, cx) {
+      Pair { fst: sd2, snd: cx2 } => Pair { fst: sd2, snd: Mstate(MkCode, slots, stack, fr, cx2) }
+    }
+  }
+}
+
+pub fn vm_shutdown_waits(sd: VmShutdown): Bool {
+  match sd.watch {
+    Nil => false
+    _ => true
+  }
+}
+
 pub fn vm_shell(
   p: MProgram,
   limit: Text,
   r: MStep,
   shows: Option(Text),
   so_far: Text,
-  program_args: List(Text)
+  program_args: List(Text),
+  jobs: List(VmJob),
+  sd: VmShutdown
 ): Unit {
   match r {
-    MstepNext(s) => vm_shell(
-      p,
-      limit,
-      mrun(p, 100000, m_set_now(s, vm_now())),
-      shows,
-      so_far,
-      program_args
-    )
+    MstepNext(s) => match vm_poll_state(jobs, s) {
+      Pair { fst: left, snd: s1 } => match vm_shutdown_state(sd, s1) {
+        Pair { fst: sd2, snd: s2 } => vm_shell(
+          p,
+          limit,
+          mrun(p, 100000, m_set_now(s2, vm_now())),
+          shows,
+          so_far,
+          program_args,
+          left,
+          sd2
+        )
+      }
+    }
     MstepDone => #()
     MstepExit(MkCode) => vm_exit(MkCode)
     MstepShow(name, shown, s) => {
@@ -230,28 +569,118 @@ pub fn vm_shell(
         so_far,
         Text::concat_all(Cons(name, Cons(" = ", Cons(shown, Cons("\n", Nil)))))
       )
-      vm_shell(p, limit, MstepNext(s), shows, so_far2, program_args)
+      vm_shell(p, limit, MstepNext(s), shows, so_far2, program_args, jobs, sd)
     }
-    MstepAsk(name, args, s) => match vm_host(name, args, program_args) {
-      Some(v) => vm_shell(p, limit, MstepNext(m_answer(s, v)), shows, so_far, program_args)
-      None => {
-        eprint(
-          Text::concat_all(
-            Cons("not supported by the vm backend: the host request ", Cons(name, Cons("\n", Nil)))
-          )
+    MstepAsk(name, args, s) => if Text::eq(name, "vm_native") {
+      vm_shell(p, limit, vm_native_answer(p, args, s), shows, so_far, program_args, jobs, sd)
+    } else if Text::eq(name, "Os::on_shutdown") {
+      let sd2 := vm_shutdown_add(sd, m_id_of(vm_arg(args, 0)))
+      vm_shell(p, limit, MstepNext(m_answer(s, MvUnit)), shows, so_far, program_args, jobs, sd2)
+    } else {
+      match vm_host(name, args, program_args) {
+        Some(v) => vm_shell(
+          p,
+          limit,
+          MstepNext(m_answer(s, v)),
+          shows,
+          so_far,
+          program_args,
+          jobs,
+          sd
         )
-        perform exit(3)
+        None => {
+          eprint(
+            Text::concat_all(
+              Cons(
+                "not supported by the vm backend: the host request ",
+                Cons(name, Cons("\n", Nil))
+              )
+            )
+          )
+          perform exit(3)
+        }
       }
     }
-    MstepSleep(until, cx) => {
-      let now := vm_now()
-      let wait := vm_i64(until) - vm_i64(now)
-      if wait > 0 {
-        perform sleep(U64::of_i64(wait))
+    MstepStart(name, args, pending, cx) => vm_shell(
+      p,
+      limit,
+      m_wake(cx, vm_now()),
+      shows,
+      so_far,
+      program_args,
+      Cons(VmJob { pending: pending, name: name, args: args }, jobs),
+      sd
+    )
+    MstepIdle(cx) => match jobs {
+      // No task can go on and nothing the host was asked can wake one, but a request to
+      // end the run may still raise what one waits for.
+      Nil => if vm_shutdown_waits(sd) {
+        perform sleep(10)
+        match vm_shutdown_fire(sd, cx) {
+          Pair { fst: sd2, snd: cx2 } => vm_shell(
+            p,
+            limit,
+            if vm_shutdown_waits(sd2) { MstepIdle(cx2) } else { m_wake(cx2, vm_now()) },
+            shows,
+            so_far,
+            program_args,
+            jobs,
+            sd2
+          )
+        }
       } else {
-        #()
+        vm_fail(m_deadlock())
       }
-      vm_shell(p, limit, m_wake(cx, vm_now()), shows, so_far, program_args)
+      _ => match vm_poll(jobs, cx, perform monotonic_clock() + vm_turn()) {
+        VmPolled { jobs: left, answered, cx: cx2 } => match vm_shutdown_fire(sd, cx2) {
+          Pair { fst: sd2, snd: cx3 } => {
+            let fired := if vm_shutdown_waits(
+              sd
+            ) { if vm_shutdown_waits(sd2) { false } else { true } } else { false }
+            let go := if answered { true } else { fired }
+            vm_shell(
+              p,
+              limit,
+              if go { m_wake(cx3, vm_now()) } else { MstepIdle(cx3) },
+              shows,
+              so_far,
+              program_args,
+              left,
+              sd2
+            )
+          }
+        }
+      }
+    }
+    MstepSleep(until, cx) => match jobs {
+      Nil => {
+        let wait := vm_i64(until) - vm_i64(vm_now())
+        // In turns while a request to end the run may come.
+        let turn := if vm_shutdown_waits(sd) { if wait > 10 { 10 } else { wait } } else { wait }
+        if turn > 0 {
+          perform sleep(U64::of_i64(turn))
+        } else {
+          #()
+        }
+        vm_shell(p, limit, m_wake(cx, vm_now()), shows, so_far, program_args, jobs, sd)
+      }
+      // A started request may answer before the timer: wait for them in turns until it.
+      _ => {
+        let timer := vm_i64(until) * 1000000
+        let turn := perform monotonic_clock() + vm_turn()
+        match vm_poll(jobs, cx, if timer < turn { timer } else { turn }) {
+          VmPolled { jobs: left, answered, cx: cx2 } => vm_shell(
+            p,
+            limit,
+            m_wake(cx2, vm_now()),
+            shows,
+            so_far,
+            program_args,
+            left,
+            sd
+          )
+        }
+      }
     }
     MstepError(message) => if Text::eq(message, m_step_limit()) {
       vm_fail(
@@ -292,7 +721,8 @@ pub fn vm_main(path: Text, limit_text: Text, shows: Option(Text), program_args: 
           )
           perform exit(3)
         }
-        COk(p) => {
+        COk(p0) => {
+          let p := vm_native_program(p0)
           match shows {
             None => #()
             Some(f) => match write_file(f, "") {
@@ -306,7 +736,9 @@ pub fn vm_main(path: Text, limit_text: Text, shows: Option(Text), program_args: 
             MstepNext(mstart(p, vm_limit(limit_text), vm_now())),
             shows,
             "",
-            program_args
+            program_args,
+            Nil,
+            VmShutdown { token: None, watch: Nil }
           )
         }
       }

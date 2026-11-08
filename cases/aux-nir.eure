@@ -1,0 +1,292 @@
+@ cases.compile_observer_observers_see_only_reached_phase_boundaries
+source = ```tauto
+fn bad(
+```
+parses = false
+
+@ cases.compile_observer_observers_see_only_reached_phase_boundaries_2
+source = ```tauto
+let x: Bool := 42
+```
+types = "error: `x`: i64 does not fit Bool"
+
+@ cases.compile_observer_observers_see_only_reached_phase_boundaries_3
+source = ```tauto
+perform show("x", 42)
+```
+shows = ["x = 42"]
+backends = ["rust", "javascript"]
+
+@ cases.occurrence_identity_equal_display_spans_keep_types_widths_rows_and_binding_sites_separate
+source = ```tauto
+
+enum Item { Item(Text) }
+fn inspect(item: Item): u64 { match item { Item(text) => Text::len(text) } }
+fn forward(item: Item, read: () -> Text): u64 { inspect(item) + Text::len(read()) }
+fn narrow(value: u32): u32 { value + 1 }
+fn wide(value: u64): u64 { value + 1 }
+fn generic<A: Shared>(&value: A): A { value }
+effect ask(): u64
+fn request(): u64 ! {ask} { perform ask() }
+fn pure(): u64 { 0 }
+fn choose(): u64 ! {ask} { pure() + request() }
+perform show("value", forward(Item("hello"), () => { let value := "hello"; generic(&value) }))
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+shows = ["value = 10"]
+backends = ["rust", "javascript"]
+
+@ cases.occurrence_identity_class_signature_and_expression_generations_have_distinct_identities
+source = ```tauto
+class C(A: Shared) { fn read(value: A): Text }
+fn choose<A: Shared>(): (A) -> Text where C(A) { C.read }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.projection_types_every_projection_has_its_checked_type_and_source_span
+source = ```tauto
+struct Inner { values: List(u64) }
+struct Outer { inner: Inner }
+fn read(value: Pair(Outer, u64)): List(u64) { value.fst.inner.values }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.projection_types_every_projection_has_its_checked_type_and_source_span_2
+source = ```tauto
+struct Inner { values: List(u64) }
+struct Outer { pair: Pair(Inner, u64) }
+fn read(value: Outer): List(u64) { value.pair.fst.values }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.projection_types_generic_projection_types_retain_the_helper_type_parameter
+source = ```tauto
+shared struct Inner(A: Shared) { values: List(A) }
+shared struct Outer(B: Shared) { inner: Inner(B) }
+shared struct Wrapper(C: Shared) { outer: Outer(C) }
+fn read<T: Shared>(&value: Wrapper(T)): List(T) { value.outer.inner.values }
+fn run(value: Wrapper(u64)): List(u64) { read(&value) }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.projection_owned
+source = ```tauto
+struct Inner { values: List(u64) }
+struct Outer { inner: Inner }
+fn read(value: Outer): List(u64) { value.inner.values }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.projection_borrowed
+source = ```tauto
+struct Inner { values: List(u64) }
+struct Outer { inner: Inner }
+fn read(&value: Outer): List(u64) { value.inner.values }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.projection_mutable
+source = ```tauto
+struct Inner { values: List(u64) }
+struct Outer { inner: Inner }
+fn read(&mut value: Outer): List(u64) { value.inner.values }
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.plain_recursive_borrow
+source = ```tauto
+enum Tree { Leaf(i64), Branch(Tree, Tree) }
+fn read(t: Tree): i64 { match t { Leaf(n) => n, Branch(l, r) => read(l) + read(r) } }
+fn run(): i64 { read(Leaf(1)) }
+perform show("value", run())
+```
+shows = ["value = 1"]
+backends = ["rust", "javascript"]
+
+@ cases.closure_recursive_borrow
+source = ```tauto
+enum Tree { Leaf(i64), Branch(Tree, Tree) }
+fn read(t: Tree): i64 { match t { Leaf(n) => n, Branch(l, r) => read(l) + read(r) } }
+fn run(): i64 { let outer := () => { let inner := () => read(Leaf(1))
+inner() }
+outer() }
+perform show("value", run())
+```
+shows = ["value = 1"]
+backends = ["rust", "javascript"]
+
+@ cases.extraction_markers_do_not_certify_totality
+files."extracted.taut" = ```tauto
+// tauto:extracted
+pub fn proved(n: i64): i64 ! {Div} { if n == 0 { 0 } else { proved(n - 1) } }
+// tauto:extracted-end
+```
+files."runtime.taut" = ```tauto
+import "extracted.taut"
+
+pub fn looping(n: i64): i64 ! {Div} { looping(n) }
+perform show("a", proved(1))
+perform show("b", looping(1))
+```
+files."main.tauto" = ```tauto
+import "extracted.taut"
+import "runtime.taut"
+```
+entry = "main.tauto"
+types = "ok"
+rows = "ok"
+lin = "ok"
+backends = ["rust", "javascript"]
+description = "Compile-only: this body intentionally diverges; the retained Rust NIR test checks call ticks and compile phases without executing it."
+
+// The self calls in tail position NIR marks `recur`, and the ones it leaves
+// as calls. `crates/tauto-nir/tests/tail_marks.rs` reads the marks.
+@ cases.tail_marks_an_owned_accumulator
+source = ```tauto
+fn count(n: u64, done: u64): u64 {
+    if n == 0 { done } else { count(n - 1, done + 1) }
+}
+perform show("count", count(3, 0))
+```
+shows = ["count = 3"]
+
+@ cases.tail_marks_a_borrow_passed_on
+source = ```tauto
+import std::prelude::Affine
+
+fn sum_from(&v: Vec(u64), i: u64, left: u64, acc: u64): u64 {
+    if left == 0 {
+        acc
+    } else {
+        let &x := Vec::index(&v, i)
+        let next := if i + 1 == Vec::len(&v) { 0 } else { i + 1 }
+        sum_from(&v, next, left - 1, acc + x)
+    }
+}
+var v: Vec(u64) := Vec::new()
+Vec::push(&mut v, 1)
+Vec::push(&mut v, 2)
+perform show("sum", handle { sum_from(&v, 0, 3, 0) } with { out_of_bounds() => 0 })
+```
+shows = ["sum = 4"]
+
+@ cases.tail_marks_a_borrow_of_a_parameters_part
+source = ```tauto
+fn reverse_onto<A>(l: List(A), acc: List(A)): List(A) {
+    ⊢ List(A) from match l {
+        Nil => acc
+        Cons(h, t) => reverse_onto(t, Cons(h, acc))
+    }
+}
+fn len<A>(l: List(A), n: u64): u64 {
+    ⊢ u64 from match l {
+        Nil => n
+        Cons(_, t) => len(t, n + 1)
+    }
+}
+let xs: List(u64) := Cons(1, Cons(2, Cons(3, Nil)))
+let ys := reverse_onto(xs, Nil)
+let n := len(ys, 0) + len(xs, 0)
+perform show("len", n)
+```
+shows = ["len = 6"]
+backends = ["rust", "javascript"]
+
+@ cases.tail_leaves_a_call_whose_value_is_used
+source = ```tauto
+fn count(n: u64): u64 {
+    if n == 0 { 0 } else { 1 + count(n - 1) }
+}
+perform show("count", count(3))
+```
+shows = ["count = 3"]
+
+@ cases.tail_leaves_a_borrow_of_a_local
+source = ```tauto
+import std::prelude::Affine
+
+fn walk(&v: Vec(u64), left: u64): u64 {
+    if left == 0 {
+        Vec::len(&v)
+    } else {
+        var w: Vec(u64) := Vec::new()
+        Vec::push(&mut w, left)
+        walk(&w, left - 1)
+    }
+}
+var v: Vec(u64) := Vec::new()
+perform show("len", walk(&v, 2))
+```
+shows = ["len = 1"]
+
+@ cases.tail_leaves_a_call_in_a_handle
+source = ```tauto
+effect ask(): u64 direct
+fn inner(n: u64): u64 {
+    handle {
+        if n == 0 { perform ask() } else { inner(n - 1) }
+    } with {
+        ask(), k => k(7)
+    }
+}
+perform show("r", inner(3))
+```
+shows = ["r = 7"]
+
+@ cases.tail_leaves_a_function_that_holds_an_extern_value
+source = ```tauto
+extern {
+  affine type Tally
+  fn tally_new(n: i64): Tally
+  fn tally_get(&t: Tally): i64
+}
+fn drain(n: i64, acc: i64): i64 {
+    if n == 0 {
+        acc
+    } else {
+        let t := tally_new(n)
+        let v := tally_get(&t)
+        drain(n - 1, acc + v)
+    }
+}
+```
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.tail_leaves_a_function_of_the_m_tier
+source = ```tauto
+effect choose(): Bool resume ω
+fn pick(n: u64, acc: u64): u64 ! {choose} {
+    if n == 0 {
+        acc
+    } else {
+        let b := perform choose()
+        pick(n - 1, if b { acc + 1 } else { acc })
+    }
+}
+fn all(): u64 {
+    handle { pick(2, 0) } with {
+        choose(), k => k(true) + k(false)
+        return v => v
+    }
+}
+perform show("sum", all())
+```
+shows = ["sum = 4"]

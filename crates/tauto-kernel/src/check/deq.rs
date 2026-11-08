@@ -18,12 +18,14 @@
 //! gets none:
 //! there is no decision to compare it with.
 
+use crate::surface::Name;
 use std::collections::HashMap;
 use std::fmt::Write;
+use tauto_surface::identity::Generation;
 
 use super::inductive::Ctor;
 use super::{Diagnostic, Kernel, T, Verdict, describe};
-use crate::surface::{Stmt, SurfaceTerm, TermKind, parse_expr_at};
+use crate::surface::{Stmt, SurfaceTerm, TermKind};
 use tauto_message::{Message, msg};
 
 const LEMMAS: &[&str] = &[
@@ -48,10 +50,10 @@ const LEMMAS: &[&str] = &[
 /// generated text calls for them.
 struct Gen<'a> {
     family: &'a str,
-    params: Vec<String>,
+    params: Vec<Name>,
     /// The types that have a decision procedure, with their number of
     /// parameters (the family being generated included).
-    known: HashMap<String, usize>,
+    known: HashMap<Name, usize>,
 }
 
 impl Gen<'_> {
@@ -59,7 +61,8 @@ impl Gen<'_> {
     fn supported(&self, ty: &T) -> bool {
         match &*ty.kind {
             TermKind::Var(n) => {
-                matches!(n.as_str(), "Nat" | "Bool")
+                (tauto_surface::bindings::is_library(&n, "Nat")
+                    || tauto_surface::bindings::is_library(&n, "Bool"))
                     || self.params.contains(n)
                     || self.known.get(n) == Some(&0)
             }
@@ -116,8 +119,10 @@ impl Gen<'_> {
             return format!("(u: {t}, v: {t}) => {}", self.call_eq(ty, "u", "v"));
         }
         match &*ty.kind {
-            TermKind::Var(n) if n == "Nat" => "Nat::eq".into(),
-            TermKind::Var(n) if n == "Bool" => "Bool::eq".into(),
+            TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "Nat") => "Nat::eq".into(),
+            TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "Bool") => {
+                "Bool::eq".into()
+            }
             TermKind::Var(n) if self.params.contains(n) => format!("e_{n}"),
             TermKind::Var(n) => format!("{n}::beq"),
             _ => String::new(),
@@ -132,8 +137,12 @@ impl Gen<'_> {
             return format!("(u: {t}) => {}", self.call_refl(ty, "u"));
         }
         match &*ty.kind {
-            TermKind::Var(n) if n == "Nat" => "Nat::eq_refl".into(),
-            TermKind::Var(n) if n == "Bool" => "Bool::eq_refl".into(),
+            TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "Nat") => {
+                "Nat::eq_refl".into()
+            }
+            TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "Bool") => {
+                "Bool::eq_refl".into()
+            }
             TermKind::Var(n) if self.params.contains(n) => format!("r_{n}"),
             TermKind::Var(n) => format!("{n}::beq_refl"),
             _ => String::new(),
@@ -152,8 +161,12 @@ impl Gen<'_> {
             );
         }
         match &*ty.kind {
-            TermKind::Var(n) if n == "Nat" => "Nat::eq_sound".into(),
-            TermKind::Var(n) if n == "Bool" => "Bool::eq_sound".into(),
+            TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "Nat") => {
+                "Nat::eq_sound".into()
+            }
+            TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "Bool") => {
+                "Bool::eq_sound".into()
+            }
             TermKind::Var(n) if self.params.contains(n) => format!("s_{n}"),
             TermKind::Var(n) => format!("{n}::beq_sound"),
             _ => String::new(),
@@ -197,10 +210,11 @@ impl Gen<'_> {
 }
 
 impl Kernel {
-    fn decidable_families(&self) -> HashMap<String, usize> {
+    /// The generated types, with their number of parameters.
+    fn decidable_families(&self) -> HashMap<Name, usize> {
         self.inds
             .iter()
-            .filter(|(n, _)| self.globals.contains_key(&format!("{n}::beq_sound")))
+            .filter(|(n, _)| matches!(n, Name::Global(owner) if self.globals.contains_key(&Name::from(owner.generated(Generation::EqualitySoundness)))))
             .map(|(n, i)| (n.clone(), i.params.len()))
             .collect()
     }
@@ -208,31 +222,84 @@ impl Kernel {
     /// The function that compares the values of `ty` (a term of the surface
     /// syntax), when `ty` has a decidable equality: what `a == b` calls.
     pub(super) fn equality_function(&self, ty: &T) -> Option<SurfaceTerm> {
-        let g = Gen {
-            family: "",
-            params: Vec::new(),
-            known: self.decidable_families(),
+        let (family, args): (&Name, &[T]) = match &*ty.kind {
+            TermKind::Var(name) => (name, &[]),
+            TermKind::App {
+                function,
+                arguments,
+            } => match &*function.kind {
+                TermKind::Var(name) => (name, arguments),
+                _ => return None,
+            },
+            _ => return None,
         };
-        g.applied(ty)?;
-        if !g.supported(ty) {
+        if args.is_empty()
+            && (tauto_surface::bindings::is_library(&family, "Nat")
+                || tauto_surface::bindings::is_library(&family, "Bool"))
+        {
+            let reference = tauto_surface::bindings::library_name(
+                if tauto_surface::bindings::is_library(&family, "Nat") {
+                    "Nat::eq"
+                } else {
+                    "Bool::eq"
+                },
+            );
+            return self
+                .globals
+                .contains_key(&reference)
+                .then(|| T::var(&reference, ty.span));
+        }
+        if self.decidable_families().get(family) != Some(&args.len()) {
             return None;
         }
-        let text = match &*ty.kind {
-            TermKind::Var(n) => format!("{n}::beq"),
-            _ => g.eq_of(ty),
+        let Name::Global(owner) = family else {
+            return None;
         };
-        parse_expr_at(&text, 0).ok()
+        let reference = Name::from(owner.generated(Generation::Equality));
+        if !self.globals.contains_key(&reference) {
+            return None;
+        }
+        let functions = args
+            .iter()
+            .map(|arg| self.equality_function(arg))
+            .collect::<Option<Vec<_>>>()?;
+        Some(if functions.is_empty() {
+            T::var(&reference, ty.span)
+        } else {
+            let left = Name::from(tauto_surface::identity::LocalRef::fresh("eq_left"));
+            let right = Name::from(tauto_surface::identity::LocalRef::fresh("eq_right"));
+            let arguments = args
+                .iter()
+                .cloned()
+                .chain(functions)
+                .chain([T::var(&left, ty.span), T::var(&right, ty.span)])
+                .collect();
+            T::new(
+                TermKind::Lam {
+                    params: vec![left, right],
+                    types: vec![Some(ty.clone()), Some(ty.clone())],
+                    body: Box::new(T::app(&reference, arguments, ty.span)),
+                },
+                ty.span,
+            )
+        })
     }
 
     /// The types declared before the lemmas the generated proofs use get
     /// theirs once those are declared (`Option` and `List` come before
     /// `Base`).
     pub(super) fn decidable_pending(&mut self) {
-        if self.deq_started || !LEMMAS.iter().all(|l| self.globals.contains_key(*l)) {
+        if self.deq_started
+            || !LEMMAS.iter().all(|l| {
+                self.resolver
+                    .source_reference(l)
+                    .is_some_and(|reference| self.globals.contains_key(&reference))
+            })
+        {
             return;
         }
         self.deq_started = true;
-        let mut names: Vec<String> = self.deq_listed.keys().cloned().collect();
+        let mut names: Vec<Name> = self.deq_listed.keys().cloned().collect();
         names.sort();
         // A type may need one that comes after it by name.
         loop {
@@ -244,7 +311,8 @@ impl Kernel {
         }
     }
 
-    fn is_proposition(&self, name: &str) -> bool {
+    /// Whether the family `name` is a proposition.
+    fn is_proposition(&self, name: &Name) -> bool {
         let mut ty = match self.globals.get(name) {
             Some(g) => &g.ty,
             None => return false,
@@ -252,7 +320,7 @@ impl Kernel {
         while let TermKind::Pi { result, .. } = &*ty.kind {
             ty = result;
         }
-        matches!(&*ty.kind, TermKind::Var(k) if k == "Prop")
+        matches!(&*ty.kind, TermKind::Var(k) if tauto_surface::bindings::is_library(&k, "Prop"))
     }
 
     /// The four declarations a type lists to have a decidable equality: `X::beq`, `X::beq_refl`,
@@ -271,28 +339,34 @@ impl Kernel {
     /// Generates `X::beq`, `X::beq_refl`, `X::beq_sound` and `X::deq` of the
     /// inductive `family` (which lists them) when it has a decision
     /// procedure, and returns whether they were generated.
-    pub(super) fn decidable_equality(&mut self, family: &str) -> bool {
+    pub(super) fn decidable_equality(&mut self, family: &Name) -> bool {
         match self.decidable_try(family) {
             Ok(()) => {
                 self.deq_why.remove(family);
                 true
             }
             Err(why) => {
-                self.deq_why.insert(family.to_string(), why);
+                self.deq_why.insert(family.clone(), why);
                 false
             }
         }
     }
 
-    fn decidable_try(&mut self, family: &str) -> Result<(), Message> {
+    fn decidable_try(&mut self, family: &Name) -> Result<(), Message> {
         let Some(ind) = self.inds.get(family).cloned() else {
             return Err(msg!("kernel-deq-not-inductive"));
         };
-        let names = ["::beq", "::beq_refl", "::beq_sound", "::deq"].map(|s| format!("{family}{s}"));
+        let names = [
+            Generation::Equality,
+            Generation::EqualityReflexivity,
+            Generation::EqualitySoundness,
+            Generation::DecidableEquality,
+        ]
+        .map(|kind| self.resolver.generated(family, kind));
         let types = ind
             .params
             .iter()
-            .all(|(_, t)| matches!(&*t.kind, TermKind::Var(k) if k == "Type"));
+            .all(|(_, t)| matches!(&*t.kind, TermKind::Var(k) if tauto_surface::bindings::is_library(&k, "Type")));
         if !types {
             return Err(msg!("kernel-deq-param-not-type"));
         }
@@ -311,14 +385,19 @@ impl Kernel {
         if self.is_proposition(family) {
             return Err(msg!("kernel-deq-proposition"));
         }
-        if let Some(l) = LEMMAS.iter().find(|l| !self.globals.contains_key(**l)) {
+        if let Some(l) = LEMMAS.iter().find(|l| {
+            !self
+                .resolver
+                .source_reference(l)
+                .is_some_and(|reference| self.globals.contains_key(&reference))
+        }) {
             return Err(msg!("kernel-deq-not-declared", name = *l));
         }
         if let Some(n) = names.iter().find(|n| self.globals.contains_key(*n)) {
-            return Err(msg!("kernel-already-defined", name = n));
+            return Err(msg!("kernel-already-defined", name = (n).to_string()));
         }
         let mut known = self.decidable_families();
-        known.insert(family.to_string(), ind.params.len());
+        known.insert(family.clone(), ind.params.len());
         let g = Gen {
             family,
             params: ind.params.iter().map(|(n, _)| n.clone()).collect(),
@@ -332,30 +411,93 @@ impl Kernel {
         }) {
             return Err(msg!(
                 "kernel-deq-field",
-                field = n,
-                ctor = c,
+                field = (n).to_string(),
+                ctor = (c).to_string(),
                 ty = describe(&t)
             ));
         }
-        let text = generate(&g, &ind.ctors);
-        // At the base of what a macro makes: what is generated has no text in the file of the
-        // family, and extraction writes it after what is written there.
-        let program =
+        // The template uses private slots for input references. Parsing the
+        // template never looks up the displays of already resolved inputs.
+        let mut encoded = HashMap::<Name, Name>::new();
+        let mut references = HashMap::<String, Name>::new();
+        let mut families: Vec<_> = g.known.keys().cloned().collect();
+        families.sort();
+        for (index, original) in families.iter().enumerate() {
+            let slot = format!("DeqType{index}");
+            encoded.insert(original.clone(), Name::from(&slot));
+            references.insert(slot.clone(), original.clone());
+            for (suffix, kind) in [
+                ("beq", Generation::Equality),
+                ("beq_refl", Generation::EqualityReflexivity),
+                ("beq_sound", Generation::EqualitySoundness),
+                ("deq", Generation::DecidableEquality),
+                ("ind", Generation::Induction),
+                ("rec", Generation::Recursion),
+                ("nc", Generation::NoConfusionType),
+                ("nc_diag", Generation::NoConfusionDiagonal),
+                ("noconf", Generation::NoConfusion),
+            ] {
+                references.insert(
+                    format!("{slot}::{suffix}"),
+                    self.resolver.generated(original, kind),
+                );
+            }
+        }
+        for (index, original) in g.params.iter().enumerate() {
+            encoded.insert(original.clone(), format!("DeqParam{index}").into());
+        }
+        let mut constructors = ind.ctors.clone();
+        for (index, constructor) in constructors.iter_mut().enumerate() {
+            let slot = format!("DeqCtor{index}");
+            references.insert(slot.clone(), constructor.name.clone());
+            constructor.name = slot.into();
+            for (_, ty) in &mut constructor.args {
+                crate::surface::references::term(ty, &mut |name| {
+                    if let Some(slot) = encoded.get(name) {
+                        *name = slot.clone();
+                    }
+                });
+            }
+        }
+        let family_slot = encoded[family].clone();
+        let template = Gen {
+            family: &family_slot,
+            params: g.params.iter().map(|name| encoded[name].clone()).collect(),
+            known: g
+                .known
+                .iter()
+                .map(|(name, arity)| (encoded[name].clone(), *arity))
+                .collect(),
+        };
+        for lemma in LEMMAS {
+            if let Some(reference) = self.resolver.source_reference(lemma) {
+                references.insert((*lemma).to_string(), reference);
+            }
+        }
+        let text = generate(&template, &constructors);
+        let mut program =
             match crate::surface::parse_program_unresolved_at(&text, crate::macros::EXPANSION_BASE)
             {
-                Ok(mut p) if p.errors.is_empty() => {
-                    let (stmts, errors) = crate::surface::modules::resolve_against(
-                        std::mem::take(&mut p.stmts),
-                        self.globals.keys().map(|k| k.as_str()),
-                    );
-                    if !errors.is_empty() {
-                        return Err(msg!("kernel-deq-no-parse"));
-                    }
-                    p.stmts = stmts;
-                    p
-                }
+                Ok(program) if program.errors.is_empty() => program,
                 _ => return Err(msg!("kernel-deq-no-parse")),
             };
+        let (statements, errors) = crate::surface::modules::resolve_in_prelude_against(
+            program.stmts,
+            references.keys().map(String::as_str),
+        );
+        if !errors.is_empty() {
+            return Err(msg!("kernel-deq-no-parse"));
+        }
+        program.stmts = statements;
+        for statement in &mut program.stmts {
+            crate::surface::references::statement(statement, &mut |name| {
+                if let Some(reference) = name.spelling().and_then(|slot| references.get(slot)) {
+                    *name = reference.clone();
+                }
+            });
+        }
+        tauto_surface::resolve::Resolver::new(tauto_surface::bindings::library_bindings())
+            .statements(&mut program.stmts);
         let records = self.records();
         let mut made = Vec::new();
         for stmt in &program.stmts {
@@ -374,7 +516,7 @@ impl Kernel {
                 return Err(msg!("kernel-deq-no-check"));
             }
         }
-        self.derived.push((family.to_string(), made));
+        self.derived.push((family.clone(), made));
         Ok(())
     }
 
@@ -384,10 +526,10 @@ impl Kernel {
         if !self.deq_started {
             return Vec::new();
         }
-        let mut missing: Vec<String> = self
+        let mut missing: Vec<Name> = self
             .deq_listed
             .keys()
-            .filter(|n| !self.globals.contains_key(&format!("{n}::beq_sound")))
+            .filter(|n| !matches!(n, Name::Global(owner) if self.globals.contains_key(&Name::from(owner.generated(Generation::EqualitySoundness)))))
             .cloned()
             .collect();
         missing.sort();
@@ -401,7 +543,7 @@ impl Kernel {
                 .remove(&n)
                 .unwrap_or_else(|| msg!("kernel-deq-not-generated"));
             let d = Diagnostic::new(
-                msg!("kernel-deq-cannot-make", name = &n, why = why),
+                msg!("kernel-deq-cannot-make", name = (&n).to_string(), why = why),
                 Some(listed.at),
             );
             out.push(super::Entry {
@@ -422,8 +564,8 @@ impl Kernel {
             return None;
         }
         let made = Self::decidable_list(&i.name);
-        let start = msg!("kernel-deq-list-mismatch", name = &i.name).to_string();
-        if let Some(why) = crate::generated::mismatch(&start, &i.generates.items, &made) {
+        let start = msg!("kernel-deq-list-mismatch", name = (&i.name).to_string());
+        if let Some(why) = crate::generated::mismatch(start, &i.generates.items, &made) {
             let mut d = Diagnostic::new(why, Some(i.generates.at));
             d.fix = Some(crate::generated::fix(&i.generates, &made));
             return Some(super::Entry {
@@ -438,7 +580,7 @@ impl Kernel {
 
 fn pattern(c: &Ctor, tag: &str) -> String {
     if c.args.is_empty() {
-        c.name.clone()
+        c.name.to_string()
     } else {
         let vars: Vec<String> = (1..=c.args.len()).map(|i| format!("{tag}{i}")).collect();
         applied(c, &vars)
@@ -475,12 +617,26 @@ fn generate(g: &Gen, ctors: &[Ctor]) -> String {
     let this = if params.is_empty() {
         family.to_string()
     } else {
-        format!("{family}({})", params.join(", "))
+        format!(
+            "{family}({})",
+            params
+                .iter()
+                .map(Name::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     };
     let generics = if params.is_empty() {
         String::new()
     } else {
-        format!("<{}>", params.join(", "))
+        format!(
+            "<{}>",
+            params
+                .iter()
+                .map(Name::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     };
     let typed_generics = if params.is_empty() {
         String::new()
@@ -520,9 +676,9 @@ fn generate(g: &Gen, ctors: &[Ctor]) -> String {
             &[&format!("a: {this}"), &format!("b: {this}")]
         )
     );
-    let _ = writeln!(out, "  match a: Bool {{");
+    let _ = writeln!(out, "  ⊢ Bool from match a {{");
     for (j, c) in ctors.iter().enumerate() {
-        let _ = writeln!(out, "    {} => match b: Bool {{", pattern(c, "x"));
+        let _ = writeln!(out, "    {} => ⊢ Bool from match b {{", pattern(c, "x"));
         for (k, d) in ctors.iter().enumerate() {
             let body = if j == k {
                 conjunction(g, &field_types(c), 0, "x", "y")
@@ -540,7 +696,7 @@ fn generate(g: &Gen, ctors: &[Ctor]) -> String {
         with(&[&e_params, &r_params], &[&format!("a: {this}")]),
         call_beq("a", "a")
     );
-    let _ = writeln!(out, "  match a: Eq(Bool, {}, true) {{", call_beq("a", "a"));
+    let _ = writeln!(out, "  ⊢ Eq(Bool, {}, true) from match a {{", call_beq("a", "a"));
     for c in ctors {
         let _ = writeln!(
             out,
@@ -562,11 +718,11 @@ fn generate(g: &Gen, ctors: &[Ctor]) -> String {
             ]
         )
     );
-    let _ = writeln!(out, "  match a: Eq({this}, a, b) {{");
+    let _ = writeln!(out, "  ⊢ Eq({this}, a, b) from match a {{");
     for (j, c) in ctors.iter().enumerate() {
         let _ = writeln!(
             out,
-            "    {} => match b: Eq({this}, {}, b) {{",
+            "    {} => ⊢ Eq({this}, {}, b) from match b {{",
             pattern(c, "x"),
             pattern(c, "x")
         );

@@ -36,7 +36,7 @@ pub enum Cps {
         args: Vec<Cps>,
     },
     External {
-        name: String,
+        name: Name,
         args: Vec<Cps>,
     },
     Builtin {
@@ -91,7 +91,7 @@ pub enum Cps {
     },
     Closure(Box<Closure>),
     Perform {
-        op: String,
+        op: Name,
         quant: Quant,
         args: Vec<Cps>,
     },
@@ -116,6 +116,7 @@ pub enum Cps {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
+    Declaration(usize),
     Unit,
     Int(i128),
     Float(f64),
@@ -145,15 +146,12 @@ pub enum Prim {
     /// with (in the order the arguments come), `order` the argument that
     /// fills each of the constructor's fields.
     Construct {
-        ctor: String,
+        ctor: Name,
         names: Vec<Option<String>>,
         order: Vec<usize>,
         is_struct: bool,
-        data: String,
-    },
-    /// A product: each member is an argument, or a field of one.
-    Product {
-        picks: Vec<(usize, Option<usize>)>,
+        data: Name,
+        field_types: Vec<Ty>,
     },
     Concat,
     TextOfInt,
@@ -176,7 +174,6 @@ pub enum Prim {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Unary {
     Not,
-    Member(usize),
     Field {
         name: String,
         index: Option<usize>,
@@ -212,12 +209,10 @@ pub enum CpsPat {
     },
     Literal(Value),
     Ctor {
-        ctor: String,
+        ctor: Name,
         fields: Vec<CpsPat>,
-        data: String,
+        data: Name,
     },
-    /// `#(…)` on a product: a pattern for each member, by position.
-    Product(Vec<CpsPat>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -230,7 +225,7 @@ pub struct MatchArm {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct HandlerArm {
-    pub op: String,
+    pub op: Name,
     pub pats: Vec<CpsPat>,
     pub k: Option<u32>,
     pub guard: Cps,
@@ -250,6 +245,8 @@ pub struct Closure {
     pub refs: Vec<(u32, u32)>,
     pub owned: Vec<bool>,
     pub moves: Vec<u32>,
+    /// Shared borrows captured as owned copies, then borrowed by each call.
+    pub owned_refs: Vec<u32>,
     /// A call consumes it.
     pub once: bool,
 }
@@ -303,6 +300,7 @@ impl Lower<'_> {
             ExprKind::Int(n) => pure(Value::Int(*n)),
             ExprKind::Float(x) => pure(Value::Float(*x)),
             ExprKind::Bool(b) => pure(Value::Bool(*b)),
+            ExprKind::Declaration(slot) => pure(Value::Declaration(*slot)),
             ExprKind::Text(t) => pure(Value::Text(t.clone())),
             ExprKind::Read { local, how } => Cps::ReadLocal {
                 id: local.id,
@@ -352,6 +350,12 @@ impl Lower<'_> {
                     Callee::Extern(n) => {
                         return Ok(Cps::External {
                             name: n.clone(),
+                            args,
+                        });
+                    }
+                    Callee::Builtin(n) if n == "Syn::same_declaration" => {
+                        return Ok(Cps::Prim {
+                            op: Prim::Eq { negate: false },
                             args,
                         });
                     }
@@ -442,7 +446,7 @@ impl Lower<'_> {
                     })
                     .collect();
                 let is_struct = match &ctor.data {
-                    DataRef::Pair | DataRef::Product => true,
+                    DataRef::Pair => true,
                     DataRef::Gen(n) => self.pkg.datas.iter().any(|d| d.name == *n && d.is_struct),
                     _ => false,
                 };
@@ -452,18 +456,12 @@ impl Lower<'_> {
                         names,
                         order,
                         is_struct,
-                        data: data_owner(&ctor.data).to_string(),
+                        data: data_owner(&ctor.data),
+                        field_types: fields.iter().map(|(_, field)| field.ty.clone()).collect(),
                     },
                     args,
                 }
             }
-            ExprKind::Product { members, picks } => Cps::Prim {
-                op: Prim::Product {
-                    picks: picks.clone(),
-                },
-                args: self.args(members)?,
-            },
-            ExprKind::Member { value, index, .. } => self.map(value, Unary::Member(*index))?,
             ExprKind::Field { base, field, .. } => self.map(
                 base,
                 Unary::Field {
@@ -628,6 +626,7 @@ impl Lower<'_> {
                 .map(|(l, _)| l.storage() == Storage::Owned)
                 .collect(),
             moves,
+            owned_refs: c.owned_refs.iter().map(|local| local.id).collect(),
             once: !c.borrowed && !c.fn_ty.kind.dup(),
         })))
     }
@@ -647,7 +646,15 @@ impl Lower<'_> {
                 }
                 referenced_locals(&arm.body, &mut used);
             }
-            *take = !used.contains(&local.id);
+            if used.contains(&local.id) {
+                // The local still owns this value. Give the match a borrow,
+                // so closing its scrutinee scope cannot release that owner.
+                scrut = Cps::BorrowPlace {
+                    id: local.id,
+                    path: Vec::new(),
+                    through_borrow: false,
+                };
+            }
         }
         Ok(scrut)
     }
@@ -740,13 +747,10 @@ fn pattern(p: &Pat) -> CpsPat {
         Pat::Int(n) | Pat::Nat(n) => CpsPat::Literal(Value::Int(i128::from(*n))),
         Pat::Bool(b) => CpsPat::Literal(Value::Bool(*b)),
         Pat::Text(t) => CpsPat::Literal(Value::Text(t.clone())),
-        Pat::Ctor { ctor, fields } if ctor.data == DataRef::Product => {
-            CpsPat::Product(fields.iter().map(pattern).collect())
-        }
         Pat::Ctor { ctor, fields } => CpsPat::Ctor {
             ctor: ctor.name.clone(),
             fields: fields.iter().map(pattern).collect(),
-            data: data_owner(&ctor.data).to_string(),
+            data: data_owner(&ctor.data),
         },
     }
 }
@@ -761,13 +765,13 @@ fn path(fields: &[FieldRef]) -> Vec<PathStep> {
         .collect()
 }
 
-pub fn data_owner(data: &DataRef) -> &str {
+/// The name of a constructor's data type.
+pub fn data_owner(data: &DataRef) -> Name {
     match data {
-        DataRef::Gen(n) => n,
-        DataRef::Option => "Option",
-        DataRef::Result => "Result",
-        DataRef::Pair => "Pair",
-        DataRef::Product => "Product",
+        DataRef::Gen(n) => n.clone(),
+        DataRef::Option => tauto::bindings::library_name("Option"),
+        DataRef::Result => tauto::bindings::library_name("Result"),
+        DataRef::Pair => tauto::bindings::library_name("Pair"),
     }
 }
 
@@ -859,14 +863,6 @@ fn copy_type(pkg: &Package, ty: &Ty, fuel: usize) -> R<bool> {
         Ty::Option(inner) => copy_type(pkg, inner, fuel - 1),
         Ty::Pair(left, right) | Ty::Result(left, right) => {
             Ok(copy_type(pkg, left, fuel - 1)? && copy_type(pkg, right, fuel - 1)?)
-        }
-        Ty::Product(ms) => {
-            for (_, m) in ms {
-                if !copy_type(pkg, m, fuel - 1)? {
-                    return Ok(false);
-                }
-            }
-            Ok(true)
         }
         Ty::Data(name, args) => {
             let Some(data) = pkg.datas.iter().find(|data| data.name == *name) else {

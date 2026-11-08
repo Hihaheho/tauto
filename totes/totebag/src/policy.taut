@@ -13,15 +13,15 @@ pub(open) inductive TbIndex: Type {
 }
 
 pub fn tb_index_alias(i: TbIndex): Text {
-  match i: Text {
+  ⊢ Text from match i {
     MkIndex(alias, id, repository, reference) => alias
   }
 }
 
 pub fn tb_twice(names: List(Text)): Option(Text) {
-  match names: Option(Text) {
+  ⊢ Option(Text) from match names {
     Nil => None
-    Cons(n, rest) => match tb_named(rest, n): Option(Text) {
+    Cons(n, rest) => ⊢ Option(Text) from match tb_named(rest, n) {
       true => Some(n)
       false => tb_twice(rest)
     }
@@ -30,9 +30,12 @@ pub fn tb_twice(names: List(Text)): Option(Text) {
 
 // One index is the other, or is read from the same place.
 pub fn tb_same_index(a: TbIndex, b: TbIndex): Bool {
-  match a: Bool {
-    MkIndex(a1, i1, r1, b1) => match b: Bool {
-      MkIndex(a2, i2, r2, b2) => Bool::or(Text::eq(i1, i2), Bool::and(Text::eq(r1, r2), Text::eq(b1, b2)))
+  ⊢ Bool from match a {
+    MkIndex(a1, i1, r1, b1) => ⊢ Bool from match b {
+      MkIndex(a2, i2, r2, b2) => Bool::or(
+        Text::eq(i1, i2),
+        Bool::and(Text::eq(r1, r2), Text::eq(b1, b2))
+      )
     }
   }
 }
@@ -42,9 +45,9 @@ pub(open) inductive TbNotIndependent: Type {
 }
 
 pub fn tb_observer_of(w: TbIndex, observers: List(TbIndex)): Option(TbNotIndependent) {
-  match observers: Option(TbNotIndependent) {
+  ⊢ Option(TbNotIndependent) from match observers {
     Nil => None
-    Cons(o, rest) => match tb_same_index(o, w): Option(TbNotIndependent) {
+    Cons(o, rest) => ⊢ Option(TbNotIndependent) from match tb_same_index(o, w) {
       true => Some(NotIndependent(tb_index_alias(w), tb_index_alias(o)))
       false => tb_observer_of(w, rest)
     }
@@ -54,10 +57,13 @@ pub fn tb_observer_of(w: TbIndex, observers: List(TbIndex)): Option(TbNotIndepen
 // A remote age witness must not be an observer's index, nor be read from an
 // observer's repository and branch: the age of a checkpoint is then told by
 // someone other than whoever accepted it.
-pub fn tb_independent(observers: List(TbIndex), witnesses: List(TbIndex)): Option(TbNotIndependent) {
-  match witnesses: Option(TbNotIndependent) {
+pub fn tb_independent(
+  observers: List(TbIndex),
+  witnesses: List(TbIndex)
+): Option(TbNotIndependent) {
+  ⊢ Option(TbNotIndependent) from match witnesses {
     Nil => None
-    Cons(w, rest) => match tb_observer_of(w, observers): Option(TbNotIndependent) {
+    Cons(w, rest) => ⊢ Option(TbNotIndependent) from match tb_observer_of(w, observers) {
       Some(found) => Some(found)
       None => tb_independent(observers, rest)
     }

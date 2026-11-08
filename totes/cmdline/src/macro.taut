@@ -1,0 +1,1197 @@
+import "cmdline.taut"
+import "help.taut"
+import "laws.taut"
+import "render.taut"
+import std::Text
+import std::prelude::Macro
+import std::prelude::Shared
+// The library this macro writes against is `laws.taut`; `cli.taut` imports both.
+
+// `cli!` makes, from one declaration of a program's options and positional
+// arguments, a record of what was given, its parser, its help and its error
+// messages, and for each field a theorem that the field is what its reader
+// reads from the command line.
+//
+//   cli!(`Greet "greet" "Greet someone" version "1.0.0" {
+//     loud -l: switch "Shout"
+//     times -n <N>: nat = 1 "How many times"
+//     name: arg text "Who to greet"
+//   }`) => inductive Greet, fn Greet::loud, …
+//
+// A field is `name [-s] [<VALUE>]: [arg] kind [mark] [= default] "about"`:
+//
+// - `switch` (`Bool`, given or not) and `count` (`Nat`, how many times, as in
+//   `-vvv`) are options that take no value;
+// - `text` (`Text`) and `nat` (`Nat`, decimal) take a value: an option is
+//   `Option(T)`, `!` makes it required (`T`), `= d` gives a default (`T`) and
+//   `...` takes it any number of times (`List(T)`);
+// - with `arg` the field is positional, in the order declared: it is required
+//   (`T`), `?` makes it optional (`Option(T)`), `= d` gives a default and
+//   `...` takes the rest (`List(T)`, last).
+//
+// An option `out_dir` is `--out-dir` on the command line; `-s` gives it a short
+// name and `<VALUE>` the name of its value in the help (the field name in
+// capitals otherwise). `-h, --help` and `-V, --version` are added.
+
+syntax!(cli, ```par
+%start Cli
+%title "cli"
+%describe Short "a short name like -v"
+%describe Meta "a value name like <FILE>"
+%describe Str "a quoted text"
+%describe Optional "the '?' that makes it optional"
+%describe Required "the '!' that makes it required"
+%describe Many "the '...' that takes it any number of times"
+%%
+Cli: Name Str Str [Version] LBrace { Field } RBrace;
+Version: KwVersion Str;
+Field: Name [Short] [Meta] Colon [KwArg] Ty [Mark] [Default] Str;
+Ty: KwSwitch | KwCount | KwText | KwNat | Choice;
+Choice: ChoiceKw LParen Name { Bar Name } RParen;
+ChoiceKw: KwOneOf | KwCommand;
+Mark: Optional | Required | Many;
+Default: Equals Value;
+Value: Str | Num | Name;
+KwVersion: 'version';
+KwArg: 'arg';
+KwSwitch: 'switch';
+KwCount: 'count';
+KwText: 'text';
+KwNat: 'nat';
+KwOneOf: 'one_of';
+KwCommand: 'command';
+LParen: '(';
+RParen: ')';
+Bar: '|';
+Optional: '?';
+Required: '!';
+Many: '...';
+Equals: '=';
+Colon: ':';
+LBrace: '{';
+RBrace: '}';
+Short: /-[A-Za-z0-9]/;
+Meta: /<[A-Za-z_][A-Za-z0-9_-]*>/;
+Num: /[0-9]+/;
+Name: /[A-Za-z][A-Za-z0-9_]*/;
+Str: /"[^"]*"/;
+```) => struct Cli, struct Default, struct Field, enum Mark, enum Ty,
+  enum Value, struct Version, struct Choice, struct Choice_Rep1, enum ChoiceKw, fn parse
+
+// ---- terms ---------------------------------------------------------------------------
+
+module Cli {
+  // A name of this library or of the kernel's prelude.
+  fn g(name: Text): SynExpr ! {Div} {
+    ExVar(Syn::global(name))
+  }
+
+  // A name the macro binds and uses itself: it has the scopes of the macro's
+  // definition, so nothing at the call can capture it.
+  fn local(name: Text): SynIdent ! {Div} {
+    Syn::ident_like(Syn::global("Nil"), name)
+  }
+
+  fn v(name: Text): SynExpr ! {Div} {
+    ExVar(Cli::local(name))
+  }
+
+  fn app(f: Text, args: List(SynExpr)): SynExpr ! {Div} {
+    ExApp(Cli::g(f), args, Syn::call_span())
+  }
+
+  // A name the expansion declares for the caller.
+  fn own(at: SynIdent, name: Text): SynExpr ! {Div} {
+    ExVar(Syn::decl_name(at, name))
+  }
+
+  fn own_app(at: SynIdent, name: Text, args: List(SynExpr)): SynExpr ! {Div} {
+    ExApp(Cli::own(at, name), args, Syn::call_span())
+  }
+
+  fn nat(n: u64): SynExpr ! {Div} {
+    ExNat(Text::of_u64(n), Syn::call_span())
+  }
+
+  fn text(t: Text): SynExpr ! {Div} {
+    ExText(t, Syn::call_span())
+  }
+
+  fn list(xs: List(SynExpr)): SynExpr ! {Div} {
+    match xs {
+      Nil => Cli::g("Nil")
+      Cons(x, rest) => Cli::app("Cons", Cons(x, Cons(Cli::list(rest), Nil)))
+    }
+  }
+
+  fn list_of(t: SynExpr): SynExpr ! {Div} {
+    Cli::app("List", Cons(t, Nil))
+  }
+
+  fn option_of(t: SynExpr): SynExpr ! {Div} {
+    Cli::app("Option", Cons(t, Nil))
+  }
+
+  fn eq(ty: SynExpr, a: SynExpr, b: SynExpr): SynExpr ! {Div} {
+    Cli::app("Eq", Cons(ty, Cons(a, Cons(b, Nil))))
+  }
+
+  fn refl(): SynExpr ! {Div} {
+    Cli::g("Refl")
+  }
+
+  fn param(name: Text, ty: SynExpr): SynIdent × SynExpr ! {Div} {
+    #(Cli::local(name), ty)
+  }
+
+  fn lam(name: Text, ty: SynExpr, body: SynExpr): SynExpr ! {Div} {
+    ExLam(Cons(BName(Cli::local(name), Some(ty)), Nil), body, Syn::call_span())
+  }
+
+  fn fst(ps: List(SynIdent × SynExpr)): List(SynIdent) ! {Div} {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => Cons((p: SynIdent), Cli::fst(rest))
+    }
+  }
+
+  fn flip(ps: List(SynIdent × SynExpr)): List(SynExpr × SynIdent) ! {Div} {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => Cons(#((p: SynExpr), (p: SynIdent)), Cli::flip(rest))
+    }
+  }
+
+  fn no_borrows(ps: List(SynIdent × SynExpr)): List(Option(Bool)) ! {Div} {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => Cons(None, Cli::no_borrows(rest))
+    }
+  }
+
+  fn some_snd(ps: List(SynIdent × SynExpr)): List(Option(SynExpr)) ! {Div} {
+    match ps {
+      Nil => Nil
+      Cons(p, rest) => Cons(Some((p: SynExpr)), Cli::some_snd(rest))
+    }
+  }
+}
+
+fn cli_fn(
+  name: SynIdent,
+  params: List(SynIdent × SynExpr),
+  result: SynExpr,
+  body: SynExpr
+): SynStmt ! {Div} {
+  StFn(SynFn {
+    name: name,
+    generics: Nil,
+    generic_types: Nil,
+    bounds: Nil,
+    params: Cli::fst(params),
+    borrows: Cli::no_borrows(params),
+    param_types: Cli::some_snd(params),
+    result: Some(result),
+    effects: None,
+    body: body,
+    span: name.span,
+  })
+}
+
+fn cli_theorem(
+  name: SynIdent,
+  params: List(SynIdent × SynExpr),
+  ty: SynExpr,
+  body: SynExpr
+): SynStmt ! {Div} {
+  StTheorem(
+    SynTheorem { name: name, implicit: 0, params: Cli::flip(params), ty: ty, body: Some(
+      body
+    ), span: name.span }
+  )
+}
+
+// ---- texts ---------------------------------------------------------------------------
+
+module Cli {
+  // The texts of the declaration are made at the call, by the library's
+  // `unquote`, `long_name`, `upper_name` and `short_name`, from the tokens as
+  // written.
+  fn unq(t: Text): SynExpr ! {Div} {
+    Cli::app("unquote", Cons(Cli::text(t), Nil))
+  }
+
+  // ---- what a field declares -------------------------------------------------------
+}
+
+// The kind: 0 `switch`, 1 `count`, 2 `text`, 3 `nat`, 4 `one_of`, 5 `command`. The mark: 0 none, 1 `?`,
+// 2 `!`, 3 `...`.
+struct cli_Arg {
+  name: Text
+  span: SynSpan
+  pos: Bool
+  kind: u64
+  mark: u64
+  default: Option(cli::Value)
+  short: Option(Text)
+  meta: Option(Text)
+  about: Text
+  // For `one_of`: the names, and the type the field's values are.
+  choices: List(Text)
+  at: SynIdent
+  ty_name: Text
+}
+
+module Cli {
+  fn kind(t: cli::Ty): u64 ! {Div} {
+    match t {
+      KwSwitch(_) => 0
+      KwCount(_) => 1
+      KwText(_) => 2
+      KwNat(_) => 3
+      Choice(ch) => match ch.choice_kw {
+        KwOneOf(_) => 4
+        KwCommand(_) => 5
+      }
+    }
+  }
+
+  fn mark(m: Option(cli::Mark)): u64 ! {Div} {
+    match m {
+      None => 0
+      Some(k) => match k {
+        Optional(_) => 1
+        Required(_) => 2
+        Many(_) => 3
+      }
+    }
+  }
+
+  fn default(d: Option(cli::Default)): Option(cli::Value) ! {Div} {
+    match d {
+      None => None
+      Some(x) => Some(x.value)
+    }
+  }
+
+  fn value_text(v: cli::Value): SynExpr ! {Div} {
+    match v {
+      Str(t) => Cli::unq(t.text)
+      Num(t) => Cli::text(t.text)
+      Name(t) => Cli::text(t.text)
+    }
+  }
+
+  fn choice_names(c: cli::Ty): List(Text) ! {Div} {
+    match c {
+      Choice(ch) => Cons(ch.name.text, Cli::choice_rest(ch.rep))
+      KwSwitch(_) => Nil
+      KwCount(_) => Nil
+      KwText(_) => Nil
+      KwNat(_) => Nil
+    }
+  }
+
+  fn choice_rest(rs: List(cli::Choice_Rep1)): List(Text) ! {Div} {
+    match rs {
+      Nil => Nil
+      Cons(r, rest) => Cons(r.name.text, Cli::choice_rest(rest))
+    }
+  }
+
+  fn member(x: Text, xs: List(Text)): Bool ! {Div} {
+    match xs {
+      Nil => false
+      Cons(y, rest) => if x == y { true } else { Cli::member(x, rest) }
+    }
+  }
+
+  fn check_choices(at: SynSpan, xs: List(Text)): Unit ! {macro_error, Div} {
+    match xs {
+      Nil => #()
+      Cons(x, rest) => if Cli::member(x, rest) {
+        Syn::error(at, concat(concat("the choice ", x), " is written twice"))
+      } else {
+        Cli::check_choices(at, rest)
+      }
+    }
+  }
+
+  fn arg(model: SynIdent, t: Text, f: cli::Field): cli_Arg ! {macro_error, Div} {
+    let at := f.name.span
+    let pos := match f.kw_arg {
+      None => false
+      Some(_) => true
+    }
+    let kind := Cli::kind(f.ty)
+    let choices := Cli::choice_names(f.ty)
+    Cli::check_choices(at, choices)
+    let mark := Cli::mark(f.mark)
+    let default := Cli::default(f.default)
+    let short := match f.short {
+      None => None
+      Some(t) => Some(t.text)
+    }
+    let meta := match f.meta {
+      None => None
+      Some(t) => Some(t.text)
+    }
+    if pos && kind < 2 {
+      Syn::error(
+        at,
+        concat(
+          concat("the argument ", f.name.text),
+          " is positional and takes a value: write `arg text` or `arg nat`"
+        )
+      )
+    } else {
+      #()
+    }
+    if pos && (match f.short { None => false
+      Some(_) => true }) {
+      Syn::error(at, concat(concat("the positional argument ", f.name.text), " has no short name"))
+    } else {
+      #()
+    }
+    if kind < 2 && (mark > 0 || (match default { None => false
+      Some(_) => true }) || (match f.meta { None => false
+      Some(_) => true })) {
+      Syn::error(
+        at,
+        concat(
+          concat("the option ", f.name.text),
+          " takes no value: it has no mark, default or <VALUE>"
+        )
+      )
+    } else {
+      #()
+    }
+    match default {
+      None => #()
+      Some(v) => {
+        if mark > 0 {
+          Syn::error(at, concat(concat("the field ", f.name.text), " has a default: it takes no mark"))
+        } else {
+          #()
+        }
+        match v {
+          Name(t) => if kind == 4 {
+            if Cli::member(t.text, choices) { #() } else { Syn::error(t.span, "a `one_of` default is one of its names") }
+          } else {
+            Syn::error(t.span, "a name is a default only of `one_of`")
+          }
+          Str(t) => if kind != 2 {
+            Syn::error(t.span, "a quoted default is of `text` only")
+          } else {
+            #()
+          }
+          Num(t) => if kind != 3 {
+            Syn::error(t.span, "a number default is of `nat` only")
+          } else {
+            #()
+          }
+        }
+      }
+    }
+    cli_Arg {
+      name: f.name.text,
+      span: at,
+      pos: pos,
+      kind: kind,
+      mark: mark,
+      default: default,
+      short: short,
+      meta: meta,
+      about: f.str.text,
+      choices: choices,
+      at: model,
+      ty_name: concat(concat(concat(t, "::"), f.name.text), "_value"),
+    }
+  }
+
+  fn args(model: SynIdent, t: Text, fs: List(cli::Field)): List(cli_Arg) ! {macro_error, Div} {
+    match fs {
+      Nil => Nil
+      Cons(f, rest) => Cons(Cli::arg(model, t, f), Cli::args(model, t, rest))
+    }
+  }
+
+  fn opts_of(xs: List(cli_Arg)): List(cli_Arg) ! {Div} {
+    match xs {
+      Nil => Nil
+      Cons(x, rest) => if x.pos || x.kind == 5 { Cli::opts_of(rest) } else { Cons(x, Cli::opts_of(rest)) }
+    }
+  }
+
+  fn poss_of(xs: List(cli_Arg)): List(cli_Arg) ! {Div} {
+    match xs {
+      Nil => Nil
+      Cons(x, rest) => if x.pos { Cons(x, Cli::poss_of(rest)) } else { Cli::poss_of(rest) }
+    }
+  }
+
+  fn count(xs: List(cli_Arg)): u64 ! {Div} {
+    match xs {
+      Nil => 0
+      Cons(x, rest) => 1 + Cli::count(rest)
+    }
+  }
+
+  // The position of the field among the options or among the positional ones.
+  fn index_from(name: Text, xs: List(cli_Arg), i: u64): u64 ! {Div} {
+    match xs {
+      Nil => i
+      Cons(x, rest) => if x.name == name { i } else { Cli::index_from(name, rest, i + 1) }
+    }
+  }
+
+  fn index(a: cli_Arg, opts: List(cli_Arg), poss: List(cli_Arg)): u64 ! {Div} {
+    if a.pos { Cli::index_from(a.name, poss, 0) } else { Cli::index_from(a.name, opts, 0) }
+  }
+
+  // ---- checks of the declaration ---------------------------------------------------------
+
+  fn has_name(name: Text, xs: List(cli_Arg)): Bool ! {Div} {
+    match xs {
+      Nil => false
+      Cons(x, rest) => if x.name == name { true } else { Cli::has_name(name, rest) }
+    }
+  }
+
+  fn has_short(c: Text, xs: List(cli_Arg)): Bool ! {Div} {
+    match xs {
+      Nil => false
+      Cons(x, rest) => match x.short {
+        None => Cli::has_short(c, rest)
+        Some(d) => if d == c { true } else { Cli::has_short(c, rest) }
+      }
+    }
+  }
+
+  fn check(xs: List(cli_Arg)): Unit ! {macro_error, Div} {
+    match xs {
+      Nil => #()
+      Cons(x, rest) => {
+        if Cli::has_name(x.name, rest) {
+          Syn::error(x.span, concat(concat("the name ", x.name), " is declared twice"))
+        } else {
+          #()
+        }
+        if (x.name == "help" || x.name == "version") && not(x.pos) {
+          Syn::error(x.span, concat(concat("--", x.name), " is added by cli!"))
+        } else {
+          #()
+        }
+        match x.short {
+          None => #()
+          Some(c) => {
+            if c == "-h" || c == "-V" {
+              Syn::error(x.span, "-h and -V are added by cli!")
+            } else {
+              #()
+            }
+            if Cli::has_short(c, rest) {
+              Syn::error(x.span, concat(concat("the short name ", c), " is declared twice"))
+            } else {
+              #()
+            }
+          }
+        }
+        if x.kind == 5 {
+          if x.pos || x.mark > 1 || (match x.short { None => false
+            Some(_) => true }) || (match x.meta { None => false
+            Some(_) => true }) || (match x.default { None => false
+            Some(_) => true }) {
+            Syn::error(x.span, "a command is not an arg, has no short name, value name or default, and is required or ?")
+          } else {
+            #()
+          }
+          match Cli::command_of(rest) {
+            None => #()
+            Some(_) => Syn::error(x.span, "at most one field is a command")
+          }
+        } else {
+          #()
+        }
+        Cli::check(rest)
+      }
+    }
+  }
+
+  // A positional argument that takes the rest is last, and a required one comes
+  // before the optional ones.
+  fn check_order(ps: List(cli_Arg), optional_seen: Bool): Unit ! {macro_error} {
+    match ps {
+      Nil => #()
+      Cons(p, rest) => {
+        let optional := p.mark == 1 || p.mark == 3 || (match p.default { None => false
+          Some(_) => true })
+        if p.mark == 3 && (match rest { Nil => false
+          Cons(_, _) => true }) {
+          Syn::error(
+            p.span,
+            concat(concat("the positional argument ", p.name), " takes the rest: it is last")
+          )
+        } else {
+          #()
+        }
+        if optional_seen && not(optional) {
+          Syn::error(
+            p.span,
+            concat(concat("the required argument ", p.name), " comes after an optional one")
+          )
+        } else {
+          #()
+        }
+        Cli::check_order(rest, optional_seen || optional)
+      }
+    }
+  }
+
+  fn takes_rest(ps: List(cli_Arg)): Bool ! {Div} {
+    match ps {
+      Nil => false
+      Cons(p, rest) => p.mark == 3 || Cli::takes_rest(rest)
+    }
+  }
+
+  // ---- the parts made for a field ------------------------------------------------------
+
+  fn base(a: cli_Arg): SynExpr ! {Div} {
+    if a.kind == 0 {
+      Cli::g("Bool")
+    } else {
+      if a.kind == 2 { Cli::g("Text") } else { if a.kind >= 4 { Cli::own(a.at, a.ty_name) } else { Cli::g("Nat") } }
+    }
+  }
+
+  // The constructor of a choice: `Greet::mode_value::fast`.
+  fn choice_ctor(a: cli_Arg, c: Text): SynExpr ! {Div} {
+    Cli::own(a.at, concat(concat(a.ty_name, "::"), c))
+  }
+
+  fn first_choice(a: cli_Arg): SynExpr ! {Div} {
+    match a.choices {
+      Nil => Cli::g("None")
+      Cons(c, rest) => Cli::choice_ctor(a, c)
+    }
+  }
+}
+
+// The type of the field.
+fn cli_type(a: cli_Arg): SynExpr ! {Div} {
+  let b := Cli::base(a)
+  if a.kind == 5 {
+    if a.mark == 1 { Cli::option_of(b) } else { b }
+  } else { if a.kind < 2 {
+    b
+  } else {
+    match a.default {
+      Some(_) => b
+      None => if a.mark == 3 {
+        Cli::list_of(b)
+      } else {
+        if a.mark == 1 || (not(a.pos) && a.mark == 0) { Cli::option_of(b) } else { b }
+      }
+    }
+  } }
+}
+
+module Cli {
+  fn value_expr(a: cli_Arg, v: cli::Value): SynExpr ! {Div} {
+    match v {
+      Str(t) => Cli::unq(t.text)
+      Num(t) => ExNat(t.text, Syn::call_span())
+      Name(t) => Cli::choice_ctor(a, t.text)
+    }
+  }
+
+  // What `parsed_or` falls back to: never used once the checks pass.
+  fn fallback(a: cli_Arg): SynExpr ! {Div} {
+    if a.kind == 5 {
+      if a.mark == 1 {
+        Cli::g("None")
+      } else {
+        match a.choices {
+          Nil => Cli::g("None")
+          Cons(c, rest) => ExApp(Cli::choice_ctor(a, c), Cons(Cli::own_app(a.at, concat(c, "::of"), Cons(Cli::g("Nil"), Nil)), Nil), Syn::call_span())
+        }
+      }
+    } else { match a.default {
+      Some(v) => Cli::value_expr(a, v)
+      None => if a.kind == 0 {
+        Cli::g("false")
+      } else {
+        if a.kind == 1 {
+          Cli::nat(0)
+        } else {
+          if a.mark == 3 {
+            Cli::g("Nil")
+          } else {
+            if a.mark == 1 || (not(a.pos) && a.mark == 0) {
+              Cli::g("None")
+            } else {
+              if a.kind == 2 { Cli::text("") } else { if a.kind == 4 { Cli::first_choice(a) } else { Cli::nat(0) } }
+            }
+          }
+        }
+      }
+    } }
+  }
+
+  fn conv(a: cli_Arg): SynExpr ! {Div} {
+    if a.kind == 2 {
+      Cli::g("conv_text")
+    } else {
+      if a.kind == 4 { Cli::own(a.at, concat(a.ty_name, "::of_text")) } else { Cli::g("conv_nat") }
+    }
+  }
+
+  // The reader of the field, applied to the items `xs`.
+  fn reader(a: cli_Arg, i: u64, xs: SynExpr): SynExpr ! {Div} {
+    let n := Cli::nat(i)
+    if a.kind == 5 {
+      Cli::app(if a.mark == 1 { "read_sub_opt" } else { "read_sub" }, Cons(xs, Cons(Cli::own(a.at, concat(a.ty_name, "::run")), Nil)))
+    } else { if a.kind == 0 {
+      Cli::app("read_switch", Cons(xs, Cons(n, Nil)))
+    } else {
+      if a.kind == 1 {
+        Cli::app("read_count", Cons(xs, Cons(n, Nil)))
+      } else {
+        let c := Cli::conv(a)
+        match a.default {
+          Some(
+            v
+          ) => Cli::app(
+            if a.pos { "arg_or" } else { "read_or" },
+            Cons(xs, Cons(n, Cons(c, Cons(Cli::value_expr(a, v), Nil))))
+          )
+          None => {
+            let f := if a.pos {
+              if a.mark == 1 { "arg_opt" } else { if a.mark == 3 { "arg_rest" } else { "arg_req" } }
+            } else {
+              if a.mark == 2 { "read_req" } else { if a.mark == 3 { "read_many" } else { "read_opt" } }
+            }
+            Cli::app(f, Cons(xs, Cons(n, Cons(c, Nil))))
+          }
+        }
+      }
+    } }
+  }
+
+  // ` [default: d]` after the description of a field with a default.
+  fn join(xs: List(Text)): Text ! {Div} {
+    match xs {
+      Nil => ""
+      Cons(x, rest) => match rest {
+        Nil => x
+        Cons(_, _) => concat(concat(x, ", "), Cli::join(rest))
+      }
+    }
+  }
+
+  // ` [default: d]` after the description of a field with a default, and
+  // ` [possible values: a, b]` after one of `one_of`.
+  fn about(a: cli_Arg): SynExpr ! {Div} {
+    let d := match a.default {
+      None => Cli::unq(a.about)
+      Some(v) => Cli::app("with_default", Cons(Cli::unq(a.about), Cons(Cli::value_text(v), Nil)))
+    }
+    if a.kind == 4 { Cli::app("with_choices", Cons(d, Cons(Cli::text(Cli::join(a.choices)), Nil))) } else { d }
+  }
+
+  // For a field of `one_of`: its type, a constructor for each name, and the
+  // reading of a value as one of them.
+  fn choice_arms(a: cli_Arg, cs: List(Text)): SynExpr ! {Div} {
+    match cs {
+      Nil => Cli::g("None")
+      Cons(c, rest) => ExMatch(
+        Cli::app("Text::eq", Cons(Cli::v("t"), Cons(Cli::text(c), Nil))),
+        Some(Cli::option_of(Cli::own(a.at, a.ty_name))),
+        Cons(
+          SynArm { pattern: PtCtor(Syn::global("true"), Nil), guard: None, goal: None, body: Cli::app("Some", Cons(Cli::choice_ctor(a, c), Nil)) },
+          Cons(SynArm { pattern: PtCtor(Syn::global("false"), Nil), guard: None, goal: None, body: Cli::choice_arms(a, rest) }, Nil)
+        ),
+        None,
+        Syn::call_span()
+      )
+    }
+  }
+
+  fn choice_ctors(a: cli_Arg, cs: List(Text)): List(SynIndCtor) ! {Div} {
+    match cs {
+      Nil => Nil
+      Cons(c, rest) => Cons(
+        SynIndCtor {
+          name: Syn::decl_name(a.at, concat(concat(a.ty_name, "::"), c)),
+          implicit: 0,
+          params: if a.kind == 5 { Cons(#(Cli::own(a.at, c), Cli::local("x")), Nil) } else { Nil },
+          result: Cli::own(a.at, a.ty_name),
+        },
+        Cli::choice_ctors(a, rest)
+      )
+    }
+  }
+
+  // For a field of `command`: subcommand `k` read by the `k`-th declaration.
+  fn run_arms(a: cli_Arg, k: SynExpr, cs: List(Text), n: u64): SynExpr ! {Div} {
+    match cs {
+      Nil => Cli::app("Failed", Cons(Cli::g("MissingCommand"), Nil))
+      Cons(c, rest) => {
+        let j := concat("k", Text::of_u64(n))
+        ExMatch(
+          k,
+          Some(Cli::app("Parsed", Cons(Cli::own(a.at, a.ty_name), Nil))),
+          Cons(
+            SynArm { pattern: PtCtor(Syn::global("Zero"), Nil), guard: None, goal: None, body: Cli::app(
+              "parsed_map",
+              Cons(Cli::choice_ctor(a, c), Cons(Cli::own_app(a.at, concat(c, "::parse"), Cons(Cli::v("rest"), Nil)), Nil))
+            ) },
+            Cons(SynArm { pattern: PtCtor(Syn::global("Succ"), Cons(PtBind(Cli::local(j)), Nil)), guard: None, goal: None, body: Cli::run_arms(a, Cli::v(j), rest, n + 1) }, Nil)
+          ),
+          None,
+          Syn::call_span()
+        )
+      }
+    }
+  }
+
+  fn spec_exprs(a: cli_Arg, cs: List(Text)): List(SynExpr) ! {Div} {
+    match cs {
+      Nil => Nil
+      Cons(c, rest) => Cons(Cli::own_app(a.at, concat(c, "::spec"), Nil), Cli::spec_exprs(a, rest))
+    }
+  }
+
+  fn command_of(xs: List(cli_Arg)): Option(cli_Arg) ! {Div} {
+    match xs {
+      Nil => None
+      Cons(x, rest) => if x.kind == 5 { Some(x) } else { Cli::command_of(rest) }
+    }
+  }
+
+  fn choice_decls(xs: List(cli_Arg)): List(SynStmt) ! {Div} {
+    match xs {
+      Nil => Nil
+      Cons(a, rest) => if a.kind == 5 {
+        Cons(
+          StInductive(SynInductive { name: Syn::decl_name(a.at, a.ty_name), params: Nil, sort: Cli::g("Type"), ctors: Cli::choice_ctors(a, a.choices), span: a.at.span }),
+          Cons(
+            cli_fn(
+              Syn::decl_name(a.at, concat(a.ty_name, "::run")),
+              Cons(Cli::param("k", Cli::g("Nat")), Cons(Cli::param("rest", Cli::list_of(Cli::g("Text"))), Nil)),
+              Cli::app("Parsed", Cons(Cli::own(a.at, a.ty_name), Nil)),
+              Cli::run_arms(a, Cli::v("k"), a.choices, 0)
+            ),
+            Cli::choice_decls(rest)
+          )
+        )
+      } else { if a.kind == 4 {
+        Cons(
+          StInductive(SynInductive { name: Syn::decl_name(a.at, a.ty_name), params: Nil, sort: Cli::g("Type"), ctors: Cli::choice_ctors(a, a.choices), span: a.at.span }),
+          Cons(
+            cli_fn(
+              Syn::decl_name(a.at, concat(a.ty_name, "::of_text")),
+              Cons(Cli::param("t", Cli::g("Text")), Nil),
+              Cli::option_of(Cli::own(a.at, a.ty_name)),
+              Cli::choice_arms(a, a.choices)
+            ),
+            Cli::choice_decls(rest)
+          )
+        )
+      } else {
+        Cli::choice_decls(rest)
+      } }
+    }
+  }
+
+  fn opt_expr(a: cli_Arg): SynExpr ! {Div} {
+    let short := match a.short {
+      None => Cli::g("None")
+      Some(c) => Cli::app("short_name", Cons(Cli::text(c), Nil))
+    }
+    let meta := match a.meta {
+      None => Cli::app("upper_name", Cons(Cli::text(a.name), Nil))
+      Some(m) => Cli::unq(m)
+    }
+    let takes := if a.kind < 2 { Cli::g("Nothing") } else { Cli::app("Value", Cons(meta, Nil)) }
+    let need := if a.mark == 2 { Cli::g("true") } else { Cli::g("false") }
+    Cli::app(
+      "Opt::Mk",
+      Cons(
+        Cli::app("long_name", Cons(Cli::text(a.name), Nil)),
+        Cons(short, Cons(takes, Cons(need, Cons(Cli::about(a), Nil))))
+      )
+    )
+  }
+
+  fn pos_expr(a: cli_Arg): SynExpr ! {Div} {
+    let arity := if a.mark == 3 {
+      Cli::g("AnyNumber")
+    } else {
+      if a.mark == 1 || (match a.default { None => false
+        Some(_) => true }) { Cli::g("AtMostOne") } else { Cli::g("ExactlyOne") }
+    }
+    Cli::app(
+      "Pos::Mk",
+      Cons(Cli::app("upper_name", Cons(Cli::text(a.name), Nil)), Cons(arity, Cons(Cli::about(a), Nil)))
+    )
+  }
+
+  fn opt_exprs(xs: List(cli_Arg)): List(SynExpr) ! {Div} {
+    match xs {
+      Nil => Nil
+      Cons(x, rest) => Cons(Cli::opt_expr(x), Cli::opt_exprs(rest))
+    }
+  }
+
+  fn pos_exprs(xs: List(cli_Arg)): List(SynExpr) ! {Div} {
+    match xs {
+      Nil => Nil
+      Cons(x, rest) => Cons(Cli::pos_expr(x), Cli::pos_exprs(rest))
+    }
+  }
+
+  fn fields(at: SynIdent, xs: List(cli_Arg)): List(SynExpr × SynIdent) ! {Div} {
+    match xs {
+      Nil => Nil
+      Cons(x, rest) => Cons(#(cli_type(x), Cli::local(x.name)), Cli::fields(at, rest))
+    }
+  }
+
+  fn binds(xs: List(cli_Arg)): List(SynPattern) ! {Div} {
+    match xs {
+      Nil => Nil
+      Cons(x, rest) => Cons(PtBind(Cli::local(x.name)), Cli::binds(rest))
+    }
+  }
+
+  fn problems(
+    xs: List(cli_Arg),
+    opts: List(cli_Arg),
+    poss: List(cli_Arg),
+    items: SynExpr
+  ): List(SynExpr) ! {Div} {
+    match xs {
+      Nil => Nil
+      Cons(
+        x,
+        rest
+      ) => Cons(
+        Cli::app("problem_of", Cons(Cli::reader(x, Cli::index(x, opts, poss), items), Nil)),
+        Cli::problems(rest, opts, poss, items)
+      )
+    }
+  }
+
+  fn values(
+    xs: List(cli_Arg),
+    opts: List(cli_Arg),
+    poss: List(cli_Arg),
+    items: SynExpr
+  ): List(SynExpr) ! {Div} {
+    match xs {
+      Nil => Nil
+      Cons(
+        x,
+        rest
+      ) => Cons(
+        Cli::app(
+          "parsed_or",
+          Cons(Cli::reader(x, Cli::index(x, opts, poss), items), Cons(Cli::fallback(x), Nil))
+        ),
+        Cli::values(rest, opts, poss, items)
+      )
+    }
+  }
+
+  // For each field: its accessor and the theorem that it is what its reader reads.
+  fn per_field(
+    at: SynIdent,
+    t: Text,
+    all: List(cli_Arg),
+    opts: List(cli_Arg),
+    poss: List(cli_Arg),
+    hv: u64,
+    k: u64,
+    xs: List(cli_Arg)
+  ): List(SynStmt) ! {Div} {
+    match xs {
+      Nil => Nil
+      Cons(x, rest) => {
+        let ty := ExVar(Syn::decl_name(at, t))
+        let get := concat(concat(t, "::"), x.name)
+        let fty := cli_type(x)
+        let items_ty := Cli::list_of(Cli::g("Item"))
+        let accessor := cli_fn(
+          Syn::decl_name(at, get),
+          Cons(Cli::param("o", ty), Nil),
+          fty,
+          ExMatch(
+            Cli::v("o"),
+            Some(fty),
+            Cons(
+              SynArm { pattern: PtCtor(
+                Syn::decl_name(at, concat(t, "::Mk")),
+                Cli::binds(all)
+              ), guard: None, goal: None, body: Cli::v(x.name) },
+              Nil
+            ),
+            None,
+            at.span
+          )
+        )
+        let i := Cli::index(x, opts, poss)
+        let read_items := Cli::reader(x, i, Cli::v("items"))
+        let lexes := Cli::eq(
+          Cli::g("Lexed"),
+          Cli::app(
+            "Lex::cmd",
+            Cons(
+              Cli::app("spec_opts", Cons(Cli::own_app(at, concat(t, "::spec"), Nil), Nil)),
+              Cons(Cli::app("spec_subs", Cons(Cli::own_app(at, concat(t, "::spec"), Nil), Nil)), Cons(Cli::v("args"), Nil))
+            )
+          ),
+          Cli::app("LexOk", Cons(Cli::v("items"), Nil))
+        )
+        let parsed := Cli::eq(
+          Cli::app("Parsed", Cons(ty, Nil)),
+          Cli::own_app(at, concat(t, "::parse"), Cons(Cli::v("args"), Nil)),
+          Cli::app("Ok", Cons(Cli::v("g"), Nil))
+        )
+        let reads := cli_theorem(
+          Syn::decl_name(at, concat(get, "::reads")),
+          Cons(
+            Cli::param("args", Cli::list_of(Cli::g("Text"))),
+            Cons(
+              Cli::param("items", items_ty),
+              Cons(
+                Cli::param("g", ty),
+                Cons(Cli::param("el", lexes), Cons(Cli::param("e", parsed), Nil))
+              )
+            )
+          ),
+          Cli::eq(
+            Cli::app("Parsed", Cons(fty, Nil)),
+            read_items,
+            Cli::app("Ok", Cons(Cli::own_app(at, get, Cons(Cli::v("g"), Nil)), Nil))
+          ),
+          Cli::app(
+            "field_reads",
+            Cons(
+              Cli::own_app(at, concat(t, "::spec"), Nil),
+              Cons(
+                Cli::nat(hv),
+                Cons(
+                  Cli::nat(hv + 1),
+                  Cons(
+                    Cli::own(at, concat(t, "::checks")),
+                    Cons(
+                      Cli::own(at, concat(t, "::of")),
+                      Cons(
+                        Cli::own(at, get),
+                        Cons(
+                          Cli::lam("xs", items_ty, Cli::reader(x, i, Cli::v("xs"))),
+                          Cons(
+                            Cli::fallback(x),
+                            Cons(
+                              Cli::nat(k),
+                              Cons(
+                                Cli::lam("xs", items_ty, Cli::refl()),
+                                Cons(
+                                  Cli::lam("xs", items_ty, Cli::refl()),
+                                  Cons(
+                                    Cli::v("args"),
+                                    Cons(
+                                      Cli::v("items"),
+                                      Cons(Cli::v("g"), Cons(Cli::v("el"), Cons(Cli::v("e"), Nil)))
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+        Cons(accessor, Cons(reads, Cli::per_field(at, t, all, opts, poss, hv, k + 1, rest)))
+      }
+    }
+  }
+}
+
+macro fn cli(c: cli::Cli): List(SynStmt) ! {macro_error, Div} {
+  let all := Cli::args(Syn::ident(c.name), c.name.text, c.field)
+  Cli::check(all)
+  let opts := Cli::opts_of(all)
+  let poss := Cli::poss_of(all)
+  Cli::check_order(poss, false)
+  let at := Syn::ident(c.name)
+  let t := c.name.text
+  let ty := ExVar(Syn::decl_name(at, t))
+  let items_ty := Cli::list_of(Cli::g("Item"))
+  let hv := Cli::count(opts)
+  let version := match c.version {
+    None => Cli::text("")
+    Some(v) => Cli::unq(v.str.text)
+  }
+  let record := StInductive(SynInductive {
+    name: Syn::decl_name(at, t),
+    params: Nil,
+    sort: Cli::g("Type"),
+    ctors: Cons(SynIndCtor { name: Syn::decl_name(at, concat(t, "::Mk")), implicit: 0, params: Cli::fields(at, all), result: ty }, Nil),
+    span: at.span,
+  })
+  let command := Cli::command_of(all)
+  let subs := match command {
+    None => Cli::g("Nil")
+    Some(a) => Cli::list(Cli::spec_exprs(a, a.choices))
+  }
+  let need_sub := match command {
+    None => Cli::g("false")
+    Some(a) => if a.mark == 1 { Cli::g("false") } else { Cli::g("true") }
+  }
+  let spec := cli_fn(
+    Syn::decl_name(at, concat(t, "::spec")),
+    Nil,
+    Cli::g("Spec"),
+    Cli::app(
+      "Spec::Mk",
+      Cons(
+        Cli::unq(c.str.text),
+        Cons(
+          Cli::unq(c.str_2.text),
+          Cons(
+            version,
+            Cons(
+              Cli::app(
+                "List::append",
+                Cons(Cli::list(Cli::opt_exprs(opts)), Cons(Cli::app("builtin_opts", Nil), Nil))
+              ),
+              Cons(Cli::list(Cli::pos_exprs(poss)), Cons(subs, Cons(need_sub, Nil)))
+            )
+          )
+        )
+      )
+    )
+  )
+  let extra := if Cli::takes_rest(poss) {
+    Nil
+  } else {
+    Cons(
+      Cli::app(
+        "problem_of",
+        Cons(Cli::app("read_extra", Cons(Cli::v("items"), Cons(Cli::nat(Cli::count(poss)), Nil))), Nil)
+      ),
+      Nil
+    )
+  }
+  let checks := cli_fn(
+    Syn::decl_name(at, concat(t, "::checks")),
+    Cons(Cli::param("items", items_ty), Nil),
+    Cli::list_of(Cli::option_of(Cli::g("Problem"))),
+    Cli::list(Syn::append(Cli::problems(all, opts, poss, Cli::v("items")), extra))
+  )
+  let of := cli_fn(
+    Syn::decl_name(at, concat(t, "::of")),
+    Cons(Cli::param("items", items_ty), Nil),
+    ty,
+    ExApp(
+      ExVar(Syn::decl_name(at, concat(t, "::Mk"))),
+      Cli::values(all, opts, poss, Cli::v("items")),
+      Syn::call_span()
+    )
+  )
+  let parse := cli_fn(
+    Syn::decl_name(at, concat(t, "::parse")),
+    Cons(Cli::param("args", Cli::list_of(Cli::g("Text"))), Nil),
+    Cli::app("Parsed", Cons(ty, Nil)),
+    Cli::app(
+      "parse_into",
+      Cons(
+        Cli::own_app(at, concat(t, "::spec"), Nil),
+        Cons(
+          Cli::nat(hv),
+          Cons(
+            Cli::nat(hv + 1),
+            Cons(
+              Cli::own(at, concat(t, "::checks")),
+              Cons(Cli::own(at, concat(t, "::of")), Cons(Cli::v("args"), Nil))
+            )
+          )
+        )
+      )
+    )
+  )
+  let help := cli_fn(
+    Syn::decl_name(at, concat(t, "::help")),
+    Nil,
+    Cli::g("Text"),
+    Cli::app("help", Cons(Cli::own_app(at, concat(t, "::spec"), Nil), Nil))
+  )
+  let message := cli_fn(
+    Syn::decl_name(at, concat(t, "::message")),
+    Cons(Cli::param("p", Cli::g("Problem")), Nil),
+    Cli::g("Text"),
+    Cli::app("message", Cons(Cli::own_app(at, concat(t, "::spec"), Nil), Cons(Cli::v("p"), Nil)))
+  )
+  let sp := Cli::own_app(at, concat(t, "::spec"), Nil)
+  let os := Cli::app("spec_opts", Cons(sp, Nil))
+  let renderable := cli_theorem(
+    Syn::decl_name(at, concat(t, "::renderable")),
+    Nil,
+    Cli::eq(Cli::g("Bool"), Cli::app("renderable", Cons(os, Nil)), Cli::g("true")),
+    Cli::refl()
+  )
+  let round_trip := cli_theorem(
+    Syn::decl_name(at, concat(t, "::round_trip")),
+    Cons(
+      Cli::param("xs", items_ty),
+      Cons(
+        Cli::param("ps", Cli::list_of(Cli::g("Text"))),
+        Cons(Cli::param("h", Cli::eq(Cli::g("Bool"), Cli::app("fits", Cons(os, Cons(Cli::v("xs"), Nil))), Cli::g("true"))), Nil)
+      )
+    ),
+    Cli::eq(
+      Cli::g("Lexed"),
+      Cli::app(
+        "Lex::cmd",
+        Cons(os, Cons(Cli::app("spec_subs", Cons(sp, Nil)), Cons(Cli::app("render", Cons(os, Cons(Cli::v("xs"), Cons(Cli::v("ps"), Nil)))), Nil)))
+      ),
+      Cli::app(
+        "LexOk",
+        Cons(Cli::app("List::append", Cons(Cli::v("xs"), Cons(Cli::app("List::map", Cons(Cli::g("positional"), Cons(Cli::v("ps"), Nil))), Nil))), Nil)
+      )
+    ),
+    Cli::app(
+      "Lex::cmd_render",
+      Cons(
+        os,
+        Cons(
+          Cli::app("spec_subs", Cons(sp, Nil)),
+          Cons(Cli::v("xs"), Cons(Cli::v("ps"), Cons(Cli::own_app(at, concat(t, "::renderable"), Nil), Cons(Cli::v("h"), Nil))))
+        )
+      )
+    )
+  )
+  Syn::append(Cli::choice_decls(all), Cons(
+    record,
+    Cons(
+      spec,
+      Cons(
+        checks,
+        Cons(
+          of,
+          Cons(parse, Cons(help, Cons(message, Cons(renderable, Cons(round_trip, Cli::per_field(at, t, all, opts, poss, hv, 0, all))))))
+        )
+      )
+    )
+  ))
+}
+

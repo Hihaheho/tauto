@@ -1,0 +1,310 @@
+@ cases.resolved-rust-evaluation-has-no-axioms
+source = path`../../totes/rustgen/model/semantics.taut`
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+
+@ cases.source-and-program-semantics-have-no-axioms
+source = path`../../totes/rustgen/model/program.taut`
+checks.RsSourceLiteral = "ok"
+checks.RsSourcePattern = "ok"
+checks.RsRepresents = "ok"
+checks.RsSourceEval = "ok"
+checks.RsSourceDefinition = "ok"
+checks.RsSourceProgram = "ok"
+checks.RsProgramRuns = "ok"
+diagnostics = []
+
+@ cases.rust-syntax-has-proof-visible-trees
+source = path`../../totes/rustgen/model/syntax.taut`
+checks."rs::Program::I" = "ok"
+checks."rs::Expr::I" = "ok"
+checks."rs::Pattern::I" = "ok"
+checks."rs::Ty::I" = "ok"
+diagnostics = []
+
+@ cases.checked-integers-use-the-written-width
+imports = [path`../../std/Base.taut`, path`../../std/Int.taut`, path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/integer.taut`]
+source = ```tauto
+
+pub theorem signed_range(): rs_integer_fits(IntOfNat(127), true, 8) = true { Refl }
+pub theorem signed_overflow(): rs_integer_fits(IntOfNat(128), true, 8) = false { Refl }
+pub theorem signed_minimum(): rs_integer_fits(IntNegSucc(127), true, 8) = true { Refl }
+pub theorem signed_underflow(): rs_integer_fits(IntNegSucc(128), true, 8) = false { Refl }
+pub theorem unsigned_negative(): rs_integer_fits(IntNegSucc(0), false, 64) = false { Refl }
+pub theorem checked_add(): rs_integer_binary(
+  "add", RsInteger(IntOfNat(127), true, 8), RsInteger(IntOfNat(1), true, 8), RsHeap(Nil)
+) = RsResultOf(RsPanic, RsHeap(Nil), Cons(RsFailure("integer-overflow"), Nil)) { Refl }
+pub theorem checked_neg_minimum(): rs_integer_neg(
+  RsInteger(IntNegSucc(127), true, 8), RsHeap(Nil)
+) = RsResultOf(RsPanic, RsHeap(Nil), Cons(RsFailure("integer-overflow"), Nil)) { Refl }
+pub theorem native_natural_subtraction_is_checked(): rs_natural_binary(
+  "sub", 2, 3, RsHeap(Nil)
+) = RsResultOf(RsPanic, RsHeap(Nil), Cons(RsFailure("integer-overflow"), Nil)) { Refl }
+pub theorem native_naturals_do_not_overflow_u64(): rs_natural_binary(
+  "add", 18446744073709551615, 1, RsHeap(Nil)
+) = RsResultOf(RsDone(RsScalar(RsNatural(18446744073709551616))), RsHeap(Nil), Nil) { Refl }
+
+```
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+
+@ cases.partial-moves-preserve-other-fields-and-borrowed-addresses
+imports = [path`../../std/Base.taut`, path`../../std/Int.taut`, path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/store.taut`]
+source = ```tauto
+
+pub theorem partial_move(): rs_save(
+  RsHeap(Cons(Some(RsData(7, false, Cons(RsScalar(RsBool(true)), Cons(RsScalar(RsBool(false)), Nil)))), Nil)),
+  RsAddr(0, Cons(0, Nil)), RsUninitialized
+) = Some(RsHeap(Cons(Some(RsData(7, false, Cons(RsUninitialized, Cons(RsScalar(RsBool(false)), Nil)))), Nil))) { Refl }
+pub theorem moved_field_cannot_be_read(): rs_load(
+  RsHeap(Cons(Some(RsData(7, false, Cons(RsUninitialized, Cons(RsScalar(RsBool(false)), Nil)))), Nil)),
+  RsAddr(0, Cons(0, Nil))
+) = None { Refl }
+pub theorem another_field_remains_live(): rs_load(
+  RsHeap(Cons(Some(RsData(7, false, Cons(RsUninitialized, Cons(RsScalar(RsBool(false)), Nil)))), Nil)),
+  RsAddr(0, Cons(1, Nil))
+) = Some(RsScalar(RsBool(false))) { Refl }
+pub theorem incomplete_aggregate_cannot_be_read_as_a_whole(): rs_load(
+  RsHeap(Cons(Some(RsData(7, false, Cons(RsUninitialized, Cons(RsScalar(RsBool(false)), Nil)))), Nil)),
+  RsAddr(0, Nil)
+) = None { Refl }
+pub theorem released_storage_cannot_be_resurrected(): rs_save(
+  RsHeap(Cons(None, Nil)), RsAddr(0, Nil), RsScalar(RsBool(true))
+) = None { Refl }
+pub theorem boxed_dereference_keeps_identity(): rs_address(
+  Cons(RsAddr(1, Nil), Nil),
+  RsHeap(Cons(Some(RsScalar(RsBool(true))), Cons(Some(RsHandle(0)), Nil))),
+  RsDeref(RsLocal(0))
+) = Some(RsAddr(0, Nil)) { Refl }
+pub theorem dereference_keeps_identity(): rs_address(
+  Cons(RsAddr(1, Nil), Nil),
+  RsHeap(Cons(Some(RsScalar(RsBool(true))), Cons(Some(RsReference(RsUnique, RsAddr(0, Nil))), Nil))),
+  RsDeref(RsLocal(0))
+) = Some(RsAddr(0, Nil)) { Refl }
+```
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+
+@ cases.guards-preview-before-committing-pattern-moves
+imports = [path`../../std/Base.taut`, path`../../std/Int.taut`, path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/pattern.taut`]
+source = ```tauto
+
+pub theorem preview_preserves_storage(): rs_match_at(
+  RsPreview, RsHeap(Cons(Some(RsScalar(RsBool(true))), Nil)), RsBind(RsMove), RsAddr(0, Nil)
+) = Some(#(Cons(RsScalar(RsBool(true)), Nil), RsHeap(Cons(Some(RsScalar(RsBool(true))), Nil)))) { Refl }
+pub theorem commit_marks_the_source_moved(): rs_match_at(
+  RsCommit, RsHeap(Cons(Some(RsScalar(RsBool(true))), Nil)), RsBind(RsMove), RsAddr(0, Nil)
+) = Some(#(Cons(RsScalar(RsBool(true)), Nil), RsHeap(Cons(Some(RsUninitialized), Nil)))) { Refl }
+pub theorem guard_binding_borrows_the_original_place(): rs_guard_prepare(
+  RsHeap(Cons(Some(RsScalar(RsBool(true))), Nil)), RsBind(RsCopy), RsAddr(0, Nil)
+) = Some(RsGuardScopeOf(Cons(RsAddr(0, Nil), Nil), Nil, RsHeap(Cons(Some(RsScalar(RsBool(true))), Nil)))) { Refl }
+pub theorem wildcard_can_skip_an_already_moved_field(): rs_match_at(
+  RsCommit, RsHeap(Cons(Some(RsData(7, false, Cons(RsUninitialized, Cons(RsScalar(RsBool(false)), Nil)))), Nil)),
+  RsConstructor(7, Cons(RsIgnore, Cons(RsBind(RsCopy), Nil))), RsAddr(0, Nil)
+) = Some(#(Cons(RsScalar(RsBool(false)), Nil), RsHeap(Cons(Some(RsData(7, false, Cons(RsUninitialized, Cons(RsScalar(RsBool(false)), Nil)))), Nil)))) { Refl }
+pub theorem reference_pattern_preserves_the_source(): rs_match_at(
+  RsCommit, RsHeap(Cons(Some(RsScalar(RsBool(true))), Nil)), RsBindReference(RsShared), RsAddr(0, Nil)
+) = Some(#(Cons(RsReference(RsShared, RsAddr(0, Nil)), Nil), RsHeap(Cons(Some(RsScalar(RsBool(true))), Nil)))) { Refl }
+```
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+
+@ cases.control-and-scope-exit-are-distinct
+imports = [path`../../std/Base.taut`, path`../../std/Int.taut`, path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/control.taut`, path`../../totes/rustgen/model/semantics.taut`]
+source = ```tauto
+
+pub fn no_runtime_calls(): RsRuntime {
+  RsRuntimeOf((name, args, heap, out, next, trace) => False)
+}
+pub theorem short_circuit(): RsEval(
+  Nil, no_runtime_calls(), Nil,
+  RsIf(RsLit(RsBool(true)), RsLit(RsUnit), RsPrimitive("unreachable", Nil)),
+  RsHeap(Nil), RsDone(RsScalar(RsUnit)), RsHeap(Nil), Nil
+) { RsEvalIfTrue(RsEvalLiteral, RsEvalLiteral) }
+pub theorem break_leaves_its_loop(): RsEval(
+  Nil, no_runtime_calls(), Nil, RsLoop(4, RsBreak(4, RsLit(RsBool(true)))),
+  RsHeap(Nil), RsDone(RsScalar(RsBool(true))), RsHeap(Nil), Nil
+) { RsEvalLoopBreak(RsEvalBreak(RsEvalLiteral)) }
+pub theorem exit_does_not_destroy_locals(): RsFinish(
+  no_runtime_calls(), Cons(0, Nil), RsHeap(Cons(Some(RsHandle(1)), Nil)),
+  RsExit(IntOfNat(7)), RsExit(IntOfNat(7)), RsHeap(Cons(Some(RsHandle(1)), Nil)), Nil
+) { RsFinishExit }
+pub theorem another_panic_during_unwinding_aborts(): rs_drop_panic(RsPanic) = RsAbort { Refl }
+pub theorem unique_references_are_not_copyable(address: RsAddress,
+  h: RsCopyable(RsReference(RsUnique, address))): False {
+  ⊢ False from match h {}
+}
+```
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+
+@ cases.closures-and-futures-have-explicit-environments
+imports = [path`../../std/Base.taut`, path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/store.taut`, path`../../totes/rustgen/model/control.taut`, path`../../totes/rustgen/model/semantics.taut`]
+source = ```tauto
+pub fn no_runtime_calls(): RsRuntime {
+  RsRuntimeOf((name, args, heap, out, next, trace) => False)
+}
+pub theorem construct_once(): RsEval(
+  Nil, no_runtime_calls(), Nil, RsLambda(RsFnOnce, 0, Nil, RsLit(RsUnit)),
+  RsHeap(Nil), RsDone(RsHandle(0)), RsHeap(Cons(Some(RsClosure(RsFnOnce, 0, Nil, RsLit(RsUnit))), Nil)), Nil
+) { RsEvalLambda(RsEvalsNil, Refl, Refl) }
+pub theorem invoke_once_consumes_the_environment(): RsApply(
+  Nil, no_runtime_calls(), RsHandle(0), Nil,
+  RsHeap(Cons(Some(RsClosure(RsFnOnce, 0, Nil, RsLit(RsUnit))), Nil)),
+  RsDone(RsScalar(RsUnit)), RsHeap(Cons(None, Nil)), Nil
+) {
+  RsApplyClosure(Refl, Refl, Refl, RsEvalLiteral, RsFunctionDone,
+    RsCallCleanupFnOnce(RsPermutationNil), RsFinishNil)
+}
+pub theorem await_consumes_the_suspended_computation(): RsEval(
+  Nil, no_runtime_calls(), Nil, RsAwait(RsFuture(Nil, RsLit(RsUnit))),
+  RsHeap(Nil), RsDone(RsScalar(RsUnit)), RsHeap(Cons(None, Nil)), Nil
+) {
+  RsEvalAwait(RsEvalFuture(RsEvalsNil, Refl, Refl), Refl, RsEvalLiteral,
+    RsFunctionDone, RsPermutationNil, RsFinishNil)
+}
+```
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+
+@ cases.source-trees-and-function-bodies-reach-the-operational-rules
+imports = [path`../../std/Base.taut`, path`../../totes/rustgen/model/syntax.taut`, path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/store.taut`, path`../../totes/rustgen/model/control.taut`, path`../../totes/rustgen/model/semantics.taut`, path`../../totes/rustgen/model/source_context.taut`, path`../../totes/rustgen/model/source_forms.taut`, path`../../totes/rustgen/model/source_construct.taut`, path`../../totes/rustgen/model/source_literals.taut`, path`../../totes/rustgen/model/source.taut`, path`../../totes/rustgen/model/program.taut`]
+source = ```tauto
+pub fn model_signature(): RsSourceSignature {
+  RsSourceSignatureOf(
+    Cons(RsSourceTypeOf(rs_source_type_name(Cons("bool", Nil)), RsCopy, None, Nil, None),
+      Cons(RsSourceTypeOf(FunctionTy_I(rs::FunctionTy::I::Mk("fn", "(", rs::Types::I::Mk(None), ")", "->", rs::TupleTy::I::Mk("(", rs::Types::I::Mk(Some(rs::Types_Opt1::I::Mk(rs_source_type_name(Cons("bool", Nil)), Nil, None))), ")"))), RsCopy, None, Nil,
+        Some(RsSourceCallOf(RsFn, Nil, 0))), Nil)),
+    Cons(RsSourceFunctionOf(rs_source_path(Cons("entry", Nil)), 1), Nil),
+    Nil, Nil, Nil, Nil, 64)
+}
+pub fn no_runtime_calls(): RsRuntime {
+  RsRuntimeOf((name, args, heap, out, next, trace) => False)
+}
+pub theorem boolean_source_evaluation(): RsSourceEval(
+  Nil, no_runtime_calls(), model_signature(), Nil, RsSourceControlOf(0, Nil),
+  rs_source_bool(true), 0, Nil, RsHeap(Nil), RsDone(RsScalar(RsBool(true))), RsHeap(Nil), Nil
+) {
+  let literal_form: RsSourceLiteral(model_signature(), RsBool(true), 0, rs_source_bool(true)) := RsSourceBool(Refl)
+  RsSourceEvaluated(Refl, RsRepresentsLiteral(literal_form), RsEvalLiteral)
+}
+pub theorem function_source_evaluation(): RsProgramRuns(
+  model_signature(), no_runtime_calls(),
+  rs::Program::I::Mk(Cons(rs::Item::I::Mk(None, None, Function_I(
+    rs_source_function(model_signature(), "entry", rs::Generics::I::Mk(None), Nil, 0, rs_source_bool(true)))), Nil)),
+  0, Nil, RsHeap(Nil), RsDone(RsScalar(RsBool(true))), RsHeap(Nil), Nil
+) {
+  let literal_form: RsSourceLiteral(model_signature(), RsBool(true), 0, rs_source_bool(true)) := RsSourceBool(Refl)
+  let represented: RsRepresents(model_signature(), Nil, RsSourceControlOf(0, Nil), RsLit(RsBool(true)), 0, rs_source_bool(true)) := RsRepresentsLiteral(literal_form)
+  RsProgramRan(
+    RsSourceProgramOf(RsSourceBodiesFunction(None,
+      RsSourceDefinitionOf(rs::Generics::I::Mk(None), Refl, Refl, Refl, Refl, represented),
+      RsSourceBodiesNil(Refl))),
+    RsApplyGlobal(Refl, Refl, Refl, RsEvalLiteral, RsFunctionDone, RsFinishNil))
+}
+```
+checks.model_signature = "ok"
+checks.no_runtime_calls = "ok"
+checks.boolean_source_evaluation = "ok"
+checks.function_source_evaluation = "ok"
+
+@ cases.nested-destructors-retain-the-unwind-state
+imports = [path`../../std/Base.taut`, path`../../std/Text.taut`, path`../../totes/rustgen/model/core.taut`, path`../../totes/rustgen/model/store.taut`, path`../../totes/rustgen/model/control.taut`]
+source = ```tauto
+pub(open) inductive PanicDrop: (Text, List(RsValue), RsStore, RsOutcome(RsValue), RsStore, List(RsEvent)) -> Prop {
+  PanicDropFirst<heap: RsStore>: PanicDrop("drop_handle", Cons(RsScalar(RsBool(true)), Cons(RsHandle(0), Nil)), heap, RsPanic, heap, Cons(RsFailure("drop-first"), Nil))
+}
+pub theorem successful_drop_during_unwind_does_not_panic(): rs_destructor_result(true, RsDone(RsScalar(RsUnit))) = RsDone(RsScalar(RsUnit)) { Refl }
+pub theorem completed_fields_resume_the_original_unwind(): rs_drop_completed(true, RsPanic) = RsDone(RsScalar(RsUnit)) { Refl }
+pub theorem nested_normal_drop_preserves_the_original_panic(heap: RsStore): RsDrop(
+  RsRuntimeOf(PanicDrop), true, RsData(9, false, Nil), heap, RsDone(RsScalar(RsUnit)), heap, Nil
+) {
+  let fields_dropped: RsFinish(RsRuntimeOf(PanicDrop), Nil, heap, RsPanic, RsPanic, heap, Nil) := RsFinishNil
+  RsDropData(Refl, fields_dropped)
+}
+pub theorem nested_second_panic_skips_the_remaining_field(): RsDrop(
+  RsRuntimeOf(PanicDrop), true, RsData(9, false, Cons(RsHandle(0), Cons(RsHandle(1), Nil))),
+  RsHeap(Cons(Some(RsScalar(RsUnit)), Cons(Some(RsScalar(RsUnit)), Nil))), RsAbort, RsHeap(Cons(Some(RsScalar(RsUnit)), Cons(Some(RsScalar(RsUnit)), Cons(None, Cons(Some(RsHandle(1)), Nil))))), Cons(RsFailure("drop-first"), Nil)
+) {
+  let first_dropped: RsDrop(RsRuntimeOf(PanicDrop), true, RsHandle(0), RsHeap(Cons(Some(RsScalar(RsUnit)), Cons(Some(RsScalar(RsUnit)), Cons(None, Cons(Some(RsHandle(1)), Nil))))), RsAbort, RsHeap(Cons(Some(RsScalar(RsUnit)), Cons(Some(RsScalar(RsUnit)), Cons(None, Cons(Some(RsHandle(1)), Nil))))), Cons(RsFailure("drop-first"), Nil)) :=
+    RsDropHandle(Refl, PanicDropFirst, RsDestructorPanic)
+  let fields_dropped: RsFinish(
+    RsRuntimeOf(PanicDrop), Cons(2, Cons(3, Nil)),
+    RsHeap(Cons(Some(RsScalar(RsUnit)), Cons(Some(RsScalar(RsUnit)), Cons(Some(RsHandle(0)), Cons(Some(RsHandle(1)), Nil))))),
+    RsPanic, RsAbort, RsHeap(Cons(Some(RsScalar(RsUnit)), Cons(Some(RsScalar(RsUnit)), Cons(None, Cons(Some(RsHandle(1)), Nil))))), Cons(RsFailure("drop-first"), Nil)
+  ) := RsFinishValue(RsUnwindsPanic, Refl, Refl, first_dropped, RsFinishAbort)
+  RsDropData(Refl, fields_dropped)
+}
+```
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"

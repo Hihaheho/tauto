@@ -277,7 +277,7 @@ fn exhausted_reader_traversal_is_not_success() {
     let entries = check_file(&root().join("totes/rustgen/tests/reader.taut")).unwrap();
     let equation = entries
         .iter()
-        .find(|entry| entry.entry.name == "reader_zero_fuel_is_not_success")
+        .find(|entry| entry.entry.name.as_str() == "reader_zero_fuel_is_not_success")
         .unwrap();
     assert!(
         matches!(&equation.entry.verdict, Verdict::Checked { axioms } if axioms.is_empty()),
@@ -446,7 +446,7 @@ mod case_inputs {
 "#
             }
             ("selfhost-reader-include.eure", "law_metadata") => {
-                r#"class C(A: Type) { law valid(): include_text!("data.txt") }"#
+                r#"class C(A: Type) { theorem valid(): include_text!("data.txt") }"#
             }
             ("selfhost-reader-include.eure", "quote_and_opaque_literal") => {
                 r#"let quoted := quote { include_text!("data.txt") }
@@ -509,7 +509,7 @@ main()
   let tagged := @reader include_text!("data.txt")
   let ref := &include_text!("data.txt")
   let branch := if include_text!("data.txt") { include_text!("data.txt") } else { include_text!("data.txt") }
-  let matched := match include_text!("data.txt"): include_text!("data.txt") {
+  let matched := ⊢ include_text!("data.txt") from match include_text!("data.txt") {
     Pick if include_text!("data.txt") => ⊢ include_text!("data.txt") from include_text!("data.txt")
   }
   while include_text!("data.txt") { let z := include_text!("data.txt") }

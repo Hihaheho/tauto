@@ -3,17 +3,19 @@
 //! `SpanMap` brings back to the text as written.
 
 use std::path::{Path, PathBuf};
+use std::{cell::RefCell, collections::HashMap};
 
 use tauto_parol::Span;
 
 use tauto::macros::{EXPANSION_BASE, Expansion};
-use tauto::program::{Loaded, load_with_text};
+use tauto::program::Loaded;
 use tauto::surface::{PRELUDE_BASE, Stmt};
 use tauto::types::{TypeReport, check_program};
 
 pub struct TypeInfo {
     loaded: Loaded,
     report: TypeReport,
+    proofs: RefCell<HashMap<(PathBuf, String), Option<String>>>,
 }
 
 /// A macro run, for the hover on its call.
@@ -25,14 +27,70 @@ impl TypeInfo {
     /// Loads the file (its text given) with its imports, expands its macros
     /// and checks the types. `None` when the program does not load.
     pub fn build(path: &Path, text: &str) -> Option<TypeInfo> {
+        let own = tauto::program::canonical_path(path);
+        Self::build_with_source(path, &|p| (p == own).then(|| Ok(text.to_string())))
+    }
+
+    /// Loads all open buffers, including unsaved imports, as one editor snapshot.
+    pub fn build_with_source(path: &Path, source: &tauto::program::Source<'_>) -> Option<TypeInfo> {
         let dirs = vec![path.parent().unwrap_or(Path::new(".")).to_path_buf()];
-        let loaded =
-            tauto::syntax::with_search_dirs(dirs, || load_with_text(path, Some(text))).ok()?;
+        let loaded = tauto::syntax::with_search_dirs(dirs, || {
+            tauto::program::load_with_source(path, source)
+        })
+        .ok()?;
         let report = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             check_program(&loaded.program).with_prelude()
         }))
         .ok()?;
-        Some(TypeInfo { loaded, report })
+        Some(TypeInfo {
+            loaded,
+            report,
+            proofs: RefCell::default(),
+        })
+    }
+
+    /// The normal natural proof, computed once per theorem in this snapshot.
+    pub fn proof_at(&self, path: &Path, span: Span) -> Option<String> {
+        fn find(stmts: &[Stmt], at: u32) -> Option<&str> {
+            for stmt in stmts {
+                match stmt {
+                    Stmt::Theorem(d) if d.span.contains(at) => return Some(d.name.as_str()),
+                    Stmt::Mutual { items, .. } => {
+                        if let Some(name) = find(items, at) {
+                            return Some(name);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        let own = super::index::canonical(path);
+        let index = self
+            .loaded
+            .files
+            .iter()
+            .position(|f| super::index::canonical(&f.path) == own)?;
+        let name = find(
+            &self.loaded.kernel_files[index],
+            self.loaded.files[index].base + span.start,
+        )?;
+        let key = (super::index::canonical(path), name.to_string());
+        self.proofs
+            .borrow_mut()
+            .entry(key)
+            .or_insert_with(|| {
+                tauto::proof::render_loaded(
+                    &self.loaded,
+                    path,
+                    Some(name),
+                    tauto::proof::Format::Natural,
+                    tauto::proof::Options::default(),
+                )
+                .ok()
+                .map(|view| view.text)
+            })
+            .clone()
     }
 
     fn base(&self, path: &Path) -> Option<u32> {
@@ -60,7 +118,7 @@ impl TypeInfo {
     pub fn local(&self, path: &Path, name: &str, site: u32) -> Option<String> {
         let base = self.base(path)?;
         let mut found = self.report.locals.iter().filter_map(|((n, id), t)| {
-            (n == name && id.span().start == site + base).then(|| t.to_string())
+            (n.as_str() == name && id.span().start == site + base).then(|| t.to_string())
         });
         let first = found.next()?;
         found.all(|t| t == first).then_some(first)

@@ -1,0 +1,1018 @@
+import std::Base
+import std::prelude::Ord
+import std::List
+import std::Text
+
+// The text of a list of UTF-8 bytes.
+pub fn text(bs: List(Nat)): Text {
+  Text::Mk(bs)
+}
+
+
+// A command-line parser whose help and parser are made from the same
+// declaration. A program declares its options and positional arguments once,
+// as a `Spec`; `lex` reads the arguments against the options, the readers turn
+// what was read into typed values, and `help` prints the same declaration.
+// `laws.taut` proves that `lex` reads a command line the way `Reads` says, and
+// that the help shows every option `lex` accepts.
+//
+// What is accepted, as in common command-line tools:
+//
+// - `--long`, and `--long VALUE` or `--long=VALUE` for an option that takes a value;
+// - `-s`, a cluster `-abc` of short switches, and `-s VALUE`, `-sVALUE` or
+//   `-s=VALUE` for a short option that takes a value;
+// - `--`, after which every argument is positional;
+// - any other argument (`-` included) is positional.
+//
+// A value is never an argument that begins with `-` and has more after it;
+// `--long=-1` gives one.
+
+// ---- the declaration ----------------------------------------------------------
+
+// What an option takes after it: nothing (a switch), or a value shown as
+// `<name>` in the help.
+pub(open) inductive Takes: Type {
+  Nothing: Takes
+  Value(name: Text): Takes
+}
+
+// An option: `--long`, and `-c` when it has the short name `c` (a byte);
+// `need` is whether it must be given (shown in the usage line).
+pub(open) inductive Opt: Type {
+  Mk(long: Text, short: Option(Nat), takes: Takes, need: Bool, about: Text): Opt
+}
+
+// How many values a positional argument takes.
+pub(open) inductive Arity: Type {
+  ExactlyOne: Arity
+  AtMostOne: Arity
+  AnyNumber: Arity
+}
+
+// A positional argument, shown as `<NAME>`, `[NAME]` or `[NAME]...`.
+pub(open) inductive Pos: Type {
+  Mk(name: Text, arity: Arity, about: Text): Pos
+}
+
+// A program: its name, what it does, its version, its options, its
+// positional arguments, its subcommands (each a program of its own, named by
+// its `name`), and whether one of them must be given.
+pub(open) inductive Spec: Type {
+  Mk(
+    name: Text,
+    about: Text,
+    version: Text,
+    opts: List(Opt),
+    poss: List(Pos),
+    subs: List(Spec),
+    need_sub: Bool
+  ): Spec
+}
+
+module Opt {
+  pub fn long(o: Opt): Text {
+    ⊢ Text from match o {
+      Mk(l, s, t, n, a) => l
+    }
+  }
+
+  pub fn short(o: Opt): Option(Nat) {
+    ⊢ Option(Nat) from match o {
+      Mk(l, s, t, n, a) => s
+    }
+  }
+
+  pub fn takes(o: Opt): Takes {
+    ⊢ Takes from match o {
+      Mk(l, s, t, n, a) => t
+    }
+  }
+
+  pub fn need(o: Opt): Bool {
+    ⊢ Bool from match o {
+      Mk(l, s, t, n, a) => n
+    }
+  }
+
+  pub fn about(o: Opt): Text {
+    ⊢ Text from match o {
+      Mk(l, s, t, n, a) => a
+    }
+  }
+}
+
+module Pos {
+  pub fn name(p: Pos): Text {
+    ⊢ Text from match p {
+      Mk(n, r, a) => n
+    }
+  }
+
+  pub fn arity(p: Pos): Arity {
+    ⊢ Arity from match p {
+      Mk(n, r, a) => r
+    }
+  }
+
+  pub fn about(p: Pos): Text {
+    ⊢ Text from match p {
+      Mk(n, r, a) => a
+    }
+  }
+}
+
+pub fn spec_name(s: Spec): Text {
+  ⊢ Text from match s {
+    Mk(n, a, v, os, ps, cs, nc) => n
+  }
+}
+
+pub fn spec_about(s: Spec): Text {
+  ⊢ Text from match s {
+    Mk(n, a, v, os, ps, cs, nc) => a
+  }
+}
+
+pub fn spec_version(s: Spec): Text {
+  ⊢ Text from match s {
+    Mk(n, a, v, os, ps, cs, nc) => v
+  }
+}
+
+pub fn spec_opts(s: Spec): List(Opt) {
+  ⊢ List(Opt) from match s {
+    Mk(n, a, v, os, ps, cs, nc) => os
+  }
+}
+
+pub fn spec_poss(s: Spec): List(Pos) {
+  ⊢ List(Pos) from match s {
+    Mk(n, a, v, os, ps, cs, nc) => ps
+  }
+}
+
+pub fn spec_subs(s: Spec): List(Spec) {
+  ⊢ List(Spec) from match s {
+    Mk(n, a, v, os, ps, cs, nc) => cs
+  }
+}
+
+pub fn spec_need_sub(s: Spec): Bool {
+  ⊢ Bool from match s {
+    Mk(n, a, v, os, ps, cs, nc) => nc
+  }
+}
+
+pub fn short_of(slot: Option(Opt)): Option(Nat) {
+  ⊢ Option(Nat) from match slot {
+    None => None
+    Some(o) => Opt::short(o)
+  }
+}
+
+pub fn takes_of(slot: Option(Opt)): Takes {
+  ⊢ Takes from match slot {
+    None => Nothing
+    Some(o) => Opt::takes(o)
+  }
+}
+
+// The short name of option `i`.
+pub fn short_at(os: List(Opt), i: Nat): Option(Nat) {
+  short_of(List::nth(os, i))
+}
+
+// What option `i` takes; nothing when there is no option `i`.
+pub fn takes_at(os: List(Opt), i: Nat): Takes {
+  takes_of(List::nth(os, i))
+}
+
+// ---- what is read -------------------------------------------------------------
+
+// An argument as it is read: option `i`, with its value when it takes one, or a
+// positional argument.
+pub(open) inductive Item: Type {
+  ItemOpt(i: Nat, v: Option(Text)): Item
+  ItemPos(t: Text): Item
+  // Subcommand `k`, and the arguments after its name, which it reads.
+  ItemSub(k: Nat, rest: List(Text)): Item
+}
+
+// Why a command line is not accepted. Options are named by their position in
+// the declaration, positional arguments by theirs among the positional ones.
+pub(open) inductive Problem: Type {
+  // An argument that is no option (`--lou`, `-x`).
+  Unknown(arg: Text): Problem
+  // Option `i` takes a value and none follows it.
+  NeedsValue(i: Nat): Problem
+  // `--long=v` for a switch.
+  NoValue(i: Nat, v: Text): Problem
+  // The value of option `i` is not of its type.
+  BadValue(i: Nat, v: Text): Problem
+  // Option `i` takes one value or is one switch, and was given twice.
+  Repeated(i: Nat): Problem
+  // Option `i` is required and was not given.
+  Missing(i: Nat): Problem
+  // Positional argument `k` is required and was not given.
+  MissingArg(k: Nat): Problem
+  // Positional argument `k` is not of its type.
+  BadArg(k: Nat, v: Text): Problem
+  // A positional argument more than the declaration takes.
+  ExtraArg(t: Text): Problem
+  // `--help` or `-h`: the help is what to show.
+  AskedHelp: Problem
+  // `--version` or `-V`.
+  AskedVersion: Problem
+  // The program takes a subcommand and none was given.
+  MissingCommand: Problem
+  // Subcommand `k` did not accept what followed its name.
+  InSub(k: Nat, p: Problem): Problem
+}
+
+// A command line read as a `T`, or why it is not one.
+pub(open) inductive Parsed(T: Type): Type {
+  Ok(v: T): Parsed(T)
+  Failed(p: Problem): Parsed(T)
+}
+
+// ---- reading the words --------------------------------------------------------
+
+pub fn bytes_same(a: List(Nat), b: List(Nat)): Bool {
+  ⊢ Bool from match a {
+    Nil => ⊢ Bool from match b {
+      Nil => true
+      Cons(y, ys) => false
+    }
+    Cons(x, xs) => ⊢ Bool from match b {
+      Nil => false
+      Cons(y, ys) => Bool::and(Nat::eq(x, y), bytes_same(xs, ys))
+    }
+  }
+}
+
+// Whether a word is read as an option: `-` and at least one byte more.
+pub fn dashy(b: List(Nat)): Bool {
+  ⊢ Bool from match b {
+    Nil => false
+    Cons(c, more) => ⊢ Bool from match more {
+      Nil => false
+      Cons(d, ds) => Nat::eq(c, 45)
+    }
+  }
+}
+
+// How a word after `--` names a long option `l`: not at all, exactly, or as
+// `l=v`.
+pub(open) inductive Hit: Type {
+  Miss: Hit
+  Exact: Hit
+  Glue(v: List(Nat)): Hit
+}
+
+module Hit {
+  pub fn after(s: Bool, r: Hit): Hit {
+    ⊢ Hit from match s {
+      false => Miss
+      true => r
+    }
+  }
+
+  pub fn end(w: List(Nat)): Hit {
+    ⊢ Hit from match w {
+      Nil => Exact
+      Cons(c, v) => Hit::after(Nat::eq(c, 61), Glue(v))
+    }
+  }
+}
+
+pub fn long_hit(l: List(Nat), w: List(Nat)): Hit {
+  ⊢ Hit from match l {
+    Nil => Hit::end(w)
+    Cons(x, xs) => ⊢ Hit from match w {
+      Nil => Miss
+      Cons(y, ys) => Hit::after(Nat::eq(x, y), long_hit(xs, ys))
+    }
+  }
+}
+
+// The first option whose long name the word names, and how.
+pub(open) inductive Found: Type {
+  Mk(i: Nat, h: Hit): Found
+}
+
+pub fn found_succ(f: Option(Found)): Option(Found) {
+  ⊢ Option(Found) from match f {
+    None => None
+    Some(x) => ⊢ Option(Found) from match x {
+      Mk(i, h) => Some(Found::Mk(Succ(i), h))
+    }
+  }
+}
+
+pub fn long_step(h: Hit, r: Option(Found)): Option(Found) {
+  ⊢ Option(Found) from match h {
+    Miss => found_succ(r)
+    Exact => Some(Found::Mk(Zero, Exact))
+    Glue(v) => Some(Found::Mk(Zero, Glue(v)))
+  }
+}
+
+pub fn lookup_long(os: List(Opt), w: List(Nat)): Option(Found) {
+  ⊢ Option(Found) from match os {
+    Nil => None
+    Cons(o, rest) => long_step(long_hit(Text::bytes(Opt::long(o)), w), lookup_long(rest, w))
+  }
+}
+
+pub fn option_succ(o: Option(Nat)): Option(Nat) {
+  ⊢ Option(Nat) from match o {
+    None => None
+    Some(i) => Some(Succ(i))
+  }
+}
+
+pub fn short_is(s: Option(Nat), c: Nat): Bool {
+  ⊢ Bool from match s {
+    None => false
+    Some(x) => Nat::eq(x, c)
+  }
+}
+
+pub fn short_step(s: Bool, r: Option(Nat)): Option(Nat) {
+  ⊢ Option(Nat) from match s {
+    false => option_succ(r)
+    true => Some(Zero)
+  }
+}
+
+// The first option whose short name is `c`.
+pub fn lookup_short(os: List(Opt), c: Nat): Option(Nat) {
+  ⊢ Option(Nat) from match os {
+    Nil => None
+    Cons(o, rest) => short_step(short_is(Opt::short(o), c), lookup_short(rest, c))
+  }
+}
+
+// What one word is read as: items, and the option whose value the next word
+// is; every word after it positional (`--`); or a problem.
+pub(open) inductive Step: Type {
+  StItems(xs: List(Item), w: Option(Nat)): Step
+  StRest: Step
+  StFail(p: Problem): Step
+}
+
+pub fn step_cons(x: Item, s: Step): Step {
+  ⊢ Step from match s {
+    StItems(xs, w) => StItems(Cons(x, xs), w)
+    StRest => StRest
+    StFail(p) => StFail(p)
+  }
+}
+
+pub fn step_wait(s: Step): Option(Nat) {
+  ⊢ Option(Nat) from match s {
+    StItems(xs, w) => w
+    StRest => None
+    StFail(p) => None
+  }
+}
+
+// The value glued to a short option: `-oFILE` or `-o=FILE`.
+pub fn glued(d: Nat, ds: List(Nat)): List(Nat) {
+  ⊢ List(Nat) from match Nat::eq(d, 61) {
+    false => Cons(d, ds)
+    true => ds
+  }
+}
+
+module Cluster {
+  pub fn takes(i: Nat, more: List(Nat), t: Takes, r: Step): Step {
+    ⊢ Step from match t {
+      Nothing => step_cons(ItemOpt(i, None), r)
+      Value(m) => ⊢ Step from match more {
+        Nil => StItems(Nil, Some(i))
+        Cons(d, ds) => StItems(Cons(ItemOpt(i, Some(text(glued(d, ds)))), Nil), None)
+      }
+    }
+  }
+
+  pub fn at(os: List(Opt), c: Nat, more: List(Nat), l: Option(Nat), r: Step): Step {
+    ⊢ Step from match l {
+      None => StFail(Unknown(text(Cons(45, Cons(c, Nil)))))
+      Some(i) => Cluster::takes(i, more, takes_at(os, i), r)
+    }
+  }
+}
+
+// The short options after a single `-`.
+pub fn cluster(os: List(Opt), cs: List(Nat)): Step {
+  ⊢ Step from match cs {
+    Nil => StItems(Nil, None)
+    Cons(c, more) => Cluster::at(os, c, more, lookup_short(os, c), cluster(os, more))
+  }
+}
+
+pub fn long_takes(a: Text, i: Nat, h: Hit, t: Takes): Step {
+  ⊢ Step from match h {
+    Miss => StFail(Unknown(a))
+    Exact => ⊢ Step from match t {
+      Nothing => StItems(Cons(ItemOpt(i, None), Nil), None)
+      Value(m) => StItems(Nil, Some(i))
+    }
+    Glue(v) => ⊢ Step from match t {
+      Nothing => StFail(NoValue(i, text(v)))
+      Value(m) => StItems(Cons(ItemOpt(i, Some(text(v))), Nil), None)
+    }
+  }
+}
+
+pub fn long_word(os: List(Opt), a: Text, f: Option(Found)): Step {
+  ⊢ Step from match f {
+    None => StFail(Unknown(a))
+    Some(x) => ⊢ Step from match x {
+      Mk(i, h) => long_takes(a, i, h, takes_at(os, i))
+    }
+  }
+}
+
+pub fn positional_step(a: Text): Step {
+  StItems(Cons(ItemPos(a), Nil), None)
+}
+
+// After `--`: the end of the options, or a long option.
+pub fn after_dashes(os: List(Opt), a: Text, ds: List(Nat)): Step {
+  ⊢ Step from match ds {
+    Nil => StRest
+    Cons(e, es) => long_word(os, a, lookup_long(os, ds))
+  }
+}
+
+// After `-` and the byte `d` (`q` is whether it is `-`).
+pub fn after_dash(os: List(Opt), a: Text, d: Nat, ds: List(Nat), q: Bool): Step {
+  ⊢ Step from match q {
+    false => cluster(os, Cons(d, ds))
+    true => after_dashes(os, a, ds)
+  }
+}
+
+pub fn dash_word(os: List(Opt), a: Text, more: List(Nat), q: Bool): Step {
+  ⊢ Step from match q {
+    false => positional_step(a)
+    true => ⊢ Step from match more {
+      Nil => positional_step(a)
+      Cons(d, ds) => after_dash(os, a, d, ds, Nat::eq(d, 45))
+    }
+  }
+}
+
+// A word read with no value pending; `b` is its bytes.
+pub fn free_word(os: List(Opt), a: Text, b: List(Nat)): Step {
+  ⊢ Step from match b {
+    Nil => positional_step(a)
+    Cons(c, more) => dash_word(os, a, more, Nat::eq(c, 45))
+  }
+}
+
+// A word read as the value of option `i`.
+pub fn value_word(i: Nat, a: Text, s: Bool): Step {
+  ⊢ Step from match s {
+    false => StItems(Cons(ItemOpt(i, Some(a)), Nil), None)
+    true => StFail(NeedsValue(i))
+  }
+}
+
+pub fn word(os: List(Opt), w: Option(Nat), a: Text): Step {
+  ⊢ Step from match w {
+    None => free_word(os, a, Text::bytes(a))
+    Some(i) => value_word(i, a, dashy(Text::bytes(a)))
+  }
+}
+
+// The result of reading the words.
+pub(open) inductive Lexed: Type {
+  LexOk(items: List(Item)): Lexed
+  LexFailed(p: Problem): Lexed
+}
+
+pub fn lexed_prepend(xs: List(Item), r: Lexed): Lexed {
+  ⊢ Lexed from match r {
+    LexOk(ys) => LexOk(List::append(xs, ys))
+    LexFailed(p) => LexFailed(p)
+  }
+}
+
+fn lex_end(w: Option(Nat)): Lexed {
+  ⊢ Lexed from match w {
+    None => LexOk(Nil)
+    Some(i) => LexFailed(NeedsValue(i))
+  }
+}
+
+pub fn positional(a: Text): Item {
+  ItemPos(a)
+}
+
+module Lex {
+  pub fn join(s: Step, rest: List(Text), r: Lexed): Lexed {
+    ⊢ Lexed from match s {
+      StItems(xs, w) => lexed_prepend(xs, r)
+      StRest => LexOk(List::map(positional, rest))
+      StFail(p) => LexFailed(p)
+    }
+  }
+}
+
+// The words from here, `w` the option whose value the first one is.
+pub fn lex_from(os: List(Opt), args: List(Text), w: Option(Nat)): Lexed {
+  ⊢ Lexed from match args {
+    Nil => lex_end(w)
+    Cons(a, rest) => Lex::join(word(os, w, a), rest, lex_from(os, rest, step_wait(word(os, w, a))))
+  }
+}
+
+// The arguments read against the options, in order.
+pub fn lex(os: List(Opt), args: List(Text)): Lexed {
+  lex_from(os, args, None)
+}
+
+// ---- subcommands --------------------------------------------------------------
+
+// The arguments split at the name of a subcommand: those before it, which
+// subcommand, and those after it. With no subcommand, `before` is every
+// argument.
+pub(open) inductive Split: Type {
+  Mk(before: List(Text), cmd: Option(Nat), after: List(Text)): Split
+}
+
+module Subcommand {
+  pub fn step(s: Bool, r: Option(Nat)): Option(Nat) {
+    ⊢ Option(Nat) from match s {
+      false => option_succ(r)
+      true => Some(Zero)
+    }
+  }
+
+  // The first subcommand named `a`.
+  pub fn index(subs: List(Spec), a: Text): Option(Nat) {
+    ⊢ Option(Nat) from match subs {
+      Nil => None
+      Cons(c, rest) => Subcommand::step(bytes_same(Text::bytes(spec_name(c)), Text::bytes(a)), Subcommand::index(rest, a))
+    }
+  }
+}
+
+pub fn split_cons(a: Text, r: Split): Split {
+  ⊢ Split from match r {
+    Mk(b, c, af) => Split::Mk(Cons(a, b), c, af)
+  }
+}
+
+// Whether a word was read as one positional argument, with no value pending.
+pub fn single_pos(xs: List(Item), w: Option(Nat)): Bool {
+  ⊢ Bool from match w {
+    Some(i) => false
+    None => ⊢ Bool from match xs {
+      Nil => false
+      Cons(x, more) => ⊢ Bool from match more {
+        Cons(y, ys) => false
+        Nil => ⊢ Bool from match x {
+          ItemOpt(i, v) => false
+          ItemPos(t) => true
+          ItemSub(k, r) => false
+        }
+      }
+    }
+  }
+}
+
+module Split {
+  pub fn add_word(a: Text, rest: List(Text), p: Bool, k: Option(Nat), r: Split): Split {
+    ⊢ Split from match p {
+      false => split_cons(a, r)
+      true => ⊢ Split from match k {
+        None => split_cons(a, r)
+        Some(j) => Split::Mk(Nil, Some(j), rest)
+      }
+    }
+  }
+}
+
+pub fn split_at(s: Step, a: Text, rest: List(Text), k: Option(Nat), r: Split): Split {
+  ⊢ Split from match s {
+    StItems(xs, w) => Split::add_word(a, rest, single_pos(xs, w), k, r)
+    StRest => Split::Mk(Cons(a, rest), None, Nil)
+    StFail(p) => Split::Mk(Cons(a, rest), None, Nil)
+  }
+}
+
+// Where the first word read as a positional argument names a subcommand.
+pub fn split_from(os: List(Opt), subs: List(Spec), args: List(Text), w: Option(Nat)): Split {
+  ⊢ Split from match args {
+    Nil => Split::Mk(Nil, None, Nil)
+    Cons(a, rest) => split_at(
+      word(os, w, a),
+      a,
+      rest,
+      Subcommand::index(subs, a),
+      split_from(os, subs, rest, step_wait(word(os, w, a)))
+    )
+  }
+}
+
+module Subcommand {
+  pub fn items(c: Option(Nat), af: List(Text)): List(Item) {
+    ⊢ List(Item) from match c {
+      None => Nil
+      Some(j) => Cons(ItemSub(j, af), Nil)
+    }
+  }
+}
+
+pub fn lexed_append(l: Lexed, ys: List(Item)): Lexed {
+  ⊢ Lexed from match l {
+    LexOk(xs) => LexOk(List::append(xs, ys))
+    LexFailed(p) => LexFailed(p)
+  }
+}
+
+module Lex {
+  pub fn split(os: List(Opt), sp: Split): Lexed {
+    ⊢ Lexed from match sp {
+      Mk(b, c, af) => lexed_append(lex(os, b), Subcommand::items(c, af))
+    }
+  }
+
+  // The arguments read against the options up to a subcommand's name, and the
+  // subcommand with the arguments after it as the last item.
+  pub fn cmd(os: List(Opt), subs: List(Spec), args: List(Text)): Lexed {
+    Lex::split(os, split_from(os, subs, args, None))
+  }
+
+  // ---- reading the items as values -------------------------------------------------
+}
+
+fn same_opt(i: Nat, x: Item): Bool {
+  ⊢ Bool from match x {
+    ItemOpt(j, v) => Nat::eq(i, j)
+    ItemPos(t) => false
+    ItemSub(k, rest) => false
+  }
+}
+
+// How many times option `i` was given.
+fn count_of(items: List(Item), i: Nat): Nat {
+  List::length(List::filter((x: Item) => same_opt(i, x), items))
+}
+
+// Whether option `i` was given.
+pub fn given(items: List(Item), i: Nat): Bool {
+  ⊢ Bool from match items {
+    Nil => false
+    Cons(x, rest) => Bool::or(same_opt(i, x), given(rest, i))
+  }
+}
+
+fn value_if(i: Nat, x: Item, r: List(Text)): List(Text) {
+  ⊢ List(Text) from match x {
+    ItemOpt(j, v) => ⊢ List(Text) from match Nat::eq(i, j) {
+      false => r
+      true => ⊢ List(Text) from match v {
+        None => r
+        Some(t) => Cons(t, r)
+      }
+    }
+    ItemPos(t) => r
+    ItemSub(k, rest) => r
+  }
+}
+
+// The values given to option `i`, in order.
+fn values_of(items: List(Item), i: Nat): List(Text) {
+  ⊢ List(Text) from match items {
+    Nil => Nil
+    Cons(x, rest) => value_if(i, x, values_of(rest, i))
+  }
+}
+
+fn pos_if(x: Item, r: List(Text)): List(Text) {
+  ⊢ List(Text) from match x {
+    ItemOpt(j, v) => r
+    ItemPos(t) => Cons(t, r)
+    ItemSub(k, rest) => r
+  }
+}
+
+// The positional arguments, in order.
+fn positionals(items: List(Item)): List(Text) {
+  ⊢ List(Text) from match items {
+    Nil => Nil
+    Cons(x, rest) => pos_if(x, positionals(rest))
+  }
+}
+
+// How a value is read as a `T`.
+pub fn conv_text(t: Text): Option(Text) {
+  Some(t)
+}
+
+fn digits_from(bs: List(Nat), acc: Nat): Option(Nat) {
+  ⊢ Option(Nat) from match bs {
+    Nil => Some(acc)
+    Cons(b, rest) => ⊢ Option(Nat) from match Bool::and(Nat::le(48, b), Nat::le(b, 57)) {
+      false => None
+      true => digits_from(rest, Nat::add(Nat::mul(acc, 10), Nat::sub(b, 48)))
+    }
+  }
+}
+
+// A decimal number: one digit or more.
+pub fn conv_nat(t: Text): Option(Nat) {
+  ⊢ Option(Nat) from match Text::bytes(t) {
+    Nil => None
+    Cons(b, rest) => digits_from(Cons(b, rest), Zero)
+  }
+}
+
+fn parsed_conv<T>(i: Nat, t: Text, c: Option(T)): Parsed(T) {
+  ⊢ Parsed(T) from match c {
+    None => Failed(BadValue(i, t))
+    Some(x) => Ok(x)
+  }
+}
+
+fn once_then<T>(i: Nat, n: Nat, r: Parsed(T)): Parsed(T) {
+  ⊢ Parsed(T) from match Nat::le(n, 1) {
+    false => Failed(Repeated(i))
+    true => r
+  }
+}
+
+// A switch: given or not, at most once.
+pub fn read_switch(items: List(Item), i: Nat): Parsed(Bool) {
+  once_then(i, count_of(items, i), Ok(given(items, i)))
+}
+
+// A count: how many times (`-vvv`).
+pub fn read_count(items: List(Item), i: Nat): Parsed(Nat) {
+  Ok(count_of(items, i))
+}
+
+module Opt {
+  fn value<T>(i: Nat, conv: (Text) -> Option(T), vs: List(Text)): Parsed(Option(T)) {
+    ⊢ Parsed(Option(T)) from match vs {
+      Nil => Ok(None)
+      Cons(t, rest) => ⊢ Parsed(Option(T)) from match conv(t) {
+        None => Failed(BadValue(i, t))
+        Some(x) => Ok(Some(x))
+      }
+    }
+  }
+}
+
+// An option that may be given once.
+pub fn read_opt<T>(items: List(Item), i: Nat, conv: (Text) -> Option(T)): Parsed(Option(T)) {
+  once_then(i, count_of(items, i), Opt::value(i, conv, values_of(items, i)))
+}
+
+fn or_default<T>(r: Parsed(Option(T)), d: T): Parsed(T) {
+  ⊢ Parsed(T) from match r {
+    Ok(o) => ⊢ Parsed(T) from match o {
+      None => Ok(d)
+      Some(x) => Ok(x)
+    }
+    Failed(p) => Failed(p)
+  }
+}
+
+fn or_missing<T>(r: Parsed(Option(T)), p: Problem): Parsed(T) {
+  ⊢ Parsed(T) from match r {
+    Ok(o) => ⊢ Parsed(T) from match o {
+      None => Failed(p)
+      Some(x) => Ok(x)
+    }
+    Failed(q) => Failed(q)
+  }
+}
+
+// An option given at most once, `d` when it is not.
+pub fn read_or<T>(items: List(Item), i: Nat, conv: (Text) -> Option(T), d: T): Parsed(T) {
+  or_default(read_opt(items, i, conv), d)
+}
+
+// An option that must be given once.
+fn read_req<T>(items: List(Item), i: Nat, conv: (Text) -> Option(T)): Parsed(T) {
+  or_missing(read_opt(items, i, conv), Missing(i))
+}
+
+fn many_values<T>(i: Nat, conv: (Text) -> Option(T), vs: List(Text)): Parsed(List(T)) {
+  ⊢ Parsed(List(T)) from match vs {
+    Nil => Ok(Nil)
+    Cons(t, rest) => ⊢ Parsed(List(T)) from match conv(t) {
+      None => Failed(BadValue(i, t))
+      Some(x) => ⊢ Parsed(List(T)) from match many_values(<T: T>, i, conv, rest) {
+        Ok(xs) => Ok(Cons(x, xs))
+        Failed(p) => Failed(p)
+      }
+    }
+  }
+}
+
+// An option that may be given any number of times, its values in order.
+pub fn read_many<T>(items: List(Item), i: Nat, conv: (Text) -> Option(T)): Parsed(List(T)) {
+  many_values(i, conv, values_of(items, i))
+}
+
+fn arg_value<T>(k: Nat, conv: (Text) -> Option(T), o: Option(Text)): Parsed(Option(T)) {
+  ⊢ Parsed(Option(T)) from match o {
+    None => Ok(None)
+    Some(t) => ⊢ Parsed(Option(T)) from match conv(t) {
+      None => Failed(BadArg(k, t))
+      Some(x) => Ok(Some(x))
+    }
+  }
+}
+
+// Positional argument `k`, when there is one.
+pub fn arg_opt<T>(items: List(Item), k: Nat, conv: (Text) -> Option(T)): Parsed(Option(T)) {
+  arg_value(k, conv, List::nth(positionals(items), k))
+}
+
+// Positional argument `k`, `d` when there is none.
+fn arg_or<T>(items: List(Item), k: Nat, conv: (Text) -> Option(T), d: T): Parsed(T) {
+  or_default(arg_opt(items, k, conv), d)
+}
+
+// Positional argument `k`, which must be there.
+pub fn arg_req<T>(items: List(Item), k: Nat, conv: (Text) -> Option(T)): Parsed(T) {
+  or_missing(arg_opt(items, k, conv), MissingArg(k))
+}
+
+fn args_values<T>(k: Nat, conv: (Text) -> Option(T), vs: List(Text)): Parsed(List(T)) {
+  ⊢ Parsed(List(T)) from match vs {
+    Nil => Ok(Nil)
+    Cons(t, rest) => ⊢ Parsed(List(T)) from match conv(t) {
+      None => Failed(BadArg(k, t))
+      Some(x) => ⊢ Parsed(List(T)) from match args_values(<T: T>, k, conv, rest) {
+        Ok(xs) => Ok(Cons(x, xs))
+        Failed(p) => Failed(p)
+      }
+    }
+  }
+}
+
+// The positional arguments from `k` on.
+pub fn arg_rest<T>(items: List(Item), k: Nat, conv: (Text) -> Option(T)): Parsed(List(T)) {
+  args_values(k, conv, List::drop(k, positionals(items)))
+}
+
+// More positional arguments than the `n` declared.
+pub fn read_extra(items: List(Item), n: Nat): Parsed(Bool) {
+  ⊢ Parsed(Bool) from match List::drop(n, positionals(items)) {
+    Nil => Ok(true)
+    Cons(t, rest) => Failed(ExtraArg(t))
+  }
+}
+
+// What a reading leaves to check: its problem, if any.
+pub fn problem_of<T>(r: Parsed(T)): Option(Problem) {
+  ⊢ Option(Problem) from match r {
+    Ok(x) => None
+    Failed(p) => Some(p)
+  }
+}
+
+// The value read, `d` when there is a problem.
+pub fn parsed_or<T>(r: Parsed(T), d: T): T {
+  ⊢ T from match r {
+    Ok(x) => x
+    Failed(p) => d
+  }
+}
+
+// The first problem of the readings, in the order of the declaration.
+pub fn first_problem(ps: List(Option(Problem))): Option(Problem) {
+  ⊢ Option(Problem) from match ps {
+    Nil => None
+    Cons(p, rest) => ⊢ Option(Problem) from match p {
+      None => first_problem(rest)
+      Some(q) => Some(q)
+    }
+  }
+}
+
+pub fn checked<T>(c: Option(Problem), v: T): Parsed(T) {
+  ⊢ Parsed(T) from match c {
+    None => Ok(v)
+    Some(p) => Failed(p)
+  }
+}
+
+pub fn read_help<T>(h: Bool, v: Bool, c: Option(Problem), x: T): Parsed(T) {
+  ⊢ Parsed(T) from match h {
+    true => Failed(AskedHelp)
+    false => ⊢ Parsed(T) from match v {
+      true => Failed(AskedVersion)
+      false => checked(c, x)
+    }
+  }
+}
+
+// `--help` (option `hv`) and `--version` (option `vv`) come before the other
+// readings.
+fn read_items<T>(
+  hv: Nat,
+  vv: Nat,
+  checks: (List(Item)) -> List(Option(Problem)),
+  mk: (List(Item)) -> T,
+  items: List(Item)
+): Parsed(T) {
+  read_help(given(items, hv), given(items, vv), first_problem(checks(items)), mk(items))
+}
+
+pub fn parse_lexed<T>(
+  hv: Nat,
+  vv: Nat,
+  checks: (List(Item)) -> List(Option(Problem)),
+  mk: (List(Item)) -> T,
+  l: Lexed
+): Parsed(T) {
+  ⊢ Parsed(T) from match l {
+    LexOk(items) => read_items(hv, vv, checks, mk, items)
+    LexFailed(p) => Failed(p)
+  }
+}
+
+// The command line read against `sp`: `checks` are the readings' problems, and
+// `mk` makes the value from the items when there are none (what `cli!` uses).
+pub fn parse_into<T>(
+  sp: Spec,
+  hv: Nat,
+  vv: Nat,
+  checks: (List(Item)) -> List(Option(Problem)),
+  mk: (List(Item)) -> T,
+  args: List(Text)
+): Parsed(T) {
+  parse_lexed(hv, vv, checks, mk, Lex::cmd(spec_opts(sp), spec_subs(sp), args))
+}
+
+// ---- reading a subcommand -----------------------------------------------------
+
+inductive SubArgs: Type {
+  Mk(k: Nat, rest: List(Text)): SubArgs
+}
+
+fn sub_if(x: Item, r: Option(SubArgs)): Option(SubArgs) {
+  ⊢ Option(SubArgs) from match x {
+    ItemOpt(i, v) => r
+    ItemPos(t) => r
+    ItemSub(k, rest) => Some(SubArgs::Mk(k, rest))
+  }
+}
+
+fn find_sub(items: List(Item)): Option(SubArgs) {
+  ⊢ Option(SubArgs) from match items {
+    Nil => None
+    Cons(x, rest) => sub_if(x, find_sub(rest))
+  }
+}
+
+module Subcommand {
+  fn wrap<S>(k: Nat, r: Parsed(S)): Parsed(S) {
+    ⊢ Parsed(S) from match r {
+      Ok(v) => Ok(v)
+      Failed(p) => Failed(InSub(k, p))
+    }
+  }
+}
+
+pub fn parsed_map<A, B>(f: (A) -> B, r: Parsed(A)): Parsed(B) {
+  ⊢ Parsed(B) from match r {
+    Ok(v) => Ok(f(v))
+    Failed(p) => Failed(p)
+  }
+}
+
+module Subcommand {
+  fn run<S>(run: (Nat, List(Text)) -> Parsed(S), x: SubArgs): Parsed(S) {
+    ⊢ Parsed(S) from match x {
+      Mk(k, rest) => Subcommand::wrap(k, run(k, rest))
+    }
+  }
+}
+
+// The subcommand given, read by `run` (subcommand `k` reads the arguments
+// after its name).
+pub fn read_sub<S>(items: List(Item), run: (Nat, List(Text)) -> Parsed(S)): Parsed(S) {
+  ⊢ Parsed(S) from match find_sub(items) {
+    None => Failed(MissingCommand)
+    Some(x) => Subcommand::run(run, x)
+  }
+}
+
+// The subcommand, when one is given.
+fn read_sub_opt<S>(items: List(Item), run: (Nat, List(Text)) -> Parsed(S)): Parsed(Option(S)) {
+  ⊢ Parsed(Option(S)) from match find_sub(items) {
+    None => Ok(None)
+    Some(x) => parsed_map((v: S) => Some(v), Subcommand::run(run, x))
+  }
+}

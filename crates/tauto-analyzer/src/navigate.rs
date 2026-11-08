@@ -211,7 +211,20 @@ impl<'a> Navigator<'a> {
             .filter(|s| s.contains(at))
             .min_by_key(|s| s.end - s.start)
             .copied();
-        let site = self.site(offset);
+        let site = self.site(offset).or_else(|| {
+            self.index()
+                .theorem_keywords
+                .iter()
+                .find_map(|(span, index)| {
+                    span.contains(at).then_some((
+                        *span,
+                        DefId {
+                            file: self.entry,
+                            index: *index,
+                        },
+                    ))
+                })
+        });
         // A name inside a call is its own; the call is the rest of it.
         let on_macro_name = site.is_some_and(|(_, id)| self.world.def(id).kind == Kind::Macro);
         if let (Some(call), true) = (call, site.is_none() || on_macro_name) {
@@ -242,10 +255,22 @@ impl<'a> Navigator<'a> {
             (true, Some(s)) => t.local(&own, &d.name, s),
             _ => t.term(&own, span),
         });
-        Some(Hover {
-            span,
-            contents: self.describe(id, ty, Some(&own)),
-        })
+        let mut contents = self.describe(id, ty, Some(&own));
+        if d.kind == Kind::Theorem
+            && let Some(types) = types
+            && let Some(path) = &self.world.file(id.file).path
+            && let Some(declaration) = d.spans.first()
+            && let Some(proof) = types.proof_at(path, *declaration)
+        {
+            // Indentation preserves proof layout without interpreting source text as Markdown.
+            contents.push_str("\n\n");
+            for line in proof.lines() {
+                contents.push_str("    ");
+                contents.push_str(line);
+                contents.push('\n');
+            }
+        }
+        Some(Hover { span, contents })
     }
 
     fn describe(&self, id: DefId, ty: Option<String>, from: Option<&Path>) -> String {

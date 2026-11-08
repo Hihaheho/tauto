@@ -1,0 +1,52 @@
+// Rust and JavaScript drop long recursive values without using stack
+// space in proportion to the number of cells.
+@ cases.a-long-list-from-bytes-is-dropped
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Os
+import std::prelude::Shared
+
+var b := Bytes::of_text("a")
+var i: u64 := 0
+while i < 20 {
+  b := Bytes::concat(b, b)
+  i := i + 1
+}
+match Bytes::to_list(b) {
+  Nil => print("nil")
+  Cons(x, rest) => print(Text::of_nat(Nat::of_u64(U64::of_u8(x))))
+}
+```
+stdout = "97"
+stderr = ""
+exit = 0
+
+// Both backends drop a long chain of a program-defined recursive type.
+@ cases.a-long-chain-of-a-program-type-is-dropped
+backends = ["rust", "javascript"]
+scenarios = ["rust", "javascript"]
+source = ```tauto
+enum Chain {
+  End
+  Link(u8, Chain)
+}
+
+fn chain(l: List(u8), acc: Chain): Chain {
+  ⊢ Chain from match l {
+    Nil => acc
+    Cons(x, rest) => chain(rest, Link(x, acc))
+  }
+}
+
+var b := Bytes::of_text("ab")
+var i: u64 := 0
+while i < 19 {
+  b := Bytes::concat(b, b)
+  i := i + 1
+}
+match chain(Bytes::to_list(b), End) {
+  End => perform show("last", 0)
+  Link(x, rest) => perform show("last", Nat::of_u64(U64::of_u8(x)))
+}
+```
+rust_shows = ["last = 98"]

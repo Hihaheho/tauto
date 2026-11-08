@@ -19,7 +19,7 @@ pub fn argument_terms(
   more: List(Ty),
   args: List(SurfaceTerm)
 ): Mut1(Unit, Checker) {
-  match args: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match args {
     Nil => mut1(Star, c)
     Cons(at, atail) => frame_bind(
       Unit,
@@ -44,7 +44,7 @@ pub theorem argument_terms_frame(
   ). ∀ ordered: CkOrdered(next). CkRunFrame(next, ck_expect_args(rest, next, ps, args)),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, argument_terms(a, rest, c, p, more, args)) {
-  match args: CkRunFrame(c, argument_terms(a, rest, c, p, more, args)) {
+  ⊢ CkRunFrame(c, argument_terms(a, rest, c, p, more, args)) from match args {
     Nil => run_frame_return(c, Star, ordered)
     Cons(at, atail) => run_frame_bind(
       Unit,
@@ -69,7 +69,7 @@ pub fn argument_params(
   args: List(SurfaceTerm),
   ps: List(Ty)
 ): Mut1(Unit, Checker) {
-  match ps: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match ps {
     Nil => mut1(Star, c)
     Cons(p, more) => argument_terms(a, rest, c, p, more, args)
   }
@@ -88,7 +88,7 @@ pub theorem argument_params_frame(
   ). ∀ ordered: CkOrdered(next). CkRunFrame(next, ck_expect_args(rest, next, ps, args)),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, argument_params(a, rest, c, args, ps)) {
-  match ps: CkRunFrame(c, argument_params(a, rest, c, args, ps)) {
+  ⊢ CkRunFrame(c, argument_params(a, rest, c, args, ps)) from match ps {
     Nil => run_frame_return(c, Star, ordered)
     Cons(p, more) => argument_terms_frame(a, rest, c, p, more, args, ih, ordered)
   }
@@ -109,7 +109,7 @@ pub theorem ck_expect_args_run_frame(
   args: List(SurfaceTerm),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, ck_expect_args(tys, c, ps, args)) {
-  match tys: CkRunFrame(c, ck_expect_args(tys, c, ps, args)) {
+  ⊢ CkRunFrame(c, ck_expect_args(tys, c, ps, args)) from match tys {
     Nil => run_frame_return(c, Star, ordered)
     Cons(a, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
@@ -189,7 +189,7 @@ pub theorem ck_lambda_params_frame(
   c: Checker,
   borrows: List(Option(Bool))
 ): CkReadFrame(c, ck_lambda_params(ps, c, borrows)) {
-  match ps: CkReadFrame(c, ck_lambda_params(ps, c, borrows)) {
+  ⊢ CkReadFrame(c, ck_lambda_params(ps, c, borrows)) from match ps {
     Nil => Refl
     Cons(p, rest) => Eq::subst(
       (z: Mut1(List(Ty), Checker)) => CkReadFrame(c, z),
@@ -206,7 +206,7 @@ pub theorem ck_lambda_params_frame(
 }
 
 pub fn argument_hint_cons(p: Ty, rest: List(Ty), c: Checker, hs: List(Ty)): Mut1(Unit, Checker) {
-  match hs: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match hs {
     Nil => mut1(Star, c)
     Cons(h, more) => frame_bind(
       Bool,
@@ -227,7 +227,7 @@ pub theorem argument_hint_cons_frame(
   ). ∀ ordered: CkOrdered(next). CkRunFrame(next, ck_lambda_hint(rest, next, hs)),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, argument_hint_cons(p, rest, c, hs)) {
-  match hs: CkRunFrame(c, argument_hint_cons(p, rest, c, hs)) {
+  ⊢ CkRunFrame(c, argument_hint_cons(p, rest, c, hs)) from match hs {
     Nil => run_frame_return(c, Star, ordered)
     Cons(h, more) => run_frame_bind(
       Bool,
@@ -258,7 +258,7 @@ pub theorem ck_lambda_hint_run_frame(
   hs: List(Ty),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, ck_lambda_hint(ps, c, hs)) {
-  match ps: CkRunFrame(c, ck_lambda_hint(ps, c, hs)) {
+  ⊢ CkRunFrame(c, ck_lambda_hint(ps, c, hs)) from match ps {
     Nil => run_frame_return(c, Star, ordered)
     Cons(p, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkRunFrame(c, z),
@@ -281,7 +281,7 @@ pub fn argument_expected(
   a: SurfaceTerm,
   expected: Option(Ty)
 ): Mut1(Unit, Checker) {
-  match expected: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match expected {
     None => mut1(Star, c)
     Some(p) => ck_rewrap1(ck_expect(c, t, p, span_of(a), "an argument"))
   }
@@ -294,7 +294,7 @@ pub theorem argument_expected_frame(
   expected: Option(Ty),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, argument_expected(c, t, a, expected)) {
-  match expected: CkRunFrame(c, argument_expected(c, t, a, expected)) {
+  ⊢ CkRunFrame(c, argument_expected(c, t, a, expected)) from match expected {
     None => run_frame_return(c, Star, ordered)
     Some(p) => run_frame_rewrap(
       c,
@@ -304,12 +304,7 @@ pub theorem argument_expected_frame(
   }
 }
 
-pub theorem argument_expected_unf(
-  c: Checker,
-  t: Ty,
-  expected: Option(Ty),
-  a: SurfaceTerm
-): ck_expect_opt(c, t, expected, a) = argument_expected(c, t, a, expected) { match expected: ck_expect_opt(c, t, expected, a) = argument_expected(c, t, a, expected) { None => Refl
+pub theorem argument_expected_unf(c: Checker, t: Ty, expected: Option(Ty), a: SurfaceTerm): ck_expect_opt(c, t, expected, a) = argument_expected(c, t, a, expected) { ⊢ ck_expect_opt(c, t, expected, a) = argument_expected(c, t, a, expected) from match expected { None => Refl
     Some(p) => Refl } }
 
 pub theorem ck_expect_opt_run_frame(
@@ -329,7 +324,7 @@ pub fn argument_returns(c: Checker): List(Ty) { c.returns }
 pub fn argument_exceeded(c: Checker): List(Ty) { c.exceeded }
 
 pub fn argument_return(c: Checker, t: Ty, span: TySpan, returns: List(Ty)): Mut1(Unit, Checker) {
-  match returns: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match returns {
     Nil => ck_rewrap1(ck_error(c, "`return` outside a function", span))
     Cons(r, rest) => ck_rewrap1(ck_expect(c, t, r, span, "the returned value"))
   }
@@ -342,7 +337,7 @@ pub theorem argument_return_frame(
   returns: List(Ty),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, argument_return(c, t, span, returns)) {
-  match returns: CkRunFrame(c, argument_return(c, t, span, returns)) {
+  ⊢ CkRunFrame(c, argument_return(c, t, span, returns)) from match returns {
     Nil => run_frame_read(
       c,
       ck_rewrap1(ck_error(c, "`return` outside a function", span)),
@@ -410,7 +405,7 @@ pub theorem argument_budget_after_frame(
 }
 
 pub fn argument_budget(c: Checker, t: Ty, span: TySpan, exceeded: List(Ty)): Mut1(Unit, Checker) {
-  match exceeded: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match exceeded {
     Nil => mut1(Star, c)
     Cons(x, rest) => frame_bind(
       Bool,
@@ -428,7 +423,7 @@ pub theorem argument_budget_frame(
   exceeded: List(Ty),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, argument_budget(c, t, span, exceeded)) {
-  match exceeded: CkRunFrame(c, argument_budget(c, t, span, exceeded)) {
+  ⊢ CkRunFrame(c, argument_budget(c, t, span, exceeded)) from match exceeded {
     Nil => run_frame_return(c, Star, ordered)
     Cons(x, rest) => run_frame_bind(
       Bool,

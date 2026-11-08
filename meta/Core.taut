@@ -1,5 +1,5 @@
-import "../std/Std.taut"
-import "Renaming.taut"
+import "Renaming.taut" { upR }
+import std::prelude::Std { List, Option }
 
 // A port of lean/Proto/Core.lean, in tauto, in five parts: terms, renaming and
 // substitution; typing; substitution preserves typing; reduction and
@@ -9,257 +9,247 @@ import "Renaming.taut"
 // ---- part 1: terms, renaming and substitution -------------------------------
 // The checks at the end of this part are computations the kernel runs.
 
-inductive Ty(): Type {
-  tnat(): Ty
-  tbool(): Ty
-  arr(a: Ty, b: Ty): Ty
+pub(open) inductive Ty: Type {
+  Tnat: Ty
+  Tbool: Ty
+  Arr(a: Ty, b: Ty): Ty
 }
 
-inductive Tm(): Type {
-  tvar(i: Nat): Tm
-  lam(A: Ty, b: Tm): Tm
-  app(f: Tm, a: Tm): Tm
-  tzero(): Tm
-  tsucc(n: Tm): Tm
-  natRec(A: Ty, z: Tm, s: Tm, n: Tm): Tm
-  tt(): Tm
-  ff(): Tm
-  ite(c: Tm, t: Tm, e: Tm): Tm
+pub(open) inductive Tm: Type {
+  Tvar(i: Nat): Tm
+  Lam(A: Ty, b: Tm): Tm
+  App(f: Tm, a: Tm): Tm
+  Tzero: Tm
+  Tsucc(n: Tm): Tm
+  NatRec(A: Ty, z: Tm, s: Tm, n: Tm): Tm
+  Tt: Tm
+  Ff: Tm
+  Ite(c: Tm, t: Tm, e: Tm): Tm
 }
 
-fn ren(t: Tm, xi: (Nat) -> Nat) -> Tm {
-  match t -> Tm {
-    tvar(i) => tvar(xi(i))
-    lam(A, b) => lam(A, ren(b, upR(xi)))
-    app(f, a) => app(ren(f, xi), ren(a, xi))
-    tzero => tzero
-    tsucc(n) => tsucc(ren(n, xi))
-    natRec(A, z, s, n) => natRec(A, ren(z, xi), ren(s, xi), ren(n, xi))
-    tt => tt
-    ff => ff
-    ite(c, t1, e) => ite(ren(c, xi), ren(t1, xi), ren(e, xi))
+pub fn ren(t: Tm, xi: (Nat) -> Nat): Tm {
+  ⊢ Tm from match t {
+    Tvar(i) => Tvar(xi(i))
+    Lam(A, b) => Lam(A, ren(b, upR(xi)))
+    App(f, a) => App(ren(f, xi), ren(a, xi))
+    Tzero => Tzero
+    Tsucc(n) => Tsucc(ren(n, xi))
+    NatRec(A, z, s, n) => NatRec(A, ren(z, xi), ren(s, xi), ren(n, xi))
+    Tt => Tt
+    Ff => Ff
+    Ite(c, t1, e) => Ite(ren(c, xi), ren(t1, xi), ren(e, xi))
   }
 }
 
-fn up(sigma: (Nat) -> Tm, n: Nat) -> Tm {
-  match n -> Tm {
-    zero => tvar(zero)
-    succ(m) => ren(sigma(m), succ)
+pub fn up(sigma: (Nat) -> Tm, n: Nat): Tm {
+  ⊢ Tm from match n {
+    Zero => Tvar(Zero)
+    Succ(m) => ren(sigma(m), Succ)
   }
 }
 
-fn subst(t: Tm, sigma: (Nat) -> Tm) -> Tm {
-  match t -> Tm {
-    tvar(i) => sigma(i)
-    lam(A, b) => lam(A, subst(b, up(sigma)))
-    app(f, a) => app(subst(f, sigma), subst(a, sigma))
-    tzero => tzero
-    tsucc(n) => tsucc(subst(n, sigma))
-    natRec(A, z, s, n) => natRec(A, subst(z, sigma), subst(s, sigma), subst(n, sigma))
-    tt => tt
-    ff => ff
-    ite(c, t1, e) => ite(subst(c, sigma), subst(t1, sigma), subst(e, sigma))
+pub fn subst(t: Tm, sigma: (Nat) -> Tm): Tm {
+  ⊢ Tm from match t {
+    Tvar(i) => sigma(i)
+    Lam(A, b) => Lam(A, subst(b, up(sigma)))
+    App(f, a) => App(subst(f, sigma), subst(a, sigma))
+    Tzero => Tzero
+    Tsucc(n) => Tsucc(subst(n, sigma))
+    NatRec(A, z, s, n) => NatRec(A, subst(z, sigma), subst(s, sigma), subst(n, sigma))
+    Tt => Tt
+    Ff => Ff
+    Ite(c, t1, e) => Ite(subst(c, sigma), subst(t1, sigma), subst(e, sigma))
   }
 }
 
-fn single(a: Tm, n: Nat) -> Tm {
-  match n -> Tm {
-    zero => a
-    succ(m) => tvar(m)
+pub fn single(a: Tm, n: Nat): Tm {
+  ⊢ Tm from match n {
+    Zero => a
+    Succ(m) => Tvar(m)
   }
 }
 
-theorem ren_var(): Eq(Tm, ren(tvar(0), succ), tvar(1)) { refl(Tm, tvar(1)) }
+pub theorem ren_var(): ren(Tvar(0), Succ) = Tvar(1) { Refl }
 
-theorem ren_under_lam(): Eq(Tm, ren(lam(tnat, tvar(0)), succ), lam(tnat, tvar(0))) {
-  refl(Tm, lam(tnat, tvar(0)))
+pub theorem ren_under_lam(): ren(Lam(Tnat, Tvar(0)), Succ) = Lam(Tnat, Tvar(0)) {
+  Refl
 }
 
-theorem beta_by_substitution(): Eq(Tm, subst(tvar(0), single(tt)), tt) { refl(Tm, tt) }
+pub theorem beta_by_substitution(): subst(Tvar(0), single(Tt)) = Tt { Refl }
 
-// ---- part 2: lists, typing, and renaming preserves typing -------------------
-
-fn nth(G: List(Ty), i: Nat) -> Option(Ty) {
-  match G -> Option(Ty) {
-    Nil => None(Ty)
-    Cons(h, t) => match i -> Option(Ty) {
-      zero => Some(Ty, h)
-      succ(m) => nth(t, m)
+pub fn nth(G: List(Ty), i: Nat): Option(Ty) {
+  ⊢ Option(Ty) from match G {
+    Nil => None(<A: Ty>)
+    Cons(h, t) => ⊢ Option(Ty) from match i {
+      Zero => Some(<A: Ty>, h)
+      Succ(m) => nth(t, m)
     }
   }
 }
 
-inductive HasType(): (List(Ty), Tm, Ty) -> Prop {
-  hvar<G: List(
-    Ty
-  ), i: Nat, A: Ty>(h: Eq(Option(Ty), nth(G, i), Some(Ty, A))): HasType(G, tvar(i), A)
-  hlam<G: List(
-    Ty
-  ), A: Ty, B: Ty, b: Tm>(h: HasType(Cons(Ty, A, G), b, B)): HasType(G, lam(A, b), arr(A, B))
-  happ<G: List(
-    Ty
-  ), A: Ty, B: Ty, f: Tm, a: Tm>(
-    hf: HasType(G, f, arr(A, B)),
+pub(open) inductive HasType: (List(Ty), Tm, Ty) -> Prop {
+  Hvar<G: List(Ty), i: Nat, A: Ty>(h: nth(G, i) = Some(<A: Ty>, A)): HasType(G, Tvar(i), A)
+  Hlam<G: List(Ty), A: Ty, B: Ty, b: Tm>(
+    h: HasType(Cons(<A: Ty>, A, G), b, B)
+  ): HasType(G, Lam(A, b), Arr(A, B))
+  Happ<G: List(Ty), A: Ty, B: Ty, f: Tm, a: Tm>(
+    hf: HasType(G, f, Arr(A, B)),
     ha: HasType(G, a, A)
-  ): HasType(G, app(f, a), B)
-  hzero(G: List(Ty)): HasType(G, tzero, tnat)
-  hsucc<G: List(Ty), n: Tm>(h: HasType(G, n, tnat)): HasType(G, tsucc(n), tnat)
-  hnatrec<G: List(
-    Ty
-  ), A: Ty, z: Tm, s: Tm, n: Tm>(
+  ): HasType(G, App(f, a), B)
+  Hzero(G: List(Ty)): HasType(G, Tzero, Tnat)
+  Hsucc<G: List(Ty), n: Tm>(h: HasType(G, n, Tnat)): HasType(G, Tsucc(n), Tnat)
+  Hnatrec<G: List(Ty), A: Ty, z: Tm, s: Tm, n: Tm>(
     hz: HasType(G, z, A),
-    hs: HasType(G, s, arr(tnat, arr(A, A))),
-    hn: HasType(G, n, tnat)
-  ): HasType(G, natRec(A, z, s, n), A)
-  htt(G: List(Ty)): HasType(G, tt, tbool)
-  hff(G: List(Ty)): HasType(G, ff, tbool)
-  hite<G: List(
-    Ty
-  ), A: Ty, c: Tm, t: Tm, e: Tm>(
-    hc: HasType(G, c, tbool),
+    hs: HasType(G, s, Arr(Tnat, Arr(A, A))),
+    hn: HasType(G, n, Tnat)
+  ): HasType(G, NatRec(A, z, s, n), A)
+  Htt(G: List(Ty)): HasType(G, Tt, Tbool)
+  Hff(G: List(Ty)): HasType(G, Ff, Tbool)
+  Hite<G: List(Ty), A: Ty, c: Tm, t: Tm, e: Tm>(
+    hc: HasType(G, c, Tbool),
     ht: HasType(G, t, A),
     he: HasType(G, e, A)
-  ): HasType(G, ite(c, t, e), A)
+  ): HasType(G, Ite(c, t, e), A)
 }
 
-def RenOk(xi: (Nat) -> Nat, G: List(Ty), D: List(Ty)): Prop :=
-∀ i: Nat. ∀ A: Ty. (
-  Eq(Option(Ty), nth(G, i), Some(Ty, A))
-) -> Eq(Option(Ty), nth(D, xi(i)), Some(Ty, A))
+pub def RenOk(xi: (Nat) -> Nat, G: List(Ty), D: List(Ty)): Prop :=
+∀ i: Nat, A: Ty. (nth(G, i) = Some(<A: Ty>, A)) -> (nth(D, xi(i)) = Some(<A: Ty>, A))
 
-theorem RenOk_up_at<xi: (
-  Nat
-) -> Nat, G: List(
-  Ty
-), D: List(
-  Ty
-), A: Ty>(
+pub theorem RenOk_up_at<xi: (Nat) -> Nat, G: List(Ty), D: List(Ty), A: Ty>(
   r: RenOk(xi, G, D),
   i: Nat,
   B: Ty,
-  e: Eq(Option(Ty), nth(Cons(Ty, A, G), i), Some(Ty, B))
-): Eq(Option(Ty), nth(Cons(Ty, A, D), upR(xi, i)), Some(Ty, B)) {
-  match i -> Eq(Option(Ty), nth(Cons(Ty, A, D), upR(xi, i)), Some(Ty, B)) {
-    zero => e
-    succ(m) => r(m, B, e)
+  e: nth(Cons(<A: Ty>, A, G), i) = Some(<A: Ty>, B)
+): nth(Cons(<A: Ty>, A, D), upR(xi, i)) = Some(<A: Ty>, B) {
+  ⊢ nth(Cons(<A: Ty>, A, D), upR(xi, i)) = Some(<A: Ty>, B) from match i {
+    Zero => e
+    Succ(m) => r(m, B, e)
   }
 }
 
-theorem RenOk_up<xi: (
-  Nat
-) -> Nat, G: List(
-  Ty
-), D: List(Ty)>(A: Ty, r: RenOk(xi, G, D)): RenOk(upR(xi), Cons(Ty, A, G), Cons(Ty, A, D)) {
+pub theorem RenOk_up<xi: (Nat) -> Nat, G: List(Ty), D: List(Ty)>(
+  A: Ty,
+  r: RenOk(xi, G, D)
+): RenOk(upR(xi), Cons(<A: Ty>, A, G), Cons(<A: Ty>, A, D)) {
   i => B => e => RenOk_up_at(r, i, B, e)
 }
 
-theorem ren_typing<G: List(
-  Ty
-), t: Tm, A: Ty>(
+pub theorem ren_typing<G: List(Ty), t: Tm, A: Ty>(
   h: HasType(G, t, A),
   xi: (Nat) -> Nat,
   D: List(Ty),
   r: RenOk(xi, G, D)
 ): HasType(D, ren(t, xi), A) {
-  match h -> HasType(D, ren(t, xi), A) {
-    hvar(G1, i, A1, e) => hvar(r(i, A1, e))
-    hlam(G1, A1, B1, b, hb) => hlam(ren_typing(hb, upR(xi), Cons(Ty, A1, D), RenOk_up(A1, r)))
-    happ(hf, ha) => happ(ren_typing(hf, xi, D, r), ren_typing(ha, xi, D, r))
-    hzero(G1) => hzero(D)
-    hsucc(hn) => hsucc(ren_typing(hn, xi, D, r))
-    hnatrec(
-      hz,
-      hs,
-      hn
-    ) => hnatrec(ren_typing(hz, xi, D, r), ren_typing(hs, xi, D, r), ren_typing(hn, xi, D, r))
-    htt(G1) => htt(D)
-    hff(G1) => hff(D)
-    hite(
-      hc,
-      ht,
-      he
-    ) => hite(ren_typing(hc, xi, D, r), ren_typing(ht, xi, D, r), ren_typing(he, xi, D, r))
+  ⊢ HasType(D, ren(t, xi), A) from match h {
+    Hvar(G1, i, A1, e) => ⊢ HasType(D, ren(Tm::Tvar(i), xi), A1) from Hvar(r(i, A1, e))
+    Hlam(G1, A1, B1, b, hb) => ⊢ HasType(
+      D,
+      ren(Tm::Lam(A1, b), xi),
+      Ty::Arr(A1, B1)
+    ) from Hlam(ren_typing(hb, upR(xi), Cons(<A: Ty>, A1, D), RenOk_up(A1, r)))
+    Happ<G: G2, A: A3, B: B4, f: f5, a: a6>(hf, ha) => ⊢ HasType(
+      D,
+      ren(Tm::App(f5, a6), xi),
+      B4
+    ) from Happ(ren_typing(hf, xi, D, r), ren_typing(ha, xi, D, r))
+    Hzero(G1) => ⊢ HasType(D, ren(Tm::Tzero, xi), Ty::Tnat) from Hzero(D)
+    Hsucc<G: G7, n: n8>(hn) => ⊢ HasType(
+      D,
+      ren(Tm::Tsucc(n8), xi),
+      Ty::Tnat
+    ) from Hsucc(ren_typing(hn, xi, D, r))
+    Hnatrec<G: G9, A: A10, z: z11, s: s12, n: n13>(hz, hs, hn) => ⊢ HasType(
+      D,
+      ren(Tm::NatRec(A10, z11, s12, n13), xi),
+      A10
+    ) from Hnatrec(ren_typing(hz, xi, D, r), ren_typing(hs, xi, D, r), ren_typing(hn, xi, D, r))
+    Htt(G1) => ⊢ HasType(D, ren(Tm::Tt, xi), Ty::Tbool) from Htt(D)
+    Hff(G1) => ⊢ HasType(D, ren(Tm::Ff, xi), Ty::Tbool) from Hff(D)
+    Hite<G: G14, A: A15, c: c16, t: t17, e: e18>(hc, ht, he) => ⊢ HasType(
+      D,
+      ren(Tm::Ite(c16, t17, e18), xi),
+      A15
+    ) from Hite(ren_typing(hc, xi, D, r), ren_typing(ht, xi, D, r), ren_typing(he, xi, D, r))
   }
 }
 
-// ---- part 3: substitution preserves typing ----------------------------------
-
-fn unwrap_or(o: Option(Ty), d: Ty) -> Ty {
-  match o -> Ty {
+pub fn unwrap_or(o: Option(Ty), d: Ty): Ty {
+  ⊢ Ty from match o {
     None => d
     Some(x) => x
   }
 }
 
-theorem some_inj<A: Ty, B: Ty>(e: Eq(Option(Ty), Some(Ty, A), Some(Ty, B))): Eq(Ty, A, B) {
-  Eq_congr(o => unwrap_or(o, A), e)
+pub theorem some_inj<A: Ty, B: Ty>(e: Some(<A: Ty>, A) = Some(<A: Ty>, B)): A = B {
+  Eq::congr(⟦unwrap_or(□, A)⟧, e)
 }
 
-theorem RenOk_succ(D: List(Ty), A: Ty): RenOk(succ, D, Cons(Ty, A, D)) {
+pub theorem RenOk_succ(D: List(Ty), A: Ty): RenOk(Succ, D, Cons(<A: Ty>, A, D)) {
   i => B => e => e
 }
 
-def SubstOk(sigma: (Nat) -> Tm, G: List(Ty), D: List(Ty)): Prop :=
-∀ i: Nat. ∀ A: Ty. (Eq(Option(Ty), nth(G, i), Some(Ty, A))) -> HasType(D, sigma(i), A)
+pub def SubstOk(sigma: (Nat) -> Tm, G: List(Ty), D: List(Ty)): Prop :=
+∀ i: Nat, A: Ty. (nth(G, i) = Some(<A: Ty>, A)) -> HasType(D, sigma(i), A)
 
-theorem SubstOk_up_at<sigma: (
-  Nat
-) -> Tm, G: List(
-  Ty
-), D: List(
-  Ty
-), A: Ty>(
+pub theorem SubstOk_up_at<sigma: (Nat) -> Tm, G: List(Ty), D: List(Ty), A: Ty>(
   s: SubstOk(sigma, G, D),
   i: Nat,
   B: Ty,
-  e: Eq(Option(Ty), nth(Cons(Ty, A, G), i), Some(Ty, B))
-): HasType(Cons(Ty, A, D), up(sigma, i), B) {
-  match i -> HasType(Cons(Ty, A, D), up(sigma, i), B) {
-    zero => hvar(Cons(Ty, A, D), zero, B, e)
-    succ(m) => ren_typing(s(m, B, e), succ, Cons(Ty, A, D), RenOk_succ(D, A))
+  e: nth(Cons(<A: Ty>, A, G), i) = Some(<A: Ty>, B)
+): HasType(Cons(<A: Ty>, A, D), up(sigma, i), B) {
+  ⊢ HasType(Cons(<A: Ty>, A, D), up(sigma, i), B) from match i {
+    Zero => Hvar(<G: Cons(<A: Ty>, A, D), i: Zero, A: B>, e)
+    Succ(m) => ren_typing(s(m, B, e), Succ, Cons(<A: Ty>, A, D), RenOk_succ(D, A))
   }
 }
 
-theorem SubstOk_up<sigma: (
-  Nat
-) -> Tm, G: List(
-  Ty
-), D: List(
-  Ty
-)>(A: Ty, s: SubstOk(sigma, G, D)): SubstOk(up(sigma), Cons(Ty, A, G), Cons(Ty, A, D)) {
+pub theorem SubstOk_up<sigma: (Nat) -> Tm, G: List(Ty), D: List(Ty)>(
+  A: Ty,
+  s: SubstOk(sigma, G, D)
+): SubstOk(up(sigma), Cons(<A: Ty>, A, G), Cons(<A: Ty>, A, D)) {
   i => B => e => SubstOk_up_at(s, i, B, e)
 }
 
-theorem subst_typing<G: List(
-  Ty
-), t: Tm, A: Ty>(
+pub theorem subst_typing<G: List(Ty), t: Tm, A: Ty>(
   h: HasType(G, t, A),
   sigma: (Nat) -> Tm,
   D: List(Ty),
   s: SubstOk(sigma, G, D)
 ): HasType(D, subst(t, sigma), A) {
-  match h -> HasType(D, subst(t, sigma), A) {
-    hvar(G1, i, A1, e) => s(i, A1, e)
-    hlam(G1, A1, B1, b, hb) => hlam(subst_typing(hb, up(sigma), Cons(Ty, A1, D), SubstOk_up(A1, s)))
-    happ(hf, ha) => happ(subst_typing(hf, sigma, D, s), subst_typing(ha, sigma, D, s))
-    hzero(G1) => hzero(D)
-    hsucc(hn) => hsucc(subst_typing(hn, sigma, D, s))
-    hnatrec(
-      hz,
-      hs,
-      hn
-    ) => hnatrec(
+  ⊢ HasType(D, subst(t, sigma), A) from match h {
+    Hvar(G1, i, A1, e) => ⊢ HasType(D, subst(Tm::Tvar(i), sigma), A1) from s(i, A1, e)
+    Hlam(G1, A1, B1, b, hb) => ⊢ HasType(
+      D,
+      subst(Tm::Lam(A1, b), sigma),
+      Ty::Arr(A1, B1)
+    ) from Hlam(subst_typing(hb, up(sigma), Cons(<A: Ty>, A1, D), SubstOk_up(A1, s)))
+    Happ<G: G19, A: A20, B: B21, f: f22, a: a23>(hf, ha) => ⊢ HasType(
+      D,
+      subst(Tm::App(f22, a23), sigma),
+      B21
+    ) from Happ(subst_typing(hf, sigma, D, s), subst_typing(ha, sigma, D, s))
+    Hzero(G1) => ⊢ HasType(D, subst(Tm::Tzero, sigma), Ty::Tnat) from Hzero(D)
+    Hsucc<G: G24, n: n25>(hn) => ⊢ HasType(
+      D,
+      subst(Tm::Tsucc(n25), sigma),
+      Ty::Tnat
+    ) from Hsucc(subst_typing(hn, sigma, D, s))
+    Hnatrec<G: G26, A: A27, z: z28, s: s29, n: n30>(hz, hs, hn) => ⊢ HasType(
+      D,
+      subst(Tm::NatRec(A27, z28, s29, n30), sigma),
+      A27
+    ) from Hnatrec(
       subst_typing(hz, sigma, D, s),
       subst_typing(hs, sigma, D, s),
       subst_typing(hn, sigma, D, s)
     )
-    htt(G1) => htt(D)
-    hff(G1) => hff(D)
-    hite(
-      hc,
-      ht,
-      he
-    ) => hite(
+    Htt(G1) => ⊢ HasType(D, subst(Tm::Tt, sigma), Ty::Tbool) from Htt(D)
+    Hff(G1) => ⊢ HasType(D, subst(Tm::Ff, sigma), Ty::Tbool) from Hff(D)
+    Hite<G: G31, A: A32, c: c33, t: t34, e: e35>(hc, ht, he) => ⊢ HasType(
+      D,
+      subst(Tm::Ite(c33, t34, e35), sigma),
+      A32
+    ) from Hite(
       subst_typing(hc, sigma, D, s),
       subst_typing(ht, sigma, D, s),
       subst_typing(he, sigma, D, s)
@@ -267,464 +257,480 @@ theorem subst_typing<G: List(
   }
 }
 
-theorem SubstOk_single_at<G: List(
-  Ty
-), A: Ty, a: Tm>(
+pub theorem SubstOk_single_at<G: List(Ty), A: Ty, a: Tm>(
   ha: HasType(G, a, A),
   i: Nat,
   B: Ty,
-  e: Eq(Option(Ty), nth(Cons(Ty, A, G), i), Some(Ty, B))
+  e: nth(Cons(<A: Ty>, A, G), i) = Some(<A: Ty>, B)
 ): HasType(G, single(a, i), B) {
-  match i -> HasType(G, single(a, i), B) {
-    zero => Eq_subst(Ty, A, B, y => HasType(G, a, y), some_inj(e), ha)
-    succ(m) => hvar(G, m, B, e)
+  ⊢ HasType(G, single(a, i), B) from match i {
+    Zero => Eq::subst(<A: Ty, a: A, b: B>, y => HasType(G, a, y), some_inj(e), ha)
+    Succ(m) => Hvar(<G: G, i: m, A: B>, e)
   }
 }
 
-theorem subst_single_typing<G: List(
-  Ty
-), A: Ty, B: Ty, b: Tm, a: Tm>(
-  hb: HasType(Cons(Ty, A, G), b, B),
+pub theorem subst_single_typing<G: List(Ty), A: Ty, B: Ty, b: Tm, a: Tm>(
+  hb: HasType(Cons(<A: Ty>, A, G), b, B),
   ha: HasType(G, a, A)
 ): HasType(G, subst(b, single(a)), B) {
   subst_typing(hb, single(a), G, i => C => e => SubstOk_single_at(ha, i, C, e))
 }
 
-// ---- part 4: reduction, inversion, preservation -----------------------------
-
-inductive Value(): (Tm) -> Prop {
-  vlam(A: Ty, b: Tm): Value(lam(A, b))
-  vzero(): Value(tzero)
-  vsucc<n: Tm>(h: Value(n)): Value(tsucc(n))
-  vtt(): Value(tt)
-  vff(): Value(ff)
+pub(open) inductive Value: (Tm) -> Prop {
+  Vlam(A: Ty, b: Tm): Value(Lam(A, b))
+  Vzero: Value(Tzero)
+  Vsucc<n: Tm>(h: Value(n)): Value(Tsucc(n))
+  Vtt: Value(Tt)
+  Vff: Value(Ff)
 }
 
-inductive Step(): (Tm, Tm) -> Prop {
-  appL<f: Tm, f2: Tm>(a: Tm, s: Step(f, f2)): Step(app(f, a), app(f2, a))
-  appR<f: Tm, a: Tm, a2: Tm>(v: Value(f), s: Step(a, a2)): Step(app(f, a), app(f, a2))
-  beta(A: Ty, b: Tm, a: Tm, v: Value(a)): Step(app(lam(A, b), a), subst(b, single(a)))
-  sstep<n: Tm, n2: Tm>(s: Step(n, n2)): Step(tsucc(n), tsucc(n2))
-  recN(
+pub(open) inductive Step: (Tm, Tm) -> Prop {
+  AppL<f: Tm, f2: Tm>(a: Tm, s: Step(f, f2)): Step(App(f, a), App(f2, a))
+  AppR<f: Tm, a: Tm, a2: Tm>(v: Value(f), s: Step(a, a2)): Step(App(f, a), App(f, a2))
+  Beta(A: Ty, b: Tm, a: Tm, v: Value(a)): Step(App(Lam(A, b), a), subst(b, single(a)))
+  Sstep<n: Tm, n2: Tm>(s: Step(n, n2)): Step(Tsucc(n), Tsucc(n2))
+  RecN(
     A: Ty,
     z: Tm,
     s1: Tm,
     n: Tm,
     n2: Tm,
     s: Step(n, n2)
-  ): Step(natRec(A, z, s1, n), natRec(A, z, s1, n2))
-  recZ(A: Ty, z: Tm, s1: Tm): Step(natRec(A, z, s1, tzero), z)
-  recS(
+  ): Step(NatRec(A, z, s1, n), NatRec(A, z, s1, n2))
+  RecZ(A: Ty, z: Tm, s1: Tm): Step(NatRec(A, z, s1, Tzero), z)
+  RecS(
     A: Ty,
     z: Tm,
     s1: Tm,
     n: Tm,
     v: Value(n)
-  ): Step(natRec(A, z, s1, tsucc(n)), app(app(s1, n), natRec(A, z, s1, n)))
-  iteC<c: Tm, c2: Tm>(t1: Tm, e1: Tm, s: Step(c, c2)): Step(ite(c, t1, e1), ite(c2, t1, e1))
-  iteT(t1: Tm, e1: Tm): Step(ite(tt, t1, e1), t1)
-  iteF(t1: Tm, e1: Tm): Step(ite(ff, t1, e1), e1)
+  ): Step(NatRec(A, z, s1, Tsucc(n)), App(App(s1, n), NatRec(A, z, s1, n)))
+  IteC<c: Tm, c2: Tm>(t1: Tm, e1: Tm, s: Step(c, c2)): Step(Ite(c, t1, e1), Ite(c2, t1, e1))
+  IteT(t1: Tm, e1: Tm): Step(Ite(Tt, t1, e1), t1)
+  IteF(t1: Tm, e1: Tm): Step(Ite(Ff, t1, e1), e1)
 }
 
 // Inversion of a typing derivation, by computation on the term: each case is
 // a continuation-passing statement of what the derivation must contain.
-def InvVar(G: List(Ty), i: Nat, A: Ty): Prop :=
-Eq(Option(Ty), nth(G, i), Some(Ty, A))
+pub def InvVar(G: List(Ty), i: Nat, A: Ty): Prop :=
+nth(G, i) = Some(<A: Ty>, A)
 
-def InvLam(G: List(Ty), A1: Ty, b: Tm, A: Ty): Prop :=
-∀ C: Prop. (∀ B: Ty. (Eq(Ty, A, arr(A1, B))) -> (HasType(Cons(Ty, A1, G), b, B)) -> C) -> C
+pub def InvLam(G: List(Ty), A1: Ty, b: Tm, A: Ty): Prop :=
+∀ C: Prop. (∀ B: Ty. (A = Arr(A1, B)) -> (HasType(Cons(<A: Ty>, A1, G), b, B)) -> C) -> C
 
-def InvApp(G: List(Ty), f: Tm, a: Tm, A: Ty): Prop :=
-∀ C: Prop. (∀ B: Ty. (HasType(G, f, arr(B, A))) -> (HasType(G, a, B)) -> C) -> C
+pub def InvApp(G: List(Ty), f: Tm, a: Tm, A: Ty): Prop :=
+∀ C: Prop. (∀ B: Ty. (HasType(G, f, Arr(B, A))) -> (HasType(G, a, B)) -> C) -> C
 
-def InvSucc(G: List(Ty), n: Tm, A: Ty): Prop :=
-∀ C: Prop. ((Eq(Ty, A, tnat)) -> (HasType(G, n, tnat)) -> C) -> C
+pub def InvSucc(G: List(Ty), n: Tm, A: Ty): Prop :=
+∀ C: Prop. ((A = Tnat) -> (HasType(G, n, Tnat)) -> C) -> C
 
-def InvRec(G: List(Ty), A1: Ty, z: Tm, s1: Tm, n: Tm, A: Ty): Prop :=
+pub def InvRec(G: List(Ty), A1: Ty, z: Tm, s1: Tm, n: Tm, A: Ty): Prop :=
 ∀ C: Prop. (
-  (
-    Eq(Ty, A, A1)
-  ) -> (HasType(G, z, A1)) -> (HasType(G, s1, arr(tnat, arr(A1, A1)))) -> (HasType(G, n, tnat)) -> C
+  (A = A1) -> (
+    HasType(G, z, A1)
+  ) -> (HasType(G, s1, Arr(Tnat, Arr(A1, A1)))) -> (HasType(G, n, Tnat)) -> C
 ) -> C
 
-def InvIte(G: List(Ty), c: Tm, t1: Tm, e1: Tm, A: Ty): Prop :=
-∀ C: Prop. ((HasType(G, c, tbool)) -> (HasType(G, t1, A)) -> (HasType(G, e1, A)) -> C) -> C
+pub def InvIte(G: List(Ty), c: Tm, t1: Tm, e1: Tm, A: Ty): Prop :=
+∀ C: Prop. ((HasType(G, c, Tbool)) -> (HasType(G, t1, A)) -> (HasType(G, e1, A)) -> C) -> C
 
-def InvIs(A: Ty, B: Ty): Prop := Eq(Ty, A, B)
+pub def InvIs(A: Ty, B: Ty): Prop := A = B
 
-fn Inv(t: Tm, G: List(Ty), A: Ty) -> Prop {
-  match t -> Prop {
-    tvar(i) => InvVar(G, i, A)
-    lam(A1, b) => InvLam(G, A1, b, A)
-    app(f, a) => InvApp(G, f, a, A)
-    tzero => InvIs(A, tnat)
-    tsucc(n) => InvSucc(G, n, A)
-    natRec(A1, z, s1, n) => InvRec(G, A1, z, s1, n, A)
-    tt => InvIs(A, tbool)
-    ff => InvIs(A, tbool)
-    ite(c, t1, e1) => InvIte(G, c, t1, e1, A)
+pub fn Inv(t: Tm, G: List(Ty), A: Ty): Prop {
+  ⊢ Prop from match t {
+    Tvar(i) => InvVar(G, i, A)
+    Lam(A1, b) => InvLam(G, A1, b, A)
+    App(f, a) => InvApp(G, f, a, A)
+    Tzero => InvIs(A, Tnat)
+    Tsucc(n) => InvSucc(G, n, A)
+    NatRec(A1, z, s1, n) => InvRec(G, A1, z, s1, n, A)
+    Tt => InvIs(A, Tbool)
+    Ff => InvIs(A, Tbool)
+    Ite(c, t1, e1) => InvIte(G, c, t1, e1, A)
   }
 }
 
-theorem inversion<G: List(Ty), t: Tm, A: Ty>(h: HasType(G, t, A)): Inv(t, G, A) {
-  match h -> Inv(t, G, A) {
-    hvar(e) => e
-    hlam(G1, A1, B1, b, hb) => C => k => k(B1, refl(Ty, arr(A1, B1)), hb)
-    happ(G1, A1, B1, f, a, hf, ha) => C => k => k(A1, hf, ha)
-    hzero(G1) => refl(Ty, tnat)
-    hsucc(hn) => C => k => k(refl(Ty, tnat), hn)
-    hnatrec(G1, A1, z, s1, n, hz, hs, hn) => C => k => k(refl(Ty, A1), hz, hs, hn)
-    htt(G1) => refl(Ty, tbool)
-    hff(G1) => refl(Ty, tbool)
-    hite(hc, ht, he) => C => k => k(hc, ht, he)
+pub theorem inversion<G: List(Ty), t: Tm, A: Ty>(h: HasType(G, t, A)): Inv(t, G, A) {
+  ⊢ Inv(t, G, A) from match h {
+    Hvar<G: G36, i: i37, A: A38>(e) => ⊢ Inv(Tm::Tvar(i37), G36, A38) from e
+    Hlam(G1, A1, B1, b, hb) => ⊢ Inv(Tm::Lam(A1, b), G1, Ty::Arr(A1, B1)) from C => k => k(
+      B1,
+      Refl,
+      hb
+    )
+    Happ(G1, A1, B1, f, a, hf, ha) => ⊢ Inv(Tm::App(f, a), G1, B1) from C => k => k(A1, hf, ha)
+    Hzero(G1) => ⊢ Inv(Tm::Tzero, G1, Ty::Tnat) from Refl
+    Hsucc<G: G39, n: n40>(hn) => ⊢ Inv(Tm::Tsucc(n40), G39, Ty::Tnat) from C => k => k(Refl, hn)
+    Hnatrec(G1, A1, z, s1, n, hz, hs, hn) => ⊢ Inv(Tm::NatRec(A1, z, s1, n), G1, A1) from C => k => k(
+      Refl,
+      hz,
+      hs,
+      hn
+    )
+    Htt(G1) => ⊢ Inv(Tm::Tt, G1, Ty::Tbool) from Refl
+    Hff(G1) => ⊢ Inv(Tm::Ff, G1, Ty::Tbool) from Refl
+    Hite<G: G41, A: A42, c: c43, t: t44, e: e45>(hc, ht, he) => ⊢ Inv(Tm::Ite(c43, t44, e45), G41, A42) from C => k => k(
+      hc,
+      ht,
+      he
+    )
   }
 }
 
-theorem cast_type<G: List(
-  Ty
-), t: Tm, A: Ty, B: Ty>(e: Eq(Ty, A, B), h: HasType(G, t, A)): HasType(G, t, B) {
-  Eq_subst(Ty, A, B, y => HasType(G, t, y), e, h)
+pub theorem cast_type<G: List(Ty), t: Tm, A: Ty, B: Ty>(
+  e: A = B,
+  h: HasType(G, t, A)
+): HasType(G, t, B) {
+  Eq::subst(<A: Ty, a: A, b: B>, y => HasType(G, t, y), e, h)
 }
 
-fn dom(x: Ty, d: Ty) -> Ty {
-  match x -> Ty {
-    tnat => d
-    tbool => d
-    arr(a, b) => a
+pub fn dom(x: Ty, d: Ty): Ty {
+  ⊢ Ty from match x {
+    Tnat => d
+    Tbool => d
+    Arr(a, b) => a
   }
 }
 
-fn cod(x: Ty, d: Ty) -> Ty {
-  match x -> Ty {
-    tnat => d
-    tbool => d
-    arr(a, b) => b
+pub fn cod(x: Ty, d: Ty): Ty {
+  ⊢ Ty from match x {
+    Tnat => d
+    Tbool => d
+    Arr(a, b) => b
   }
 }
 
-theorem arr_dom<a: Ty, b: Ty, c: Ty, d: Ty>(e: Eq(Ty, arr(a, b), arr(c, d))): Eq(Ty, a, c) {
-  Eq_congr(x => dom(x, a), e)
+pub theorem arr_dom<a: Ty, b: Ty, c: Ty, d: Ty>(e: Arr(a, b) = Arr(c, d)): a = c {
+  Eq::congr(⟦dom(□, a)⟧, e)
 }
 
-theorem arr_cod<a: Ty, b: Ty, c: Ty, d: Ty>(e: Eq(Ty, arr(a, b), arr(c, d))): Eq(Ty, b, d) {
-  Eq_congr(x => cod(x, b), e)
+pub theorem arr_cod<a: Ty, b: Ty, c: Ty, d: Ty>(e: Arr(a, b) = Arr(c, d)): b = d {
+  Eq::congr(⟦cod(□, b)⟧, e)
 }
 
-theorem preservation<t: Tm, t2: Tm>(
+pub theorem preservation<t: Tm, t2: Tm>(
   s: Step(t, t2),
   G: List(Ty),
   A: Ty,
   h: HasType(G, t, A)
 ): HasType(G, t2, A) {
-  match s -> HasType(G, t2, A) {
-    appL(
-      f,
-      f2,
-      a,
-      sf
-    ) => inversion(
+  ⊢ HasType(G, t2, A) from match s {
+    AppL(f, f2, a, sf) => ⊢ HasType(
       G,
-      app(f, a),
+      Tm::App(f2, a),
+      A
+    ) from inversion(
+      G,
+      App(f, a),
       A,
       h,
-      HasType(G, app(f2, a), A),
-      B => hf => ha => happ(preservation(sf, G, arr(B, A), hf), ha)
+      HasType(G, App(f2, a), A),
+      B => hf => ha => Happ(preservation(sf, G, Arr(B, A), hf), ha)
     )
-    appR(
-      f,
-      a,
-      a2,
-      vf,
-      sa
-    ) => inversion(
+    AppR(f, a, a2, vf, sa) => ⊢ HasType(
       G,
-      app(f, a),
+      Tm::App(f, a2),
+      A
+    ) from inversion(
+      G,
+      App(f, a),
       A,
       h,
-      HasType(G, app(f, a2), A),
-      B => hf => ha => happ(hf, preservation(sa, G, B, ha))
+      HasType(G, App(f, a2), A),
+      B => hf => ha => Happ(hf, preservation(sa, G, B, ha))
     )
-    beta(
-      A1,
-      b,
-      a,
-      va
-    ) => inversion(
+    Beta(A1, b, a, va) => ⊢ HasType(
       G,
-      app(lam(A1, b), a),
+      subst(b, single(a)),
+      A
+    ) from inversion(
+      G,
+      App(Lam(A1, b), a),
       A,
       h,
       HasType(G, subst(b, single(a)), A),
       B => hf => ha => inversion(
         G,
-        lam(A1, b),
-        arr(B, A),
+        Lam(A1, b),
+        Arr(B, A),
         hf,
         HasType(G, subst(b, single(a)), A),
         B2 => eq => hb => cast_type(
-          Eq_sym(Ty, A, B2, arr_cod(eq)),
+          Eq::sym(<A: Ty, a: A, b: B2>, arr_cod(eq)),
           subst_single_typing(hb, cast_type(arr_dom(eq), ha))
         )
       )
     )
-    sstep(
-      n,
-      n2,
-      sn
-    ) => inversion(
+    Sstep(n, n2, sn) => ⊢ HasType(
       G,
-      tsucc(n),
+      Tm::Tsucc(n2),
+      A
+    ) from inversion(
+      G,
+      Tsucc(n),
       A,
       h,
-      HasType(G, tsucc(n2), A),
-      eq => hn => cast_type(Eq_sym(Ty, A, tnat, eq), hsucc(preservation(sn, G, tnat, hn)))
-    )
-    recN(
-      A1,
-      z,
-      s1,
-      n,
-      n2,
-      sn
-    ) => inversion(
-      G,
-      natRec(A1, z, s1, n),
-      A,
-      h,
-      HasType(G, natRec(A1, z, s1, n2), A),
-      eq => hz => hs => hn => cast_type(
-        Eq_sym(Ty, A, A1, eq),
-        hnatrec(hz, hs, preservation(sn, G, tnat, hn))
+      HasType(G, Tsucc(n2), A),
+      eq => hn => cast_type(
+        Eq::sym(<A: Ty, a: A, b: Tnat>, eq),
+        Hsucc(preservation(sn, G, Tnat, hn))
       )
     )
-    recZ(
-      A1,
-      z,
-      s1
-    ) => inversion(
+    RecN(A1, z, s1, n, n2, sn) => ⊢ HasType(
       G,
-      natRec(A1, z, s1, tzero),
+      Tm::NatRec(A1, z, s1, n2),
+      A
+    ) from inversion(
+      G,
+      NatRec(A1, z, s1, n),
+      A,
+      h,
+      HasType(G, NatRec(A1, z, s1, n2), A),
+      eq => hz => hs => hn => cast_type(
+        Eq::sym(<A: Ty, a: A, b: A1>, eq),
+        Hnatrec(hz, hs, preservation(sn, G, Tnat, hn))
+      )
+    )
+    RecZ(A1, z, s1) => ⊢ HasType(
+      G,
+      z,
+      A
+    ) from inversion(
+      G,
+      NatRec(A1, z, s1, Tzero),
       A,
       h,
       HasType(G, z, A),
-      eq => hz => hs => hn => cast_type(Eq_sym(Ty, A, A1, eq), hz)
+      eq => hz => hs => hn => cast_type(Eq::sym(<A: Ty, a: A, b: A1>, eq), hz)
     )
-    recS(
-      A1,
-      z,
-      s1,
-      n,
-      vn
-    ) => inversion(
+    RecS(A1, z, s1, n, vn) => ⊢ HasType(
       G,
-      natRec(A1, z, s1, tsucc(n)),
+      Tm::App(Tm::App(s1, n), Tm::NatRec(A1, z, s1, n)),
+      A
+    ) from inversion(
+      G,
+      NatRec(A1, z, s1, Tsucc(n)),
       A,
       h,
-      HasType(G, app(app(s1, n), natRec(A1, z, s1, n)), A),
+      HasType(G, App(App(s1, n), NatRec(A1, z, s1, n)), A),
       eq => hz => hs => hn => inversion(
         G,
-        tsucc(n),
-        tnat,
+        Tsucc(n),
+        Tnat,
         hn,
-        HasType(G, app(app(s1, n), natRec(A1, z, s1, n)), A),
-        eq2 => hn2 => cast_type(Eq_sym(Ty, A, A1, eq), happ(happ(hs, hn2), hnatrec(hz, hs, hn2)))
+        HasType(G, App(App(s1, n), NatRec(A1, z, s1, n)), A),
+        eq2 => hn2 => cast_type(
+          Eq::sym(<A: Ty, a: A, b: A1>, eq),
+          Happ(Happ(hs, hn2), Hnatrec(hz, hs, hn2))
+        )
       )
     )
-    iteC(
-      c,
-      c2,
-      t1,
-      e1,
-      sc
-    ) => inversion(
+    IteC(c, c2, t1, e1, sc) => ⊢ HasType(
       G,
-      ite(c, t1, e1),
+      Tm::Ite(c2, t1, e1),
+      A
+    ) from inversion(
+      G,
+      Ite(c, t1, e1),
       A,
       h,
-      HasType(G, ite(c2, t1, e1), A),
-      hc => ht => he => hite(preservation(sc, G, tbool, hc), ht, he)
+      HasType(G, Ite(c2, t1, e1), A),
+      hc => ht => he => Hite(preservation(sc, G, Tbool, hc), ht, he)
     )
-    iteT(t1, e1) => inversion(G, ite(tt, t1, e1), A, h, HasType(G, t1, A), hc => ht => he => ht)
-    iteF(t1, e1) => inversion(G, ite(ff, t1, e1), A, h, HasType(G, e1, A), hc => ht => he => he)
+    IteT(t1, e1) => ⊢ HasType(
+      G,
+      t1,
+      A
+    ) from inversion(G, Ite(Tt, t1, e1), A, h, HasType(G, t1, A), hc => ht => he => ht)
+    IteF(t1, e1) => ⊢ HasType(
+      G,
+      e1,
+      A
+    ) from inversion(G, Ite(Ff, t1, e1), A, h, HasType(G, e1, A), hc => ht => he => he)
   }
 }
 
-// ---- part 5: canonical forms and progress -----------------------------------
-
-inductive Steps(t: Tm): Prop {
-  stepsTo<t2: Tm>(s: Step(t, t2)): Steps(t)
+pub(open) inductive Steps(t: Tm): Prop {
+  StepsTo<t2: Tm>(s: Step(t, t2)): Steps(t)
 }
 
-def Prog(t: Tm): Prop := Or(Value(t), Steps(t))
+pub def Prog(t: Tm): Prop := Value(t) ∨ Steps(t)
 
-theorem steps_elim<t: Tm>(C: Prop, st: Steps(t), k: ∀ t2: Tm. (Step(t, t2)) -> C): C {
-  Steps_ind(t, w => C, t2 => s => k(t2, s), st)
+pub theorem steps_elim<t: Tm>(C: Prop, st: Steps(t), k: ∀ t2: Tm. (Step(t, t2)) -> C): C {
+  Steps::ind(<t: t>, w => C, t2 => s => k(t2, s), st)
 }
 
-theorem prog_val<t: Tm>(v: Value(t)): Prog(t) {
-  or_inl(Value(t), Steps(t), v)
+pub theorem prog_val<t: Tm>(v: Value(t)): Prog(t) {
+  OrInl(<A: Value(t), B: Steps(t)>, v)
 }
 
-theorem prog_step<t: Tm, t2: Tm>(s: Step(t, t2)): Prog(t) {
-  or_inr(Value(t), Steps(t), stepsTo(t, t2, s))
+pub theorem prog_step<t: Tm, t2: Tm>(s: Step(t, t2)): Prog(t) {
+  OrInr(<A: Value(t), B: Steps(t)>, StepsTo(s))
 }
 
-fn isNatTy(x: Ty) -> Prop {
-  match x -> Prop {
-    tnat => True
-    tbool => False
-    arr(a, b) => False
+pub fn isNatTy(x: Ty): Prop {
+  ⊢ Prop from match x {
+    Tnat => True
+    Tbool => False
+    Arr(a, b) => False
   }
 }
 
-fn isBoolTy(x: Ty) -> Prop {
-  match x -> Prop {
-    tnat => False
-    tbool => True
-    arr(a, b) => False
+pub fn isBoolTy(x: Ty): Prop {
+  ⊢ Prop from match x {
+    Tnat => False
+    Tbool => True
+    Arr(a, b) => False
   }
 }
 
-theorem ne_nat_bool(e: Eq(Ty, tnat, tbool)): False {
-  Eq_subst(Ty, tnat, tbool, y => isNatTy(y), e, trivial)
+pub theorem ne_nat_bool(e: Tnat = Tbool): False {
+  Eq::subst(<A: Ty, a: Tnat, b: Tbool>, y => isNatTy(y), e, Trivial)
 }
 
-theorem ne_nat_arr<a: Ty, b: Ty>(e: Eq(Ty, tnat, arr(a, b))): False {
-  Eq_subst(Ty, tnat, arr(a, b), y => isNatTy(y), e, trivial)
+pub theorem ne_nat_arr<a: Ty, b: Ty>(e: Tnat = Arr(a, b)): False {
+  Eq::subst(<A: Ty, a: Tnat, b: Arr(a, b)>, y => isNatTy(y), e, Trivial)
 }
 
-theorem ne_bool_arr<a: Ty, b: Ty>(e: Eq(Ty, tbool, arr(a, b))): False {
-  Eq_subst(Ty, tbool, arr(a, b), y => isBoolTy(y), e, trivial)
+pub theorem ne_bool_arr<a: Ty, b: Ty>(e: Tbool = Arr(a, b)): False {
+  Eq::subst(<A: Ty, a: Tbool, b: Arr(a, b)>, y => isBoolTy(y), e, Trivial)
 }
 
-fn isNoneO(o: Option(Ty)) -> Prop {
-  match o -> Prop {
+pub fn isNoneO(o: Option(Ty)): Prop {
+  ⊢ Prop from match o {
     None => True
     Some(x) => False
   }
 }
 
-theorem nil_no_var<G: List(
-  Ty
-), i: Nat, A: Ty>(e: Eq(List(Ty), G, Nil(Ty)), eh: Eq(Option(Ty), nth(G, i), Some(Ty, A))): False {
-  Eq_subst(
-    Option(Ty),
-    None(Ty),
-    Some(Ty, A),
+pub theorem nil_no_var<G: List(Ty), i: Nat, A: Ty>(
+  e: G = Nil(<A: Ty>),
+  eh: nth(G, i) = Some(<A: Ty>, A)
+): False {
+  Eq::subst(
+    <A: Option(Ty), a: None(<A: Ty>), b: Some(<A: Ty>, A)>,
     o => isNoneO(o),
-    Eq_subst(List(Ty), G, Nil(Ty), y => Eq(Option(Ty), nth(y, i), Some(Ty, A)), e, eh),
-    trivial
+    Eq::subst(<A: List(Ty), a: G, b: Nil(<A: Ty>)>, y => nth(y, i) = Some(<A: Ty>, A), e, eh),
+    Trivial
   )
 }
 
-def CanonArr(f: Tm): Prop :=
-∀ C: Prop. ((∀ A2: Ty. ∀ b: Tm. (Eq(Tm, f, lam(A2, b))) -> C)) -> C
+pub def CanonArr(f: Tm): Prop :=
+∀ C: Prop. ((∀ A2: Ty, b: Tm. (f = Lam(A2, b)) -> C)) -> C
 
-def CanonNat(n: Tm): Prop :=
-∀ C: Prop. ((Eq(Tm, n, tzero)) -> C) -> (∀ m: Tm. (Value(m)) -> (Eq(Tm, n, tsucc(m))) -> C) -> C
+pub def CanonNat(n: Tm): Prop :=
+∀ C: Prop. ((n = Tzero) -> C) -> (∀ m: Tm. (Value(m)) -> (n = Tsucc(m)) -> C) -> C
 
-def CanonBool(c: Tm): Prop :=
-∀ C: Prop. ((Eq(Tm, c, tt)) -> C) -> ((Eq(Tm, c, ff)) -> C) -> C
+pub def CanonBool(c: Tm): Prop :=
+∀ C: Prop. ((c = Tt) -> C) -> ((c = Ff) -> C) -> C
 
-theorem canon_arr<f: Tm>(
+pub theorem canon_arr<f: Tm>(
   v: Value(f),
   G: List(Ty),
   A1: Ty,
   B1: Ty,
-  h: HasType(G, f, arr(A1, B1))
+  h: HasType(G, f, Arr(A1, B1))
 ): CanonArr(f) {
-  match v -> CanonArr(f) {
-    vlam(A, b) => C => k => k(A, b, refl(Tm, lam(A, b)))
-    vzero => False_elim(CanonArr(tzero), ne_nat_arr(Eq_sym(Ty, arr(A1, B1), tnat, inversion(h))))
-    vsucc(
-      n,
-      vn
-    ) => inversion(
-      G,
-      tsucc(n),
-      arr(A1, B1),
-      h,
-      CanonArr(tsucc(n)),
-      eq => hn => False_elim(CanonArr(tsucc(n)), ne_nat_arr(Eq_sym(Ty, arr(A1, B1), tnat, eq)))
+  ⊢ CanonArr(f) from match v {
+    Vlam(A, b) => ⊢ CanonArr(Tm::Lam(A, b)) from C => k => k(A, b, Refl)
+    Vzero => ⊢ CanonArr(Tm::Tzero) from False::elim(
+      <P: CanonArr(Tzero)>,
+      ne_nat_arr(Eq::sym(<A: Ty, a: Arr(A1, B1), b: Tnat>, inversion(h)))
     )
-    vtt => False_elim(CanonArr(tt), ne_bool_arr(Eq_sym(Ty, arr(A1, B1), tbool, inversion(h))))
-    vff => False_elim(CanonArr(ff), ne_bool_arr(Eq_sym(Ty, arr(A1, B1), tbool, inversion(h))))
+    Vsucc(n, vn) => ⊢ CanonArr(
+      Tm::Tsucc(n)
+    ) from inversion(
+      G,
+      Tsucc(n),
+      Arr(A1, B1),
+      h,
+      CanonArr(Tsucc(n)),
+      eq => hn => False::elim(
+        <P: CanonArr(Tsucc(n))>,
+        ne_nat_arr(Eq::sym(<A: Ty, a: Arr(A1, B1), b: Tnat>, eq))
+      )
+    )
+    Vtt => ⊢ CanonArr(Tm::Tt) from False::elim(
+      <P: CanonArr(Tt)>,
+      ne_bool_arr(Eq::sym(<A: Ty, a: Arr(A1, B1), b: Tbool>, inversion(h)))
+    )
+    Vff => ⊢ CanonArr(Tm::Ff) from False::elim(
+      <P: CanonArr(Ff)>,
+      ne_bool_arr(Eq::sym(<A: Ty, a: Arr(A1, B1), b: Tbool>, inversion(h)))
+    )
   }
 }
 
-theorem canon_nat<n: Tm>(v: Value(n), G: List(Ty), h: HasType(G, n, tnat)): CanonNat(n) {
-  match v -> CanonNat(n) {
-    vlam(
-      A,
-      b
-    ) => inversion(
+pub theorem canon_nat<n: Tm>(v: Value(n), G: List(Ty), h: HasType(G, n, Tnat)): CanonNat(n) {
+  ⊢ CanonNat(n) from match v {
+    Vlam(A, b) => ⊢ CanonNat(
+      Tm::Lam(A, b)
+    ) from inversion(
       G,
-      lam(A, b),
-      tnat,
+      Lam(A, b),
+      Tnat,
       h,
-      CanonNat(lam(A, b)),
-      B2 => eq => hb => False_elim(CanonNat(lam(A, b)), ne_nat_arr(eq))
+      CanonNat(Lam(A, b)),
+      B2 => eq => hb => False::elim(<P: CanonNat(Lam(A, b))>, ne_nat_arr(eq))
     )
-    vzero => C => k1 => k2 => k1(refl(Tm, tzero))
-    vsucc(m, vm) => C => k1 => k2 => k2(m, vm, refl(Tm, tsucc(m)))
-    vtt => False_elim(CanonNat(tt), ne_nat_bool(inversion(h)))
-    vff => False_elim(CanonNat(ff), ne_nat_bool(inversion(h)))
+    Vzero => ⊢ CanonNat(Tm::Tzero) from C => k1 => k2 => k1(Refl)
+    Vsucc(m, vm) => ⊢ CanonNat(Tm::Tsucc(m)) from C => k1 => k2 => k2(m, vm, Refl)
+    Vtt => ⊢ CanonNat(Tm::Tt) from False::elim(<P: CanonNat(Tt)>, ne_nat_bool(inversion(h)))
+    Vff => ⊢ CanonNat(Tm::Ff) from False::elim(<P: CanonNat(Ff)>, ne_nat_bool(inversion(h)))
   }
 }
 
-theorem canon_bool<c: Tm>(v: Value(c), G: List(Ty), h: HasType(G, c, tbool)): CanonBool(c) {
-  match v -> CanonBool(c) {
-    vlam(
-      A,
-      b
-    ) => inversion(
+pub theorem canon_bool<c: Tm>(v: Value(c), G: List(Ty), h: HasType(G, c, Tbool)): CanonBool(c) {
+  ⊢ CanonBool(c) from match v {
+    Vlam(A, b) => ⊢ CanonBool(
+      Tm::Lam(A, b)
+    ) from inversion(
       G,
-      lam(A, b),
-      tbool,
+      Lam(A, b),
+      Tbool,
       h,
-      CanonBool(lam(A, b)),
-      B2 => eq => hb => False_elim(CanonBool(lam(A, b)), ne_bool_arr(eq))
+      CanonBool(Lam(A, b)),
+      B2 => eq => hb => False::elim(<P: CanonBool(Lam(A, b))>, ne_bool_arr(eq))
     )
-    vzero => False_elim(CanonBool(tzero), ne_nat_bool(Eq_sym(Ty, tbool, tnat, inversion(h))))
-    vsucc(
-      m,
-      vm
-    ) => inversion(
+    Vzero => ⊢ CanonBool(Tm::Tzero) from False::elim(
+      <P: CanonBool(Tzero)>,
+      ne_nat_bool(Eq::sym(<A: Ty, a: Tbool, b: Tnat>, inversion(h)))
+    )
+    Vsucc(m, vm) => ⊢ CanonBool(
+      Tm::Tsucc(m)
+    ) from inversion(
       G,
-      tsucc(m),
-      tbool,
+      Tsucc(m),
+      Tbool,
       h,
-      CanonBool(tsucc(m)),
-      eq => hm => False_elim(CanonBool(tsucc(m)), ne_nat_bool(Eq_sym(Ty, tbool, tnat, eq)))
+      CanonBool(Tsucc(m)),
+      eq => hm => False::elim(
+        <P: CanonBool(Tsucc(m))>,
+        ne_nat_bool(Eq::sym(<A: Ty, a: Tbool, b: Tnat>, eq))
+      )
     )
-    vtt => C => k1 => k2 => k1(refl(Tm, tt))
-    vff => C => k1 => k2 => k2(refl(Tm, ff))
+    Vtt => ⊢ CanonBool(Tm::Tt) from C => k1 => k2 => k1(Refl)
+    Vff => ⊢ CanonBool(Tm::Ff) from C => k1 => k2 => k2(Refl)
   }
 }
 
-theorem progress<G: List(
-  Ty
-), t: Tm, A: Ty>(h: HasType(G, t, A), e: Eq(List(Ty), G, Nil(Ty))): Prog(t) {
-  match h -> Prog(t) {
-    hvar(G1, i, A1, eh) => False_elim(Prog(tvar(i)), nil_no_var(e, eh))
-    hlam(G1, A1, B1, b, hb) => prog_val(vlam(A1, b))
-    happ(
-      G1,
-      A1,
-      B1,
-      f,
-      a,
-      hf,
-      ha
-    ) => or_elim(
+pub theorem progress<G: List(Ty), t: Tm, A: Ty>(h: HasType(G, t, A), e: G = Nil(<A: Ty>)): Prog(t) {
+  ⊢ Prog(t) from match h {
+    Hvar(G1, i, A1, eh) => ⊢ Prog(
+      Tm::Tvar(i)
+    ) from False::elim(<P: Prog(Tvar(i))>, nil_no_var(e, eh))
+    Hlam(G1, A1, B1, b, hb) => ⊢ Prog(Tm::Lam(A1, b)) from prog_val(Vlam(A1, b))
+    Happ(G1, A1, B1, f, a, hf, ha) => ⊢ Prog(
+      Tm::App(f, a)
+    ) from Or::elim(
       Value(f),
       Steps(f),
-      Prog(app(f, a)),
+      Prog(App(f, a)),
       progress(hf, e),
-      vf => or_elim(
+      vf => Or::elim(
         Value(a),
         Steps(a),
-        Prog(app(f, a)),
+        Prog(App(f, a)),
         progress(ha, e),
         va => canon_arr(
           f,
@@ -733,125 +739,112 @@ theorem progress<G: List(
           A1,
           B1,
           hf,
-          Prog(app(f, a)),
+          Prog(App(f, a)),
           A2 => b => eqf => prog_step(
-            Eq_subst(
-              Tm,
-              lam(A2, b),
-              f,
-              y => Step(app(y, a), subst(b, single(a))),
-              Eq_sym(Tm, f, lam(A2, b), eqf),
-              beta(A2, b, a, va)
+            Eq::subst(
+              <A: Tm, a: Lam(A2, b), b: f>,
+              y => Step(App(y, a), subst(b, single(a))),
+              Eq::sym(<A: Tm, a: f, b: Lam(A2, b)>, eqf),
+              Beta(A2, b, a, va)
             )
           )
         ),
-        sa => steps_elim(Prog(app(f, a)), sa, a2 => s2 => prog_step(appR(vf, s2)))
+        sa => steps_elim(Prog(App(f, a)), sa, a2 => s2 => prog_step(AppR(vf, s2)))
       ),
-      sf => steps_elim(Prog(app(f, a)), sf, f2 => s2 => prog_step(appL(a, s2)))
+      sf => steps_elim(Prog(App(f, a)), sf, f2 => s2 => prog_step(AppL(a, s2)))
     )
-    hzero(G1) => prog_val(vzero)
-    hsucc(
-      G1,
-      n,
-      hn
-    ) => or_elim(
+    Hzero(G1) => ⊢ Prog(Tm::Tzero) from prog_val(Vzero)
+    Hsucc(G1, n, hn) => ⊢ Prog(
+      Tm::Tsucc(n)
+    ) from Or::elim(
       Value(n),
       Steps(n),
-      Prog(tsucc(n)),
+      Prog(Tsucc(n)),
       progress(hn, e),
-      vn => prog_val(vsucc(vn)),
-      sn => steps_elim(Prog(tsucc(n)), sn, n2 => s2 => prog_step(sstep(s2)))
+      vn => prog_val(Vsucc(vn)),
+      sn => steps_elim(Prog(Tsucc(n)), sn, n2 => s2 => prog_step(Sstep(s2)))
     )
-    hnatrec(
-      G1,
-      A1,
-      z,
-      s1,
-      n,
-      hz,
-      hs,
-      hn
-    ) => or_elim(
+    Hnatrec(G1, A1, z, s1, n, hz, hs, hn) => ⊢ Prog(
+      Tm::NatRec(A1, z, s1, n)
+    ) from Or::elim(
       Value(n),
       Steps(n),
-      Prog(natRec(A1, z, s1, n)),
+      Prog(NatRec(A1, z, s1, n)),
       progress(hn, e),
       vn => canon_nat(
         n,
         vn,
         G1,
         hn,
-        Prog(natRec(A1, z, s1, n)),
+        Prog(NatRec(A1, z, s1, n)),
         eq0 => prog_step(
-          Eq_subst(
-            Tm,
-            tzero,
-            n,
-            y => Step(natRec(A1, z, s1, y), z),
-            Eq_sym(Tm, n, tzero, eq0),
-            recZ(A1, z, s1)
+          Eq::subst(
+            <A: Tm, a: Tzero, b: n>,
+            y => Step(NatRec(A1, z, s1, y), z),
+            Eq::sym(<A: Tm, a: n, b: Tzero>, eq0),
+            RecZ(A1, z, s1)
           )
         ),
         m => vm => eqs => prog_step(
-          Eq_subst(
-            Tm,
-            tsucc(m),
-            n,
-            y => Step(natRec(A1, z, s1, y), app(app(s1, m), natRec(A1, z, s1, m))),
-            Eq_sym(Tm, n, tsucc(m), eqs),
-            recS(A1, z, s1, m, vm)
+          Eq::subst(
+            <A: Tm, a: Tsucc(m), b: n>,
+            y => Step(NatRec(A1, z, s1, y), App(App(s1, m), NatRec(A1, z, s1, m))),
+            Eq::sym(<A: Tm, a: n, b: Tsucc(m)>, eqs),
+            RecS(A1, z, s1, m, vm)
           )
         )
       ),
       sn => steps_elim(
-        Prog(natRec(A1, z, s1, n)),
+        Prog(NatRec(A1, z, s1, n)),
         sn,
-        n2 => s2 => prog_step(recN(A1, z, s1, n, n2, s2))
+        n2 => s2 => prog_step(RecN(A1, z, s1, n, n2, s2))
       )
     )
-    htt(G1) => prog_val(vtt)
-    hff(G1) => prog_val(vff)
-    hite(
-      G1,
-      A1,
-      c,
-      t1,
-      e1,
-      hc,
-      ht,
-      he
-    ) => or_elim(
+    Htt(G1) => ⊢ Prog(Tm::Tt) from prog_val(Vtt)
+    Hff(G1) => ⊢ Prog(Tm::Ff) from prog_val(Vff)
+    Hite(G1, A1, c, t1, e1, hc, ht, he) => ⊢ Prog(
+      Tm::Ite(c, t1, e1)
+    ) from Or::elim(
       Value(c),
       Steps(c),
-      Prog(ite(c, t1, e1)),
+      Prog(Ite(c, t1, e1)),
       progress(hc, e),
       vc => canon_bool(
         c,
         vc,
         G1,
         hc,
-        Prog(ite(c, t1, e1)),
+        Prog(Ite(c, t1, e1)),
         eqt => prog_step(
-          Eq_subst(Tm, tt, c, y => Step(ite(y, t1, e1), t1), Eq_sym(Tm, c, tt, eqt), iteT(t1, e1))
+          Eq::subst(
+            <A: Tm, a: Tt, b: c>,
+            y => Step(Ite(y, t1, e1), t1),
+            Eq::sym(<A: Tm, a: c, b: Tt>, eqt),
+            IteT(t1, e1)
+          )
         ),
         eqf => prog_step(
-          Eq_subst(Tm, ff, c, y => Step(ite(y, t1, e1), e1), Eq_sym(Tm, c, ff, eqf), iteF(t1, e1))
+          Eq::subst(
+            <A: Tm, a: Ff, b: c>,
+            y => Step(Ite(y, t1, e1), e1),
+            Eq::sym(<A: Tm, a: c, b: Ff>, eqf),
+            IteF(t1, e1)
+          )
         )
       ),
-      sc => steps_elim(Prog(ite(c, t1, e1)), sc, c2 => s2 => prog_step(iteC(t1, e1, s2)))
+      sc => steps_elim(Prog(Ite(c, t1, e1)), sc, c2 => s2 => prog_step(IteC(t1, e1, s2)))
     )
   }
 }
 
-theorem type_safety<t: Tm, t2: Tm>(
+pub theorem type_safety<t: Tm, t2: Tm>(
   s: Step(t, t2),
   A: Ty,
-  h: HasType(Nil(Ty), t, A)
-): And(HasType(Nil(Ty), t2, A), Prog(t2)) {
-  and_intro(
-    HasType(Nil(Ty), t2, A),
-    Prog(t2),
-    preservation(s, Nil(Ty), A, h),
-    progress(preservation(s, Nil(Ty), A, h), refl(List(Ty), Nil(Ty)))
+  h: HasType(Nil(<A: Ty>), t, A)
+): HasType(Nil(<A: Ty>), t2, A) ∧ Prog(t2) {
+  AndIntro(
+    <A: HasType(Nil(<A: Ty>), t2, A), B: Prog(t2)>,
+    preservation(s, Nil(<A: Ty>), A, h),
+    progress(preservation(s, Nil(<A: Ty>), A, h), Refl)
   )
 }

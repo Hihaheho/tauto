@@ -29,7 +29,7 @@ pub fn inference_class_method(
   cn: Text,
   found: Bool
 ): Mut1(Ty, Checker) {
-  match found: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match found {
     true => ck_rewrap1(ck_lookup(c, cat3(cn, ".", name), env, span))
     false => frame_bind(
       Unit,
@@ -53,10 +53,7 @@ pub theorem inference_class_method_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_class_method(j, c, term, env, span, base, name, cn, found)) {
-  match found: CkRunFrame(
-    c,
-    inference_class_method(j, c, term, env, span, base, name, cn, found)
-  ) {
+  ⊢ CkRunFrame(c, inference_class_method(j, c, term, env, span, base, name, cn, found)) from match found {
     true => run_frame_read(
       c,
       ck_rewrap1(ck_lookup(c, cat3(cn, ".", name), env, span)),
@@ -103,7 +100,7 @@ pub fn inference_field_base(
   name: Text,
   r#class: Option(Text)
 ): Mut1(Ty, Checker) {
-  match r#class: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match r#class {
     None => frame_bind(
       Ty,
       Ty,
@@ -136,7 +133,7 @@ pub theorem inference_field_base_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_field_base(j, c, term, env, span, base, name, r#class)) {
-  match r#class: CkRunFrame(c, inference_field_base(j, c, term, env, span, base, name, r#class)) {
+  ⊢ CkRunFrame(c, inference_field_base(j, c, term, env, span, base, name, r#class)) from match r#class {
     None => run_frame_bind(
       Ty,
       Ty,
@@ -175,7 +172,7 @@ pub fn inference_term(
   span: TySpan,
   sk: SurfaceKind
 ): Mut1(Ty, Checker) {
-  match sk: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match sk {
     SkVar(name) => ck_rewrap1(ck_lookup(c, name, env, span))
     SkNat(n) => ck_rewrap1(ck_nat_literal(c, n, span))
     SkText(s) => mut1(TyText, c)
@@ -352,7 +349,7 @@ pub theorem inference_term_frame(
   ih: InferenceFrames(j),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, inference_term(j, c, term, env, span, sk)) {
-  match sk: CkRunFrame(c, inference_term(j, c, term, env, span, sk)) {
+  ⊢ CkRunFrame(c, inference_term(j, c, term, env, span, sk)) from match sk {
     SkVar(name) => run_frame_read(
       c,
       ck_rewrap1(ck_lookup(c, name, env, span)),
@@ -853,14 +850,7 @@ pub theorem inference_term_frame(
       frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),
       ordered
     )
-    SkStep(
-      pat_tactic,
-      pat_arg,
-      pat_call_start,
-      pat_call_end,
-      pat_before,
-      pat_arms
-    ) => run_frame_bind(
+    SkStep(pat_tactic, pat_arg, pat_call_start, pat_call_end, pat_before, pat_arms) => run_frame_bind(
       Unit,
       Ty,
       c,
@@ -909,12 +899,17 @@ pub theorem inference_step_ck_infer_term_in_frame(
   inference_step_ck_infer_term_in(j, c, term, env)
 ) { inference_term_frame(j, c, term, env, span_of(term), inference_term_kind(term), ih, ordered) }
 
-pub theorem inference_unf_ck_infer_term_in(
-  j: Nat,
-  c: Checker,
-  term: SurfaceTerm,
-  env: List(Local)
-): ck_infer_term_in(Succ(j), c, term, env) = inference_step_ck_infer_term_in(j, c, term, env) { match term: ck_infer_term_in(Succ(j), c, term, env) = inference_step_ck_infer_term_in(j, c, term, env) { SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => match sk: ck_infer_term_in(Succ(j), c, SurfaceTermIndexedMk(sk, start, end, ast_occurrence), env) = inference_step_ck_infer_term_in(j, c, SurfaceTermIndexedMk(sk, start, end, ast_occurrence), env) {
+pub theorem inference_unf_ck_infer_term_in(j: Nat, c: Checker, term: SurfaceTerm, env: List(Local)): ck_infer_term_in(Succ(j), c, term, env) = inference_step_ck_infer_term_in(j, c, term, env) { ⊢ ck_infer_term_in(Succ(j), c, term, env) = inference_step_ck_infer_term_in(j, c, term, env) from match term { SurfaceTermIndexedMk(sk, start, end, ast_occurrence) => ⊢ ck_infer_term_in(
+  Succ(j),
+  c,
+  SurfaceTermIndexedMk(sk, start, end, ast_occurrence),
+  env
+) = inference_step_ck_infer_term_in(
+  j,
+  c,
+  SurfaceTermIndexedMk(sk, start, end, ast_occurrence),
+  env
+) from match sk {
       SkVar(pat_name) => Refl
       SkNat(pat_digits) => Refl
       SkText(pat_value) => Refl

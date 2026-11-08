@@ -9,7 +9,7 @@ pub fn build(
     pkg: &Package,
     m: &tauto::manifest::Manifest,
     dir: &Path,
-    origins: &BTreeMap<String, String>,
+    origins: &BTreeMap<tauto_nir::Name, tauto_nir::Name>,
     timings: &mut crate::timings::Timings,
 ) -> Result<(), String> {
     // The engine suspends the Wasm stack. Rust callback signatures stay ordinary
@@ -443,9 +443,12 @@ impl Codec<'_> {
                     .iter()
                     .find(|d| d.name == *n)
                     .cloned()
-                    .ok_or_else(|| crate::i18n::t!("js-wasm-unknown-data", name = n))?;
+                    .ok_or_else(|| crate::i18n::t!("js-wasm-unknown-data", name = n.to_string()))?;
                 if d.view {
-                    return Err(crate::i18n::t!("js-wasm-borrowed-view", name = n));
+                    return Err(crate::i18n::t!(
+                        "js-wasm-borrowed-view",
+                        name = n.to_string()
+                    ));
                 }
                 let subst = d
                     .generics
@@ -514,13 +517,17 @@ impl Codec<'_> {
                             format!("({})", s.join(","))
                         }
                     };
-                    from.push_str(&format!("{}=>{path}{},", quote(&c.name), wrap(fs)));
+                    from.push_str(&format!(
+                        "{}=>{path}{},",
+                        quote(tauto_jsgen::constructor_symbol(self.pkg, &c.name)),
+                        wrap(fs)
+                    ));
                     to.push_str(&format!(
                         "{path}{}=>{{{}ctor({},{},json!({}),json!([{}]),{})}},",
                         wrap(pats),
                         if d.linear { "bomb.defuse();" } else { "" },
-                        quote(n),
-                        quote(&c.name),
+                        quote(&tauto_jsgen::owner_symbol(self.pkg, n)),
+                        quote(tauto_jsgen::constructor_symbol(self.pkg, &c.name)),
                         serde_json::to_string(&names).unwrap(),
                         outs.join(","),
                         d.is_struct
@@ -535,16 +542,16 @@ impl Codec<'_> {
             }
         };
         let owner = match t {
-            Ty::Option(_) => Some("Option"),
-            Ty::Result(_, _) => Some("Result"),
-            Ty::Pair(_, _) => Some("Pair"),
-            Ty::Data(n, _) if !self.opaque(t) => Some(n.as_str()),
+            Ty::Option(_) => Some("Option".to_string()),
+            Ty::Result(_, _) => Some("Result".to_string()),
+            Ty::Pair(_, _) => Some("Pair".to_string()),
+            Ty::Data(n, _) if !self.opaque(t) => Some(tauto_jsgen::owner_symbol(self.pkg, n)),
             _ => None,
         };
         let from = match owner {
             Some(owner) => format!(
                 "assert_eq!(v[\"owner\"].as_str(),Some({}),\"wrong or missing constructor owner\");{from}",
-                quote(owner)
+                quote(&owner)
             ),
             None => from,
         };
@@ -638,8 +645,8 @@ impl Codec<'_> {
                     };
                     code.push_str(&format!(
                         "{path}{pat}=>ctor({},{},json!({}),json!([{}]),{}),",
-                        quote(n),
-                        quote(&c.name),
+                        quote(&tauto_jsgen::owner_symbol(self.pkg, n)),
+                        quote(tauto_jsgen::constructor_symbol(self.pkg, &c.name)),
                         serde_json::to_string(
                             &c.fields.iter().map(|f| &f.name).collect::<Vec<_>>()
                         )
@@ -714,25 +721,25 @@ impl Codec<'_> {
             };
             let index = "args[\"args\"][0][\"$int\"].as_str().unwrap().parse::<usize>().expect(\"index too large\")";
             arms.push(format!(
-                "\"Vec.len\"|\"Slice.len\"=>json!({{\"$int\":{read}.len().to_string()}})"
+                "\"Vec::len\"|\"Slice::len\"=>json!({{\"$int\":{read}.len().to_string()}})"
             ));
-            arms.push(format!("\"Vec.get\"|\"Slice.get\"|\"Vec.index\"=>{{let value={read};match value.get({index}){{Some(item)=>{{let view=unsafe{{view(item as *const {elem} as *mut {elem},false,{sub},{opaque},&frame)}};if name==\"Vec.index\"{{view}}else{{ctor(\"Option\",\"Some\",json!([null]),json!([view]),false)}}}},None=>if name==\"Vec.index\"{{json!({{\"abiEffect\":\"out_of_bounds\"}})}}else{{ctor(\"Option\",\"None\",json!([]),json!([]),false)}}}}}}"));
-            arms.push(format!("\"Vec.get_mut\"|\"Vec.last_mut\"=>{{let value={write};let index=if name==\"Vec.last_mut\"{{value.len().checked_sub(1)}}else{{Some({index})}};match index.and_then(|i|value.get_mut(i)){{Some(item)=>ctor(\"Option\",\"Some\",json!([null]),json!([unsafe{{view(item as *mut {elem},true,{sub},{opaque},&frame)}}]),false),None=>ctor(\"Option\",\"None\",json!([]),json!([]),false)}}}}"));
+            arms.push(format!("\"Vec::get\"|\"Slice::get\"|\"Vec::index\"=>{{let value={read};match value.get({index}){{Some(item)=>{{let view=unsafe{{view(item as *const {elem} as *mut {elem},false,{sub},{opaque},&frame)}};if name==\"Vec::index\"{{view}}else{{ctor(\"Option\",\"Some\",json!([null]),json!([view]),false)}}}},None=>if name==\"Vec::index\"{{json!({{\"abiEffect\":\"out_of_bounds\"}})}}else{{ctor(\"Option\",\"None\",json!([]),json!([]),false)}}}}}}"));
+            arms.push(format!("\"Vec::get_mut\"|\"Vec::last_mut\"=>{{let value={write};let index=if name==\"Vec::last_mut\"{{value.len().checked_sub(1)}}else{{Some({index})}};match index.and_then(|i|value.get_mut(i)){{Some(item)=>ctor(\"Option\",\"Some\",json!([null]),json!([unsafe{{view(item as *mut {elem},true,{sub},{opaque},&frame)}}]),false),None=>ctor(\"Option\",\"None\",json!([]),json!([]),false)}}}}"));
             if matches!(t, Ty::Vec(_)) {
                 let slice = self.codec(&Ty::Slice(a.clone()))?;
-                arms.push(format!("\"Vec.as_slice\"=>unsafe{{view({read}.as_slice() as *const [{elem}] as *mut [{elem}],false,{slice},false,&frame)}}"));
-                arms.push(format!("\"Vec.as_mut_slice\"=>unsafe{{view({write}.as_mut_slice() as *mut [{elem}],true,{slice},false,&frame)}}"));
-                arms.push(format!("\"Vec.push\"=>{{let item=from{sub}(&args[\"args\"][0],&frame);{write}.push(item);Value::Null}}"));
-                arms.push(format!("\"Vec.pop\"=>match {write}.pop(){{Some(item)=>ctor(\"Option\",\"Some\",json!([null]),json!([to{sub}(item,&frame)]),false),None=>ctor(\"Option\",\"None\",json!([]),json!([]),false)}}"));
-                arms.push(format!("\"Vec.clear\"=>{{{write}.clear();Value::Null}}"));
+                arms.push(format!("\"Vec::as_slice\"=>unsafe{{view({read}.as_slice() as *const [{elem}] as *mut [{elem}],false,{slice},false,&frame)}}"));
+                arms.push(format!("\"Vec::as_mut_slice\"=>unsafe{{view({write}.as_mut_slice() as *mut [{elem}],true,{slice},false,&frame)}}"));
+                arms.push(format!("\"Vec::push\"=>{{let item=from{sub}(&args[\"args\"][0],&frame);{write}.push(item);Value::Null}}"));
+                arms.push(format!("\"Vec::pop\"=>match {write}.pop(){{Some(item)=>ctor(\"Option\",\"Some\",json!([null]),json!([to{sub}(item,&frame)]),false),None=>ctor(\"Option\",\"None\",json!([]),json!([]),false)}}"));
+                arms.push(format!("\"Vec::clear\"=>{{{write}.clear();Value::Null}}"));
                 arms.push(format!(
-                    "\"Vec.truncate\"=>{{{write}.truncate({index});Value::Null}}"
+                    "\"Vec::truncate\"=>{{{write}.truncate({index});Value::Null}}"
                 ));
-                arms.push(format!("\"Vec.swap\"=>{{let a={index};let b=args[\"args\"][1][\"$int\"].as_str().unwrap().parse::<usize>().unwrap();let value={write};if a>=value.len()||b>=value.len(){{json!({{\"abiEffect\":\"out_of_bounds\"}})}}else{{value.swap(a,b);Value::Null}}}}"));
+                arms.push(format!("\"Vec::swap\"=>{{let a={index};let b=args[\"args\"][1][\"$int\"].as_str().unwrap().parse::<usize>().unwrap();let value={write};if a>=value.len()||b>=value.len(){{json!({{\"abiEffect\":\"out_of_bounds\"}})}}else{{value.swap(a,b);Value::Null}}}}"));
             }
         }
         if *t == Ty::Buf {
-            arms.push("\"Buf.push\"=>{frame.write::<String>(&args[\"value\"]).push_str(args[\"args\"][0].as_str().unwrap());Value::Null}".into());
+            arms.push("\"Buf::push\"=>{frame.write::<String>(&args[\"value\"]).push_str(args[\"args\"][0].as_str().unwrap());Value::Null}".into());
         }
         let ty = self.static_ty(t);
         let mut out = if self.cloneable(t) {

@@ -142,7 +142,7 @@ fn effects_after_a_function_type() {
     let TermKind::Pi { effects, .. } = (*terms.pop().unwrap().kind).clone() else {
         panic!("not a Pi")
     };
-    assert_eq!(effects, Some(vec!["Div".to_string(), "ask".to_string()]));
+    assert_eq!(effects, Some(vec!["Div".into(), "ask".into()]));
 }
 
 /// A function of `std` with a prelude function's name is that builtin's
@@ -160,7 +160,40 @@ fn a_std_model_takes_and_gives_what_its_builtin_does() {
     let errors = model("module U64 {\n  pub fn of_nat(n: Nat): Option(U64) {\n    None\n  }\n}\n");
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
-        errors[0].0.contains("`std::Model::U64::of_nat`"),
+        errors[0]
+            .0
+            .to_string()
+            .contains("`std::Model::U64::of_nat`"),
         "{errors:?}"
     );
+}
+
+#[test]
+fn application_mapping_preserves_occurrence_identity() {
+    let span = Default::default();
+    let empty = SurfaceTerm::new(
+        TermKind::App {
+            function: Box::new(SurfaceTerm::var("f", span)),
+            arguments: vec![],
+        },
+        span,
+    );
+    let nested = SurfaceTerm::new(
+        TermKind::App {
+            function: Box::new(SurfaceTerm::var("g", span)),
+            arguments: vec![empty.clone()],
+        },
+        span,
+    );
+    for original in [&empty, &nested] {
+        let mapped = original
+            .map_applications(false, |part| Ok::<_, ()>(part.clone()))
+            .unwrap();
+        assert_eq!(mapped.id(), original.id());
+        if let TermKind::App { arguments, .. } = &*mapped.kind {
+            if let Some(argument) = arguments.last() {
+                assert_eq!(argument.id(), empty.id());
+            }
+        }
+    }
 }

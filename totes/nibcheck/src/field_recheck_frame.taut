@@ -27,7 +27,9 @@ pub theorem recheck_fields_cons_unf(
   rest: List(SurfaceDataField),
   c: Checker,
   generics: Ordmap(Text, Ty)
-): ck_recheck_fields(Cons(f, rest), c, generics) = recheck_fields_cons(f, rest, c, generics) { Refl }
+): ck_recheck_fields(Cons(f, rest), c, generics) = recheck_fields_cons(f, rest, c, generics) {
+  Refl
+}
 pub theorem recheck_fields_cons_frame(
   f: SurfaceDataField,
   rest: List(SurfaceDataField),
@@ -50,7 +52,7 @@ pub theorem ck_recheck_fields_frame(
   c: Checker,
   generics: Ordmap(Text, Ty)
 ): CkReadFrame(c, ck_recheck_fields(xs, c, generics)) {
-  match xs: CkReadFrame(c, ck_recheck_fields(xs, c, generics)) {
+  ⊢ CkReadFrame(c, ck_recheck_fields(xs, c, generics)) from match xs {
     Nil => Refl
     Cons(f, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkReadFrame(c, m),
@@ -107,7 +109,7 @@ pub theorem ck_recheck_ctors_frame(
   c: Checker,
   generics: Ordmap(Text, Ty)
 ): CkReadFrame(c, ck_recheck_ctors(xs, c, generics)) {
-  match xs: CkReadFrame(c, ck_recheck_ctors(xs, c, generics)) {
+  ⊢ CkReadFrame(c, ck_recheck_ctors(xs, c, generics)) from match xs {
     Nil => Refl
     Cons(k, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkReadFrame(c, m),
@@ -172,7 +174,7 @@ pub theorem ck_recheck_datas_frame(
   xs: List(SurfaceData),
   c: Checker
 ): CkReadFrame(c, ck_recheck_datas(xs, c)) {
-  match xs: CkReadFrame(c, ck_recheck_datas(xs, c)) {
+  ⊢ CkReadFrame(c, ck_recheck_datas(xs, c)) from match xs {
     Nil => Refl
     Cons(d, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => CkReadFrame(c, m),

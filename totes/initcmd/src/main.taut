@@ -1,0 +1,396 @@
+import "../../text/src/text.taut"
+import std::Base
+import std::List
+import std::Text
+import std::prelude::Os
+
+// `tauto init [PATH]`: makes a local tote, `Tauto.eure` and `src/main.taut`,
+// without overwriting anything and without following a link: each directory
+// down to PATH must be a plain one (`fs_read_link`), and the files are made
+// only where nothing is (`fs_write_new`). When a step fails, what the run
+// made is taken away again. The exit status is 0, 1 when it fails, and 2
+// when the arguments are wrong.
+
+extern {
+  // The message `key`; `first` and `second` fill its arguments.
+  fn init_message(&key: Text, &first: Text, &second: Text): Text
+}
+
+pub fn init_msg(key: Text, first: Text): Text {
+  init_message(key, first, "")
+}
+
+// What a path is, looking at the entry itself: a link counts as other.
+pub enum InitKind {
+  InitAbsent
+  InitDir
+  InitOther
+}
+
+pub struct InitFile { path: Text, text: Text }
+
+// What went wrong and what the run had made by then, newest first.
+pub struct InitFailure { error: Text, made: List(Text) }
+
+pub fn init_io(path: Text, e: IoError): Text {
+  Text::concat_all(Cons(path, Cons(": ", Cons(io_message(e), Nil))))
+}
+
+pub fn init_kind(path: Text): Result(InitKind, Text) ! {fs_read_link, fs_stat} {
+  match perform fs_read_link(path) {
+    Err(e) => Err(init_io(path, e))
+    Ok(link) => match link {
+      Some(target) => Ok(InitOther)
+      None => match perform fs_stat(path) {
+        Err(e) => Err(init_io(path, e))
+        Ok(found) => match found {
+          None => Ok(InitAbsent)
+          Some(st) => match st.kind {
+            IsDir => Ok(InitDir)
+            IsFile => Ok(InitOther)
+            IsOther => Ok(InitOther)
+          }
+        }
+      }
+    }
+  }
+}
+
+// Whether the plain directory `path` exists; it is an error for anything
+// else to be there.
+pub fn init_directory(path: Text): Result(Bool, Text) ! {fs_read_link, fs_stat} {
+  match init_kind(path) {
+    Err(e) => Err(e)
+    Ok(kind) => match kind {
+      InitAbsent => Ok(false)
+      InitDir => Ok(true)
+      InitOther => Err(init_msg("init-not-plain-directory", path))
+    }
+  }
+}
+
+pub fn init_is_lower(c: Nat): Bool {
+  c >= 97 && c <= 122
+}
+
+pub fn init_name_tail(bytes: List(Nat)): Bool {
+  match bytes {
+    Nil => true
+    Cons(c, rest) => (init_is_lower(c) || (c >= 48 && c <= 57) || c == 45) && init_name_tail(rest)
+  }
+}
+
+pub fn init_valid_name(name: Text): Bool {
+  match Text::bytes(name) {
+    Nil => false
+    Cons(c, rest) => init_is_lower(c) && init_name_tail(rest)
+  }
+}
+
+// The parts of a path that name something: `.` and empty parts are no
+// component.
+pub fn init_is_component(p: Text): Bool {
+  not(Text::eq(p, "")) && not(Text::eq(p, "."))
+}
+
+pub fn init_components(path: Text): List(Text) {
+  List::filter(init_is_component, text_split(path, "/"))
+}
+
+pub fn init_has_parent(parts: List(Text)): Bool {
+  match parts {
+    Nil => false
+    Cons(p, rest) => Text::eq(p, "..") || init_has_parent(rest)
+  }
+}
+
+pub fn init_strip_in(k: Nat, path: Text): Text {
+  match k {
+    Zero => path
+    Succ(k2) => {
+      let n := Text::len(path)
+      if n > 0 && Text::byte(path, n - 1) == Some(47) {
+        init_strip_in(k2, Text::slice_or_empty(path, 0, n - 1))
+      } else {
+        path
+      }
+    }
+  }
+}
+
+pub fn init_strip_slashes(path: Text): Text {
+  init_strip_in(Text::len(path), path)
+}
+
+// `/a/b` for the components `a`, `b`.
+pub fn init_join(parts: List(Text)): Text {
+  match parts {
+    Nil => "/"
+    Cons(p, rest) => Text::concat("/", text_join(parts, "/"))
+  }
+}
+
+// Every proper prefix of the components must be a plain directory that
+// exists.
+pub fn init_walk(done: List(Text), rest: List(Text)): Result(Unit, Text) ! {fs_read_link, fs_stat} {
+  match rest {
+    Nil => Ok(#())
+    Cons(p, more) => match more {
+      Nil => Ok(#())
+      Cons(next, later) => {
+        let here := List::append(done, Cons(p, Nil))
+        let path := init_join(here)
+        match init_directory(path) {
+          Err(e) => Err(e)
+          Ok(exists) => if exists {
+            init_walk(here, more)
+          } else {
+            Err(init_msg("init-parent-missing", path))
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn init_manifest(name: Text): Text {
+  Text::concat_all(
+    Cons("package {\n  name = \"", Cons(name, Cons("\"\n  version = \"0.1.0\"\n}\n", Nil)))
+  )
+}
+
+pub fn init_source(): Text {
+  "perform show(\"hello\", 42)\n"
+}
+
+// Takes away what the run made, the files and then the directories (only
+// while they are empty), newest first; the paths that could not be taken.
+pub fn init_undo_files(files: List(Text), failed: List(Text)): List(Text) ! {fs_remove, Div} {
+  match files {
+    Nil => failed
+    Cons(f, rest) => match perform fs_remove(f) {
+      Ok(u) => init_undo_files(rest, failed)
+      Err(e) => init_undo_files(rest, Cons(init_io(f, e), failed))
+    }
+  }
+}
+
+pub fn init_undo_dirs(
+  dirs: List(Text),
+  failed: List(Text)
+): List(Text) ! {fs_remove, fs_list_dir, Div} {
+  match dirs {
+    Nil => failed
+    Cons(d, rest) => match perform fs_list_dir(d) {
+      Err(e) => init_undo_dirs(rest, Cons(init_io(d, e), failed))
+      Ok(entries) => match entries {
+        Nil => match perform fs_remove(d) {
+          Ok(u) => init_undo_dirs(rest, failed)
+          Err(e) => init_undo_dirs(rest, Cons(init_io(d, e), failed))
+        }
+        Cons(x, y) => init_undo_dirs(rest, Cons(init_io(d, Failed("directory not empty")), failed))
+      }
+    }
+  }
+}
+
+pub fn init_fail(
+  error: Text,
+  dirs: List(Text),
+  files: List(Text)
+): Text ! {fs_remove, fs_list_dir, Div} {
+  let failed := List::reverse(init_undo_dirs(dirs, init_undo_files(files, Nil)))
+  match failed {
+    Nil => error
+    Cons(x, y) => init_message("init-cleanup-failed", error, text_join(failed, ", "))
+  }
+}
+
+// Makes the directories that are not there and then the files, `dirs` and
+// `files` being what has been made so far, newest first.
+pub fn init_make_dirs(
+  todo: List(Text),
+  dirs: List(Text)
+): Result(List(Text), InitFailure) ! {fs_create_dir, Div} {
+  match todo {
+    Nil => Ok(dirs)
+    Cons(d, rest) => match perform fs_create_dir(d) {
+      Ok(u) => init_make_dirs(rest, Cons(d, dirs))
+      Err(e) => Err(InitFailure { error: io_message(e), made: dirs })
+    }
+  }
+}
+
+pub fn init_make_files(
+  todo: List(InitFile),
+  files: List(Text)
+): Result(List(Text), InitFailure) ! {fs_write_new, Div} {
+  match todo {
+    Nil => Ok(files)
+    Cons(item, rest) => match perform fs_write_new(item.path, item.text) {
+      Err(e) => Err(InitFailure { error: io_message(e), made: files })
+      Ok(u) => init_make_files(rest, Cons(item.path, files))
+    }
+  }
+}
+
+pub fn init_create(
+  root: Text,
+  src: Text,
+  root_exists: Bool,
+  src_exists: Bool,
+  name: Text,
+  shown: Text
+): Result(Text, Text) ! {fs_create_dir, fs_write_new, fs_remove, fs_list_dir, Div} {
+  let want := List::append(
+    if root_exists { Nil } else { Cons(root, Nil) },
+    if src_exists { Nil } else { Cons(src, Nil) }
+  )
+  match init_make_dirs(want, Nil) {
+    Err(failure) => Err(init_fail(failure.error, failure.made, Nil))
+    Ok(dirs) => match init_make_files(
+      Cons(
+        InitFile { path: Text::concat(root, "/Tauto.eure"), text: init_manifest(name) },
+        Cons(InitFile { path: Text::concat(src, "/main.taut"), text: init_source() }, Nil)
+      ),
+      Nil
+    ) {
+      Err(failure) => Err(init_fail(failure.error, dirs, failure.made))
+      Ok(files) => Ok(shown)
+    }
+  }
+}
+
+pub fn init_absent(path: Text, shown: Text): Result(Unit, Text) ! {fs_read_link, fs_stat} {
+  match init_kind(path) {
+    Err(e) => Err(e)
+    Ok(kind) => match kind {
+      InitAbsent => Ok(#())
+      InitDir => Err(init_msg("init-refuse-overwrite", shown))
+      InitOther => Err(init_msg("init-refuse-overwrite", shown))
+    }
+  }
+}
+
+pub fn init_run(
+  path: Text
+): Result(
+  Text,
+  Text
+) ! {fs_read_link, fs_stat, fs_canonicalize, fs_create_dir, fs_write_new, fs_remove, fs_list_dir, Div} {
+  let parts := init_components(path)
+  if Text::eq(path, "") || init_has_parent(text_split(path, "/")) {
+    Err(init_message("init-bad-path", "", ""))
+  } else {
+    match perform fs_canonicalize(".") {
+      Err(e) => Err(io_message(e))
+      Ok(cwd) => {
+        let cwd_parts := init_components(cwd)
+        let all := if Text::byte(
+          path,
+          0
+        ) == Some(47) { parts } else { List::append(cwd_parts, parts) }
+        let root := init_join(all)
+        let shown := if Text::byte(path, 0) == Some(47) {
+          init_strip_slashes(path)
+        } else {
+          Text::concat_all(
+            Cons(init_strip_slashes(cwd), Cons("/", Cons(init_strip_slashes(path), Nil)))
+          )
+        }
+        match init_walk(Nil, all) {
+          Err(e) => Err(e)
+          Ok(u) => match init_directory(root) {
+            Err(e) => Err(e)
+            Ok(root_exists) => {
+              let resolved := if root_exists {
+                match perform fs_canonicalize(root) {
+                  Ok(real) => Ok(real)
+                  Err(e) => Err(io_message(e))
+                }
+              } else {
+                Ok(root)
+              }
+              match resolved {
+                Err(e) => Err(e)
+                Ok(real) => match List::last(init_components(real)) {
+                  None => Err(init_message("init-no-name", "", ""))
+                  Some(name) => if not(init_valid_name(name)) {
+                    Err(init_message("init-bad-name", "", ""))
+                  } else {
+                    let src := Text::concat(root, "/src")
+                    match init_directory(src) {
+                      Err(e) => Err(e)
+                      Ok(src_exists) => match init_absent(
+                        Text::concat(root, "/Tauto.eure"),
+                        Text::concat(shown, "/Tauto.eure")
+                      ) {
+                        Err(e) => Err(e)
+                        Ok(a) => match init_absent(
+                          Text::concat(src, "/main.taut"),
+                          Text::concat(shown, "/src/main.taut")
+                        ) {
+                          Err(e) => Err(e)
+                          Ok(b) => init_create(root, src, root_exists, src_exists, name, shown)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn init_command(
+  args: List(Text)
+): i32 ! {fs_read_link, fs_stat, fs_canonicalize, fs_create_dir, fs_write_new, fs_remove, fs_list_dir, stdout, stderr, Div} {
+  let help := Text::concat(init_message("init-help", "", ""), "\n")
+  let path := match args {
+    Nil => Some(".")
+    Cons(a, rest) => match rest {
+      Nil => if text_starts_with(a, "-", 0) { None } else { Some(a) }
+      Cons(b, more) => None
+    }
+  }
+  let one := match args {
+    Cons(a, rest) => match rest {
+      Nil => Text::eq(a, "--help") || Text::eq(a, "-h")
+      Cons(b, more) => false
+    }
+    Nil => false
+  }
+  if one {
+    print(help)
+    0
+  } else {
+    match path {
+      None => {
+        eprint(help)
+        2
+      }
+      Some(p) => match init_run(p) {
+        Ok(root) => {
+          print(Text::concat(init_msg("init-created", Text::concat(root, "/Tauto.eure")), "\n"))
+          print(Text::concat(init_message("init-run-hint", "", ""), "\n"))
+          0
+        }
+        Err(error) => {
+          eprint(Text::concat(init_msg("init-failed", error), "\n"))
+          1
+        }
+      }
+    }
+  }
+}
+
+let code := init_command(perform argv())
+if code != 0 {
+  perform exit(code)
+} else {
+  #()
+}

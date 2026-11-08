@@ -1,0 +1,76 @@
+// A data type's row parameter takes an effect row: `Grant(!{pos} ∪ e)`. The
+// row is checked as a function's is and has no run-time representation, so a
+// library can record what each handler gives at the place that takes the
+// effect out of the row (`docs/design/row-parameters.md`).
+
+@ cases.a-row-argument-records-what-each-handler-gives
+source = ```nib
+effect pos(): i64 resume <=1
+effect vel(): i64 resume <=1
+struct Grant(!e) { gives: List(Text), run: () -> i64 ! e }
+fn start<!e>(f: () -> i64 ! e): Grant(e) { Grant { gives: Nil, run: f } }
+fn give_pos<!e>(g: Grant(!{pos} ∪ e)): Grant(e) {
+  let r := g.run
+  Grant {
+    gives: Cons("pos", g.gives),
+    run: () => handle { r() } with {
+      pos(), k => k(10)
+      return v => v
+    }
+  }
+}
+fn give_vel<!e>(g: Grant(!{vel} ∪ e)): Grant(e) {
+  let r := g.run
+  Grant {
+    gives: Cons("vel", g.gives),
+    run: () => handle { r() } with {
+      vel(), k => k(5)
+      return v => v
+    }
+  }
+}
+fn run_all(g: Grant(!{})): i64 {
+  let r := g.run
+  r()
+}
+fn step(): i64 ! {pos, vel} { perform pos() + perform vel() }
+let g := give_pos(give_vel(start(step)))
+perform show("gives", g.gives)
+perform show("value", run_all(g))
+```
+shows = [
+  "gives = Cons(\"pos\", Cons(\"vel\", Nil))",
+  "value = 15",
+]
+
+// `App` mentions `e` only as `Answer`'s row argument, so `e` is a row
+// parameter of `App` too, not a type: an `App(e)` holds nothing of `e` and is
+// as duplicable as its fields, and may live across an `e` that resumes ω.
+@ cases.a-generic-given-to-a-row-parameter-is-a-row-parameter
+source = ```nib
+effect query(q: Text): Text
+shared struct Answer(!e) { name: Text, run: (arg: Text) -> Result(Text, Text) ! {Div} ∪ e }
+fn loading<!e>(run: () -> Result(Text, Text) ! {Div} ∪ e): Answer(e) {
+  Answer { name: "x", run: (arg: Text) => run() }
+}
+shared struct App(!e) { answers: List(Answer(e)) }
+fn first<!e>(a: App(e)): Text ! {Div} ∪ e { go(a.answers) }
+fn go<!e>(l: List(Answer(e))): Text ! {Div} ∪ e {
+  match l {
+    Nil => "none"
+    Cons(x, rest) => match (x.run)("") {
+      Ok(t) => t
+      Err(w) => w
+    }
+  }
+}
+fn from_db(): Result(Text, Text) ! {Div, query} { Ok(perform query("q")) }
+let a := App { answers: Cons(loading(from_db), Nil) }
+perform show("answer", handle { first(a) } with {
+  query(q), k => k("row")
+  return v => v
+})
+```
+shows = [
+  "answer = \"row\"",
+]

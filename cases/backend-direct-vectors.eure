@@ -1,0 +1,163 @@
+// Code over vectors, bytes, `Buf` and the fields of structs, through shared
+// and mutable borrows, runs in direct form and gives what the evaluator gives.
+@ cases.direct-vectors-in-place
+backends = ["rust", "javascript"]
+source = ```tauto
+struct Canvas { w: u64, h: u64 }
+
+fn blend(dst: u32, src: u32): u32 { U32::or(dst, src) }
+
+// A pixel through a cell: read, then written back.
+fn put(&mut px: Vec(u32), i: u64, src: u32): Unit {
+  let old := match Vec::get(&px, i) {
+    Some(x) => x
+    None => 0
+  }
+  match Vec::get_mut(&mut px, i) {
+    Some(at) => {
+      at := blend(old, src)
+    }
+    None => #()
+  }
+}
+
+fn fill(&mut px: Vec(u32), cv: Canvas, src: u32): Unit ! {Div} {
+  var y: u64 := 0
+  while y < cv.h {
+    var x: u64 := 0
+    while x < cv.w {
+      put(&mut px, y * cv.w + x, src)
+      x := x + 1
+    }
+    y := y + 1
+  }
+}
+
+fn sum(&px: Vec(u32)): u64 ! {Div} {
+  var s: u64 := 0
+  var i: u64 := 0
+  while i < Vec::len(&px) {
+    s := s + match Vec::get(&px, i) { Some(x) => U64::of_u32(x), None => 0 }
+    i := i + 1
+  }
+  s
+}
+
+fn bump(&mut n: u64, r#by: u64): Unit { n := n + r#by }
+
+fn swap_in(&mut v: Vec(u64)): Vec(u64) ! {Div} {
+  var w: Vec(u64) := Vec::new()
+  Vec::push(&mut w, 7)
+  Vec::push(&mut w, 8)
+  replace(&mut v, w)
+}
+
+fn words(&t: Text): Text ! {Div} {
+  var b := Buf::new()
+  Buf::push(&mut b, t)
+  let sp := " and "
+  Buf::push(&mut b, &sp)
+  Buf::push(&mut b, t)
+  Text::of(b)
+}
+
+fn trim(&mut v: Vec(u64)): u64 ! {Div} {
+  let popped := match Vec::pop(&mut v) { Some(x) => x, None => 0 }
+  Vec::truncate(&mut v, 1)
+  popped
+}
+
+fn last_twice(&mut v: Vec(u64)): Unit {
+  match Vec::last_mut(&mut v) { Some(at) => { at := at * 2 }, None => #() }
+}
+
+fn bytes_sum(b: Bytes): u64 ! {Div} {
+  var s: u64 := 0
+  var i: u64 := 0
+  while i < Bytes::len(b) {
+    s := s + match Bytes::get(b, i) { Some(x) => U64::of_u8(x), None => 0 }
+    i := i + 1
+  }
+  s
+}
+
+fn rows(&cv: Canvas): u64 { cv.h }
+
+var px: Vec(u32) := Vec::new()
+var i: u64 := 0
+while i < 12 { Vec::push(&mut px, U32::of_u64(i)); i := i + 1 }
+fill(&mut px, Canvas { w: 4, h: 3 }, 16)
+perform show("sum", sum(&px))
+var n: u64 := 5
+bump(&mut n, 9007199254740990)
+perform show("n", n)
+var v: Vec(u64) := Vec::new()
+Vec::push(&mut v, 1)
+Vec::push(&mut v, 2)
+Vec::push(&mut v, 3)
+let old := swap_in(&mut v)
+perform show("old", Vec::len(&old))
+perform show("new", Vec::len(&v))
+perform show("words", words("tea"))
+Vec::push(&mut v, 9)
+perform show("popped", trim(&mut v))
+last_twice(&mut v)
+perform show("trimmed", Vec::len(&v))
+perform show("first", match Vec::get(&v, 0) { Some(x) => x, None => 0 })
+var e: Vec(u64) := Vec::new()
+Vec::push(&mut e, 4)
+Vec::clear(&mut e)
+perform show("cleared", Vec::len(&e))
+perform show("bytes", bytes_sum(Bytes::of_list([1, 2, 250])))
+let cv := Canvas { w: 2, h: 9 }
+perform show("rows", rows(&cv))
+```
+rust_shows = ["sum = 258", "n = 9007199254740995", "old = 3", "new = 2", "words = \"tea and tea\"", "popped = 9", "trimmed = 1", "first = 14", "cleared = 0", "bytes = 253", "rows = 9"]
+
+// A recursion deeper than the host stack starts again in continuation form;
+// what the direct form changed in place before that is undone first.
+@ cases.direct-changes-undone-on-restart
+backends = ["rust", "javascript"]
+source = ```tauto
+fn fill(&mut v: Vec(u64), n: u64): u64 ! {Div} {
+  if n == 0 {
+    0
+  } else {
+    Vec::push(&mut v, n)
+    match Vec::get_mut(&mut v, 0) { Some(at) => { at := at + 1 }, None => #() }
+    1 + fill(&mut v, n - 1)
+  }
+}
+
+fn count(&mut c: u64, n: u64): u64 ! {Div} {
+  if n == 0 { 0 } else { c := c + 1; 1 + count(&mut c, n - 1) }
+}
+
+fn churn(&mut v: Vec(u64), n: u64): u64 ! {Div} {
+  if n == 0 {
+    0
+  } else {
+    Vec::clear(&mut v)
+    Vec::push(&mut v, n)
+    Vec::push(&mut v, n)
+    Vec::truncate(&mut v, 1)
+    1 + churn(&mut v, n - 1)
+  }
+}
+
+var v: Vec(u64) := Vec::new()
+Vec::push(&mut v, 5)
+perform show("depth", fill(&mut v, 30000))
+perform show("len", Vec::len(&v))
+perform show("first", match Vec::get(&v, 0) { Some(x) => x, None => 0 })
+var c: u64 := 3
+perform show("count", count(&mut c, 30000))
+perform show("c", c)
+var w: Vec(u64) := Vec::new()
+Vec::push(&mut w, 1)
+Vec::push(&mut w, 2)
+perform show("churn", churn(&mut w, 30000))
+perform show("w", Vec::len(&w))
+perform show("w0", match Vec::get(&w, 0) { Some(x) => x, None => 0 })
+```
+rust_shows = ["depth = 30000", "len = 30001", "first = 30005", "count = 30000", "c = 30003", "churn = 30000", "w = 1", "w0 = 1"]

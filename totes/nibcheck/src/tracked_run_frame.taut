@@ -37,7 +37,7 @@ pub theorem tracked_run_bind<A: Type, B: Type>(
     next
   ). TrackedRunFrame(next, k(value, next))
 ): TrackedRunFrame(c, frame_bind(A, B, k, m)) {
-  match m: TrackedRunFrame(c, frame_bind(A, B, k, m)) {
+  ⊢ TrackedRunFrame(c, frame_bind(A, B, k, m)) from match m {
     mut1(value, next) => {
       let h: TrackedRunFrame(next, k(value, next)) := tail(value, next, And::left(first))
       AndIntro(
@@ -89,9 +89,14 @@ pub theorem tracked_pattern_bind<A: Type, B: Type>(
     next
   ). TrackedScopeFrame(next, k(value, next, env))
 ): TrackedScopeFrame(c, pattern_bind(A, B, k, m)) {
-  match m: TrackedScopeFrame(c, pattern_bind(A, B, k, m)) {
+  ⊢ TrackedScopeFrame(c, pattern_bind(A, B, k, m)) from match m {
     mut2(value, next, env) => {
-      let h: TrackedScopeFrame(next, k(value, next, env)) := tail(value, next, env, And::left(first))
+      let h: TrackedScopeFrame(next, k(value, next, env)) := tail(
+        value,
+        next,
+        env,
+        And::left(first)
+      )
       AndIntro(
         And::left(h),
         tracked_state_trans(

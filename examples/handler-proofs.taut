@@ -14,7 +14,7 @@ pub(open) effect read_completed(token: Nat, value: Nat): Unit
 // ---- a counter kept in a `var`, written by the handler -----------------------
 
 pub fn ticks(n: Nat): Unit ! {tick} {
-  match n: Unit {
+  ⊢ Unit from match n {
     Zero => Star
     Succ(m) => {
       perform tick()
@@ -42,7 +42,7 @@ pub theorem count_from_step(
 }
 
 pub theorem count_from_is(n: Nat, start: Nat): count_from(n, start) = Nat::add(start, n) {
-  match n: count_from(n, start) = Nat::add(start, n) {
+  ⊢ count_from(n, start) = Nat::add(start, n) from match n {
     Zero => Refl
     Succ(m) => Eq::trans(count_from_is(m, Succ(start)), Nat::add_succ_left(start, m))
   }
@@ -71,15 +71,15 @@ pub(open) inductive Resource: Type {
 }
 
 pub fn begin(r: Resource): Resource {
-  match r: Resource {
+  ⊢ Resource from match r {
     Mk(g, v) => Resource::Mk(Succ(g), v)
   }
 }
 
 // A completion is shown only when it answers the newest read.
 pub fn complete(r: Resource, token: Nat, value: Nat): Resource {
-  match r: Resource {
-    Mk(g, v) => match Nat::eq(g, token): Resource {
+  ⊢ Resource from match r {
+    Mk(g, v) => ⊢ Resource from match Nat::eq(g, token) {
       true => Resource::Mk(g, value)
       false => Resource::Mk(g, v)
     }
@@ -87,13 +87,13 @@ pub fn complete(r: Resource, token: Nat, value: Nat): Resource {
 }
 
 pub fn generation(r: Resource): Nat {
-  match r: Nat {
+  ⊢ Nat from match r {
     Mk(g, v) => g
   }
 }
 
 pub fn displayed(r: Resource): Nat {
-  match r: Nat {
+  ⊢ Nat from match r {
     Mk(g, v) => v
   }
 }

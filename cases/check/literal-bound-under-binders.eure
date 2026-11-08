@@ -1,0 +1,74 @@
+// A fact about a function that counts down a literal bound (`4000` steps),
+// shown through lemmas whose implicit arguments are found by comparing terms.
+// Comparisons tried on the way fail (`go(l, …)` against `go(l', …)`), and
+// reducing the bound on both sides lays open the next call below the binders
+// of a `match` that does not reduce, one level per step of the bound. The
+// comparison stops at the arguments of the second such level, so a failing
+// try costs a few steps instead of the whole bound.
+
+@ cases.a-failing-comparison-does-not-run-a-literal-bound
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::List
+import std::Base
+
+fn here(x: List(Nat)): Option(List(Nat)) {
+  ⊢ Option(List(Nat)) from match List::take(2, x) {
+    Nil => None
+    Cons(h, t) => ⊢ Option(List(Nat)) from match h {
+      Zero => Some(x)
+      Succ(n) => None
+    }
+  }
+}
+fn go(l: List(Nat), p: Nat, fuel: Nat): Option(List(Nat)) {
+  ⊢ Option(List(Nat)) from match fuel {
+    Zero => None
+    Succ(k) => ⊢ Option(List(Nat)) from match here(List::drop(p, l)) {
+      Some(e) => Some(e)
+      None => ⊢ Option(List(Nat)) from match p {
+        Zero => None
+        Succ(q) => go(l, q, k)
+      }
+    }
+  }
+}
+fn go_try(h: Option(List(Nat)), l: List(Nat), p: Nat, k: Nat): Option(List(Nat)) {
+  ⊢ Option(List(Nat)) from match h {
+    Some(e) => Some(e)
+    None => ⊢ Option(List(Nat)) from match p {
+      Zero => None
+      Succ(q) => go(l, q, k)
+    }
+  }
+}
+theorem drop_app(a: List(Nat), b: List(Nat)): List::drop(List::length(a), List::append(a, b)) = b {
+  ⊢ List::drop(List::length(a), List::append(a, b)) = b from match a {
+    Nil => Refl
+    Cons(x, t) => drop_app(t, b)
+  }
+}
+theorem found(
+  p: List(Nat),
+  e: List(Nat),
+  he: here(e) = Some(e)
+): go(List::append(p, e), List::length(p), 4000) = Some(e) {
+  Eq::trans(
+    Eq::congr((x: List(Nat)) => go_try(here(x), List::append(p, e), List::length(p), 3999), drop_app(p, e)),
+    Eq::congr((h: Option(List(Nat))) => go_try(h, List::append(p, e), List::length(p), 3999), he)
+  )
+}
+```
+
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"

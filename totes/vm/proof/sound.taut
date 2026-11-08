@@ -22,7 +22,7 @@ pub(open) inductive IsFinal: (State) -> Prop {
 }
 
 pub fn code_is_ret(c: Bytecode): Bool {
-  match c: Bool {
+  ⊢ Bool from match c {
     CRet => true
     CLoad(i, k) => false
     CPush(n, k) => false
@@ -41,19 +41,19 @@ pub fn code_is_ret(c: Bytecode): Bool {
 }
 
 pub fn state_code(s: State): Bytecode {
-  match s: Bytecode {
+  ⊢ Bytecode from match s {
     StateMk(c, env, st, fr) => c
   }
 }
 
 pub theorem final_code<s: State>(fin: IsFinal(s)): (code_is_ret(state_code(s)) = true) {
-  match fin: (code_is_ret(state_code(s)) = true) {
+  ⊢ (code_is_ret(state_code(s)) = true) from match fin {
     Mk(env, w) => Refl
   }
 }
 
 pub theorem final_stops<s: State>(prog: List(Bytecode), fin: IsFinal(s)): (step(prog, s) = None) {
-  match fin: (step(prog, s) = None) {
+  ⊢ (step(prog, s) = None) from match fin {
     Mk(env, w) => Refl
   }
 }
@@ -87,7 +87,7 @@ pub theorem starn_next<prog: List(
   fin: IsFinal(s3),
   nf: (IsFinal(s1)) -> False
 ): Next(prog, n, s1, s3) {
-  match h: (IsFinal(s3)) -> ((IsFinal(s1)) -> False) -> Next(prog, n, s1, s3) {
+  (⊢ (IsFinal(s3)) -> ((IsFinal(s1)) -> False) -> Next(prog, n, s1, s3) from match h {
     StarnRefl(s) => (f: IsFinal(s)) => (g: (IsFinal(s)) -> False) => False::elim(g(f))
     StarnStep(m, t1, t2, t3, h1, rest) => (f: IsFinal(t3)) => (g: (IsFinal(t1)) -> False) => NextMk(
       t2,
@@ -96,7 +96,7 @@ pub theorem starn_next<prog: List(
       h1,
       rest
     )
-  }(fin, nf)
+  })(fin, nf)
 }
 
 // The rest of a run whose first instruction is known to go to `s2`.
@@ -116,13 +116,11 @@ pub theorem starn_inv<prog: List(
   fin: IsFinal(s3),
   stp: step(prog, s1) = Some(s2)
 ): After(prog, n, s2, s3) {
-  match h: (IsFinal(s3)) -> (step(prog, s1) = Some(s2)) -> After(prog, n, s2, s3) {
+  (⊢ (IsFinal(s3)) -> (step(prog, s1) = Some(s2)) -> After(prog, n, s2, s3) from match h {
     StarnRefl(s) => (f: IsFinal(s)) => (e: step(prog, s) = Some(s2)) => False::elim(
       Option::none_ne_some(s2, Eq::trans(Eq::sym(final_stops(prog, f)), e))
     )
-    StarnStep(m, t1, t2, t3, h1, rest) => (f: IsFinal(t3)) => (
-      e: step(prog, t1) = Some(s2)
-    ) => AfterMk(
+    StarnStep(m, t1, t2, t3, h1, rest) => (f: IsFinal(t3)) => (e: step(prog, t1) = Some(s2)) => AfterMk(
       m,
       Nat::le_refl(Succ(m)),
       Eq::subst(
@@ -134,7 +132,7 @@ pub theorem starn_inv<prog: List(
         rest
       )
     )
-  }(fin, stp)
+  })(fin, stp)
 }
 
 // A run from a state that does not step ends where it starts.
@@ -144,12 +142,12 @@ pub theorem stop_path<prog: List(
   h: StarN(prog, n, s1, s3),
   stop: step(prog, s1) = None
 ): (s1 = s3) {
-  match h: (step(prog, s1) = None) -> (s1 = s3) {
+  (⊢ (step(prog, s1) = None) -> (s1 = s3) from match h {
     StarnRefl(s) => (e: step(prog, s) = None) => Refl
     StarnStep(m, t1, t2, t3, h1, rest) => (e: step(prog, t1) = None) => False::elim(
       Option::none_ne_some(t2, Eq::trans(Eq::sym(e), h1))
     )
-  }(stop)
+  })(stop)
 }
 
 pub theorem lt_lt(
@@ -196,14 +194,14 @@ pub theorem load_inv(
   s2: State,
   e: step_load(o, k, env, st, fr) = Some(s2)
 ): LoadInv(o, k, env, st, fr, s2) {
-  match o: (step_load(o, k, env, st, fr) = Some(s2)) -> LoadInv(o, k, env, st, fr, s2) {
+  (⊢ (step_load(o, k, env, st, fr) = Some(s2)) -> LoadInv(o, k, env, st, fr, s2) from match o {
     None => (e0: None = Some(s2)) => False::elim(Option::none_ne_some(s2, e0))
     Some(v) => (e1: Some(StateMk(k, env, Cons(v, st), fr)) = Some(s2)) => LoadMk(
       v,
       Refl,
       Eq::sym(Option::some_inj(StateMk(k, env, Cons(v, st), fr), s2, e1))
     )
-  }(e)
+  })(e)
 }
 
 pub(open) inductive Nat2Inv(
@@ -236,15 +234,13 @@ pub theorem nat2_inv(
   s2: State,
   e: step_nat2(op, k, env, Cons(vb, Cons(va, st)), fr) = Some(s2)
 ): Nat2Inv(op, k, env, vb, va, st, fr, s2) {
-  match vb: (
+  (⊢ (
     step_nat2(op, k, env, Cons(vb, Cons(va, st)), fr) = Some(s2)
-  ) -> Nat2Inv(op, k, env, vb, va, st, fr, s2) {
+  ) -> Nat2Inv(op, k, env, vb, va, st, fr, s2) from match vb {
     VPair(p, q) => (e0: None = Some(s2)) => False::elim(Option::none_ne_some(s2, e0))
-    VNat(m) => (
-      e0: step_nat2(op, k, env, Cons(VNat(m), Cons(va, st)), fr) = Some(s2)
-    ) => match va: (
+    VNat(m) => (e0: step_nat2(op, k, env, Cons(VNat(m), Cons(va, st)), fr) = Some(s2)) => (⊢ (
       step_nat2(op, k, env, Cons(VNat(m), Cons(va, st)), fr) = Some(s2)
-    ) -> Nat2Inv(op, k, env, VNat(m), va, st, fr, s2) {
+    ) -> Nat2Inv(op, k, env, VNat(m), va, st, fr, s2) from match va {
       VPair(p, q) => (e1: None = Some(s2)) => False::elim(Option::none_ne_some(s2, e1))
       VNat(n) => (e1: Some(StateMk(k, env, Cons(VNat(op(n, m)), st), fr)) = Some(s2)) => Nat2Mk(
         n,
@@ -253,8 +249,8 @@ pub theorem nat2_inv(
         Refl,
         Eq::sym(Option::some_inj(StateMk(k, env, Cons(VNat(op(n, m)), st), fr), s2, e1))
       )
-    }(e0)
-  }(e)
+    })(e0)
+  })(e)
 }
 
 pub(open) inductive BranchInv(
@@ -289,30 +285,28 @@ pub theorem branch_inv(
   s2: State,
   h: step_branch(t, e, k, env, Cons(vc, st), fr) = Some(s2)
 ): BranchInv(t, e, k, env, vc, st, fr, s2) {
-  match vc: (
+  (⊢ (
     step_branch(t, e, k, env, Cons(vc, st), fr) = Some(s2)
-  ) -> BranchInv(t, e, k, env, vc, st, fr, s2) {
+  ) -> BranchInv(t, e, k, env, vc, st, fr, s2) from match vc {
     VPair(p, q) => (h0: None = Some(s2)) => False::elim(Option::none_ne_some(s2, h0))
-    VNat(n) => (h0: step_branch(t, e, k, env, Cons(VNat(n), st), fr) = Some(s2)) => match n: (
+    VNat(n) => (h0: step_branch(t, e, k, env, Cons(VNat(n), st), fr) = Some(s2)) => (⊢ (
       step_branch(t, e, k, env, Cons(VNat(n), st), fr) = Some(s2)
-    ) -> BranchInv(t, e, k, env, VNat(n), st, fr, s2) {
+    ) -> BranchInv(t, e, k, env, VNat(n), st, fr, s2) from match n {
       Zero => (h1: Some(StateMk(e, env, Nil, Cons(FrameMk(k, env, st), fr))) = Some(s2)) => BrElse(
         Refl,
         Eq::sym(Option::some_inj(StateMk(e, env, Nil, Cons(FrameMk(k, env, st), fr)), s2, h1))
       )
-      Succ(n2) => (
-        h1: Some(StateMk(t, env, Nil, Cons(FrameMk(k, env, st), fr))) = Some(s2)
-      ) => BrThen(
+      Succ(n2) => (h1: Some(StateMk(t, env, Nil, Cons(FrameMk(k, env, st), fr))) = Some(s2)) => BrThen(
         n2,
         Refl,
         Eq::sym(Option::some_inj(StateMk(t, env, Nil, Cons(FrameMk(k, env, st), fr)), s2, h1))
       )
-    }(h0)
-  }(h)
+    })(h0)
+  })(h)
 }
 
 pub fn pick(first: Bool, a: Val, b: Val): Val {
-  match first: Val {
+  ⊢ Val from match first {
     true => a
     false => b
   }
@@ -345,15 +339,13 @@ pub theorem proj_inv(
   s2: State,
   h: step_proj(first, k, env, Cons(p, st), fr) = Some(s2)
 ): ProjInv(first, k, env, p, st, fr, s2) {
-  match p: (
+  (⊢ (
     step_proj(first, k, env, Cons(p, st), fr) = Some(s2)
-  ) -> ProjInv(first, k, env, p, st, fr, s2) {
+  ) -> ProjInv(first, k, env, p, st, fr, s2) from match p {
     VNat(n) => (h0: None = Some(s2)) => False::elim(Option::none_ne_some(s2, h0))
-    VPair(a, b) => (
-      h0: step_proj(first, k, env, Cons(VPair(a, b), st), fr) = Some(s2)
-    ) => match first: (
+    VPair(a, b) => (h0: step_proj(first, k, env, Cons(VPair(a, b), st), fr) = Some(s2)) => (⊢ (
       step_proj(first, k, env, Cons(VPair(a, b), st), fr) = Some(s2)
-    ) -> ProjInv(first, k, env, VPair(a, b), st, fr, s2) {
+    ) -> ProjInv(first, k, env, VPair(a, b), st, fr, s2) from match first {
       true => (h1: Some(StateMk(k, env, Cons(a, st), fr)) = Some(s2)) => ProjMk(
         a,
         b,
@@ -366,8 +358,8 @@ pub theorem proj_inv(
         Refl,
         Eq::sym(Option::some_inj(StateMk(k, env, Cons(b, st), fr), s2, h1))
       )
-    }(h0)
-  }(h)
+    })(h0)
+  })(h)
 }
 
 pub(open) inductive CallInv(
@@ -396,16 +388,16 @@ pub theorem call_inv(
   s2: State,
   h: step_call(o, v, k, env, st, fr) = Some(s2)
 ): CallInv(o, v, k, env, st, fr, s2) {
-  match o: (step_call(o, v, k, env, st, fr) = Some(s2)) -> CallInv(o, v, k, env, st, fr, s2) {
+  (⊢ (step_call(o, v, k, env, st, fr) = Some(s2)) -> CallInv(o, v, k, env, st, fr, s2) from match o {
     None => (h0: None = Some(s2)) => False::elim(Option::none_ne_some(s2, h0))
-    Some(c) => (
-      h0: Some(StateMk(c, Cons(v, Nil), Nil, Cons(FrameMk(k, env, st), fr))) = Some(s2)
-    ) => CallMk(
+    Some(c) => (h0: Some(StateMk(c, Cons(v, Nil), Nil, Cons(FrameMk(k, env, st), fr))) = Some(s2)) => CallMk(
       c,
       Refl,
-      Eq::sym(Option::some_inj(StateMk(c, Cons(v, Nil), Nil, Cons(FrameMk(k, env, st), fr)), s2, h0))
+      Eq::sym(
+        Option::some_inj(StateMk(c, Cons(v, Nil), Nil, Cons(FrameMk(k, env, st), fr)), s2, h0)
+      )
     )
-  }(h)
+  })(h)
 }
 
 pub(open) inductive NthInv(prog: List(Expr), f: Nat, c: Bytecode): Prop {
@@ -422,26 +414,26 @@ pub theorem nth_compile_inv(
   c: Bytecode,
   e: List::nth(compile(prog), f) = Some(c)
 ): NthInv(prog, f, c) {
-  match prog: (List::nth(compile(prog), f) = Some(c)) -> NthInv(prog, f, c) {
+  (⊢ (List::nth(compile(prog), f) = Some(c)) -> NthInv(prog, f, c) from match prog {
     Nil => (e0: List::nth(compile(Nil), f) = Some(c)) => False::elim(Option::none_ne_some(c, e0))
-    Cons(x, rest) => (e0: List::nth(compile(Cons(x, rest)), f) = Some(c)) => match f: (
+    Cons(x, rest) => (e0: List::nth(compile(Cons(x, rest)), f) = Some(c)) => (⊢ (
       List::nth(compile(Cons(x, rest)), f) = Some(c)
-    ) -> NthInv(Cons(x, rest), f, c) {
+    ) -> NthInv(Cons(x, rest), f, c) from match f {
       Zero => (e1: Some(comp_body(x)) = Some(c)) => NthMk(
         x,
         Refl,
         Eq::sym(Option::some_inj(comp_body(x), c, e1))
       )
-      Succ(g) => (e1: List::nth(compile(rest), g) = Some(c)) => match nth_compile_inv(
+      Succ(g) => (e1: List::nth(compile(rest), g) = Some(c)) => ⊢ NthInv(Cons(x, rest), Succ(g), c) from match nth_compile_inv(
         rest,
         g,
         c,
         e1
-      ): NthInv(Cons(x, rest), Succ(g), c) {
+      ) {
         NthMk(body, found, ec) => NthMk(Cons(x, rest), Succ(g), c, body, found, ec)
       }
-    }(e0)
-  }(e)
+    })(e0)
+  })(e)
 }
 
 // The run from the code of `e` followed by `k` reaches `k` with a value of `e` pushed, in
@@ -509,17 +501,15 @@ pub theorem back_e(
   h: StarN(compile(prog), n, StateMk(comp(e, k), env, st, fr), s3),
   fin: IsFinal(s3)
 ): Back(prog, n, env, e, k, st, fr, s3) {
-  match e: (
+  (⊢ (
     StarN(compile(prog), n, StateMk(comp(e, k), env, st, fr), s3)
-  ) -> Back(prog, n, env, e, k, st, fr, s3) {
-    XVar(i) => (
-      h: StarN(compile(prog), n, StateMk(comp(XVar(i), k), env, st, fr), s3)
-    ) => match starn_next(
+  ) -> Back(prog, n, env, e, k, st, fr, s3) from match e {
+    XVar(i) => (h: StarN(compile(prog), n, StateMk(comp(XVar(i), k), env, st, fr), s3)) => ⊢ Back(prog, n, env, XVar(i), k, st, fr, s3) from match starn_next(
       h,
       fin,
       not_final(CLoad(i, k), env, st, fr, Refl)
-    ): Back(prog, n, env, XVar(i), k, st, fr, s3) {
-      NextMk(s2, m, lt, stp, rest) => match load_inv(
+    ) {
+      NextMk(s2, m, lt, stp, rest) => ⊢ Back(prog, n, env, XVar(i), k, st, fr, s3) from match load_inv(
         List::nth(env, i),
         k,
         env,
@@ -527,7 +517,7 @@ pub theorem back_e(
         fr,
         s2,
         stp
-      ): Back(prog, n, env, XVar(i), k, st, fr, s3) {
+      ) {
         LoadMk(v, eo, es) => BackMk(
           v,
           m,
@@ -544,19 +534,15 @@ pub theorem back_e(
         )
       }
     }
-    XNat(c) => (
-      h: StarN(compile(prog), n, StateMk(comp(XNat(c), k), env, st, fr), s3)
-    ) => match starn_inv(
+    XNat(c) => (h: StarN(compile(prog), n, StateMk(comp(XNat(c), k), env, st, fr), s3)) => ⊢ Back(prog, n, env, XNat(c), k, st, fr, s3) from match starn_inv(
       StateMk(k, env, Cons(VNat(c), st), fr),
       h,
       fin,
       Refl
-    ): Back(prog, n, env, XNat(c), k, st, fr, s3) {
+    ) {
       AfterMk(m, lt, rest) => BackMk(VNat(c), m, lt, EvNat(env, c), rest)
     }
-    XAdd(a, b) => (
-      h: StarN(compile(prog), n, StateMk(comp(XAdd(a, b), k), env, st, fr), s3)
-    ) => match back_e(
+    XAdd(a, b) => (h: StarN(compile(prog), n, StateMk(comp(XAdd(a, b), k), env, st, fr), s3)) => ⊢ Back(prog, n, env, XAdd(a, b), k, st, fr, s3) from match back_e(
       prog,
       B,
       ih,
@@ -570,8 +556,8 @@ pub theorem back_e(
       hb,
       h,
       fin
-    ): Back(prog, n, env, XAdd(a, b), k, st, fr, s3) {
-      BackMk(va, m1, lt1, eva, r1) => match back_e(
+    ) {
+      BackMk(va, m1, lt1, eva, r1) => ⊢ Back(prog, n, env, XAdd(a, b), k, st, fr, s3) from match back_e(
         prog,
         B,
         ih,
@@ -585,13 +571,13 @@ pub theorem back_e(
         le_of_lt(m1, n, B, lt1, hb),
         r1,
         fin
-      ): Back(prog, n, env, XAdd(a, b), k, st, fr, s3) {
-        BackMk(vb, m2, lt2, evb, r2) => match starn_next(
+      ) {
+        BackMk(vb, m2, lt2, evb, r2) => ⊢ Back(prog, n, env, XAdd(a, b), k, st, fr, s3) from match starn_next(
           r2,
           fin,
           not_final(CAdd(k), env, Cons(vb, Cons(va, st)), fr, Refl)
-        ): Back(prog, n, env, XAdd(a, b), k, st, fr, s3) {
-          NextMk(s2, m3, lt3, stp, r3) => match nat2_inv(
+        ) {
+          NextMk(s2, m3, lt3, stp, r3) => ⊢ Back(prog, n, env, XAdd(a, b), k, st, fr, s3) from match nat2_inv(
             Nat::add,
             k,
             env,
@@ -601,7 +587,7 @@ pub theorem back_e(
             fr,
             s2,
             stp
-          ): Back(prog, n, env, XAdd(a, b), k, st, fr, s3) {
+          ) {
             Nat2Mk(n1, n2, ea, eb, es) => BackMk(
               VNat(Nat::add(n1, n2)),
               m3,
@@ -623,9 +609,7 @@ pub theorem back_e(
         }
       }
     }
-    XSub(a, b) => (
-      h: StarN(compile(prog), n, StateMk(comp(XSub(a, b), k), env, st, fr), s3)
-    ) => match back_e(
+    XSub(a, b) => (h: StarN(compile(prog), n, StateMk(comp(XSub(a, b), k), env, st, fr), s3)) => ⊢ Back(prog, n, env, XSub(a, b), k, st, fr, s3) from match back_e(
       prog,
       B,
       ih,
@@ -639,8 +623,8 @@ pub theorem back_e(
       hb,
       h,
       fin
-    ): Back(prog, n, env, XSub(a, b), k, st, fr, s3) {
-      BackMk(va, m1, lt1, eva, r1) => match back_e(
+    ) {
+      BackMk(va, m1, lt1, eva, r1) => ⊢ Back(prog, n, env, XSub(a, b), k, st, fr, s3) from match back_e(
         prog,
         B,
         ih,
@@ -654,13 +638,13 @@ pub theorem back_e(
         le_of_lt(m1, n, B, lt1, hb),
         r1,
         fin
-      ): Back(prog, n, env, XSub(a, b), k, st, fr, s3) {
-        BackMk(vb, m2, lt2, evb, r2) => match starn_next(
+      ) {
+        BackMk(vb, m2, lt2, evb, r2) => ⊢ Back(prog, n, env, XSub(a, b), k, st, fr, s3) from match starn_next(
           r2,
           fin,
           not_final(CSub(k), env, Cons(vb, Cons(va, st)), fr, Refl)
-        ): Back(prog, n, env, XSub(a, b), k, st, fr, s3) {
-          NextMk(s2, m3, lt3, stp, r3) => match nat2_inv(
+        ) {
+          NextMk(s2, m3, lt3, stp, r3) => ⊢ Back(prog, n, env, XSub(a, b), k, st, fr, s3) from match nat2_inv(
             Nat::sub,
             k,
             env,
@@ -670,7 +654,7 @@ pub theorem back_e(
             fr,
             s2,
             stp
-          ): Back(prog, n, env, XSub(a, b), k, st, fr, s3) {
+          ) {
             Nat2Mk(n1, n2, ea, eb, es) => BackMk(
               VNat(Nat::sub(n1, n2)),
               m3,
@@ -692,9 +676,7 @@ pub theorem back_e(
         }
       }
     }
-    XMul(a, b) => (
-      h: StarN(compile(prog), n, StateMk(comp(XMul(a, b), k), env, st, fr), s3)
-    ) => match back_e(
+    XMul(a, b) => (h: StarN(compile(prog), n, StateMk(comp(XMul(a, b), k), env, st, fr), s3)) => ⊢ Back(prog, n, env, XMul(a, b), k, st, fr, s3) from match back_e(
       prog,
       B,
       ih,
@@ -708,8 +690,8 @@ pub theorem back_e(
       hb,
       h,
       fin
-    ): Back(prog, n, env, XMul(a, b), k, st, fr, s3) {
-      BackMk(va, m1, lt1, eva, r1) => match back_e(
+    ) {
+      BackMk(va, m1, lt1, eva, r1) => ⊢ Back(prog, n, env, XMul(a, b), k, st, fr, s3) from match back_e(
         prog,
         B,
         ih,
@@ -723,13 +705,13 @@ pub theorem back_e(
         le_of_lt(m1, n, B, lt1, hb),
         r1,
         fin
-      ): Back(prog, n, env, XMul(a, b), k, st, fr, s3) {
-        BackMk(vb, m2, lt2, evb, r2) => match starn_next(
+      ) {
+        BackMk(vb, m2, lt2, evb, r2) => ⊢ Back(prog, n, env, XMul(a, b), k, st, fr, s3) from match starn_next(
           r2,
           fin,
           not_final(CMul(k), env, Cons(vb, Cons(va, st)), fr, Refl)
-        ): Back(prog, n, env, XMul(a, b), k, st, fr, s3) {
-          NextMk(s2, m3, lt3, stp, r3) => match nat2_inv(
+        ) {
+          NextMk(s2, m3, lt3, stp, r3) => ⊢ Back(prog, n, env, XMul(a, b), k, st, fr, s3) from match nat2_inv(
             Nat::mul,
             k,
             env,
@@ -739,7 +721,7 @@ pub theorem back_e(
             fr,
             s2,
             stp
-          ): Back(prog, n, env, XMul(a, b), k, st, fr, s3) {
+          ) {
             Nat2Mk(n1, n2, ea, eb, es) => BackMk(
               VNat(Nat::mul(n1, n2)),
               m3,
@@ -761,9 +743,7 @@ pub theorem back_e(
         }
       }
     }
-    XLt(a, b) => (
-      h: StarN(compile(prog), n, StateMk(comp(XLt(a, b), k), env, st, fr), s3)
-    ) => match back_e(
+    XLt(a, b) => (h: StarN(compile(prog), n, StateMk(comp(XLt(a, b), k), env, st, fr), s3)) => ⊢ Back(prog, n, env, XLt(a, b), k, st, fr, s3) from match back_e(
       prog,
       B,
       ih,
@@ -777,8 +757,8 @@ pub theorem back_e(
       hb,
       h,
       fin
-    ): Back(prog, n, env, XLt(a, b), k, st, fr, s3) {
-      BackMk(va, m1, lt1, eva, r1) => match back_e(
+    ) {
+      BackMk(va, m1, lt1, eva, r1) => ⊢ Back(prog, n, env, XLt(a, b), k, st, fr, s3) from match back_e(
         prog,
         B,
         ih,
@@ -792,13 +772,13 @@ pub theorem back_e(
         le_of_lt(m1, n, B, lt1, hb),
         r1,
         fin
-      ): Back(prog, n, env, XLt(a, b), k, st, fr, s3) {
-        BackMk(vb, m2, lt2, evb, r2) => match starn_next(
+      ) {
+        BackMk(vb, m2, lt2, evb, r2) => ⊢ Back(prog, n, env, XLt(a, b), k, st, fr, s3) from match starn_next(
           r2,
           fin,
           not_final(CLt(k), env, Cons(vb, Cons(va, st)), fr, Refl)
-        ): Back(prog, n, env, XLt(a, b), k, st, fr, s3) {
-          NextMk(s2, m3, lt3, stp, r3) => match nat2_inv(
+        ) {
+          NextMk(s2, m3, lt3, stp, r3) => ⊢ Back(prog, n, env, XLt(a, b), k, st, fr, s3) from match nat2_inv(
             (p: Nat, q: Nat) => bool_nat(Nat::lt(p, q)),
             k,
             env,
@@ -808,7 +788,7 @@ pub theorem back_e(
             fr,
             s2,
             stp
-          ): Back(prog, n, env, XLt(a, b), k, st, fr, s3) {
+          ) {
             Nat2Mk(n1, n2, ea, eb, es) => BackMk(
               VNat(bool_nat(Nat::lt(n1, n2))),
               m3,
@@ -830,9 +810,7 @@ pub theorem back_e(
         }
       }
     }
-    XLet(a, body) => (
-      h: StarN(compile(prog), n, StateMk(comp(XLet(a, body), k), env, st, fr), s3)
-    ) => match back_e(
+    XLet(a, body) => (h: StarN(compile(prog), n, StateMk(comp(XLet(a, body), k), env, st, fr), s3)) => ⊢ Back(prog, n, env, XLet(a, body), k, st, fr, s3) from match back_e(
       prog,
       B,
       ih,
@@ -846,14 +824,14 @@ pub theorem back_e(
       hb,
       h,
       fin
-    ): Back(prog, n, env, XLet(a, body), k, st, fr, s3) {
-      BackMk(va, m1, lt1, eva, r1) => match starn_inv(
+    ) {
+      BackMk(va, m1, lt1, eva, r1) => ⊢ Back(prog, n, env, XLet(a, body), k, st, fr, s3) from match starn_inv(
         StateMk(comp(body, CUnbind(k)), Cons(va, env), st, fr),
         r1,
         fin,
         Refl
-      ): Back(prog, n, env, XLet(a, body), k, st, fr, s3) {
-        AfterMk(m2, lt2, r2) => match back_e(
+      ) {
+        AfterMk(m2, lt2, r2) => ⊢ Back(prog, n, env, XLet(a, body), k, st, fr, s3) from match back_e(
           prog,
           B,
           ih,
@@ -867,13 +845,13 @@ pub theorem back_e(
           le_of_lt(m2, n, B, lt_lt(m2, m1, n, lt2, lt1), hb),
           r2,
           fin
-        ): Back(prog, n, env, XLet(a, body), k, st, fr, s3) {
-          BackMk(v, m3, lt3, evb, r3) => match starn_inv(
+        ) {
+          BackMk(v, m3, lt3, evb, r3) => ⊢ Back(prog, n, env, XLet(a, body), k, st, fr, s3) from match starn_inv(
             StateMk(k, env, Cons(v, st), fr),
             r3,
             fin,
             Refl
-          ): Back(prog, n, env, XLet(a, body), k, st, fr, s3) {
+          ) {
             AfterMk(m4, lt4, r4) => BackMk(
               v,
               m4,
@@ -885,9 +863,7 @@ pub theorem back_e(
         }
       }
     }
-    XIf(c, t, e2) => (
-      h: StarN(compile(prog), n, StateMk(comp(XIf(c, t, e2), k), env, st, fr), s3)
-    ) => match back_e(
+    XIf(c, t, e2) => (h: StarN(compile(prog), n, StateMk(comp(XIf(c, t, e2), k), env, st, fr), s3)) => ⊢ Back(prog, n, env, XIf(c, t, e2), k, st, fr, s3) from match back_e(
       prog,
       B,
       ih,
@@ -901,13 +877,13 @@ pub theorem back_e(
       hb,
       h,
       fin
-    ): Back(prog, n, env, XIf(c, t, e2), k, st, fr, s3) {
-      BackMk(vc, m1, lt1, evc, r1) => match starn_next(
+    ) {
+      BackMk(vc, m1, lt1, evc, r1) => ⊢ Back(prog, n, env, XIf(c, t, e2), k, st, fr, s3) from match starn_next(
         r1,
         fin,
         not_final(CBranch(comp(t, CRet), comp(e2, CRet), k), env, Cons(vc, st), fr, Refl)
-      ): Back(prog, n, env, XIf(c, t, e2), k, st, fr, s3) {
-        NextMk(s2, m2, lt2, stp, r2) => match branch_inv(
+      ) {
+        NextMk(s2, m2, lt2, stp, r2) => ⊢ Back(prog, n, env, XIf(c, t, e2), k, st, fr, s3) from match branch_inv(
           comp(t, CRet),
           comp(e2, CRet),
           k,
@@ -917,8 +893,8 @@ pub theorem back_e(
           fr,
           s2,
           stp
-        ): Back(prog, n, env, XIf(c, t, e2), k, st, fr, s3) {
-          BrThen(n0, ec, es) => match back_e(
+        ) {
+          BrThen(n0, ec, es) => ⊢ Back(prog, n, env, XIf(c, t, e2), k, st, fr, s3) from match back_e(
             prog,
             B,
             ih,
@@ -931,21 +907,19 @@ pub theorem back_e(
             m2,
             le_of_lt(m2, n, B, lt_lt(m2, m1, n, lt2, lt1), hb),
             Eq::subst(
-              State,
-              s2,
-              StateMk(comp(t, CRet), env, Nil, Cons(FrameMk(k, env, st), fr)),
+              <A: State, a: s2, b: StateMk(comp(t, CRet), env, Nil, Cons(FrameMk(k, env, st), fr))>,
               (x: State) => StarN(compile(prog), m2, x, s3),
               es,
               r2
             ),
             fin
-          ): Back(prog, n, env, XIf(c, t, e2), k, st, fr, s3) {
-            BackMk(v, m3, lt3, evt, r3) => match starn_inv(
+          ) {
+            BackMk(v, m3, lt3, evt, r3) => ⊢ Back(prog, n, env, XIf(c, t, e2), k, st, fr, s3) from match starn_inv(
               StateMk(k, env, Cons(v, st), fr),
               r3,
               fin,
               Refl
-            ): Back(prog, n, env, XIf(c, t, e2), k, st, fr, s3) {
+            ) {
               AfterMk(m4, lt4, r4) => BackMk(
                 v,
                 m4,
@@ -958,7 +932,7 @@ pub theorem back_e(
               )
             }
           }
-          BrElse(ec, es) => match back_e(
+          BrElse(ec, es) => ⊢ Back(prog, n, env, XIf(c, t, e2), k, st, fr, s3) from match back_e(
             prog,
             B,
             ih,
@@ -971,21 +945,19 @@ pub theorem back_e(
             m2,
             le_of_lt(m2, n, B, lt_lt(m2, m1, n, lt2, lt1), hb),
             Eq::subst(
-              State,
-              s2,
-              StateMk(comp(e2, CRet), env, Nil, Cons(FrameMk(k, env, st), fr)),
+              <A: State, a: s2, b: StateMk(comp(e2, CRet), env, Nil, Cons(FrameMk(k, env, st), fr))>,
               (x: State) => StarN(compile(prog), m2, x, s3),
               es,
               r2
             ),
             fin
-          ): Back(prog, n, env, XIf(c, t, e2), k, st, fr, s3) {
-            BackMk(v, m3, lt3, evt, r3) => match starn_inv(
+          ) {
+            BackMk(v, m3, lt3, evt, r3) => ⊢ Back(prog, n, env, XIf(c, t, e2), k, st, fr, s3) from match starn_inv(
               StateMk(k, env, Cons(v, st), fr),
               r3,
               fin,
               Refl
-            ): Back(prog, n, env, XIf(c, t, e2), k, st, fr, s3) {
+            ) {
               AfterMk(m4, lt4, r4) => BackMk(
                 v,
                 m4,
@@ -1001,9 +973,7 @@ pub theorem back_e(
         }
       }
     }
-    XPair(a, b) => (
-      h: StarN(compile(prog), n, StateMk(comp(XPair(a, b), k), env, st, fr), s3)
-    ) => match back_e(
+    XPair(a, b) => (h: StarN(compile(prog), n, StateMk(comp(XPair(a, b), k), env, st, fr), s3)) => ⊢ Back(prog, n, env, XPair(a, b), k, st, fr, s3) from match back_e(
       prog,
       B,
       ih,
@@ -1017,8 +987,8 @@ pub theorem back_e(
       hb,
       h,
       fin
-    ): Back(prog, n, env, XPair(a, b), k, st, fr, s3) {
-      BackMk(va, m1, lt1, eva, r1) => match back_e(
+    ) {
+      BackMk(va, m1, lt1, eva, r1) => ⊢ Back(prog, n, env, XPair(a, b), k, st, fr, s3) from match back_e(
         prog,
         B,
         ih,
@@ -1032,13 +1002,13 @@ pub theorem back_e(
         le_of_lt(m1, n, B, lt1, hb),
         r1,
         fin
-      ): Back(prog, n, env, XPair(a, b), k, st, fr, s3) {
-        BackMk(vb, m2, lt2, evb, r2) => match starn_inv(
+      ) {
+        BackMk(vb, m2, lt2, evb, r2) => ⊢ Back(prog, n, env, XPair(a, b), k, st, fr, s3) from match starn_inv(
           StateMk(k, env, Cons(VPair(va, vb), st), fr),
           r2,
           fin,
           Refl
-        ): Back(prog, n, env, XPair(a, b), k, st, fr, s3) {
+        ) {
           AfterMk(m3, lt3, r3) => BackMk(
             VPair(va, vb),
             m3,
@@ -1049,9 +1019,7 @@ pub theorem back_e(
         }
       }
     }
-    XFst(a) => (
-      h: StarN(compile(prog), n, StateMk(comp(XFst(a), k), env, st, fr), s3)
-    ) => match back_e(
+    XFst(a) => (h: StarN(compile(prog), n, StateMk(comp(XFst(a), k), env, st, fr), s3)) => ⊢ Back(prog, n, env, XFst(a), k, st, fr, s3) from match back_e(
       prog,
       B,
       ih,
@@ -1065,13 +1033,13 @@ pub theorem back_e(
       hb,
       h,
       fin
-    ): Back(prog, n, env, XFst(a), k, st, fr, s3) {
-      BackMk(va, m1, lt1, eva, r1) => match starn_next(
+    ) {
+      BackMk(va, m1, lt1, eva, r1) => ⊢ Back(prog, n, env, XFst(a), k, st, fr, s3) from match starn_next(
         r1,
         fin,
         not_final(CFst(k), env, Cons(va, st), fr, Refl)
-      ): Back(prog, n, env, XFst(a), k, st, fr, s3) {
-        NextMk(s2, m2, lt2, stp, r2) => match proj_inv(
+      ) {
+        NextMk(s2, m2, lt2, stp, r2) => ⊢ Back(prog, n, env, XFst(a), k, st, fr, s3) from match proj_inv(
           true,
           k,
           env,
@@ -1080,7 +1048,7 @@ pub theorem back_e(
           fr,
           s2,
           stp
-        ): Back(prog, n, env, XFst(a), k, st, fr, s3) {
+        ) {
           ProjMk(pa, pb, ep, es) => BackMk(
             pa,
             m2,
@@ -1098,9 +1066,7 @@ pub theorem back_e(
         }
       }
     }
-    XSnd(a) => (
-      h: StarN(compile(prog), n, StateMk(comp(XSnd(a), k), env, st, fr), s3)
-    ) => match back_e(
+    XSnd(a) => (h: StarN(compile(prog), n, StateMk(comp(XSnd(a), k), env, st, fr), s3)) => ⊢ Back(prog, n, env, XSnd(a), k, st, fr, s3) from match back_e(
       prog,
       B,
       ih,
@@ -1114,13 +1080,13 @@ pub theorem back_e(
       hb,
       h,
       fin
-    ): Back(prog, n, env, XSnd(a), k, st, fr, s3) {
-      BackMk(va, m1, lt1, eva, r1) => match starn_next(
+    ) {
+      BackMk(va, m1, lt1, eva, r1) => ⊢ Back(prog, n, env, XSnd(a), k, st, fr, s3) from match starn_next(
         r1,
         fin,
         not_final(CSnd(k), env, Cons(va, st), fr, Refl)
-      ): Back(prog, n, env, XSnd(a), k, st, fr, s3) {
-        NextMk(s2, m2, lt2, stp, r2) => match proj_inv(
+      ) {
+        NextMk(s2, m2, lt2, stp, r2) => ⊢ Back(prog, n, env, XSnd(a), k, st, fr, s3) from match proj_inv(
           false,
           k,
           env,
@@ -1129,7 +1095,7 @@ pub theorem back_e(
           fr,
           s2,
           stp
-        ): Back(prog, n, env, XSnd(a), k, st, fr, s3) {
+        ) {
           ProjMk(pa, pb, ep, es) => BackMk(
             pb,
             m2,
@@ -1147,9 +1113,7 @@ pub theorem back_e(
         }
       }
     }
-    XCall(f, a) => (
-      h: StarN(compile(prog), n, StateMk(comp(XCall(f, a), k), env, st, fr), s3)
-    ) => match back_e(
+    XCall(f, a) => (h: StarN(compile(prog), n, StateMk(comp(XCall(f, a), k), env, st, fr), s3)) => ⊢ Back(prog, n, env, XCall(f, a), k, st, fr, s3) from match back_e(
       prog,
       B,
       ih,
@@ -1163,13 +1127,13 @@ pub theorem back_e(
       hb,
       h,
       fin
-    ): Back(prog, n, env, XCall(f, a), k, st, fr, s3) {
-      BackMk(va, m1, lt1, eva, r1) => match starn_next(
+    ) {
+      BackMk(va, m1, lt1, eva, r1) => ⊢ Back(prog, n, env, XCall(f, a), k, st, fr, s3) from match starn_next(
         r1,
         fin,
         not_final(CCall(f, k), env, Cons(va, st), fr, Refl)
-      ): Back(prog, n, env, XCall(f, a), k, st, fr, s3) {
-        NextMk(s2, m2, lt2, stp, r2) => match call_inv(
+      ) {
+        NextMk(s2, m2, lt2, stp, r2) => ⊢ Back(prog, n, env, XCall(f, a), k, st, fr, s3) from match call_inv(
           List::nth(compile(prog), f),
           va,
           k,
@@ -1178,14 +1142,14 @@ pub theorem back_e(
           fr,
           s2,
           stp
-        ): Back(prog, n, env, XCall(f, a), k, st, fr, s3) {
-          CallMk(c, eo, es) => match nth_compile_inv(
+        ) {
+          CallMk(c, eo, es) => ⊢ Back(prog, n, env, XCall(f, a), k, st, fr, s3) from match nth_compile_inv(
             prog,
             f,
             c,
             eo
-          ): Back(prog, n, env, XCall(f, a), k, st, fr, s3) {
-            NthMk(body, found, ec) => match ih(
+          ) {
+            NthMk(body, found, ec) => ⊢ Back(prog, n, env, XCall(f, a), k, st, fr, s3) from match ih(
               body,
               CRet,
               Cons(va, Nil),
@@ -1195,9 +1159,7 @@ pub theorem back_e(
               m2,
               Nat::le_trans(Succ(m2), n, B, lt_lt(m2, m1, n, lt2, lt1), hb),
               Eq::subst(
-                Bytecode,
-                c,
-                comp_body(body),
+                <A: Bytecode, a: c, b: comp_body(body)>,
                 (x: Bytecode) => StarN(
                   compile(prog),
                   m2,
@@ -1206,22 +1168,20 @@ pub theorem back_e(
                 ),
                 ec,
                 Eq::subst(
-                  State,
-                  s2,
-                  StateMk(c, Cons(va, Nil), Nil, Cons(FrameMk(k, env, st), fr)),
+                  <A: State, a: s2, b: StateMk(c, Cons(va, Nil), Nil, Cons(FrameMk(k, env, st), fr))>,
                   (x: State) => StarN(compile(prog), m2, x, s3),
                   es,
                   r2
                 )
               ),
               fin
-            ): Back(prog, n, env, XCall(f, a), k, st, fr, s3) {
-              BackMk(v, m3, lt3, evb, r3) => match starn_inv(
+            ) {
+              BackMk(v, m3, lt3, evb, r3) => ⊢ Back(prog, n, env, XCall(f, a), k, st, fr, s3) from match starn_inv(
                 StateMk(k, env, Cons(v, st), fr),
                 r3,
                 fin,
                 Refl
-              ): Back(prog, n, env, XCall(f, a), k, st, fr, s3) {
+              ) {
                 AfterMk(m4, lt4, r4) => BackMk(
                   v,
                   m4,
@@ -1235,21 +1195,17 @@ pub theorem back_e(
         }
       }
     }
-  }(h)
+  })(h)
 }
 
 pub theorem back(prog: List(Expr), B: Nat): BackUpTo(prog, B) {
-  match B: BackUpTo(prog, B) {
-    Zero => (e: Expr) => (k: Bytecode) => (env: List(Val)) => (st: List(Val)) => (
-      fr: List(Frame)
-    ) => (s3: State) => (n: Nat) => (hb: Nat::le(n, Zero) = true) => back_e(
+  ⊢ BackUpTo(prog, B) from match B {
+    Zero => (e: Expr) => (k: Bytecode) => (env: List(Val)) => (st: List(Val)) => (fr: List(Frame)) => (s3: State) => (n: Nat) => (hb: Nat::le(n, Zero) = true) => back_e(
       prog,
       Zero,
-      (e1: Expr) => (k1: Bytecode) => (env1: List(Val)) => (st1: List(Val)) => (
-        fr1: List(Frame)
-      ) => (s4: State) => (n1: Nat) => (lt: Nat::le(Succ(n1), Zero) = true) => (
-        h1: StarN(compile(prog), n1, StateMk(comp(e1, k1), env1, st1, fr1), s4)
-      ) => (f1: IsFinal(s4)) => False::elim(false_ne_true(lt)),
+      (e1: Expr) => (k1: Bytecode) => (env1: List(Val)) => (st1: List(Val)) => (fr1: List(Frame)) => (s4: State) => (n1: Nat) => (lt: Nat::le(Succ(n1), Zero) = true) => (h1: StarN(compile(prog), n1, StateMk(comp(e1, k1), env1, st1, fr1), s4)) => (f1: IsFinal(s4)) => False::elim(
+        false_ne_true(lt)
+      ),
       e,
       k,
       env,
@@ -1259,14 +1215,10 @@ pub theorem back(prog: List(Expr), B: Nat): BackUpTo(prog, B) {
       n,
       hb
     )
-    Succ(B1) => (e: Expr) => (k: Bytecode) => (env: List(Val)) => (st: List(Val)) => (
-      fr: List(Frame)
-    ) => (s3: State) => (n: Nat) => (hb: Nat::le(n, Succ(B1)) = true) => back_e(
+    Succ(B1) => (e: Expr) => (k: Bytecode) => (env: List(Val)) => (st: List(Val)) => (fr: List(Frame)) => (s3: State) => (n: Nat) => (hb: Nat::le(n, Succ(B1)) = true) => back_e(
       prog,
       Succ(B1),
-      (e1: Expr) => (k1: Bytecode) => (env1: List(Val)) => (st1: List(Val)) => (
-        fr1: List(Frame)
-      ) => (s4: State) => (n1: Nat) => (lt: Nat::le(Succ(n1), Succ(B1)) = true) => back(
+      (e1: Expr) => (k1: Bytecode) => (env1: List(Val)) => (st1: List(Val)) => (fr1: List(Frame)) => (s4: State) => (n1: Nat) => (lt: Nat::le(Succ(n1), Succ(B1)) = true) => back(
         prog,
         B1
       )(e1, k1, env1, st1, fr1, s4, n1, lt),
@@ -1283,20 +1235,20 @@ pub theorem back(prog: List(Expr), B: Nat): BackUpTo(prog, B) {
 }
 
 pub theorem final_inv(s: State, w: Val, e: final_answer(s) = Some(w)): IsFinal(s) {
-  match s: (final_answer(s) = Some(w)) -> IsFinal(s) {
-    StateMk(c, env, st, fr) => match c: (
+  (⊢ (final_answer(s) = Some(w)) -> IsFinal(s) from match s {
+    StateMk(c, env, st, fr) => ⊢ (
       final_answer(StateMk(c, env, st, fr)) = Some(w)
-    ) -> IsFinal(StateMk(c, env, st, fr)) {
-      CRet => match fr: (
+    ) -> IsFinal(StateMk(c, env, st, fr)) from match c {
+      CRet => ⊢ (
         final_answer(StateMk(CRet, env, st, fr)) = Some(w)
-      ) -> IsFinal(StateMk(CRet, env, st, fr)) {
-        Nil => match st: (
+      ) -> IsFinal(StateMk(CRet, env, st, fr)) from match fr {
+        Nil => ⊢ (
           final_answer(StateMk(CRet, env, st, Nil)) = Some(w)
-        ) -> IsFinal(StateMk(CRet, env, st, Nil)) {
+        ) -> IsFinal(StateMk(CRet, env, st, Nil)) from match st {
           Nil => (e0: None = Some(w)) => False::elim(Option::none_ne_some(w, e0))
-          Cons(v, rest) => match rest: (
+          Cons(v, rest) => ⊢ (
             final_answer(StateMk(CRet, env, Cons(v, rest), Nil)) = Some(w)
-          ) -> IsFinal(StateMk(CRet, env, Cons(v, rest), Nil)) {
+          ) -> IsFinal(StateMk(CRet, env, Cons(v, rest), Nil)) from match rest {
             Nil => (e1: Some(v) = Some(w)) => IsFinal::Mk(env, v)
             Cons(x, rest2) => (e0: None = Some(w)) => False::elim(Option::none_ne_some(w, e0))
           }
@@ -1317,7 +1269,7 @@ pub theorem final_inv(s: State, w: Val, e: final_answer(s) = Some(w)): IsFinal(s
       CSnd(k) => (e0: None = Some(w)) => False::elim(Option::none_ne_some(w, e0))
       CCall(f, k) => (e0: None = Some(w)) => False::elim(Option::none_ne_some(w, e0))
     }
-  }(e)
+  })(e)
 }
 
 pub(open) inductive HaltN(prog: List(Bytecode), s1: State, s2: State): Prop {
@@ -1334,7 +1286,7 @@ pub theorem run_from_halt(
   e: run_from(prog, g, s, o) = Some(s2),
   ih: ∀ x: State. (run(prog, g, x) = Some(s2)) -> HaltN(prog, x, s2)
 ): HaltN(prog, s, s2) {
-  match o: (step(prog, s) = o) -> (run_from(prog, g, s, o) = Some(s2)) -> HaltN(prog, s, s2) {
+  (⊢ (step(prog, s) = o) -> (run_from(prog, g, s, o) = Some(s2)) -> HaltN(prog, s, s2) from match o {
     None => (eo0: step(prog, s) = None) => (e0: Some(s) = Some(s2)) => HaltMk(
       Zero,
       Eq::subst(
@@ -1346,13 +1298,13 @@ pub theorem run_from_halt(
         StarnRefl(s)
       )
     )
-    Some(x) => (eo1: step(prog, s) = Some(x)) => (e1: run(prog, g, x) = Some(s2)) => match ih(
+    Some(x) => (eo1: step(prog, s) = Some(x)) => (e1: run(prog, g, x) = Some(s2)) => ⊢ HaltN(prog, s, s2) from match ih(
       x,
       e1
-    ): HaltN(prog, s, s2) {
+    ) {
       HaltMk(n, h) => HaltMk(Succ(n), StarnStep(eo1, h))
     }
-  }(eo, e)
+  })(eo, e)
 }
 
 // A run that stops is a counted run.
@@ -1363,7 +1315,7 @@ pub theorem run_halt(
   s2: State,
   e: run(prog, fuel, s) = Some(s2)
 ): HaltN(prog, s, s2) {
-  match fuel: (run(prog, fuel, s) = Some(s2)) -> HaltN(prog, s, s2) {
+  (⊢ (run(prog, fuel, s) = Some(s2)) -> HaltN(prog, s, s2) from match fuel {
     Zero => (e0: None = Some(s2)) => False::elim(Option::none_ne_some(s2, e0))
     Succ(g) => (e1: run(prog, Succ(g), s) = Some(s2)) => run_from_halt(
       prog,
@@ -1375,7 +1327,7 @@ pub theorem run_halt(
       e1,
       (x: State) => (ex: run(prog, g, x) = Some(s2)) => run_halt(prog, g, x, s2, ex)
     )
-  }(e)
+  })(e)
 }
 
 // What the machine's answer says: `f` is a function of `prog` whose body has the value `w`.
@@ -1397,12 +1349,12 @@ pub theorem sound_from_final(
   h: StarN(compile(prog), n, start(f, arg), s2),
   e: final_answer(s2) = Some(w)
 ): Sound(prog, f, arg, w) {
-  match starn_next(
+  ⊢ Sound(prog, f, arg, w) from match starn_next(
     h,
     final_inv(s2, w, e),
     not_final(CCall(f, CRet), Nil, Cons(arg, Nil), Nil, Refl)
-  ): Sound(prog, f, arg, w) {
-    NextMk(s1, m1, lt1, stp, r1) => match call_inv(
+  ) {
+    NextMk(s1, m1, lt1, stp, r1) => ⊢ Sound(prog, f, arg, w) from match call_inv(
       List::nth(compile(prog), f),
       arg,
       CRet,
@@ -1411,9 +1363,9 @@ pub theorem sound_from_final(
       Nil,
       s1,
       stp
-    ): Sound(prog, f, arg, w) {
-      CallMk(c, eo, es) => match nth_compile_inv(prog, f, c, eo): Sound(prog, f, arg, w) {
-        NthMk(body, found, ec) => match back(
+    ) {
+      CallMk(c, eo, es) => ⊢ Sound(prog, f, arg, w) from match nth_compile_inv(prog, f, c, eo) {
+        NthMk(body, found, ec) => ⊢ Sound(prog, f, arg, w) from match back(
           prog,
           m1
         )(
@@ -1426,9 +1378,7 @@ pub theorem sound_from_final(
           m1,
           Nat::le_refl(m1),
           Eq::subst(
-            Bytecode,
-            c,
-            comp_body(body),
+            <A: Bytecode, a: c, b: comp_body(body)>,
             (x: Bytecode) => StarN(
               compile(prog),
               m1,
@@ -1437,37 +1387,31 @@ pub theorem sound_from_final(
             ),
             ec,
             Eq::subst(
-              State,
-              s1,
-              StateMk(c, Cons(arg, Nil), Nil, Cons(FrameMk(CRet, Nil, Nil), Nil)),
+              <A: State, a: s1, b: StateMk(c, Cons(arg, Nil), Nil, Cons(FrameMk(CRet, Nil, Nil), Nil))>,
               (x: State) => StarN(compile(prog), m1, x, s2),
               es,
               r1
             )
           ),
           final_inv(s2, w, e)
-        ): Sound(prog, f, arg, w) {
-          BackMk(v, m2, lt2, ev, r2) => match starn_inv(
+        ) {
+          BackMk(v, m2, lt2, ev, r2) => ⊢ Sound(prog, f, arg, w) from match starn_inv(
             StateMk(CRet, Nil, Cons(v, Nil), Nil),
             r2,
             final_inv(s2, w, e),
             Refl
-          ): Sound(prog, f, arg, w) {
+          ) {
             AfterMk(m3, lt3, r3) => SoundMk(
               body,
               found,
               Eq::subst(
-                Val,
-                v,
-                w,
+                <A: Val, a: v, b: w>,
                 (x: Val) => Eval(prog, Cons(arg, Nil), body, x),
                 Option::some_inj(
                   v,
                   w,
                   Eq::subst(
-                    State,
-                    s2,
-                    StateMk(CRet, Nil, Cons(v, Nil), Nil),
+                    <A: State, a: s2, b: StateMk(CRet, Nil, Cons(v, Nil), Nil)>,
                     (x: State) => final_answer(x) = Some(w),
                     Eq::sym(stop_path(r3, Refl)),
                     e
@@ -1493,18 +1437,22 @@ pub theorem machine_sound_at(
   eo: run(compile(prog), fuel, start(f, arg)) = o,
   e: answer(o) = Some(w)
 ): Sound(prog, f, arg, w) {
-  match o: (
+  (⊢ (
     run(compile(prog), fuel, start(f, arg)) = o
-  ) -> (answer(o) = Some(w)) -> Sound(prog, f, arg, w) {
-    None => (eo0: run(compile(prog), fuel, start(f, arg)) = None) => (
-      e0: None = Some(w)
-    ) => False::elim(Option::none_ne_some(w, e0))
-    Some(s2) => (eo1: run(compile(prog), fuel, start(f, arg)) = Some(s2)) => (
-      e1: final_answer(s2) = Some(w)
-    ) => match run_halt(compile(prog), fuel, start(f, arg), s2, eo1): Sound(prog, f, arg, w) {
+  ) -> (answer(o) = Some(w)) -> Sound(prog, f, arg, w) from match o {
+    None => (eo0: run(compile(prog), fuel, start(f, arg)) = None) => (e0: None = Some(w)) => False::elim(
+      Option::none_ne_some(w, e0)
+    )
+    Some(s2) => (eo1: run(compile(prog), fuel, start(f, arg)) = Some(s2)) => (e1: final_answer(s2) = Some(w)) => ⊢ Sound(prog, f, arg, w) from match run_halt(
+      compile(prog),
+      fuel,
+      start(f, arg),
+      s2,
+      eo1
+    ) {
       HaltMk(n, h) => sound_from_final(prog, f, arg, w, s2, n, h, e1)
     }
-  }(eo, e)
+  })(eo, e)
 }
 
 // The theorem: when the machine running the compiled program answers `w` for calling `f`

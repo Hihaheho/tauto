@@ -37,10 +37,10 @@ pub theorem fnt_some_registered(
   fnt_table(ck_st(signature_some_after(source, m))),
   ck_val(signature_some_after(source, m))
 ) {
-  match m: RegisteredOptionalSignature(
+  ⊢ RegisteredOptionalSignature(
     fnt_table(ck_st(signature_some_after(source, m))),
     ck_val(signature_some_after(source, m))
-  ) {
+  ) from match m {
     mut1(scheme, next) => RegisteredOptionalSome(source, scheme, found)
   }
 }
@@ -50,10 +50,10 @@ pub theorem fnt_none_registered(
   fnt_table(ck_st(signature_none_after(m))),
   ck_val(signature_none_after(m))
 ) {
-  match m: RegisteredOptionalSignature(
+  ⊢ RegisteredOptionalSignature(
     fnt_table(ck_st(signature_none_after(m))),
     ck_val(signature_none_after(m))
-  ) {
+  ) from match m {
     mut1(ignored, next) => RegisteredOptionalNone
   }
 }
@@ -63,7 +63,7 @@ pub theorem fnt_some_before(
   m: Mut1(Scheme, Checker),
   absent: FunctionNameAbsent(signature_name(source), types_function_decls(rest))
 ): FunctionBeforeRest(rest, ck_val(signature_some_after(source, m))) {
-  match m: FunctionBeforeRest(rest, ck_val(signature_some_after(source, m))) {
+  ⊢ FunctionBeforeRest(rest, ck_val(signature_some_after(source, m))) from match m {
     mut1(scheme, next) => FunctionBeforeSome(source, scheme, absent)
   }
 }
@@ -71,7 +71,7 @@ pub theorem fnt_none_before(
   rest: List(SurfaceStmt),
   m: Mut1(Unit, Checker)
 ): FunctionBeforeRest(rest, ck_val(signature_none_after(m))) {
-  match m: FunctionBeforeRest(rest, ck_val(signature_none_after(m))) {
+  ⊢ FunctionBeforeRest(rest, ck_val(signature_none_after(m))) from match m {
     mut1(ignored, next) => FunctionBeforeNone
   }
 }
@@ -84,10 +84,10 @@ pub theorem ck_program_decl_registered(
   fnt_table(ck_st(ck_program_decl(c, stmt))),
   ck_val(ck_program_decl(c, stmt))
 ) {
-  match stmt: RegisteredOptionalSignature(
+  ⊢ RegisteredOptionalSignature(
     fnt_table(ck_st(ck_program_decl(c, stmt))),
     ck_val(ck_program_decl(c, stmt))
-  ) {
+  ) from match stmt {
     StLet(name, ty, value, borrow, mutable) => RegisteredOptionalNone
     StVar(name, ty, value, borrow) => RegisteredOptionalNone
     StModule(name, stmts, start, end) => RegisteredOptionalNone
@@ -143,7 +143,7 @@ pub theorem ck_program_decl_before(
   seen: List(Text),
   fresh: FreshFunctionNames(types_function_decls(Cons(stmt, rest)), seen)
 ): FunctionBeforeRest(rest, ck_val(ck_program_decl(c, stmt))) {
-  match stmt: FunctionBeforeRest(rest, ck_val(ck_program_decl(c, stmt))) {
+  ⊢ FunctionBeforeRest(rest, ck_val(ck_program_decl(c, stmt))) from match stmt {
     StLet(name, ty, value, borrow, mutable) => FunctionBeforeNone
     StVar(name, ty, value, borrow) => FunctionBeforeNone
     StModule(name, stmts, start, end) => FunctionBeforeNone
@@ -213,12 +213,12 @@ pub theorem fnt_option_after_rest<first: Option(
   before: FunctionBeforeRest(rest, first),
   registered: RegisteredOptionalSignature(fnt_table(c), first)
 ): RegisteredOptionalSignature(fnt_table(ck_st(ck_program_decls(rest, c))), first) {
-  match before: RegisteredOptionalSignature(fnt_table(ck_st(ck_program_decls(rest, c))), first) {
+  ⊢ RegisteredOptionalSignature(fnt_table(ck_st(ck_program_decls(rest, c))), first) from match before {
     FunctionBeforeNone => RegisteredOptionalNone
-    FunctionBeforeSome(source, scheme, absent) => match registered: RegisteredOptionalSignature(
+    FunctionBeforeSome(source, scheme, absent) => ⊢ RegisteredOptionalSignature(
       fnt_table(ck_st(ck_program_decls(rest, c))),
       Some(Pair {fst: source, snd: scheme})
-    ) {
+    ) from match registered {
       RegisteredOptionalSome(stored_source, stored_scheme, found) => RegisteredOptionalSome(
         source,
         scheme,
@@ -240,7 +240,7 @@ pub theorem fnt_registered_opt_cons<table: Ordmap(
   rest: List(Pair(SurfaceFn, Scheme)),
   remaining: RegisteredSignatures(table, rest)
 ): RegisteredSignatures(table, opt_cons(first, rest)) {
-  match registered: RegisteredSignatures(table, opt_cons(first, rest)) {
+  ⊢ RegisteredSignatures(table, opt_cons(first, rest)) from match registered {
     RegisteredOptionalNone => remaining
     RegisteredOptionalSome(source, scheme, found) => RegisteredSignaturesCons(
       source,
@@ -271,10 +271,10 @@ pub theorem fnt_after_tail_registered(
   fnt_table(ck_st(fnt_cons_after_tail(first, m))),
   ck_val(fnt_cons_after_tail(first, m))
 ) {
-  match m: RegisteredSignatures(
+  ⊢ RegisteredSignatures(
     fnt_table(ck_st(fnt_cons_after_tail(first, m))),
     ck_val(fnt_cons_after_tail(first, m))
-  ) {
+  ) from match m {
     mut1(schemes, next) => fnt_registered_opt_cons(head, schemes, tail)
   }
 }
@@ -308,10 +308,10 @@ pub theorem fnt_after_head_registered(
   fnt_table(ck_st(fnt_cons_after_head(rest, m))),
   ck_val(fnt_cons_after_head(rest, m))
 ) {
-  match m: RegisteredSignatures(
+  ⊢ RegisteredSignatures(
     fnt_table(ck_st(fnt_cons_after_head(rest, m))),
     ck_val(fnt_cons_after_head(rest, m))
-  ) {
+  ) from match m {
     mut1(first, next) => fnt_after_tail_registered(
       first,
       ck_program_decls(rest, next),
@@ -331,10 +331,10 @@ pub theorem ck_program_decls_registered(
   fnt_table(ck_st(ck_program_decls(program, c))),
   ck_val(ck_program_decls(program, c))
 ) {
-  match program: RegisteredSignatures(
+  ⊢ RegisteredSignatures(
     fnt_table(ck_st(ck_program_decls(program, c))),
     ck_val(ck_program_decls(program, c))
-  ) {
+  ) from match program {
     Nil => RegisteredSignaturesNil
     Cons(Stmt, rest) => Eq::subst(
       (result: Mut1(List(Pair(SurfaceFn, Scheme)), Checker)) => RegisteredSignatures(

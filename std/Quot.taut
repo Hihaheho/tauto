@@ -12,12 +12,8 @@ module Quot {
     r: (A, A) -> Prop,
     s: (B, B) -> Prop,
     f: (A, B) -> C,
-    hl: ∀ a1: A,
-    a2: A,
-    b: B. (r(a1, a2)) -> (f(a1, b) = f(a2, b)),
-    hr: ∀ a: A,
-    b1: B,
-    b2: B. (s(b1, b2)) -> (f(a, b1) = f(a, b2)),
+    hl: ∀ a1: A, a2: A, b: B. (r(a1, a2)) -> (f(a1, b) = f(a2, b)),
+    hr: ∀ a: A, b1: B, b2: B. (s(b1, b2)) -> (f(a, b1) = f(a, b2)),
     q1: Quot(A, r),
     q2: Quot(B, s)
   ): C {
@@ -46,12 +42,9 @@ module Quot {
   ) -> Prop, a: A, b: A>(
     d: (A, A) -> Bool,
     d_refl: ∀ x: A. d(x, x) = true,
-    d_respects: ∀ x: A,
-    y: A,
-    z: A. (r(y, z)) -> (d(x, y) = d(x, z)),
-    d_sound: ∀ x: A,
-    y: A. (d(x, y) = true) -> r(x, y),
-    e: Quot::mk(A, r, a) = Quot::mk(A, r, b)
+    d_respects: ∀ x: A, y: A, z: A. (r(y, z)) -> (d(x, y) = d(x, z)),
+    d_sound: ∀ x: A, y: A. (d(x, y) = true) -> r(x, y),
+    e: Quot::mk(<A: A, r: r>, a) = Quot::mk(<A: A, r: r>, b)
   ): r(a, b) {
     let tested: d(
       a,
@@ -60,10 +53,7 @@ module Quot {
       a,
       b
     ) := Eq::congr(
-      Quot(A, r),
-      Bool,
-      Quot::mk(A, r, a),
-      Quot::mk(A, r, b),
+      <A: Quot(A, r), B: Bool, a: Quot::mk(<A: A, r: r>, a), b: Quot::mk(<A: A, r: r>, b)>,
       q => Quot::lift(y => d(a, y), y => z => p => d_respects(a, y, z, p), q),
       e
     );
@@ -78,16 +68,23 @@ pub def Pointwise(A: Type, B: (A) -> Type, f: ∀ x: A. B(x), g: ∀ x: A. B(x))
 // the classes of `f` and `g` are equal (`Quot::sound`); reading each class at
 // `y` with `Quot::lift` computes to `f(y)` and `g(y)`, so the two functions
 // `y => f(y)` and `y => g(y)` are equal, and these are `f` and `g`.
-pub theorem funext<A: Type, B: (
-  A
-) -> Type>(f: ∀ x: A. B(x), g: ∀ x: A. B(x), pointwise: ∀ x: A. f(x) = g(x)): f = g {
+pub theorem funext<A: Type, B: (A) -> Type>(
+  f: ∀ x: A. B(x),
+  g: ∀ x: A. B(x),
+  pointwise: ∀ x: A. f(x) = g(x)
+): f = g {
   Eq::congr(
-    Quot(∀ x: A. B(x), (u, v) => Pointwise(A, B, u, v)),
-    ∀ x: A. B(x),
-    Quot::mk(∀ x: A. B(x), (u, v) => Pointwise(A, B, u, v), f),
-    Quot::mk(∀ x: A. B(x), (u, v) => Pointwise(A, B, u, v), g),
+    <A: Quot(
+      ∀ x: A. B(x),
+      (u, v) => Pointwise(A, B, u, v)
+    ), B: (
+      ∀ x: A. B(x)
+    ), a: Quot::mk(
+      <A: (∀ x: A. B(x)), r: ((u, v) => Pointwise(A, B, u, v))>,
+      f
+    ), b: Quot::mk(<A: (∀ x: A. B(x)), r: ((u, v) => Pointwise(A, B, u, v))>, g)>,
     q => y => Quot::lift(k => k(y), u => v => p => p(y), q),
-    Quot::sound(∀ x: A. B(x), (u, v) => Pointwise(A, B, u, v), f, g, pointwise)
+    Quot::sound(<A: (∀ x: A. B(x)), r: ((u, v) => Pointwise(A, B, u, v)), a: f, b: g>, pointwise)
   )
 }
 
@@ -96,5 +93,5 @@ pub theorem funext_nondependent<A: Type, B: Type>(
   g: (A) -> B,
   pointwise: ∀ x: A. f(x) = g(x)
 ): f = g {
-  funext(A, x => B, f, g, pointwise)
+  funext(<A: A, B: (x => B)>, f, g, pointwise)
 }

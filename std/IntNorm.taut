@@ -27,9 +27,9 @@ pub(open) inductive IntExpr: Type {
 
 // The value of variable `i`; the variables not in the list are 0.
 pub fn ie_env_get(env: List(Int), i: Nat): Int {
-  match env: Int {
+  ⊢ Int from match env {
     Nil => IntOfNat(Zero)
-    Cons(h, t) => match i: Int {
+    Cons(h, t) => ⊢ Int from match i {
       Zero => h
       Succ(k) => ie_env_get(t, k)
     }
@@ -37,7 +37,7 @@ pub fn ie_env_get(env: List(Int), i: Nat): Int {
 }
 
 pub fn ie_eval(env: List(Int), e: IntExpr): Int {
-  match e: Int {
+  ⊢ Int from match e {
     IeConst(n) => IntOfNat(n)
     IeVar(i) => ie_env_get(env, i)
     IeAdd(a, b) => Int::add(ie_eval(env, a), ie_eval(env, b))
@@ -49,7 +49,7 @@ pub fn ie_eval(env: List(Int), e: IntExpr): Int {
 
 // The natural variables: `Int::pos` and `Int::negp` of each variable in turn.
 pub fn ie_parts_env(env: List(Int)): List(Nat) {
-  match env: List(Nat) {
+  ⊢ List(Nat) from match env {
     Nil => Nil
     Cons(h, t) => Cons(Int::pos(h), Cons(Int::negp(h), ie_parts_env(t)))
   }
@@ -57,7 +57,7 @@ pub fn ie_parts_env(env: List(Int)): List(Nat) {
 
 // Where `Int::pos` of variable `i` is among the natural variables.
 pub fn ie_pv(i: Nat): Nat {
-  match i: Nat {
+  ⊢ Nat from match i {
     Zero => Zero
     Succ(k) => Succ(Succ(ie_pv(k)))
   }
@@ -65,12 +65,12 @@ pub fn ie_pv(i: Nat): Nat {
 
 // The parts added (`false`) or subtracted (`true`).
 pub fn ie_part(e: IntExpr, s: Bool): NatExpr {
-  match e: NatExpr {
-    IeConst(n) => match s: NatExpr {
+  ⊢ NatExpr from match e {
+    IeConst(n) => ⊢ NatExpr from match s {
       false => NeConst(n)
       true => NeConst(Zero)
     }
-    IeVar(i) => match s: NatExpr {
+    IeVar(i) => ⊢ NatExpr from match s {
       false => NeVar(ie_pv(i))
       true => NeVar(Succ(ie_pv(i)))
     }
@@ -80,7 +80,7 @@ pub fn ie_part(e: IntExpr, s: Bool): NatExpr {
       NeMul(ie_part(a, true), ie_part(b, not(s)))
     )
     IeNeg(a) => ie_part(a, not(s))
-    IeNat(n) => match s: NatExpr {
+    IeNat(n) => ⊢ NatExpr from match s {
       false => n
       true => NeConst(Zero)
     }
@@ -97,26 +97,27 @@ pub theorem ie_var_sound(
   Ne::env_get(ie_parts_env(env), ie_pv(i)),
   Ne::env_get(ie_parts_env(env), Succ(ie_pv(i)))
 ) {
-  match env: ie_env_get(
+  ⊢ ie_env_get(
     env,
     i
   ) = Int::sub_nat(
     Ne::env_get(ie_parts_env(env), ie_pv(i)),
     Ne::env_get(ie_parts_env(env), Succ(ie_pv(i)))
-  ) {
-    Nil => match i: IntOfNat(
-      Zero
-    ) = Int::sub_nat(Ne::env_get(Nil, ie_pv(i)), Ne::env_get(Nil, Succ(ie_pv(i)))) {
+  ) from match env {
+    Nil => ⊢ IntOfNat(Zero) = Int::sub_nat(
+      Ne::env_get(Nil, ie_pv(i)),
+      Ne::env_get(Nil, Succ(ie_pv(i)))
+    ) from match i {
       Zero => Refl
       Succ(k) => Refl
     }
-    Cons(h, t) => match i: ie_env_get(
+    Cons(h, t) => ⊢ ie_env_get(
       Cons(h, t),
       i
     ) = Int::sub_nat(
       Ne::env_get(ie_parts_env(Cons(h, t)), ie_pv(i)),
       Ne::env_get(ie_parts_env(Cons(h, t)), Succ(ie_pv(i)))
-    ) {
+    ) from match i {
       Zero => Int::parts(h)
       Succ(k) => ie_var_sound(t, k)
     }
@@ -133,13 +134,13 @@ pub theorem ie_sound(
   Ne::eval(ie_parts_env(env), ie_part(e, false)),
   Ne::eval(ie_parts_env(env), ie_part(e, true))
 ) {
-  match e: ie_eval(
+  ⊢ ie_eval(
     env,
     e
   ) = Int::sub_nat(
     Ne::eval(ie_parts_env(env), ie_part(e, false)),
     Ne::eval(ie_parts_env(env), ie_part(e, true))
-  ) {
+  ) from match e {
     IeConst(n) => Eq::sym(Int::sub_nat_zero(n))
     IeVar(i) => ie_var_sound(env, i)
     IeAdd(a, b) => Eq::trans(
@@ -296,12 +297,10 @@ module Tac {
               let x := Tac::ie_read(a, vars, at)
               let u := (x: SynExpr)
               #(quote { IeNeg($u) }, (x: List(SynExpr)))
+            } else if name == "IntOfNat" {
+              Tac::ie_of_nat(e, a, vars, at)
             } else {
-              if name == "IntOfNat" {
-                Tac::ie_of_nat(e, a, vars, at)
-              } else {
-                Tac::ie_var(e, vars)
-              }
+              Tac::ie_var(e, vars)
             }
             Cons(b, extra) => match extra {
               Cons(_, _) => Tac::ie_var(e, vars)
@@ -312,12 +311,10 @@ module Tac {
                 let v := (y: SynExpr)
                 if name == "Int::add" {
                   #(quote { IeAdd($u, $v) }, (y: List(SynExpr)))
+                } else if name == "Int::sub" {
+                  #(quote { IeAdd($u, IeNeg($v)) }, (y: List(SynExpr)))
                 } else {
-                  if name == "Int::sub" {
-                    #(quote { IeAdd($u, IeNeg($v)) }, (y: List(SynExpr)))
-                  } else {
-                    #(quote { IeMul($u, $v) }, (y: List(SynExpr)))
-                  }
+                  #(quote { IeMul($u, $v) }, (y: List(SynExpr)))
                 }
               } else {
                 Tac::ie_var(e, vars)

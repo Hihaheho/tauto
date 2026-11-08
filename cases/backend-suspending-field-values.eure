@@ -1,0 +1,170 @@
+@ cases.a-named-suspending-function-is-stored-in-a-shared-field
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Par
+import std::prelude::Shared
+
+shared struct Callback { run: () -> u64 ! {wait} }
+fn locked_value(): u64 ! {wait} {
+  let mutex := Mutex::new((42: u64))
+  let guard := Mutex::lock(mutex)
+  let &value := MutexGuard::get(&guard)
+  value
+}
+let callback := Callback { run: locked_value }
+perform show("result", (callback.run)())
+```
+shows = ["result = 42"]
+rust_shows = ["result = 42"]
+javascript_shows = ["result = 42"]
+
+@ cases.a-local-function-value-is-stored-in-a-suspending-field
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Par
+import std::prelude::Shared
+
+shared struct Callback { run: () -> u64 ! {wait} }
+fn locked_value(): u64 ! {wait} {
+  let mutex := Mutex::new((42: u64))
+  let guard := Mutex::lock(mutex)
+  let &value := MutexGuard::get(&guard)
+  value
+}
+let run := locked_value
+let callback := Callback { run: run }
+perform show("result", (callback.run)())
+```
+shows = ["result = 42"]
+rust_shows = ["result = 42"]
+javascript_shows = ["result = 42"]
+
+@ cases.a-callback-parameter-is-forwarded-into-a-suspending-field
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Par
+import std::prelude::Shared
+
+shared struct Callback { run: () -> u64 ! {wait} }
+fn locked_value(): u64 ! {wait} {
+  let mutex := Mutex::new((42: u64))
+  let guard := Mutex::lock(mutex)
+  let &value := MutexGuard::get(&guard)
+  value
+}
+fn stored(run: () -> u64 ! {wait}): Callback { Callback { run: run } }
+let callback := stored(locked_value)
+perform show("result", (callback.run)())
+```
+shows = ["result = 42"]
+rust_shows = ["result = 42"]
+javascript_shows = ["result = 42"]
+
+@ cases.a-factory-returns-a-shared-suspending-function-field
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Par
+import std::prelude::Shared
+
+shared struct Callback { run: () -> u64 ! {wait} }
+fn locked_value(): u64 ! {wait} {
+  let mutex := Mutex::new((42: u64))
+  let guard := Mutex::lock(mutex)
+  let &value := MutexGuard::get(&guard)
+  value
+}
+fn stored(): Callback { Callback { run: locked_value } }
+let callback := stored()
+perform show("result", (callback.run)() + (callback.run)())
+```
+shows = ["result = 84"]
+rust_shows = ["result = 84"]
+javascript_shows = ["result = 84"]
+
+@ cases.a-named-function-field-suspends-when-called
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Os
+import std::prelude::Shared
+shared struct Callback { run: (value: u64) -> u64 ! {sleep} }
+fn delayed(value: u64): u64 ! {sleep} { perform sleep(1); value + 1 }
+let callback := Callback { run: delayed }
+perform show("result", (callback.run)(41))
+```
+shows = ["result = 42"]
+rust_shows = ["result = 42"]
+javascript_shows = ["result = 42"]
+
+@ cases.a-pure-function-item-is-lifted-to-a-suspending-field
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Par
+import std::prelude::Shared
+shared struct Callback { run: () -> u64 ! {wait} }
+fn value(): u64 { 42 }
+let callback := Callback { run: value }
+perform show("result", (callback.run)())
+```
+shows = ["result = 42"]
+rust_shows = ["result = 42"]
+javascript_shows = ["result = 42"]
+
+@ cases.a-pure-local-function-value-is-lifted-to-a-suspending-field
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Par
+import std::prelude::Shared
+shared struct Callback { run: () -> u64 ! {wait} }
+fn value(): u64 { 42 }
+let saved := value
+let callback := Callback { run: saved }
+perform show("result", (callback.run)())
+```
+shows = ["result = 42"]
+rust_shows = ["result = 42"]
+javascript_shows = ["result = 42"]
+
+@ cases.a-named-local-suspending-function-keeps-its-shared-capture
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Par
+import std::prelude::Shared
+shared struct Callback { run: () -> u64 ! {wait} }
+fn stored(): Callback {
+  let mutex := Mutex::new((42: u64))
+  fn locked_value(): u64 ! {wait} {
+    let guard := Mutex::lock(mutex)
+    let &value := MutexGuard::get(&guard)
+    value
+  }
+  Callback { run: locked_value }
+}
+let callback := stored()
+perform show("result", (callback.run)())
+```
+shows = ["result = 42"]
+rust_shows = ["result = 42"]
+javascript_shows = ["result = 42"]
+
+@ cases.a-pattern-bound-function-is-stored-in-another-suspending-field
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Par
+import std::prelude::Shared
+
+shared struct Callback { run: () -> u64 ! {wait} }
+fn locked_value(): u64 ! {wait} {
+  let mutex := Mutex::new((42: u64))
+  let guard := Mutex::lock(mutex)
+  let &value := MutexGuard::get(&guard)
+  value
+}
+fn transfer(callback: Callback): Callback {
+  match callback { Callback { run } => Callback { run: run } }
+}
+let callback := transfer(Callback { run: locked_value })
+perform show("result", (callback.run)())
+```
+shows = ["result = 42"]
+rust_shows = ["result = 42"]
+javascript_shows = ["result = 42"]

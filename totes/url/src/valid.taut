@@ -15,7 +15,7 @@ pub fn clean(set: (Nat) -> Bool, x: List(Nat)): Bool {
 }
 
 pub fn opt_list_is(o: Option(List(Nat)), x: List(Nat)): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     None => false
     Some(y) => bytes_eq(y, x)
   }
@@ -31,13 +31,16 @@ pub fn seg_ok(special: Bool, s: List(Nat)): Bool {
     clean(path_set, s),
     Bool::and(
       all_bytes((b: Nat) => not(Nat::eq(b, 47)), s),
-      Bool::and(Nat::eq(dots(s), 0), implies(special, all_bytes((b: Nat) => not(Nat::eq(b, 92)), s)))
+      Bool::and(
+        Nat::eq(dots(s), 0),
+        implies(special, all_bytes((b: Nat) => not(Nat::eq(b, 92)), s))
+      )
     )
   )
 }
 
 pub fn segs_ok(special: Bool, ss: List(List(Nat))): Bool {
-  match ss: Bool {
+  ⊢ Bool from match ss {
     Nil => true
     Cons(s, rest) => Bool::and(seg_ok(special, s), segs_ok(special, rest))
   }
@@ -54,14 +57,14 @@ pub fn host_ok(special: Bool, h: List(Nat)): Bool {
 }
 
 pub fn not_default(default: Option(Nat), n: Nat): Bool {
-  match default: Bool {
+  ⊢ Bool from match default {
     None => true
     Some(d) => not(Nat::eq(n, d))
   }
 }
 
 pub fn port_ok(default: Option(Nat), o: Option(Nat)): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     None => true
     Some(n) => Bool::and(Nat::lt(n, 65536), not_default(default, n))
   }
@@ -76,7 +79,7 @@ pub fn cred_empty(user: List(Nat), pass: List(Nat)): Bool {
 }
 
 pub fn is_none(o: Option(Nat)): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     None => true
     Some(n) => false
   }
@@ -97,12 +100,15 @@ pub fn auth_fields_ok(
 ): Bool {
   Bool::and(
     cred_ok(user, pass),
-    Bool::and(host_ok(special, host), Bool::and(port_ok(default, port), cred_has_host(user, pass, host, port)))
+    Bool::and(
+      host_ok(special, host),
+      Bool::and(port_ok(default, port), cred_has_host(user, pass, host, port))
+    )
   )
 }
 
 pub fn auth_ok(special: Bool, default: Option(Nat), a: Authority): Bool {
-  match a: Bool {
+  ⊢ Bool from match a {
     Auth(user, pass, host, port) => auth_fields_ok(special, default, user, pass, host, port)
   }
 }
@@ -120,7 +126,7 @@ pub fn opaque_ok(o: List(Nat)): Bool {
 }
 
 pub fn path_ok(special: Bool, has_auth: Bool, p: UrlPath): Bool {
-  match p: Bool {
+  ⊢ Bool from match p {
     Opaque(o) => Bool::and(not(has_auth), opaque_ok(o))
     Segments(ss) => Bool::and(
       segs_ok(special, ss),
@@ -130,9 +136,9 @@ pub fn path_ok(special: Bool, has_auth: Bool, p: UrlPath): Bool {
 }
 
 pub fn query_ok(special: Bool, q: Option(List(Nat))): Bool {
-  match q: Bool {
+  ⊢ Bool from match q {
     None => true
-    Some(x) => match special: Bool {
+    Some(x) => ⊢ Bool from match special {
       true => clean(special_query_set, x)
       false => clean(query_set, x)
     }
@@ -140,21 +146,21 @@ pub fn query_ok(special: Bool, q: Option(List(Nat))): Bool {
 }
 
 pub fn fragment_ok(f: Option(List(Nat))): Bool {
-  match f: Bool {
+  ⊢ Bool from match f {
     None => true
     Some(x) => clean(fragment_set, x)
   }
 }
 
 pub fn auth_opt_ok(special: Bool, default: Option(Nat), a: Option(Authority)): Bool {
-  match a: Bool {
+  ⊢ Bool from match a {
     None => not(special)
     Some(x) => auth_ok(special, default, x)
   }
 }
 
 pub fn is_file(s: List(Nat)): Bool {
-  match scheme_kind(s): Bool {
+  ⊢ Bool from match scheme_kind(s) {
     Special(d) => false
     File => true
     NotSpecial => false
@@ -162,14 +168,14 @@ pub fn is_file(s: List(Nat)): Bool {
 }
 
 pub fn is_some_auth(a: Option(Authority)): Bool {
-  match a: Bool {
+  ⊢ Bool from match a {
     None => false
     Some(x) => true
   }
 }
 
 pub fn url_valid(u: Url): Bool {
-  match u: Bool {
+  ⊢ Bool from match u {
     MkUrl(s, a, p, q, f) => Bool::and(
       scheme_ok(s),
       Bool::and(

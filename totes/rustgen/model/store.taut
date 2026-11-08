@@ -2,9 +2,9 @@ import "core.taut" { RsAddress, RsBorrow, RsLiteral, RsPlace, RsStore, RsValue }
 import "../../../std/Base.taut" { List }
 
 pub fn rs_set<A>(xs: List(A), index: Nat, value: A): List(A) {
-  match xs: List(A) {
+  ⊢ List(A) from match xs {
     Nil => Nil
-    Cons(x, rest) => match index: List(A) {
+    Cons(x, rest) => ⊢ List(A) from match index {
       Zero => Cons(value, rest)
       Succ(i) => Cons(x, rs_set(rest, i, value))
     }
@@ -12,8 +12,8 @@ pub fn rs_set<A>(xs: List(A), index: Nat, value: A): List(A) {
 }
 
 pub fn rs_cell(heap: RsStore, index: Nat): Option(RsValue) {
-  match heap: Option(RsValue) {
-    RsHeap(cells) => match List::nth(cells, index): Option(RsValue) {
+  ⊢ Option(RsValue) from match heap {
+    RsHeap(cells) => ⊢ Option(RsValue) from match List::nth(cells, index) {
       None => None
       Some(cell) => cell
     }
@@ -21,22 +21,22 @@ pub fn rs_cell(heap: RsStore, index: Nat): Option(RsValue) {
 }
 
 pub fn rs_store_cell(heap: RsStore, index: Nat, value: Option(RsValue)): RsStore {
-  match heap: RsStore {
+  ⊢ RsStore from match heap {
     RsHeap(cells) => RsHeap(rs_set(cells, index, value))
   }
 }
 
 pub fn rs_alloc(heap: RsStore, value: RsValue): Nat × RsStore {
-  match heap: Nat × RsStore {
+  ⊢ Nat × RsStore from match heap {
     RsHeap(cells) => #(List::length(cells), RsHeap(List::append(cells, Cons(Some(value), Nil))))
   }
 }
 
 pub fn rs_alloc_values(heap: RsStore, values: List(RsValue)): List(Nat) × RsStore {
-  match values: List(Nat) × RsStore {
+  ⊢ List(Nat) × RsStore from match values {
     Nil => #(Nil, heap)
-    Cons(v, rest) => match rs_alloc(heap, v): List(Nat) × RsStore {
-      #(index, next) => match rs_alloc_values(next, rest): List(Nat) × RsStore {
+    Cons(v, rest) => ⊢ List(Nat) × RsStore from match rs_alloc(heap, v) {
+      #(index, next) => ⊢ List(Nat) × RsStore from match rs_alloc_values(next, rest) {
         #(indices, final_heap) => #(Cons(index, indices), final_heap)
       }
     }
@@ -44,7 +44,7 @@ pub fn rs_alloc_values(heap: RsStore, values: List(RsValue)): List(Nat) × RsSto
 }
 
 pub fn rs_initialized(value: RsValue): Bool {
-  match value: Bool {
+  ⊢ Bool from match value {
     RsUninitialized => false
     RsScalar(v) => true
     RsData(tag, is_copy, fields) => true
@@ -57,7 +57,7 @@ pub fn rs_initialized(value: RsValue): Bool {
 }
 
 pub fn rs_fields(value: RsValue): Option(List(RsValue)) {
-  match value: Option(List(RsValue)) {
+  ⊢ Option(List(RsValue)) from match value {
     RsData(tag, is_copy, fields) => Some(fields)
     RsUninitialized => None
     RsScalar(v) => None
@@ -70,7 +70,7 @@ pub fn rs_fields(value: RsValue): Option(List(RsValue)) {
 }
 
 pub fn rs_rebuild(value: RsValue, fields: List(RsValue)): Option(RsValue) {
-  match value: Option(RsValue) {
+  ⊢ Option(RsValue) from match value {
     RsData(tag, is_copy, old) => Some(RsData(tag, is_copy, fields))
     RsUninitialized => None
     RsScalar(v) => None
@@ -83,11 +83,11 @@ pub fn rs_rebuild(value: RsValue, fields: List(RsValue)): Option(RsValue) {
 }
 
 pub fn rs_project(value: RsValue, path: List(Nat)): Option(RsValue) {
-  match path: Option(RsValue) {
+  ⊢ Option(RsValue) from match path {
     Nil => Some(value)
-    Cons(index, rest) => match rs_fields(value): Option(RsValue) {
+    Cons(index, rest) => ⊢ Option(RsValue) from match rs_fields(value) {
       None => None
-      Some(fields) => match List::nth(fields, index): Option(RsValue) {
+      Some(fields) => ⊢ Option(RsValue) from match List::nth(fields, index) {
         None => None
         Some(field) => rs_project(field, rest)
       }
@@ -97,7 +97,7 @@ pub fn rs_project(value: RsValue, path: List(Nat)): Option(RsValue) {
 
 mutual {
   pub fn rs_complete(value: RsValue): Bool {
-    match value: Bool {
+    ⊢ Bool from match value {
       RsData(tag, is_copy, fields) => rs_fields_complete(fields)
       RsUninitialized => false
       RsScalar(lit) => true
@@ -109,7 +109,7 @@ mutual {
     }
   }
   pub fn rs_fields_complete(fields: List(RsValue)): Bool {
-    match fields: Bool {
+    ⊢ Bool from match fields {
       Nil => true
       Cons(value, rest) => rs_complete(value) && rs_fields_complete(rest)
     }
@@ -117,13 +117,13 @@ mutual {
 }
 
 pub fn rs_replace(value: RsValue, path: List(Nat), replacement: RsValue): Option(RsValue) {
-  match path: Option(RsValue) {
+  ⊢ Option(RsValue) from match path {
     Nil => Some(replacement)
-    Cons(index, rest) => match rs_fields(value): Option(RsValue) {
+    Cons(index, rest) => ⊢ Option(RsValue) from match rs_fields(value) {
       None => None
-      Some(fields) => match List::nth(fields, index): Option(RsValue) {
+      Some(fields) => ⊢ Option(RsValue) from match List::nth(fields, index) {
         None => None
-        Some(field) => match rs_replace(field, rest, replacement): Option(RsValue) {
+        Some(field) => ⊢ Option(RsValue) from match rs_replace(field, rest, replacement) {
           None => None
           Some(next) => rs_rebuild(value, rs_set(fields, index, next))
         }
@@ -133,8 +133,8 @@ pub fn rs_replace(value: RsValue, path: List(Nat), replacement: RsValue): Option
 }
 
 pub fn rs_peek(heap: RsStore, address: RsAddress): Option(RsValue) {
-  match address: Option(RsValue) {
-    RsAddr(root, fields) => match rs_cell(heap, root): Option(RsValue) {
+  ⊢ Option(RsValue) from match address {
+    RsAddr(root, fields) => ⊢ Option(RsValue) from match rs_cell(heap, root) {
       None => None
       Some(value) => rs_project(value, fields)
     }
@@ -142,26 +142,26 @@ pub fn rs_peek(heap: RsStore, address: RsAddress): Option(RsValue) {
 }
 
 pub fn rs_load(heap: RsStore, address: RsAddress): Option(RsValue) {
-  match rs_peek(heap, address): Option(RsValue) {
+  ⊢ Option(RsValue) from match rs_peek(heap, address) {
     None => None
     Some(value) => if rs_complete(value) { Some(value) } else { None }
   }
 }
 
 pub fn rs_save(heap: RsStore, address: RsAddress, value: RsValue): Option(RsStore) {
-  match address: Option(RsStore) {
-    RsAddr(root, fields) => match List::nth(match heap: List(Option(RsValue)) {
+  ⊢ Option(RsStore) from match address {
+    RsAddr(root, fields) => ⊢ Option(RsStore) from match List::nth(⊢ List(Option(RsValue)) from match heap {
       RsHeap(cells) => cells
-    }, root): Option(RsStore) {
+    }, root) {
       None => None
-      Some(old) => match fields: Option(RsStore) {
-        Nil => match old: Option(RsStore) {
+      Some(old) => ⊢ Option(RsStore) from match fields {
+        Nil => ⊢ Option(RsStore) from match old {
           None => None
           Some(previous) => Some(rs_store_cell(heap, root, Some(value)))
         }
-        Cons(index, rest) => match old: Option(RsStore) {
+        Cons(index, rest) => ⊢ Option(RsStore) from match old {
           None => None
-          Some(previous) => match rs_replace(previous, fields, value): Option(RsStore) {
+          Some(previous) => ⊢ Option(RsStore) from match rs_replace(previous, fields, value) {
             None => None
             Some(next) => Some(rs_store_cell(heap, root, Some(next)))
           }
@@ -172,7 +172,7 @@ pub fn rs_save(heap: RsStore, address: RsAddress, value: RsValue): Option(RsStor
 }
 
 pub fn rs_reference(value: RsValue): Option(RsAddress) {
-  match value: Option(RsAddress) {
+  ⊢ Option(RsAddress) from match value {
     RsReference(kind, address) => Some(address)
     RsUninitialized => None
     RsScalar(v) => None
@@ -185,18 +185,18 @@ pub fn rs_reference(value: RsValue): Option(RsAddress) {
 }
 
 pub fn rs_address(env: List(RsAddress), heap: RsStore, place: RsPlace): Option(RsAddress) {
-  match place: Option(RsAddress) {
-    RsLocal(index) => match List::nth(env, index): Option(RsAddress) {
+  ⊢ Option(RsAddress) from match place {
+    RsLocal(index) => ⊢ Option(RsAddress) from match List::nth(env, index) {
       None => None
       Some(root) => Some(root)
     }
-    RsField(base, field) => match rs_address(env, heap, base): Option(RsAddress) {
+    RsField(base, field) => ⊢ Option(RsAddress) from match rs_address(env, heap, base) {
       None => None
       Some(RsAddr(root, fields)) => Some(RsAddr(root, List::append(fields, Cons(field, Nil))))
     }
-    RsDeref(base) => match rs_address(env, heap, base): Option(RsAddress) {
+    RsDeref(base) => ⊢ Option(RsAddress) from match rs_address(env, heap, base) {
       None => None
-      Some(address) => match rs_load(heap, address): Option(RsAddress) {
+      Some(address) => ⊢ Option(RsAddress) from match rs_load(heap, address) {
         None => None
         Some(value) => rs_reference(value)
       }
@@ -206,8 +206,8 @@ pub fn rs_address(env: List(RsAddress), heap: RsStore, place: RsPlace): Option(R
 
 mutual {
   pub fn rs_can_copy(value: RsValue): Bool {
-    match value: Bool {
-      RsScalar(lit) => match lit: Bool {
+    ⊢ Bool from match value {
+      RsScalar(lit) => ⊢ Bool from match lit {
         RsNatural(n) => false
         RsUnit => true
         RsBool(b) => true
@@ -217,7 +217,7 @@ mutual {
         RsFloat(bits, single) => true
       }
       RsData(tag, is_copy, fields) => is_copy && rs_fields_copy(fields)
-      RsReference(kind, address) => match kind: Bool {
+      RsReference(kind, address) => ⊢ Bool from match kind {
         RsShared => true
         RsUnique => false
       }
@@ -229,7 +229,7 @@ mutual {
     }
   }
   pub fn rs_fields_copy(fields: List(RsValue)): Bool {
-    match fields: Bool {
+    ⊢ Bool from match fields {
       Nil => true
       Cons(value, rest) => rs_can_copy(value) && rs_fields_copy(rest)
     }
@@ -237,13 +237,13 @@ mutual {
 }
 
 pub fn rs_reference_kind(kind: RsBorrow, value: RsValue): Option(RsAddress) {
-  match value: Option(RsAddress) {
-    RsReference(actual, address) => match kind: Option(RsAddress) {
-      RsShared => match actual: Option(RsAddress) {
+  ⊢ Option(RsAddress) from match value {
+    RsReference(actual, address) => ⊢ Option(RsAddress) from match kind {
+      RsShared => ⊢ Option(RsAddress) from match actual {
         RsShared => Some(address)
         RsUnique => None
       }
-      RsUnique => match actual: Option(RsAddress) {
+      RsUnique => ⊢ Option(RsAddress) from match actual {
         RsShared => None
         RsUnique => Some(address)
       }
@@ -259,7 +259,7 @@ pub fn rs_reference_kind(kind: RsBorrow, value: RsValue): Option(RsAddress) {
 }
 
 pub fn rs_roots(slots: List(Nat)): List(RsAddress) {
-  match slots: List(RsAddress) {
+  ⊢ List(RsAddress) from match slots {
     Nil => Nil
     Cons(slot, rest) => Cons(RsAddr(slot, Nil), rs_roots(rest))
   }

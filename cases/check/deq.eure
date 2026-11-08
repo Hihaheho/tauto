@@ -1,0 +1,184 @@
+@ cases.a-field-of-an-undecidable-type-cannot-list-an-equality-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Fun: Type => fn Fun::beq, theorem Fun::beq_refl, theorem Fun::beq_sound, theorem Fun::deq {
+  Mk(f: (Nat) -> Nat): Fun
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::Fun#1" = "ok"
+checks."input/main.taut::Fun#2" = "error: "
+@ cases.a-field-of-an-undecidable-type-cannot-list-an-equality-0.diagnostics[]
+file = "input/main.taut"
+name = "Fun"
+message = "`Fun` lists a decidable equality that cannot be made: the field `f` of `Fun::Mk` has type `(Nat) -> Nat`, which has no decidable equality (a type that has one lists `fn T::beq, theorem T::beq_refl, theorem T::beq_sound, theorem T::deq` after its sort)"
+span = "«=> fn Fun::beq, theorem Fun::beq_refl, theorem Fun::beq_sound, theorem Fun::deq»"
+
+@ cases.a-parameter-is-compared-by-a-function-given-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+inductive Color: Type => fn Color::beq, theorem Color::beq_refl, theorem Color::beq_sound, theorem Color::deq {
+  Red: Color
+  Green: Color
+  Blue: Color
+}
+inductive Cell: Type => fn Cell::beq, theorem Cell::beq_refl, theorem Cell::beq_sound, theorem Cell::deq {
+  Empty: Cell
+  CellOf(c: Color, n: Nat, b: Bool): Cell
+}
+inductive Tree: Type => fn Tree::beq, theorem Tree::beq_refl, theorem Tree::beq_sound, theorem Tree::deq {
+  Leaf: Tree
+  Node(l: Tree, v: Nat, r: Tree): Tree
+}
+
+inductive Box(A: Type): Type => fn Box::beq, theorem Box::beq_refl, theorem Box::beq_sound, theorem Box::deq {
+  Mk(a: A, t: Tree): Box(A)
+}
+fn same_boxes(a: Box(Nat), b: Box(Nat)): Bool { a == b }
+fn same_lists(a: List(Nat), b: List(Nat)): Bool { a == b }
+fn same_options(a: Option(Pair(Nat, Color)), b: Option(Pair(Nat, Color))): Bool { a != b }
+theorem sound(a: List(Nat), b: List(Nat), h: Eq(Bool, a == b, true)): a = b {
+  List::beq_sound(Nat::eq, Nat::eq_sound, a, b, h)
+}
+theorem iff_box(a: Box(Color), b: Box(Color)): Iff(Box::beq(Color::beq, a, b) = true, a = b) {
+  Box::deq(Color::beq, Color::beq_sound, Color::beq_refl, a, b)
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::Color" = "ok"
+checks."input/main.taut::Cell" = "ok"
+checks."input/main.taut::Tree" = "ok"
+checks."input/main.taut::Box" = "ok"
+checks."input/main.taut::same_boxes" = "ok"
+checks."input/main.taut::same_lists" = "ok"
+checks."input/main.taut::same_options" = "ok"
+checks."input/main.taut::sound" = "ok"
+checks."input/main.taut::iff_box" = "ok"
+
+@ cases.an-inductive-of-numbers-decisions-and-itself-is-decidable-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+inductive Color: Type => fn Color::beq, theorem Color::beq_refl, theorem Color::beq_sound, theorem Color::deq {
+  Red: Color
+  Green: Color
+  Blue: Color
+}
+inductive Cell: Type => fn Cell::beq, theorem Cell::beq_refl, theorem Cell::beq_sound, theorem Cell::deq {
+  Empty: Cell
+  CellOf(c: Color, n: Nat, b: Bool): Cell
+}
+inductive Tree: Type => fn Tree::beq, theorem Tree::beq_refl, theorem Tree::beq_sound, theorem Tree::deq {
+  Leaf: Tree
+  Node(l: Tree, v: Nat, r: Tree): Tree
+}
+
+fn same_color(a: Color, b: Color): Bool { a == b }
+fn same_tree(a: Tree, b: Tree): Bool { a != b }
+theorem sound(a: Tree, b: Tree, h: Tree::beq(a, b) = true): a = b { Tree::beq_sound(a, b, h) }
+theorem refl_cell(c: Cell): Cell::beq(c, c) = true { Cell::beq_refl(c) }
+theorem iff_color(a: Color, b: Color): Iff(Color::beq(a, b) = true, a = b) { Color::deq(a, b) }
+theorem green_is_not_blue(h: Green = Blue): False {
+  false_ne_true(Eq::subst(Color, Green, Blue, (z: Color) => Color::beq(Green, z) = true, h, Color::beq_refl(Green)))
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::Color" = "ok"
+checks."input/main.taut::Cell" = "ok"
+checks."input/main.taut::Tree" = "ok"
+checks."input/main.taut::same_color" = "ok"
+checks."input/main.taut::same_tree" = "ok"
+checks."input/main.taut::sound" = "ok"
+checks."input/main.taut::refl_cell" = "ok"
+checks."input/main.taut::iff_color" = "ok"
+checks."input/main.taut::green_is_not_blue" = "ok"
+
+@ cases.an-inductive-that-does-not-list-an-equality-has-none-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+inductive Color: Type {
+  Red: Color
+  Green: Color
+}
+fn same(a: Color, b: Color): Bool { a == b }
+theorem t(a: Color): Color::beq(a, a) = true { Color::beq_refl(a) }
+```
+
+checks_all = "ok"
+checks."input/main.taut::Color" = "ok"
+checks."input/main.taut::same" = "error: "
+checks."input/main.taut::t" = "error: "
+@ cases.an-inductive-that-does-not-list-an-equality-has-none-0.diagnostics[]
+file = "input/main.taut"
+name = "same"
+message = "`==` is on `Nat`, `Bool`, `Text` or a type with a decidable equality, not `Color`; an inductive has one when it lists `=> fn Color::beq, theorem Color::beq_refl, theorem Color::beq_sound, theorem Color::deq` after its sort"
+span = "«a == b»"
+@ cases.an-inductive-that-does-not-list-an-equality-has-none-0.diagnostics[]
+file = "input/main.taut"
+name = "t"
+message = "`Color::beq` is not defined"
+span = " «Color::beq»("
+@ cases.an-inductive-that-does-not-list-an-equality-has-none-0.diagnostics[]
+file = "input/main.taut"
+name = "t"
+message = "`Color::beq_refl` is not defined"
+span = "«Color::beq_refl»"
+
+@ cases.the-list-is-the-four-declarations-or-it-is-an-error-with-the-fix-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+inductive Color: Type => fn Color::beq, theorem Color::deq {
+  Red: Color
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::Color#1" = "error: "
+checks."input/main.taut::Color#2" = "ok"
+@ cases.the-list-is-the-four-declarations-or-it-is-an-error-with-the-fix-0.diagnostics[]
+file = "input/main.taut"
+name = "Color"
+message = "`Color`: the list after its sort does not match what an inductive can make besides its eliminators (the four of a decidable equality); made but not listed: theorem Color::beq_refl, theorem Color::beq_sound"
+span = "«=> fn Color::beq, theorem Color::deq»"
+fix = "=> fn Color::beq, theorem Color::beq_refl, theorem Color::beq_sound, theorem Color::deq"
+fix_span = "=> fn Color::beq, theorem Color::deq"
+
+// The decidable equality needs no import: what it is made from is the kernel's prelude.
+@ cases.a-generated-equality-runs-without-an-import-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::prelude::Os
+
+inductive Color: Type => fn Color::beq, theorem Color::beq_refl, theorem Color::beq_sound, theorem Color::deq {
+  Red: Color
+  Blue: Color
+}
+
+fn apply2(f: (Color, Color) -> Bool, a: Color, b: Color): Bool {
+  f(a, b)
+}
+
+match Color::beq(Red, Blue) {
+  true => perform stdout("same\n")
+  false => perform stdout("different\n")
+}
+match apply2(Color::beq, Blue, Blue) {
+  true => perform stdout("same\n")
+  false => perform stdout("different\n")
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::Color" = "ok"
+checks."input/main.taut::apply2" = "ok"

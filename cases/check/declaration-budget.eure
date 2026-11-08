@@ -1,0 +1,33 @@
+// `budget N` after a declaration's result: the kernel checks that declaration
+// with at most `N` steps of reduction, in place of the default limit.
+
+@ cases.a-declaration-checks-within-the-budget-written
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+theorem two(): 1 + 1 = 2 budget 100_000_000 {
+  Refl
+}
+fn id_nat(n: Nat): Nat budget 1_000 {
+  n
+}
+def small(): Type budget 50 := Nat
+```
+
+checks_all = "ok"
+
+@ cases.a-declaration-past-its-budget-is-rejected
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn count(n: Nat): Nat {
+  match n {
+    Zero => Zero
+    Succ(k) => Succ(count(k))
+  }
+}
+theorem slow(): count(50) = 50 budget 10 {
+  Refl
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::slow" = "error: gave up after"

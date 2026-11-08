@@ -37,7 +37,7 @@ pub theorem body_module_context(
   es: List(TypeError),
   c: Checker
 ): CkContextFrame(c, ck_module_errors(es, c)) {
-  match es: CkContextFrame(c, ck_module_errors(es, c)) {
+  ⊢ CkContextFrame(c, ck_module_errors(es, c)) from match es {
     Nil => ordinary => Refl
     Cons(e, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkContextFrame(c, z),
@@ -73,7 +73,7 @@ pub theorem body_after_module_errors(
   position: frame_constructor_position(ck_st(m)) = false,
   clean: DiagnosticReportClean(run_after_module_errors(prelude, program, m))
 ): DataBodyReport(source, run_after_module_errors(prelude, program, m)) {
-  match m: DataBodyReport(source, run_after_module_errors(prelude, program, m)) {
+  ⊢ DataBodyReport(source, run_after_module_errors(prelude, program, m)) from match m {
     mut1(v, next) => body_finish_report(
       source,
       ck_run(next, prelude, program),
@@ -144,7 +144,9 @@ pub theorem types_check_data_bodies(
   clean: diagnostic_report_errors(types_check(prelude, program, errors)) = Nil
 ): DataBodyChecked(finish_report_datas(types_check(prelude, program, errors)), source) {
   ck_types_run_data_body(
-    checker_new(Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))),
+    checker_new(
+      Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))
+    ),
     prelude,
     program,
     source,

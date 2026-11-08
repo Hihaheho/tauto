@@ -1,0 +1,260 @@
+@ cases.imported-effect-set-expands-in-caller-and-callback-rows
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app"
+version = "0.1.0" }
+```
+files."app/src/runtime.taut" = ```tauto
+import std::Base
+import std::prelude::Par
+
+effect access_runtime(): Unit direct
+pub effect rt { access_runtime, wait }
+pub fn run_handler(): Unit ! {rt, Div} {
+  perform access_runtime()
+}
+pub fn batch<T>(f: () -> T ! {rt, Div}): T ! {rt, Div} {
+  f()
+}
+
+pub fn drive(body: () -> Unit ! {rt, Div}): Unit ! {wait, Div} {
+  handle { body() } with {
+    access_runtime(), k => k(#())
+  }
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::Base
+import "runtime.taut"
+
+pub fn fire(): Unit ! {rt, Div} {
+  batch(() => run_handler())
+}
+drive(() => fire())
+```
+tote_errors = []
+
+@ cases.effect-set-in-one-file-has-the-same-row
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app"
+version = "0.1.0" }
+```
+files."app/src/main.taut" = ```tauto
+import std::Base
+import std::prelude::Par
+
+effect access_runtime(): Unit direct
+pub effect rt { access_runtime, wait }
+pub fn run_handler(): Unit ! {rt, Div} {
+  perform access_runtime()
+}
+pub fn batch<T>(f: () -> T ! {rt, Div}): T ! {rt, Div} {
+  f()
+}
+
+pub fn drive(body: () -> Unit ! {rt, Div}): Unit ! {wait, Div} {
+  handle { body() } with {
+    access_runtime(), k => k(#())
+  }
+}
+
+
+pub fn fire(): Unit ! {rt, Div} {
+  batch(() => run_handler())
+}
+drive(() => fire())
+```
+tote_errors = []
+
+@ cases.imported-effect-set-does-not-permit-an-omitted-member
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app"
+version = "0.1.0" }
+```
+files."app/src/runtime.taut" = ```tauto
+import std::Base
+import std::prelude::Par
+
+effect access_runtime(): Unit direct
+pub effect rt { access_runtime, wait }
+pub fn run_handler(): Unit ! {rt, Div} {
+  perform access_runtime()
+}
+pub fn batch<T>(f: () -> T ! {rt, Div}): T ! {rt, Div} {
+  f()
+}
+
+pub fn drive(body: () -> Unit ! {rt, Div}): Unit ! {wait, Div} {
+  handle { body() } with {
+    access_runtime(), k => k(#())
+  }
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::Base
+import std::prelude::Par
+import "runtime.taut"
+
+pub fn fire(): Unit ! {wait, Div} {
+  batch(() => run_handler())
+}
+drive(() => fire())
+```
+tote_errors = ["access_runtime but its row"]
+
+@ cases.imported-effect-set-can-name-an-imported-set
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app"
+version = "0.1.0" }
+```
+files."app/src/runtime.taut" = ```tauto
+import std::Base
+import std::prelude::Par
+
+effect access_runtime(): Unit direct
+pub effect rt { access_runtime, wait }
+pub fn run_handler(): Unit ! {rt, Div} {
+  perform access_runtime()
+}
+pub fn batch<T>(f: () -> T ! {rt, Div}): T ! {rt, Div} {
+  f()
+}
+
+pub fn drive(body: () -> Unit ! {rt, Div}): Unit ! {wait, Div} {
+  handle { body() } with {
+    access_runtime(), k => k(#())
+  }
+}
+```
+files."app/src/middle.taut" = ```tauto
+import std::Base
+import "runtime.taut"
+
+pub effect session {rt}
+pub fn invoke(): Unit ! {session, Div} { batch(() => run_handler()) }
+```
+files."app/src/main.taut" = ```tauto
+import std::Base
+import "middle.taut"
+import "runtime.taut"
+
+pub fn fire(): Unit ! {session, Div} { invoke() }
+drive(() => fire())
+```
+tote_errors = []
+
+@ cases.imported-effect-set-keeps-the-definition-effect-identity
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app"
+version = "0.1.0" }
+```
+files."app/src/runtime.taut" = ```tauto
+import std::Base
+import std::prelude::Par
+
+effect access_runtime(): Unit direct
+pub effect rt { access_runtime, wait }
+pub fn run_handler(): Unit ! {rt, Div} {
+  perform access_runtime()
+}
+pub fn batch<T>(f: () -> T ! {rt, Div}): T ! {rt, Div} {
+  f()
+}
+
+pub fn drive(body: () -> Unit ! {rt, Div}): Unit ! {wait, Div} {
+  handle { body() } with {
+    access_runtime(), k => k(#())
+  }
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::Base
+import "runtime.taut"
+
+effect access_runtime(): Unit direct
+
+pub fn fire(): Unit ! {rt, Div} {
+  batch(() => run_handler())
+}
+drive(() => fire())
+```
+tote_errors = []
+
+@ cases.imported-effect-set-does-not-authorize-a-same-named-caller-effect
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app"
+version = "0.1.0" }
+```
+files."app/src/runtime.taut" = ```tauto
+import std::Base
+import std::prelude::Par
+
+effect access_runtime(): Unit direct
+pub effect rt { access_runtime, wait }
+pub fn run_handler(): Unit ! {rt, Div} {
+  perform access_runtime()
+}
+pub fn batch<T>(f: () -> T ! {rt, Div}): T ! {rt, Div} {
+  f()
+}
+
+pub fn drive(body: () -> Unit ! {rt, Div}): Unit ! {wait, Div} {
+  handle { body() } with {
+    access_runtime(), k => k(#())
+  }
+}
+```
+files."app/src/main.taut" = ```tauto
+import std::Base
+import "runtime.taut"
+
+effect access_runtime(): Unit direct
+
+pub fn fire(): Unit ! {rt, Div} {
+  perform access_runtime()
+}
+drive(() => fire())
+```
+tote_errors = ["access_runtime but its row"]
+
+@ cases.imported-effect-set-bounds-keep-definition-effect-identities
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app"
+version = "0.1.0" }
+```
+files."app/src/runtime.taut" = ```tauto
+import std::Base
+import std::prelude::Par
+
+effect access_runtime(): Unit direct
+pub effect rt { access_runtime, wait }
+pub fn run_handler(): Unit ! {rt, Div} {
+  perform access_runtime()
+}
+pub fn batch<T>(f: () -> T ! {rt, Div}): T ! {rt, Div} {
+  f()
+}
+
+pub fn drive(body: () -> Unit ! {rt, Div}): Unit ! {wait, Div} {
+  handle { body() } with {
+    access_runtime(), k => k(#())
+  }
+}
+
+pub effect all_rt {rt, Div}
+pub fn forward<!e: all_rt>(f: () -> Unit ! e): Unit ! e { f() }
+```
+files."app/src/main.taut" = ```tauto
+import std::Base
+import "runtime.taut"
+
+pub fn fire<!e: all_rt>(f: () -> Unit ! e): Unit ! e { forward(f) }
+drive(() => fire(() => run_handler()))
+```
+tote_errors = []

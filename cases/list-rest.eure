@@ -1,0 +1,126 @@
+// `[a, ..r]` is `Cons(a, r)`, as `[a]` is `Cons(a, Nil)`: the rest of the
+// list takes the place of `Nil`, in a term and in a pattern.
+
+@ cases.list-rest-terms-read-alike
+source = ```tauto
+let a := [1, 2, ..xs]
+let b := [1, ..f(xs)]
+let c := [..xs]
+let d := [[1, ..xs], []]
+```
+differential = "surface"
+
+@ cases.list-rest-patterns-read-alike
+source = ```tauto
+fn f(l: List(i64)): i64 {
+  match l {
+    [] => 0
+    [x] => x
+    [x, y, ..rest] => x + y
+  }
+}
+fn g(l: List(i64)): i64 {
+  match l {
+    [..rest] => 0
+  }
+}
+fn h(l: List(i64)): i64 {
+  match l {
+    [_, .._] => 1
+    [] => 0
+  }
+}
+```
+differential = "surface"
+
+@ cases.list-rest-runs
+source = ```tauto
+fn sum2(l: List(i64)): i64 {
+  match l {
+    [] => 0
+    [x] => x
+    [x, y, ..rest] => x + y + sum2(rest)
+  }
+}
+fn len(l: List(i64)): i64 {
+  match l {
+    [] => 0
+    [_, ..rest] => 1 + len(rest)
+  }
+}
+let xs := [3, 4]
+perform show("sum", sum2([1, 2, ..xs]))
+perform show("len", len([0, ..[1, ..xs]]))
+perform show("whole", len([..xs]))
+```
+shows = ["sum = 10", "len = 4", "whole = 2"]
+
+// The rest is a constructor's argument, so the implicit `y` is found by
+// first-order matching, as with `Cons(I, Cons(I, y))`.
+@ cases.list-rest-infers-the-rest
+source = ```tauto
+inductive Sym: Type {
+  I: Sym
+  U: Sym
+}
+inductive Ends: (List(Sym)) -> Prop {
+  Mk(l: List(Sym)): Ends(l)
+}
+theorem rule<y: List(Sym)>(h: Ends([I, I, ..y])): Ends([U, ..y]) {
+  Ends::Mk([U, ..y])
+}
+theorem use(h: Ends([I, I, U])): Ends([U, U]) {
+  rule(h)
+}
+```
+checks_all = "checked"
+
+@ cases.list-rest-is-the-whole-list
+source = ```tauto
+theorem same(l: List(Nat)): [..l] = l {
+  Refl(List(Nat), l)
+}
+theorem cons(a: Nat, l: List(Nat)): [a, ..l] = Cons(a, l) {
+  Refl(List(Nat), Cons(a, l))
+}
+```
+checks_all = "checked"
+
+@ cases.list-patterns-cover-what-they-expand-to
+source = ```tauto
+fn f(l: List(i64)): i64 {
+  match l {
+    [] => 0
+    [x, y, ..rest] => x
+  }
+}
+```
+types = "error: the `match` does not cover every value"
+
+@ cases.list-rest-only-last-in-a-term
+parses = false
+source = "let a := [..xs, 1]"
+
+@ cases.list-rest-only-last-in-a-term-2
+parses = false
+source = "let a := [1, ..xs, 2]"
+
+@ cases.list-rest-only-last-in-a-pattern
+parses = false
+source = ```tauto
+fn f(l: List(i64)): i64 {
+  match l {
+    [..rest, x] => x
+  }
+}
+```
+
+@ cases.list-rest-pattern-is-a-name
+parses = false
+source = ```tauto
+fn f(l: List(i64)): i64 {
+  match l {
+    [x, ..Cons(y, r)] => x
+  }
+}
+```

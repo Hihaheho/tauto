@@ -1,0 +1,102 @@
+description = "A function and a macro in another file do not change the identity of the polymorphic show effect."
+@ cases.check-alone
+source = ```tauto
+pub fn check(name: Text, ok: Bool): Unit ! {∀ A. show(A)} {
+  if ok { perform show(name, "ok") } else { perform show(name, "FAILED") }
+}
+```
+checks.check = "skipped"
+diagnostics = []
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.control
+entry = "src/main.taut"
+files."Tauto.eure" = 'package { name = "show-macro-repro" version = "0.1.0" }'
+files."src/check.taut" = ```tauto
+pub fn check(name: Text, ok: Bool): Unit ! {∀ A. show(A)} {
+  if ok { perform show(name, "ok") } else { perform show(name, "FAILED") }
+}
+```
+files."src/main.taut" = ```tauto
+import "check.taut"
+check("example", true)
+```
+checks.check = "skipped"
+diagnostics = []
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.macro-loaded
+entry = "src/main.taut"
+files."Tauto.eure" = 'package { name = "show-macro-repro" version = "0.1.0" }'
+files."src/check.taut" = ```tauto
+pub fn check(name: Text, ok: Bool): Unit ! {∀ A. show(A)} {
+  if ok { perform show(name, "ok") } else { perform show(name, "FAILED") }
+}
+```
+files."src/macros.taut" = ```tauto
+import std::prelude::Macro
+fn show(): Bool { true }
+macro fn example(e: SynExpr): SynExpr { quote { show() } }
+```
+files."src/main.taut" = ```tauto
+import std::prelude::Macro
+import "macros.taut"
+import "check.taut"
+check("example", true)
+```
+checks.check = "skipped"
+diagnostics = []
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.macro-called
+entry = "src/main.taut"
+files."Tauto.eure" = 'package { name = "show-macro-repro" version = "0.1.0" }'
+files."src/check.taut" = ```tauto
+pub fn check(name: Text, ok: Bool): Unit ! {∀ A. show(A)} {
+  if ok { perform show(name, "ok") } else { perform show(name, "FAILED") }
+}
+```
+files."src/macros.taut" = ```tauto
+import std::prelude::Macro
+fn show(): Bool { true }
+macro fn example(e: SynExpr): SynExpr { quote { show() } }
+```
+files."src/main.taut" = ```tauto
+import std::prelude::Macro
+import "macros.taut"
+import "check.taut"
+check("example", example!(true))
+```
+checks.check = "skipped"
+diagnostics = []
+types = "ok"
+rows = "ok"
+lin = "ok"
+
+@ cases.function-loaded
+entry = "src/main.taut"
+files."Tauto.eure" = 'package { name = "show-macro-repro" version = "0.1.0" }'
+files."src/check.taut" = ```tauto
+pub fn check(name: Text, ok: Bool): Unit ! {∀ A. show(A)} {
+  if ok { perform show(name, "ok") } else { perform show(name, "FAILED") }
+}
+```
+files."src/macros.taut" = ```tauto
+fn show(): Bool { true }
+```
+files."src/main.taut" = ```tauto
+import "macros.taut"
+import "check.taut"
+check("example", true)
+```
+checks.check = "skipped"
+diagnostics = []
+types = "ok"
+rows = "ok"
+lin = "ok"

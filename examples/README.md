@@ -34,6 +34,8 @@ program. Axiom-free checking is covered by `cases/check/verified-examples.eure` 
 - `effect-proofs/`: algebraic completion effects whose handler calls the same proved transition; stale responses leave the state unchanged, while current responses update it. Its Japanese README states the handler and extraction trust boundary.
 - `calc/`: reads arithmetic from text with an `inductive_syntax!` and compiles it with `compiler/`; the step from the tree to the code is proved.
 - `typed-lang/`: a small typed expression language. `inductive_syntax!` makes the parser and tree from a grammar, `mode!` makes the type checker from the typing rules (sound, complete, unique), and the type safety of the evaluator is proved by hand. See its Japanese README.
+- `bounded-batch/`: a queue snapshot split into a bounded batch and the remaining jobs, with
+  proofs of order/duplicate preservation and size, source-bundle replay, and four-backend comparison.
 - `certified-state/`: state transitions with `std/State.taut`; each command is proved to keep the
   invariant, and the program writes the checked transition's result into a mutable cell.
 - `wf/`: functions by well-founded recursion (`decreasing_by`), with proofs from their unfolding equations.

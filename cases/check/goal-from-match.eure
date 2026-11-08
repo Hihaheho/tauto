@@ -1,0 +1,79 @@
+@ cases.a-goal-written-before-a-match-is-its-result-type
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+theorem via(
+  f: (Nat) -> Ordering,
+  g: (Nat) -> Ordering,
+  n: Nat,
+  h: g(n) = f(n)
+): Or(g(n) = Less, Or(g(n) = Equal, g(n) = Greater)) {
+  ⊢ Or(g(n) = Less, Or(g(n) = Equal, g(n) = Greater)) from match f(n) eqn e {
+    Less => OrInl(h)
+    Equal => OrInr(OrInl(h))
+    Greater => OrInr(OrInr(h))
+  }
+}
+```
+checks_all = "ok"
+checks.via = "ok"
+
+@ cases.a-goal-on-an-arm-is-the-result-type-of-the-match-in-it
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+theorem both(a: Bool, b: Bool): Or(a = true, a = false) {
+  ⊢ Or(a = true, a = false) from match a {
+    true => ⊢ Or(true = true, true = false) from match b {
+      true => OrInl(Refl)
+      false => OrInl(Refl)
+    }
+    false => OrInr(Refl)
+  }
+}
+```
+checks_all = "ok"
+checks.both = "ok"
+
+@ cases.a-goal-before-a-term-that-is-not-a-match-checks-the-term-against-it
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+theorem refl_nat(n: Nat): n = n {
+  ⊢ n = n from Refl
+}
+```
+checks_all = "ok"
+checks.refl_nat = "ok"
+
+@ cases.the-type-after-the-scrutinee-is-the-scrutinee-s-type
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+fn flip(b: Bool): Bool {
+  match b: Bool {
+    true => false
+    false => true
+  }
+}
+```
+checks_all = "ok"
+checks.flip = "ok"
+
+@ cases.the-type-after-the-scrutinee-is-not-the-result-type
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+fn count(b: Bool): Nat {
+  match b: Nat {
+    true => 1
+    false => 0
+  }
+}
+```
+checks.count = "error: `Bool` is not `Nat`"

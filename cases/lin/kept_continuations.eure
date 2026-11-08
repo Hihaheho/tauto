@@ -1,0 +1,319 @@
+// Continuations kept in a storage: the cycle check reads what they hold
+// (`docs/design/shared-levels.md`).
+
+@ cases.a-generator-kept-in-a-mutex-runs
+source = ```nib
+import std::prelude::Par
+
+effect tick(n: i64): Unit
+affine enum S { Done, More(i64, affine (Unit) -> S ! {}) }
+fn gen(n: i64): S ! {} {
+  handle {
+    perform tick(n)
+    perform tick(n + 1)
+  } with {
+    return _ => Done
+    tick(x), k => More(x, k)
+  }
+}
+fn step(m: Mutex(S)): i64 {
+  match Mutex::take(m) {
+    More(x, k) => {
+      Mutex::put(m, k(#()))
+      x
+    }
+    Done => {
+      Mutex::put(m, Done)
+      0
+    }
+  }
+}
+let m := Mutex::new(gen(1))
+let a := step(m)
+let b := step(m)
+let c := step(m)
+perform show("a", a)
+perform show("b", b)
+perform show("c", c)
+```
+lin = "ok"
+shows = ["a = 1", "b = 2", "c = 0"]
+
+@ cases.a-multi-shot-continuation-kept-in-a-mutex-runs
+source = ```nib
+import std::prelude::Par
+
+effect choose(): Bool resume ω
+enum S { Done(i64), More((Bool) -> S ! {}) }
+fn pick(): S ! {} {
+  handle {
+    let b := perform choose()
+    if b { 10 } else { 20 }
+  } with {
+    return v => Done(v)
+    choose(), k => More(k)
+  }
+}
+fn run(s: S, b: Bool): i64 {
+  match s {
+    More(k) => match k(b) {
+      Done(v) => v
+      More(_) => 0
+    }
+    Done(v) => v
+  }
+}
+let m := Mutex::new(pick())
+let s := Mutex::take(m)
+perform show("t", run(s, true))
+perform show("f", run(s, false))
+Mutex::put(m, s)
+```
+lin = "ok"
+shows = ["t = 10", "f = 20"]
+
+@ cases.a-kept-continuation-shows-where-it-is-resumed
+// What the body performs and does not handle goes to the code that resumes it.
+source = ```nib
+effect tick(): Unit
+affine enum S { Done, More(affine (Unit) -> S ! {∀ A. show(A)}) }
+fn say(n: i64): Unit ! {∀ A. show(A)} { perform show("b", n) }
+fn gen(): S {
+  handle {
+    perform show("a", 1)
+    perform tick()
+    say(2)
+    perform tick()
+    perform show("c", 3)
+    Done
+  } with {
+    return s => s
+    tick(), k => More(k)
+  }
+}
+fn step(s: S): S ! {∀ A. show(A)} {
+  match s { More(k) => k(#()), Done => Done }
+}
+let s0 := gen()
+let s1 := step(s0)
+let s2 := step(s1)
+perform show("end", 0)
+```
+lin = "ok"
+shows = ["a = 1", "b = 2", "c = 3", "end = 0"]
+
+@ cases.a-kept-continuation-meets-the-direct-handlers-of-its-resumer
+// A `direct` handler inside the body is part of the continuation; the one
+// around each resume answers what goes out of it.
+source = ```nib
+effect tick(): Unit
+effect log(n: i64): Unit direct
+affine enum S { Done, More(affine (Unit) -> S ! {log}) }
+fn gen(): S {
+  handle {
+    perform log(1)
+    perform tick()
+    handle {
+      perform log(2)
+      perform tick()
+      perform log(3)
+    } with {
+      log(n), k => k(perform log(n * 10))
+    }
+    Done
+  } with {
+    return s => s
+    tick(), k => More(k)
+  }
+}
+fn step(s: S, tag: i64): S {
+  handle {
+    match s { More(k) => k(#()), Done => Done }
+  } with {
+    log(n), k => k(perform show("log", tag * 1000 + n))
+  }
+}
+let s0 := handle { gen() } with { log(n), k => k(perform show("first", n)) }
+let s1 := step(s0, 1)
+let s2 := step(s1, 2)
+perform show("end", 0)
+```
+lin = "ok"
+shows = ["first = 1", "log = 1020", "log = 2030", "end = 0"]
+
+@ cases.a-kept-multi-shot-continuation-shows-each-time
+source = ```nib
+effect choose(): Bool resume ω
+enum S { Done(i64), More((Bool) -> S ! {∀ A. show(A)}) }
+fn pick(): S {
+  handle {
+    let b := perform choose()
+    perform show("b", b)
+    if b { 10 } else { 20 }
+  } with {
+    return v => Done(v)
+    choose(), k => More(k)
+  }
+}
+fn run(s: S, b: Bool): i64 ! {∀ A. show(A)} {
+  match s {
+    More(k) => match k(b) { Done(v) => v, More(_) => 0 }
+    Done(v) => v
+  }
+}
+let s := pick()
+perform show("t", run(s, true))
+perform show("f", run(s, false))
+```
+lin = "ok"
+shows = ["b = true", "t = 10", "b = false", "f = 20"]
+
+@ cases.a-kept-continuation-that-calls-a-showing-function-value
+// The Rust backend gives a function value its handlers at the call, which
+// a kept continuation does not hold.
+backend_known_failure.rust = "unsupported: a function value that performs a direct operation"
+source = ```nib
+effect tick(): Unit
+affine enum S { Done, More(affine (Unit) -> S ! {∀ A. show(A)}) }
+fn each(f: (i64) -> Unit ! {∀ A. show(A)}): Unit ! {∀ A. show(A)} { f(1); f(2) }
+fn gen(): S {
+  handle {
+    perform tick()
+    each((n) => perform show("n", n))
+    Done
+  } with {
+    return s => s
+    tick(), k => More(k)
+  }
+}
+match gen() { More(k) => { let _ := k(#()) }, Done => #() }
+```
+lin = "ok"
+shows = ["n = 1", "n = 2"]
+
+@ cases.a-continuation-whose-body-holds-its-mutex-is-a-cycle
+source = ```nib
+effect tick(): Unit
+affine enum S { Done, More(affine (Unit) -> S ! {}) }
+let m := Mutex::new(Done)
+let s := handle {
+  perform tick()
+  Mutex::put(m, Done)
+} with {
+  return _ => Done
+  tick(), k => More(k)
+}
+Mutex::put(m, s)
+```
+lin = "error: strong reference cycle"
+
+@ cases.a-continuation-holds-the-frames-it-was-performed-in
+source = ```nib
+effect tick(): Unit
+affine enum S { Done, More(affine (Unit) -> S ! {}) }
+fn inner(q: Mutex(S)): Unit ! {tick} {
+  perform tick()
+  Mutex::put(q, Done)
+}
+fn top(): Unit {
+  let m := Mutex::new(Done)
+  let s := handle { inner(m) } with {
+    return _ => Done
+    tick(), k => More(k)
+  }
+  Mutex::put(m, s)
+}
+```
+lin = "error: strong reference cycle"
+
+@ cases.a-continuation-holds-the-scope-of-its-handle
+// The frames of the body hold the scope around the `handle`, used or not.
+source = ```nib
+effect tick(): Unit
+affine enum S { Done, More(affine (Unit) -> S ! {}) }
+let m := Mutex::new(Done)
+let s := handle {
+  perform tick()
+  Done
+} with {
+  return _ => Done
+  tick(), k => More(k)
+}
+Mutex::put(m, s)
+```
+lin = "error: strong reference cycle"
+
+@ cases.an-arm-that-keeps-its-continuation-in-a-mutex-it-sees-is-a-cycle
+// A resume reinstalls the handler, and the handler holds the mutex.
+source = ```nib
+effect tick(): Unit
+affine enum S { Done, More(affine (Unit) -> S ! {}) }
+fn top(): Unit {
+  let m := Mutex::new(Done)
+  let t := handle {
+    perform tick()
+    Done
+  } with {
+    tick(), k => {
+      Mutex::put(m, More(k))
+      Done
+    }
+  }
+}
+```
+lin = "error: strong reference cycle"
+
+@ cases.a-finished-call-is-not-on-the-stack-of-a-kept-continuation
+// `holder` returned before `tick`, and its row has no effect a kept
+// continuation captures, so its frame is not held.
+source = ```nib
+import std::prelude::Par
+effect tick(): Unit
+effect slot(): Mutex(S) direct
+affine enum S { Done, More(affine (Unit) -> S ! {slot}) }
+fn holder(): Unit ! {slot} { Mutex::put(perform slot(), Done) }
+fn through<!e>(f: () -> Unit ! e): Unit ! e { f() }
+fn body(): S ! {slot, tick} { holder(); perform tick(); Done }
+fn gen(): S ! {slot} {
+  handle { body() } with {
+    return _ => Done
+    tick(), k => More(k)
+  }
+}
+fn top(): Unit {
+  let m := Mutex::new(Done)
+  let s := handle { gen() } with {
+    slot(), k => k(m)
+  }
+  Mutex::put(m, s)
+}
+top()
+```
+lin = "ok"
+
+@ cases.a-call-that-can-suspend-is-on-the-stack-of-a-kept-continuation
+// `body` performs `tick` while it holds `q`, so `k` holds the mutex.
+source = ```nib
+import std::prelude::Par
+effect tick(): Unit
+effect slot(): Mutex(S) direct
+affine enum S { Done, More(affine (Unit) -> S ! {slot}) }
+fn holder(): Unit ! {slot} { Mutex::put(perform slot(), Done) }
+fn through<!e>(f: () -> Unit ! e): Unit ! e { f() }
+fn body(): S ! {slot, tick} { let q := perform slot(); perform tick(); Mutex::put(q, Done); Done }
+fn gen(): S ! {slot} {
+  handle { body() } with {
+    return _ => Done
+    tick(), k => More(k)
+  }
+}
+fn top(): Unit {
+  let m := Mutex::new(Done)
+  let s := handle { gen() } with {
+    slot(), k => k(m)
+  }
+  Mutex::put(m, s)
+}
+top()
+```
+lin = "error: strong reference cycle"

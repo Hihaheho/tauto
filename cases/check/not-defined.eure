@@ -1,0 +1,249 @@
+@ cases.a-name-declared-further-on-is-checked-first-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn early(n: Nat): Nat { late(n) }
+
+theorem early_zero(): early(Zero) = Zero { Refl }
+
+fn late(n: Nat): Nat { n }
+```
+
+checks_all = "ok"
+checks."input/main.taut::early" = "ok"
+checks."input/main.taut::early_zero" = "ok"
+checks."input/main.taut::late" = "ok"
+
+@ cases.declarations-that-use-each-other-outside-mutual-say-so-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn early(n: Nat): Nat { late(n) }
+
+fn late(n: Nat): Nat { early(n) }
+
+fn other(n: Nat): Nat { last(n) }
+
+fn last(n: Nat): Nat { n }
+```
+
+checks_all = "ok"
+checks."input/main.taut::early" = "error: "
+checks."input/main.taut::late" = "error: "
+checks."input/main.taut::other" = "ok"
+checks."input/main.taut::last" = "ok"
+@ cases.declarations-that-use-each-other-outside-mutual-say-so-0.diagnostics[]
+file = "input/main.taut"
+name = "early"
+message = "`late` is not defined yet: it is declared further on, and it uses this declaration, directly or through others; declarations that use each other are written together in a `mutual` block"
+span = "{ «late»("
+@ cases.declarations-that-use-each-other-outside-mutual-say-so-0.diagnostics[]
+file = "input/main.taut"
+name = "late"
+message = "uses `early`, which did not check"
+span = "«early(n)»"
+
+@ cases.a-struct-used-in-a-proof-says-to-declare-an-inductive-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+struct Pt { x: Nat }
+
+theorem pt_refl(p: Pt): Zero = Zero { Refl }
+```
+
+checks_all = "ok"
+checks."input/main.taut::pt_refl" = "error: "
+@ cases.a-struct-used-in-a-proof-says-to-declare-an-inductive-0.diagnostics[]
+file = "input/main.taut"
+name = "pt_refl"
+message = "`Pt` is not defined in proofs: a `struct` or an `enum` is not one of the kernel's types; write `inductive` before it (`inductive struct`, `inductive enum`) to use it here"
+span = " «Pt»)"
+
+@ cases.a-use-of-a-declaration-whose-type-did-not-check-says-so-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn get_skip(n: Nat): n { n }
+
+fn user(n: Nat): Nat { get_skip(n) }
+```
+
+checks_all = "ok"
+checks."input/main.taut::get_skip" = "error: "
+checks."input/main.taut::user" = "error: "
+@ cases.a-use-of-a-declaration-whose-type-did-not-check-says-so-0.diagnostics[]
+file = "input/main.taut"
+name = "get_skip"
+message = "`n` is not a type"
+span = ": «n» "
+@ cases.a-use-of-a-declaration-whose-type-did-not-check-says-so-0.diagnostics[]
+file = "input/main.taut"
+name = "user"
+message = "uses `get_skip`, which did not check"
+span = "{ «get_skip»("
+
+@ cases.a-use-of-a-failed-mutual-theorem-says-so-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+def P<A: Type>(a: A, n: Nat): Prop := n = n
+
+mutual {
+  theorem ev(n: Nat): P(n, n) {
+    ⊢ P(n, n) from match n {
+      Zero => Refl
+      Succ(k) => od(Zero)
+    }
+  }
+  theorem od(n: Nat): P(n, Succ(n)) {
+    ⊢ P(n, Succ(n)) from match n {
+      Zero => Refl
+      Succ(k) => ev(k)
+    }
+  }
+}
+
+theorem use_ev(n: Nat): P(n, n) { ev(n) }
+```
+
+checks_all = "ok"
+checks."input/main.taut::P" = "ok"
+checks."input/main.taut::ev" = "error: "
+checks."input/main.taut::od" = "error: "
+checks."input/main.taut::use_ev" = "error: "
+@ cases.a-use-of-a-failed-mutual-theorem-says-so-0.diagnostics[]
+file = "input/main.taut"
+name = "ev"
+message = "`od(Zero)` is not structural: `od` matches on its parameter `n`, so the argument for `n` is a part of the value matched here (a field, a field of a field matched in the arm, a function-typed field applied to all its arguments, or a part matched in the arm written as the arm's constructor), and `Zero` is not. Pass a variable bound by a pattern of the `match` on `n` (a field of the value) for `n`"
+span = "«od(Zero)»"
+@ cases.a-use-of-a-failed-mutual-theorem-says-so-0.diagnostics[]
+file = "input/main.taut"
+name = "od"
+message = "`od(Zero)` is not structural: `od` matches on its parameter `n`, so the argument for `n` is a part of the value matched here (a field, a field of a field matched in the arm, a function-typed field applied to all its arguments, or a part matched in the arm written as the arm's constructor), and `Zero` is not. Pass a variable bound by a pattern of the `match` on `n` (a field of the value) for `n`"
+span = "«od(Zero)»"
+@ cases.a-use-of-a-failed-mutual-theorem-says-so-0.diagnostics[]
+file = "input/main.taut"
+name = "use_ev"
+message = "uses `ev`, which did not check"
+span = "«theorem use_ev(n: Nat): P(n, n) { ev(n) }»"
+
+@ cases.a-function-that-runs-as-written-says-why-in-a-proof-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn t(): Text { "hi" }
+
+theorem t_refl(): t() = t() { Refl }
+```
+
+checks_all = "ok"
+checks."input/main.taut::t" = "skipped"
+checks."input/main.taut::t_refl" = "error: "
+@ cases.a-function-that-runs-as-written-says-why-in-a-proof-0.diagnostics[]
+file = "input/main.taut"
+name = "t_refl"
+message = "`t` is not defined in proofs: it runs as written and is not checked by the kernel, because it uses `Text`, which runs as written: it is a built-in of the prelude; it is in the standard library: `import std::Text`; a proof uses only what the kernel checked; when a kernel declaration of that name was meant, import it where the name is written: a name a macro's `quote` writes means what the macro's own file sees"
+span = "«t»() ="
+@ cases.a-function-that-runs-as-written-says-why-in-a-proof-0.diagnostics[]
+file = "input/main.taut"
+name = "t_refl"
+message = "`t` is not defined in proofs: it runs as written and is not checked by the kernel, because it uses `Text`, which runs as written: it is a built-in of the prelude; it is in the standard library: `import std::Text`; a proof uses only what the kernel checked; when a kernel declaration of that name was meant, import it where the name is written: a name a macro's `quote` writes means what the macro's own file sees"
+span = "= «t»()"
+
+@ cases.a-function-of-a-file-without-the-import-means-the-builtin-0
+entry = "input/main.taut"
+files."input/lib.taut" = ```tauto
+pub fn show_path(n: Nat): Text { Text::of_nat(n) }
+```
+files."input/main.taut" = ```tauto
+import std::Text
+import "lib.taut"
+
+theorem shown(): show_path(42) = "42" { Refl(Text, "42") }
+```
+files."input/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/68042a765101c218e18f2287df9e40744f0c82afa9e33fa7f1a5150c5dd6e011.tables`
+files."input/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/de0f4cb98b624e291bdc49d8877eaa936ccc4a26b3371d17270d4ba64e6c9791.tables`
+files."input/.tauto-syntax/0442206936ab8619f1825b015a599181368844d934775e202b7f8ffeeafd7bbc.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/0442206936ab8619f1825b015a599181368844d934775e202b7f8ffeeafd7bbc.tables`
+files."input/.tauto-syntax/bf312ce6787529a699581c388659b45282560a771a1173f30b476be713b94dd0.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/bf312ce6787529a699581c388659b45282560a771a1173f30b476be713b94dd0.tables`
+files."input/.tauto-syntax/815e83a9c712310879ba006b2a96d5253d2f5fe23563c51b0436af78e16239a4.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/815e83a9c712310879ba006b2a96d5253d2f5fe23563c51b0436af78e16239a4.tables`
+files."input/.tauto-syntax/d47d6b952cf70281395b77d5b02c41432a000a0d194d476decce1cad470cf951.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/d47d6b952cf70281395b77d5b02c41432a000a0d194d476decce1cad470cf951.tables`
+files."input/.tauto-syntax/7a04e69a7f1a1a212182c13e462121e239681beac367537d3edaadcd2ddcd1ae.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/7a04e69a7f1a1a212182c13e462121e239681beac367537d3edaadcd2ddcd1ae.tables`
+files."input/.tauto-syntax/b86f53836c1c73c63bc2cafa5aef421cbe7ea84ad052a16d711e2a5dadfcaec4.tables" = path`../../crates/tauto/tests/syntax_fixtures/.tauto-syntax/b86f53836c1c73c63bc2cafa5aef421cbe7ea84ad052a16d711e2a5dadfcaec4.tables`
+
+checks."input/main.taut::shown" = "error: "
+@ cases.a-function-of-a-file-without-the-import-means-the-builtin-0.diagnostics[]
+file = "input/main.taut"
+name = "shown"
+message = "`show_path` is not defined in proofs: it runs as written and is not checked by the kernel, because it uses `Text::of_nat`, which runs as written: it is a built-in of the prelude; it is in the standard library: `import std::Text`; a proof uses only what the kernel checked; when a kernel declaration of that name was meant, import it where the name is written: a name a macro's `quote` writes means what the macro's own file sees"
+span = "«show_path»"
+
+@ cases.a-proof-states-facts-about-a-program-enum-and-struct-0
+description = "an `inductive enum` and an `inductive struct` are inductive families of the same shape, so the functions over them are checked and a proof can use them"
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::Text
+
+inductive enum Route {
+  Home
+  About
+  Post(Nat)
+}
+
+inductive struct Link {
+  to: Route
+  label: Text
+}
+
+fn segments(r: Route): List(Text) {
+  match r {
+    Home => Nil
+    About => Cons("about", Nil)
+    Post(id) => Cons("posts", Cons(Text::of_nat(id), Nil))
+  }
+}
+
+fn route(segs: List(Text)): Option(Route) {
+  match segs {
+    Nil => Some(Home)
+    Cons(a, rest) => match rest {
+      Nil => if a == "about" { Some(About) } else { None }
+      Cons(b, more) => None
+    }
+  }
+}
+
+fn target(l: Link): List(Text) { segments(l.to) }
+
+theorem about_back(): route(segments(About)) = Some(About) { Refl }
+
+theorem link_home(): target(Link { to: Home, label: "home" }) = Nil { Refl }
+```
+
+checks_all = "ok"
+checks."input/main.taut::segments" = "ok"
+checks."input/main.taut::route" = "ok"
+checks."input/main.taut::target" = "ok"
+checks."input/main.taut::about_back" = "ok"
+checks."input/main.taut::link_home" = "ok"
+
+@ cases.an-enum-without-inductive-runs-as-written-0
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+enum Id {
+  Named(u64)
+}
+
+fn same(i: Id): Id { i }
+
+theorem same_refl(i: Id): same(i) = i { Refl }
+```
+
+checks_all = "ok"
+checks."input/main.taut::same" = "skipped"
+checks."input/main.taut::same_refl" = "error: "
+@ cases.an-enum-without-inductive-runs-as-written-0.diagnostics[]
+file = "input/main.taut"
+name = "same_refl"
+message = "`same` is not defined in proofs: it runs as written and is not checked by the kernel, because it uses `Id`, which runs as written: it is an `enum`, not one of the kernel's types; write `inductive enum` for the proofs to see it; a proof uses only what the kernel checked"
+span = ": «same»("

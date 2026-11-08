@@ -13,7 +13,7 @@ pub theorem allocated_named_substitution(
   values: GenericMapAllocated(limit, map),
   mapped: TypeListAllocated(limit, ty_map_list(params, map))
 ): TypeAllocated(limit, ty_substitute(TyNamed(name, params), map)) {
-  match params: TypeAllocated(limit, ty_substitute(TyNamed(name, params), map)) {
+  ⊢ TypeAllocated(limit, ty_substitute(TyNamed(name, params), map)) from match params {
     Nil => allocated_substitute_name(limit, map, name, TyNamed(name, Nil), Trivial, values)
     Cons(first, rest) => mapped
   }
@@ -27,7 +27,7 @@ mutual {
     values: GenericMapAllocated(limit, map),
     allocated: TypeAllocated(limit, ty)
   ): TypeAllocated(limit, ty_substitute(ty, map)) {
-    match ty: TypeAllocated(limit, ty_substitute(ty, map)) {
+    ⊢ TypeAllocated(limit, ty_substitute(ty, map)) from match ty {
       TyInt(width) => Trivial
       TyBool => Trivial
       TyText => Trivial
@@ -106,7 +106,7 @@ mutual {
     values: GenericMapAllocated(limit, map),
     allocated: TypeListAllocated(limit, types)
   ): TypeListAllocated(limit, ty_map_list(types, map)) {
-    match types: TypeListAllocated(limit, ty_map_list(types, map)) {
+    ⊢ TypeListAllocated(limit, ty_map_list(types, map)) from match types {
       Nil => Trivial
       Cons(head, tail) => AndIntro(
         allocated_substitute(head, limit, map, ordered, values, And::left(allocated)),

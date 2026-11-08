@@ -1,0 +1,93 @@
+@ cases.a-field-projection-in-a-theorem-type-is-the-match-a-body-gets
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."Data.taut" = path`../../std/Data.taut`
+files."main.nib" = ```tauto
+import "Data.taut"
+theorem first<A: Type>(p: Pair(A, A)): p.fst = Pair::fst(p) { Refl(A, Pair::fst(p)) }
+theorem assumed<A: Type>(p: Pair(A, A), h: p.fst = p.snd): Pair::fst(p) = p.snd { h }
+theorem under_forall<A: Type>(p: Pair(A, A)): ∀ q: Pair(A, A). ∀ h: (p.fst = q.fst). Pair::fst(p) = q.fst {
+  (q, h) => h
+}
+theorem matched<A: Type>(p: Pair(A, A)): (⊢ A from match p { Pair { fst: x, snd: y } => x }) = p.fst {
+  Refl(A, Pair::fst(p))
+}
+theorem wrong<A: Type>(p: Pair(A, A)): p.fst = p.snd { Refl(A, p.fst) }
+theorem missing<A: Type>(p: Pair(A, A)): p.nope = p.snd { Refl(A, p.snd) }
+```
+checks.first = "ok"
+checks.assumed = "ok"
+checks.under_forall = "ok"
+checks.matched = "ok"
+checks.wrong = "error: type mismatch"
+checks.missing = "error: `Pair` has no field `nope`"
+
+@ cases.implicit-type-arguments-are-found-through-a-local-function-and-none
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."Data.taut" = path`../../std/Data.taut`
+files."main.nib" = ```tauto
+import "Data.taut"
+inductive Box(A: Type): Type {
+  Mk(a: A): Box(A)
+}
+theorem same<A: Type>(s: Box(A), q: Pair(Option(A), Box(A))): q = q {
+  Refl(Pair(Option(A), Box(A)), q)
+}
+theorem through_local<A: Type>(
+  s: Box(A),
+  next: (Box(A)) -> Pair(Option(A), Box(A))
+): next(s) = next(s) {
+  same(s, next(s))
+}
+theorem through_none<A: Type>(s: Box(A)): Eq(Pair(Option(A), Box(A)), Pair { fst: None, snd: s }, Pair { fst: None, snd: s }) {
+  same(s, Pair { fst: None, snd: s })
+}
+theorem none_alone<A: Type>(a: A): Option::or(None, Some(a)) = Some(a) { Refl(Option(A), Some(a)) }
+```
+checks.through_local = "ok"
+checks.through_none = "ok"
+checks.none_alone = "ok"
+
+@ cases.a-field-projection-under-a-lambda-in-a-theorem-type
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."Data.taut" = path`../../std/Data.taut`
+files."main.nib" = ```tauto
+import "Data.taut"
+theorem lam<A: Type>(p: Pair(A, A)): ((e: Pair(A, A)) => e.snd)(p) = Pair::snd(p) { Refl(A, Pair::snd(p)) }
+theorem arrow<A: Type>(p: Pair(A, A)): (p.fst = p.snd) -> (⊢ A from match p { Pair { fst: x, snd: y } => x }) = p.fst {
+  (h) => Refl(A, Pair::fst(p))
+}
+theorem keep<A: Type>(m: (Pair(A, A)) -> Type, p: Pair(A, A), h: m(p)): m(p) { h }
+theorem motive<A: Type>(p: Pair(A, A), h: (p.fst = p.snd) -> (Pair::fst(p) = p.snd)): (p.fst = p.snd) -> (Pair::fst(p) = p.snd) {
+  keep(A, (c: Pair(A, A)) => (c.fst = c.snd) -> (⊢ A from match c { Pair { fst: x, snd: y } => x }) = c.snd, p, h)
+}
+```
+checks.lam = "ok"
+checks.motive = "ok"
+checks.arrow = "ok"
+
+@ cases.a-field-projection-under-an-exists-in-a-theorem-type
+entry = "main.taut"
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."Data.taut" = path`../../std/Data.taut`
+files."Url.taut" = ```tauto
+import "Data.taut"
+inductive struct Url {
+  query: Nat
+  path: Nat
+}
+```
+files."main.taut" = ```tauto
+import "Url.taut"
+theorem witness(t: Url): ∃ n: Nat. n = t.query { ExIntro(Nat, (n: Nat) => n = t.query, t.query, Refl(Nat, t.query)) }
+theorem bound<A: Type>(p: Pair(A, A)): ∃ q: Pair(A, A). q.fst = p.fst {
+  ExIntro(Pair(A, A), (q: Pair(A, A)) => q.fst = p.fst, p, Refl(A, p.fst))
+}
+theorem wrong(t: Url): ∃ n: Nat. n = t.query { ExIntro(Nat, (n: Nat) => n = t.query, t.path, Refl(Nat, t.path)) }
+```
+checks.witness = "ok"
+checks.bound = "ok"
+checks.wrong = "error: type mismatch"

@@ -1,0 +1,65 @@
+@ cases.a-predicate-that-computes-to-no-shows-the-value-it-was-given
+entry = "main.taut"
+files."main.taut" = ```tauto
+inductive enum Res { Ok, Bad(Nat, Nat) }
+fn first_bad(a: List(Nat), b: List(Nat)): Res {
+  ⊢ Res from match a {
+    Nil => Ok,
+    Cons(x, r) => ⊢ Res from match b {
+      Nil => Ok,
+      Cons(y, s) => ⊢ Res from match Nat::eq(x, y) { true => first_bad(r, s), false => Bad(x, y) }
+    }
+  }
+}
+fn is_ok(r: Res): Bool { ⊢ Bool from match r { Ok => true, Bad(x, y) => false } }
+fn ResOk(r: Res): Prop { is_ok(r) = true }
+theorem r#direct(): is_ok(first_bad([2, 3], [4, 3])) = true { Refl }
+theorem through_a_name(): ResOk(first_bad([2, 3], [4, 3])) { Refl }
+theorem passes(): ResOk(first_bad([2, 3], [2, 3])) { Refl }
+```
+checks_all = "ok"
+checks."main.taut::direct" = "error: "
+checks."main.taut::through_a_name" = "error: "
+@ cases.a-predicate-that-computes-to-no-shows-the-value-it-was-given.diagnostics[]
+file = "main.taut"
+name = "direct"
+message = "type mismatch: expected `is_ok(first_bad(List::Cons(Nat, 2, List::Cons(Nat, 3, List::Nil(Nat))), List::Cons(Nat, 4, List::Cons(Nat, 3, List::Nil(Nat))))) = true`, found `is_ok(first_bad(List::Cons(Nat, 2, List::Cons(Nat, 3, List::Nil(Nat))), List::Cons(Nat, 4, List::Cons(Nat, 3, List::Nil(Nat))))) = is_ok(first_bad(List::Cons(Nat, 2, List::Cons(Nat, 3, List::Nil(Nat))), List::Cons(Nat, 4, List::Cons(Nat, 3, List::Nil(Nat)))))`\n  differing part: expected `true`, found `false`\n  the found `false` is computed from `is_ok(Res::Bad(2, 4))`"
+span = "true { «Refl» }\n"
+@ cases.a-predicate-that-computes-to-no-shows-the-value-it-was-given.diagnostics[]
+file = "main.taut"
+name = "through_a_name"
+message = "type mismatch: expected `is_ok(first_bad(List::Cons(Nat, 2, List::Cons(Nat, 3, List::Nil(Nat))), List::Cons(Nat, 4, List::Cons(Nat, 3, List::Nil(Nat))))) = true`, found `is_ok(first_bad(List::Cons(Nat, 2, List::Cons(Nat, 3, List::Nil(Nat))), List::Cons(Nat, 4, List::Cons(Nat, 3, List::Nil(Nat))))) = is_ok(first_bad(List::Cons(Nat, 2, List::Cons(Nat, 3, List::Nil(Nat))), List::Cons(Nat, 4, List::Cons(Nat, 3, List::Nil(Nat)))))`\n  differing part: expected `true`, found `false`\n  the found `false` is computed from `is_ok(Res::Bad(2, 4))`"
+span = ") { «Refl» }\ntheorem"
+
+@ cases.nothing-more-is-said-when-the-arguments-do-not-compute
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn is_zero(n: Nat): Bool { ⊢ Bool from match n { Zero => true, Succ(m) => false } }
+theorem open(n: Nat): is_zero(Succ(n)) = true { Refl }
+```
+checks_all = "ok"
+checks."main.taut::open" = "error: "
+@ cases.nothing-more-is-said-when-the-arguments-do-not-compute.diagnostics[]
+file = "main.taut"
+name = "open"
+message = "type mismatch: expected `is_zero(Succ(n)) = true`, found `is_zero(Succ(n)) = is_zero(Succ(n))`\n  differing part: expected `true`, found `false`"
+span = "«Refl»"
+
+// A wrong argument to a hypothesis whose type applies a name that computes
+// deep: the parts that differ are found as written, without unfolding the
+// name and comparing what it unfolds to step by step.
+@ cases.a-wrong-argument-is-shown-as-written-under-a-name-that-computes-deep
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn p2(n: Nat): Nat { ⊢ Nat from match n { Zero => 1, Succ(m) => p2(m) + p2(m) } }
+fn big(s: Nat): Nat { p2(s + 60) }
+fn pos(x: Nat): Prop { Succ(Zero) = x }
+theorem wrong_argument(r: Nat, hb: (s: Nat) -> pos(big(s))): pos(big(r)) { hb(big(r)) }
+```
+checks_all = "ok"
+checks."main.taut::wrong_argument" = "error: "
+@ cases.a-wrong-argument-is-shown-as-written-under-a-name-that-computes-deep.diagnostics[]
+file = "main.taut"
+name = "wrong_argument"
+message = "type mismatch: expected `Succ(Zero) = big(r)`, found `Succ(Zero) = big(big(r))`\n  differing part: expected `r`, found `big(r)`"
+span = "«hb(big(r))»"

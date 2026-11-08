@@ -80,6 +80,7 @@ mutual
     | .text, v => ∃ s, v = .text s
     | .decimal, v => ∃ q, v = .dec q
     | .float, v => ∃ f, v = .flt f
+    | .float32, v => ∃ f, v = .flt32 f
     | .never, _ => False
     | .fn ps B ρ, v => Value v ∧ Inhab sg (.fn ps B ρ) v ∧ HasType sg S [] v (.fn ps B ρ) [] ∧
         (divEff ∈ ρ ∨ ∀ S' args, S <+: S' → Sems sg I S' ps args → ∀ μ, StoreSem sg S' μ →
@@ -226,6 +227,7 @@ mutual
     | .text, _, h => h
     | .decimal, _, h => h
     | .float, _, h => h
+    | .float32, _, h => h
     | .never, _, h => h
     | .info _ _, _, h => by
         obtain ⟨b, rfl, hb⟩ := h
@@ -274,6 +276,7 @@ mutual
     | .text, _, h => by obtain ⟨s, rfl⟩ := h; exact ⟨.text, .text⟩
     | .decimal, _, h => by obtain ⟨q, rfl⟩ := h; exact ⟨.dec, .dec⟩
     | .float, _, h => by obtain ⟨f, rfl⟩ := h; exact ⟨.flt, .flt⟩
+    | .float32, _, h => by obtain ⟨f, rfl⟩ := h; exact ⟨.flt32, .flt32⟩
     | .never, _, h => h.elim
     | .fn _ _ _, _, h => ⟨h.1, h.2.1⟩
     | .union ts, _, h => by
@@ -332,6 +335,7 @@ mutual
     | .text, _, h => by obtain ⟨s, rfl⟩ := h; exact .text
     | .decimal, _, h => by obtain ⟨q, rfl⟩ := h; exact .dec
     | .float, _, h => by obtain ⟨f, rfl⟩ := h; exact .flt
+    | .float32, _, h => by obtain ⟨f, rfl⟩ := h; exact .flt32
     | .never, _, h => h.elim
     | .fn _ _ _, _, h => h.2.2.1
     | .union ts, v, h => by
@@ -449,6 +453,7 @@ theorem HasType.sem_closed_aux (hI : Good sg I) :
     | text => obtain ⟨rfl, -⟩ := hh'; exact ⟨_, rfl⟩
     | dec => obtain ⟨rfl, -⟩ := hh'; exact ⟨_, rfl⟩
     | flt => obtain ⟨rfl, -⟩ := hh'; exact ⟨_, rfl⟩
+    | flt32 => obtain ⟨rfl, -⟩ := hh'; exact ⟨_, rfl⟩
     | prim => obtain ⟨rfl, -⟩ := hh'; exact absurd (by cases ‹Prim› <;> trivial) hfn
     | lam => obtain ⟨-, B, ρl, rfl, -⟩ := hh'; exact absurd trivial hfn
     | loc => obtain ⟨B, rfl, hl, -⟩ := hh'; exact ⟨_, rfl, hl⟩
@@ -701,6 +706,7 @@ mutual
     | .text => exact .text
     | .dec => exact .dec
     | .flt => exact .flt
+    | .flt32 => exact .flt32
     | .lam => exact .lam
     | .prim => exact .prim
     | .loc => exact .loc
@@ -764,6 +770,7 @@ theorem Owns.sem (hI : Good sg I) {d args A} (ho : Owns d args A) :
   | text => intro _ _ _ h; obtain ⟨_, h⟩ := h; cases h
   | decimal => intro _ _ _ h; obtain ⟨_, h⟩ := h; cases h
   | float => intro _ _ _ h; obtain ⟨_, h⟩ := h; cases h
+  | float32 => intro _ _ _ h; obtain ⟨_, h⟩ := h; cases h
   | fn => intro _ _ _ h; obtain ⟨-, h, -⟩ := h; cases h
   | cell => intro _ _ _ h; obtain ⟨_, h, -⟩ := h; cases h
   | brw => intro _ _ _ h; obtain ⟨_, h, -⟩ := h; cases h
@@ -1298,6 +1305,7 @@ mutual
     | .text _ => True
     | .dec _ => True
     | .flt _ => True
+    | .flt32 _ => True
     | .prim _ _ _ => True
     | .lam _ b => b.Basic
     | .app f args => f.Basic ∧ Tms.Basic args
@@ -1352,6 +1360,7 @@ mutual
     | .text _, _ => by simp [Tm.inst, Tm.Basic]
     | .dec _, _ => by simp [Tm.inst, Tm.Basic]
     | .flt _, _ => by simp [Tm.inst, Tm.Basic]
+    | .flt32 _, _ => by simp [Tm.inst, Tm.Basic]
     | .prim _ _ _, _ => by simp [Tm.inst, Tm.Basic]
     | .lam _ b, h => by simp only [Tm.inst, Tm.Basic] at h ⊢; exact Tm.Basic.inst θ (t := b) h
     | .app f args, h => by
@@ -1533,6 +1542,16 @@ theorem prim_sem (hI : Good sg I) (hbt : Builtins sg) (hsig : SigOk sg) (hdk : D
           cases hc : op.flt x y with
           | some c => exact .step (.floatArith hc) (List.prefix_refl _) (.val .flt hs ⟨c, rfl⟩)
           | none => exact .fault ⟨[], _, rfl, .flt hc, by simp⟩
+  | float32Arith op =>
+      simp only [Prim.ty, Sem]
+      refine ⟨.prim, .prim, .prim hp, Or.inr fun S' args _ ha μ hs => ?_⟩
+      match args, ha with
+      | [a, b], ha =>
+          simp only [Sems, Sem, and_true] at ha
+          obtain ⟨⟨x, rfl⟩, ⟨y, rfl⟩⟩ := ha
+          cases hc : op.flt32 x y with
+          | some c => exact .step (.float32Arith hc) (List.prefix_refl _) (.val .flt32 hs ⟨c, rfl⟩)
+          | none => exact .fault ⟨[], _, rfl, .flt32 hc, by simp⟩
   | decimal w =>
       simp only [Prim.ty, Sem]
       refine ⟨.prim, .prim, .prim hp, Or.inr fun S' args _ ha μ hs => ?_⟩
@@ -1645,6 +1664,7 @@ mutual
     | .text => exact .text
     | .dec => exact .dec
     | .flt => exact .flt
+    | .flt32 => exact .flt32
     | .lam hb => exact .lam (HasType.transfer hop hdata hdefs hb)
     | .app hf ha => exact .app (HasType.transfer hop hdata hdefs hf) (HasTypes.transfer hop hdata hdefs ha)
     | .ite hc ht hf =>
@@ -1724,6 +1744,7 @@ mutual
     | .text => simp only [Tm.subst]; exact Or.inr (.val .text hs ⟨_, rfl⟩)
     | .dec => simp only [Tm.subst]; exact Or.inr (.val .dec hs ⟨_, rfl⟩)
     | .flt => simp only [Tm.subst]; exact Or.inr (.val .flt hs ⟨_, rfl⟩)
+    | .flt32 => simp only [Tm.subst]; exact Or.inr (.val .flt32 hs ⟨_, rfl⟩)
     | .lam (ps := ps) (A := B) (ρ := ρl) hbody =>
         have hw := ((HasType.lam hbody).transfer hop hdata hdefs).ext hx |>.subst (hσ.substOk hI)
         simp only [Tm.subst] at hw ⊢

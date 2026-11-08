@@ -21,7 +21,7 @@ pub fn reader_test_state(): RustgenReaderState {
   RustgenReaderState::Mk("m", 0, Cons(RustgenSource::Mk("d", "v"), Nil), Nil, None)
 }
 pub fn reader_test_constraint(path: Text): SurfaceConstraint {
-  SurfaceConstraintMk("C", reader_test_call(path), 10, 20)
+  SurfaceConstraintMk("C", reader_test_call(path), 10, 20, Nil)
 }
 pub fn reader_test_method(body: SurfaceTerm): SurfaceFn {
   SurfaceFnMk(
@@ -36,44 +36,57 @@ pub fn reader_test_method(body: SurfaceTerm): SurfaceFn {
     Cons(reader_test_constraint("u"), Nil),
     0,
     30,
-    body
+    body,
+    Nil
   )
 }
 pub fn reader_test_literal(term: SurfaceTerm): Bool {
-  term.start == 1 && term.end == 9 && match term.kind: Bool {
+  term.start == 1 && term.end == 9 && (⊢ Bool from match term.kind {
     SkText(value) => value == "v"
     _ => false
+  })
+}
+pub fn reader_test_literal_list(items: List(SurfaceTerm)): Bool {
+  ⊢ Bool from match items {
+    Cons(item, rest) => reader_test_literal(item) && List::length(rest) == 0
+    Nil => false
+  }
+}
+pub fn reader_test_named_literal(items: List(SurfaceNamed)): Bool {
+  ⊢ Bool from match items {
+    Cons(item, rest) => item.name == "A" && reader_test_literal(item.ty) && List::length(rest) == 0
+    Nil => false
   }
 }
 pub fn reader_test_optional_literal(term: Option(SurfaceTerm)): Bool {
-  match term: Bool {
+  ⊢ Bool from match term {
     Some(value) => reader_test_literal(value)
     None => false
   }
 }
 pub fn reader_test_constraint_untouched(items: List(SurfaceConstraint)): Bool {
-  match items: Bool {
+  ⊢ Bool from match items {
     Cons(item, rest) => List::length(rest) == 0 && item.r#class == "C" &&
     item.start == 10 && item.end == 20 && item.ty.start == 1 && item.ty.end == 9 &&
-    match item.ty.kind: Bool {
-      SkMacroCall(name, arg) => name == "include_text" && match arg.kind: Bool {
+    (⊢ Bool from match item.ty.kind {
+      SkMacroCall(name, arg) => name == "include_text" && (⊢ Bool from match arg.kind {
         SkText(path) => path == "u"
         _ => false
-      }
+      })
       _ => false
-    }
+    })
     Nil => false
   }
 }
 pub fn reader_test_method_fields(items: List(SurfaceFn), executable: Bool): Bool {
-  match items: Bool {
+  ⊢ Bool from match items {
     Cons(method, rest) => {
-      let parameter := match method.param_types: Bool {
+      let parameter := ⊢ Bool from match method.param_types {
         Cons(item, more) => List::length(more) == 0 && reader_test_optional_literal(item)
         Nil => false
       }
       let body: Bool := if executable { reader_test_literal(method.body) } else {
-        match method.body.kind: Bool {
+        ⊢ Bool from match method.body.kind {
           SkOther(kind) => kind == "ExternFn"
           _ => false
         }
@@ -88,14 +101,26 @@ pub fn reader_test_method_fields(items: List(SurfaceFn), executable: Bool): Bool
 pub fn reader_test_class_fields(): Bool {
   var state := reader_test_state()
   let method := reader_test_method(surface_term_mk(SkOther("ExternFn"), 0, 30))
-  let input := SurfaceClassMk("C", "A", 1, None, Cons(method, Nil), Nil, 0, 40)
+  let input := SurfaceClassMk(
+    "C",
+    "A",
+    1,
+    None,
+    Cons(method, Nil),
+    Nil,
+    0,
+    40,
+    Cons(SurfaceNamed { name: "A", ty: reader_test_call("d") }, Nil)
+  )
   let output := rustgen_reader_stmt(20, &mut state, StClass(input))
-  rustgen_reader_ready(state) && List::length(state.resources) == 2 &&
-  match output: Bool {
+  rustgen_reader_ready(state) && List::length(state.resources) == 3 &&
+  (⊢ Bool from match output {
     StClass(value) => value.name == "C" && value.param == "A" && value.arity == 1 &&
-    value.start == 0 && value.end == 40 && reader_test_method_fields(value.methods, false)
+    value.start == 0 && value.end == 40 && reader_test_named_literal(
+      value.parameters
+    ) && reader_test_method_fields(value.methods, false)
     _ => false
-  }
+  })
 }
 pub fn reader_test_instance_fields(): Bool {
   var state := reader_test_state()
@@ -104,45 +129,56 @@ pub fn reader_test_instance_fields(): Bool {
     Nil,
     "C",
     reader_test_call("d"),
-    Cons(reader_test_constraint("d"), Nil),
+    Cons(
+      SurfaceConstraintMk("C", reader_test_call("d"), 10, 20, Cons(reader_test_call("d"), Nil)),
+      Nil
+    ),
     Cons(reader_test_method(reader_test_call("d")), Nil),
     Nil,
     0,
-    40
+    40,
+    Cons(reader_test_call("d"), Nil),
+    Cons(reader_test_call("d"), Nil)
   )
   let output := rustgen_reader_stmt(20, &mut state, StInstance(input))
-  rustgen_reader_ready(state) && List::length(state.resources) == 5 &&
-  match output: Bool {
+  rustgen_reader_ready(state) && List::length(state.resources) == 8 &&
+  (⊢ Bool from match output {
     StInstance(value) => {
-      let constraint := match value.wheres: Bool {
+      let constraint := ⊢ Bool from match value.wheres {
         Cons(item, rest) => List::length(rest) == 0 && item.r#class == "C" &&
-        item.start == 10 && item.end == 20 && reader_test_literal(item.ty)
+        item.start == 10 && item.end == 20 && reader_test_literal(
+          item.ty
+        ) && reader_test_literal_list(item.arguments)
         Nil => false
       }
       value.r#class == "C" && value.start == 0 && value.end == 40 &&
-      reader_test_literal(value.head) && constraint &&
+      reader_test_literal(
+        value.head
+      ) && constraint && reader_test_literal_list(
+        value.generic_types
+      ) && reader_test_literal_list(value.arguments) &&
       reader_test_method_fields(value.methods, true)
     }
     _ => false
-  }
+  })
 }
 pub fn reader_test_extern_fields(): Bool {
   var state := reader_test_state()
   let method := reader_test_method(surface_term_mk(SkOther("ExternFn"), 0, 30))
   let output := rustgen_reader_stmt(20, &mut state, StExtern("", Cons(method, Nil), 0, 40))
   rustgen_reader_ready(state) && List::length(state.resources) == 2 &&
-  match output: Bool {
+  (⊢ Bool from match output {
     StExtern(abi, methods, start, end) => abi == "" && start == 0 && end == 40 &&
     reader_test_method_fields(methods, false)
     _ => false
-  }
+  })
 }
 pub fn reader_test_function_fields(): Bool {
   var state := reader_test_state()
   let output := rustgen_reader_stmt(20, &mut state, StFn(reader_test_method(reader_test_call("d"))))
   rustgen_reader_ready(state) && List::length(state.resources) == 3 &&
-  match output: Bool {
+  (⊢ Bool from match output {
     StFn(method) => reader_test_method_fields(Cons(method, Nil), true)
     _ => false
-  }
+  })
 }

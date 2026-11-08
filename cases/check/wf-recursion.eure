@@ -1,0 +1,206 @@
+@ cases.a-call-must-end-with-its-proof-0
+imports = [path`../../std/WellFounded.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+fn id_nat(n: Nat): Nat { n }
+
+fn down(n: Nat): Nat decreasing_by measure(id_nat) => theorem down::eq {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(m) => down(m)
+  }
+}
+```
+
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+checks."input/main.taut::down" = "error: "
+checks."input/main.taut::id_nat" = "ok"
+@ cases.a-call-must-end-with-its-proof-0.diagnostics[]
+file = "input/main.taut"
+name = "down"
+message = "a recursive call of `down` takes its 1 arguments and then the proof that the first is below `n`"
+span = "«down(m)»"
+
+@ cases.a-call-with-the-proof-that-it-descends-is-accepted-0
+imports = [path`../../std/WellFounded.taut`, path`../../std/Nat.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+fn id_nat(n: Nat): Nat { n }
+
+fn down(n: Nat): Nat decreasing_by measure(id_nat) => theorem down::eq {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(m) => down(m, Nat::le_refl(m))
+  }
+}
+```
+
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+checks."input/main.taut::id_nat" = "ok"
+checks."input/main.taut::down@step" = "ok"
+checks."input/main.taut::down" = "ok"
+checks."input/main.taut::down::eq" = "ok"
+
+@ cases.a-proof-of-another-fact-is-not-a-proof-that-it-descends-0
+imports = [path`../../std/WellFounded.taut`, path`../../std/Nat.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+fn id_nat(n: Nat): Nat { n }
+
+fn loop_(n: Nat): Nat decreasing_by measure(id_nat) => theorem loop_::eq {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(m) => loop_(Succ(m), Nat::le_refl(Succ(m)))
+  }
+}
+```
+
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+checks."input/main.taut::id_nat" = "ok"
+checks."input/main.taut::loop_@step" = "error: "
+checks."input/main.taut::loop_" = "error: "
+checks."input/main.taut::loop_::eq" = "error: "
+@ cases.a-proof-of-another-fact-is-not-a-proof-that-it-descends-0.diagnostics[]
+file = "input/main.taut"
+name = "loop_@step"
+message = "type mismatch: expected `Nat::lt(id_nat(Succ(m)), id_nat(Succ(m))) = true`, found `Nat::le(Succ(m), Succ(m)) = true`\n  differing part: expected `Nat::lt(id_nat(Succ(m)), id_nat(Succ(m)))`, found `Nat::le(Succ(m), Succ(m))`"
+span = "«Nat::le_refl(Succ(m))»"
+@ cases.a-proof-of-another-fact-is-not-a-proof-that-it-descends-0.diagnostics[]
+file = "input/main.taut"
+name = "loop_"
+message = "uses `loop_@step`, which did not check"
+span = "«fn loop_(n: Nat): Nat decreasing_by measure(id_nat) => theorem loop_::eq {\n  ⊢ Nat from match n {\n    Zero => Zero\n    Succ(m) => loop_(Succ(m), Nat::le_refl(Succ(m)))\n  }\n}»"
+@ cases.a-proof-of-another-fact-is-not-a-proof-that-it-descends-0.diagnostics[]
+file = "input/main.taut"
+name = "loop_::eq"
+message = "uses `loop_`, which did not check; what follows may come from that: type mismatch: expected `loop_(n) = loop_@step(n, n' => r' => loop_(n'))`, found `wf_fix(Nat, wf_rel_lt(Nat, measure(Nat, id_nat)), n' => Nat, wf_rel_wf(Nat, measure(Nat, id_nat)), loop_@step, n) = loop_@step(n, y => r => wf_fix(Nat, wf_rel_lt(Nat, measure(Nat, id_nat)), n' => Nat, wf_rel_wf(Nat, measure(Nat, id_nat)), loop_@step, y))`\n  differing part: expected `loop_(n)`, found `wf_fix(Nat, wf_rel_lt(Nat, measure(Nat, id_nat)), n' => Nat, wf_rel_wf(Nat, measure(Nat, id_nat)), loop_@step, n)`"
+span = "«fn loop_(n: Nat): Nat decreasing_by measure(id_nat) => theorem loop_::eq {\n  ⊢ Nat from match n {\n    Zero => Zero\n    Succ(m) => loop_(Succ(m), Nat::le_refl(Succ(m)))\n  }\n}»"
+
+@ cases.recursion-without-decreasing-by-is-still-rejected-0
+imports = [path`../../std/WellFounded.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+fn id_nat(n: Nat): Nat { n }
+
+fn spin(n: Nat): Nat {
+  spin(n)
+}
+```
+
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+checks."input/main.taut::id_nat" = "ok"
+checks."input/main.taut::spin" = "error: "
+@ cases.recursion-without-decreasing-by-is-still-rejected-0.diagnostics[]
+file = "input/main.taut"
+name = "spin"
+message = "`spin` calls itself outside a structural match; there is no other termination check"
+span = "  «spin»("
+
+@ cases.the-function-is-not-a-value-in-its-own-body-0
+imports = [path`../../std/WellFounded.taut`, path`../../std/Nat.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+
+fn id_nat(n: Nat): Nat { n }
+
+fn down(n: Nat): Nat decreasing_by measure(id_nat) => theorem down::eq {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(m) => Succ(m)
+  }
+}
+
+fn again(n: Nat): Nat decreasing_by measure(id_nat) => theorem again::eq {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(m) => again(m, Nat::le_refl(m)) + again
+  }
+}
+```
+
+checks_all = "ok"
+checks."calc_is_white" = "skipped"
+checks."calc_syntax::parse" = "skipped"
+checks."calc_is_rel" = "skipped"
+checks."calc_multiline" = "skipped"
+checks."calc_lay" = "skipped"
+checks."calc_fmt" = "skipped"
+checks."calc_tokens" = "skipped"
+checks."calc_iff" = "skipped"
+checks."calc_last" = "skipped"
+checks."calc_steps" = "skipped"
+checks."calc" = "skipped"
+checks."input/main.taut::again" = "error: "
+checks."input/main.taut::id_nat" = "ok"
+checks."input/main.taut::down@step" = "ok"
+checks."input/main.taut::down" = "ok"
+checks."input/main.taut::down::eq" = "ok"
+@ cases.the-function-is-not-a-value-in-its-own-body-0.diagnostics[]
+file = "input/main.taut"
+name = "again"
+message = "`again` is only called in its own body, with the proof"
+span = " «again»\n"
+
+@ cases.the-library-is-needed-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn id_nat(n: Nat): Nat { n }
+fn f(n: Nat): Nat decreasing_by id_nat(n) => theorem f::eq { n }
+```
+
+checks_all = "ok"
+checks."input/main.taut::f" = "error: "
+checks."input/main.taut::id_nat" = "ok"
+@ cases.the-library-is-needed-0.diagnostics[]
+file = "input/main.taut"
+name = "f"
+message = "`decreasing_by` needs `wf_fix`: import \"WellFounded.taut\""
+span = "«fn f(n: Nat): Nat decreasing_by id_nat(n) => theorem f::eq { n }»"

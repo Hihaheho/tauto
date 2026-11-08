@@ -1,0 +1,41 @@
+@ cases.generated-equality-runs-through-a-function-value
+extract = true
+backends = ["rust", "javascript", "vm"]
+source = ```tauto
+import std::prelude::Os
+
+inductive Color: Type => fn Color::beq, theorem Color::beq_refl, theorem Color::beq_sound, theorem Color::deq {
+  Red: Color
+  Blue: Color
+}
+
+fn apply2(f: (Color, Color) -> Bool, a: Color, b: Color): Bool {
+  f(a, b)
+}
+
+match Bool::and(not(Color::beq(Red, Blue)), apply2(Color::beq, Blue, Blue)) {
+  true => perform stdout("ok\n")
+  false => perform stdout("wrong\n")
+}
+```
+stdout = "ok\n"
+
+@ cases.a-named-test-runs-generated-equality
+extract = true
+source = ```tauto
+import std::prelude::Os
+
+inductive Color: Type => fn Color::beq, theorem Color::beq_refl, theorem Color::beq_sound, theorem Color::deq {
+  Red: Color
+  Blue: Color
+}
+
+fn apply2(f: (Color, Color) -> Bool, a: Color, b: Color): Bool {
+  f(a, b)
+}
+
+perform test("generated equality", () => {
+  expect(Bool::and(not(Color::beq(Red, Blue)), apply2(Color::beq, Blue, Blue)), "generated equality")
+})
+```
+tests = ["generated equality"]

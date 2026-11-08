@@ -20,6 +20,15 @@ perform show("value", forward(Item("hello"), () => { let value := "hello"; gener
 "#,
     )
     .unwrap();
+    tauto::resolve::Resolver::default().statements(&mut program.stmts);
+    let ask = program
+        .stmts
+        .iter()
+        .find_map(|statement| match statement {
+            Stmt::Effect(effect) if effect.name.as_str() == "ask" => Some(effect.name.clone()),
+            _ => None,
+        })
+        .unwrap();
     for stmt in &mut program.stmts {
         walk::stmt(stmt, &mut |term| term.span = tauto_parol::Span::new(7, 8));
     }
@@ -33,32 +42,32 @@ perform show("value", forward(Item("hello"), () => { let value := "hello"; gener
         let mut copy = stmt.clone();
         walk::stmt(&mut copy, &mut |term| {
             if let TermKind::App { function, .. } = &*term.kind {
-                if matches!(&*function.kind, TermKind::Var(name) if name == "+") {
+                if matches!(&*function.kind, TermKind::Var(name) if name.as_str() == "+") {
                     operations.push(types.widths[&term.id()]);
                 }
                 calls.push(term.id());
                 if let TermKind::Var(name) = &*function.kind {
-                    if name != "+" && name != "Tuple" {
+                    if name.as_str() != "+" && name.as_str() != "Tuple" {
                         assert!(types.term(function).is_some(), "{function:?}");
                     }
-                    if name == "pure" {
+                    if name.as_str() == "pure" {
                         assert!(rows.calls[&term.id()].is_empty());
                     }
-                    if name == "request" {
-                        assert!(rows.calls[&term.id()].contains("ask"));
+                    if name.as_str() == "request" {
+                        assert!(rows.calls[&term.id()].contains(&ask));
                     }
                 }
             }
         });
         if let Stmt::Fn(function) = stmt {
-            if function.name == "narrow" || function.name == "wide" {
-                let width = if function.name == "narrow" {
+            if function.name.as_str() == "narrow" || function.name.as_str() == "wide" {
+                let width = if function.name.as_str() == "narrow" {
                     Width::U32
                 } else {
                     Width::U64
                 };
                 assert_eq!(
-                    types.local("value", function.body.id()),
+                    types.local(&function.params[0], function.body.id()),
                     Some(&Ty::Int(width))
                 );
             }
@@ -74,6 +83,7 @@ perform show("value", forward(Item("hello"), () => { let value := "hello"; gener
         types: &types,
         rows: &rows,
         lib: false,
+        expansion_only: None,
     })
     .unwrap();
     let mut forwards = 0;
@@ -81,7 +91,7 @@ perform show("value", forward(Item("hello"), () => { let value := "hello"; gener
         function.body.walk(&mut |expr| {
             if let ExprKind::Call(call) = &expr.kind
                 && let Callee::Inst(inst) = call.callee
-                && package.fns[inst].source == "forward"
+                && package.fns[inst].source.as_str() == "forward"
             {
                 assert!(!matches!(call.args[0].kind, ExprKind::TempRef(_)));
                 forwards += 1;

@@ -256,3 +256,35 @@ impl<T: Unlink> Unbox for Owned<T> {
 pub fn unwrap_or_clone<P: Unrc>(rc: P) -> P::Target {
     rc.unrc()
 }
+
+/// A shared cell moved into a shared field, which may be spelled the other
+/// way (`Rc` for `Shared` or back): the cell is reused, not copied.
+pub trait Relink<To> {
+    fn relink(self) -> To;
+}
+
+impl<T> Relink<Rc<T>> for Rc<T> {
+    fn relink(self) -> Rc<T> {
+        self
+    }
+}
+
+impl<T: Unlink> Relink<Shared<T>> for Rc<T> {
+    fn relink(self) -> Shared<T> {
+        Shared::from(self)
+    }
+}
+
+impl<T: Unlink> Relink<Shared<T>> for Shared<T> {
+    fn relink(self) -> Shared<T> {
+        self
+    }
+}
+
+impl<T: Unlink> Relink<Rc<T>> for Shared<T> {
+    fn relink(mut self) -> Rc<T> {
+        self.0
+            .take()
+            .expect("tauto: a link was read while it was dropped")
+    }
+}

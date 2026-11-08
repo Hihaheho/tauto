@@ -1,0 +1,91 @@
+description = "`tauto check` holds each handler arm to the `resume` its effect declares, as the checks of the programs that run do."
+
+@ cases.resuming_twice_needs_resume_omega
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+effect choose(): Bool
+
+fn both(): List(Bool) {
+  handle {
+    let b := perform choose()
+    b
+  } with {
+    choose(), k => List::append(k(true), k(false))
+    return v => Cons(v, Nil)
+  }
+}
+```
+checks."both" = "error: declared `resume <=1`; declare it `resume ω`"
+
+@ cases.resume_omega_resumes_twice
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+effect choose(): Bool resume ω
+
+fn both(): List(Bool) {
+  handle {
+    let b := perform choose()
+    b
+  } with {
+    choose(), k => List::append(k(true), k(false))
+    return v => Cons(v, Nil)
+  }
+}
+
+theorem both_is(): both() = Cons(true, Cons(false, Nil)) {
+  Refl
+}
+```
+checks."both" = "checked"
+checks."both_is" = "checked"
+
+@ cases.one_call_on_each_branch_is_once
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+effect pick(n: Nat): Bool
+
+fn one(n: Nat): Bool {
+  handle { perform pick(n) } with {
+    pick(m), k => match m {
+      Zero => k(true)
+      Succ(j) => k(false)
+    }
+  }
+}
+```
+checks."one" = "checked"
+
+@ cases.a_call_in_a_loop_is_any_number
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+effect step(): Unit
+
+fn run(n: Nat): Unit {
+  handle { perform step() } with {
+    step(), k => {
+      var go: Bool := true
+      while go {
+        go := false
+        k(Star)
+      }
+      Star
+    }
+  }
+}
+```
+checks."run" = "error: may call `k` any number of times"
+
+@ cases.check_and_run_agree_on_resuming_twice
+source = ```tauto
+effect flip(): Bool
+
+fn both(): i64 {
+  handle {
+    if perform flip() { 1 } else { 2 }
+  } with {
+    flip(), k => k(true) + k(false)
+  }
+}
+```
+checks."both" = "error: declared `resume <=1`; declare it `resume ω`"
+lin = "error: k is used after move"

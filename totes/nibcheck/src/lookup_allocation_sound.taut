@@ -24,13 +24,13 @@ import "types_match.taut"
 import "unify_sound.taut"
 
 pub fn OptionSchemeAllocated(limit: Nat, found: Option(Scheme)): Prop {
-  match found: Prop { None => True
+  ⊢ Prop from match found { None => True
     Some(s) => TypeAllocated(limit, instantiation_scheme_ty(s)) }
 }
 pub def FunctionsAllocated(limit: Nat, functions: Ordmap(Text, Scheme)): Prop :=
 ∀ name: Text. OptionSchemeAllocated(limit, Ordmap::get(functions, name, Ordmap::compare_text))
 pub fn OptionLocalAllocated(limit: Nat, found: Option(Local)): Prop {
-  match found: Prop { None => True
+  ⊢ Prop from match found { None => True
     Some(local) => TypeAllocated(limit, leaf_local_ty(local)) }
 }
 pub theorem env_find_option_allocated_k(
@@ -41,7 +41,7 @@ pub theorem env_find_option_allocated_k(
   found: Option(Local),
   same: env_find(env, name) = found
 ): OptionLocalAllocated(limit, found) {
-  match found: OptionLocalAllocated(limit, found) {
+  ⊢ OptionLocalAllocated(limit, found) from match found {
     None => Trivial
     Some(local) => env_find_allocated(env, name, local, limit, bounded, same)
   }
@@ -55,7 +55,7 @@ pub theorem lookup_ctor_allocation(
   declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
   found: Option(Pair(Text, Nat))
 ): AllocationResult(c, leaf_lookup_ctor(c, name, env, span, found)) {
-  match found: AllocationResult(c, leaf_lookup_ctor(c, name, env, span, found)) {
+  ⊢ AllocationResult(c, leaf_lookup_ctor(c, name, env, span, found)) from match found {
     None => allocation_result_bind(
       Unit,
       c,
@@ -96,7 +96,7 @@ pub theorem lookup_builtin_allocation(
     m
   )
 ) {
-  match m: AllocationResult(
+  ⊢ AllocationResult(
     c,
     frame_bind(
       Ty,
@@ -104,7 +104,7 @@ pub theorem lookup_builtin_allocation(
       (i: Ty, next: Checker) => mut1(TyFn(Cons(i, Cons(i, Nil)), i, KindShared), next),
       m
     )
-  ) {
+  ) from match m {
     mut1(i, next) => AndIntro(
       And::left(allocated),
       AndIntro(
@@ -123,7 +123,7 @@ pub theorem lookup_special_allocation(
   declarations: DatasAllocated(ck_next_of(c), ck_datas_of(c)),
   special: Bool
 ): AllocationResult(c, leaf_lookup_special(c, name, env, span, special)) {
-  match special: AllocationResult(c, leaf_lookup_special(c, name, env, span, special)) {
+  ⊢ AllocationResult(c, leaf_lookup_special(c, name, env, span, special)) from match special {
     true => lookup_builtin_allocation(c, ck_fresh_int(c), ck_fresh_int_allocation_result(c, state))
     false => lookup_ctor_allocation(
       c,
@@ -146,7 +146,7 @@ pub theorem lookup_function_allocation(
   found: Option(Scheme),
   bounded: OptionSchemeAllocated(ck_next_of(c), found)
 ): AllocationResult(c, leaf_lookup_function(c, name, env, span, found)) {
-  match found: AllocationResult(c, leaf_lookup_function(c, name, env, span, found)) {
+  ⊢ AllocationResult(c, leaf_lookup_function(c, name, env, span, found)) from match found {
     Some(s) => allocation_result_rewrap(
       c,
       ck_instantiate_scheme(c, name, s, span),
@@ -174,7 +174,7 @@ pub theorem lookup_allocation_k(
   found: Option(Local),
   bounded: OptionLocalAllocated(ck_next_of(c), found)
 ): AllocationResult(c, leaf_lookup(c, name, env, span, found)) {
-  match found: AllocationResult(c, leaf_lookup(c, name, env, span, found)) {
+  ⊢ AllocationResult(c, leaf_lookup(c, name, env, span, found)) from match found {
     Some(local) => allocation_result_return(c, leaf_local_ty(local), state, bounded)
     None => lookup_function_allocation(
       c,

@@ -10,9 +10,7 @@ import "unify_sound.taut"
 import "written_context_sound.taut"
 import "../../surface/src/surface.taut"
 
-pub def CkNormal(
-  c: Checker
-): Prop := written_context(c) = (Pair { fst: false, snd: false })
+pub def CkNormal(c: Checker): Prop := written_context(c) = (Pair { fst: false, snd: false })
 pub def CkNormalFrame<A: Type>(
   c: Checker,
   m: Mut1(A, Checker)
@@ -31,7 +29,7 @@ pub theorem normal_bind<A: Type, B: Type>(
   before: CkNormalFrame(c, m),
   after: ∀ value: A. ∀ next: Checker. CkNormalFrame(next, k(value, next))
 ): CkNormalFrame(c, frame_bind(A, B, k, m)) {
-  match m: CkNormalFrame(c, frame_bind(A, B, k, m)) {
+  ⊢ CkNormalFrame(c, frame_bind(A, B, k, m)) from match m {
     mut1(value, next) => normal => after(value, next, before(normal))
   }
 }
@@ -40,7 +38,7 @@ pub theorem normal_rewrap<A: Type>(
   m: Mut1(A, Checker),
   kept: CkNormalFrame(c, m)
 ): CkNormalFrame(c, ck_rewrap1(m)) {
-  match m: CkNormalFrame(c, ck_rewrap1(m)) {
+  ⊢ CkNormalFrame(c, ck_rewrap1(m)) from match m {
     mut1(value, next) => kept
   }
 }
@@ -50,7 +48,7 @@ pub theorem normal_return<A: Type, B: Type>(
   m: Mut1(A, Checker),
   kept: CkNormalFrame(c, m)
 ): CkNormalFrame(c, frame_return(value, m)) {
-  match m: CkNormalFrame(c, frame_return(value, m)) {
+  ⊢ CkNormalFrame(c, frame_return(value, m)) from match m {
     mut1(ignored, next) => kept
   }
 }

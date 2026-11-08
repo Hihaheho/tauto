@@ -17,13 +17,13 @@ import "Revision.taut"
 
 // The members of a pair.
 pub fn pfst<A, B>(p: A × B): A {
-  match p: A {
+  ⊢ A from match p {
     #(a, b) => a
   }
 }
 
 pub fn psnd<A, B>(p: A × B): B {
-  match p: B {
+  ⊢ B from match p {
     #(a, b) => b
   }
 }
@@ -34,7 +34,7 @@ pub inductive Dep(K: Type): Type {
 }
 
 pub fn dep_id<K>(d: Dep(K)): K {
-  match d: K {
+  ⊢ K from match d {
     Mk(k, s) => k
   }
 }
@@ -45,7 +45,7 @@ pub fn dep_of<K>(k: K, seen: Nat): Dep(K) {
 }
 
 pub fn dep_seen<K>(d: Dep(K)): Nat {
-  match d: Nat {
+  ⊢ Nat from match d {
     Mk(k, s) => s
   }
 }
@@ -67,43 +67,43 @@ pub(open) inductive Node(K: Type, T: Type): Type {
 
 module Node {
   pub fn data<K, T>(n: Node(K, T)): T {
-    match n: T {
+    ⊢ T from match n {
       Mk(x, d, v, c, l, ds, rs) => x
     }
   }
 
   pub fn durability<K, T>(n: Node(K, T)): Nat {
-    match n: Nat {
+    ⊢ Nat from match n {
       Mk(x, d, v, c, l, ds, rs) => d
     }
   }
 
   pub fn verified_at<K, T>(n: Node(K, T)): Nat {
-    match n: Nat {
+    ⊢ Nat from match n {
       Mk(x, d, v, c, l, ds, rs) => v
     }
   }
 
   pub fn changed_at<K, T>(n: Node(K, T)): Nat {
-    match n: Nat {
+    ⊢ Nat from match n {
       Mk(x, d, v, c, l, ds, rs) => c
     }
   }
 
   pub fn level<K, T>(n: Node(K, T)): Nat {
-    match n: Nat {
+    ⊢ Nat from match n {
       Mk(x, d, v, c, l, ds, rs) => l
     }
   }
 
   pub fn deps<K, T>(n: Node(K, T)): List(Dep(K)) {
-    match n: List(Dep(K)) {
+    ⊢ List(Dep(K)) from match n {
       Mk(x, d, v, c, l, ds, rs) => ds
     }
   }
 
   pub fn dependents<K, T>(n: Node(K, T)): List(K) {
-    match n: List(K) {
+    ⊢ List(K) from match n {
       Mk(x, d, v, c, l, ds, rs) => rs
     }
   }
@@ -120,13 +120,13 @@ pub(open) inductive Whale(K: Type, T: Type): Type {
 
 module Whale {
   pub fn nodes<K, T>(w: Whale(K, T)): List(K × Node(K, T)) {
-    match w: List(K × Node(K, T)) {
+    ⊢ List(K × Node(K, T)) from match w {
       Mk(ns, r) => ns
     }
   }
 
   pub fn revision<K, T>(w: Whale(K, T)): List(Nat) {
-    match w: List(Nat) {
+    ⊢ List(Nat) from match w {
       Mk(ns, r) => r
     }
   }
@@ -141,7 +141,7 @@ module Whale {
 
 module Key {
   pub fn pick(o: Ordering): Bool {
-    match o: Bool {
+    ⊢ Bool from match o {
       Less => false
       Equal => true
       Greater => false
@@ -160,7 +160,7 @@ pub fn key_in<K>(k: K, l: List(K)): Bool where Ord(K) {
 module Key {
   // `l` with `k` at the end, unless it is already there.
   pub fn add<K>(l: List(K), k: K): List(K) where Ord(K) {
-    match key_in(k, l): List(K) {
+    ⊢ List(K) from match key_in(k, l) {
       true => l
       false => List::append(l, Cons(k, Nil))
     }
@@ -177,16 +177,16 @@ module Key {
 }
 
 pub fn nodes_hit<K, T>(n: Node(K, T), rest: Option(Node(K, T)), b: Bool): Option(Node(K, T)) {
-  match b: Option(Node(K, T)) {
+  ⊢ Option(Node(K, T)) from match b {
     true => Some(n)
     false => rest
   }
 }
 
 pub fn nodes_get<K, T>(ns: List(K × Node(K, T)), k: K): Option(Node(K, T)) where Ord(K) {
-  match ns: Option(Node(K, T)) {
+  ⊢ Option(Node(K, T)) from match ns {
     Nil => None
-    Cons(e, rest) => match e: Option(Node(K, T)) {
+    Cons(e, rest) => ⊢ Option(Node(K, T)) from match e {
       #(k1, n) => nodes_hit(n, nodes_get(rest, k), key_eq(k1, k))
     }
   }
@@ -203,7 +203,7 @@ pub fn nodes_put_at<K, T>(
   later: List(K × Node(K, T)),
   b: Bool
 ): List(K × Node(K, T)) {
-  match b: List(K × Node(K, T)) {
+  ⊢ List(K × Node(K, T)) from match b {
     true => Cons(#(k, n), rest)
     false => Cons(#(k1, m), later)
   }
@@ -214,9 +214,9 @@ pub fn nodes_put<K, T>(
   k: K,
   n: Node(K, T)
 ): List(K × Node(K, T)) where Ord(K) {
-  match ns: List(K × Node(K, T)) {
+  ⊢ List(K × Node(K, T)) from match ns {
     Nil => Cons(#(k, n), Nil)
-    Cons(e, rest) => match e: List(K × Node(K, T)) {
+    Cons(e, rest) => ⊢ List(K × Node(K, T)) from match e {
       #(k1, m) => nodes_put_at(k1, m, rest, k, n, nodes_put(rest, k, n), key_eq(k1, k))
     }
   }
@@ -228,16 +228,16 @@ pub fn nodes_drop_at<K, T>(
   later: List(K × Node(K, T)),
   b: Bool
 ): List(K × Node(K, T)) {
-  match b: List(K × Node(K, T)) {
+  ⊢ List(K × Node(K, T)) from match b {
     true => later
     false => Cons(#(k1, m), later)
   }
 }
 
 pub fn nodes_remove<K, T>(ns: List(K × Node(K, T)), k: K): List(K × Node(K, T)) where Ord(K) {
-  match ns: List(K × Node(K, T)) {
+  ⊢ List(K × Node(K, T)) from match ns {
     Nil => Nil
-    Cons(e, rest) => match e: List(K × Node(K, T)) {
+    Cons(e, rest) => ⊢ List(K × Node(K, T)) from match e {
       #(k1, m) => nodes_drop_at(k1, m, nodes_remove(rest, k), key_eq(k1, k))
     }
   }
@@ -249,7 +249,7 @@ pub fn nodes_change_at<K, T>(
   f: (Node(K, T)) -> Node(K, T),
   b: Bool
 ): K × Node(K, T) {
-  match b: K × Node(K, T) {
+  ⊢ K × Node(K, T) from match b {
     true => #(k1, f(m))
     false => #(k1, m)
   }
@@ -261,9 +261,9 @@ pub fn nodes_modify<K, T>(
   k: K,
   f: (Node(K, T)) -> Node(K, T)
 ): List(K × Node(K, T)) where Ord(K) {
-  match ns: List(K × Node(K, T)) {
+  ⊢ List(K × Node(K, T)) from match ns {
     Nil => Nil
-    Cons(e, rest) => match e: List(K × Node(K, T)) {
+    Cons(e, rest) => ⊢ List(K × Node(K, T)) from match e {
       #(k1, m) => Cons(nodes_change_at(k1, m, f, key_eq(k1, k)), nodes_modify(rest, k, f))
     }
   }
@@ -311,7 +311,7 @@ pub fn changed_of<K, T>(o: Option(Node(K, T))): Option(Nat) {
 }
 
 pub fn fresh_by(c: Option(Nat), seen: Nat): Bool {
-  match c: Bool {
+  ⊢ Bool from match c {
     None => false
     Some(v) => Nat::le(v, seen)
   }
@@ -323,14 +323,14 @@ pub fn dep_fresh<K, T>(ns: List(K × Node(K, T)), d: Dep(K)): Bool where Ord(K) 
 }
 
 pub fn deps_fresh<K, T>(ns: List(K × Node(K, T)), ds: List(Dep(K))): Bool where Ord(K) {
-  match ds: Bool {
+  ⊢ Bool from match ds {
     Nil => true
     Cons(d, rest) => Bool::and(dep_fresh(ns, d), deps_fresh(ns, rest))
   }
 }
 
 pub fn verified_of<K, T>(o: Option(Node(K, T)), r: List(Nat)): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     None => false
     Some(n) => Node::verified_by(n, r)
   }
@@ -347,7 +347,7 @@ pub fn valid_of<K, T>(
   o: Option(Node(K, T)),
   r: List(Nat)
 ): Bool where Ord(K) {
-  match o: Bool {
+  ⊢ Bool from match o {
     None => false
     Some(n) => Bool::or(Node::verified_by(n, r), deps_fresh(ns, Node::deps(n)))
   }
@@ -368,7 +368,7 @@ module Whale {
 
 module Node {
   pub fn raise_verified<K, T>(n: Node(K, T), at: Nat): Node(K, T) {
-    match n: Node(K, T) {
+    ⊢ Node(K, T) from match n {
       Mk(x, d, v, c, l, ds, rs) => Node::Mk(x, d, Nat::max(v, at), c, l, ds, rs)
     }
   }
@@ -405,26 +405,26 @@ pub(open) inductive Resolved(K: Type): Type {
 }
 
 pub fn resolved_deps<K>(r: Resolved(K)): List(Dep(K)) {
-  match r: List(Dep(K)) {
+  ⊢ List(Dep(K)) from match r {
     Mk(ds, d, l) => ds
   }
 }
 
 pub fn resolved_durability<K>(r: Resolved(K)): Nat {
-  match r: Nat {
+  ⊢ Nat from match r {
     Mk(ds, d, l) => d
   }
 }
 
 pub fn resolved_level<K>(r: Resolved(K)): Nat {
-  match r: Nat {
+  ⊢ Nat from match r {
     Mk(ds, d, l) => l
   }
 }
 
 // The keys of `ids` that have no node.
 pub fn missing_pick<K, T>(k: K, o: Option(Node(K, T)), rest: List(K)): List(K) {
-  match o: List(K) {
+  ⊢ List(K) from match o {
     None => Cons(k, rest)
     Some(n) => rest
   }
@@ -432,14 +432,14 @@ pub fn missing_pick<K, T>(k: K, o: Option(Node(K, T)), rest: List(K)): List(K) {
 
 // The keys of `ids` that have no node.
 pub fn missing_ids<K, T>(ns: List(K × Node(K, T)), ids: List(K)): List(K) where Ord(K) {
-  match ids: List(K) {
+  ⊢ List(K) from match ids {
     Nil => Nil
     Cons(k, rest) => missing_pick(k, nodes_get(ns, k), missing_ids(ns, rest))
   }
 }
 
 pub fn resolve_one<K, T>(k: K, o: Option(Node(K, T)), rest: Resolved(K)): Resolved(K) {
-  match o: Resolved(K) {
+  ⊢ Resolved(K) from match o {
     None => rest
     Some(n) => Resolved::Mk(
       Cons(Dep::Mk(k, Node::changed_at(n)), resolved_deps(rest)),
@@ -454,14 +454,14 @@ pub fn resolve_found<K, T>(
   ids: List(K),
   dur: Nat
 ): Resolved(K) where Ord(K) {
-  match ids: Resolved(K) {
+  ⊢ Resolved(K) from match ids {
     Nil => Resolved::Mk(Nil, dur, Zero)
     Cons(k, rest) => resolve_one(k, nodes_get(ns, k), resolve_found(ns, rest, dur))
   }
 }
 
 pub fn resolve_if<K>(missing: List(K), found: Resolved(K)): Outcome(K, Resolved(K)) {
-  match missing: Outcome(K, Resolved(K)) {
+  ⊢ Outcome(K, Resolved(K)) from match missing {
     Nil => Done(
       Resolved::Mk(resolved_deps(found), resolved_durability(found), Succ(resolved_level(found)))
     )
@@ -485,14 +485,14 @@ pub fn resolve_reads<K, T>(
 
 module Node {
   pub fn with_dependents<K, T>(n: Node(K, T), rs: List(K)): Node(K, T) {
-    match n: Node(K, T) {
+    ⊢ Node(K, T) from match n {
       Mk(x, d, v, c, l, ds, old) => Node::Mk(x, d, v, c, l, ds, rs)
     }
   }
 }
 
 pub fn link<K, T>(ns: List(K × Node(K, T)), k: K, ids: List(K)): List(K × Node(K, T)) where Ord(K) {
-  match ids: List(K × Node(K, T)) {
+  ⊢ List(K × Node(K, T)) from match ids {
     Nil => ns
     Cons(i, rest) => link(
       nodes_modify(
@@ -511,7 +511,7 @@ pub fn unlink<K, T>(
   k: K,
   ids: List(K)
 ): List(K × Node(K, T)) where Ord(K) {
-  match ids: List(K × Node(K, T)) {
+  ⊢ List(K × Node(K, T)) from match ids {
     Nil => ns
     Cons(i, rest) => unlink(
       nodes_modify(
@@ -540,14 +540,14 @@ pub fn dep_ids<K>(ds: List(Dep(K))): List(K) {
 }
 
 pub fn dependents_in<K, T>(o: Option(Node(K, T))): List(K) {
-  match o: List(K) {
+  ⊢ List(K) from match o {
     None => Nil
     Some(n) => Node::dependents(n)
   }
 }
 
 pub fn dep_ids_in<K, T>(o: Option(Node(K, T))): List(K) {
-  match o: List(K) {
+  ⊢ List(K) from match o {
     None => Nil
     Some(n) => Node::dep_ids(n)
   }
@@ -591,19 +591,19 @@ pub inductive Written: Type {
 }
 
 pub fn written_revision(r: Written): Nat {
-  match r: Nat {
+  ⊢ Nat from match r {
     Mk(v, d, l) => v
   }
 }
 
 pub fn written_durability(r: Written): Nat {
-  match r: Nat {
+  ⊢ Nat from match r {
     Mk(v, d, l) => d
   }
 }
 
 pub fn written_level(r: Written): Nat {
-  match r: Nat {
+  ⊢ Nat from match r {
     Mk(v, d, l) => l
   }
 }
@@ -651,7 +651,7 @@ pub fn register_with<K, T>(
   x: T,
   o: Outcome(K, Resolved(K))
 ): Outcome(K, Whale(K, T) × Written) where Ord(K) {
-  match o: Outcome(K, Whale(K, T) × Written) {
+  ⊢ Outcome(K, Whale(K, T) × Written) from match o {
     Absent(ks) => Absent(ks)
     Done(res) => Done(write_changed(w, k, x, res))
   }
@@ -700,7 +700,7 @@ pub fn unchanged_with<K, T>(
   n: Node(K, T),
   o: Outcome(K, Resolved(K))
 ): Outcome(K, Whale(K, T)) where Ord(K) {
-  match o: Outcome(K, Whale(K, T)) {
+  ⊢ Outcome(K, Whale(K, T)) from match o {
     Absent(ks) => Absent(ks)
     Done(res) => Done(
       put_unchanged(w, k, Node::data(n), res, Node::verified_at(n), Node::changed_at(n))
@@ -714,7 +714,7 @@ pub fn unchanged_at<K, T>(
   ids: List(K),
   o: Option(Node(K, T))
 ): Outcome(K, Whale(K, T)) where Ord(K) {
-  match o: Outcome(K, Whale(K, T)) {
+  ⊢ Outcome(K, Whale(K, T)) from match o {
     None => Done(w)
     Some(n) => unchanged_with(w, k, n, resolve_reads(w, Node::durability(n), ids))
   }
@@ -739,7 +739,7 @@ pub fn changed_with<K, T>(
   n: Node(K, T),
   o: Outcome(K, Resolved(K))
 ): Outcome(K, Whale(K, T) × Nat) where Ord(K) {
-  match o: Outcome(K, Whale(K, T) × Nat) {
+  ⊢ Outcome(K, Whale(K, T) × Nat) from match o {
     Absent(ks) => Absent(ks)
     Done(res) => Done(
       #(
@@ -756,7 +756,7 @@ pub fn changed_at_node<K, T>(
   ids: List(K),
   o: Option(Node(K, T))
 ): Outcome(K, Whale(K, T) × Nat) where Ord(K) {
-  match o: Outcome(K, Whale(K, T) × Nat) {
+  ⊢ Outcome(K, Whale(K, T) × Nat) from match o {
     None => Done(#(w, Zero))
     Some(n) => changed_with(w, k, n, resolve_reads(w, Node::durability(n), ids))
   }
@@ -780,19 +780,19 @@ pub inductive Updated: Type {
 }
 
 fn updated_changed(u: Updated): Bool {
-  match u: Bool {
+  ⊢ Bool from match u {
     Mk(c, v, d) => c
   }
 }
 
 pub fn updated_revision(u: Updated): Nat {
-  match u: Nat {
+  ⊢ Nat from match u {
     Mk(c, v, d) => v
   }
 }
 
 pub fn verified_in<K, T>(o: Option(Node(K, T))): Nat {
-  match o: Nat {
+  ⊢ Nat from match o {
     None => Zero
     Some(n) => Node::verified_at(n)
   }
@@ -801,7 +801,7 @@ pub fn verified_in<K, T>(o: Option(Node(K, T))): Nat {
 // The `changed_at` an unchanged write keeps: the node's, or the current counter for a new
 // node.
 pub fn changed_in<K, T>(o: Option(Node(K, T)), now: Nat): Nat {
-  match o: Nat {
+  ⊢ Nat from match o {
     None => now
     Some(n) => Node::changed_at(n)
   }
@@ -818,7 +818,7 @@ pub fn update_by<K, T>(
   res: Resolved(K),
   changed: Bool
 ): Whale(K, T) × Updated where Ord(K) {
-  match changed: Whale(K, T) × Updated {
+  ⊢ Whale(K, T) × Updated from match changed {
     true => #(
       pfst(write_changed(w, k, x, res)),
       Updated::Mk(
@@ -852,7 +852,7 @@ pub fn update_with<K, T>(
   differs: (Option(T), T) -> Bool,
   o: Outcome(K, Resolved(K))
 ): Outcome(K, Whale(K, T) × Updated) where Ord(K) {
-  match o: Outcome(K, Whale(K, T) × Updated) {
+  ⊢ Outcome(K, Whale(K, T) × Updated) from match o {
     Absent(ks) => Absent(ks)
     Done(res) => Done(update_by(w, k, x, res, differs(data_in(Whale::get(w, k)), x)))
   }
@@ -884,7 +884,7 @@ pub fn inserted_pick<K, T>(
   p: Whale(K, T) × Written,
   o: Option(Node(K, T))
 ): Outcome(K, Whale(K, T) × Found(K, T)) {
-  match o: Outcome(K, Whale(K, T) × Found(K, T)) {
+  ⊢ Outcome(K, Whale(K, T) × Found(K, T)) from match o {
     // `Whale::register` always puts `k` (`register_puts`).
     None => Absent(Nil)
     Some(n) => Done(#(pfst(p), Inserted(n)))
@@ -895,7 +895,7 @@ pub fn inserted_with<K, T>(
   k: K,
   o: Outcome(K, Whale(K, T) × Written)
 ): Outcome(K, Whale(K, T) × Found(K, T)) where Ord(K) {
-  match o: Outcome(K, Whale(K, T) × Found(K, T)) {
+  ⊢ Outcome(K, Whale(K, T) × Found(K, T)) from match o {
     Absent(ks) => Absent(ks)
     Done(p) => inserted_pick(p, Whale::get(pfst(p), k))
   }
@@ -909,7 +909,7 @@ pub fn get_or_insert_at<K, T>(
   ids: List(K),
   o: Option(Node(K, T))
 ): Outcome(K, Whale(K, T) × Found(K, T)) where Ord(K) {
-  match o: Outcome(K, Whale(K, T) × Found(K, T)) {
+  ⊢ Outcome(K, Whale(K, T) × Found(K, T)) from match o {
     Some(n) => Done(#(w, Existing(n)))
     None => inserted_with(k, Whale::register(w, k, x, dur, ids))
   }
@@ -936,7 +936,7 @@ pub fn remove_at<K, T>(
   k: K,
   o: Option(Node(K, T))
 ): Whale(K, T) × Option(Node(K, T)) where Ord(K) {
-  match o: Whale(K, T) × Option(Node(K, T)) {
+  ⊢ Whale(K, T) × Option(Node(K, T)) from match o {
     None => #(w, None)
     Some(n) => #(
       Whale::Mk(unlink(nodes_remove(Whale::nodes(w), k), k, Node::dep_ids(n)), Whale::revision(w)),
@@ -958,7 +958,7 @@ pub fn unused_pick<K, T>(
   n: Node(K, T),
   rs: List(K)
 ): Whale(K, T) × Option(Node(K, T)) where Ord(K) {
-  match rs: Whale(K, T) × Option(Node(K, T)) {
+  ⊢ Whale(K, T) × Option(Node(K, T)) from match rs {
     Nil => remove_at(w, k, Some(n))
     Cons(r, more) => #(w, None)
   }
@@ -969,7 +969,7 @@ pub fn unused_at<K, T>(
   k: K,
   o: Option(Node(K, T))
 ): Whale(K, T) × Option(Node(K, T)) where Ord(K) {
-  match o: Whale(K, T) × Option(Node(K, T)) {
+  ⊢ Whale(K, T) × Option(Node(K, T)) from match o {
     None => #(w, None)
     Some(n) => unused_pick(w, k, n, Node::dependents(n))
   }
@@ -994,7 +994,7 @@ pub fn reads_of<K, T>(ns: List(K × Node(K, T)), k: K): List(K) where Ord(K) {
 
 // Whether a path of at most `fuel` reads from `k` reaches `target`.
 pub fn reaches<K, T>(ns: List(K × Node(K, T)), target: K, k: K, fuel: Nat): Bool where Ord(K) {
-  match fuel: Bool {
+  ⊢ Bool from match fuel {
     Zero => key_eq(k, target)
     Succ(f) => Bool::or(
       key_eq(k, target),

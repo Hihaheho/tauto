@@ -22,9 +22,9 @@ pub(open) inductive NatExpr: Type =>
 
 module Ne {
   pub fn env_get(env: List(Nat), i: Nat): Nat {
-    match env: Nat {
+    ⊢ Nat from match env {
       Nil => Zero
-      Cons(h, t) => match i: Nat {
+      Cons(h, t) => ⊢ Nat from match i {
         Zero => h
         Succ(k) => Ne::env_get(t, k)
       }
@@ -32,7 +32,7 @@ module Ne {
   }
 
   pub fn eval(env: List(Nat), e: NatExpr): Nat {
-    match e: Nat {
+    ⊢ Nat from match e {
       NeConst(n) => n
       NeVar(i) => Ne::env_get(env, i)
       NeAdd(a, b) => Nat::add(Ne::eval(env, a), Ne::eval(env, b))
@@ -43,14 +43,14 @@ module Ne {
 
 module Nm {
   pub fn eval(env: List(Nat), m: List(Nat)): Nat {
-    match m: Nat {
+    ⊢ Nat from match m {
       Nil => Succ(Zero)
       Cons(v, r) => Nat::mul(Ne::env_get(env, v), Nm::eval(env, r))
     }
   }
 
   pub fn ins_at(y: Bool, v: Nat, w: Nat, m2: List(Nat), rest: List(Nat)): List(Nat) {
-    match y: List(Nat) {
+    ⊢ List(Nat) from match y {
       false => Cons(w, rest)
       true => Cons(v, Cons(w, m2))
     }
@@ -58,37 +58,34 @@ module Nm {
 
   // `v` before the first variable it is not after.
   pub fn ins(v: Nat, m: List(Nat)): List(Nat) {
-    match m: List(Nat) {
+    ⊢ List(Nat) from match m {
       Nil => Cons(v, Nil)
       Cons(w, m2) => Nm::ins_at(v <= w, v, w, m2, Nm::ins(v, m2))
     }
   }
 
   pub fn mul(a: List(Nat), b: List(Nat)): List(Nat) {
-    match a: List(Nat) {
+    ⊢ List(Nat) from match a {
       Nil => b
       Cons(v, r) => Nm::ins(v, Nm::mul(r, b))
     }
   }
 
   pub fn cmp_at(e: Bool, l: Bool, r: Ordering): Ordering {
-    match e: Ordering {
+    ⊢ Ordering from match e {
       true => r
-      false => match l: Ordering {
-        true => Less
-        false => Greater
-      }
+      false => ⊢ Ordering from match l { true => Less, false => Greater }
     }
   }
 
   // The lexicographic order of monomials.
   pub fn cmp(a: List(Nat), b: List(Nat)): Ordering {
-    match a: Ordering {
-      Nil => match b: Ordering {
+    ⊢ Ordering from match a {
+      Nil => ⊢ Ordering from match b {
         Nil => Equal
         Cons(y, ys) => Less
       }
-      Cons(x, xs) => match b: Ordering {
+      Cons(x, xs) => ⊢ Ordering from match b {
         Nil => Greater
         Cons(y, ys) => Nm::cmp_at(x == y, x < y, Nm::cmp(xs, ys))
       }
@@ -107,9 +104,9 @@ module Nm {
     hr: (r = Equal) -> (xs = ys),
     h: Nm::cmp_at(e, l, r) = Equal
   ): Cons(x, xs) = Cons(y, ys) {
-    match e: Cons(x, xs) = Cons(y, ys) {
+    ⊢ Cons(x, xs) = Cons(y, ys) from match e {
       true => Eq::trans(Eq::congr(⟦Cons(□, xs)⟧, he(Refl)), Eq::congr(⟦Cons(y, □)⟧, hr(h)))
-      false => match l: Cons(x, xs) = Cons(y, ys) {
+      false => ⊢ Cons(x, xs) = Cons(y, ys) from match l {
         true => False::elim(less_ne_equal(h))
         false => False::elim(greater_ne_equal(h))
       }
@@ -117,12 +114,12 @@ module Nm {
   }
 
   pub theorem cmp_sound(a: List(Nat), b: List(Nat), h: Nm::cmp(a, b) = Equal): a = b {
-    match a: a = b {
-      Nil => match b: Nil = b {
+    ⊢ a = b from match a {
+      Nil => ⊢ Nil = b from match b {
         Nil => Refl
         Cons(y, ys) => False::elim(less_ne_equal(h))
       }
-      Cons(x, xs) => match b: Cons(x, xs) = b {
+      Cons(x, xs) => ⊢ Cons(x, xs) = b from match b {
         Nil => False::elim(greater_ne_equal(h))
         Cons(y, ys) => Nm::cmp_at_sound(
           x == y,
@@ -147,14 +144,14 @@ pub(open) inductive NmTerm: Type {
 }
 
 pub fn nt_eval(env: List(Nat), t: NmTerm): Nat {
-  match t: Nat {
+  ⊢ Nat from match t {
     Nt(c, m) => Nat::mul(c, Nm::eval(env, m))
   }
 }
 
 module Np {
   pub fn eval(env: List(Nat), p: List(NmTerm)): Nat {
-    match p: Nat {
+    ⊢ Nat from match p {
       Nil => Zero
       Cons(t, r) => Nat::add(nt_eval(env, t), Np::eval(env, r))
     }
@@ -169,7 +166,7 @@ module Np {
     p2: List(NmTerm),
     rest: List(NmTerm)
   ): List(NmTerm) {
-    match o: List(NmTerm) {
+    ⊢ List(NmTerm) from match o {
       Less => Cons(Nt(c, m), Cons(Nt(d, n), p2))
       Equal => Cons(Nt(Nat::add(c, d), m), p2)
       Greater => Cons(Nt(d, n), rest)
@@ -178,36 +175,36 @@ module Np {
 
   // `c` times `m` added, the coefficients of the same monomial summed.
   pub fn ins(c: Nat, m: List(Nat), p: List(NmTerm)): List(NmTerm) {
-    match p: List(NmTerm) {
+    ⊢ List(NmTerm) from match p {
       Nil => Cons(Nt(c, m), Nil)
-      Cons(u, p2) => match u: List(NmTerm) {
+      Cons(u, p2) => ⊢ List(NmTerm) from match u {
         Nt(d, n) => Np::ins_at(Nm::cmp(m, n), c, m, d, n, p2, Np::ins(c, m, p2))
       }
     }
   }
 
   pub fn add(p: List(NmTerm), q: List(NmTerm)): List(NmTerm) {
-    match p: List(NmTerm) {
+    ⊢ List(NmTerm) from match p {
       Nil => q
-      Cons(t, r) => match t: List(NmTerm) {
+      Cons(t, r) => ⊢ List(NmTerm) from match t {
         Nt(c, m) => Np::ins(c, m, Np::add(r, q))
       }
     }
   }
 
   pub fn mul_mono(c: Nat, m: List(Nat), q: List(NmTerm)): List(NmTerm) {
-    match q: List(NmTerm) {
+    ⊢ List(NmTerm) from match q {
       Nil => Nil
-      Cons(u, r) => match u: List(NmTerm) {
+      Cons(u, r) => ⊢ List(NmTerm) from match u {
         Nt(d, n) => Np::ins(Nat::mul(c, d), Nm::mul(m, n), Np::mul_mono(c, m, r))
       }
     }
   }
 
   pub fn mul(p: List(NmTerm), q: List(NmTerm)): List(NmTerm) {
-    match p: List(NmTerm) {
+    ⊢ List(NmTerm) from match p {
       Nil => Nil
-      Cons(t, r) => match t: List(NmTerm) {
+      Cons(t, r) => ⊢ List(NmTerm) from match t {
         Nt(c, m) => Np::add(Np::mul_mono(c, m, q), Np::mul(r, q))
       }
     }
@@ -215,7 +212,7 @@ module Np {
 
   // `n` is `n` times the empty product, and 0 is no term.
   pub fn const(n: Nat): List(NmTerm) {
-    match n: List(NmTerm) {
+    ⊢ List(NmTerm) from match n {
       Zero => Nil
       Succ(k) => Cons(Nt(Succ(k), Nil), Nil)
     }
@@ -224,7 +221,7 @@ module Np {
 
 module Ne {
   pub fn norm(e: NatExpr): List(NmTerm) {
-    match e: List(NmTerm) {
+    ⊢ List(NmTerm) from match e {
       NeConst(n) => Np::const(n)
       NeVar(i) => Cons(Nt(Succ(Zero), Cons(i, Nil)), Nil)
       NeAdd(a, b) => Np::add(Ne::norm(a), Ne::norm(b))
@@ -246,10 +243,10 @@ module Nm {
     env,
     Nm::ins_at(y, v, w, m2, rest)
   ) = Nat::mul(Ne::env_get(env, v), Nm::eval(env, Cons(w, m2))) {
-    match y: Nm::eval(
+    ⊢ Nm::eval(
       env,
       Nm::ins_at(y, v, w, m2, rest)
-    ) = Nat::mul(Ne::env_get(env, v), Nm::eval(env, Cons(w, m2))) {
+    ) = Nat::mul(Ne::env_get(env, v), Nm::eval(env, Cons(w, m2))) from match y {
       false => Eq::trans(
         Eq::congr(⟦Nat::mul(Ne::env_get(env, w), □)⟧, ih),
         Nat::mul_swap(Ne::env_get(env, w), Ne::env_get(env, v), Nm::eval(env, m2))
@@ -263,7 +260,7 @@ module Nm {
     v: Nat,
     m: List(Nat)
   ): Nm::eval(env, Nm::ins(v, m)) = Nat::mul(Ne::env_get(env, v), Nm::eval(env, m)) {
-    match m: Nm::eval(env, Nm::ins(v, m)) = Nat::mul(Ne::env_get(env, v), Nm::eval(env, m)) {
+    ⊢ Nm::eval(env, Nm::ins(v, m)) = Nat::mul(Ne::env_get(env, v), Nm::eval(env, m)) from match m {
       Nil => Refl
       Cons(w, m2) => Nm::ins_at_sound(
         env,
@@ -282,7 +279,7 @@ module Nm {
     a: List(Nat),
     b: List(Nat)
   ): Nm::eval(env, Nm::mul(a, b)) = Nat::mul(Nm::eval(env, a), Nm::eval(env, b)) {
-    match a: Nm::eval(env, Nm::mul(a, b)) = Nat::mul(Nm::eval(env, a), Nm::eval(env, b)) {
+    ⊢ Nm::eval(env, Nm::mul(a, b)) = Nat::mul(Nm::eval(env, a), Nm::eval(env, b)) from match a {
       Nil => Eq::sym(Nat::mul_one_left(Nm::eval(env, b)))
       Cons(v, r) => Eq::trans(
         Nm::ins_sound(env, v, Nm::mul(r, b)),
@@ -311,10 +308,10 @@ module Np {
     env,
     Np::ins_at(o, c, m, d, n, p2, rest)
   ) = Nat::add(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, Cons(Nt(d, n), p2))) {
-    match o: Np::eval(
+    ⊢ Np::eval(
       env,
       Np::ins_at(o, c, m, d, n, p2, rest)
-    ) = Nat::add(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, Cons(Nt(d, n), p2))) {
+    ) = Nat::add(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, Cons(Nt(d, n), p2))) from match o {
       Less => Refl
       Equal => Eq::trans(
         Eq::congr(
@@ -353,15 +350,15 @@ module Np {
     m: List(Nat),
     p: List(NmTerm)
   ): Np::eval(env, Np::ins(c, m, p)) = Nat::add(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, p)) {
-    match p: Np::eval(
+    ⊢ Np::eval(
       env,
       Np::ins(c, m, p)
-    ) = Nat::add(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, p)) {
+    ) = Nat::add(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, p)) from match p {
       Nil => Refl
-      Cons(u, p2) => match u: Np::eval(
+      Cons(u, p2) => ⊢ Np::eval(
         env,
         Np::ins(c, m, Cons(u, p2))
-      ) = Nat::add(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, Cons(u, p2))) {
+      ) = Nat::add(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, Cons(u, p2))) from match u {
         Nt(d, n) => Np::ins_at_sound(
           env,
           Nm::cmp(m, n),
@@ -383,12 +380,12 @@ module Np {
     p: List(NmTerm),
     q: List(NmTerm)
   ): Np::eval(env, Np::add(p, q)) = Nat::add(Np::eval(env, p), Np::eval(env, q)) {
-    match p: Np::eval(env, Np::add(p, q)) = Nat::add(Np::eval(env, p), Np::eval(env, q)) {
+    ⊢ Np::eval(env, Np::add(p, q)) = Nat::add(Np::eval(env, p), Np::eval(env, q)) from match p {
       Nil => Eq::sym(Nat::add_zero_left(Np::eval(env, q)))
-      Cons(t, r) => match t: Np::eval(
+      Cons(t, r) => ⊢ Np::eval(
         env,
         Np::add(Cons(t, r), q)
-      ) = Nat::add(Np::eval(env, Cons(t, r)), Np::eval(env, q)) {
+      ) = Nat::add(Np::eval(env, Cons(t, r)), Np::eval(env, q)) from match t {
         Nt(c, m) => Eq::trans(
           Np::ins_sound(env, c, m, Np::add(r, q)),
           Eq::trans(
@@ -427,15 +424,15 @@ module Np {
     env,
     Np::mul_mono(c, m, q)
   ) = Nat::mul(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, q)) {
-    match q: Np::eval(
+    ⊢ Np::eval(
       env,
       Np::mul_mono(c, m, q)
-    ) = Nat::mul(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, q)) {
+    ) = Nat::mul(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, q)) from match q {
       Nil => Eq::sym(Nat::mul_zero_right(Nat::mul(c, Nm::eval(env, m))))
-      Cons(u, r) => match u: Np::eval(
+      Cons(u, r) => ⊢ Np::eval(
         env,
         Np::mul_mono(c, m, Cons(u, r))
-      ) = Nat::mul(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, Cons(u, r))) {
+      ) = Nat::mul(Nat::mul(c, Nm::eval(env, m)), Np::eval(env, Cons(u, r))) from match u {
         Nt(d, n) => Eq::trans(
           Np::ins_sound(env, Nat::mul(c, d), Nm::mul(m, n), Np::mul_mono(c, m, r)),
           Eq::trans(
@@ -476,12 +473,12 @@ module Np {
     p: List(NmTerm),
     q: List(NmTerm)
   ): Np::eval(env, Np::mul(p, q)) = Nat::mul(Np::eval(env, p), Np::eval(env, q)) {
-    match p: Np::eval(env, Np::mul(p, q)) = Nat::mul(Np::eval(env, p), Np::eval(env, q)) {
+    ⊢ Np::eval(env, Np::mul(p, q)) = Nat::mul(Np::eval(env, p), Np::eval(env, q)) from match p {
       Nil => Eq::sym(Nat::mul_zero_left(Np::eval(env, q)))
-      Cons(t, r) => match t: Np::eval(
+      Cons(t, r) => ⊢ Np::eval(
         env,
         Np::mul(Cons(t, r), q)
-      ) = Nat::mul(Np::eval(env, Cons(t, r)), Np::eval(env, q)) {
+      ) = Nat::mul(Np::eval(env, Cons(t, r)), Np::eval(env, q)) from match t {
         Nt(c, m) => Eq::trans(
           Np::add_sound(env, Np::mul_mono(c, m, q), Np::mul(r, q)),
           Eq::trans(
@@ -509,7 +506,7 @@ module Np {
   }
 
   pub theorem const_sound(env: List(Nat), n: Nat): Np::eval(env, Np::const(n)) = n {
-    match n: Np::eval(env, Np::const(n)) = n {
+    ⊢ Np::eval(env, Np::const(n)) = n from match n {
       Zero => Refl
       Succ(k) => Nat::mul_one_right(Succ(k))
     }
@@ -521,7 +518,7 @@ module Ne {
     env: List(Nat),
     e: NatExpr
   ): Ne::eval(env, e) = Np::eval(env, Ne::norm(e)) {
-    match e: Ne::eval(env, e) = Np::eval(env, Ne::norm(e)) {
+    ⊢ Ne::eval(env, e) = Np::eval(env, Ne::norm(e)) from match e {
       NeConst(n) => Eq::sym(Np::const_sound(env, n))
       NeVar(i) => Eq::sym(
         Eq::trans(
@@ -571,14 +568,14 @@ module Nat {
 
 module Nat {
   pub theorem le_add_right(a: Nat, b: Nat): a <= a + b = true {
-    match b: a <= a + b = true {
+    ⊢ a <= a + b = true from match b {
       Zero => Nat::le_refl(a)
       Succ(k) => Nat::le_trans(a, a + k, Succ(a + k), Nat::le_add_right(a, k), Nat::le_succ(a + k))
     }
   }
 
   pub theorem le_add_left(a: Nat, b: Nat): b <= a + b = true {
-    match b: b <= a + b = true {
+    ⊢ b <= a + b = true from match b {
       Zero => Refl
       Succ(k) => Nat::le_add_left(a, k)
     }
@@ -586,7 +583,7 @@ module Nat {
 
   // `a + c <= b + c`.
   pub theorem le_add_mono_left(a: Nat, b: Nat, c: Nat, h: a <= b = true): a + c <= b + c = true {
-    match c: a + c <= b + c = true {
+    ⊢ a + c <= b + c = true from match c {
       Zero => h
       Succ(k) => Nat::le_add_mono_left(a, b, k, h)
     }
@@ -626,7 +623,7 @@ module Nat {
 
   // `c * x <= d * x`.
   pub theorem le_mul_mono_left(c: Nat, d: Nat, x: Nat, h: c <= d = true): c * x <= d * x = true {
-    match x: c * x <= d * x = true {
+    ⊢ c * x <= d * x = true from match x {
       Zero => Refl
       Succ(k) => Nat::le_add_mono(c * k, d * k, c, d, Nat::le_mul_mono_left(c, d, k, h), h)
     }
@@ -635,26 +632,23 @@ module Nat {
 
 module Np {
   pub fn le_at(o: Ordering, b: Bool, e: Bool, g: Bool): Bool {
-    match o: Bool {
+    ⊢ Bool from match o {
       Less => false
-      Equal => match b: Bool {
-        true => e
-        false => false
-      }
+      Equal => ⊢ Bool from match b { true => e, false => false }
       Greater => g
     }
   }
 
   pub fn le_chk(p: List(NmTerm), q: List(NmTerm)): Bool {
-    match q: Bool {
-      Nil => match p: Bool {
+    ⊢ Bool from match q {
+      Nil => ⊢ Bool from match p {
         Nil => true
         Cons(t, p2) => false
       }
-      Cons(u, q2) => match p: Bool {
+      Cons(u, q2) => ⊢ Bool from match p {
         Nil => true
-        Cons(t, p2) => match t: Bool {
-          Nt(c, m) => match u: Bool {
+        Cons(t, p2) => ⊢ Bool from match t {
+          Nt(c, m) => ⊢ Bool from match u {
             Nt(d, n) => Np::le_at(Nm::cmp(m, n), c <= d, Np::le_chk(p2, q2), Np::le_chk(p, q2))
           }
         }
@@ -680,12 +674,12 @@ module Np {
     hg: (g = true) -> (Np::eval(env, Cons(Nt(c, m), p2)) <= Np::eval(env, q2) = true),
     h: Np::le_at(o, b, e, g) = true
   ): Np::eval(env, Cons(Nt(c, m), p2)) <= Np::eval(env, Cons(Nt(d, n), q2)) = true {
-    match o: Np::eval(env, Cons(Nt(c, m), p2)) <= Np::eval(env, Cons(Nt(d, n), q2)) = true {
+    ⊢ Np::eval(env, Cons(Nt(c, m), p2)) <= Np::eval(env, Cons(Nt(d, n), q2)) = true from match o {
       Less => False::elim(false_ne_true(h))
-      Equal => match b: Np::eval(
+      Equal => ⊢ Np::eval(
         env,
         Cons(Nt(c, m), p2)
-      ) <= Np::eval(env, Cons(Nt(d, n), q2)) = true {
+      ) <= Np::eval(env, Cons(Nt(d, n), q2)) = true from match b {
         true => Eq::subst(
           (z: List(Nat)) => Np::eval(
             env,
@@ -719,18 +713,21 @@ module Np {
     q: List(NmTerm),
     h: Np::le_chk(p, q) = true
   ): Np::eval(env, p) <= Np::eval(env, q) = true {
-    match q: Np::eval(env, p) <= Np::eval(env, q) = true {
-      Nil => match p: Np::eval(env, p) <= Zero = true {
+    ⊢ Np::eval(env, p) <= Np::eval(env, q) = true from match q {
+      Nil => ⊢ Np::eval(env, p) <= Zero = true from match p {
         Nil => Refl
         Cons(t, p2) => False::elim(false_ne_true(h))
       }
-      Cons(u, q2) => match p: Np::eval(env, p) <= Np::eval(env, Cons(u, q2)) = true {
+      Cons(u, q2) => ⊢ Np::eval(env, p) <= Np::eval(env, Cons(u, q2)) = true from match p {
         Nil => Refl
-        Cons(t, p2) => match t: Np::eval(env, Cons(t, p2)) <= Np::eval(env, Cons(u, q2)) = true {
-          Nt(c, m) => match u: Np::eval(
+        Cons(t, p2) => ⊢ Np::eval(
+          env,
+          Cons(t, p2)
+        ) <= Np::eval(env, Cons(u, q2)) = true from match t {
+          Nt(c, m) => ⊢ Np::eval(
             env,
             Cons(Nt(c, m), p2)
-          ) <= Np::eval(env, Cons(u, q2)) = true {
+          ) <= Np::eval(env, Cons(u, q2)) = true from match u {
             Nt(d, n) => Np::le_at_sound(
               env,
               Nm::cmp(m, n),

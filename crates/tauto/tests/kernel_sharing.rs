@@ -35,7 +35,11 @@ theorem r#shared(): Eq(Nat, {}, 3) {{ Refl }}
     declare_prelude(&mut k).unwrap();
     k.set_timeout(Some(Duration::from_secs(20)));
     let entries = k.declare_program(&loaded.program);
-    let verdict = &entries.iter().find(|e| e.name == "shared").unwrap().verdict;
+    let verdict = &entries
+        .iter()
+        .find(|e| e.name.as_str() == "shared")
+        .unwrap()
+        .verdict;
     assert!(matches!(verdict, Verdict::Checked { .. }), "{verdict:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -61,7 +65,11 @@ fn a_sum_with_an_unknown_operand_is_not_unfolded() {
     declare_prelude(&mut k).unwrap();
     k.set_timeout(Some(Duration::from_secs(10)));
     let entries = k.declare_program(&loaded.program);
-    let verdict = &entries.iter().find(|e| e.name == "same").unwrap().verdict;
+    let verdict = &entries
+        .iter()
+        .find(|e| e.name.as_str() == "same")
+        .unwrap()
+        .verdict;
     assert!(matches!(verdict, Verdict::Checked { .. }), "{verdict:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -89,7 +97,11 @@ fn a_numeral_written_with_constructors_is_computed_at_once() {
     k.set_timeout(Some(Duration::from_secs(10)));
     let entries = k.declare_program(&loaded.program);
     for name in ["one_times", "nested"] {
-        let verdict = &entries.iter().find(|e| e.name == name).unwrap().verdict;
+        let verdict = &entries
+            .iter()
+            .find(|e| e.name.as_str() == name)
+            .unwrap()
+            .verdict;
         assert!(
             matches!(verdict, Verdict::Checked { .. }),
             "{name}: {verdict:?}"

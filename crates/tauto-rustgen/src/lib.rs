@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use proc_macro2::Ident;
 use tauto_message::msg;
-use tauto_nir::{DataDef, Package, Span, Ty};
+use tauto_nir::{DataDef, Name, Package, Span, Ty};
 
 use crate::tok::{Rs, generics, id, idents, lexes, lifetime};
 use quote::quote;
@@ -28,7 +28,9 @@ mod ty;
 
 pub use borrowed_budget::{BorrowDiagnostic, BorrowReason, borrowed_budget_diagnostics};
 pub use cargo::{BuildEvent, Options, WASM_TARGETS, Workspace, WriteStats, workspace};
-pub use item::{allow_lints, emit_items, emit_lib, emit_lib_tokens, emit_module};
+pub use item::{
+    allow_lints, emit_items, emit_lib, emit_lib_tokens, emit_module, emit_vm_lib_tokens,
+};
 pub use nonresuming::{BudgetDiagnostic, BudgetReason, budget_diagnostics};
 pub use tok::render;
 
@@ -36,10 +38,10 @@ pub use tok::render;
 /// each extern type, and the Rust path of each extern function.
 #[derive(Debug, Clone, Default)]
 pub struct Bindings {
-    pub types: std::collections::BTreeMap<String, Binding>,
-    pub externs: std::collections::BTreeMap<String, Binding>,
+    pub types: std::collections::BTreeMap<Name, Binding>,
+    pub externs: std::collections::BTreeMap<Name, Binding>,
     /// Explicit host promises; these are not inferred from effect rows.
-    pub nonresuming_externs: BTreeMap<String, HostContract>,
+    pub nonresuming_externs: BTreeMap<Name, HostContract>,
     /// Separate Rust facades requiring an explicit whole-embedding host assertion.
     pub nonresuming_entries: BTreeMap<String, EntryContract>,
     /// Also write `uniffi_api`: the facade's functions as UniFFI exports.
@@ -123,7 +125,11 @@ impl Bindings {
             for (k, e) in &m.rust.types {
                 lex(e)?;
                 out.types.insert(
-                    k.clone(),
+                    pkg.datas
+                        .iter()
+                        .find(|d| d.name.as_str() == k)
+                        .map(|d| d.name.clone())
+                        .unwrap_or_else(|| Name::from(k)),
                     Binding {
                         rust: e.value.clone(),
                         at: at(e),
@@ -139,7 +145,7 @@ impl Bindings {
                 continue;
             }
             let Some(b) = bridge else {
-                return Err(msg!("rustgen-type-no-binding", name = &d.name).to_string());
+                return Err(msg!("rustgen-type-no-binding", name = d.name.to_string()).to_string());
             };
             out.types.insert(
                 d.name.clone(),
@@ -190,7 +196,9 @@ impl Bindings {
                     );
                 }
                 (None, None) => {
-                    return Err(msg!("rustgen-extern-no-binding", name = &x.name).to_string());
+                    return Err(
+                        msg!("rustgen-extern-no-binding", name = x.name.to_string()).to_string()
+                    );
                 }
             }
         }
@@ -205,18 +213,21 @@ impl Bindings {
                     )
                     .to_string());
                 }
-                if !pkg.externs.iter().any(|x| {
-                    &x.name == name || x.name.strip_prefix("main::") == Some(name.as_str())
-                }) {
+                let external = pkg.externs.iter().find(|x| {
+                    x.name.as_str() == name || x.name.strip_prefix("main::") == Some(name.as_str())
+                });
+                let Some(external) = external else {
                     return Err(msg!(
                         "rustgen-contract-unknown-extern",
                         at = at(entry),
                         name = name
                     )
                     .to_string());
-                }
-                out.nonresuming_externs
-                    .insert(name.clone(), HostContract::ClosedHostV1 { at: at(entry) });
+                };
+                out.nonresuming_externs.insert(
+                    external.name.clone(),
+                    HostContract::ClosedHostV1 { at: at(entry) },
+                );
             }
             for (facade, entry) in &m.rust.nonresuming_entries {
                 let mut chars = facade.chars();
@@ -252,7 +263,7 @@ impl Bindings {
                 if pkg
                     .datas
                     .iter()
-                    .any(|data| Gen::data_name(&data.name).to_string() == public_name)
+                    .any(|data| Gen::data_name(pkg, &data.name).to_string() == public_name)
                 {
                     return Err(msg!(
                         "rustgen-facade-collides-data",
@@ -318,7 +329,7 @@ pub(crate) struct Gen<'a> {
     pub bindings: &'a Bindings,
     pub union_names: Vec<Rs>,
     pub union_params: Vec<Vec<String>>,
-    pub data_index: HashMap<&'a str, usize>,
+    pub data_index: HashMap<&'a Name, usize>,
     /// For each data: can it be cloned, compared, shown.
     pub flags: Vec<[bool; 4]>,
     /// Where run-time errors point: `(file, line, col)` by constant name.
@@ -357,6 +368,11 @@ pub(crate) struct Gen<'a> {
     /// The locals of a function type in the function being written (its
     /// parameters and `let`s), with the types they are written with.
     pub fn_locals: HashMap<u32, Ty>,
+    /// The locals a pattern bound to a shared field, held as the field's
+    /// `Rc` or `Shared` rather than as its content. The content is taken
+    /// out (`unrc`) only where a value is needed, and a constructor that
+    /// puts the local back into a shared field reuses the cell.
+    pub lazy: HashSet<u32>,
 }
 
 impl<'a> Gen<'a> {
@@ -376,7 +392,7 @@ impl<'a> Gen<'a> {
         }
         let mut o_callback_reserved = BTreeSet::new();
         for data in &pkg.datas {
-            o_callback_reserved.insert(Self::data_name(&data.name).to_string());
+            o_callback_reserved.insert(Self::data_name(pkg, &data.name).to_string());
             o_callback_reserved.extend(data.generics.iter().cloned());
         }
         for function in &pkg.fns {
@@ -384,7 +400,7 @@ impl<'a> Gen<'a> {
             o_callback_reserved.extend(function.generics.iter().map(|(name, _)| name.clone()));
         }
         for external in &pkg.externs {
-            o_callback_reserved.insert(external.name.clone());
+            o_callback_reserved.insert(external.name.to_string());
             o_callback_reserved.extend(external.generics.iter().cloned());
         }
         for operation in &pkg.ops {
@@ -404,7 +420,7 @@ impl<'a> Gen<'a> {
             .datas
             .iter()
             .enumerate()
-            .map(|(i, d)| (d.name.as_str(), i))
+            .map(|(i, d)| (&d.name, i))
             .collect();
         let mut g = Gen {
             pkg,
@@ -416,6 +432,7 @@ impl<'a> Gen<'a> {
             flags: vec![[true; 4]; pkg.datas.len()],
             locs: BTreeMap::new(),
             named_refs: Cell::new(false),
+            lazy: HashSet::new(),
             lt_name: Cell::new("'r"),
             o_lt_name: Cell::new("'_"),
             o_callback_types: RefCell::new(Default::default()),
@@ -438,7 +455,7 @@ impl<'a> Gen<'a> {
         g
     }
 
-    pub fn data(&self, name: &str) -> Option<&'a DataDef> {
+    pub fn data(&self, name: &Name) -> Option<&'a DataDef> {
         self.data_index.get(name).map(|i| &self.pkg.datas[*i])
     }
 
@@ -448,7 +465,36 @@ impl<'a> Gen<'a> {
     /// the generated code writes bare) gets a trailing `_`, and so does a
     /// name that is one of those plus trailing `_`s, so two types never
     /// meet at one Rust name.
-    pub fn data_name(name: &str) -> Ident {
+    pub fn data_name(pkg: &Package, name: &Name) -> Ident {
+        Self::data_symbol(pkg.datas.iter().map(|d| &d.name), name)
+    }
+
+    fn data_symbol<'n>(names: impl Iterator<Item = &'n Name>, name: &Name) -> Ident {
+        let names: Vec<_> = names.collect();
+        let base = Self::data_spelling(name);
+        let spelling = base.to_string();
+        let collides = names
+            .iter()
+            .any(|other| **other != *name && Self::data_spelling(other).to_string() == spelling);
+        if !collides {
+            return base;
+        }
+        let position = names
+            .iter()
+            .position(|other| **other == *name)
+            .expect("a generated type has a declaration identity");
+        let occupied: BTreeSet<String> = names
+            .iter()
+            .map(|other| Self::data_spelling(other).to_string())
+            .collect();
+        let mut candidate = format!("{}__type_{position}", spelling.trim_start_matches("r#"));
+        while occupied.contains(&candidate) {
+            candidate.push('_');
+        }
+        id(&candidate)
+    }
+
+    fn data_spelling(name: &str) -> Ident {
         static TAKEN: std::sync::LazyLock<BTreeSet<String>> = std::sync::LazyLock::new(|| {
             let mut taken: BTreeSet<String> = [
                 "String", "Vec", "Option", "Result", "Box", "Some", "None", "Ok", "Err", "Bomb",
@@ -516,16 +562,13 @@ impl<'a> Gen<'a> {
             Ty::HashMap(a, b) | Ty::Result(a, b) | Ty::Pair(a, b) => {
                 self.ty_has(a, p) && self.ty_has(b, p)
             }
-            Ty::Product(ms) => ms.iter().all(|(_, m)| self.ty_has(m, p)),
             // The runtime's shared slots and handles (`Ref`, `Weak`, `Mutex`,
             // `Atomic`, `Pending`) have no `PartialEq`: a copy is another
             // handle on the same slot, so equality of contents is not theirs.
             Ty::Std(_, _) if matches!(p, Pred::Eq | Pred::Hash) => false,
             Ty::Std(_, args) => args.iter().all(|a| self.ty_has(a, p)),
             Ty::Data(n, args) => {
-                self.data_index
-                    .get(n.as_str())
-                    .is_none_or(|i| self.flags[*i][k])
+                self.data_index.get(n).is_none_or(|i| self.flags[*i][k])
                     && args.iter().all(|a| self.ty_has(a, p))
             }
             Ty::Union(id) => self.pkg.unions[*id]
@@ -637,4 +680,28 @@ pub fn type_name_with_lifetime(
     g.lt_name.set(lifetime);
     g.o_lt_name.set(lifetime);
     g.ty(ty).to_string()
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn type_symbols_distinguish_references_and_escaped_spellings() {
+        let names: Vec<Name> = ["Same", "Same", "A::B", "A__B", "Same__type_0"]
+            .into_iter()
+            .map(|s| Name::from(tauto::identity::DeclRef::fresh(s)))
+            .collect();
+        let symbols: Vec<_> = names
+            .iter()
+            .map(|name| Gen::data_symbol(names.iter(), name).to_string())
+            .collect();
+        assert_eq!(symbols.iter().collect::<BTreeSet<_>>().len(), names.len());
+        for (name, symbol) in names.iter().zip(&symbols) {
+            assert_eq!(
+                &Gen::data_symbol(names.iter(), &name.clone()).to_string(),
+                symbol
+            );
+        }
+    }
 }

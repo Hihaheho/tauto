@@ -19,18 +19,8 @@ mutual {
     other: Ty,
     second: WrittenTerm(other_env, generics, partial, borrow, term, other)
   ): t = other {
-    match meaning: t = other {
-      Mk(
-        ctor_ast_occurrence,
-        gs,
-        Mode,
-        borrowing,
-        sk,
-        value,
-        start,
-        end,
-        inner
-      ) => written_unique_term(
+    ⊢ t = other from match meaning {
+      Mk(ctor_ast_occurrence, gs, Mode, borrowing, sk, value, start, end, inner) => written_unique_term(
         ctor_ast_occurrence,
         second,
         value,
@@ -52,7 +42,7 @@ mutual {
     other: Ty,
     second: WrittenKind(other_env, generics, partial, borrow, kind, other)
   ): t = other {
-    match meaning: t = other {
+    ⊢ t = other from match meaning {
       WrittenKindName(gs, Mode, borrowing, name, value, Named) => written_unique_name(
         second,
         env,
@@ -63,17 +53,7 @@ mutual {
         ctor_ast_occurrence,
         second
       )
-      WrittenKindInfo(
-        ctor_ast_occurrence,
-        gs,
-        Mode,
-        borrowing,
-        arg,
-        value,
-        start,
-        end,
-        argument
-      ) => written_unique_info(
+      WrittenKindInfo(ctor_ast_occurrence, gs, Mode, borrowing, arg, value, start, end, argument) => written_unique_info(
         ctor_ast_occurrence,
         second,
         value,
@@ -84,23 +64,7 @@ mutual {
           next_meaning
         )
       )
-      WrittenKindNamed(
-        ctor_ast_occurrence,
-        gs,
-        Mode,
-        borrowing,
-        name,
-        args,
-        types,
-        start,
-        end,
-        NotTuple,
-        not_info,
-        unbound,
-        SliceBorrowed,
-        arguments,
-        arity
-      ) => written_unique_named(
+      WrittenKindNamed(ctor_ast_occurrence, gs, Mode, borrowing, name, args, types, start, end, NotTuple, not_info, unbound, SliceBorrowed, arguments, arity) => written_unique_named(
         ctor_ast_occurrence,
         second,
         types,
@@ -114,23 +78,7 @@ mutual {
           next_meaning
         )
       )
-      WrittenKindGeneric(
-        ctor_ast_occurrence,
-        gs,
-        Mode,
-        borrowing,
-        name,
-        arg,
-        head,
-        value,
-        bound,
-        start,
-        end,
-        not_info,
-        Parameter,
-        constructor,
-        argument
-      ) => written_unique_generic(
+      WrittenKindGeneric(ctor_ast_occurrence, gs, Mode, borrowing, name, arg, head, value, bound, start, end, not_info, Parameter, constructor, argument) => written_unique_generic(
         ctor_ast_occurrence,
         second,
         head,
@@ -146,23 +94,7 @@ mutual {
           next_meaning
         )
       )
-      WrittenKindNested(
-        ctor_ast_occurrence,
-        gs,
-        Mode,
-        borrowing,
-        function,
-        before,
-        args,
-        start,
-        end,
-        name,
-        first,
-        last,
-        constructor,
-        arguments,
-        arity
-      ) => written_unique_nested(
+      WrittenKindNested(ctor_ast_occurrence, gs, Mode, borrowing, function, before, args, start, end, name, first, last, constructor, arguments, arity) => written_unique_nested(
         ctor_ast_occurrence,
         second,
         name,
@@ -181,25 +113,7 @@ mutual {
           next_meaning
         )
       )
-      WrittenKindFunction(
-        gs,
-        Mode,
-        borrowing,
-        params,
-        result,
-        effects,
-        Binders,
-        Suffix,
-        inner,
-        arguments,
-        Returns,
-        value,
-        MkSplit,
-        MkScope,
-        ParameterTypes,
-        ResultType,
-        Polymorphic
-      ) => written_unique_function(
+      WrittenKindFunction(gs, Mode, borrowing, params, result, effects, Binders, Suffix, inner, arguments, Returns, value, MkSplit, MkScope, ParameterTypes, ResultType, Polymorphic) => written_unique_function(
         second,
         Binders,
         Suffix,
@@ -223,19 +137,7 @@ mutual {
           next_meaning
         )
       )
-      WrittenKindFunctionKind(
-        gs,
-        Mode,
-        borrowing,
-        spelling,
-        body,
-        params,
-        result,
-        original,
-        kind,
-        function,
-        Annotation
-      ) => written_unique_fn_kind(
+      WrittenKindFunctionKind(gs, Mode, borrowing, spelling, body, params, result, original, kind, function, Annotation) => written_unique_fn_kind(
         second,
         params,
         result,
@@ -304,18 +206,9 @@ mutual {
     other: List(Ty),
     second: WrittenTerms(other_env, generics, partial, terms, other)
   ): types = other {
-    match meaning: types = other {
+    ⊢ types = other from match meaning {
       WrittenTermsNil(gs, Mode) => written_unique_terms_nil(second)
-      WrittenTermsCons(
-        gs,
-        Mode,
-        first,
-        rest,
-        value,
-        values,
-        head,
-        tail
-      ) => written_unique_terms_cons(
+      WrittenTermsCons(gs, Mode, first, rest, value, values, head, tail) => written_unique_terms_cons(
         second,
         value,
         values,
@@ -347,19 +240,9 @@ mutual {
     other: List(Ty),
     second: WrittenParameters(other_env, generics, partial, params, other)
   ): types = other {
-    match meaning: types = other {
+    ⊢ types = other from match meaning {
       WrittenParametersNil(gs, Mode) => written_unique_parameters_nil(second)
-      WrittenParametersCons(
-        gs,
-        Mode,
-        name,
-        body,
-        rest,
-        value,
-        values,
-        head,
-        tail
-      ) => written_unique_parameters_cons(
+      WrittenParametersCons(gs, Mode, name, body, rest, value, values, head, tail) => written_unique_parameters_cons(
         second,
         value,
         values,

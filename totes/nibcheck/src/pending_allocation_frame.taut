@@ -23,7 +23,9 @@ pub theorem allocation_same_rewrap<A: Type>(
 ): AllocationSame(
   c,
   ck_rewrap1(m)
-) { Eq::subst((result: Mut1(A, Checker)) => AllocationSame(c, result), Eq::sym(ck_rewrap1_id(m)), h) }
+) {
+  Eq::subst((result: Mut1(A, Checker)) => AllocationSame(c, result), Eq::sym(ck_rewrap1_id(m)), h)
+}
 pub theorem allocation_same_bind<A: Type, B: Type>(
   c: Checker,
   k: (A, Checker) -> Mut1(B, Checker),
@@ -31,7 +33,7 @@ pub theorem allocation_same_bind<A: Type, B: Type>(
   first: AllocationSame(c, m),
   tail: ∀ value: A. ∀ next: Checker. AllocationSame(next, k(value, next))
 ): AllocationSame(c, frame_bind(A, B, k, m)) {
-  match m: AllocationSame(c, frame_bind(A, B, k, m)) {
+  ⊢ AllocationSame(c, frame_bind(A, B, k, m)) from match m {
     mut1(value, next) => Eq::trans(first, tail(value, next))
   }
 }
@@ -53,7 +55,7 @@ pub theorem instantiation_pred_allocation_same(
   span: TySpan,
   found: Option(Ty)
 ): AllocationSame(c, instantiation_pred(c, p, what, span, found)) {
-  match found: AllocationSame(c, instantiation_pred(c, p, what, span, found)) { None => Refl
+  ⊢ AllocationSame(c, instantiation_pred(c, p, what, span, found)) from match found { None => Refl
     Some(value) => Refl }
 }
 pub theorem instantiation_preds_cons_allocation_same(
@@ -98,7 +100,7 @@ pub theorem ck_pend_preds_allocation_same(
   what: Text,
   span: TySpan
 ): AllocationSame(c, ck_pend_preds(ps, c, map, what, span)) {
-  match ps: AllocationSame(c, ck_pend_preds(ps, c, map, what, span)) {
+  ⊢ AllocationSame(c, ck_pend_preds(ps, c, map, what, span)) from match ps {
     Nil => Refl
     Cons(p, rest) => Eq::subst(
       (result: Mut1(Unit, Checker)) => AllocationSame(c, result),

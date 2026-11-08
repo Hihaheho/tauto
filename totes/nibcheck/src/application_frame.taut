@@ -22,7 +22,7 @@ pub fn application_effect_arity(
   ps: List(Ty),
   bad: Bool
 ): Mut1(Unit, Checker) {
-  match bad: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match bad {
     true => ck_rewrap1(
       ck_error(
         c,
@@ -50,7 +50,7 @@ pub theorem application_effect_arity_frame(
   bad: Bool,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, application_effect_arity(c, eff, types, args, span, ps, bad)) {
-  match bad: CkRunFrame(c, application_effect_arity(c, eff, types, args, span, ps, bad)) {
+  ⊢ CkRunFrame(c, application_effect_arity(c, eff, types, args, span, ps, bad)) from match bad {
     true => run_frame_read(
       c,
       ck_rewrap1(
@@ -110,7 +110,7 @@ pub fn application_effect_inst(
   original: Ty,
   inst: Ty
 ): Mut1(Ty, Checker) {
-  match inst: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match inst {
     TyInt(pat_w) => mut1(original, c)
     TyBool => mut1(original, c)
     TyText => mut1(original, c)
@@ -155,7 +155,7 @@ pub theorem application_effect_inst_frame(
   inst: Ty,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, application_effect_inst(c, eff, types, args, span, original, inst)) {
-  match inst: CkRunFrame(c, application_effect_inst(c, eff, types, args, span, original, inst)) {
+  ⊢ CkRunFrame(c, application_effect_inst(c, eff, types, args, span, original, inst)) from match inst {
     TyInt(pat_w) => run_frame_return(c, original, ordered)
     TyBool => run_frame_return(c, original, ordered)
     TyText => run_frame_return(c, original, ordered)
@@ -210,7 +210,7 @@ pub fn application_effect_found(
   span: TySpan,
   found: Option(EffectSig)
 ): Mut1(Ty, Checker) {
-  match found: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match found {
     None => frame_bind(
       Unit,
       Ty,
@@ -235,7 +235,7 @@ pub theorem application_effect_found_frame(
   found: Option(EffectSig),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, application_effect_found(c, eff, types, args, span, found)) {
-  match found: CkRunFrame(c, application_effect_found(c, eff, types, args, span, found)) {
+  ⊢ CkRunFrame(c, application_effect_found(c, eff, types, args, span, found)) from match found {
     None => run_frame_bind(
       Unit,
       Ty,
@@ -287,14 +287,20 @@ pub theorem application_effect_unf(
   types: List(Ty),
   args: List(SurfaceTerm),
   span: TySpan
-): ck_perform_of(c, eff, types, args, span) = application_effect_found(
-    c,
-    eff,
-    types,
-    args,
-    span,
-    Ordmap::get(handle_effects(c), eff, Ordmap::compare_text)
-  ) { Refl }
+): ck_perform_of(
+  c,
+  eff,
+  types,
+  args,
+  span
+) = application_effect_found(
+  c,
+  eff,
+  types,
+  args,
+  span,
+  Ordmap::get(handle_effects(c), eff, Ordmap::compare_text)
+) { Refl }
 
 pub theorem ck_perform_of_run_frame(
   c: Checker,
@@ -327,7 +333,7 @@ pub fn application_fn_arity(
   ps: List(Ty),
   bad: Bool
 ): Mut1(Unit, Checker) {
-  match bad: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match bad {
     true => ck_rewrap1(
       ck_error(
         c,
@@ -353,7 +359,7 @@ pub theorem application_fn_arity_frame(
   bad: Bool,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, application_fn_arity(c, term, arguments, args, ps, bad)) {
-  match bad: CkRunFrame(c, application_fn_arity(c, term, arguments, args, ps, bad)) {
+  ⊢ CkRunFrame(c, application_fn_arity(c, term, arguments, args, ps, bad)) from match bad {
     true => run_frame_read(
       c,
       ck_rewrap1(
@@ -410,7 +416,7 @@ pub fn application_fn_known(
   r: Ty,
   known: Option(List(Ty))
 ): Mut1(Ty, Checker) {
-  match known: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match known {
     Some(kp) => mut1(r, c)
     None => frame_bind(
       Unit,
@@ -431,14 +437,21 @@ pub theorem application_fn_known_frame(
   known: Option(List(Ty)),
   ordered: CkOrdered(c)
 ): CkRunFrame(c, application_fn_known(c, term, arguments, args, ps, r, known)) {
-  match known: CkRunFrame(c, application_fn_known(c, term, arguments, args, ps, r, known)) {
+  ⊢ CkRunFrame(c, application_fn_known(c, term, arguments, args, ps, r, known)) from match known {
     Some(kp) => run_frame_return(c, r, ordered)
     None => run_frame_bind(
       Unit,
       Ty,
       c,
       (ignored: Unit, c1: Checker) => mut1(r, c1),
-      application_fn_arity(c, term, arguments, args, ps, not(Nat::eq(list_len(ps), list_len(args)))),
+      application_fn_arity(
+        c,
+        term,
+        arguments,
+        args,
+        ps,
+        not(Nat::eq(list_len(ps), list_len(args)))
+      ),
       application_fn_arity_frame(
         c,
         term,
@@ -464,7 +477,7 @@ pub fn application_fn(
   original: Ty,
   fr: Ty
 ): Mut1(Ty, Checker) {
-  match fr: Mut1(Ty, Checker) {
+  ⊢ Mut1(Ty, Checker) from match fr {
     TyInt(pat_w) => frame_bind(
       Unit,
       Ty,
@@ -598,10 +611,10 @@ pub theorem application_fn_frame(
   fr: Ty,
   ordered: CkOrdered(c)
 ): CkRunFrame(c, application_fn(c, term, function, arguments, f, known, args, original, fr)) {
-  match fr: CkRunFrame(
+  ⊢ CkRunFrame(
     c,
     application_fn(c, term, function, arguments, f, known, args, original, fr)
-  ) {
+  ) from match fr {
     TyInt(pat_w) => run_frame_bind(
       Unit,
       Ty,
@@ -988,17 +1001,25 @@ pub theorem application_fn_unf(
   f: Ty,
   known: Option(List(Ty)),
   args: List(Ty)
-): ck_app_result(c, term, function, arguments, f, known, args) = application_fn(
-    c,
-    term,
-    function,
-    arguments,
-    f,
-    known,
-    args,
-    ty_unborrowed(ck_resolve(c, f)),
-    ty_unborrowed(ck_resolve(c, f))
-  ) { Refl }
+): ck_app_result(
+  c,
+  term,
+  function,
+  arguments,
+  f,
+  known,
+  args
+) = application_fn(
+  c,
+  term,
+  function,
+  arguments,
+  f,
+  known,
+  args,
+  ty_unborrowed(ck_resolve(c, f)),
+  ty_unborrowed(ck_resolve(c, f))
+) { Refl }
 
 pub theorem ck_app_result_run_frame(
   c: Checker,

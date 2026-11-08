@@ -33,7 +33,7 @@ pub theorem error_frame_bind<A: Type, B: Type>(
   hm: CkErrorFrame(c, m),
   hk: ∀ v: A. ∀ next: Checker. CkErrorFrame(next, k(v, next))
 ): CkErrorFrame(c, frame_bind(k, m)) {
-  match m: CkErrorFrame(c, frame_bind(k, m)) {
+  ⊢ CkErrorFrame(c, frame_bind(k, m)) from match m {
     mut1(v, next) => clean => hm(hk(v, next, clean))
   }
 }
@@ -50,7 +50,7 @@ pub theorem error_frame_if(
   span: TySpan,
   take: Bool
 ): CkErrorFrame(c, frame_error_if(c, message, span, take)) {
-  match take: CkErrorFrame(c, frame_error_if(c, message, span, take)) {
+  ⊢ CkErrorFrame(c, frame_error_if(c, message, span, take)) from match take {
     true => ck_error_error_frame(c, message, span)
     false => error_frame_return(c, Star)
   }

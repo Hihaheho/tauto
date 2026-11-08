@@ -1,0 +1,86 @@
+description = "Recursion through a nested inductive type: a tree whose children are a `List` of trees."
+
+@ cases.a_mutual_block_recurses_through_a_list_of_trees
+source = ```tauto
+inductive Tree: Type {
+  Node(v: Nat, c: List(Tree)): Tree
+}
+fn plus(n: Nat, m: Nat): Nat {
+  match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
+  }
+}
+mutual {
+  fn size(t: Tree): Nat {
+    match t {
+      Node(v, c) => Succ(sizes(c))
+    }
+  }
+  fn sizes(l: List(Tree)): Nat {
+    match l {
+      Nil => Zero
+      Cons(h, r) => plus(size(h), sizes(r))
+    }
+  }
+}
+theorem t(): size(Node(Zero, Cons(Node(Zero, Nil), Cons(Node(Zero, Nil), Nil)))) = 3 {
+  Refl
+}
+```
+checks."size" = "checked"
+checks."sizes" = "checked"
+checks."t" = "checked"
+
+@ cases.one_function_through_a_list_of_trees_points_to_mutual
+source = ```tauto
+inductive Tree: Type {
+  Node(v: Nat, c: List(Tree)): Tree
+}
+fn plus(n: Nat, m: Nat): Nat {
+  match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
+  }
+}
+fn sizes(l: List(Tree)): Nat {
+  match l {
+    Nil => Zero
+    Cons(h, r) => match h {
+      Node(v, c) => Succ(plus(sizes(c), sizes(r)))
+    }
+  }
+}
+```
+checks."sizes" = "error: `h` is a part of another type of the group, and a recursion through its parts is a function that matches on that type, together with this one in one `mutual { … }` block"
+
+@ cases.a_call_on_a_part_of_another_type_names_the_called_function
+source = ```tauto
+mutual {
+  inductive V: Type {
+    Vnat(n: Nat): V
+    Varr(xs: List(N)): V
+  }
+  inductive N: Type {
+    Node(v: V, ext: List(N)): N
+  }
+}
+mutual {
+  fn size(n: N): Nat {
+    match n {
+      Node(v, ext) => match v {
+        Vnat(k) => Zero
+        Varr(xs) => sizes(xs)
+      }
+    }
+  }
+  fn sizes(xs: List(N)): Nat {
+    match xs {
+      Nil => Zero
+      Cons(x, rest) => Succ(sizes(rest))
+    }
+  }
+}
+```
+checks."size" = "error: `sizes(xs)` is not structural: `sizes` matches on its parameter `xs`, so the argument for `xs` is a part of the value matched here"
+checks."sizes" = "error: `v` is a part of another type of the group"

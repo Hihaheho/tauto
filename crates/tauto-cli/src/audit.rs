@@ -100,7 +100,7 @@ fn read(
     for file in files {
         let parsed = std::fs::read_to_string(&file)
             .map_err(|e| e.to_string())
-            .and_then(|text| parse_program(&text));
+            .and_then(|text| parse_program(&text).map_err(|e| e.to_string()));
         match parsed {
             Ok(program) => program.stmts.iter().for_each(|s| tote.add(s)),
             Err(_) => tote.unread.push(
@@ -134,14 +134,17 @@ impl Tote {
             }
             Stmt::Extern { fns, .. } => {
                 for f in fns {
-                    self.externs.insert(f.name.clone());
-                    self.effects.extend(f.effects.iter().flatten().cloned());
+                    self.externs.insert(f.name.to_string());
+                    self.effects
+                        .extend(f.effects.iter().flatten().map(ToString::to_string));
                 }
             }
             Stmt::Theorem(t) if t.body.is_none() => {
-                self.axioms.insert(t.name.clone());
+                self.axioms.insert(t.name.to_string());
             }
-            Stmt::Fn(f) => self.effects.extend(f.effects.iter().flatten().cloned()),
+            Stmt::Fn(f) => self
+                .effects
+                .extend(f.effects.iter().flatten().map(ToString::to_string)),
             Stmt::Attributed { stmt, .. } => self.add(stmt),
             _ => {}
         }

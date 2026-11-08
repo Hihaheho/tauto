@@ -1,0 +1,194 @@
+description = "`Float` (IEEE 754 binary64): literals, arithmetic, comparisons, the digits `show` writes, the functions of `std/prelude/Num.taut`, and conversions, with the same output on every backend (`docs/design/float.md`)."
+
+// Literals with a point or an exponent; `+ - *` and unary `-` are IEEE 754's, and
+// `==` says `0.0 == -0.0` and NaN is not equal to itself.
+@ cases.float-arithmetic
+source = ```nib
+struct Point { x: Float, y: Float }
+fn norm(p: Point): Float { Float::sqrt(p.x * p.x + p.y * p.y) }
+fn sum(xs: List(Float)): Float {
+  match xs {
+    Nil => 0.0
+    Cons(x, rest) => x + sum(rest)
+  }
+}
+perform show("lit", [1.5, 2e10, 6.02e23, 1.0e-3, 0.1])
+perform show("add", 0.1 + 0.2)
+perform show("sub", 1.0 - 3.5)
+perform show("mul", 1.5 * -4.0)
+perform show("div", 1.0 / 3.0)
+perform show("neg", -(0.0))
+perform show("point", Point { x: 3.0, y: 4.0 })
+perform show("norm", norm(Point { x: 3.0, y: 4.0 }))
+perform show("sum", sum([0.1, 0.2, 0.3]))
+perform show("lt", 0.1 + 0.2 > 0.3)
+perform show("eq", 0.0 == -0.0)
+perform show("nan", Float::sqrt(-1.0) == Float::sqrt(-1.0))
+perform show("big", 1e300 * 1e10)
+```
+shows = ["lit = Cons(1.5, Cons(20000000000, Cons(602000000000000000000000, Cons(0.001, Cons(0.1, Nil)))))", "add = 0.30000000000000004", "sub = -2.5", "mul = -6", "div = 0.3333333333333333", "neg = -0", "point = Point { x: 3, y: 4 }", "norm = 5", "sum = 0.6", "lt = true", "eq = true", "nan = false", "big = inf"]
+
+// The shortest digits that read back as the same `Float`, never with an
+// exponent; of two as near, the larger (`tie`).
+@ cases.float-shown-digits
+source = ```nib
+perform show("one", 1.0)
+perform show("tenth", 0.1)
+perform show("e21", 1e21)
+perform show("e-7", 1e-7)
+perform show("tiny", Float::of_bits(1))
+perform show("max", Float::of_bits(9218868437227405311))
+perform show("negzero", -0.0)
+perform show("nan", Float::sqrt(-1.0))
+perform show("inf", 1e308 * 10.0)
+perform show("ninf", -1e308 * 10.0)
+perform show("tie", 568843492673848.25)
+perform show("text", Text::of_float(2.0 / 3.0))
+```
+shows = ["one = 1", "tenth = 0.1", "e21 = 1000000000000000000000", "e-7 = 0.0000001", "tiny = 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005", "max = 179769313486231570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "negzero = -0", "nan = NaN", "inf = inf", "ninf = -inf", "tie = 568843492673848.3", "text = \"0.6666666666666666\""]
+
+// The functions that are not exact in IEEE 754 are the runtime's own, so
+// every backend prints these digits.
+@ cases.float-functions
+source = ```nib
+perform show("sqrt", Float::sqrt(2.0))
+perform show("cbrt", Float::cbrt(-27.0))
+perform show("exp", Float::exp(1.0))
+perform show("ln", Float::ln(10.0))
+perform show("log2", Float::log2(10.0))
+perform show("log10", Float::log10(2.0))
+perform show("pow", Float::pow(1.0001, 10000.0))
+perform show("sin", Float::sin(1e22))
+perform show("cos", Float::cos(0.5))
+perform show("tan", Float::tan(1.5))
+perform show("asin", Float::asin(0.3))
+perform show("acos", Float::acos(-0.7))
+perform show("atan", Float::atan(10.0))
+perform show("atan2", Float::atan2(-1.0, -1.0))
+perform show("sinh", Float::sinh(2.5))
+perform show("cosh", Float::cosh(-3.0))
+perform show("tanh", Float::tanh(0.4))
+perform show("abs", Float::abs(-2.5))
+perform show("floor", Float::floor(-2.5))
+perform show("ceil", Float::ceil(-2.5))
+perform show("trunc", Float::trunc(-2.5))
+perform show("round", [Float::round(-2.5), Float::round(2.5), Float::round(0.49999999999999994), Float::round(-0.3)])
+perform show("isnan", [Float::is_nan(Float::ln(-1.0)), Float::is_nan(1.0)])
+```
+shows = ["sqrt = 1.4142135623730951", "cbrt = -3", "exp = 2.7182818284590455", "ln = 2.302585092994046", "log2 = 3.321928094887362", "log10 = 0.3010299956639812", "pow = 2.7181459268249255", "sin = -0.8522008497671888", "cos = 0.8775825618903728", "tan = 14.101419947171719", "asin = 0.3046926540153975", "acos = 2.34619382340565", "atan = 1.4711276743037347", "atan2 = -2.356194490192345", "sinh = 6.0502044810397875", "cosh = 10.067661995777765", "tanh = 0.3799489622552249", "abs = 2.5", "floor = -3", "ceil = -2", "trunc = -2", "round = Cons(-3, Cons(3, Cons(0, Cons(-0, Nil))))", "isnan = Cons(true, Cons(false, Nil))"]
+
+// `float_of_i64` rounds to the nearest; `i64_of_float` takes the integer part.
+@ cases.float-conversions
+source = ```nib
+perform show("of_i64", Float::of_i64(9007199254740993))
+perform show("to_i64", [I64::of_float(-2.9), I64::of_float(2.9), I64::of_float(-9.223372036854775808e18)])
+perform show("bits", [Float::bits(1.0), Float::bits(-0.0)])
+perform show("of_bits", Float::of_bits(4614253070214989087))
+perform show("parse", [Float::of_text("-2.5E-3"), Float::of_text("1e400"), Float::of_text(".5"), Float::of_text("inf"), Float::of_text("12")])
+```
+shows = ["of_i64 = 9007199254740992", "to_i64 = Cons(-2, Cons(2, Cons(-9223372036854775808, Nil)))", "bits = Cons(4607182418800017408, Cons(9223372036854775808, Nil))", "of_bits = 3.14", "parse = Cons(Some(-0.0025), Cons(Some(inf), Cons(None, Cons(None, Cons(Some(12), Nil)))))"]
+
+// `Float` through closures, recursion, `var` and `while`, a handler, a `Vec`
+// and a product: a copy value like the integers. The product shows its members
+// in its one order (labels, then the types by name), so `Float` before `Text`.
+@ cases.float-in-programs
+source = ```nib
+import std::prelude::Affine
+
+effect ask(): Float
+fn scale(f: (Float) -> Float, xs: List(Float)): List(Float) {
+  match xs { Nil => Nil, Cons(x, rest) => Cons(f(x), scale(f, rest)) }
+}
+fn mean(xs: List(Float), n: Float, acc: Float): Float {
+  match xs { Nil => acc / n, Cons(x, rest) => mean(rest, n, acc + x) }
+}
+fn total(n: i64): Float {
+  var s := 0.0
+  var i := 0
+  while i < n {
+    s := s + Float::of_i64(i) * 0.5
+    i := i + 1
+  }
+  s
+}
+let k := 2.5
+perform show("closure", scale(x => x * k, [1.0, 2.0]))
+perform show("mean", mean([1.0, 2.0, 4.0], 3.0, 0.0))
+perform show("loop", total(10))
+perform show("handled", handle { perform ask() + 1.0 } with { ask(), k => k(41.0) })
+var v := Vec::new()
+Vec::push(&mut v, 1.25)
+Vec::push(&mut v, -3.5)
+perform show("vec", Vec::into_list(v))
+perform show("product", #(1.0, "a"))
+perform show("opt", Some(Float::pow(2.0, -1074.0)))
+```
+shows = ["closure = Cons(2.5, Cons(5, Nil))", "mean = 2.3333333333333335", "loop = 22.5", "handled = 42", "vec = Cons(1.25, Cons(-3.5, Nil))", "product = #(1, \"a\")", "opt = Some(0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005)"]
+
+// `/` by zero, of either sign, is a run-time error rather than an infinity.
+@ cases.float-division-by-zero
+source = ```nib
+fn ratio(a: Float, b: Float): Float { a / b }
+perform show("r", ratio(1.0, -0.0))
+```
+run_error = "division by zero"
+
+@ cases.float-to-i64-nan-fails
+source = ```nib
+perform show("n", I64::of_float(Float::sqrt(-1.0)))
+```
+run_error = "the number is too large"
+
+@ cases.float-to-i64-out-of-range-fails
+source = ```nib
+perform show("n", I64::of_float(9.223372036854775808e18))
+```
+run_error = "the number is too large"
+
+@ cases.float-literal-too-large
+source = ```nib
+perform show("x", 1e400)
+```
+types = "error: 1e400 is too large for a Float"
+
+@ cases.float-integer-operand
+source = ```nib
+fn f(x: Float): Float { x + 1 }
+```
+types = "error: `+` of Float and i64: the operands differ"
+
+// Without `std/Float.taut` the proofs have no `Float`: a theorem cannot name
+// the type or a literal.
+@ cases.float-needs-std-in-proofs
+source = ```tauto
+theorem same(x: Float): x = x { Refl }
+fn twice(x: Float): Float { x * 2.0 }
+theorem two(): twice(1.0) = 2.0 { Refl }
+```
+checks.same = "error: `Float` is not defined in proofs"
+checks.twice = "skipped"
+checks.two = "error: not a kernel term: a Float literal"
+
+// With it, a literal is the bits of its `Float`, and the proofs compute
+// with the definitions of `std/Float.taut`: the rounded sum, the square
+// root, and division that is decided rather than failing.
+@ cases.float-in-proofs
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::Float
+
+theorem tenths(): Float::add(0.1, 0.2) = 0.30000000000000004 { Refl }
+theorem not_three_tenths(): Float::eq(Float::add(0.1, 0.2), 0.3) = false { Refl }
+theorem root(): Float::sqrt(2.0) = 1.4142135623730951 { Refl }
+theorem halves(): Float::round(-2.5) = -3.0 { Refl }
+theorem by_zero(): Float::checked_div(1.0, -0.0) = None { Refl }
+theorem nan_is_not_equal(): Float::eq(Float::sqrt(-1.0), Float::sqrt(-1.0)) = false { Refl }
+fn grow(x: Float): Float { Float::exp(x) }
+```
+checks.tenths = "ok"
+checks.not_three_tenths = "ok"
+checks.root = "ok"
+checks.halves = "ok"
+checks.by_zero = "ok"
+checks.nan_is_not_equal = "ok"
+checks.grow = "axioms: std::Float::Float::exp"

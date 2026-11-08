@@ -47,6 +47,8 @@ mutual
     | decimal
     /-- `Float`: IEEE 754 binary64. -/
     | float
+    /-- `Float32`: IEEE 754 binary32. -/
+    | float32
     /-- The type of an expression that never gives a value (`Div`'s result). -/
     | never
     /-- `(ps) -> ret ! row` -/
@@ -99,6 +101,7 @@ mutual
     | .text => .text
     | .decimal => .decimal
     | .float => .float
+    | .float32 => .float32
     | .never => .never
     | .fn ps r ρ => .fn (ps.map (·.inst θ)) (r.inst θ) (ρ.flatMap (·.inst θ))
     | .union ts => .union (ts.map (·.inst θ))
@@ -164,6 +167,7 @@ mutual
     | .text => by simp [Ty.inst]
     | .decimal => by simp [Ty.inst]
     | .float => by simp [Ty.inst]
+    | .float32 => by simp [Ty.inst]
     | .never => by simp [Ty.inst]
     | .fn ps r ρ => by
         simp only [Ty.inst]

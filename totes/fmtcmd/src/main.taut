@@ -1,0 +1,139 @@
+import "../../syntax/src/syntax.taut"
+import "../../fmt/src/fmt.taut"
+import "../../text/src/text.taut"
+import "../../unicode/src/classes.taut"
+import "../../unicode/src/unicode.taut"
+import std::Base
+import std::Text
+import std::prelude::Os
+
+// `tauto fmt [--check] FILE…`: lays the files out again, or with `--check`
+// lists the ones that would change. The exit status is 0 when every file is
+// as it should be, 1 when a file does not format or (with `--check`) would
+// change, and 2 when a file cannot be read or written or the arguments are
+// wrong.
+
+extern {
+  // The usage text of the `tauto` command.
+  fn fmt_usage(): Text
+  // "`path` is not formatted", in the user's language.
+  fn fmt_not_formatted(&path: Text): Text
+  // The text with the bodies of its syntax literals laid out; warnings go
+  // to standard error.
+  fn fmt_literals(&path: Text, &formatted: Text): Text
+  // Why the Rust formatter rejects the source, with the place; empty when it
+  // accepts it.
+  fn fmt_diagnostic(&source: Text): Text
+}
+
+pub fn fmt_is_flag(a: Text): Bool {
+  text_starts_with(a, "--", 0)
+}
+
+pub fn fmt_has_other_flag(args: List(Text)): Bool {
+  match args {
+    Nil => false
+    Cons(a, rest) => if fmt_is_flag(a) && not(Text::eq(a, "--check")) {
+      true
+    } else {
+      fmt_has_other_flag(rest)
+    }
+  }
+}
+
+pub fn fmt_has_check(args: List(Text)): Bool {
+  match args {
+    Nil => false
+    Cons(a, rest) => if Text::eq(a, "--check") { true } else { fmt_has_check(rest) }
+  }
+}
+
+pub fn fmt_paths(args: List(Text)): List(Text) {
+  match args {
+    Nil => Nil
+    Cons(a, rest) => if fmt_is_flag(a) { fmt_paths(rest) } else { Cons(a, fmt_paths(rest)) }
+  }
+}
+
+// The file laid out, and then the bodies of its syntax literals laid out by
+// the functions their syntaxes register.
+pub fn fmt_with_literals(&tables: SyntaxTables, classes: UnicodeClasses, path: Text, formatted: Text): Text {
+  let laid := fmt_literals(path, formatted)
+  if Text::eq(laid, formatted) {
+    formatted
+  } else {
+    match fmt_format(tables, classes, laid) {
+      FmtOk(again) => again
+      FmtErr(e) => laid
+    }
+  }
+}
+
+// What went wrong with a source the formatter rejects: the Rust formatter
+// names the place; the Tauto one does not.
+pub fn fmt_why(source: Text, message: Text): Text {
+  let rust := fmt_diagnostic(source)
+  if Text::eq(rust, "") { message } else { rust }
+}
+
+// Formats each file in turn. `status` is 0 or 1; a file that cannot be read
+// or written ends the run with 2.
+pub fn fmt_each(&tables: SyntaxTables, classes: UnicodeClasses, check: Bool, paths: List(Text), status: i32): i32 ! {fs_read, fs_write, stdout, stderr, Div} {
+  match paths {
+    Nil => status
+    Cons(path, rest) => match read_file(path) {
+      Err(e) => {
+        eprint(Text::concat_all(Cons(path, Cons(": ", Cons(e, Cons("\n", Nil))))))
+        2
+      }
+      Ok(source) => match fmt_format(tables, classes, source) {
+        FmtErr(message) => {
+          eprint(Text::concat_all(Cons(path, Cons(": ", Cons(fmt_why(source, message), Cons("\n", Nil))))))
+          fmt_each(tables, classes, check, rest, 1)
+        }
+        FmtOk(formatted) => {
+          let out := fmt_with_literals(tables, classes, path, formatted)
+          if Text::eq(out, source) {
+            fmt_each(tables, classes, check, rest, status)
+          } else if check {
+            print(Text::concat_all(Cons(fmt_not_formatted(path), Cons("\n", Nil))))
+            fmt_each(tables, classes, check, rest, 1)
+          } else {
+            match write_file(path, out) {
+              Err(e) => {
+                eprint(Text::concat_all(Cons(path, Cons(": ", Cons(e, Cons("\n", Nil))))))
+                2
+              }
+              Ok(u) => fmt_each(tables, classes, check, rest, status)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn fmt_command(&tables: SyntaxTables, classes: UnicodeClasses, args: List(Text)): i32 ! {fs_read, fs_write, stdout, stderr, Div} {
+  let paths := fmt_paths(args)
+  if fmt_has_other_flag(args) || List::length(paths) == 0 {
+    eprint(Text::concat_all(Cons(fmt_usage(), Cons("\n", Nil))))
+    2
+  } else {
+    fmt_each(tables, classes, fmt_has_check(args), paths, 0)
+  }
+}
+
+match syntax_tables() {
+  None => {
+    eprint("the tables of the syntax are damaged\n")
+    perform exit(2)
+  }
+  Some(tables) => {
+    let code := fmt_command(tables, unicode_classes(), perform argv())
+    if code != 0 {
+      perform exit(code)
+    } else {
+      #()
+    }
+  }
+}

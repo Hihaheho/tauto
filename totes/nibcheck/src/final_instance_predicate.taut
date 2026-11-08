@@ -22,7 +22,11 @@ pub def InstancePredicateParameter(
   map: Ordmap(Text, Ty),
   name: Text,
   kind: Kind
-): Prop := ∀ ty: Ty. ∀ found: Ordmap::get(map, instantiation_parameter(p), Ordmap::compare_text) = Some(ty). ck_resolve(c, ty) = TyParam(name, kind)
+): Prop := ∀ ty: Ty. ∀ found: Ordmap::get(
+  map,
+  instantiation_parameter(p),
+  Ordmap::compare_text
+) = Some(ty). ck_resolve(c, ty) = TyParam(name, kind)
 pub theorem final_instance_predicate_parameter(
   c: Checker,
   assume: List(Pair(Text, Text)),
@@ -36,7 +40,7 @@ pub theorem final_instance_predicate_parameter(
   resolved: InstancePredicateParameter(c, p, map, name, kind),
   final: FinalDiagnostics0(c)
 ): ClassAssumption(assume, instantiation_constraint(p), name) {
-  match recorded: ClassAssumption(assume, instantiation_constraint(p), name) {
+  ⊢ ClassAssumption(assume, instantiation_constraint(p), name) from match recorded {
     Mk(ty, found, member) => final_parameter_class(
       c,
       instantiated_pending(instantiation_constraint(p), ty, what, span, assume),

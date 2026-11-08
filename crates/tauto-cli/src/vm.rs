@@ -154,7 +154,7 @@ pub(crate) fn prepare(
     let package = match tauto_nir::compile_loaded_with_observer(&loaded, false, true, |_| {}) {
         Ok(p) => p,
         Err(CompileError::Front(m)) => {
-            eprintln!("{}", super::locate_in(&loaded, &path, &m));
+            eprintln!("{}", super::locate_front(&loaded, &path, &m));
             return Err(ExitCode::FAILURE);
         }
         Err(CompileError::Unsupported(u)) => {
@@ -167,7 +167,7 @@ pub(crate) fn prepare(
                 .unwrap_or_else(|| path.clone());
             eprintln!(
                 "{}",
-                crate::i18n::t!("vm-unsupported", place = place, what = &u.what)
+                crate::i18n::t!("vm-unsupported", place = place, what = u.what.clone())
             );
             return Err(ExitCode::FAILURE);
         }
@@ -219,6 +219,9 @@ pub(crate) fn prepare(
         eprintln!("{}: {e}", file.display());
         return Err(ExitCode::FAILURE);
     }
+    if jit_on() {
+        vm_bridge::set_program(package.clone());
+    }
     let limit = (steps != u64::MAX).then_some(steps);
     let args = tauto_vm::wire::machine_args(&flags, &file, limit, None, &run.program_args);
     Ok(Prepared::Machine { dir, args })
@@ -231,7 +234,7 @@ fn in_process(
     permissions: Permissions,
     steps: u64,
 ) -> ExitCode {
-    let program = match tauto_vm::compile(package) {
+    let mut program = match tauto_vm::compile(package) {
         Ok(p) => p,
         Err(what) => {
             eprintln!(
@@ -241,6 +244,9 @@ fn in_process(
             return ExitCode::FAILURE;
         }
     };
+    if jit_on() {
+        tauto_jit::attach(&mut program, package);
+    }
     let mut host = tauto_vm::Process {
         args: program_args,
         permissions,
@@ -260,4 +266,10 @@ fn in_process(
             ExitCode::FAILURE
         }
     }
+}
+
+/// Whether the machine runs some functions as native code
+/// (`docs/design/jit.md`): unless `TAUTO_JIT` is `0`.
+fn jit_on() -> bool {
+    std::env::var_os("TAUTO_JIT").is_none_or(|v| v != "0")
 }

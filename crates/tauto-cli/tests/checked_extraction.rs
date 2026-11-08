@@ -33,7 +33,7 @@ impl Fixture {
                 "import {:?}\n{}",
                 base,
                 r#"pub fn twice(n: Nat): Nat {
-  match n: Nat {
+  ⊢ Nat from match n {
     Zero => Zero
     Succ(k) => Succ(Succ(twice(k)))
   }
@@ -70,13 +70,13 @@ perform show("value", mapped(Cons(2, Nil)))
                 base,
                 r#"mutual {
   pub fn even(n: Nat): Bool {
-    match n: Bool {
+    ⊢ Bool from match n {
       Zero => true
       Succ(k) => odd(k)
     }
   }
   pub fn odd(n: Nat): Bool {
-    match n: Bool {
+    ⊢ Bool from match n {
       Zero => false
       Succ(k) => even(k)
     }
@@ -129,13 +129,13 @@ fn run_leaves_out_the_generics_of_mutual_functions() {
         &file,
         r#"mutual {
   fn f<A>(l: List(A)): Nat {
-    match l: Nat {
+    ⊢ Nat from match l {
       Nil => Zero
       Cons(x, xs) => Succ(g(xs))
     }
   }
   fn g<A>(l: List(A)): Nat {
-    match l: Nat {
+    ⊢ Nat from match l {
       Nil => Zero
       Cons(x, xs) => Succ(f(xs))
     }
@@ -216,7 +216,7 @@ fn extraction_evidence_is_bound_to_the_complete_expanded_program() {
     };
     for stmt in &mut loaded.program.stmts {
         if let tauto::surface::Stmt::Fn(f) = stmt
-            && f.name == "twice"
+            && f.name.as_str() == "twice"
         {
             f.body.kind = replacement.body.kind.clone();
         }
@@ -270,9 +270,11 @@ perform show("value", use_callback(spin))
     }
     for source in [
         r#"fn spin(): i64 ! {} { let again := spin
- again() }"#,
+ again() }
+let r := spin()"#,
         r#"fn make(): (() -> i64 ! {}) ! {} { spin }
-fn spin(): i64 ! {} { make()() }"#,
+fn spin(): i64 ! {} { make()() }
+let r := spin()"#,
     ] {
         assert!(tauto_nir::compile(source).is_err());
         assert!(tauto_nir::compile_javascript(source).is_err());

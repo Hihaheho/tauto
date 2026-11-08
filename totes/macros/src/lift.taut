@@ -111,7 +111,10 @@ pub fn lf_scope_cons(s: Text, rest: List(i64)): List(i64) {
 pub fn lf_scopes_from(marks: Text, at: Nat): List(i64) {
   match text_find(marks, ",", at) {
     Some(i) => lf_scope_cons(Text::slice_or_empty(marks, at, i), lf_scopes_from(marks, i + 1))
-    None => lf_scope_cons(Text::slice_or_empty(marks, at, Nat::of_u64(std::prelude::Text::len(marks))), Nil)
+    None => lf_scope_cons(
+      Text::slice_or_empty(marks, at, Nat::of_u64(std::prelude::Text::len(marks))),
+      Nil
+    )
   }
 }
 
@@ -147,7 +150,10 @@ pub fn lf_ident(c: LfCtx, &mut errs: LfSt, name: Text, at: LfSp): Node {
                 Cons(NLabeled { name: "scopes", value: NList(lf_ints(sp.scopes)) }, Nil)
               )
             },
-            Cons(NLabeled { name: "span", value: span }, Nil)
+            Cons(
+              NLabeled { name: "span", value: span },
+              Cons(NLabeled { name: "declaration", value: NOpt(None) }, Nil)
+            )
           )
         )
       )
@@ -259,8 +265,8 @@ pub fn lf_fields(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceField), at: LfSp): L
 
 // `()`, the unit, is read as `Tuple` applied to nothing; it is the node `ExUnit`.
 pub fn lf_is_unit(f: SurfaceTerm, args: List(SurfaceTerm)): Bool {
-  match args: Bool {
-    Nil => match f.kind: Bool {
+  ⊢ Bool from match args {
+    Nil => ⊢ Bool from match f.kind {
       SkVar(n) => n == "Tuple"
       _ => false
     }
@@ -395,13 +401,51 @@ pub fn lf_expr(c: LfCtx, &mut errs: LfSt, t: SurfaceTerm): Node {
       "a syntax literal is not written inside a quote; call a macro"
     )
     SkHole(n) => lf_ex("ExHole", Cons(NText(n), Cons(span, Nil)))
-    SkStep(tactic, arg, cs, ce, Before, arms) => lf_err(
-      &mut errs,
-      "a step cannot be written in a quote"
-    )
-    SkProduct(items) => lf_err(&mut errs, "a product cannot be written in a quote yet")
-    SkProject(base, ty) => lf_err(&mut errs, "a product cannot be written in a quote yet")
+    SkStep(tactic, arg, cs, ce, Before, arms) => {
+      let call := LfSp { start: cs, end: ce }
+      let n := lf_ident(c, &mut errs, tactic, call)
+      let a := lf_expr(c, &mut errs, arg)
+      let g := lf_opt_expr(c, &mut errs, Before)
+      let xs := lf_step_arms(c, &mut errs, arms)
+      lf_ex("ExStep", Cons(n, Cons(a, Cons(g, Cons(NList(xs), Cons(span, Nil))))))
+    }
+    SkProduct(items) => {
+      let xs := lf_exprs(c, &mut errs, items)
+      lf_ex("ExProduct", Cons(xs, Cons(span, Nil)))
+    }
+    SkProject(base, ty) => lf_err(&mut errs, "an ascription cannot be written in a quote yet")
     SkOther(n) => lf_err(&mut errs, "cannot be written in a quote yet")
+  }
+}
+
+// The arms of a step: `Δ ⊢ goal from body`, each variable with its type.
+pub fn lf_step_arms(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceStepArm)): List(Node) {
+  match xs {
+    Nil => Nil
+    Cons(SurfaceStepArmMk(bs, goal, body, start, end), rest) => {
+      let at := LfSp { start: start, end: end }
+      let binders := lf_step_binders(c, &mut errs, bs, at)
+      let g := lf_expr(c, &mut errs, goal)
+      let b := lf_expr(c, &mut errs, body)
+      let arm := nd_st(
+        "SynStepArm",
+        Cons(
+          NLabeled { name: "binders", value: NList(binders) },
+          Cons(NLabeled { name: "goal", value: g }, Cons(NLabeled { name: "body", value: b }, Nil))
+        )
+      )
+      Cons(arm, lf_step_arms(c, &mut errs, rest))
+    }
+  }
+}
+
+pub fn lf_step_binders(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceField), at: LfSp): List(Node) {
+  match xs {
+    Nil => Nil
+    Cons(SurfaceFieldMk(name, ty), rest) => {
+      let t := lf_expr(c, &mut errs, ty)
+      Cons(lf_binder(c, &mut errs, name, Some(t), at), lf_step_binders(c, &mut errs, rest, at))
+    }
   }
 }
 
@@ -457,7 +501,10 @@ pub fn lf_stmt(c: LfCtx, &mut errs: LfSt, s: SurfaceStmt): Node {
       "an assignment to a field cannot be written in a quote yet"
     )
     StCalled(generates, call) => lf_err(&mut errs, "this statement cannot be written in a quote")
-    StAttributed(name, arg, generates, inner) => lf_err(&mut errs, "an attributed statement cannot be written in a quote yet")
+    StAttributed(name, arg, generates, inner) => lf_err(
+      &mut errs,
+      "an attributed statement cannot be written in a quote yet"
+    )
     StAssign(name, None, value) => {
       let at := LfSp { start: value.start, end: value.end }
       let id := lf_ident(c, &mut errs, name, at)
@@ -534,6 +581,7 @@ pub fn lf_opt_expr_list(c: LfCtx, &mut errs: LfSt, xs: List(Option(SurfaceTerm))
 pub fn lf_fn(c: LfCtx, &mut errs: LfSt, f: SurfaceFn): Node {
   let at := LfSp { start: f.start, end: f.end }
   let types := lf_opt_expr_list(c, &mut errs, f.param_types)
+  let generic_types := lf_expr_list(c, &mut errs, f.generic_types)
   let name := lf_ident(c, &mut errs, f.name, at)
   let params := lf_idents(c, &mut errs, f.params, at)
   let result := lf_opt_expr(c, &mut errs, f.result)
@@ -546,20 +594,23 @@ pub fn lf_fn(c: LfCtx, &mut errs: LfSt, f: SurfaceFn): Node {
       Cons(
         NLabeled { name: "generics", value: nd_texts(f.generics) },
         Cons(
-          NLabeled { name: "bounds", value: NList(lf_bound_nodes(f.bounds)) },
+          NLabeled { name: "generic_types", value: NList(generic_types) },
           Cons(
-            NLabeled { name: "params", value: NList(params) },
+            NLabeled { name: "bounds", value: NList(lf_bound_nodes(f.bounds)) },
             Cons(
-              NLabeled { name: "borrows", value: lf_opt_bools(f.borrows) },
+              NLabeled { name: "params", value: NList(params) },
               Cons(
-                NLabeled { name: "param_types", value: NList(types) },
+                NLabeled { name: "borrows", value: lf_opt_bools(f.borrows) },
                 Cons(
-                  NLabeled { name: "result", value: result },
+                  NLabeled { name: "param_types", value: NList(types) },
                   Cons(
-                    NLabeled { name: "effects", value: nd_opt_texts(f.effects) },
+                    NLabeled { name: "result", value: result },
                     Cons(
-                      NLabeled { name: "body", value: body },
-                      Cons(NLabeled { name: "span", value: span }, Nil)
+                      NLabeled { name: "effects", value: nd_opt_texts(f.effects) },
+                      Cons(
+                        NLabeled { name: "body", value: body },
+                        Cons(NLabeled { name: "span", value: span }, Nil)
+                      )
                     )
                   )
                 )
@@ -611,12 +662,7 @@ pub fn lf_theorem(c: LfCtx, &mut errs: LfSt, d: SurfaceTheorem): Node {
   )
 }
 
-pub fn lf_data_fields(
-  c: LfCtx,
-  &mut errs: LfSt,
-  xs: List(SurfaceDataField),
-  at: LfSp
-): List(Node) {
+pub fn lf_data_fields(c: LfCtx, &mut errs: LfSt, xs: List(SurfaceDataField), at: LfSp): List(Node) {
   match xs {
     Nil => Nil
     Cons(f, rest) => {
@@ -777,7 +823,10 @@ pub fn lf_pattern_fields(
     Nil => Nil
     Cons(f, rest) => {
       let n := lf_pattern(c, &mut errs, f.pattern, at)
-      Cons(nd_product2("SynPattern", n, "Text", NText(f.name)), lf_pattern_fields(c, &mut errs, rest, at))
+      Cons(
+        nd_product2("SynPattern", n, "Text", NText(f.name)),
+        lf_pattern_fields(c, &mut errs, rest, at)
+      )
     }
   }
 }

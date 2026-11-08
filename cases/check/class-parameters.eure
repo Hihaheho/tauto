@@ -1,0 +1,165 @@
+description = "Typed class telescopes retain terms and use coherent first-order instance discrimination."
+
+@ cases.class-two-types
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Convert(A: Type, B: Type) { fn convert(value: A): B }
+instance Convert(Nat, Bool) { fn convert(value: Nat): Bool { true } }
+instance Convert(Bool, Nat) { fn convert(value: Bool): Nat { 3 } }
+fn to_bool(value: Nat): Bool { Convert::convert(value) }
+fn to_nat(value: Bool): Nat { Convert::convert(value) }
+```
+checks_all = "ok"
+
+@ cases.class-natural-index
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Tagged(A: Type, n: Nat): Type { Tag(value: A): Tagged(A, n) }
+class Read(A: Type, n: Nat) { fn read(value: Tagged(A, n)): A }
+instance Read(Nat, 1) { fn read(value: Tagged(Nat, 1)): Nat { ⊢ Nat from match value { Tag(item) => item } } }
+instance Read(Nat, 2) { fn read(value: Tagged(Nat, 2)): Nat { ⊢ Nat from match value { Tag(item) => item } } }
+fn one(value: Tagged(Nat, 1)): Nat { Read::read(value) }
+fn two(value: Tagged(Nat, 2)): Nat { Read::read(value) }
+fn generic<n: Nat>(value: Tagged(Nat, n)): Nat where Read(Nat, n) { Read::read(value) }
+```
+checks_all = "ok"
+
+@ cases.class-constructor-index
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Key(A: Type): Type { KeyOf(value: A): Key(A) }
+inductive Tagged(key: Key(Nat)): Type { Tag(value: Nat): Tagged(key) }
+class Read(key: Key(Nat)) { fn read(value: Tagged(key)): Nat }
+instance Read(KeyOf(1)) { fn read(value: Tagged(KeyOf(1))): Nat { ⊢ Nat from match value { Tag(item) => item } } }
+fn one(value: Tagged(KeyOf(Nat, 1))): Nat { Read::read(value) }
+```
+checks_all = "ok"
+
+@ cases.class-text-index
+imports = [path`../../std/Text.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Tagged(key: Text): Type { Tag(value: Nat): Tagged(key) }
+class Read(key: Text) { fn read(value: Tagged(key)): Nat }
+instance Read("one") { fn read(value: Tagged("one")): Nat { ⊢ Nat from match value { Tag(item) => item } } }
+instance Read("two") { fn read(value: Tagged("two")): Nat { ⊢ Nat from match value { Tag(item) => item } } }
+fn one(value: Tagged("one")): Nat { Read::read(value) }
+fn two(value: Tagged("two")): Nat { Read::read(value) }
+```
+checks_all = "ok"
+
+@ cases.class-duplicate-natural-normal-form
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Read(A: Type, n: Nat) { fn read(value: A): A }
+instance Read(Nat, 1) { fn read(value: Nat): Nat { value } }
+instance Read(Nat, Succ(Zero)) { fn read(value: Nat): Nat { value } }
+```
+checks_all = "ok"
+checks."input/main.taut::Read(Nat, Succ(Zero))" = "error: instance Read(Nat, Succ(Zero)) is already defined"
+
+@ cases.class-overlapping-generic-index
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Read(A: Type, n: Nat) { fn read(value: A): A }
+instance<n: Nat> Read(Nat, n) { fn read(value: Nat): Nat { value } }
+instance Read(Nat, 2) { fn read(value: Nat): Nat { value } }
+```
+checks_all = "ok"
+checks."input/main.taut::Read(Nat, 2)" = "error: instance Read(Nat, 2) is already defined"
+
+@ cases.class-dependent-telescope
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Tagged(A: Type, key: A): Type { Tag(value: A): Tagged(A, key) }
+class Read(A: Type, key: A) { fn read(value: Tagged(A, key)): A }
+instance<A, key: A> Read(A, key) {
+  fn read(value: Tagged(A, key)): A { ⊢ A from match value { Tag(item) => item } }
+}
+fn one(value: Tagged(Nat, 1)): Nat { Read::read(value) }
+```
+checks_all = "ok"
+
+@ cases.class-generic-constructor-pattern
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Key(A: Type): Type { KeyOf(value: A): Key(A) }
+inductive Tagged(key: Key(Nat)): Type { Tag(value: Nat): Tagged(key) }
+class Read(key: Key(Nat)) { fn read(value: Tagged(key)): Nat }
+instance<n: Nat> Read(KeyOf(n)) { fn read(value: Tagged(KeyOf(n))): Nat { n } }
+fn one(value: Tagged(KeyOf(Nat, 1))): Nat { Read::read(value) }
+theorem selected_index(): one(Tag(9)) = 1 { Refl }
+```
+checks_all = "ok"
+
+@ cases.class-unicode-text-discriminators
+imports = [path`../../std/Text.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Tagged(key: Text): Type { Tag(value: Nat): Tagged(key) }
+class Read(key: Text) { fn read(value: Tagged(key)): Nat }
+instance Read("あ") { fn read(value: Tagged("あ")): Nat { 1 } }
+instance Read("い") { fn read(value: Tagged("い")): Nat { 2 } }
+fn first(value: Tagged("あ")): Nat { Read::read(value) }
+fn second(value: Tagged("い")): Nat { Read::read(value) }
+theorem first_result(): first(Tag(9)) = 1 { Refl }
+theorem second_result(): second(Tag(9)) = 2 { Refl }
+```
+checks_all = "ok"
+
+@ cases.class-wrong-instance-arity
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+class Read(A: Type) { fn read(value: A): A }
+instance Read(Nat, 1) { fn read(value: Nat): Nat { value } }
+```
+checks_all = "ok"
+checks."input/main.taut::Read(Nat, 1)" = "error: class argument count does not match its parameter telescope"
+
+@ cases.class-cyclic-dictionary-is-rejected
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Tagged(n: Nat): Type { Tag(value: Nat): Tagged(n) }
+class Read(n: Nat) { fn read(value: Tagged(n)): Nat }
+instance<n: Nat> Read(n) where Read(n) {
+  fn read(value: Tagged(n)): Nat { 0 }
+}
+fn one(value: Tagged(1)): Nat { Read::read(value) }
+```
+checks_all = "ok"
+checks."input/main.taut::one" = "error: instance resolution contains a cyclic constraint"
+
+@ cases.class-universal-instance-at-runtime-index
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Tagged(n: Nat): Type { Tag(value: Nat): Tagged(n) }
+class Read(n: Nat) { fn read(value: Tagged(n)): Nat }
+instance<n: Nat> Read(n) { fn read(value: Tagged(n)): Nat { n } }
+fn read_any<n: Nat>(value: Tagged(n)): Nat { Read::read(value) }
+fn read_one(value: Tagged(1)): Nat { read_any(value) }
+theorem one_result(): read_one(Tag(9)) = 1 { Refl }
+```
+checks_all = "ok"
+
+@ cases.class-natural-constructor-patterns
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive Tagged(n: Nat): Type { Tag(value: Nat): Tagged(n) }
+class Read(n: Nat) { fn read(value: Tagged(n)): Nat }
+instance Read(0) { fn read(value: Tagged(0)): Nat { 0 } }
+instance<n: Nat> Read(Succ(n)) { fn read(value: Tagged(Succ(n))): Nat { n } }
+fn read_three(value: Tagged(3)): Nat { Read::read(value) }
+theorem predecessor_result(): read_three(Tag(9)) = 2 { Refl }
+```
+checks_all = "ok"

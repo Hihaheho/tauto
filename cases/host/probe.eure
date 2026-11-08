@@ -1,0 +1,157 @@
+// The case host gives every runner the same extern: `Probe::new(name)` makes a
+// value whose drop the run writes down by name. `probe_drops` compares the
+// names in the order the program drops them, on every backend.
+
+@ cases.values-are-dropped-in-reverse-order-of-declaration
+files_tote = "p"
+backends = ["rust", "javascript"]
+shows = ["in = 1", "after = 2"]
+probe_drops = ["b", "a", "c"]
+
+files."p/Tauto.eure" = 'package { name = "p" }'
+files."p/src/main.taut" = ```tauto
+affine struct Probe {}
+module Probe {
+  extern {
+    fn new(&name: Text): Probe
+  }
+}
+fn scope(): i64 {
+  let a := Probe::new("a")
+  let b := Probe::new("b")
+  1
+}
+let r := scope()
+perform show("in", r)
+let c := Probe::new("c")
+perform show("after", 2)
+```
+
+@ cases.values-left-by-a-resume-0-effect-are-dropped-in-reverse-order
+files_tote = "p"
+backends = ["rust", "javascript"]
+shows = ["in = 1", "scope = 2", "leave = 0"]
+probe_drops = ["b", "a", "d", "c"]
+
+files."p/Tauto.eure" = 'package { name = "p" }'
+files."p/src/main.taut" = ```tauto
+affine struct Probe {}
+module Probe {
+  extern {
+    fn new(&name: Text): Probe
+  }
+}
+effect stop(): Never resume 0
+fn scope(): i64 {
+  let a := Probe::new("a")
+  let b := Probe::new("b")
+  perform show("in", 1)
+  2
+}
+fn leave(): i64 ! {stop} {
+  let c := Probe::new("c")
+  let d := Probe::new("d")
+  perform stop()
+}
+let r := scope()
+perform show("scope", r)
+let s := handle { leave() } with { stop() => 0 }
+perform show("leave", s)
+```
+
+@ cases.a-capture-of-a-closure-never-called-is-dropped-with-it
+files_tote = "p"
+backends = ["rust", "javascript"]
+shows = ["in = 1", "after = 2"]
+probe_drops = ["c", "a"]
+
+files."p/Tauto.eure" = 'package { name = "p" }'
+files."p/src/main.taut" = ```tauto
+affine struct Probe {}
+module Probe {
+  extern {
+    fn new(&name: Text): Probe
+  }
+}
+fn scope(): i64 {
+  let a := Probe::new("a")
+  let c := Probe::new("c")
+  let f := () => c
+  perform show("in", 1)
+  2
+}
+let r := scope()
+perform show("after", r)
+```
+
+@ cases.captures-and-temporaries-left-by-a-resume-0-effect-are-dropped
+files_tote = "p"
+backends = ["rust", "javascript"]
+shows = ["leave = 0"]
+probe_drops = ["t", "b", "c"]
+
+files."p/Tauto.eure" = 'package { name = "p" }'
+files."p/src/main.taut" = ```tauto
+affine struct Probe {}
+module Probe {
+  extern {
+    fn new(&name: Text): Probe
+  }
+}
+effect stop(): Never resume 0
+fn pair(x: Probe, y: i64): i64 { 1 }
+fn leave(): i64 ! {stop} {
+  let c := Probe::new("c")
+  let f := () => c
+  let b := Probe::new("b")
+  pair(Probe::new("t"), perform stop())
+}
+let s := handle { leave() } with { stop() => 0 }
+perform show("leave", s)
+```
+
+@ cases.a-moved-value-is-dropped-by-its-new-owner
+files_tote = "p"
+backends = ["rust", "javascript"]
+shows = ["kept = 1"]
+probe_drops = ["a", "b"]
+files."p/Tauto.eure" = 'package { name = "p" }'
+files."p/src/main.taut" = ```tauto
+affine struct Probe {}
+module Probe {
+  extern {
+    fn new(&name: Text): Probe
+  }
+}
+fn keep(p: Probe): () { }
+let a := Probe::new("a")
+let b := Probe::new("b")
+keep(a)
+perform show("kept", 1)
+```
+
+@ cases.a-borrowed-temporary-is-dropped-at-the-end-of-its-statement
+files_tote = "p"
+backends = ["rust", "javascript"]
+shows = ["n = 1", "after = 2"]
+probe_drops = ["t", "u", "a"]
+
+files."p/Tauto.eure" = 'package { name = "p" }'
+files."p/src/main.taut" = ```tauto
+affine struct Probe {}
+module Probe {
+  extern {
+    fn new(&name: Text): Probe
+  }
+}
+fn look(&probe: Probe): i64 { 1 }
+fn scope(): i64 {
+  let a := Probe::new("a")
+  let n := look(&Probe::new("t"))
+  perform show("n", n)
+  look(&Probe::new("u"))
+  2
+}
+let r := scope()
+perform show("after", r)
+```

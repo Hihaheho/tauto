@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use tauto::program::LoadError;
 use tauto::report::{self, Report};
 use tauto_analyzer::assist::suggest;
 use tauto_analyzer::{Options, Stats, Workspace};
@@ -46,7 +47,7 @@ fn workspace() -> Workspace {
 
 /// The answer of `tauto check` for the same texts.
 fn batch(path: &Path, text: Option<&str>) -> Result<Report, String> {
-    report::check_report(path, text)
+    report::check_report(path, text).map_err(|e| e.to_string())
 }
 
 /// A fresh name (`eff'505`) carries a counter of the thread's, which differs
@@ -63,7 +64,9 @@ fn unnumbered(json: &str) -> String {
     out
 }
 
-fn same(a: &Result<Report, String>, b: &Result<Report, String>) {
+/// The incremental report and the batch one agree; a program that does not
+/// load fails the same way, its error shown as `tauto check` shows it.
+fn same(a: &Result<Report, LoadError>, b: &Result<Report, String>) {
     match (a, b) {
         (Ok(a), Ok(b)) => {
             assert_eq!(a.text(), b.text());
@@ -73,7 +76,7 @@ fn same(a: &Result<Report, String>, b: &Result<Report, String>) {
                 unnumbered(&b.library_json().render())
             );
         }
-        (Err(a), Err(b)) => assert_eq!(a, b),
+        (Err(a), Err(b)) => assert_eq!(&a.to_string(), b),
         (a, b) => panic!(
             "incremental {:?}, batch {:?}",
             a.as_ref().map(|_| "ok"),
@@ -138,6 +141,30 @@ fn a_whole_program_checks_as_the_batch_checker_does() {
     let stats = ws.stats(&main);
     assert_eq!(stats.loads, 1);
     assert_eq!(stats.checked, 6, "{stats:?}");
+}
+
+#[test]
+fn a_proof_may_use_a_lemma_written_after_it_as_in_the_batch_checker() {
+    let dir = Dir::new();
+    let main = dir.write(
+        "main.taut",
+        r#"theorem first(A: Prop, a: A): A {
+  later(A, a)
+}
+
+theorem later(A: Prop, a: A): A {
+  a
+}
+"#,
+    );
+    let ws = workspace();
+    let inc = ws.report(&main);
+    let batch = batch(&main, None);
+    same(&inc, &batch);
+    assert!(
+        !inc.unwrap().text().contains("not defined"),
+        "the lemma is checked before the proof that uses it"
+    );
 }
 
 #[test]
@@ -266,7 +293,7 @@ fn parentheses_added_before_a_hole_move_it() {
     let (report, holes) = ws.goals(&main, None).unwrap();
     let span = holes[0].goal.span;
     assert_eq!(&edited[span.start as usize..span.end as usize], "?h");
-    same(&Ok(report), &batch(&main, Some(&edited)));
+    same(&Ok::<_, LoadError>(report), &batch(&main, Some(&edited)));
     assert!(ws.try_fill(&main, "h", "a").unwrap().accepted);
 }
 
@@ -341,7 +368,7 @@ fn holes_have_their_goals_and_a_candidate_is_tried_without_being_kept() {
     assert_eq!(report.status(), report::Status::Incomplete);
     let names: Vec<_> = holes.iter().map(|h| h.goal.name.as_str()).collect();
     assert_eq!(names, ["one", "right", "left"]);
-    same(&Ok(report), &batch(&file, None));
+    same(&Ok::<_, LoadError>(report), &batch(&file, None));
 
     let before = ws.stats(&file);
     let wrong = ws.try_fill(&file, "right", "p").unwrap();
@@ -414,7 +441,10 @@ fn a_fill_goes_on_and_the_names_of_the_other_holes_stay() {
     // The workspace's text is the candidate; the disk was not written.
     assert_eq!(report.source(&holes[0].file), filled.candidate);
     assert_eq!(std::fs::read_to_string(&file).unwrap(), with_holes_source());
-    same(&Ok(report), &batch(&file, Some(&filled.candidate)));
+    same(
+        &Ok::<_, LoadError>(report),
+        &batch(&file, Some(&filled.candidate)),
+    );
 }
 
 #[test]

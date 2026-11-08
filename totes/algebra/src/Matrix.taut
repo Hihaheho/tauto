@@ -20,14 +20,14 @@ pub def AlgebraMatrixEq(
 pub fn algebra_vector_zero<R: Type>(
   addition: AlgebraMonoid(0, R),
   n: Nat
-): AlgebraVector(R, n) { index => algebra_unit(0, R, addition) }
+): AlgebraVector(R, n) { index => algebra_unit(<u: 0, A: R>, addition) }
 
 pub fn algebra_vector_add<R: Type>(
   addition: AlgebraMonoid(0, R),
   n: Nat,
   left: AlgebraVector(R, n),
   right: AlgebraVector(R, n)
-): AlgebraVector(R, n) { index => algebra_op(0, R, addition)(left(index), right(index)) }
+): AlgebraVector(R, n) { index => algebra_op(<u: 0, A: R>, addition)(left(index), right(index)) }
 
 // Right scalar multiplication needs no commutativity of the semiring product.
 pub fn algebra_vector_scale<R: Type>(
@@ -35,7 +35,7 @@ pub fn algebra_vector_scale<R: Type>(
   n: Nat,
   values: AlgebraVector(R, n),
   scalar: R
-): AlgebraVector(R, n) { index => algebra_op(0, R, multiplication)(values(index), scalar) }
+): AlgebraVector(R, n) { index => algebra_op(<u: 0, A: R>, multiplication)(values(index), scalar) }
 
 pub fn algebra_matrix_add<R: Type>(
   addition: AlgebraMonoid(0, R),
@@ -47,7 +47,7 @@ pub fn algebra_matrix_add<R: Type>(
   R,
   rows,
   columns
-) { row => column => algebra_op(0, R, addition)(left(row, column), right(row, column)) }
+) { row => column => algebra_op(<u: 0, A: R>, addition)(left(row, column), right(row, column)) }
 
 pub fn algebra_matrix_scale<R: Type>(
   multiplication: AlgebraMonoid(0, R),
@@ -59,7 +59,7 @@ pub fn algebra_matrix_scale<R: Type>(
   R,
   rows,
   columns
-) { row => column => algebra_op(0, R, multiplication)(matrix(row, column), scalar) }
+) { row => column => algebra_op(<u: 0, A: R>, multiplication)(matrix(row, column), scalar) }
 
 pub fn algebra_matrix_apply<R: Type>(
   addition: AlgebraMonoid(0, R),
@@ -69,11 +69,10 @@ pub fn algebra_matrix_apply<R: Type>(
   matrix: AlgebraMatrix(R, rows, columns),
   values: AlgebraVector(R, columns)
 ): AlgebraVector(R, rows) {
-  row => algebra_sum(
-    R,
+  row => algebra_sum(<R: R>,
     addition,
     columns,
-    column => algebra_op(0, R, multiplication)(matrix(row, column), values(column))
+    column => algebra_op(<u: 0, A: R>, multiplication)(matrix(row, column), values(column))
   )
 }
 
@@ -86,11 +85,10 @@ pub fn algebra_matrix_product<R: Type>(
   left: AlgebraMatrix(R, rows, inner),
   right: AlgebraMatrix(R, inner, columns)
 ): AlgebraMatrix(R, rows, columns) {
-  row => column => algebra_sum(
-    R,
+  row => column => algebra_sum(<R: R>,
     addition,
     inner,
-    index => algebra_op(0, R, multiplication)(left(row, index), right(index, column))
+    index => algebra_op(<u: 0, A: R>, multiplication)(left(row, index), right(index, column))
   )
 }
 
@@ -111,17 +109,16 @@ pub theorem algebra_matrix_apply_congr<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_matrix_apply(R, addition, multiplication, rows, columns, matrix, left)(row),
-  algebra_matrix_apply(R, addition, multiplication, rows, columns, matrix, right)(row)
+  algebra_matrix_apply(<R: R>, addition, multiplication, rows, columns, matrix, left)(row),
+  algebra_matrix_apply(<R: R>, addition, multiplication, rows, columns, matrix, right)(row)
 ) {
-  algebra_sum_congr(
-    R,
+  algebra_sum_congr(<R: R>,
     addition,
     columns,
-    column => algebra_op(0, R, multiplication)(matrix(row, column), left(column)),
-    column => algebra_op(0, R, multiplication)(matrix(row, column), right(column)),
+    column => algebra_op(<u: 0, A: R>, multiplication)(matrix(row, column), left(column)),
+    column => algebra_op(<u: 0, A: R>, multiplication)(matrix(row, column), right(column)),
     column => algebra_apply(
-      (v: R) => algebra_op(0, R, multiplication)(matrix(row, column), v),
+      (v: R) => algebra_op(<u: 0, A: R>, multiplication)(matrix(row, column), v),
       equal(column)
     )
   )
@@ -142,27 +139,25 @@ pub theorem algebra_matrix_apply_zero<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_matrix_apply(
-    R,
+  algebra_matrix_apply(<R: R>,
     addition,
     multiplication,
     rows,
     columns,
     matrix,
-    algebra_vector_zero(R, addition, columns)
+    algebra_vector_zero(<R: R>, addition, columns)
   )(row),
-  algebra_unit(0, R, addition)
+  algebra_unit(<u: 0, A: R>, addition)
 ) {
   algebra_chain(
-    algebra_sum_congr(
-      R,
+    algebra_sum_congr(<R: R>,
       addition,
       columns,
-      column => algebra_op(0, R, multiplication)(matrix(row, column), algebra_unit(0, R, addition)),
-      column => algebra_unit(0, R, addition),
+      column => algebra_op(<u: 0, A: R>, multiplication)(matrix(row, column), algebra_unit(<u: 0, A: R>, addition)),
+      column => algebra_unit(<u: 0, A: R>, addition),
       column => algebra_mul_zero(laws, matrix(row, column))
     ),
-    algebra_sum_zero(R, addition, columns)
+    algebra_sum_zero(<R: R>, addition, columns)
   )
 }
 
@@ -183,49 +178,41 @@ pub theorem algebra_matrix_apply_add<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_matrix_apply(
-    R,
+  algebra_matrix_apply(<R: R>,
     addition,
     multiplication,
     rows,
     columns,
     matrix,
-    algebra_vector_add(R, addition, columns, left, right)
+    algebra_vector_add(<R: R>, addition, columns, left, right)
   )(row),
-  algebra_op(
-    0,
-    R,
+  algebra_op(<u: 0, A: R>,
     addition
   )(
-    algebra_matrix_apply(R, addition, multiplication, rows, columns, matrix, left)(row),
-    algebra_matrix_apply(R, addition, multiplication, rows, columns, matrix, right)(row)
+    algebra_matrix_apply(<R: R>, addition, multiplication, rows, columns, matrix, left)(row),
+    algebra_matrix_apply(<R: R>, addition, multiplication, rows, columns, matrix, right)(row)
   )
 ) {
   algebra_chain(
-    algebra_sum_congr(
-      R,
+    algebra_sum_congr(<R: R>,
       addition,
       columns,
-      column => algebra_op(
-        0,
-        R,
+      column => algebra_op(<u: 0, A: R>,
         multiplication
-      )(matrix(row, column), algebra_op(0, R, addition)(left(column), right(column))),
-      column => algebra_op(
-        0,
-        R,
+      )(matrix(row, column), algebra_op(<u: 0, A: R>, addition)(left(column), right(column))),
+      column => algebra_op(<u: 0, A: R>,
         addition
       )(
-        algebra_op(0, R, multiplication)(matrix(row, column), left(column)),
-        algebra_op(0, R, multiplication)(matrix(row, column), right(column))
+        algebra_op(<u: 0, A: R>, multiplication)(matrix(row, column), left(column)),
+        algebra_op(<u: 0, A: R>, multiplication)(matrix(row, column), right(column))
       ),
       column => algebra_distribute_left(laws, matrix(row, column), left(column), right(column))
     ),
     algebra_sum_add(
       laws,
       columns,
-      column => algebra_op(0, R, multiplication)(matrix(row, column), left(column)),
-      column => algebra_op(0, R, multiplication)(matrix(row, column), right(column))
+      column => algebra_op(<u: 0, A: R>, multiplication)(matrix(row, column), left(column)),
+      column => algebra_op(<u: 0, A: R>, multiplication)(matrix(row, column), right(column))
     )
   )
 }
@@ -247,44 +234,36 @@ pub theorem algebra_matrix_apply_scale<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_matrix_apply(
-    R,
+  algebra_matrix_apply(<R: R>,
     addition,
     multiplication,
     rows,
     columns,
     matrix,
-    algebra_vector_scale(R, multiplication, columns, values, scalar)
+    algebra_vector_scale(<R: R>, multiplication, columns, values, scalar)
   )(row),
-  algebra_op(
-    0,
-    R,
+  algebra_op(<u: 0, A: R>,
     multiplication
-  )(algebra_matrix_apply(R, addition, multiplication, rows, columns, matrix, values)(row), scalar)
+  )(algebra_matrix_apply(<R: R>, addition, multiplication, rows, columns, matrix, values)(row), scalar)
 ) {
   algebra_chain(
-    algebra_sum_congr(
-      R,
+    algebra_sum_congr(<R: R>,
       addition,
       columns,
-      column => algebra_op(
-        0,
-        R,
+      column => algebra_op(<u: 0, A: R>,
         multiplication
-      )(matrix(row, column), algebra_op(0, R, multiplication)(values(column), scalar)),
-      column => algebra_op(
-        0,
-        R,
+      )(matrix(row, column), algebra_op(<u: 0, A: R>, multiplication)(values(column), scalar)),
+      column => algebra_op(<u: 0, A: R>,
         multiplication
-      )(algebra_op(0, R, multiplication)(matrix(row, column), values(column)), scalar),
+      )(algebra_op(<u: 0, A: R>, multiplication)(matrix(row, column), values(column)), scalar),
       column => algebra_flip(
-        algebra_assoc(0, R, multiplication, matrix(row, column), values(column), scalar)
+        algebra_assoc(<u: 0, A: R>, multiplication, matrix(row, column), values(column), scalar)
       )
     ),
     algebra_sum_mul_right(
       laws,
       columns,
-      column => algebra_op(0, R, multiplication)(matrix(row, column), values(column)),
+      column => algebra_op(<u: 0, A: R>, multiplication)(matrix(row, column), values(column)),
       scalar
     )
   )
@@ -306,122 +285,93 @@ pub theorem algebra_sum_product<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_sum(
-    R,
+  algebra_sum(<R: R>,
     addition,
     columns,
-    column => algebra_op(
-      0,
-      R,
+    column => algebra_op(<u: 0, A: R>,
       multiplication
     )(
-      algebra_sum(
-        R,
+      algebra_sum(<R: R>,
         addition,
         inner,
-        index => algebra_op(0, R, multiplication)(left(index), middle(index, column))
+        index => algebra_op(<u: 0, A: R>, multiplication)(left(index), middle(index, column))
       ),
       right(column)
     )
   ),
-  algebra_sum(
-    R,
+  algebra_sum(<R: R>,
     addition,
     inner,
-    index => algebra_op(
-      0,
-      R,
+    index => algebra_op(<u: 0, A: R>,
       multiplication
     )(
       left(index),
-      algebra_sum(
-        R,
+      algebra_sum(<R: R>,
         addition,
         columns,
-        column => algebra_op(0, R, multiplication)(middle(index, column), right(column))
+        column => algebra_op(<u: 0, A: R>, multiplication)(middle(index, column), right(column))
       )
     )
   )
 ) {
   algebra_chain(
-    algebra_sum_congr(
-      R,
+    algebra_sum_congr(<R: R>,
       addition,
       columns,
-      column => algebra_op(
-        0,
-        R,
+      column => algebra_op(<u: 0, A: R>,
         multiplication
       )(
-        algebra_sum(
-          R,
+        algebra_sum(<R: R>,
           addition,
           inner,
-          index => algebra_op(0, R, multiplication)(left(index), middle(index, column))
+          index => algebra_op(<u: 0, A: R>, multiplication)(left(index), middle(index, column))
         ),
         right(column)
       ),
-      column => algebra_sum(
-        R,
+      column => algebra_sum(<R: R>,
         addition,
         inner,
-        index => algebra_op(
-          0,
-          R,
+        index => algebra_op(<u: 0, A: R>,
           multiplication
-        )(algebra_op(0, R, multiplication)(left(index), middle(index, column)), right(column))
+        )(algebra_op(<u: 0, A: R>, multiplication)(left(index), middle(index, column)), right(column))
       ),
       column => algebra_flip(
         algebra_sum_mul_right(
           laws,
           inner,
-          index => algebra_op(0, R, multiplication)(left(index), middle(index, column)),
+          index => algebra_op(<u: 0, A: R>, multiplication)(left(index), middle(index, column)),
           right(column)
         )
       )
     ),
     algebra_chain(
-      algebra_sum_congr(
-        R,
+      algebra_sum_congr(<R: R>,
         addition,
         columns,
-        column => algebra_sum(
-          R,
+        column => algebra_sum(<R: R>,
           addition,
           inner,
-          index => algebra_op(
-            0,
-            R,
+          index => algebra_op(<u: 0, A: R>,
             multiplication
-          )(algebra_op(0, R, multiplication)(left(index), middle(index, column)), right(column))
+          )(algebra_op(<u: 0, A: R>, multiplication)(left(index), middle(index, column)), right(column))
         ),
-        column => algebra_sum(
-          R,
+        column => algebra_sum(<R: R>,
           addition,
           inner,
-          index => algebra_op(
-            0,
-            R,
+          index => algebra_op(<u: 0, A: R>,
             multiplication
-          )(left(index), algebra_op(0, R, multiplication)(middle(index, column), right(column)))
+          )(left(index), algebra_op(<u: 0, A: R>, multiplication)(middle(index, column), right(column)))
         ),
-        column => algebra_sum_congr(
-          R,
+        column => algebra_sum_congr(<R: R>,
           addition,
           inner,
-          index => algebra_op(
-            0,
-            R,
+          index => algebra_op(<u: 0, A: R>,
             multiplication
-          )(algebra_op(0, R, multiplication)(left(index), middle(index, column)), right(column)),
-          index => algebra_op(
-            0,
-            R,
+          )(algebra_op(<u: 0, A: R>, multiplication)(left(index), middle(index, column)), right(column)),
+          index => algebra_op(<u: 0, A: R>,
             multiplication
-          )(left(index), algebra_op(0, R, multiplication)(middle(index, column), right(column))),
-          index => algebra_assoc(
-            0,
-            R,
+          )(left(index), algebra_op(<u: 0, A: R>, multiplication)(middle(index, column), right(column))),
+          index => algebra_assoc(<u: 0, A: R>,
             multiplication,
             left(index),
             middle(index, column),
@@ -434,43 +384,34 @@ pub theorem algebra_sum_product<R: Type, addition: AlgebraMonoid(
           laws,
           columns,
           inner,
-          column => index => algebra_op(
-            0,
-            R,
+          column => index => algebra_op(<u: 0, A: R>,
             multiplication
-          )(left(index), algebra_op(0, R, multiplication)(middle(index, column), right(column)))
+          )(left(index), algebra_op(<u: 0, A: R>, multiplication)(middle(index, column), right(column)))
         ),
-        algebra_sum_congr(
-          R,
+        algebra_sum_congr(<R: R>,
           addition,
           inner,
-          index => algebra_sum(
-            R,
+          index => algebra_sum(<R: R>,
             addition,
             columns,
-            column => algebra_op(
-              0,
-              R,
+            column => algebra_op(<u: 0, A: R>,
               multiplication
-            )(left(index), algebra_op(0, R, multiplication)(middle(index, column), right(column)))
+            )(left(index), algebra_op(<u: 0, A: R>, multiplication)(middle(index, column), right(column)))
           ),
-          index => algebra_op(
-            0,
-            R,
+          index => algebra_op(<u: 0, A: R>,
             multiplication
           )(
             left(index),
-            algebra_sum(
-              R,
+            algebra_sum(<R: R>,
               addition,
               columns,
-              column => algebra_op(0, R, multiplication)(middle(index, column), right(column))
+              column => algebra_op(<u: 0, A: R>, multiplication)(middle(index, column), right(column))
             )
           ),
           index => algebra_sum_mul_left(
             laws,
             columns,
-            column => algebra_op(0, R, multiplication)(middle(index, column), right(column)),
+            column => algebra_op(<u: 0, A: R>, multiplication)(middle(index, column), right(column)),
             left(index)
           )
         )
@@ -499,25 +440,23 @@ pub theorem algebra_matrix_product_assoc<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_matrix_product(
-    R,
+  algebra_matrix_product(<R: R>,
     addition,
     multiplication,
     rows,
     second,
     columns,
-    algebra_matrix_product(R, addition, multiplication, rows, first, second, a, b),
+    algebra_matrix_product(<R: R>, addition, multiplication, rows, first, second, a, b),
     c
   )(row, column),
-  algebra_matrix_product(
-    R,
+  algebra_matrix_product(<R: R>,
     addition,
     multiplication,
     rows,
     first,
     columns,
     a,
-    algebra_matrix_product(R, addition, multiplication, first, second, columns, b, c)
+    algebra_matrix_product(<R: R>, addition, multiplication, first, second, columns, b, c)
   )(row, column)
 ) {
   algebra_sum_product(laws, first, second, index => a(row, index), b, index => c(index, column))
@@ -541,23 +480,21 @@ pub theorem algebra_matrix_product_apply<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_matrix_apply(
-    R,
+  algebra_matrix_apply(<R: R>,
     addition,
     multiplication,
     rows,
     columns,
-    algebra_matrix_product(R, addition, multiplication, rows, inner, columns, left, right),
+    algebra_matrix_product(<R: R>, addition, multiplication, rows, inner, columns, left, right),
     values
   )(row),
-  algebra_matrix_apply(
-    R,
+  algebra_matrix_apply(<R: R>,
     addition,
     multiplication,
     rows,
     inner,
     left,
-    algebra_matrix_apply(R, addition, multiplication, inner, columns, right, values)
+    algebra_matrix_apply(<R: R>, addition, multiplication, inner, columns, right, values)
   )(row)
 ) {
   algebra_sum_product(laws, inner, columns, index => left(row, index), right, values)
@@ -570,15 +507,14 @@ pub fn algebra_matrix_identity<R: Type>(
   row: AlgebraFin(n),
   column: AlgebraFin(n)
 ): R {
-  match row: R {
-    AlgebraFirst(k) => match column: R {
-      AlgebraFirst(j) => algebra_unit(0, R, multiplication)
-      AlgebraNext(j, prior) => algebra_unit(0, R, addition)
+  ⊢ R from match row {
+    AlgebraFirst(k) => ⊢ R from match column {
+      AlgebraFirst(j) => algebra_unit(<u: 0, A: R>, multiplication)
+      AlgebraNext(j, prior) => algebra_unit(<u: 0, A: R>, addition)
     }
-    AlgebraNext(k, prior_row) => match column: R {
-      AlgebraFirst(j) => algebra_unit(0, R, addition)
-      AlgebraNext(j, prior_column) => algebra_matrix_identity(
-        R,
+    AlgebraNext(k, prior_row) => ⊢ R from match column {
+      AlgebraFirst(j) => algebra_unit(<u: 0, A: R>, addition)
+      AlgebraNext(j, prior_column) => algebra_matrix_identity(<R: R>,
         addition,
         multiplication,
         k,
@@ -603,62 +539,53 @@ pub theorem algebra_matrix_identity_sum_left<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_sum(
-    R,
+  algebra_sum(<R: R>,
     addition,
     n,
-    column => algebra_op(
-      0,
-      R,
+    column => algebra_op(<u: 0, A: R>,
       multiplication
-    )(algebra_matrix_identity(R, addition, multiplication, n, row, column), values(column))
+    )(algebra_matrix_identity(<R: R>, addition, multiplication, n, row, column), values(column))
   ),
   values(row)
 ) {
-  match row: AlgebraEq(
+  ⊢ AlgebraEq(
     0,
     R,
-    algebra_sum(
-      R,
+    algebra_sum(<R: R>,
       addition,
       n,
-      column => algebra_op(
-        0,
-        R,
+      column => algebra_op(<u: 0, A: R>,
         multiplication
-      )(algebra_matrix_identity(R, addition, multiplication, n, row, column), values(column))
+      )(algebra_matrix_identity(<R: R>, addition, multiplication, n, row, column), values(column))
     ),
     values(row)
-  ) {
+  ) from match row {
     AlgebraFirst(k) => algebra_chain(
       algebra_binary_congr(
-        algebra_op(0, R, addition),
-        algebra_left_unit(0, R, multiplication, values(AlgebraFirst(k))),
+        algebra_op(<u: 0, A: R>, addition),
+        algebra_left_unit(<u: 0, A: R>, multiplication, values(AlgebraFirst(k))),
         algebra_chain(
-          algebra_sum_congr(
-            R,
+          algebra_sum_congr(<R: R>,
             addition,
             k,
-            column => algebra_op(
-              0,
-              R,
+            column => algebra_op(<u: 0, A: R>,
               multiplication
-            )(algebra_unit(0, R, addition), values(AlgebraNext(k, column))),
-            column => algebra_unit(0, R, addition),
+            )(algebra_unit(<u: 0, A: R>, addition), values(AlgebraNext(k, column))),
+            column => algebra_unit(<u: 0, A: R>, addition),
             column => algebra_zero_mul(laws, values(AlgebraNext(k, column)))
           ),
-          algebra_sum_zero(R, addition, k)
+          algebra_sum_zero(<R: R>, addition, k)
         )
       ),
-      algebra_right_unit(0, R, addition, values(AlgebraFirst(k)))
+      algebra_right_unit(<u: 0, A: R>, addition, values(AlgebraFirst(k)))
     )
     AlgebraNext(k, prior) => algebra_chain(
       algebra_binary_congr(
-        algebra_op(0, R, addition),
+        algebra_op(<u: 0, A: R>, addition),
         algebra_zero_mul(laws, values(AlgebraFirst(k))),
         algebra_matrix_identity_sum_left(laws, k, prior, column => values(AlgebraNext(k, column)))
       ),
-      algebra_left_unit(0, R, addition, values(AlgebraNext(k, prior)))
+      algebra_left_unit(<u: 0, A: R>, addition, values(AlgebraNext(k, prior)))
     )
   }
 }
@@ -677,62 +604,53 @@ pub theorem algebra_matrix_identity_sum_right<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_sum(
-    R,
+  algebra_sum(<R: R>,
     addition,
     n,
-    column => algebra_op(
-      0,
-      R,
+    column => algebra_op(<u: 0, A: R>,
       multiplication
-    )(values(column), algebra_matrix_identity(R, addition, multiplication, n, column, row))
+    )(values(column), algebra_matrix_identity(<R: R>, addition, multiplication, n, column, row))
   ),
   values(row)
 ) {
-  match row: AlgebraEq(
+  ⊢ AlgebraEq(
     0,
     R,
-    algebra_sum(
-      R,
+    algebra_sum(<R: R>,
       addition,
       n,
-      column => algebra_op(
-        0,
-        R,
+      column => algebra_op(<u: 0, A: R>,
         multiplication
-      )(values(column), algebra_matrix_identity(R, addition, multiplication, n, column, row))
+      )(values(column), algebra_matrix_identity(<R: R>, addition, multiplication, n, column, row))
     ),
     values(row)
-  ) {
+  ) from match row {
     AlgebraFirst(k) => algebra_chain(
       algebra_binary_congr(
-        algebra_op(0, R, addition),
-        algebra_right_unit(0, R, multiplication, values(AlgebraFirst(k))),
+        algebra_op(<u: 0, A: R>, addition),
+        algebra_right_unit(<u: 0, A: R>, multiplication, values(AlgebraFirst(k))),
         algebra_chain(
-          algebra_sum_congr(
-            R,
+          algebra_sum_congr(<R: R>,
             addition,
             k,
-            column => algebra_op(
-              0,
-              R,
+            column => algebra_op(<u: 0, A: R>,
               multiplication
-            )(values(AlgebraNext(k, column)), algebra_unit(0, R, addition)),
-            column => algebra_unit(0, R, addition),
+            )(values(AlgebraNext(k, column)), algebra_unit(<u: 0, A: R>, addition)),
+            column => algebra_unit(<u: 0, A: R>, addition),
             column => algebra_mul_zero(laws, values(AlgebraNext(k, column)))
           ),
-          algebra_sum_zero(R, addition, k)
+          algebra_sum_zero(<R: R>, addition, k)
         )
       ),
-      algebra_right_unit(0, R, addition, values(AlgebraFirst(k)))
+      algebra_right_unit(<u: 0, A: R>, addition, values(AlgebraFirst(k)))
     )
     AlgebraNext(k, prior) => algebra_chain(
       algebra_binary_congr(
-        algebra_op(0, R, addition),
+        algebra_op(<u: 0, A: R>, addition),
         algebra_mul_zero(laws, values(AlgebraFirst(k))),
         algebra_matrix_identity_sum_right(laws, k, prior, column => values(AlgebraNext(k, column)))
       ),
-      algebra_left_unit(0, R, addition, values(AlgebraNext(k, prior)))
+      algebra_left_unit(<u: 0, A: R>, addition, values(AlgebraNext(k, prior)))
     )
   }
 }
@@ -753,14 +671,13 @@ pub theorem algebra_matrix_identity_left<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_matrix_product(
-    R,
+  algebra_matrix_product(<R: R>,
     addition,
     multiplication,
     rows,
     rows,
     columns,
-    i => j => algebra_matrix_identity(R, addition, multiplication, rows, i, j),
+    i => j => algebra_matrix_identity(<R: R>, addition, multiplication, rows, i, j),
     matrix
   )(row, column),
   matrix(row, column)
@@ -784,15 +701,14 @@ pub theorem algebra_matrix_identity_right<R: Type, addition: AlgebraMonoid(
 ): AlgebraEq(
   0,
   R,
-  algebra_matrix_product(
-    R,
+  algebra_matrix_product(<R: R>,
     addition,
     multiplication,
     rows,
     columns,
     columns,
     matrix,
-    i => j => algebra_matrix_identity(R, addition, multiplication, columns, i, j)
+    i => j => algebra_matrix_identity(<R: R>, addition, multiplication, columns, i, j)
   )(row, column),
   matrix(row, column)
 ) {
@@ -811,24 +727,22 @@ pub theorem algebra_matrix_add_assoc<R: Type>(
 ): AlgebraEq(
   0,
   R,
-  algebra_matrix_add(
-    R,
+  algebra_matrix_add(<R: R>,
     addition,
     rows,
     columns,
-    algebra_matrix_add(R, addition, rows, columns, a, b),
+    algebra_matrix_add(<R: R>, addition, rows, columns, a, b),
     c
   )(row, column),
-  algebra_matrix_add(
-    R,
+  algebra_matrix_add(<R: R>,
     addition,
     rows,
     columns,
     a,
-    algebra_matrix_add(R, addition, rows, columns, b, c)
+    algebra_matrix_add(<R: R>, addition, rows, columns, b, c)
   )(row, column)
 ) {
-  algebra_assoc(0, R, addition, a(row, column), b(row, column), c(row, column))
+  algebra_assoc(<u: 0, A: R>, addition, a(row, column), b(row, column), c(row, column))
 }
 
 pub theorem algebra_matrix_scale_assoc<R: Type>(
@@ -843,24 +757,22 @@ pub theorem algebra_matrix_scale_assoc<R: Type>(
 ): AlgebraEq(
   0,
   R,
-  algebra_matrix_scale(
-    R,
+  algebra_matrix_scale(<R: R>,
     multiplication,
     rows,
     columns,
-    algebra_matrix_scale(R, multiplication, rows, columns, matrix, a),
+    algebra_matrix_scale(<R: R>, multiplication, rows, columns, matrix, a),
     b
   )(row, column),
-  algebra_matrix_scale(
-    R,
+  algebra_matrix_scale(<R: R>,
     multiplication,
     rows,
     columns,
     matrix,
-    algebra_op(0, R, multiplication)(a, b)
+    algebra_op(<u: 0, A: R>, multiplication)(a, b)
   )(row, column)
 ) {
-  algebra_assoc(0, R, multiplication, matrix(row, column), a, b)
+  algebra_assoc(<u: 0, A: R>, multiplication, matrix(row, column), a, b)
 }
 
 pub theorem algebra_matrix_product_congr<R: Type, rows: Nat, inner: Nat, columns: Nat, left: AlgebraMatrix(
@@ -889,8 +801,7 @@ pub theorem algebra_matrix_product_congr<R: Type, rows: Nat, inner: Nat, columns
 ): AlgebraEq(
   0,
   R,
-  algebra_matrix_product(
-    R,
+  algebra_matrix_product(<R: R>,
     addition,
     multiplication,
     rows,
@@ -899,8 +810,7 @@ pub theorem algebra_matrix_product_congr<R: Type, rows: Nat, inner: Nat, columns
     left,
     right
   )(row, column),
-  algebra_matrix_product(
-    R,
+  algebra_matrix_product(<R: R>,
     addition,
     multiplication,
     rows,
@@ -910,14 +820,13 @@ pub theorem algebra_matrix_product_congr<R: Type, rows: Nat, inner: Nat, columns
     right_other
   )(row, column)
 ) {
-  algebra_sum_congr(
-    R,
+  algebra_sum_congr(<R: R>,
     addition,
     inner,
-    index => algebra_op(0, R, multiplication)(left(row, index), right(index, column)),
-    index => algebra_op(0, R, multiplication)(left_other(row, index), right_other(index, column)),
+    index => algebra_op(<u: 0, A: R>, multiplication)(left(row, index), right(index, column)),
+    index => algebra_op(<u: 0, A: R>, multiplication)(left_other(row, index), right_other(index, column)),
     index => algebra_binary_congr(
-      algebra_op(0, R, multiplication),
+      algebra_op(<u: 0, A: R>, multiplication),
       left_equal(row, index),
       right_equal(index, column)
     )

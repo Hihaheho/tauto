@@ -15,24 +15,14 @@ theorem en_one(): plural(Cons(101, Cons(110, Nil)), 1) = COne {
   Refl
 }
 
-theorem en_other(
-  n: Nat,
-  h: Nat::eq(n, 1) = false
-): plural(Cons(101, Cons(110, Nil)), n) = COther {
-  Eq::subst(
-    Bool,
-    false,
-    Nat::eq(n, 1),
-    (y: Bool) => one_or_other(y) = COther,
-    Eq::sym(h),
-    Refl
-  )
+theorem en_other(n: Nat, h: Nat::eq(n, 1) = false): plural(Cons(101, Cons(110, Nil)), n) = COther {
+  Eq::subst(<A: Bool, a: false, b: Nat::eq(n, 1)>, (y: Bool) => one_or_other(y) = COther, Eq::sym(h), Refl)
 }
 
 theorem slavic_not_other(a: Bool, b: Bool): is_other(slavic(a, b)) = false {
-  match a: is_other(slavic(a, b)) = false {
+  ⊢ is_other(slavic(a, b)) = false from match a {
     true => Refl
-    false => match b: is_other(slavic(false, b)) = false {
+    false => ⊢ is_other(slavic(false, b)) = false from match b {
       true => Refl
       false => Refl
     }

@@ -1,0 +1,236 @@
+
+@ cases.builtin_pair
+source = ```tauto
+fn answer(): i64 {
+  let value := Pair { snd: 2, fst: 40 }
+  value.fst + value.snd
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.generic_record
+source = ```tauto
+inductive Cell(A: Type): Type { Mk(value: A): Cell(A) }
+fn wrap<A>(value: A): Cell(A) { Cell { value: value } }
+fn answer(): Text { wrap(Pair { snd: "語", fst: "日本" }).value.fst }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "日本\n"
+
+@ cases.generic_reordered
+source = ```tauto
+inductive Duo(A: Type): Type { Mk(first: A, second: A): Duo(A) }
+fn answer(): i64 {
+  let value := Duo { second: 2, first: 40 }
+  value.first + value.second
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.empty_values_are_constrained
+source = ```tauto
+fn answer(): Bool {
+  let value: Pair(Option(Nat), List(Text)) := Pair { snd: Nil, fst: None }
+  ⊢ Bool from match (value: Option(Nat)) { None => true
+    Some(n) => false }
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "true\n"
+
+@ cases.empty_record
+source = ```tauto
+inductive EmptyRecord: Type { Mk: EmptyRecord }
+fn answer(): i64 {
+  let value := EmptyRecord {}
+  ⊢ i64 from match value { Mk => 42 }
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.explicit_pair
+source = ```tauto
+inductive Pair: Type { Mk(left: i64, right: i64): Pair }
+fn answer(): i64 {
+  let value := Pair { right: 2, left: 40 }
+  value.left + value.right
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.fields_run_in_written_order
+source = ```tauto
+fn first(): i64 { 9223372036854775807 + 1 }
+fn second(): i64 { 9223372036854775807 + 2 }
+fn answer(): i64 {
+  let value := Pair { snd: first(), fst: second() }
+  value.fst + value.snd
+}
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_run_error = '<input>:1:'
+
+@ cases.missing_field
+source = ```tauto
+fn answer(): i64 { let value := Pair { fst: 42 }; value.fst }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'record field count differs'
+
+@ cases.extra_field
+source = ```tauto
+fn answer(): i64 { let value := Pair { fst: 40, snd: 2, extra: 0 }; value.fst }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'record field count differs'
+
+@ cases.unknown_field
+source = ```tauto
+fn answer(): i64 { let value := Pair { fst: 40, other: 2 }; value.fst }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'missing record field'
+
+@ cases.duplicate_field
+source = ```tauto
+fn answer(): i64 { let value := Pair { fst: 40, fst: 2 }; value.fst }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'duplicate record field'
+
+@ cases.unknown_type
+source = ```tauto
+fn answer(): i64 { let value := Missing { fst: 42 }; 42 }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'unknown record type'
+
+@ cases.constructor_is_not_record_type
+source = ```tauto
+inductive Cell: Type { Mk(value: i64): Cell }
+fn answer(): i64 { let value := Cell::Mk { value: 42 }; 42 }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'record requires a datatype'
+
+@ cases.multiple_constructors
+source = ```tauto
+inductive Choice: Type { Left(value: i64): Choice
+  Right(value: i64): Choice }
+fn answer(): i64 { let value := Choice { value: 42 }; 42 }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'record requires a single-constructor type'
+
+@ cases.field_type_mismatch
+source = ```tauto
+inductive Cell: Type { Mk(value: i64): Cell }
+fn answer(): i64 { let value := Cell { value: "wrong" }; value.value }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'type mismatch'
+
+@ cases.generic_fields_disagree
+source = ```tauto
+inductive Duo(A: Type): Type { Mk(first: A, second: A): Duo(A) }
+fn answer(): i64 { let value := Duo { first: 42, second: "wrong" }; 42 }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'numeric literal requires integer type'
+
+@ cases.pair_arity
+source = ```tauto
+fn consume(value: Pair(i64)): i64 { 42 }
+fn answer(): i64 { 42 }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'unknown declared type'
+
+@ cases.explicit_pair_cannot_use_default_fields
+source = ```tauto
+inductive Pair: Type { Mk(left: i64, right: i64): Pair }
+fn answer(): i64 { let value := Pair { fst: 40, snd: 2 }; 42 }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'missing record field'
+
+@ cases.invalid_pair_not_replaced_by_builtin
+source = ```tauto
+inductive Pair: Prop { Mk: Pair }
+fn answer(): i64 { 42 }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'data must live in Type'
+
+@ cases.effectful_field
+source = ```tauto
+effect ask(): i64
+fn read(): i64 ! {ask} { perform ask() }
+fn answer(): i64 { let value := Pair { fst: read(), snd: 0 }; value.fst }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'unsupported declaration: StEffect'
+
+@ cases.mutable_field
+source = ```tauto
+fn answer(): i64 { let value := Pair { fst: { var n := 1; n }, snd: 2 }; value.fst }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'unsupported block statement: StVar'
+
+@ cases.borrowed_field
+source = ```tauto
+fn answer(): i64 { let n := 42; let value := Pair { fst: &n, snd: 2 }; value.snd }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'borrows are unsupported'
+
+@ cases.projected_away_large_integer
+source = ```tauto
+fn answer(): Bool { Pair { fst: 42, snd: 9223372036854775807 }.fst == 42 }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "true\n"
+
+@ cases.projected_nat_keeps_its_context
+source = ```tauto
+fn answer(): Nat { Pair { fst: 42, snd: 9223372036854775807 }.fst }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_stdout = "42\n"
+
+@ cases.projected_away_unresolved_type
+source = ```tauto
+fn answer(): i64 { Pair { fst: 42, snd: None }.fst }
+```
+differential = "rustgen"
+selfhost_entry = "answer"
+selfhost_compile_error = 'cannot infer a projected-away type parameter'

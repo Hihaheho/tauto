@@ -1,0 +1,115 @@
+description = "Row parameters keep value generic telescopes and effect calls aligned."
+
+@ cases.explicit-value-row-first
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn keep<!e, n: Nat>(callback: () -> Unit ! e): Nat ! {} ∪ e { callback(); n }
+fn answer(): Nat { keep(13, () => #()) }
+perform show("value", answer())
+```
+shows = ["value = 13"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["value = 13"]
+javascript_shows = ["value = 13"]
+
+@ cases.explicit-value-row-middle
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn keep<a: Nat, !e, n: Nat>(callback: () -> Unit ! e): Nat ! {} ∪ e { callback(); n }
+fn answer(): Nat { keep(1, 17, () => #()) }
+perform show("value", answer())
+```
+shows = ["value = 17"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["value = 17"]
+javascript_shows = ["value = 17"]
+
+@ cases.explicit-value-row-last
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn keep<n: Nat, !e>(callback: () -> Unit ! e): Nat ! {} ∪ e { callback(); n }
+fn answer(): Nat { keep(19, () => #()) }
+perform show("value", answer())
+```
+shows = ["value = 19"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["value = 19"]
+javascript_shows = ["value = 19"]
+
+@ cases.inferred-value-row-first
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+inductive At(n: Nat): Type { Mk: At(n) }
+fn index<!e, n: Nat>(w: At(n), callback: () -> Unit ! e): Nat ! {} ∪ e { callback(); n }
+fn answer(): Nat { index(At::Mk(23), () => #()) }
+perform show("value", answer())
+```
+shows = ["value = 23"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["value = 23"]
+javascript_shows = ["value = 23"]
+
+@ cases.inferred-value-row-middle
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+inductive At(n: Nat): Type { Mk: At(n) }
+fn index<A: Type, !e, n: Nat>(x: A, w: At(n), callback: () -> Unit ! e): Nat ! {} ∪ e { callback(); n }
+fn answer(): Nat { index(true, At::Mk(23), () => #()) }
+perform show("value", answer())
+```
+shows = ["value = 23"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["value = 23"]
+javascript_shows = ["value = 23"]
+
+@ cases.inferred-value-row-last
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+inductive At(n: Nat): Type { Mk: At(n) }
+fn index<n: Nat, !e>(w: At(n), callback: () -> Unit ! e): Nat ! {} ∪ e { callback(); n }
+fn answer(): Nat { index(At::Mk(23), () => #()) }
+perform show("value", answer())
+```
+shows = ["value = 23"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["value = 23"]
+javascript_shows = ["value = 23"]
+
+@ cases.explicit-value-row-keeps-effects
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+effect tick(): Unit resume 1
+fn keep<!e, n: Nat>(callback: () -> Unit ! e): Nat ! {tick} ∪ e { perform tick(); callback(); n }
+fn answer(): Nat {
+  handle { keep(29, () => #()) } with { tick(), k => k(#()) }
+}
+perform show("value", answer())
+```
+shows = ["value = 29"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["value = 29"]
+javascript_shows = ["value = 29"]
+
+@ cases.explicit-value-prefix-keeps-callback-row
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+effect ask(): Nat resume 1
+fn asked(): Nat ! {ask} { perform ask() }
+fn run<!e, n: Nat>(f: () -> Nat ! e): Nat ! e { f(); n }
+fn answer(): Nat {
+  handle { run(31, asked) } with { ask(), k => k(7) }
+}
+perform show("value", answer())
+```
+shows = ["value = 31"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["value = 31"]
+javascript_shows = ["value = 31"]

@@ -80,10 +80,10 @@ pub fn snippet_char_width(c: Nat): Nat {
 // The columns the characters from byte `i` to byte `stop` take, added to `w`; `k` bounds the
 // steps.
 pub fn snippet_width_in(k: Nat, t: Text, i: Nat, stop: Nat, w: Nat): Nat {
-  match k: Nat {
+  ⊢ Nat from match k {
     Zero => w
     Succ(k2) => if stop <= i { w } else {
-      match text_decode(t, i): Nat {
+      ⊢ Nat from match text_decode(t, i) {
         None => snippet_width_in(k2, t, i + 1, stop, w + 1)
         Some(#(@code code, @len len)) => snippet_width_in(
           k2,
@@ -110,10 +110,10 @@ pub fn snippet_shown_char(t: Text, i: Nat, len: Nat, code: Nat): Text {
 
 // The characters from byte `i` to byte `stop` as shown, last first, onto `parts`.
 pub fn snippet_shown_in(k: Nat, t: Text, i: Nat, stop: Nat, parts: List(Text)): List(Text) {
-  match k: List(Text) {
+  ⊢ List(Text) from match k {
     Zero => parts
     Succ(k2) => if stop <= i { parts } else {
-      match text_decode(t, i): List(Text) {
+      ⊢ List(Text) from match text_decode(t, i) {
         None => snippet_shown_in(k2, t, i + 1, stop, parts)
         Some(#(@code code, @len len)) => snippet_shown_in(
           k2,
@@ -135,9 +135,9 @@ pub fn snippet_shown(t: Text, i: Nat, stop: Nat): Text {
 
 // The byte where the line holding byte `at` starts; `k` bounds the steps back.
 pub fn snippet_line_start_in(k: Nat, t: Text, at: Nat): Nat {
-  match k: Nat {
+  ⊢ Nat from match k {
     Zero => at
-    Succ(k2) => match at: Nat {
+    Succ(k2) => ⊢ Nat from match at {
       Zero => 0
       Succ(before) => if Text::byte_value(
         t,
@@ -153,7 +153,7 @@ pub fn snippet_line_start(t: Text, at: Nat): Nat {
 
 // The first newline from byte `i`, or the end of `t`; `k` bounds the steps.
 pub fn snippet_line_end_in(k: Nat, t: Text, i: Nat): Nat {
-  match k: Nat {
+  ⊢ Nat from match k {
     Zero => i
     Succ(k2) => if Text::byte_value(t, i) == 10 { i } else { snippet_line_end_in(k2, t, i + 1) }
   }
@@ -166,7 +166,7 @@ pub fn snippet_line_end(t: Text, at: Nat): Nat {
 
 // The number of the line holding byte `at`, counting the newlines from byte `i` onto `n`.
 pub fn snippet_line_number_in(k: Nat, t: Text, i: Nat, at: Nat, n: Nat): Nat {
-  match k: Nat {
+  ⊢ Nat from match k {
     Zero => n
     Succ(k2) => if at <= i { n } else if Text::byte_value(t, i) == 10 {
       snippet_line_number_in(k2, t, i + 1, at, n + 1)
@@ -180,7 +180,7 @@ pub fn snippet_line_number(t: Text, at: Nat): Nat {
 
 // The first byte from `i` that is not a space or a tab, or `stop`.
 pub fn snippet_indent_end_in(k: Nat, t: Text, i: Nat, stop: Nat): Nat {
-  match k: Nat {
+  ⊢ Nat from match k {
     Zero => i
     Succ(k2) => if stop <= i { stop } else if Text::byte_value(
       t,
@@ -226,7 +226,7 @@ pub fn snippet_pad(n: Nat): Text {
 
 // Each line followed by a newline.
 pub fn snippet_lines_of(lines: List(Text)): Text {
-  match lines: Text {
+  ⊢ Text from match lines {
     Nil => ""
     Cons(line, rest) => Text::concat(Text::concat(line, text_newline()), snippet_lines_of(rest))
   }
@@ -234,7 +234,7 @@ pub fn snippet_lines_of(lines: List(Text)): Text {
 
 // `severity: message`; the lines of the message after its first follow as they are.
 pub fn snippet_header(color: Bool, style: Text, severity: Text, message: Text): Text {
-  match text_lines(message): Text {
+  ⊢ Text from match text_lines(message) {
     Nil => Text::concat(snippet_paint(color, style, severity), text_newline())
     Cons(first, rest) => Text::concat_all(
       Cons(
@@ -377,7 +377,7 @@ pub fn snippet_body(
 }
 
 pub fn snippet_note_lines(color: Bool, width: Nat, lines: List(Text)): Text {
-  match lines: Text {
+  ⊢ Text from match lines {
     Nil => ""
     Cons(line, rest) => Text::concat(
       Text::concat_all(

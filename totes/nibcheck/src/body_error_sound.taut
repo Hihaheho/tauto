@@ -10,14 +10,10 @@ pub theorem ck_top_let_frame_errors(
   c: Checker,
   s: SurfaceStmt,
   env: Scope
-): CkErrorFrame(c, ck_top_let(c, s, env)) { match s: CkErrorFrame(c, ck_top_let(c, s, env)) {
-    StLet(name, ty, value, borrow, bm) => match env: CkErrorFrame(
-      c,
-      ck_top_let(c, StLet(name, ty, value, borrow, bm), env)
-    ) { ScopeMk(items) => match items: CkErrorFrame(
-      c,
-      ck_top_let(c, StLet(name, ty, value, borrow, bm), ScopeMk(items))
-    ) { Nil => (clean_errors => clean_errors)
+): CkErrorFrame(c, ck_top_let(c, s, env)) { ⊢ CkErrorFrame(c, ck_top_let(c, s, env)) from match s {
+    StLet(name, ty, value, borrow, bm) => ⊢ CkErrorFrame(c, ck_top_let(c, StLet(name, ty, value, borrow, bm), env)) from match env { ScopeMk(items) => ⊢ CkErrorFrame(c, ck_top_let(c, StLet(name, ty, value, borrow, bm), ScopeMk(items))) from match items { Nil => (
+      clean_errors => clean_errors
+    )
         Cons(l, older) => (clean_errors => clean_errors) } }
     StVar(name, ty, value, vb) => (clean_errors => clean_errors)
     StAssign(name, name_place, value) => (clean_errors => clean_errors)

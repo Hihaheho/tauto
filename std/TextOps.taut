@@ -12,12 +12,12 @@ module Bytes {
   // character, so the parts of a split are texts again.
 
   pub fn starts_with(b: List(Nat), p: List(Nat)): Bool {
-    match b: Bool {
-      Nil => match p: Bool {
+    ⊢ Bool from match b {
+      Nil => ⊢ Bool from match p {
         Nil => true
         Cons(y, ys) => false
       }
-      Cons(x, xs) => match p: Bool {
+      Cons(x, xs) => ⊢ Bool from match p {
         Nil => true
         Cons(y, ys) => x == y && starts_with(xs, ys)
       }
@@ -26,12 +26,12 @@ module Bytes {
 
   // The offset of the first place `needle` starts in `hay`, counted from `i`.
   pub fn find_from(hay: List(Nat), needle: List(Nat), i: Nat): Option(Nat) {
-    match hay: Option(Nat) {
-      Nil => match needle: Option(Nat) {
+    ⊢ Option(Nat) from match hay {
+      Nil => ⊢ Option(Nat) from match needle {
         Nil => Some(i)
         Cons(y, ys) => None
       }
-      Cons(x, xs) => match starts_with(hay, needle): Option(Nat) {
+      Cons(x, xs) => ⊢ Option(Nat) from match starts_with(hay, needle) {
         true => Some(i)
         false => find_from(xs, needle, Succ(i))
       }
@@ -46,44 +46,44 @@ module Bytes {
     sep: Nat,
     pr: List(List(Nat)) × List(Nat)
   ): List(List(Nat)) × List(Nat) {
-    match pr: List(List(Nat)) × List(Nat) {
-      #(rest, cur) => match h == sep: List(List(Nat)) × List(Nat) {
-        true => #(Cons(cur, rest), Nil(Nat))
+    ⊢ List(List(Nat)) × List(Nat) from match pr {
+      #(rest, cur) => ⊢ List(List(Nat)) × List(Nat) from match h == sep {
+        true => #(Cons(cur, rest), Nil(<A: Nat>))
         false => #(rest, Cons(h, cur))
       }
     }
   }
 
   pub fn split(bs: List(Nat), sep: Nat): List(List(Nat)) × List(Nat) {
-    match bs: List(List(Nat)) × List(Nat) {
-      Nil => #(Nil(List(Nat)), Nil(Nat))
+    ⊢ List(List(Nat)) × List(Nat) from match bs {
+      Nil => #(Nil(<A: List(Nat)>), Nil(<A: Nat>))
       Cons(h, t) => split_step(h, sep, split(t, sep))
     }
   }
 
   // The parts after the first, each after a `sep`.
   pub fn join_rest(sep: List(Nat), rest: List(List(Nat))): List(Nat) {
-    match rest: List(Nat) {
+    ⊢ List(Nat) from match rest {
       Nil => Nil
       Cons(q, qs) => List::append(sep, List::append(q, join_rest(sep, qs)))
     }
   }
 
   pub fn unsplit(sep: List(Nat), pr: List(List(Nat)) × List(Nat)): List(Nat) {
-    match pr: List(Nat) {
+    ⊢ List(Nat) from match pr {
       #(rest, cur) => List::append(cur, join_rest(sep, rest))
     }
   }
 
   pub theorem starts_with_nil(b: List(Nat)): starts_with(b, Nil) = true {
-    match b: starts_with(b, Nil) = true {
+    ⊢ starts_with(b, Nil) = true from match b {
       Nil => Refl
       Cons(x, xs) => Refl
     }
   }
 
   pub theorem starts_with_self(b: List(Nat)): starts_with(b, b) = true {
-    match b: starts_with(b, b) = true {
+    ⊢ starts_with(b, b) = true from match b {
       Nil => Refl
       Cons(x, xs) => Eq::trans(
         Eq::congr(⟦□ && starts_with(xs, xs)⟧, Nat::eq_refl(x)),
@@ -96,7 +96,7 @@ module Bytes {
     p: List(Nat),
     r: List(Nat)
   ): starts_with(List::append(p, r), p) = true {
-    match p: starts_with(List::append(p, r), p) = true {
+    ⊢ starts_with(List::append(p, r), p) = true from match p {
       Nil => starts_with_nil(r)
       Cons(y, ys) => Eq::trans(
         Eq::congr(⟦□ && starts_with(List::append(ys, r), ys)⟧, Nat::eq_refl(y)),
@@ -111,15 +111,16 @@ module Bytes {
     i: Nat,
     h: starts_with(hay, needle) = true
   ): find_from(hay, needle, i) = Some(i) {
-    match hay: find_from(hay, needle, i) = Some(i) {
-      Nil => match needle: find_from(Nil, needle, i) = Some(i) {
+    ⊢ find_from(hay, needle, i) = Some(i) from match hay {
+      Nil => ⊢ find_from(Nil, needle, i) = Some(i) from match needle {
         Nil => Refl
         Cons(y, ys) => False::elim(false_ne_true(h))
       }
-      Cons(x, xs) => match starts_with(
+      Cons(x, xs) => ⊢ find_from(
         Cons(x, xs),
-        needle
-      ): find_from(Cons(x, xs), needle, i) = Some(i) {
+        needle,
+        i
+      ) = Some(i) from match starts_with(Cons(x, xs), needle) {
         true => ⊢ Some(i) = Some(i) from Refl
         false => ⊢ find_from(xs, needle, Succ(i)) = Some(i) from False::elim(false_ne_true(h))
       }
@@ -131,14 +132,14 @@ module Bytes {
     sep: Nat,
     pr: List(List(Nat)) × List(Nat)
   ): unsplit([sep], split_step(h, sep, pr)) = Cons(h, unsplit([sep], pr)) {
-    match pr: unsplit([sep], split_step(h, sep, pr)) = Cons(h, unsplit([sep], pr)) {
-      #(rest, cur) => match h == sep eqn e: unsplit(
+    ⊢ unsplit([sep], split_step(h, sep, pr)) = Cons(h, unsplit([sep], pr)) from match pr {
+      #(rest, cur) => ⊢ unsplit(
         [sep],
         split_step(h, sep, #(rest, cur))
-      ) = Cons(h, List::append(cur, join_rest([sep], rest))) {
+      ) = Cons(h, List::append(cur, join_rest([sep], rest))) from match h == sep eqn e {
         true => ⊢ unsplit(
           [sep],
-          #(Cons(cur, rest), Nil(Nat))
+          #(Cons(cur, rest), Nil(<A: Nat>))
         ) = Cons(
           h,
           List::append(cur, join_rest([sep], rest))
@@ -155,7 +156,7 @@ module Bytes {
   }
 
   pub theorem split_unsplit(bs: List(Nat), sep: Nat): unsplit([sep], split(bs, sep)) = bs {
-    match bs: unsplit([sep], split(bs, sep)) = bs {
+    ⊢ unsplit([sep], split(bs, sep)) = bs from match bs {
       Nil => Refl
       Cons(h, t) => Eq::trans(
         unsplit_step(h, sep, split(t, sep)),
@@ -168,7 +169,7 @@ module Bytes {
 module Text {
 
   pub fn is_empty(t: Text): Bool {
-    match Text::bytes(t): Bool {
+    ⊢ Bool from match Text::bytes(t) {
       Nil => true
       Cons(x, xs) => false
     }
@@ -192,7 +193,7 @@ module Text {
   }
 
   pub fn repeat(t: Text, n: Nat): Text {
-    match n: Text {
+    ⊢ Text from match n {
       Zero => Text::Mk(Nil)
       Succ(k) => Text::concat(t, repeat(t, k))
     }
@@ -203,7 +204,7 @@ module Text {
   }
 
   pub fn of_split(pr: List(List(Nat)) × List(Nat)): List(Text) {
-    match pr: List(Text) {
+    ⊢ List(Text) from match pr {
       #(rest, cur) => Cons(Text::Mk(cur), of_bytes_list(rest))
     }
   }
@@ -214,7 +215,7 @@ module Text {
   }
 
   pub fn join(sep: Text, parts: List(Text)): Text {
-    match parts: Text {
+    ⊢ Text from match parts {
       Nil => Text::Mk(Nil)
       Cons(p, rest) => Text::Mk(
         List::append(
@@ -226,7 +227,7 @@ module Text {
   }
 
   pub theorem eta(t: Text): Text::Mk(Text::bytes(t)) = t {
-    match t: Text::Mk(Text::bytes(t)) = t {
+    ⊢ Text::Mk(Text::bytes(t)) = t from match t {
       Mk(bs) => Refl
     }
   }
@@ -255,7 +256,7 @@ module Text {
   }
 
   pub theorem len_repeat(t: Text, n: Nat): Text::len(repeat(t, n)) = Nat::mul(Text::len(t), n) {
-    match n: Text::len(repeat(t, n)) = Nat::mul(Text::len(t), n) {
+    ⊢ Text::len(repeat(t, n)) = Nat::mul(Text::len(t), n) from match n {
       Zero => Refl
       Succ(k) => Eq::trans(
         List::length_append(Text::bytes(t), Text::bytes(repeat(t, k))),
@@ -300,8 +301,8 @@ module Text {
   pub theorem join_pair(
     pr: List(List(Nat)) × List(Nat),
     sep: Nat
-  ): join(Text::Mk([sep]), of_split(pr)) = Text::Mk(Bytes::unsplit([sep], pr)) {
-    match pr: join(Text::Mk([sep]), of_split(pr)) = Text::Mk(Bytes::unsplit([sep], pr)) {
+  ): Text::join(Text::Mk([sep]), of_split(pr)) = Text::Mk(Bytes::unsplit([sep], pr)) {
+    ⊢ Text::join(Text::Mk([sep]), of_split(pr)) = Text::Mk(Bytes::unsplit([sep], pr)) from match pr {
       #(rest, cur) => Eq::congr(
         ⟦Text::Mk(List::append(cur, Bytes::join_rest([sep], □)))⟧,
         bytes_of_parts(rest)
@@ -309,8 +310,8 @@ module Text {
     }
   }
 
-  pub theorem split_on_join(t: Text, sep: Nat): join(Text::Mk([sep]), split_on(t, sep)) = t {
-    match t: join(Text::Mk([sep]), split_on(t, sep)) = t {
+  pub theorem split_on_join(t: Text, sep: Nat): Text::join(Text::Mk([sep]), split_on(t, sep)) = t {
+    ⊢ Text::join(Text::Mk([sep]), split_on(t, sep)) = t from match t {
       Mk(bs) => Eq::trans(
         join_pair(Bytes::split(bs, sep), sep),
         Eq::congr(⟦Text::Mk(□)⟧, Bytes::split_unsplit(bs, sep))
@@ -338,7 +339,7 @@ module Text {
     Refl
   }
 
-  pub theorem join_commas(): join(",", ["a", "b"]) = "a,b" {
+  pub theorem join_commas(): Text::join(",", ["a", "b"]) = "a,b" {
     Refl
   }
 }

@@ -3,12 +3,12 @@ use crate::check::{
     Derivation, FileEntry, InferenceRule as Rule, Kernel, Verdict, declare_prelude,
 };
 use crate::surface::print::print_term as show;
-use crate::surface::{Stmt, TheoremDecl};
+use crate::surface::{Name, Stmt, SurfaceTerm, TheoremDecl};
 use std::{fmt::Write, path::Path};
 mod json;
 mod natural;
 mod notation;
-use tauto_message::msg;
+use tauto_message::{Message, msg};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub enum Format {
@@ -41,7 +41,7 @@ pub struct View {
 }
 
 /// Each displayed inference comes from a core check, without the proof cache.
-pub fn render_file(path: &Path, only: Option<&str>, format: Format) -> Result<View, String> {
+pub fn render_file(path: &Path, only: Option<&str>, format: Format) -> Result<View, Message> {
     render_file_with(path, only, format, Options::default())
 }
 
@@ -55,8 +55,30 @@ pub fn render_file_with(
     only: Option<&str>,
     format: Format,
     options: Options,
-) -> Result<View, String> {
-    let loaded = crate::program::load_with_text(path, None)?;
+) -> Result<View, Message> {
+    let loaded = crate::program::load_with_text_in(path, None)?;
+    render_loaded(&loaded, path, only, format, options)
+}
+
+/// Presents a loaded editor snapshot using the same checks and notation as the CLI.
+pub fn render_loaded(
+    loaded: &crate::program::Loaded,
+    path: &Path,
+    only: Option<&str>,
+    format: Format,
+    options: Options,
+) -> Result<View, Message> {
+    if !loaded.program.errors.is_empty() {
+        return Err(Message::text(
+            loaded
+                .program
+                .errors
+                .iter()
+                .map(|(message, _)| message.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ));
+    }
     let own = crate::program::canonical_path(path);
     let index = loaded
         .files
@@ -65,20 +87,20 @@ pub fn render_file_with(
         .ok_or_else(|| msg!("proof-no-theorem").to_string())?;
     let mut declarations = Vec::new();
     theorems(&loaded.kernel_files[index], &mut declarations);
-    declarations.retain(|d| only.is_none_or(|name| name == d.name));
+    declarations.retain(|d| only.is_none_or(|name| name == d.name.as_str()));
     if declarations.is_empty() {
-        return Err(msg!("proof-no-theorem").to_string());
+        return Err(msg!("proof-no-theorem"));
     }
     let mut kernel = Kernel::new();
     declare_prelude(&mut kernel)?;
     kernel.record_derivations(
         &declarations
             .iter()
-            .map(|d| d.name.as_str())
+            .map(|d| d.name.clone())
             .collect::<Vec<_>>(),
     );
     kernel.record_elaborated();
-    let entries = crate::read::declare_loaded(&mut kernel, &loaded)?;
+    let entries = crate::read::declare_loaded(&mut kernel, loaded)?;
     if matches!(format, Format::Json) {
         return json::render(
             &declarations,
@@ -107,10 +129,10 @@ pub fn render_file_with(
             .filter(|e| e.file == own && e.entry.name == d.name)
             .collect();
         let [entry] = matching.as_slice() else {
-            return Err(msg!("proof-ambiguous", name = d.name.clone()).to_string());
+            return Err(msg!("proof-ambiguous", name = d.name.to_string()));
         };
         let status = verdict(entry);
-        let notation = notation::Notation::new(&loaded, &kernel, d);
+        let notation = notation::Notation::new(loaded, &kernel, d);
         if html {
             write!(out, "<section><h1>{}</h1>", esc(&d.name)).unwrap();
             if let Some(status) = &status {
@@ -233,7 +255,15 @@ fn theorems<'a>(stmts: &'a [Stmt], out: &mut Vec<&'a TheoremDecl>) {
 fn verdict(entry: &FileEntry) -> Option<String> {
     Some(match &entry.entry.verdict {
         Verdict::Checked { axioms } if axioms.is_empty() => return None,
-        Verdict::Checked { axioms } => msg!("proof-axioms", names = axioms.join(", ")).to_string(),
+        Verdict::Checked { axioms } => msg!(
+            "proof-axioms",
+            names = axioms
+                .iter()
+                .map(Name::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .to_string(),
         Verdict::Incomplete { holes, uses } => {
             let mut details = holes
                 .iter()
@@ -247,7 +277,7 @@ fn verdict(entry: &FileEntry) -> Option<String> {
                     format!("?{}: {} [{}]", h.name, show(&h.goal), context)
                 })
                 .collect::<Vec<_>>();
-            details.extend(uses.iter().cloned());
+            details.extend(uses.iter().map(ToString::to_string));
             msg!("proof-incomplete", details = details.join("; ")).to_string()
         }
         Verdict::Failed(d) => msg!("proof-failed", details = d.to_string()).to_string(),
@@ -255,28 +285,120 @@ fn verdict(entry: &FileEntry) -> Option<String> {
     })
 }
 
+/// Bound variables may be renamed when core writes a type. Free references
+/// still compare by their declaration or local identity.
+fn same_term(a: &SurfaceTerm, b: &SurfaceTerm) -> bool {
+    use crate::surface::TermKind;
+    fn go(a: &SurfaceTerm, b: &SurfaceTerm, bound: &[(Name, Name)]) -> bool {
+        match (&*a.kind, &*b.kind) {
+            (TermKind::Var(a), TermKind::Var(b)) => {
+                match bound.iter().rev().find(|(left, _)| left == a) {
+                    Some((_, right)) => right == b,
+                    None => a == b && !bound.iter().any(|(_, right)| right == b),
+                }
+            }
+            (
+                TermKind::App {
+                    function: af,
+                    arguments: aa,
+                },
+                TermKind::App {
+                    function: bf,
+                    arguments: ba,
+                },
+            ) => {
+                aa.len() == ba.len()
+                    && go(af, bf, bound)
+                    && aa.iter().zip(ba).all(|(a, b)| go(a, b, bound))
+            }
+            (
+                TermKind::Pi {
+                    params: ap,
+                    result: ar,
+                    effects: ae,
+                },
+                TermKind::Pi {
+                    params: bp,
+                    result: br,
+                    effects: be,
+                },
+            ) => {
+                if ap.len() != bp.len() || ae != be {
+                    return false;
+                }
+                let mut inner = bound.to_vec();
+                for ((an, at), (bn, bt)) in ap.iter().zip(bp) {
+                    if !go(at, bt, &inner) {
+                        return false;
+                    }
+                    if let (Some(an), Some(bn)) = (an, bn) {
+                        inner.push((an.clone(), bn.clone()));
+                    }
+                }
+                go(ar, br, &inner)
+            }
+            (
+                TermKind::Lam {
+                    params: ap,
+                    body: ab,
+                    types: at,
+                },
+                TermKind::Lam {
+                    params: bp,
+                    body: bb,
+                    types: bt,
+                },
+            ) => {
+                if ap.len() != bp.len() || at.len() != bt.len() {
+                    return false;
+                }
+                let mut inner = bound.to_vec();
+                for (i, (a, b)) in ap.iter().zip(bp).enumerate() {
+                    match (
+                        at.get(i).and_then(Option::as_ref),
+                        bt.get(i).and_then(Option::as_ref),
+                    ) {
+                        (Some(a), Some(b)) if !go(a, b, &inner) => return false,
+                        (Some(_), None) | (None, Some(_)) => return false,
+                        _ => {}
+                    }
+                    inner.push((a.clone(), b.clone()));
+                }
+                go(ab, bb, &inner)
+            }
+            _ => crate::surface::same_term_structure(a, b),
+        }
+    }
+    go(a, b, &[])
+}
+
 #[derive(Default)]
 struct Scopes {
-    contexts: Vec<Vec<(String, String)>>,
+    contexts: Vec<Vec<(Name, SurfaceTerm)>>,
     displayed: Vec<Vec<(String, String)>>,
     notation: notation::Notation,
 }
 impl Scopes {
-    fn key(d: &Derivation) -> Vec<(String, String)> {
-        d.context
-            .iter()
-            .map(|(n, t)| (n.clone(), show(t)))
-            .collect()
+    fn key(d: &Derivation) -> Vec<(Name, SurfaceTerm)> {
+        d.context.clone()
+    }
+    fn same(a: &[(Name, SurfaceTerm)], b: &[(Name, SurfaceTerm)]) -> bool {
+        a.len() == b.len()
+            && a.iter()
+                .zip(b)
+                .all(|((an, at), (bn, bt))| an == bn && same_term(at, bt))
     }
     fn collect(&mut self, d: &Derivation) {
         let k = Self::key(d);
-        if !self.contexts.contains(&k) {
+        if !self.contexts.iter().any(|c| Self::same(c, &k)) {
             self.contexts.push(k);
             self.displayed.push(
                 d.context
                     .iter()
                     .enumerate()
-                    .map(|(i, (n, t))| (n.clone(), self.notation.show(t, &d.context[..i], false)))
+                    .map(|(i, (n, t))| {
+                        (n.to_string(), self.notation.show(t, &d.context[..i], false))
+                    })
                     .collect(),
             );
         }
@@ -287,7 +409,7 @@ impl Scopes {
     fn id(&self, d: &Derivation) -> usize {
         self.contexts
             .iter()
-            .position(|c| c == &Self::key(d))
+            .position(|c| Self::same(c, &Self::key(d)))
             .expect("recorded context")
     }
     fn text(&self, out: &mut String) {
@@ -348,7 +470,7 @@ fn rule_name(d: &Derivation) -> String {
             bindings(
                 &d.introduced
                     .iter()
-                    .map(|(n, t)| (n.clone(), show(t)))
+                    .map(|(n, t)| (n.to_string(), show(t)))
                     .collect::<Vec<_>>()
             )
         )

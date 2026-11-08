@@ -2,24 +2,24 @@
 
 @ cases.module-qualified-call
 source = ```nib
-module M { fn one() -> i64 { 1 } }
-perform show("x", M.one())
+module M { fn one(): i64 { 1 } }
+perform show("x", M::one())
 ```
 shows = ["x = 1"]
 
 @ cases.module-inner-unqualified
 source = ```nib
 module M {
-  fn one() -> i64 { 1 }
-  fn two() -> i64 { one() + one() }
+  fn one(): i64 { 1 }
+  fn two(): i64 { one() + one() }
 }
-M.two()
+M::two()
 ```
 types = "ok"
 
 @ cases.module-not-open
 source = ```nib
-module M { fn one() -> i64 { 1 } }
+module M { fn one(): i64 { 1 } }
 one()
 ```
 types = "error: one is not defined"
@@ -27,15 +27,15 @@ types = "error: one is not defined"
 @ cases.module-and-type-same-name
 source = ```nib
 struct P { x: i64 }
-module P { fn mk() -> i64 { 1 } }
-P.mk()
+module P { fn mk(): i64 { 1 } }
+P::mk()
 ```
 types = "ok"
 
 @ cases.module-nested
 source = ```nib
-module A { module B { fn f() -> i64 { 1 } } }
-A.B.f()
+module A { module B { fn f(): i64 { 1 } } }
+A::B::f()
 ```
 types = "ok"
 
@@ -44,20 +44,170 @@ source = ```nib
 module M { }
 module M { }
 ```
-types = "error: module M is declared twice"
+types = "ok"
 
 @ cases.local-named-like-module
 source = ```nib
-module m { fn f() -> i64 { 1 } }
-let m = 1
+module m { fn f(): i64 { 1 } }
+let m := 1
 ```
-types = "error: m is the name of a module"
+types = "error: m is the name of a module, so `m.f` would not tell a field from a qualified name; give the local another name"
 
 @ cases.module-collides-with-class
 source = ```nib
-class Ord<A: linear> {
-  fn compare(&a: A, &b: A) -> i64
+class Cmp(A: Linear) {
+  fn compare(&a: A, &b: A): i64
 }
-module Ord { fn compare(&a: i64, &b: i64) -> i64 { 0 } }
+module Cmp { fn compare(&a: i64, &b: i64): i64 { 0 } }
 ```
-types = "error: module Ord collides with class Ord"
+types = "error: module Cmp collides with class Cmp"
+
+@ cases.module-function-argument-shadow
+source = ```nib
+module M {
+  fn f(): i64 { 1 }
+  fn g(f: () -> i64): i64 { f() }
+}
+perform show("value", M::g(() => 42))
+```
+shows = ["value = 42"]
+
+@ cases.module-local-binding-shadow
+source = ```nib
+module M {
+  fn f(): i64 { 1 }
+  fn g(): i64 {
+    let f := f() + 41
+    f
+  }
+}
+perform show("value", M::g())
+```
+shows = ["value = 42"]
+
+@ cases.module-types
+source = ```nib
+module Shape {
+  struct Point { x: i64, y: i64 }
+  enum Kind { Dot, Line(i64) }
+  fn origin(): Point { Point { x: 0, y: 0 } }
+  fn size(k: Kind): i64 {
+    match k {
+      Dot => 0
+      Line(n) => n
+    }
+  }
+}
+fn far(p: Shape::Point): i64 { p.x + p.y }
+perform show("v", far(Shape::origin()) + Shape::size(Shape::Kind::Line(3)))
+```
+shows = ["v = 3"]
+
+@ cases.module-nested-collides-with-class
+source = ```nib
+class Cmp(A: Linear) {
+  fn compare(&a: A, &b: A): i64
+}
+module M { module Cmp { fn compare(&a: i64, &b: i64): i64 { 0 } } }
+```
+types = "error: module M::Cmp collides with class Cmp"
+
+@ cases.module-function-declared-after-its-use-is-ambiguous
+source = ```nib
+module A {
+  module B {
+    fn g(): i64 { f() }
+  }
+}
+module A {
+  fn f(): i64 { 1 }
+  module B {
+    fn f(): i64 { 2 }
+  }
+}
+```
+types = "error: f names more than one declaration here"
+
+@ cases.inner-module-function-named-as-an-outer-one-is-ambiguous
+source = ```nib
+module A {
+  fn f(): i64 { 1 }
+  module B {
+    fn f(): i64 { 2 }
+    fn g(): i64 { f() }
+  }
+}
+```
+types = "error: f names more than one declaration here"
+
+@ cases.module-path-says-which-function
+source = ```nib
+module A {
+  fn f(): i64 { 1 }
+  module B {
+    fn f(): i64 { 2 }
+    fn g(): i64 { A::f() + A::B::f() }
+  }
+}
+perform show("value", A::B::g())
+```
+shows = ["value = 3"]
+
+// A top-level function has no module path to be named with, so `f` in a
+// module that also declares `f` is ambiguous; the module's own is `M::f`.
+@ cases.module-function-named-as-a-top-level-function-is-ambiguous
+source = ```nib
+fn f(): i64 { 1 }
+module M {
+  fn f(): i64 { 2 }
+  fn g(): i64 { f() }
+}
+```
+types = "error: f names both M::f and a declaration outside every module here"
+
+@ cases.module-function-named-as-a-top-level-function-written-with-its-path
+source = ```nib
+fn f(): i64 { 1 }
+module M {
+  fn f(): i64 { 2 }
+  fn g(): i64 { M::f() }
+}
+perform show("value", M::g())
+```
+shows = ["value = 2"]
+
+// A constructor of an imported file, written alone in a pattern, is that
+// constructor, though a module of the prelude has its name (`Pending`, the
+// module of `Pending(A)`).
+@ cases.imported-constructor-named-like-a-prelude-module
+files."state.taut" = ```taut
+pub(open) enum State { Pending, Done }
+```
+files."main.taut" = ```taut
+import "state.taut"
+fn label(s: State): Text { match s { Pending => "pending", Done => "done" } }
+perform show("label", label(Pending))
+```
+entry = "main.taut"
+shows = ["label = \"pending\""]
+
+// `import self::b` in `a.taut` imports `a/b.taut`, the file's own module, and
+// `self::c` in `a/b.taut` imports `a/b/c.taut`.
+@ cases.self-module-import
+files."a.taut" = ```taut
+import self::b { two }
+pub fn three(): i64 { two() + 1 }
+```
+files."a/b.taut" = ```taut
+import self::c { one }
+pub fn two(): i64 { one() + 1 }
+```
+files."a/b/c.taut" = ```taut
+pub fn one(): i64 { 1 }
+```
+files."main.taut" = ```taut
+import "a.taut" { three }
+perform show("value", three())
+```
+entry = "main.taut"
+shows = ["value = 3"]

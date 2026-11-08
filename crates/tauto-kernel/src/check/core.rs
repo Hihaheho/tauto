@@ -4,13 +4,11 @@
 //! by the checker's source, the proof text and the interfaces of what it
 //! names), which is taken as checked; `TAUTO_CACHE=off` checks everything.
 //!
-//! The named checker (`check.rs`) works on the surface AST, where a name may
-//! mean a local, a sort or a global, and it renames binders to keep them
-//! apart; a mistake in that renaming would be a way to prove `False`.
-//! This module reads the elaborated term once, resolving every name by its
-//! binder (bound variables become de Bruijn indices, the variables of a
-//! context fresh atoms), and checks it independently of local binder names.
-//! Global names identify constants; binder hints are only for display. It has
+//! The named checker (`check.rs`) elaborates surface terms whose global and
+//! local references have distinct identities. This module reads local IDs as
+//! de Bruijn indices, and open context variables as fresh atoms. Global IDs
+//! identify constants in the accepted declaration environment; neither binder
+//! hints nor declaration displays participate in lookup. The core has
 //! its own reading of an inductive declaration (strict
 //! positivity, uniform parameters, universes, large elimination, the
 //! eliminators and their iota rule). A declaration is added only if both
@@ -22,6 +20,7 @@
 //! met), a weak head normal form, convertibility or subtyping in its context
 //! (`whnf_in`, `conv_in`, `subtype_in`).
 
+use crate::surface::Name;
 use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
@@ -29,6 +28,47 @@ use super::derivation::{Derivation, InferenceRule};
 use super::{Ctx, Sort, T, sort_named, sort_term};
 use crate::surface::TermKind;
 use tauto_message::{Message, msg};
+use tauto_surface::identity::DeclRef;
+
+/// Source spellings used at the named-to-core boundary. This index is not
+/// evidence of acceptance; only entries in `Core::globals` have a checked type.
+#[derive(Clone, Default)]
+struct SourceNames(HashMap<String, DeclRef>);
+
+impl SourceNames {
+    fn reserve(&mut self, name: &str) -> DeclRef {
+        self.0
+            .entry(name.into())
+            .or_insert_with(|| DeclRef::primitive(name).unwrap_or_else(|| DeclRef::fresh(name)))
+            .clone()
+    }
+
+    fn get(&self, name: &str) -> Option<&DeclRef> {
+        self.0.get(name)
+    }
+    fn reference<'a>(&'a self, name: &'a Name) -> Option<&'a DeclRef> {
+        match name {
+            Name::Global(reference) => Some(reference),
+            Name::Spelled(spelling) => self.get(spelling),
+            _ => None,
+        }
+    }
+    fn register(&mut self, name: &Name) -> DeclRef {
+        match name {
+            Name::Global(reference) => reference.clone(),
+            Name::Spelled(spelling) => self.reserve(spelling),
+            _ => panic!("a core declaration requires a global reference"),
+        }
+    }
+    fn generated(&mut self, owner: &Name, kind: tauto_surface::identity::Generation) -> DeclRef {
+        let owner = self.register(owner);
+        let reference = owner.generated(kind);
+        if self.get(owner.display()) == Some(&owner) {
+            self.0.insert(reference.display().into(), reference.clone());
+        }
+        reference
+    }
+}
 
 type R = Rc<Tm>;
 
@@ -39,7 +79,7 @@ pub(super) enum Tm {
     /// A variable of the context (an atom).
     FVar(u64),
     Sort(Sort),
-    Const(Rc<str>),
+    Const(DeclRef),
     /// The binder's name is only shown (see [`Hint`]).
     Pi(Hint, R, R),
     Lam(Hint, R),
@@ -47,19 +87,20 @@ pub(super) enum Tm {
     Lit(u128),
 }
 
-/// The name a binder was written with: shown when a term is written back
-/// as a named one, and nothing else. Two terms that differ only in their
-/// hints are the same term.
+/// The source binder retained for writing terms and hole contexts back to
+/// the surface. It does not participate in type checking or conversion:
+/// two terms that differ only in their hints are the same term.
 #[derive(Debug, Clone)]
-pub(super) struct Hint(Option<Rc<str>>);
+pub(super) struct Hint(Option<Name>);
 
 impl Hint {
     fn none() -> Self {
         Hint(None)
     }
 
-    fn named(n: &str) -> Self {
-        Hint((n != "_").then(|| n.into()))
+    fn named(n: impl Into<Name>) -> Self {
+        let n = n.into();
+        Hint((n.as_str() != "_").then_some(n))
     }
 }
 
@@ -160,8 +201,14 @@ fn lit_op(op: &str, x: u128, y: u128) -> Option<u128> {
     }
 }
 
+fn primitive_operator(reference: &DeclRef) -> Option<&'static str> {
+    ["+", "*", "-"]
+        .into_iter()
+        .find(|name| reference.is_primitive(name))
+}
+
 fn konst(n: &str) -> Tm {
-    Const(n.into())
+    Const(DeclRef::primitive(n).expect("core builtin reference"))
 }
 
 /// `t` with the variable bound at depth `d` replaced by the locally closed `v`.
@@ -425,7 +472,7 @@ fn has_loose(t: &Tm, d: usize) -> bool {
     }
 }
 
-fn mentions_const(t: &Tm, names: &[Rc<str>]) -> bool {
+fn mentions_const(t: &Tm, names: &[DeclRef]) -> bool {
     match t {
         Const(c) => names.contains(c),
         Pi(_, a, b) => mentions_const(a, names) || mentions_const(b, names),
@@ -525,7 +572,7 @@ const SHOWN_NODES: usize = 2000;
 /// `t` with what is past its first `budget` nodes (outermost first) as `…`.
 fn pruned(t: &Tm, budget: &mut usize) -> Tm {
     if *budget == 0 {
-        return Const("…".into());
+        return Const(DeclRef::fresh("…"));
     }
     *budget -= 1;
     match t {
@@ -546,8 +593,8 @@ fn pruned(t: &Tm, budget: &mut usize) -> Tm {
 /// written with the constructors.
 fn unfold_lit(t: Tm) -> Tm {
     match t {
-        Lit(0) => Const("Zero".into()),
-        Lit(k) => App(Rc::new(Const("Succ".into())), Rc::new(Lit(k - 1))),
+        Lit(0) => konst("Zero"),
+        Lit(k) => App(Rc::new(konst("Succ")), Rc::new(Lit(k - 1))),
         t => t,
     }
 }
@@ -559,6 +606,31 @@ fn apps_node(f: R, args: impl IntoIterator<Item = R>) -> R {
 
 fn apps_rc(f: Tm, args: impl IntoIterator<Item = R>) -> Tm {
     args.into_iter().fold(f, |f, a| App(Rc::new(f), a))
+}
+
+/// The most nodes a reduced term is written out with (`whnf_in`).
+const WRITTEN_LIMIT: usize = 1 << 20;
+
+/// The number of nodes `t` has written out as a tree, its shared parts
+/// counted at each place they are used; past [`WRITTEN_LIMIT`] it stops
+/// counting. Each shared part is counted once (`seen`), so this costs the
+/// size of `t` in the core, not written out.
+fn written_size(t: &Tm, seen: &mut HashMap<usize, usize, AddrBuild>) -> usize {
+    let part = |r: &R, seen: &mut HashMap<usize, usize, AddrBuild>| {
+        let key = Rc::as_ptr(r) as usize;
+        if let Some(&n) = seen.get(&key) {
+            return n;
+        }
+        let n = written_size(r, seen);
+        seen.insert(key, n);
+        n
+    };
+    let n = match t {
+        Pi(_, a, b) | App(a, b) => part(a, seen).saturating_add(part(b, seen)),
+        Lam(_, b) => part(b, seen),
+        _ => 0,
+    };
+    n.saturating_add(1).min(WRITTEN_LIMIT + 1)
 }
 
 fn spine(t: &Tm) -> (&Tm, Vec<Tm>) {
@@ -591,11 +663,11 @@ struct Def {
 #[derive(Default)]
 struct DefWalk {
     next: usize,
-    index: HashMap<Rc<str>, usize>,
-    low: HashMap<Rc<str>, usize>,
-    stack: Vec<Rc<str>>,
-    on: HashSet<Rc<str>>,
-    uses: HashMap<Rc<str>, Vec<Rc<str>>>,
+    index: HashMap<DeclRef, usize>,
+    low: HashMap<DeclRef, usize>,
+    stack: Vec<DeclRef>,
+    on: HashSet<DeclRef>,
+    uses: HashMap<DeclRef, Vec<DeclRef>>,
 }
 
 #[derive(Debug, Clone)]
@@ -619,7 +691,7 @@ struct RecArg {
 
 #[derive(Debug, Clone)]
 struct CtorInfo {
-    name: Rc<str>,
+    name: DeclRef,
     nargs: usize,
     recs: Vec<RecArg>,
 }
@@ -628,17 +700,18 @@ struct CtorInfo {
 struct IndInfo {
     params: usize,
     indices: usize,
-    group: Vec<Rc<str>>,
+    group: Vec<DeclRef>,
     pos: usize,
     ctors: Vec<CtorInfo>,
     /// A nested member stands for `J(args)`; its constructors are `J`'s.
-    alias: Option<(Rc<str>, Vec<Tm>)>,
+    alias: Option<(DeclRef, Vec<Tm>)>,
     /// The result indices of the only constructor, over the parameters,
     /// for the reduction of a proof of an `Eq`-like proposition.
     k_like: Option<Vec<Tm>>,
 }
 
-pub(super) type Declared<'a> = &'a dyn Fn(&str) -> Option<T>;
+/// The types of the names the named checker has declared.
+pub(super) type Declared<'a> = &'a dyn Fn(&Name) -> Option<T>;
 
 /// The atoms a question of the named checker is asked over: its context's
 /// variables, each read (with its type) when a term first mentions it, and
@@ -656,11 +729,11 @@ struct Open<'a> {
     types: Vec<(u64, Tm)>,
     opaque: Vec<(u64, T)>,
     /// The names the binders entered while typing are shown under.
-    named: Vec<(u64, String)>,
+    named: Vec<(u64, Name)>,
     /// The types of the names the named checker has declared and the core
     /// has not (yet): each such name is an atom of that type.
     outer: Option<Declared<'a>>,
-    declared: Vec<(String, u64)>,
+    declared: Vec<(Name, u64)>,
     next: u64,
 }
 
@@ -736,8 +809,8 @@ pub(super) struct Budget {
     /// Whether it was the limit on the steps that stopped reduction.
     out_of_steps: bool,
     /// The name unfolded last before the step past the limit.
-    last_unfold: Option<Rc<str>>,
-    unfolds: HashMap<Rc<str>, u64>,
+    last_unfold: Option<DeclRef>,
+    unfolds: HashMap<DeclRef, u64>,
     /// The first sum or product of two numerals past `u128` met, which is
     /// left as it is ([`Core::past_u128`]).
     past_u128: Option<String>,
@@ -757,19 +830,29 @@ pub(super) struct Spent {
     pub past_u128: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Elimination {
+    Induction,
+    Recursion,
+    At(super::Level),
+}
+
 #[derive(Clone)]
 pub(super) struct Core {
-    globals: HashMap<Rc<str>, Global>,
-    /// Behind `Rc` so that [`Core::iota`], which looks one up at every
-    /// eliminator step, shares it instead of copying its constructors.
-    inds: HashMap<Rc<str>, Rc<IndInfo>>,
+    names: SourceNames,
+    globals: HashMap<DeclRef, Global>,
+    /// Shared across eliminator steps without copying constructors.
+    inds: HashMap<DeclRef, Rc<IndInfo>>,
     /// Constructor → (family it builds, place among its constructors).
-    ctors: HashMap<Rc<str>, (Rc<str>, usize)>,
+    ctors: HashMap<DeclRef, (DeclRef, usize)>,
     /// Eliminator → (family, whether it is `_rec`).
-    recs: HashMap<Rc<str>, Rc<str>>,
+    recs: HashMap<DeclRef, DeclRef>,
+    rec_targets: HashMap<DeclRef, Vec<DeclRef>>,
+    eliminators: HashMap<(DeclRef, Elimination), DeclRef>,
     /// The quotient's constants declared so far, each without a value and
     /// with the type [`quot_type`] gives it (`Core::quot_iota`).
-    quot: HashSet<Rc<str>>,
+    quot: HashSet<DeclRef>,
+    /// The types of the atoms in scope.
     lctx: HashMap<u64, Tm>,
     next: u64,
     /// Applications of the same name found not convertible argument by
@@ -786,10 +869,10 @@ pub(super) struct Core {
     /// The names that lay open calls of themselves reduced on both sides on
     /// the way to the comparison in hand, each with `conv_binders` where it
     /// was (`Core::conv_cut`).
-    conv_unfolded: Vec<(Rc<str>, usize)>,
+    conv_unfolded: Vec<(DeclRef, usize)>,
     /// The height and recursion of each name with a value, found when first
     /// asked for (`Core::def`).
-    defs: HashMap<Rc<str>, Def>,
+    defs: HashMap<DeclRef, Def>,
     /// How much reduction the declaration in hand has done, and whether it ran
     /// out of time (`Kernel::set_timeout`).
     budget: Budget,
@@ -808,11 +891,14 @@ pub(super) struct Core {
     /// The level variables of the universe template being checked once for
     /// every level (`check/universe.rs`): `Type(u + 1)` reads as a sort only
     /// over these, and no declaration outside that check sees one.
-    pub(super) level_vars: Vec<String>,
+    pub(super) level_vars: Vec<Name>,
     #[cfg(feature = "selfhost")]
     replay: Option<Vec<(String, bool)>>,
     #[cfg(feature = "selfhost")]
     replay_skipped: usize,
+    /// The time spent in the recorded operations, to compare with a replay.
+    #[cfg(feature = "selfhost")]
+    replay_time: std::time::Duration,
 }
 
 #[derive(Clone)]
@@ -898,7 +984,7 @@ pub(super) struct Typed {
 pub(super) struct Met {
     pub hole: T,
     pub goal: T,
-    pub bound: Vec<(String, T)>,
+    pub bound: Vec<(Name, T)>,
 }
 
 /// Where a term does not type, written back: the path to the subterm (see
@@ -906,7 +992,7 @@ pub(super) struct Met {
 pub(super) struct Failure {
     pub why: Failed,
     pub at: Vec<u8>,
-    pub bound: Vec<(String, T)>,
+    pub bound: Vec<(Name, T)>,
 }
 
 pub(super) enum Failed {
@@ -933,9 +1019,9 @@ fn fail<X>(m: impl Into<Message>) -> Res<X> {
 /// its type `∀ params indices. Sort`, and each constructor's type
 /// `∀ params args. Family(params, indices)`.
 pub(super) struct FamSpec {
-    pub name: String,
+    pub name: Name,
     pub ty: T,
-    pub ctors: Vec<(String, T)>,
+    pub ctors: Vec<(Name, T)>,
 }
 
 /// The quotient: `Quot(A, r)`, `quot_mk(A, r, a)`, and the two ways out of
@@ -1000,10 +1086,13 @@ fn quot_type(name: &str) -> Option<Tm> {
 impl Core {
     pub(super) fn new() -> Self {
         let mut c = Core {
+            names: SourceNames::default(),
             globals: HashMap::new(),
             inds: HashMap::new(),
             ctors: HashMap::new(),
             recs: HashMap::new(),
+            rec_targets: HashMap::new(),
+            eliminators: HashMap::new(),
             quot: HashSet::new(),
             lctx: HashMap::new(),
             next: 0,
@@ -1024,6 +1113,8 @@ impl Core {
             replay: None,
             #[cfg(feature = "selfhost")]
             replay_skipped: 0,
+            #[cfg(feature = "selfhost")]
+            replay_time: std::time::Duration::ZERO,
         };
         let nat = konst("Nat");
         let binary = Pi(
@@ -1033,7 +1124,7 @@ impl Core {
         );
         for op in ["+", "*", "-"] {
             c.globals.insert(
-                op.into(),
+                c.names.reserve(op),
                 Global {
                     ty: binary.clone(),
                     value: None,
@@ -1046,7 +1137,7 @@ impl Core {
     #[cfg(feature = "selfhost")]
     pub(super) fn add_decl(
         &mut self,
-        name: &str,
+        name: &Name,
         ty: &T,
         value: Option<&T>,
         transparent: bool,
@@ -1055,31 +1146,50 @@ impl Core {
             .replay
             .as_ref()
             .and_then(|_| selfhost::encode_decl(self, name, ty, value, transparent));
-        let result = self.add_decl_inner(name, ty, value, transparent);
+        let result = self.timed(|c| c.add_decl_inner(name, ty, value, transparent, true));
+        self.record(input, result.is_ok());
+        result
+    }
+
+    /// [`Core::add_decl`] for a value this checker has checked before
+    /// (`check/cache.rs`): only its type is checked.
+    #[cfg(feature = "selfhost")]
+    pub(super) fn add_decl_checked_before(
+        &mut self,
+        name: &Name,
+        ty: &T,
+        value: Option<&T>,
+        transparent: bool,
+    ) -> Res<()> {
+        let input = self
+            .replay
+            .as_ref()
+            .and_then(|_| selfhost::encode_decl(self, name, ty, value, transparent));
+        let result = self.timed(|c| c.add_decl_inner(name, ty, value, transparent, false));
         self.record(input, result.is_ok());
         result
     }
 
     #[cfg(feature = "selfhost")]
-    pub(super) fn add_constant(&mut self, name: &str, value: &T) -> Res<()> {
+    pub(super) fn add_constant(&mut self, name: &Name, value: &T) -> Res<()> {
         let input = self.replay.as_ref().and_then(|_| {
             self.read(value)
                 .ok()
                 .map(|v| format!("C {name} {}", selfhost::term(&v)))
         });
-        let result = self.add_constant_inner(name, value);
+        let result = self.timed(|c| c.add_constant_inner(name, value));
         self.record(input, result.is_ok());
         result
     }
 
     #[cfg(feature = "selfhost")]
-    pub(super) fn set_value(&mut self, name: &str, value: &T) -> Res<()> {
+    pub(super) fn set_value(&mut self, name: &Name, value: &T) -> Res<()> {
         let input = self.replay.as_ref().and_then(|_| {
             self.read(value)
                 .ok()
                 .map(|v| format!("V {name} {}", selfhost::term(&v)))
         });
-        let result = self.set_value_inner(name, value);
+        let result = self.timed(|c| c.set_value_inner(name, value));
         self.record(input, result.is_ok());
         result
     }
@@ -1090,7 +1200,7 @@ impl Core {
             .replay
             .as_ref()
             .and_then(|_| selfhost::encode_inductive(self, fams, np, &out));
-        let result = self.add_inductive_inner(fams, np, out);
+        let result = self.timed(|c| c.add_inductive_inner(fams, np, out));
         self.record(input, result.is_ok());
         result
     }
@@ -1098,21 +1208,34 @@ impl Core {
     #[cfg(not(feature = "selfhost"))]
     pub(super) fn add_decl(
         &mut self,
-        name: &str,
+        name: &Name,
         ty: &T,
         value: Option<&T>,
         transparent: bool,
     ) -> Res<()> {
-        self.add_decl_inner(name, ty, value, transparent)
+        self.add_decl_inner(name, ty, value, transparent, true)
+    }
+
+    /// [`Core::add_decl`] for a value this checker has checked before
+    /// (`check/cache.rs`): only its type is checked.
+    #[cfg(not(feature = "selfhost"))]
+    pub(super) fn add_decl_checked_before(
+        &mut self,
+        name: &Name,
+        ty: &T,
+        value: Option<&T>,
+        transparent: bool,
+    ) -> Res<()> {
+        self.add_decl_inner(name, ty, value, transparent, false)
     }
 
     #[cfg(not(feature = "selfhost"))]
-    pub(super) fn add_constant(&mut self, name: &str, value: &T) -> Res<()> {
+    pub(super) fn add_constant(&mut self, name: &Name, value: &T) -> Res<()> {
         self.add_constant_inner(name, value)
     }
 
     #[cfg(not(feature = "selfhost"))]
-    pub(super) fn set_value(&mut self, name: &str, value: &T) -> Res<()> {
+    pub(super) fn set_value(&mut self, name: &Name, value: &T) -> Res<()> {
         self.set_value_inner(name, value)
     }
 
@@ -1120,15 +1243,19 @@ impl Core {
     /// checked. Only conversions are lost, so nothing checks that did not
     /// check with the name unfolding. The self-hosted checker does not read
     /// it, and the trace counts it as skipped.
-    pub(super) fn seal(&mut self, name: &str) -> Res<()> {
-        let result = match self.globals.get_mut(name) {
+    pub(super) fn seal(&mut self, name: &Name) -> Res<()> {
+        let result = match self
+            .names
+            .reference(name)
+            .and_then(|id| self.globals.get_mut(&id))
+        {
             Some(g) => {
                 g.value = None;
                 self.shared.clear();
                 self.defs.clear();
                 Ok(())
             }
-            None => fail(msg!("kernel-core-not-defined", name = name)),
+            None => fail(msg!("kernel-core-not-defined", name = (name).to_string())),
         };
         #[cfg(feature = "selfhost")]
         self.record(None, result.is_ok());
@@ -1137,8 +1264,12 @@ impl Core {
 
     /// Stops a name declared just now from unfolding: a theorem. Nothing
     /// has unfolded it yet, so the caches stay. Only conversions are lost.
-    pub(super) fn seal_fresh(&mut self, name: &str) {
-        if let Some(g) = self.globals.get_mut(name) {
+    pub(super) fn seal_fresh(&mut self, name: &Name) {
+        if let Some(g) = self
+            .names
+            .reference(name)
+            .and_then(|id| self.globals.get_mut(&id))
+        {
             g.value = None;
         }
     }
@@ -1166,7 +1297,9 @@ impl Core {
         else {
             return None;
         };
-        if !matches!(&*function.kind, TermKind::Var(n) if n == "Type") || arguments.len() != 1 {
+        if !matches!(&*function.kind, TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "Type"))
+            || arguments.len() != 1
+        {
             return None;
         }
         let l = super::level_of(&arguments[0])?;
@@ -1193,7 +1326,7 @@ impl Core {
     /// `t` read with `scope`, the names bound so far (innermost last). With
     /// `open`, a question of the named checker: its context's names are
     /// atoms, and what the core cannot read is an atom of no type.
-    fn read_in(&self, t: &T, scope: &mut Vec<String>, mut open: Option<&mut Open<'_>>) -> Res<Tm> {
+    fn read_in(&self, t: &T, scope: &mut Vec<Name>, mut open: Option<&mut Open<'_>>) -> Res<Tm> {
         let opaque = |open: Option<&mut Open<'_>>, why: Message| match open {
             Some(o) => Ok(o.opaque(t)),
             None => Err(why),
@@ -1203,7 +1336,29 @@ impl Core {
         }
         Ok(match &*t.kind {
             TermKind::Var(n) => {
-                if n == "_" {
+                if let Name::Global(reference) = n {
+                    if let Some(sort) = sort_named(n) {
+                        return Ok(Sort(sort));
+                    }
+                    if self.globals.contains_key(reference) {
+                        return Ok(Const(reference.clone()));
+                    }
+                    // During elaboration a recursive declaration's signature
+                    // is an explicit open assumption under its exact ID. It
+                    // is not installed in the closed declaration environment.
+                    if let Some(o) = open.as_deref_mut()
+                        && let Some(i) = o.ctx.iter().rposition(|(name, _)| name == n)
+                    {
+                        return Ok(FVar(self.local(o, i)));
+                    }
+                    if let Some(o) = open.as_deref_mut()
+                        && let Some(atom) = self.declared(o, n)
+                    {
+                        return Ok(FVar(atom));
+                    }
+                    return opaque(open, msg!("kernel-core-not-defined", name = n.to_string()));
+                }
+                if n.spelling() == Some("_") {
                     return opaque(open, msg!("kernel-core-underscore-not-value"));
                 }
                 if let Some(p) = scope.iter().rposition(|m| m == n) {
@@ -1217,14 +1372,21 @@ impl Core {
                     FVar(self.local(o, i))
                 } else if let Some(s) = sort_named(n) {
                     Sort(s)
-                } else if self.globals.contains_key(n.as_str()) {
-                    Const(n.as_str().into())
+                } else if let Some(reference) = self
+                    .names
+                    .reference(n)
+                    .filter(|r| self.globals.contains_key(*r))
+                {
+                    Const(reference.clone())
                 } else if let Some(o) = open.as_deref_mut()
                     && let Some(x) = self.declared(o, n)
                 {
                     FVar(x)
                 } else {
-                    return opaque(open, msg!("kernel-core-not-defined", name = n));
+                    return opaque(
+                        open,
+                        msg!("kernel-core-not-defined", name = (n).to_string()),
+                    );
                 }
             }
             TermKind::Nat(n) => match n.parse::<u128>() {
@@ -1271,6 +1433,11 @@ impl Core {
                 let depth = scope.len();
                 let mut doms = Vec::new();
                 for (n, d) in params {
+                    if n.as_ref()
+                        .is_some_and(|n| n.is_resolved() && !matches!(n, Name::Local(_)))
+                    {
+                        return opaque(open, msg!("kernel-core-not-kernel-term"));
+                    }
                     let n = n.clone().unwrap_or_else(|| "_".into());
                     doms.push((
                         Hint::named(&n),
@@ -1286,6 +1453,12 @@ impl Core {
                 acc
             }
             TermKind::Lam { params, body, .. } => {
+                if params
+                    .iter()
+                    .any(|n| n.is_resolved() && !matches!(n, Name::Local(_)))
+                {
+                    return opaque(open, msg!("kernel-core-not-kernel-term"));
+                }
                 let depth = scope.len();
                 scope.extend(params.iter().cloned());
                 let mut acc = self.read_in(body, scope, open)?;
@@ -1397,12 +1570,18 @@ impl Core {
 
     pub(super) fn proof_reduction_in(
         &mut self,
-        ctx: &[(String, T)],
+        ctx: &[(Name, T)],
         t: &T,
     ) -> Option<super::derivation::ProofReduction> {
         self.start_budget(Some(4096), None);
         let normal = self.nf_in(&ctx.to_vec(), t);
-        let mut unfolded: Vec<String> = self.budget.unfolds.keys().map(|n| n.to_string()).collect();
+        let mut unfolded: Vec<Name> = self
+            .budget
+            .unfolds
+            .keys()
+            .cloned()
+            .map(Name::Global)
+            .collect();
         unfolded.sort();
         let spent = self.end_budget();
         (!spent.out).then_some(super::derivation::ProofReduction { normal, unfolded })
@@ -1525,8 +1704,8 @@ impl Core {
                         continue;
                     }
                     let c = c.clone();
-                    if matches!(&*c, "+" | "*" | "-")
-                        && let Some(next) = self.arith(&c, &args)
+                    if let Some(op) = primitive_operator(&c)
+                        && let Some(next) = self.arith(op, &args)
                     {
                         t = Rc::new(next);
                         continue;
@@ -1705,14 +1884,14 @@ impl Core {
     fn literal_or_whnf(&mut self, t: &R) -> Tm {
         let (head, args) = spine_rc(t);
         if let Const(c) = head
-            && matches!(&**c, "+" | "*" | "-")
+            && let Some(op) = primitive_operator(c)
         {
             if let [x, y] = args.as_slice()
                 && let (Some(x), Some(y)) = (self.number(x), self.number(y))
             {
-                match lit_op(c, x, y) {
+                match lit_op(op, x, y) {
                     Some(n) => return Lit(n),
-                    None => self.past_u128(c, x, y),
+                    None => self.past_u128(op, x, y),
                 }
             }
             return (**t).clone();
@@ -1821,8 +2000,8 @@ impl Core {
             }
             match &w {
                 Lit(k) => return k.checked_add(more),
-                Const(c) if &**c == "Zero" => return Some(more),
-                App(f, x) if matches!(&**f, Const(c) if &**c == "Succ") => {
+                Const(c) if c.is_primitive("Zero") => return Some(more),
+                App(f, x) if matches!(&**f, Const(c) if c.is_primitive("Succ")) => {
                     more = more.checked_add(1)?;
                     let x = x.clone();
                     w = self.literal_or_whnf(&x);
@@ -1843,7 +2022,7 @@ impl Core {
     fn offset_view(&mut self, t: &R) -> Option<(Tm, u128)> {
         let mut s: &Tm = t;
         while let App(f, x) = s
-            && matches!(&**f, Const(c) if &**c == "Succ")
+            && matches!(&**f, Const(c) if c.is_primitive("Succ"))
         {
             s = x;
         }
@@ -1864,7 +2043,7 @@ impl Core {
                 return None;
             }
             if let (Const(c), args) = spine_rc(&t)
-                && &**c == "+"
+                && c.is_primitive("+")
                 && let [x, y] = args.as_slice()
                 && let Lit(n) = self.literal_or_whnf(y)
             {
@@ -1876,14 +2055,14 @@ impl Core {
             let w = self.whnf_shared(&t);
             match &w {
                 Lit(_) => return None,
-                Const(c) if &**c == "Zero" => return None,
-                App(f, x) if matches!(&**f, Const(c) if &**c == "Succ") => {
+                Const(c) if c.is_primitive("Zero") => return None,
+                App(f, x) if matches!(&**f, Const(c) if c.is_primitive("Succ")) => {
                     k = k.checked_add(1)?;
                     t = x.clone();
                 }
                 _ => {
                     if let (Const(c), args) = spine_rc(&w)
-                        && &**c == "+"
+                        && c.is_primitive("+")
                         && args.len() == 2
                         && w != *t
                     {
@@ -1899,8 +2078,8 @@ impl Core {
     /// Whether `c` is `+`, or a name defined as a sum of its parameters
     /// (`Nat::add(a, b)` is `a + b`): what [`Core::offset_view`] reads `+ n`
     /// off.
-    fn is_sum(&self, c: &str) -> bool {
-        if c == "+" {
+    fn is_sum(&self, c: &DeclRef) -> bool {
+        if c.is_primitive("+") {
             return true;
         }
         let Some(mut v) = self.globals.get(c).and_then(|g| g.value.clone()) else {
@@ -1909,15 +2088,15 @@ impl Core {
         while let Lam(_, b) = &*v {
             v = b.clone();
         }
-        matches!(spine_rc(&v), (Const(h), args) if &**h == "+" && args.len() == 2)
+        matches!(spine_rc(&v), (Const(h), args) if h.is_primitive("+") && args.len() == 2)
     }
 
     /// The operator `+`, `*` or `-` that `c` is: the operator itself, or a
     /// name defined as it on its two parameters in order (`Nat::add(a, b)`
     /// is `a + b`). Two such applications to convertible operands are
     /// convertible without unfolding the name.
-    fn arith_op(&self, c: &str) -> Option<&'static str> {
-        let op = |c: &str| ["+", "*", "-"].into_iter().find(|o| *o == c);
+    fn arith_op(&self, c: &DeclRef) -> Option<&'static str> {
+        let op = primitive_operator;
         if let Some(o) = op(c) {
             return Some(o);
         }
@@ -1936,18 +2115,19 @@ impl Core {
     /// the definition gives (`numeric_agrees_with_unfolding` checks it). A
     /// program cannot declare these names again, so they are always these
     /// definitions.
-    fn numeric(&mut self, c: &Rc<str>, args: &[R]) -> Option<Tm> {
-        if self.numeric_off || !NUMERIC.contains(&&**c) {
+    fn numeric(&mut self, c: &DeclRef, args: &[R]) -> Option<Tm> {
+        if self.numeric_off {
             return None;
         }
-        let arity = numeric_arity(c);
+        let operation = NUMERIC.iter().copied().find(|n| c.is_primitive(n))?;
+        let arity = numeric_arity(operation);
         if args.len() < arity {
             return None;
         }
         let x = self.numeral(&args[0])?;
         let y = self.numeral(&args[1])?;
         let yn = |b: bool| konst(if b { "true" } else { "false" });
-        let out = match &**c {
+        let out = match operation {
             "Nat::eq" => yn(x == y),
             "Nat::lt" => yn(x < y),
             "Nat::sub" => Lit(x.saturating_sub(y)),
@@ -1968,8 +2148,10 @@ impl Core {
         match t {
             Lit(0) => Some(None),
             Lit(k) => Some(Some(Lit(k - 1))),
-            Const(c) if &**c == "Zero" => Some(None),
-            App(f, x) if matches!(&**f, Const(c) if &**c == "Succ") => Some(Some((**x).clone())),
+            Const(c) if c.is_primitive("Zero") => Some(None),
+            App(f, x) if matches!(&**f, Const(c) if c.is_primitive("Succ")) => {
+                Some(Some((**x).clone()))
+            }
             _ => None,
         }
     }
@@ -1978,27 +2160,27 @@ impl Core {
     /// family `of` is, reading a numeral as `Zero`/`Succ`. The arguments are
     /// the nodes of `t` itself, so that what reducing them gives is found
     /// again (`Core::whnf_shared`) wherever the arm uses them.
-    fn as_ctor(&self, t: &Tm, of: &str) -> Option<(Rc<str>, Vec<R>)> {
+    fn as_ctor(&self, t: &Tm, of: &DeclRef) -> Option<(DeclRef, Vec<R>)> {
         if let Lit(k) = t {
-            if of != "Nat" || !self.ctors.contains_key("Zero") {
+            if Some(of) != DeclRef::primitive("Nat").as_ref()
+                || !self.ctors.contains_key(&DeclRef::primitive("Zero")?)
+            {
                 return None;
             }
             return Some(if *k == 0 {
-                ("Zero".into(), vec![])
+                (DeclRef::primitive("Zero")?, vec![])
             } else {
-                ("Succ".into(), vec![Rc::new(Lit(k - 1))])
+                (DeclRef::primitive("Succ")?, vec![Rc::new(Lit(k - 1))])
             });
         }
         let (head, args) = spine_rc(t);
         match head {
-            Const(c) if self.ctors.get(c).is_some_and(|(f, _)| &**f == of) => {
-                Some((c.clone(), args))
-            }
+            Const(c) if self.ctors.get(c).is_some_and(|(f, _)| f == of) => Some((c.clone(), args)),
             _ => None,
         }
     }
 
-    fn iota(&mut self, rec: &Rc<str>, shared: &[R]) -> Option<R> {
+    fn iota(&mut self, rec: &DeclRef, shared: &[R]) -> Option<R> {
         let args: Vec<Tm> = shared.iter().map(|a| (**a).clone()).collect();
         let family = self.recs.get(rec)?.clone();
         let ind = self.inds.get(&family)?.clone();
@@ -2050,7 +2232,7 @@ impl Core {
         let minor = shared[np + nf + offset + j].clone();
         // `T::rec`, `T::ind` or `T::rec@l`: what follows the family's name,
         // which may itself hold dots (`M::T::rec`).
-        let suffix = rec.strip_prefix(&*family)?.strip_prefix("::")?.to_string();
+        let targets = self.rec_targets.get(rec)?.clone();
         let mut applied = actual.clone();
         for r in &c.recs {
             let ys: Vec<u64> = (0..r.ys).map(|_| self.fresh(Sort(Sort::Prop))).collect();
@@ -2064,8 +2246,7 @@ impl Core {
             } else {
                 Rc::new(apps((*actual[r.arg]).clone(), ys.iter().map(|y| FVar(*y))))
             });
-            let target = format!("{}::{suffix}", ind.group[r.fam]);
-            let mut ih = apps_rc(Const(target.into()), call);
+            let mut ih = apps_rc(Const(targets.get(r.fam)?.clone()), call);
             for y in ys.iter().rev() {
                 ih = lam_over(*y, &ih);
             }
@@ -2093,7 +2274,11 @@ impl Core {
             "Quot::ind" => &["Quot", "Quot::mk"],
             _ => &["Quot"],
         };
-        if needs.iter().any(|q| !self.quot.contains(*q)) {
+        if needs.iter().any(|q| {
+            !self
+                .quot
+                .contains(&DeclRef::primitive(q).expect("quotient builtin"))
+        }) {
             return fail(msg!(
                 "kernel-core-quot-declared-after",
                 name = name,
@@ -2109,16 +2294,19 @@ impl Core {
     /// `Quot_lift(A, r, B, f, h, quot_mk(A', r', a))` is `f(a)`, and
     /// `Quot::ind(A, r, P, m, quot_mk(A', r', a))` is `m(a)`: the value under
     /// `quot_mk` is passed to the function, whatever the relation.
-    fn quot_iota(&mut self, c: &Rc<str>, args: &[R]) -> Option<R> {
-        let (f, major) = match &**c {
-            "Quot::lift" => (3, 5),
-            "Quot::ind" => (3, 4),
-            _ => return None,
+    fn quot_iota(&mut self, c: &DeclRef, args: &[R]) -> Option<R> {
+        let (f, major) = if c.is_primitive("Quot::lift") {
+            (3, 5)
+        } else if c.is_primitive("Quot::ind") {
+            (3, 4)
+        } else {
+            return None;
         };
         let q = self.whnf_shared(args.get(major)?);
         let (head, inner) = spine_rc(&q);
         match head {
-            Const(m) if &**m == "Quot::mk" && self.quot.contains(m) && inner.len() == 3 => {}
+            Const(m) if m.is_primitive("Quot::mk") && self.quot.contains(m) && inner.len() == 3 => {
+            }
             _ => return None,
         }
         Some(apps_node(
@@ -2320,6 +2508,44 @@ impl Core {
         }
     }
 
+    /// A transparent view through a nonrecursive, single-constructor family.
+    /// Reducing its eliminator can expose a shared head without reducing fields.
+    fn record_view(&self, t: &Tm) -> bool {
+        let (Const(name), arguments) = spine_rc(t) else {
+            return false;
+        };
+        let Some(global) = self.globals.get(name) else {
+            return false;
+        };
+        let Some(value) = &global.value else {
+            return false;
+        };
+        let mut body = &**value;
+        let mut binders = 0;
+        while let Lam(_, inner) = body {
+            body = inner;
+            binders += 1;
+        }
+        if arguments.len() < binders {
+            return false;
+        }
+        let Const(rec) = spine_rc(body).0 else {
+            return false;
+        };
+        self.recs
+            .get(rec)
+            .and_then(|family| self.inds.get(family))
+            .is_some_and(|info| matches!(info.ctors.as_slice(), [ctor] if ctor.recs.is_empty()))
+    }
+
+    fn unfold_record_view(&mut self, t: &Tm) -> Option<Tm> {
+        let unfolded = self.unfold_head(t)?;
+        let lazy = std::mem::replace(&mut self.lazy_iota, false);
+        let result = self.whnf_with(&unfolded, false);
+        self.lazy_iota = lazy;
+        Some(result)
+    }
+
     fn unfold_head(&mut self, t: &Tm) -> Option<Tm> {
         if self.spend() {
             return None;
@@ -2341,7 +2567,7 @@ impl Core {
     /// The height and recursion of `c` when it has a value. Found for the
     /// names its value reaches at once, a group of names that use each other
     /// together (Tarjan's strongly connected components).
-    fn def(&mut self, c: &Rc<str>) -> Option<Def> {
+    fn def(&mut self, c: &DeclRef) -> Option<Def> {
         if let Some(d) = self.defs.get(c) {
             return Some(*d);
         }
@@ -2351,7 +2577,7 @@ impl Core {
         self.defs.get(c).copied()
     }
 
-    fn def_visit(&mut self, c: &Rc<str>, w: &mut DefWalk) {
+    fn def_visit(&mut self, c: &DeclRef, w: &mut DefWalk) {
         let at = w.next;
         w.next += 1;
         w.index.insert(c.clone(), at);
@@ -2402,12 +2628,12 @@ impl Core {
 
     /// The names with a value that the value of `c` uses, each once. The
     /// value is walked as the graph of its shared nodes.
-    fn uses(&self, c: &Rc<str>) -> Vec<Rc<str>> {
+    fn uses(&self, c: &DeclRef) -> Vec<DeclRef> {
         let Some(v) = self.globals.get(c).and_then(|g| g.value.clone()) else {
             return Vec::new();
         };
         let mut seen: HashSet<usize> = HashSet::new();
-        let mut out: Vec<Rc<str>> = Vec::new();
+        let mut out: Vec<DeclRef> = Vec::new();
         let mut todo: Vec<R> = vec![v];
         while let Some(n) = todo.pop() {
             if !seen.insert(Rc::as_ptr(&n) as usize) {
@@ -2451,7 +2677,7 @@ impl Core {
     /// conversion that needs `f` reduced again below the binders of its own
     /// reduction although its arguments are not convertible; such a "no" is
     /// kept in `conv_fail` like any other until the outermost `conv` ends.
-    fn conv_cut(&mut self, f: &Rc<str>) -> bool {
+    fn conv_cut(&mut self, f: &DeclRef) -> bool {
         self.lays_open_itself(f)
             && self
                 .conv_unfolded
@@ -2461,13 +2687,13 @@ impl Core {
 
     /// Whether `f` can lay open calls of itself: a name whose value uses it,
     /// or an eliminator, whose step on a constructor applies it again.
-    fn lays_open_itself(&mut self, f: &Rc<str>) -> bool {
+    fn lays_open_itself(&mut self, f: &DeclRef) -> bool {
         self.recs.contains_key(f) || self.def(f).is_some_and(|d| d.recursive)
     }
 
     /// The recursive name (`Core::lays_open_itself`) both `a` and `b` apply to as
     /// many arguments, with the arguments.
-    fn same_recursive<'t>(&mut self, a: &'t Tm, b: &'t Tm) -> Option<(Rc<str>, Vec<R>, Vec<R>)> {
+    fn same_recursive<'t>(&mut self, a: &'t Tm, b: &'t Tm) -> Option<(DeclRef, Vec<R>, Vec<R>)> {
         let ((ha, xs), (hb, ys)) = (spine_rc(a), spine_rc(b));
         match (ha, hb) {
             (Const(f), Const(g)) if f == g && xs.len() == ys.len() && self.lays_open_itself(f) => {
@@ -2606,13 +2832,18 @@ impl Core {
                     self.conv_unfolded.push((f, self.conv_binders));
                 }
             }
-            // The higher name is unfolded first: it may unfold to the lower
-            // one, which is then compared as it is (lazy unfolding by
-            // height). Names of the same height unfold together.
-            let (ua, ub) = match (self.head_height(&a), self.head_height(&b)) {
-                (Some(x), Some(y)) if x > y => (self.unfold_head(&a), None),
-                (Some(x), Some(y)) if x < y => (None, self.unfold_head(&b)),
-                _ => (self.unfold_head(&a), self.unfold_head(&b)),
+            // A record view is reduced before a field's calculation, so its
+            // shared head can be compared without unfolding that calculation.
+            // Otherwise the higher definition is unfolded first; definitions
+            // of the same height unfold together.
+            let (ua, ub) = match (self.record_view(&a), self.record_view(&b)) {
+                (true, false) => (self.unfold_record_view(&a), None),
+                (false, true) => (None, self.unfold_record_view(&b)),
+                _ => match (self.head_height(&a), self.head_height(&b)) {
+                    (Some(x), Some(y)) if x > y => (self.unfold_head(&a), None),
+                    (Some(x), Some(y)) if x < y => (None, self.unfold_head(&b)),
+                    _ => (self.unfold_head(&a), self.unfold_head(&b)),
+                },
             };
             match (ua, ub) {
                 (None, None) if self.force_both(&mut a, &mut b) => {}
@@ -3027,13 +3258,13 @@ impl Core {
 
     /// The atom of a name only the named checker has declared, its type
     /// read the first time.
-    fn declared(&self, o: &mut Open<'_>, n: &str) -> Option<u64> {
+    fn declared(&self, o: &mut Open<'_>, n: &Name) -> Option<u64> {
         if let Some((_, x)) = o.declared.iter().find(|(m, _)| m == n) {
             return Some(*x);
         }
         let ty = (o.outer?)(n)?;
         let x = o.atom();
-        o.declared.push((n.to_string(), x));
+        o.declared.push((n.clone(), x));
         let visible = std::mem::replace(&mut o.visible, 0);
         let ty = self.read_open(&ty, o);
         o.visible = visible;
@@ -3124,7 +3355,7 @@ impl Core {
         }
         self.ask(ctx, &[t], |c, read, o| {
             let w = c.whnf_with(&read[0], false);
-            if w == read[0] {
+            if w == read[0] || written_size(&w, &mut HashMap::default()) > WRITTEN_LIMIT {
                 return t.clone();
             }
             Self::write(&w, o, &mut Vec::new(), t.span)
@@ -3132,14 +3363,18 @@ impl Core {
     }
 
     /// `t` in weak head normal form in `ctx`, written back as a named term.
-    /// What did not reduce is given back as it was written.
+    /// What did not reduce is given back as it was written, and so is a form
+    /// too large to write: the core shares the parts of a term, a named term
+    /// does not, so a form that unfolds a long computation on a variable
+    /// (many rounds of a hash on an unknown block) can be small in the core
+    /// and larger than memory written out. Either is equal to `t`.
     pub(super) fn whnf_in(&mut self, ctx: &Ctx, t: &T) -> T {
         if self.stuck(ctx, t) {
             return t.clone();
         }
         self.ask(ctx, &[t], |c, read, o| {
             let w = c.whnf(&read[0]);
-            if w == read[0] {
+            if w == read[0] || written_size(&w, &mut HashMap::default()) > WRITTEN_LIMIT {
                 return t.clone();
             }
             Self::write(&w, o, &mut Vec::new(), t.span)
@@ -3193,7 +3428,9 @@ impl Core {
                         .as_mut()
                         .and_then(|frames| frames.last_mut())
                         .and_then(|f| f.pop())
-                        .map(|raw| c.write_derivation(raw, ctx, o, avoid, t.span)),
+                        .map(|raw| {
+                            c.write_derivation(raw, ctx, o, avoid, t.span, &mut HashMap::new())
+                        }),
                     holes: track
                         .met
                         .iter()
@@ -3258,9 +3495,10 @@ impl Core {
         o: &Open<'_>,
         avoid: &[&str],
         span: tauto_parol::Span,
+        bindings: &mut HashMap<u64, Name>,
     ) -> Derivation {
         let mut shown = o.clone();
-        let locals = self.name_bound(&raw.bound, &mut shown, avoid);
+        let locals = self.name_bound_cached(&raw.bound, &mut shown, avoid, Some(bindings));
         let mut context = ctx.clone();
         context.extend(locals);
         let mut term = Self::write(&raw.term, &shown, &mut Vec::new(), span);
@@ -3268,7 +3506,7 @@ impl Core {
         let premises: Vec<_> = raw
             .premises
             .into_iter()
-            .map(|p| self.write_derivation(p, ctx, o, avoid, span))
+            .map(|p| self.write_derivation(p, ctx, o, avoid, span, bindings))
             .collect();
         let introduced: Vec<_> = if raw.rule == InferenceRule::Introduction {
             premises
@@ -3338,14 +3576,27 @@ impl Core {
         bound: &[(u64, Hint)],
         o: &mut Open<'_>,
         avoid: &[&str],
-    ) -> Vec<(String, T)> {
+    ) -> Vec<(Name, T)> {
+        self.name_bound_cached(bound, o, avoid, None)
+    }
+
+    fn name_bound_cached(
+        &self,
+        bound: &[(u64, Hint)],
+        o: &mut Open<'_>,
+        avoid: &[&str],
+        mut bindings: Option<&mut HashMap<u64, Name>>,
+    ) -> Vec<(Name, T)> {
         let mut out = Vec::new();
         for (x, h) in bound {
             let base = h.0.as_deref().unwrap_or("x");
             let taken = |n: &str| {
-                o.ctx.iter().any(|(m, _)| m == n)
-                    || o.named.iter().any(|(_, m)| m == n)
-                    || self.globals.contains_key(n)
+                o.ctx.iter().any(|(m, _)| m.as_str() == n)
+                    || o.named.iter().any(|(_, m)| m.as_str() == n)
+                    || self
+                        .names
+                        .get(n)
+                        .is_some_and(|id| self.globals.contains_key(id))
                     || sort_named(n).is_some()
                     || avoid.contains(&n)
             };
@@ -3358,6 +3609,22 @@ impl Core {
                 .expect("a fresh name");
             let ty = self.lctx.get(x).expect("a bound atom has a type");
             let ty = Self::write(ty, o, &mut Vec::new(), Default::default());
+            let name = if let Some(name) = bindings.as_ref().and_then(|all| all.get(x)) {
+                name.clone()
+            } else {
+                match &h.0 {
+                    Some(reference @ Name::Local(_))
+                        if !o.ctx.iter().any(|(other, _)| other == reference)
+                            && !o.named.iter().any(|(_, other)| other == reference) =>
+                    {
+                        reference.clone()
+                    }
+                    _ => Name::from(tauto_surface::identity::LocalRef::fresh(name)),
+                }
+            };
+            if let Some(all) = bindings.as_mut() {
+                all.insert(*x, name.clone());
+            }
             o.named.push((*x, name.clone()));
             out.push((name, ty));
         }
@@ -3381,10 +3648,12 @@ impl Core {
             TermKind::Var(n) => {
                 ctx.iter().any(|(m, _)| m == n)
                     || sort_named(n).is_some()
-                    || self.globals.get(n.as_str()).is_some_and(|g| {
-                        g.value.is_none()
-                            && !self.recs.contains_key(n.as_str())
-                            && !matches!(n.as_str(), "+" | "*" | "-")
+                    || self.names.reference(n).is_some_and(|id| {
+                        self.globals.get(&id).is_some_and(|g| {
+                            g.value.is_none()
+                                && !self.recs.contains_key(id)
+                                && !matches!(n.as_str(), "+" | "*" | "-")
+                        })
                     })
             }
             _ => false,
@@ -3395,12 +3664,14 @@ impl Core {
     /// written with, primed (`n'1`, …) where that would capture a name its
     /// body uses; one written without a name that its body needs is `x`. The
     /// same term is written the same way wherever it is.
-    fn write(t: &Tm, o: &Open<'_>, scope: &mut Vec<String>, span: tauto_parol::Span) -> T {
+    fn write(t: &Tm, o: &Open<'_>, scope: &mut Vec<Name>, span: tauto_parol::Span) -> T {
         let kind = match t {
             BVar(i) => TermKind::Var(scope[scope.len() - 1 - i].clone()),
-            FVar(x) => o.back(*x).unwrap_or_else(|| TermKind::Var(format!("#{x}"))),
+            FVar(x) => o
+                .back(*x)
+                .unwrap_or_else(|| TermKind::Var(format!("#{x}").into())),
             Sort(s) => return sort_term(s, span),
-            Const(c) => TermKind::Var(c.to_string()),
+            Const(c) => TermKind::Var(Name::Global(c.clone())),
             Lit(k) => TermKind::Nat(k.to_string()),
             App(..) => {
                 let (head, args) = spine(t);
@@ -3444,7 +3715,7 @@ impl Core {
 
     /// `base`, or the first of `base'1`, `base'2`, … that is not a name
     /// `body` (the body of the binder, under `scope`) uses.
-    fn binder(base: &str, body: &Tm, o: &Open<'_>, scope: &[String]) -> String {
+    fn binder(base: &str, body: &Tm, o: &Open<'_>, scope: &[Name]) -> Name {
         let mut names = Vec::new();
         Self::names(body, 1, o, scope, &mut names);
         (0..)
@@ -3453,22 +3724,27 @@ impl Core {
                 i => format!("{base}'{i}"),
             })
             .find(|n| !names.contains(n))
+            .map(|display| tauto_surface::identity::LocalRef::fresh(display).into())
             .expect("a fresh name")
     }
 
     /// The names a term at `depth` binders under `scope` uses: its globals,
     /// its context variables, the free names of its unread parts, and the
     /// variables of `scope` it refers to.
-    fn names(t: &Tm, depth: usize, o: &Open<'_>, scope: &[String], out: &mut Vec<String>) {
+    fn names(t: &Tm, depth: usize, o: &Open<'_>, scope: &[Name], out: &mut Vec<String>) {
         match t {
             BVar(i) if *i >= depth => {
                 if let Some(n) = scope.get(scope.len().wrapping_sub(1 + i - depth)) {
-                    out.push(n.clone());
+                    out.push(n.to_string());
                 }
             }
             FVar(x) => match o.back(*x) {
-                Some(TermKind::Var(n)) => out.push(n),
-                Some(kind) => out.extend(super::free_vars(&T::new(kind, Default::default()))),
+                Some(TermKind::Var(n)) => out.push(n.to_string()),
+                Some(kind) => out.extend(
+                    super::free_vars(&T::new(kind, Default::default()))
+                        .into_iter()
+                        .map(|n| n.to_string()),
+                ),
                 None => {}
             },
             Const(c) => out.push(c.to_string()),
@@ -3486,9 +3762,18 @@ impl Core {
         }
     }
 
-    fn fresh_name(&self, name: &str) -> Res<()> {
-        if self.globals.contains_key(name) {
-            return fail(msg!("kernel-core-already-defined", name = name));
+    // ---- declarations -----------------------------------------------------
+
+    fn fresh_name(&self, name: &Name) -> Res<()> {
+        if self
+            .names
+            .reference(name)
+            .is_some_and(|id| self.globals.contains_key(&id))
+        {
+            return fail(msg!(
+                "kernel-core-already-defined",
+                name = (name).to_string()
+            ));
         }
         Ok(())
     }
@@ -3497,10 +3782,11 @@ impl Core {
     /// value (when given) has that type. `transparent` lets it unfold.
     fn add_decl_inner(
         &mut self,
-        name: &str,
+        name: &Name,
         ty: &T,
         value: Option<&T>,
         transparent: bool,
+        check_value: bool,
     ) -> Res<()> {
         self.fresh_name(name)?;
         let ty = self.read(ty)?;
@@ -3509,15 +3795,20 @@ impl Core {
         let value = match value {
             Some(v) => {
                 let v = self.read(v)?;
-                self.check(&v, &ty)?;
+                if check_value {
+                    self.check(&v, &ty)?;
+                }
                 Some(v)
             }
             None => None,
         };
         self.lctx.clear();
-        let again = self.globals.contains_key(name);
+        let again = self
+            .names
+            .reference(name)
+            .is_some_and(|id| self.globals.contains_key(&id));
         self.globals.insert(
-            name.into(),
+            self.names.register(name),
             Global {
                 ty,
                 value: if transparent {
@@ -3528,7 +3819,7 @@ impl Core {
             },
         );
         if quot {
-            self.quot.insert(name.into());
+            self.quot.insert(self.names.register(name));
         }
         // What nodes reduced to was found with the names as they were.
         self.shared.clear();
@@ -3541,25 +3832,27 @@ impl Core {
 
     /// Takes back a declaration added a moment ago, so that it can be
     /// checked again (`check/cache.rs`).
-    pub(super) fn forget(&mut self, name: &str) {
+    pub(super) fn forget(&mut self, name: &Name) {
         #[cfg(feature = "selfhost")]
         if let Some(trace) = &mut self.replay {
             trace.push((format!("F {name}"), true));
         }
-        self.globals.remove(name);
-        self.quot.remove(name);
+        if let Some(id) = self.names.reference(name) {
+            self.globals.remove(&id);
+            self.quot.remove(&id);
+        }
         self.shared.clear();
         self.defs.clear();
     }
 
     /// A top-level `let`: its type is inferred.
-    fn add_constant_inner(&mut self, name: &str, value: &T) -> Res<()> {
+    fn add_constant_inner(&mut self, name: &Name, value: &T) -> Res<()> {
         self.fresh_name(name)?;
         let v = self.read(value)?;
         let ty = self.infer(&v)?;
         self.lctx.clear();
         self.globals.insert(
-            name.into(),
+            self.names.register(name),
             Global {
                 ty,
                 value: Some(Rc::new(v)),
@@ -3571,19 +3864,28 @@ impl Core {
 
     /// Makes an accepted declaration unfold (a function whose body the
     /// named checker compiled after checking its statement).
-    fn set_value_inner(&mut self, name: &str, value: &T) -> Res<()> {
-        if self.quot.contains(name) {
-            return fail(msg!("kernel-core-quot-no-value", name = name));
+    fn set_value_inner(&mut self, name: &Name, value: &T) -> Res<()> {
+        if self
+            .names
+            .reference(name)
+            .is_some_and(|id| self.quot.contains(&id))
+        {
+            return fail(msg!("kernel-core-quot-no-value", name = (name).to_string()));
         }
         let v = self.read(value)?;
         let ty = self
-            .globals
-            .get(name)
+            .names
+            .reference(name)
+            .and_then(|id| self.globals.get(&id))
             .map(|g| g.ty.clone())
-            .ok_or_else(|| msg!("kernel-core-not-defined", name = name))?;
+            .ok_or_else(|| msg!("kernel-core-not-defined", name = (name).to_string()))?;
         self.check(&v, &ty)?;
         self.lctx.clear();
-        if let Some(g) = self.globals.get_mut(name) {
+        if let Some(g) = self
+            .names
+            .reference(name)
+            .and_then(|id| self.globals.get_mut(&id))
+        {
             g.value = Some(Rc::new(v));
         }
         self.shared.clear();
@@ -3595,10 +3897,26 @@ impl Core {
     /// families) with `np` shared parameters, in the sort `out`. On success
     /// the families, constructors, nested members and eliminators are added.
     fn add_inductive_inner(&mut self, fams: &[FamSpec], np: usize, out: Sort) -> Res<()> {
-        let saved = (self.globals.clone(), self.ctors.clone(), self.recs.clone());
+        let saved = (
+            self.globals.clone(),
+            self.ctors.clone(),
+            self.recs.clone(),
+            self.inds.clone(),
+            self.rec_targets.clone(),
+            self.eliminators.clone(),
+            self.names.clone(),
+        );
         let result = self.inductive_inner(fams, np, out);
         if result.is_err() {
-            (self.globals, self.ctors, self.recs) = saved;
+            (
+                self.globals,
+                self.ctors,
+                self.recs,
+                self.inds,
+                self.rec_targets,
+                self.eliminators,
+                self.names,
+            ) = saved;
         }
         self.lctx.clear();
         self.shared.clear();
@@ -3607,7 +3925,7 @@ impl Core {
     }
 
     fn inductive_inner(&mut self, specs: &[FamSpec], np: usize, out: Sort) -> Res<()> {
-        let names: Vec<Rc<str>> = specs.iter().map(|f| f.name.as_str().into()).collect();
+        let names: Vec<DeclRef> = specs.iter().map(|f| self.names.register(&f.name)).collect();
         // Families first, so constructors (and siblings) can mention them.
         let mut fam_tys = Vec::new();
         for f in specs {
@@ -3616,7 +3934,7 @@ impl Core {
             self.infer_sort(&ty)?;
             fam_tys.push(ty.clone());
             self.globals
-                .insert(f.name.as_str().into(), Global { ty, value: None });
+                .insert(self.names.register(&f.name), Global { ty, value: None });
         }
         // The parameters are shared by the group, written the same way.
         for ty in &fam_tys[1..] {
@@ -3669,24 +3987,34 @@ impl Core {
                 ctors: Vec::new(),
             });
         }
-        let mut taken: Vec<Rc<str>> = names.clone();
+        // Constructors of the declared families.
+        let mut taken: Vec<DeclRef> = names.clone();
         for (k, f) in specs.iter().enumerate() {
             for (cname, cty) in &f.ctors {
                 self.fresh_name(cname)?;
-                if taken.iter().any(|c| &**c == cname.as_str()) {
-                    return fail(msg!("kernel-core-ctor-already-defined", name = cname));
+                if taken.contains(&self.names.register(cname)) {
+                    return fail(msg!(
+                        "kernel-core-ctor-already-defined",
+                        name = (cname).to_string()
+                    ));
                 }
-                taken.push(cname.as_str().into());
+                taken.push(self.names.register(cname));
                 let ty = self.read(cty)?;
                 self.infer_sort(&ty)?;
                 let mut walk = ty;
                 for x in &params {
                     let Some((_, d, b)) = walk.pi_parts() else {
-                        return fail(msg!("kernel-core-ctor-take-params", name = cname));
+                        return fail(msg!(
+                            "kernel-core-ctor-take-params",
+                            name = (cname).to_string()
+                        ));
                     };
                     let px = self.lctx[x].clone();
                     if *d != px && !self.conv(&d, &px) {
-                        return fail(msg!("kernel-core-ctor-take-params", name = cname));
+                        return fail(msg!(
+                            "kernel-core-ctor-take-params",
+                            name = (cname).to_string()
+                        ));
                     }
                     walk = inst(&b, &FVar(*x));
                 }
@@ -3694,7 +4022,10 @@ impl Core {
                 while let Some((_, d, b)) = walk.pi_parts() {
                     let s = self.infer_sort(&d)?;
                     if out != Sort::Prop && !s.le(&out) {
-                        return fail(msg!("kernel-core-ctor-arg-universe", name = cname));
+                        return fail(msg!(
+                            "kernel-core-ctor-arg-universe",
+                            name = (cname).to_string()
+                        ));
                     }
                     let x = self.fresh((*d).clone());
                     args.push((x, (*d).clone()));
@@ -3707,16 +4038,19 @@ impl Core {
                 {
                     return fail(msg!(
                         "kernel-core-ctor-must-return",
-                        name = cname,
-                        family = &f.name
+                        name = (cname).to_string(),
+                        family = (&f.name).to_string()
                     ));
                 }
                 let result_idx = rargs[np..].to_vec();
                 if result_idx.iter().any(|t| mentions_const(t, &names)) {
-                    return fail(msg!("kernel-core-index-mentions-family", name = cname));
+                    return fail(msg!(
+                        "kernel-core-index-mentions-family",
+                        name = (cname).to_string()
+                    ));
                 }
                 members[k].ctors.push(Ctor {
-                    name: cname.as_str().into(),
+                    name: self.names.register(cname),
                     args,
                     result_idx,
                     recs: Vec::new(),
@@ -3726,8 +4060,8 @@ impl Core {
         // Positivity, nested occurrences and recursive arguments: for the
         // declared families, then for the members nesting adds (whose
         // constructors are those of the type they stand for).
-        let mut group: Vec<Rc<str>> = names.clone();
-        let mut aliases: Vec<(Rc<str>, Vec<Tm>)> = Vec::new();
+        let mut group: Vec<DeclRef> = names.clone();
+        let mut aliases: Vec<(DeclRef, Vec<Tm>)> = Vec::new();
         let mut at = 0;
         while at < members.len() {
             for ci in 0..members[at].ctors.len() {
@@ -3826,9 +4160,15 @@ impl Core {
         let mut elims = Vec::new();
         for ms in sorts.iter().cloned() {
             for k in 0..members.len() {
-                let suffix = if ms == Sort::Prop { "ind" } else { "rec" };
-                let name: Rc<str> = format!("{}::{suffix}", members[k].name).into();
-                self.fresh_name(&name)?;
+                let name = self.reserve_eliminator(
+                    &members[k].name,
+                    &if ms == Sort::Prop {
+                        Elimination::Induction
+                    } else {
+                        Elimination::Recursion
+                    },
+                );
+                self.fresh_name(&Name::from(name.clone()))?;
                 let ty = self.eliminator(&members, &params, k, ms.clone());
                 if mentions_fvar(&ty) || has_loose(&ty, 0) {
                     return fail(msg!("kernel-core-eliminator-not-closed"));
@@ -3837,12 +4177,18 @@ impl Core {
                 elims.push((name, k, ty));
             }
         }
+        for group in elims.chunks(members.len()) {
+            let targets: Vec<_> = group.iter().map(|(name, _, _)| name.clone()).collect();
+            for name in &targets {
+                self.rec_targets.insert(name.clone(), targets.clone());
+            }
+        }
         for (name, k, ty) in elims {
             self.globals
                 .insert(name.clone(), Global { ty, value: None });
             self.recs.insert(name, members[k].name.clone());
         }
-        let group_names: Vec<Rc<str>> = members.iter().map(|m| m.name.clone()).collect();
+        let group_names: Vec<DeclRef> = members.iter().map(|m| m.name.clone()).collect();
         for (pos, m) in members.iter().enumerate() {
             let k_like = match m.ctors.as_slice() {
                 [c] if out == Sort::Prop && members.len() == 1 && c.args.is_empty() => Some(
@@ -3900,8 +4246,8 @@ impl Core {
         &mut self,
         d: &Tm,
         np: usize,
-        group: &mut Vec<Rc<str>>,
-        aliases: &mut Vec<(Rc<str>, Vec<Tm>)>,
+        group: &mut Vec<DeclRef>,
+        aliases: &mut Vec<(DeclRef, Vec<Tm>)>,
     ) -> Res<Tm> {
         if let Pi(h, a, b) = d {
             return Ok(Pi(
@@ -3925,7 +4271,7 @@ impl Core {
             return fail(msg!("kernel-core-nested-no-params"));
         }
         if jind.indices > 0 || jind.group.len() > 1 || args.len() != jind.params {
-            return fail(msg!("kernel-core-cannot-nest", name = &**j));
+            return fail(msg!("kernel-core-cannot-nest", name = j.display()));
         }
         if args.iter().any(|a| mentions_fvar(a) || has_loose(a, 0)) {
             return fail(msg!("kernel-core-nested-depends"));
@@ -3933,8 +4279,8 @@ impl Core {
         if let Some(k) = aliases.iter().position(|(j2, a2)| j2 == j && *a2 == args) {
             return Ok(Const(group[group.len() - aliases.len() + k].clone()));
         }
-        let member: Rc<str> = format!("{}_{}{}", group[0], j, aliases.len() + 1).into();
-        self.fresh_name(&member)?;
+        let member = group[0].generated(tauto_surface::identity::Generation::Nested(aliases.len()));
+        self.fresh_name(&Name::from(member.clone()))?;
         group.push(member.clone());
         aliases.push((j.clone(), args));
         Ok(Const(member))
@@ -3943,7 +4289,7 @@ impl Core {
     /// A recursive argument `∀ ys. G(params, idx)` with `G` in the group.
     fn recursive(
         &mut self,
-        group: &[Rc<str>],
+        group: &[DeclRef],
         members: &[Member],
         pvars: &[Tm],
         arg: usize,
@@ -3976,7 +4322,7 @@ impl Core {
             0
         };
         if args.len() != np + indices || args[..np] != pvars[..np] {
-            return fail(msg!("kernel-core-recursive-arg-params", name = &**g));
+            return fail(msg!("kernel-core-recursive-arg-params", name = g.display()));
         }
         Ok(Some(Rec {
             arg,
@@ -4072,16 +4418,17 @@ impl Core {
 }
 
 struct Member {
-    name: Rc<str>,
+    name: DeclRef,
     /// `∀ indices. Sort`, over the parameters (atoms).
     index_tel: Tm,
     indices: usize,
-    alias: Option<(Rc<str>, Vec<Tm>)>,
+    /// A nested member stands for `J(args)`.
+    alias: Option<(DeclRef, Vec<Tm>)>,
     ctors: Vec<Ctor>,
 }
 
 struct Ctor {
-    name: Rc<str>,
+    name: DeclRef,
     /// Argument atoms and their types (over the parameters and the earlier
     /// arguments).
     args: Vec<(u64, Tm)>,
@@ -4098,7 +4445,7 @@ struct Rec {
 
 /// Strict positivity: the group occurs only as the target of `∀`s, applied
 /// to arguments that do not mention it.
-fn positive(group: &[Rc<str>], d: &Tm) -> Res<()> {
+fn positive(group: &[DeclRef], d: &Tm) -> Res<()> {
     if !mentions_const(d, group) {
         return Ok(());
     }
@@ -4139,6 +4486,109 @@ mod tests {
     use super::super::{Kernel, Stmt, T, parse_program};
     use super::*;
 
+    #[test]
+    fn a_global_reference_cannot_be_used_as_a_lexical_binder() {
+        let mut core = Core::new();
+        let reference = DeclRef::fresh("x");
+        let name: Name = reference.clone().into();
+        let span = Default::default();
+        core.add_decl_inner(
+            &name,
+            &T::var(
+                &Name::from(DeclRef::of_sort(tauto_surface::identity::SortSymbol::Type(
+                    0,
+                ))),
+                span,
+            ),
+            None,
+            false,
+            true,
+        )
+        .unwrap();
+        let term = T::var(&name, span);
+        let context = vec![(name.clone(), T::var("Type", span))];
+        let mut open = Open::new(&context);
+        assert_eq!(
+            core.read_in(&term, &mut vec![name.clone()], Some(&mut open))
+                .unwrap(),
+            Const(reference)
+        );
+        let lambda = T::new(
+            TermKind::Lam {
+                params: vec![name],
+                types: Vec::new(),
+                body: Box::new(term),
+            },
+            span,
+        );
+        assert!(core.read(&lambda).is_err());
+    }
+
+    #[test]
+    fn open_declaration_assumptions_require_exact_identity_and_do_not_escape() {
+        let mut core = Core::new();
+        let name: Name = DeclRef::fresh("recursive").into();
+        let other: Name = DeclRef::fresh("recursive").into();
+        let span = Default::default();
+        let ty = T::var("Type", span);
+        let context = vec![(name.clone(), ty)];
+        let term = T::var(&name, span);
+        assert!(
+            core.type_in(&context, &term, Ask::Infer, &|_| None, &[])
+                .is_ok()
+        );
+        assert!(
+            core.type_in(&context, &T::var(&other, span), Ask::Infer, &|_| None, &[])
+                .is_err()
+        );
+        assert!(core.read(&term).is_err());
+        assert!(
+            core.type_in(&vec![], &term, Ask::Infer, &|_| None, &[])
+                .is_err()
+        );
+        assert!(!core.globals.contains_key(name.as_global().unwrap()));
+    }
+
+    #[test]
+    fn intrinsic_dispatch_requires_the_primitive_reference() {
+        let mut core = Core::new();
+        let impostor = DeclRef::fresh("Nat::eq");
+        let args = [Rc::new(Lit(3)), Rc::new(Lit(3))];
+        assert!(core.numeric(&impostor, &args).is_none());
+        assert!(
+            core.numeric(&DeclRef::primitive("Nat::eq").unwrap(), &args)
+                .is_some()
+        );
+        assert_eq!(primitive_operator(&DeclRef::fresh("+")), None);
+        assert_eq!(
+            primitive_operator(&DeclRef::primitive("+").unwrap()),
+            Some("+")
+        );
+        let unaccepted = core.names.reserve("unaccepted");
+        assert!(core.infer(&Const(unaccepted)).is_err());
+    }
+
+    #[test]
+    fn equal_display_names_cannot_cross_core_environments() {
+        let mut left = Core::new();
+        let mut right = Core::new();
+        let ty = T::var("Type", Default::default());
+        left.add_decl_inner(&Name::from("Item"), &ty, None, false, true)
+            .unwrap();
+        right
+            .add_decl_inner(&Name::from("Item"), &ty, None, false, true)
+            .unwrap();
+        let reference = left.names.get("Item").unwrap().clone();
+        assert_eq!(
+            reference.display(),
+            right.names.get("Item").unwrap().display()
+        );
+        assert_ne!(reference, *right.names.get("Item").unwrap());
+        assert!(left.infer(&Const(reference.clone())).is_ok());
+        assert!(right.infer(&Const(reference)).is_err());
+    }
+
+    /// A kernel with the prelude declared.
     fn kernel() -> Kernel {
         let mut k = Kernel::new();
         let prelude = super::super::kernel_prelude().unwrap();
@@ -4152,7 +4602,8 @@ mod tests {
     /// The proof is not elaborated: the core reads it as written. The
     /// statement is, so that an equation `a = b` is the `Eq` it stands for.
     fn read(k: &mut Kernel, src: &str) -> (T, T) {
-        let p = parse_program(src).unwrap();
+        let mut p = parse_program(src).unwrap();
+        k.resolve_statements(&mut p.stmts);
         let Stmt::Theorem(t) = &p.stmts[0] else {
             panic!()
         };
@@ -4204,7 +4655,7 @@ mod tests {
         for &(x, y) in &pairs {
             for op in NUMERIC {
                 // The proof that the divisor is not 0 is not looked at.
-                let proof = (numeric_arity(op) == 3).then(|| konst("h"));
+                let proof = (numeric_arity(op) == 3).then(|| FVar(42));
                 let t = apps(konst(op), [Lit(x), Lit(y)].into_iter().chain(proof));
                 c.numeric_off = false;
                 let fast = c.whnf(&t);
@@ -4235,7 +4686,7 @@ mod tests {
         c.start_budget(None, None);
         let t = apps(
             konst("Nat::div_nz"),
-            [apps(konst("*"), [chain, Lit(8)]), Lit(7), konst("h")],
+            [apps(konst("*"), [chain, Lit(8)]), Lit(7), FVar(42)],
         );
         assert_eq!(c.whnf(&t), Lit(342));
         assert!(c.end_budget().steps < 2000);
@@ -4266,7 +4717,10 @@ mod tests {
             app(BVar(2), Lit(4)),
             Lam(Hint::named("_"), Rc::new(app(BVar(0), BVar(4)))),
             Pi(Hint::named("_"), shared.clone(), shared.clone()),
-            apps(konst("f"), [BVar(1), (*shared).clone(), BVar(5)]),
+            apps(
+                Const(DeclRef::fresh("f")),
+                [BVar(1), (*shared).clone(), BVar(5)],
+            ),
         ];
         for t in terms {
             let r = Rc::new(t);
@@ -4294,10 +4748,18 @@ mod tests {
         let mut k = kernel();
         let c = &mut k.core;
         c.start_budget(None, None);
-        let nat = c.inds.get("Nat").unwrap().clone();
+        let nat = c
+            .inds
+            .get(&DeclRef::primitive("Nat").unwrap())
+            .unwrap()
+            .clone();
         let before = Rc::strong_count(&nat);
         let t = apps(
-            konst("Nat::rec"),
+            Const(
+                DeclRef::primitive("Nat")
+                    .unwrap()
+                    .generated(tauto_surface::identity::Generation::Recursion),
+            ),
             [
                 Sort(Sort::ty(0)),
                 Lit(0),
@@ -4339,14 +4801,18 @@ mod tests {
     fn accepts(src: &str) {
         let mut k = kernel();
         let (ty, body) = read(&mut k, src);
-        k.core.add_decl("t", &ty, Some(&body), false).unwrap();
+        k.core
+            .add_decl(&Name::from("t"), &ty, Some(&body), false)
+            .unwrap();
     }
 
     fn rejects(src: &str) {
         let mut k = kernel();
         let (ty, body) = read(&mut k, src);
         assert!(
-            k.core.add_decl("t", &ty, Some(&body), false).is_err(),
+            k.core
+                .add_decl(&Name::from("t"), &ty, Some(&body), false)
+                .is_err(),
             "{src}"
         );
     }
@@ -4372,9 +4838,9 @@ mod tests {
         // from being exponential.
         let mut k = kernel();
         let defs = parse_program(
-            &r#"fn double(n: Nat): Nat { match n: Nat { Zero => Zero
+            &r#"fn double(n: Nat): Nat { ⊢ Nat from match n { Zero => Zero
  Succ(m) => Succ(Succ(double(m))) } }
-fn add2(a: Nat, b: Nat): Nat { match a: Nat { Zero => b
+fn add2(a: Nat, b: Nat): Nat { ⊢ Nat from match a { Zero => b
  Succ(m) => Succ(add2(m, b)) } }"#
                 .to_string(),
         )
@@ -4386,7 +4852,11 @@ fn add2(a: Nat, b: Nat): Nat { match a: Nat { Zero => b
             &mut k,
             &r#"theorem t(): double(20) = add2(23, 20) { Refl(Nat, double(20)) }"#.to_string(),
         );
-        assert!(k.core.add_decl("t", &ty, Some(&body), false).is_err());
+        assert!(
+            k.core
+                .add_decl(&Name::from("t"), &ty, Some(&body), false)
+                .is_err()
+        );
     }
 
     /// The steps the core takes to check `theorem` after `defs`, and whether
@@ -4400,7 +4870,10 @@ fn add2(a: Nat, b: Nat): Nat { match a: Nat { Zero => b
         }
         let (ty, body) = read(&mut k, theorem);
         k.core.start_budget(None, None);
-        let ok = k.core.add_decl("t", &ty, Some(&body), false).is_ok();
+        let ok = k
+            .core
+            .add_decl(&Name::from("t"), &ty, Some(&body), false)
+            .is_ok();
         (k.core.end_budget().steps, ok)
     }
 
@@ -4409,10 +4882,10 @@ fn add2(a: Nat, b: Nat): Nat { match a: Nat { Zero => b
         // The motive applied to a number in the statement is typed by its
         // argument and its body, not by computing `fib(24)`.
         let (steps, ok) = steps_for(
-            r#"fn add2(a: Nat, b: Nat): Nat { match a: Nat { Zero => b
+            r#"fn add2(a: Nat, b: Nat): Nat { ⊢ Nat from match a { Zero => b
  Succ(m) => Succ(add2(m, b)) } }
-fn fib(n: Nat): Nat { match n: Nat { Zero => 1
- Succ(m) => match m: Nat { Zero => 1
+fn fib(n: Nat): Nat { ⊢ Nat from match n { Zero => 1
+ Succ(m) => ⊢ Nat from match m { Zero => 1
  Succ(p) => add2(fib(m), fib(p)) } } }"#,
             r#"theorem t(): ((k) => fib(k))(24) = fib(24) { Refl(Nat, fib(24)) }"#,
         );
@@ -4426,10 +4899,10 @@ fn fib(n: Nat): Nat { match n: Nat { Zero => 1
         // stuck `2 * pow2(…)`. The typed comparison goes down the chain after
         // the untyped one failed; comparing copies, each link compared and
         // reduced again all of the chain below it, about two million steps.
-        let defs = r#"fn pow2(n: Nat): Nat { match n: Nat { Zero => 1
+        let defs = r#"fn pow2(n: Nat): Nat { ⊢ Nat from match n { Zero => 1
  Succ(k) => 2 * pow2(k) } }
 fn big(s: Nat): Nat { pow2(s + 400) }
-fn is_zero(n: Nat): Bool { match n: Bool { Zero => true
+fn is_zero(n: Nat): Bool { ⊢ Bool from match n { Zero => true
  Succ(k) => false } }
 fn pos(x: Nat): Prop { is_zero(x) = false }"#;
         let (steps, ok) = steps_for(
@@ -4451,7 +4924,7 @@ fn pos(x: Nat): Prop { is_zero(x) = false }"#;
         // is the argument's own node, whose value was found when `nat_lt`
         // compared it, so thirty `m`s reduce each argument once.
         let (steps, ok) = steps_for(
-            r#"fn mx(a: Nat, b: Nat): Nat { match Nat::lt(a, b): Nat { false => a
+            r#"fn mx(a: Nat, b: Nat): Nat { ⊢ Nat from match Nat::lt(a, b) { false => a
  true => b } }
 fn m(n: Nat): Nat { mx(n, n) }"#,
             r#"theorem t(): m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(20)))))))))))))))))))))))))))))) = 20 { Refl(Nat, 20) }"#,
@@ -4459,7 +4932,7 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
         assert!(ok);
         assert!(steps < 5_000, "{steps} steps");
         let (_, ok) = steps_for(
-            r#"fn mx(a: Nat, b: Nat): Nat { match Nat::lt(a, b): Nat { false => a
+            r#"fn mx(a: Nat, b: Nat): Nat { ⊢ Nat from match Nat::lt(a, b) { false => a
  true => b } }
 fn m(n: Nat): Nat { mx(n, n) }"#,
             r#"theorem t(): m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(m(20)))))))))))))))))))))))))))))) = 21 { Refl(Nat, 20) }"#,
@@ -4471,8 +4944,8 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
     fn a_wrong_number_is_rejected_by_its_value() {
         // A number compared with a literal is computed once and compared as a
         // value; a wrong literal costs about what the right one does.
-        let defs = r#"fn h(n: Nat): Nat { match n: Nat { Zero => 123456789
- Succ(m) => Nat::rem_nz(Nat::sub(h(m), 7), 1000003, (e: Eq(Nat, 1000003, 0)) => Eq::subst((x: Nat) => match x: Prop {
+        let defs = r#"fn h(n: Nat): Nat { ⊢ Nat from match n { Zero => 123456789
+ Succ(m) => Nat::rem_nz(Nat::sub(h(m), 7), 1000003, (e: Eq(Nat, 1000003, 0)) => Eq::subst((x: Nat) => ⊢ Prop from match x {
    Zero => False
    Succ(_) => True
  }, e, Trivial)) } }"#;
@@ -4537,6 +5010,7 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
 
     #[test]
     fn a_redex_types_its_argument() {
+        // `(fun x => 0)(Ω)` with an ill-typed argument.
         rejects(
             &r#"theorem t(): Nat { (x => 0)(Trivial(Trivial)) }
 "#
@@ -4551,23 +5025,31 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
     fn quotient_constants_are_fixed() {
         let mut k = kernel();
         let (ty, body) = read(&mut k, "theorem t(n: Nat): Nat { n }");
-        assert!(k.core.add_decl("Quot::lift", &ty, None, false).is_err());
-        assert!(k.core.set_value("Quot::lift", &body).is_err());
+        assert!(
+            k.core
+                .add_decl(&Name::from("Quot::lift"), &ty, None, false)
+                .is_err()
+        );
+        assert!(k.core.set_value(&Name::from("Quot::lift"), &body).is_err());
         let mut fresh = Kernel::new();
         let (ty, _) = read(&mut fresh, "theorem t(A: Type): Type { A }");
         let err = fresh
             .core
-            .add_decl("Quot::mk", &ty, None, false)
+            .add_decl(&Name::from("Quot::mk"), &ty, None, false)
             .unwrap_err();
         assert_eq!(err.id, "kernel-core-quot-declared-after", "{err:?}");
-        let err = fresh.core.add_decl("Quot", &ty, None, false).unwrap_err();
+        let err = fresh
+            .core
+            .add_decl(&Name::from("Quot"), &ty, None, false)
+            .unwrap_err();
         assert_eq!(err.id, "kernel-core-quot-type", "{err:?}");
     }
 
     fn inductive(src: &str) -> Result<(), Message> {
         tauto_messages::install();
         let mut k = kernel();
-        let p = parse_program(src).unwrap();
+        let mut p = parse_program(src).unwrap();
+        k.resolve_statements(&mut p.stmts);
         let Stmt::Inductive(i) = &p.stmts[0] else {
             panic!()
         };
@@ -4585,7 +5067,7 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
             .constructors
             .iter()
             .map(|c| {
-                let args: Vec<(String, T)> = c
+                let args: Vec<(Name, T)> = c
                     .params
                     .iter()
                     .map(|(n, d)| (n.clone(), k.shape(d).unwrap()))
@@ -4684,9 +5166,32 @@ fn m(n: Nat): Nat { mx(n, n) }"#,
 }
 
 impl Core {
+    fn reserve_eliminator(&mut self, family: &DeclRef, sort: &Elimination) -> DeclRef {
+        let key = (family.clone(), sort.clone());
+        if let Some(reference) = self.eliminators.get(&key) {
+            return reference.clone();
+        }
+        let reference = match sort {
+            Elimination::Induction => self.names.generated(
+                &Name::from(family.clone()),
+                tauto_surface::identity::Generation::Induction,
+            ),
+            Elimination::Recursion => self.names.generated(
+                &Name::from(family.clone()),
+                tauto_surface::identity::Generation::Recursion,
+            ),
+            Elimination::At(level) => DeclRef::fresh(format!("{family}::rec@{level}")),
+        };
+        self.eliminators.insert(key, reference.clone());
+        reference
+    }
+
     /// Specialize the motive universe of an already validated large eliminator.
     /// Its parameters, indices and reduction rule are unchanged.
-    pub(super) fn recursor_at(&mut self, family: &str, level: &super::Level) -> Res<()> {
+    pub(super) fn recursor_at(&mut self, family: &Name, level: &super::Level) -> Res<()> {
+        #[cfg(feature = "selfhost")]
+        let result = self.timed(|c| c.recursor_at_inner(family, level));
+        #[cfg(not(feature = "selfhost"))]
         let result = self.recursor_at_inner(family, level);
         self.shared.clear();
         self.defs.clear();
@@ -4695,26 +5200,41 @@ impl Core {
         result
     }
 
-    fn recursor_at_inner(&mut self, family: &str, level: &super::Level) -> Res<()> {
+    pub(super) fn specialized_recursor(&self, family: &Name, level: &super::Level) -> Option<Name> {
+        let family = self.names.reference(family)?;
+        let reference = self
+            .eliminators
+            .get(&(family.clone(), Elimination::At(level.clone())))?;
+        self.recs
+            .contains_key(reference)
+            .then(|| Name::from(reference.clone()))
+    }
+
+    fn recursor_at_inner(&mut self, family: &Name, level: &super::Level) -> Res<()> {
         if level.floor() > 65535 {
             return fail(msg!("kernel-core-recursor-universe"));
         }
         let info = self
-            .inds
-            .get(family)
+            .names
+            .reference(family)
+            .and_then(|id| self.inds.get(id))
             .cloned()
             .ok_or_else(|| msg!("kernel-core-unknown-family"))?;
         let mut pending = Vec::new();
         for member in &info.group {
-            let original: Rc<str> = format!("{member}::rec").into();
+            let original = self
+                .eliminators
+                .get(&(member.clone(), Elimination::Recursion))
+                .cloned()
+                .ok_or_else(|| msg!("kernel-core-missing-recursor"))?;
             if self.recs.get(&original) != Some(member) {
                 return fail(msg!("kernel-core-no-large-elimination"));
             }
-            let name: Rc<str> = format!("{member}::rec@{level}").into();
+            let name = self.reserve_eliminator(member, &Elimination::At(level.clone()));
             if self.recs.contains_key(&name) {
                 continue;
             }
-            self.fresh_name(&name)?;
+            self.fresh_name(&Name::from(name.clone()))?;
             let ty = self
                 .globals
                 .get(&original)
@@ -4753,6 +5273,19 @@ impl Core {
             let ty = change(&ty, info.params, info.group.len(), level)?;
             self.infer_sort(&ty)?;
             pending.push((name, member.clone(), ty));
+        }
+        let targets: Vec<_> = info
+            .group
+            .iter()
+            .map(|member| {
+                self.eliminators
+                    .get(&(member.clone(), Elimination::At(level.clone())))
+                    .cloned()
+                    .ok_or_else(|| msg!("kernel-core-missing-recursor"))
+            })
+            .collect::<Res<_>>()?;
+        for name in &targets {
+            self.rec_targets.insert(name.clone(), targets.clone());
         }
         for (name, member, ty) in pending {
             self.globals

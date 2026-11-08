@@ -15,7 +15,7 @@ import "../../text/src/text.taut"
 // (`event`, `merge` of `lin.rs`), in the proof language (`docs/design/self-host.md`「nibcheck の健全性（`totes/nibcheck/src/`）」).
 
 pub fn range_from(n: Nat, r#from: Nat): List(Nat) {
-  match n: List(Nat) {
+  ⊢ List(Nat) from match n {
     Zero => Nil
     Succ(m) => Cons(r#from, range_from(m, r#from + 1))
   }
@@ -26,7 +26,7 @@ pub fn range_list(r#from: Nat, to: Nat): List(Nat) {
 }
 
 pub fn trim_bars_in(n: Nat, t: Text): Text {
-  match n: Text {
+  ⊢ Text from match n {
     Zero => t
     Succ(m) => if text_starts_with(
       t,
@@ -59,7 +59,7 @@ pub fn lin_quants_of(c: Lin, eff: Text, bounded: List(Text), r#direct: List(Text
   } else if text_starts_with(eff, "?", 0) {
     Nil
   } else {
-    match Ordmap::get(c.rows.quants, eff, Ordmap::compare_text): List(Quant) {
+    ⊢ List(Quant) from match Ordmap::get(c.rows.quants, eff, Ordmap::compare_text) {
       Some(q) => Cons(q, Nil)
       None => Cons(QuantAtMostOne, Nil)
     }
@@ -67,28 +67,28 @@ pub fn lin_quants_of(c: Lin, eff: Text, bounded: List(Text), r#direct: List(Text
 }
 
 pub fn quants_any_many(qs: List(Quant)): Bool {
-  match qs: Bool {
+  ⊢ Bool from match qs {
     Nil => false
     Cons(q, rest) => quant_is_many(q) || quants_any_many(rest)
   }
 }
 
 pub fn quant_is_one(q: Quant): Bool {
-  match q: Bool {
+  ⊢ Bool from match q {
     QuantOne => true
     _ => false
   }
 }
 
 pub fn quants_any_not_one(qs: List(Quant)): Bool {
-  match qs: Bool {
+  ⊢ Bool from match qs {
     Nil => false
     Cons(q, rest) => (not(quant_is_one(q)) && not(quant_is_direct(q))) || quants_any_not_one(rest)
   }
 }
 
 pub fn handles_answering(hs: List(HandleCtx), eff: Text): Option(HandleCtx) {
-  match hs: Option(HandleCtx) {
+  ⊢ Option(HandleCtx) from match hs {
     Nil => None
     Cons(h, rest) => if Ordmap::contains(h.answers, eff, Ordmap::compare_text) {
       Some(h)
@@ -99,7 +99,7 @@ pub fn handles_answering(hs: List(HandleCtx), eff: Text): Option(HandleCtx) {
 }
 
 pub fn indexes_below(xs: List(Nat), limit: Nat): List(Nat) {
-  match xs: List(Nat) {
+  ⊢ List(Nat) from match xs {
     Nil => Nil
     Cons(i, rest) => if i < limit { Cons(i, indexes_below(rest, limit)) } else {
       indexes_below(rest, limit)
@@ -112,7 +112,7 @@ pub fn binding_duplicated(b: Binding): Bool {
   if class_is_dup(b.r#class) {
     false
   } else {
-    match b.mode: Bool {
+    ⊢ Bool from match b.mode {
       ModeOwned => true
       ModeVar => true
       ModeVarInClosure => true
@@ -147,7 +147,11 @@ pub fn lin_event_one(
     if many && binding_duplicated(b) {
       lin_error(&mut c, cat4(b.name, " is live across ", shown, ", which resumes \u{3c9}"), span)
     } else if not_one && class_is_linear(b.r#class) && mode_is_owned(b.mode) {
-      lin_error(&mut c, cat5(b.name, " is live across ", shown, ", which may not resume", may_not_resume_hint(eff)), span)
+      lin_error(
+        &mut c,
+        cat5(b.name, " is live across ", shown, ", which may not resume", may_not_resume_hint(eff)),
+        span
+      )
     }
   }
 }
@@ -161,7 +165,7 @@ pub fn lin_event_live(
   shown: Text,
   span: TySpan
 ): Unit {
-  match live: Unit {
+  ⊢ Unit from match live {
     Nil => #()
     Cons(i, rest) => {
       lin_event_one(&mut c, i, many, not_one, eff, shown, span)
@@ -171,14 +175,14 @@ pub fn lin_event_live(
 }
 
 pub fn handle_start(frame: Frame, eff: Text): Nat {
-  match handles_answering(frame.handles, eff): Nat {
+  ⊢ Nat from match handles_answering(frame.handles, eff) {
     Some(h) => h.start
     None => frame.base
   }
 }
 
 pub fn handle_extra(frame: Frame, eff: Text, r#from: Nat): List(Nat) {
-  match handles_answering(frame.handles, eff): List(Nat) {
+  ⊢ List(Nat) from match handles_answering(frame.handles, eff) {
     Some(h) => indexes_below(h.return_uses, r#from)
     None => Nil
   }
@@ -197,7 +201,7 @@ pub fn lin_event_effect(&mut c: Lin, eff: Text, span: TySpan): Unit {
 }
 
 pub fn lin_event_effects(effects: List(Text), &mut c: Lin, span: TySpan): Unit {
-  match effects: Unit {
+  ⊢ Unit from match effects {
     Nil => #()
     Cons(eff, rest) => {
       lin_event_effect(&mut c, eff, span)
@@ -209,28 +213,28 @@ pub fn lin_event_effects(effects: List(Text), &mut c: Lin, span: TySpan): Unit {
 // `row` may be performed here: the bindings live across it must suit its
 // quantities.
 pub fn lin_event(&mut c: Lin, row: RowSet, span: TySpan): Unit {
-  match c.frames: Unit {
+  ⊢ Unit from match c.frames {
     Nil => #()
     Cons(f, rest) => lin_event_effects(rowset_list(row), &mut c, span)
   }
 }
 
 pub fn lin_call_event(&mut c: Lin, t: SurfaceTerm): Unit {
-  match Ordmap::get(c.rows.calls, RowSpan { start: t.start, end: t.end }, rows_compare_span): Unit {
+  ⊢ Unit from match Ordmap::get(c.rows.calls, RowSpan { start: t.start, end: t.end }, rows_compare_span) {
     Some(row) => lin_event(&mut c, row, span_of(t))
     None => #()
   }
 }
 
 pub fn bound_is_at_most_one(b: Option(Text)): Bool {
-  match b: Bool {
+  ⊢ Bool from match b {
     Some(x) => x == "<=1"
     None => false
   }
 }
 
 pub fn lin_bounded(gs: List(Text), bs: List(Option(Text))): List(Text) {
-  match gs: List(Text) {
+  ⊢ List(Text) from match gs {
     Nil => Nil
     Cons(g, rest) => if bound_is_at_most_one(list_head_or_none(bs)) {
       Cons(g, lin_bounded(rest, List::tail(bs)))
@@ -241,7 +245,7 @@ pub fn lin_bounded(gs: List(Text), bs: List(Option(Text))): List(Text) {
 }
 
 pub fn lin_push_params(ps: List(Text), &mut c: Lin, site: Nat): Unit {
-  match ps: Unit {
+  ⊢ Unit from match ps {
     Nil => #()
     Cons(p, rest) => {
       lin_push_unit(&mut c, p, site, false)
@@ -251,8 +255,8 @@ pub fn lin_push_params(ps: List(Text), &mut c: Lin, site: Nat): Unit {
 }
 
 pub fn fn_returns_borrow(f: SurfaceFn): Bool {
-  match f.result: Bool {
-    Some(r) => match r.kind: Bool {
+  ⊢ Bool from match f.result {
+    Some(r) => ⊢ Bool from match r.kind {
       SkBorrow(m, x) => true
       _ => false
     }
@@ -261,14 +265,14 @@ pub fn fn_returns_borrow(f: SurfaceFn): Bool {
 }
 
 pub fn opt_span(e: Option(SurfaceTerm)): TySpan {
-  match e: TySpan {
+  ⊢ TySpan from match e {
     Some(x) => span_of(x)
     None => TySpan { start: 0, end: 0 }
   }
 }
 
 pub fn stmt_span(s: SurfaceStmt): TySpan {
-  match s: TySpan {
+  ⊢ TySpan from match s {
     StLet(n, ty, value, b, bm) => span_of(value)
     StVar(n, ty, value, vb) => span_of(value)
     StAssign(n, n_place, value) => span_of(value)
@@ -287,9 +291,9 @@ pub fn stmt_span(s: SurfaceStmt): TySpan {
 }
 
 pub fn last_stmt_span(ss: List(SurfaceStmt)): TySpan {
-  match ss: TySpan {
+  ⊢ TySpan from match ss {
     Nil => TySpan { start: 0, end: 0 }
-    Cons(s, rest) => match rest: TySpan {
+    Cons(s, rest) => ⊢ TySpan from match rest {
       Nil => stmt_span(s)
       Cons(x, more) => last_stmt_span(rest)
     }
@@ -297,7 +301,7 @@ pub fn last_stmt_span(ss: List(SurfaceStmt)): TySpan {
 }
 
 pub fn lin_freeze_all(lent: List(Pair(Nat, Bool)), &mut c: Lin, r#by: Nat): Unit {
-  match lent: Unit {
+  ⊢ Unit from match lent {
     Nil => #()
     Cons(l, rest) => {
       let b := lin_get(c, l.fst)
@@ -355,7 +359,7 @@ pub fn lin_leave_function(&mut c: Lin, span: TySpan): Unit {
 }
 
 pub fn lin_states_below(n: Nat, c: Lin, acc: List(LinState)): List(LinState) {
-  match n: List(LinState) {
+  ⊢ List(LinState) from match n {
     Zero => acc
     Succ(i) => lin_states_below(i, c, Cons(lin_get(c, i).state, acc))
   }
@@ -366,7 +370,7 @@ pub fn lin_snapshot(c: Lin): Option(List(LinState)) {
 }
 
 pub fn lin_restore_from(states: List(LinState), &mut c: Lin, i: Nat): Unit {
-  match states: Unit {
+  ⊢ Unit from match states {
     Nil => #()
     Cons(s, rest) => if i < c.count {
       lin_set_state(&mut c, i, s)
@@ -376,7 +380,7 @@ pub fn lin_restore_from(states: List(LinState), &mut c: Lin, i: Nat): Unit {
 }
 
 pub fn lin_restore(&mut c: Lin, states: Option(List(LinState))): Unit {
-  match states: Unit {
+  ⊢ Unit from match states {
     None => set_to(&mut c.dead, true)
     Some(ss) => {
       set_to(&mut c.dead, false)
@@ -386,9 +390,9 @@ pub fn lin_restore(&mut c: Lin, states: Option(List(LinState))): Unit {
 }
 
 pub fn live_paths(paths: List(Option(List(LinState)))): List(List(LinState)) {
-  match paths: List(List(LinState)) {
+  ⊢ List(List(LinState)) from match paths {
     Nil => Nil
-    Cons(p, rest) => match p: List(List(LinState)) {
+    Cons(p, rest) => ⊢ List(List(LinState)) from match p {
       Some(ss) => Cons(ss, live_paths(rest))
       None => live_paths(rest)
     }
@@ -396,21 +400,21 @@ pub fn live_paths(paths: List(Option(List(LinState)))): List(List(LinState)) {
 }
 
 pub fn state_at(ss: List(LinState), i: Nat): LinState {
-  match nth_item(ss, i): LinState {
+  ⊢ LinState from match nth_item(ss, i) {
     Some(s) => s
     None => BsOwned
   }
 }
 
 pub fn states_at(paths: List(List(LinState)), i: Nat): List(LinState) {
-  match paths: List(LinState) {
+  ⊢ List(LinState) from match paths {
     Nil => Nil
     Cons(p, rest) => Cons(state_at(p, i), states_at(rest, i))
   }
 }
 
 pub fn all_state(ss: List(LinState), s: LinState): Bool {
-  match ss: Bool {
+  ⊢ Bool from match ss {
     Nil => true
     Cons(x, rest) => state_eq(x, s) && all_state(rest, s)
   }
@@ -431,7 +435,7 @@ pub fn lin_merged_state(&mut c: Lin, states: List(LinState), b: Binding, span: T
 
 // The bindings from `i` on, `r` of them, take the state their paths join in.
 pub fn lin_merge_from(r: Nat, &mut c: Lin, live: List(List(LinState)), i: Nat, span: TySpan): Unit {
-  match r: Unit {
+  ⊢ Unit from match r {
     Zero => #()
     Succ(r2) => {
       let state := lin_merged_state(&mut c, states_at(live, i), lin_get(c, i), span)
@@ -444,7 +448,7 @@ pub fn lin_merge_from(r: Nat, &mut c: Lin, live: List(List(LinState)), i: Nat, s
 // The state after paths join: a binding moved on some paths only is `Maybe`,
 // which a linear one may not be.
 pub fn lin_merge(&mut c: Lin, paths: List(Option(List(LinState))), span: TySpan): Unit {
-  match live_paths(paths): Unit {
+  ⊢ Unit from match live_paths(paths) {
     Nil => set_to(&mut c.dead, true)
     Cons(first, rest) => {
       set_to(&mut c.dead, false)

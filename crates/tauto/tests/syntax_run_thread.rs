@@ -66,6 +66,6 @@ fn an_extracted_parse_finds_its_tables_at_run_time() {
     // A text that is not of the grammar: the tables were found and read it.
     assert_eq!(
         shown,
-        "macro.syntax_error: in arith: expected Num or LParen, found Star"
+        "macro-syntax-expected-found"
     );
 }

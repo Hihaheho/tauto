@@ -1,0 +1,101 @@
+@ cases.a-lambda-parameter-is-matched-at-its-written-type-in-a-motive-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn isz(n: Nat): Bool {
+  ⊢ Bool from match n {
+    Zero => true
+    Succ(k) => false
+  }
+}
+
+theorem t(a: Nat, b: Nat, e: a = b, h: isz(a) = true): isz(b) = true {
+  Eq::subst(Nat, a, b, (z: Nat) => (⊢ Bool from match z {
+    Zero => true
+    Succ(k) => false
+  }) = true, e, h)
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::isz" = "ok"
+checks."input/main.taut::t" = "ok"
+
+@ cases.a-lambda-parameter-written-at-another-type-is-rejected-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn apply_zero(g: (n: Nat) -> Nat): Nat { g(Zero) }
+
+fn wrong(): Nat { apply_zero((z: Bool) => Zero) }
+```
+
+checks_all = "ok"
+checks."input/main.taut::apply_zero" = "ok"
+checks."input/main.taut::wrong" = "error: "
+@ cases.a-lambda-parameter-written-at-another-type-is-rejected-0.diagnostics[]
+file = "input/main.taut"
+name = "wrong"
+message = "the parameter `z` is written as `Bool`, but here it is a `Nat`"
+span = "«Bool»"
+
+@ cases.a-later-lambda-parameter-type-reads-implicit-arguments-from-an-earlier-written-type-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::Data
+
+fn size<A>(l: List(A)): Nat {
+  ⊢ Nat from match l {
+    Nil => Zero
+    Cons(x, r) => Succ(size(r))
+  }
+}
+
+fn take<A>(a: List(A), f: (l: List(A)) -> (size(l) = size(l)) -> Nat): Nat {
+  f(a, Refl)
+}
+
+fn used<A>(n: Nat, a: List(A)): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(k) => take(A, a, (l: List(A)) => (h: size(l) = size(l)) => k)
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::size" = "ok"
+checks."input/main.taut::take" = "ok"
+checks."input/main.taut::used" = "ok"
+
+@ cases.a-later-lambda-parameter-type-is-still-held-to-the-given-type-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::Data
+
+fn size<A>(l: List(A)): Nat {
+  ⊢ Nat from match l {
+    Nil => Zero
+    Cons(x, r) => Succ(size(r))
+  }
+}
+
+fn take<A>(a: List(A), f: (l: List(A)) -> (size(l) = size(l)) -> Nat): Nat {
+  f(a, Refl)
+}
+
+fn used<A>(n: Nat, a: List(A)): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(k) => take(A, a, (l: List(A)) => (h: size(l) = Zero) => k)
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::size" = "ok"
+checks."input/main.taut::take" = "ok"
+checks."input/main.taut::used" = "error: "
+@ cases.a-later-lambda-parameter-type-is-still-held-to-the-given-type-0.diagnostics[]
+file = "input/main.taut"
+name = "used"
+message = "the parameter `h` is written as `size(A, l) = Zero`, but here it is a `size(A, l) = size(A, l)`"
+span = "«size(l) = Zero»"

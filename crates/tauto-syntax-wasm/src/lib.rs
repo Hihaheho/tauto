@@ -5,7 +5,7 @@
 //! the answer `parse` returns: a length (four bytes, little endian) and
 //! that many bytes of JSON.
 //!
-//! The JSON is `{"ok":AST}` or `{"err":{"message":…,"at":…,"expected":[…]}}`,
+//! The JSON is `{"ok":AST}` or `{"err":{"message":…,"at":…,"expected":[…],"args":[[name,value],…]}}`,
 //! where an AST is `{"n":[type,ctor,start,end,[AST…]]}`, `{"t":[start,end]}`,
 //! `{"l":[AST…]}` or `{"o":AST|null}`.
 
@@ -63,11 +63,12 @@ pub fn answer(name: &str, tables: &str, text: &str) -> String {
         Ok(t) => t,
         Err(e) => {
             out.push_str("{\"err\":{\"message\":");
-            string(
-                &mut out,
-                &format!("macro.syntax_error: in {name}: the tables do not read: {e:?}"),
-            );
-            out.push_str(",\"at\":0,\"expected\":[]}}");
+            string(&mut out, tauto_syntax::TABLES);
+            out.push_str(",\"at\":0,\"expected\":[],\"args\":[[\"syntax\",");
+            string(&mut out, name);
+            out.push_str("],[\"detail\",");
+            string(&mut out, &format!("{e:?}"));
+            out.push_str("]]}}");
             return out;
         }
     };
@@ -86,6 +87,17 @@ pub fn answer(name: &str, tables: &str, text: &str) -> String {
                     out.push(',');
                 }
                 string(&mut out, e);
+            }
+            out.push_str("],\"args\":[");
+            for (i, (n, v)) in d.args.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push('[');
+                string(&mut out, n);
+                out.push(',');
+                string(&mut out, v);
+                out.push(']');
             }
             out.push_str("]}}");
         }

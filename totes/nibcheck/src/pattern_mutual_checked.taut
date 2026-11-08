@@ -57,10 +57,10 @@ pub theorem pattern_fields_next_frame_checked(
   ih_ctor_args: PatternIH_ctor_args_checked(j),
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, pattern_fields_next(j, c, name, args, t, env, span, at, borrowed, found)) {
-  match found: CkScopeChecked(
+  ⊢ CkScopeChecked(
     c,
     pattern_fields_next(j, c, name, args, t, env, span, at, borrowed, found)
-  ) {
+  ) from match found {
     None => pattern_return_frame_checked(c, env, Star, ordered)
     Some(fields) => pattern_rewrap_frame_checked(
       c,
@@ -132,10 +132,10 @@ pub theorem pattern_args_fields_frame_checked(
   ih_ctor_args: PatternIH_ctor_args_checked(j),
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, pattern_args_fields(j, c, p, rest, borrowed, env, span, at, fields)) {
-  match fields: CkScopeChecked(
+  ⊢ CkScopeChecked(
     c,
     pattern_args_fields(j, c, p, rest, borrowed, env, span, at, fields)
-  ) {
+  ) from match fields {
     Nil => pattern_return_frame_checked(c, env, Star, ordered)
     Cons(field, more) => pattern_bind_frame_checked(
       Unit,
@@ -168,7 +168,7 @@ pub theorem pattern_args_step_frame_checked(
   ih_ctor_args: PatternIH_ctor_args_checked(j),
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, pattern_args_step(j, c, fields, borrowed, env, span, at, args)) {
-  match args: CkScopeChecked(c, pattern_args_step(j, c, fields, borrowed, env, span, at, args)) {
+  ⊢ CkScopeChecked(c, pattern_args_step(j, c, fields, borrowed, env, span, at, args)) from match args {
     Nil => pattern_return_frame_checked(c, env, Star, ordered)
     Cons(p, rest) => pattern_args_fields_frame_checked(
       j,
@@ -199,7 +199,7 @@ pub theorem pattern_bind_name_frame_checked(
   ih_ctor_pattern: PatternIH_ctor_pattern_checked(j),
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, pattern_bind_name(j, c, t, env, span, at, name, nullary)) {
-  match nullary: CkScopeChecked(c, pattern_bind_name(j, c, t, env, span, at, name, nullary)) {
+  ⊢ CkScopeChecked(c, pattern_bind_name(j, c, t, env, span, at, name, nullary)) from match nullary {
     true => pattern_rewrap_frame_checked(
       c,
       ck_ctor_pattern_in(j, c, name, Nil, t, env, span, at),
@@ -225,7 +225,7 @@ pub theorem pattern_record_frame_checked(
   ih_ctor_pattern: PatternIH_ctor_pattern_checked(j),
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, pattern_record(j, c, t, env, span, at, name, pos)) {
-  match pos: CkScopeChecked(c, pattern_record(j, c, t, env, span, at, name, pos)) {
+  ⊢ CkScopeChecked(c, pattern_record(j, c, t, env, span, at, name, pos)) from match pos {
     PositionalOk(args) => pattern_rewrap_frame_checked(
       c,
       ck_ctor_pattern_in(j, c, name, args, t, env, span, at),
@@ -257,7 +257,7 @@ pub theorem pattern_step_frame_checked(
   ih_ctor_pattern: PatternIH_ctor_pattern_checked(j),
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, pattern_step(j, c, t, env, span, at, p)) {
-  match p: CkScopeChecked(c, pattern_step(j, c, t, env, span, at, p)) {
+  ⊢ CkScopeChecked(c, pattern_step(j, c, t, env, span, at, p)) from match p {
     PtWild => pattern_return_frame_checked(c, env, Star, ordered)
     PtBind(name) => pattern_bind_name_frame_checked(
       j,
@@ -369,7 +369,7 @@ pub def PatternAll_checked(
   And(PatternIH_ctor_pattern_checked(k), PatternIH_ctor_args_checked(k))
 )
 pub theorem pattern_all_checked(k: Nat): PatternAll_checked(k) {
-  match k: PatternAll_checked(k) {
+  ⊢ PatternAll_checked(k) from match k {
     Zero => AndIntro(
       c => p => t => env => span => at => ordered => AndIntro(
         ordered,

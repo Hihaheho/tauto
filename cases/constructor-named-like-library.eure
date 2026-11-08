@@ -1,0 +1,60 @@
+// A constructor of a file's own type means that constructor wherever the
+// file writes its name alone, also when the name is one the language keeps
+// for itself with no declaration in the standard library (`Info`, `Char`,
+// `Div`, `Exceeded`, `Level`), as it does for a name the library declares
+// (`List`). The library's type of the name still means the type.
+@ cases.constructor-named-like-library
+source = ```tauto
+pub(open) enum Level { Debug, Info }
+enum Sym { Char, Div, Exceeded, Level, List }
+
+fn info(): Level { Info }
+
+fn rank(x: Level): Nat {
+  match x {
+    Debug => 0
+    Info => 1
+  }
+}
+
+fn sym(x: Sym): Nat {
+  match x {
+    Char => 0
+    Div => 1
+    Exceeded => 2
+    Level => 3
+    List => 4
+  }
+}
+
+fn same(c: Char): Char { c }
+
+perform show("info", rank(info()))
+perform show("level", sym(Level))
+perform show("char", sym(Char))
+```
+shows = ['info = 1', 'level = 3', 'char = 0']
+
+// `#(a, b)` and `#()` are the language's tuples also in a file with a
+// constructor named `Tuple`: the syntax is read as `Tuple`, which stays the
+// library's, so an expression names the constructor with its type
+// (`Atom::Tuple`). A pattern names it alone.
+@ cases.a-constructor-named-tuple-leaves-tuples-alone
+source = ```tauto
+enum Atom { Name, Tuple(Bool) }
+
+fn pair(): Nat × Nat { #(1, 2) }
+
+fn none(): Unit { #() }
+
+fn atom(a: Atom): Bool {
+  match a {
+    Name => false
+    Tuple(b) => b
+  }
+}
+
+perform show("pair", pair())
+perform show("atom", atom(Atom::Tuple(true)))
+```
+shows = ['pair = #(1, 2)', 'atom = true']

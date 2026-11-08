@@ -1,0 +1,33 @@
+import std::Text
+import "../src/cmdline.taut"
+import "../src/cli.taut"
+
+// A value that is one of a few names: `one_of` makes a type with a
+// constructor for each, and the help lists them.
+
+cli!(`Run "run" "Run a job" { mode -m: one_of(fast|safe|slow) = safe "How to run" level: arg one_of(low|high)? "The level" }`) =>
+  inductive Run::mode_value, fn Run::mode_value::of_text, inductive Run::level_value, fn Run::level_value::of_text, inductive Run, fn Run::spec, fn Run::checks, fn Run::of, fn Run::parse, fn Run::help, fn Run::message, theorem Run::renderable, theorem Run::round_trip, fn Run::mode, theorem Run::mode::reads, fn Run::level, theorem Run::level::reads
+
+theorem parse_default(): Run::parse(Nil) = Ok(Run::Mk(Run::mode_value::safe, None)) {
+  Refl
+}
+
+theorem parse_both(): Run::parse(Cons("-mfast", Cons("high", Nil))) = Ok(Run::Mk(Run::mode_value::fast, Some(Run::level_value::high))) {
+  Refl
+}
+
+theorem parse_not_a_choice(): Run::parse(Cons("--mode", Cons("quick", Nil))) = Failed(BadValue(0, "quick")) {
+  Refl
+}
+
+theorem parse_bad_level(): Run::parse(Cons("mid", Nil)) = Failed(BadArg(0, "mid")) {
+  Refl
+}
+
+theorem help_text(): Run::help() = "Run a job\n\nUsage: run [OPTIONS] [LEVEL]\n\nArguments:\n  [LEVEL]            The level [possible values: low, high]\n\nOptions:\n  -m, --mode <MODE>  How to run [default: safe] [possible values: fast, safe, slow]\n  -h, --help         Print help\n  -V, --version      Print version\n" {
+  Refl
+}
+
+theorem bad_value_message(): Run::message(BadValue(0, "quick")) = "error: invalid value 'quick' for '--mode <MODE>'\n\nUsage: run [OPTIONS] [LEVEL]\n\nFor more information, try '--help'.\n" {
+  Refl
+}

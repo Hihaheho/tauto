@@ -6,31 +6,31 @@ pub(open) inductive AlgebraEq(u: Level, A: Type(u), a: A): (A) -> Prop {
 pub theorem algebra_subst<u: Level, A: Type(
   u
 ), a: A, b: A>(P: (A) -> Prop, e: AlgebraEq(u, A, a, b), p: P(a)): P(b) {
-  AlgebraEq::ind(u, A, a, y => proof => P(y), p, b, e)
+  AlgebraEq::ind(<u: u, A: A, a: a>, y => proof => P(y), p, b, e)
 }
 
 pub theorem algebra_sym<u: Level, A: Type(
   u
 ), a: A, b: A>(e: AlgebraEq(u, A, a, b)): AlgebraEq(u, A, b, a) {
-  algebra_subst(u, A, a, b, y => AlgebraEq(u, A, y, a), e, AlgebraRefl(u, A, a))
+  algebra_subst(<u: u, A: A, a: a, b: b>, y => AlgebraEq(u, A, y, a), e, AlgebraRefl(<u: u, A: A, a: a>))
 }
 
 pub theorem algebra_trans<u: Level, A: Type(
   u
 ), a: A, b: A, c: A>(e1: AlgebraEq(u, A, a, b), e2: AlgebraEq(u, A, b, c)): AlgebraEq(u, A, a, c) {
-  algebra_subst(u, A, b, c, y => AlgebraEq(u, A, a, y), e2, e1)
+  algebra_subst(<u: u, A: A, a: b, b: c>, y => AlgebraEq(u, A, a, y), e2, e1)
 }
 
 pub theorem algebra_congr<u: Level, v: Level, A: Type(
   u
 ), B: Type(v), a: A, b: A>(f: (A) -> B, e: AlgebraEq(u, A, a, b)): AlgebraEq(v, B, f(a), f(b)) {
-  algebra_subst(u, A, a, b, y => AlgebraEq(v, B, f(a), f(y)), e, AlgebraRefl(v, B, f(a)))
+  algebra_subst(<u: u, A: A, a: a, b: b>, y => AlgebraEq(v, B, f(a), f(y)), e, AlgebraRefl(<u: v, A: B, a: f(a)>))
 }
 
 pub theorem algebra_from_eq<A: Type, a: A, b: A>(e: a = b): AlgebraEq(0, A, a, b) {
-  Eq::subst(A, a, b, y => AlgebraEq(0, A, a, y), e, AlgebraRefl(0, A, a))
+  Eq::subst(<A: A, a: a, b: b>, y => AlgebraEq(0, A, a, y), e, AlgebraRefl(<u: 0, A: A, a: a>))
 }
 
 pub theorem algebra_to_eq<A: Type, a: A, b: A>(e: AlgebraEq(0, A, a, b)): a = b {
-  algebra_subst(0, A, a, b, y => a = y, e, Refl(A, a))
+  algebra_subst(<u: 0, A: A, a: a, b: b>, y => a = y, e, Refl(<A: A, a: a>))
 }

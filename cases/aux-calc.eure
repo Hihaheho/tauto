@@ -1,0 +1,69 @@
+@ cases.native_host_arithmetic_contract
+source = ```tauto
+fn results(source: Text): Unit {
+  match calc_read(source, 100000) {
+    Ok(original) => match calc_fold_bounded(original, 100000) {
+      Ok(folded) => {
+        perform show("folded", match folded { ELit(value) => Some(value), _ => None })
+        perform show("eval", calc_eval_bounded(original, 100000))
+        perform show("folded-eval", calc_eval_bounded(folded, 100000))
+        perform show("stack", calc_run_bounded(original, 100000))
+        perform show("folded-stack", calc_run_bounded(folded, 100000))
+      }
+      Err(failure) => perform show("unexpected-fold", failure)
+    }
+    Err(failure) => perform show("unexpected-parse", failure)
+  }
+}
+results("0")
+results("12")
+results("1 + 2 * 3")
+results("(2 + 3) * (4 + 5)")
+results("(7+0)*1")
+results("12345 * 6789")
+perform show("ast-at", match calc_parse("12") { Ok(ast) => ast.span.id, Err(diag) => 999 })
+```
+imports = [path`../examples/calc/src/calc.taut`, path`../examples/calc/src/api.taut`, path`../examples/compiler/src/compiler.taut`]
+budget = 100000000
+shows = ["folded = Some(0)", "eval = Ok(0)", "folded-eval = Ok(0)", "stack = Ok(Some(Cons(0, Nil)))", "folded-stack = Ok(Some(Cons(0, Nil)))", "folded = Some(12)", "eval = Ok(12)", "folded-eval = Ok(12)", "stack = Ok(Some(Cons(12, Nil)))", "folded-stack = Ok(Some(Cons(12, Nil)))", "folded = Some(7)", "eval = Ok(7)", "folded-eval = Ok(7)", "stack = Ok(Some(Cons(7, Nil)))", "folded-stack = Ok(Some(Cons(7, Nil)))", "folded = Some(45)", "eval = Ok(45)", "folded-eval = Ok(45)", "stack = Ok(Some(Cons(45, Nil)))", "folded-stack = Ok(Some(Cons(45, Nil)))", "folded = Some(7)", "eval = Ok(7)", "folded-eval = Ok(7)", "stack = Ok(Some(Cons(7, Nil)))", "folded-stack = Ok(Some(Cons(7, Nil)))", "folded = Some(83810205)", "eval = Ok(83810205)", "folded-eval = Ok(83810205)", "stack = Ok(Some(Cons(83810205, Nil)))", "folded-stack = Ok(Some(Cons(83810205, Nil)))", "ast-at = 0"]
+extract = true
+backends = ["rust", "javascript"]
+
+@ cases.parse_failure_is_not_budget_exhaustion
+source = ```tauto
+fn invalid(source: Text): Bool {
+  match calc_parse(source) {
+    Err(raw) => match calc_read(source, 100000) {
+      Err(CalcParseFailed(domain)) => domain.code == "macro.syntax_error" && domain.at == raw.at && domain.message == raw.message
+      _ => false
+    }
+    Ok(tree) => false
+  }
+}
+perform show("syntax", invalid("2 + * 3"))
+perform show("syntax", invalid("("))
+perform show("syntax", invalid("日本語"))
+perform show("syntax", invalid("1 trailing"))
+```
+imports = [path`../examples/calc/src/calc.taut`, path`../examples/calc/src/api.taut`]
+budget = 100000000
+shows = ["syntax = true", "syntax = true", "syntax = true", "syntax = true"]
+extract = true
+backends = ["rust", "javascript"]
+
+@ cases.zero_and_negative_budgets
+source = ```tauto
+fn exhausted(steps: i64): Unit {
+  perform show("read", match calc_read("1", steps) { Err(CalcBudgetExceeded) => true, _ => false })
+  perform show("fold", match calc_fold_bounded(ELit(1), steps) { Err(CalcBudgetExceeded) => true, _ => false })
+  perform show("eval", match calc_eval_bounded(ELit(1), steps) { Err(CalcBudgetExceeded) => true, _ => false })
+  perform show("stack", match calc_run_bounded(ELit(1), steps) { Err(CalcBudgetExceeded) => true, _ => false })
+}
+exhausted(0)
+exhausted(-1)
+```
+imports = [path`../examples/calc/src/calc.taut`, path`../examples/calc/src/api.taut`, path`../examples/compiler/src/compiler.taut`]
+budget = 100000000
+shows = ["read = true", "fold = true", "eval = true", "stack = true", "read = true", "fold = true", "eval = true", "stack = true"]
+extract = true
+backends = ["rust", "javascript"]

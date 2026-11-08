@@ -12,10 +12,7 @@ pub def TrackedState(
   next: Checker
 ): Prop := And(
   Sub(TyLiteral, stable_literals(c), stable_literals(next)),
-  And(
-    stable_functions(next) = stable_functions(c),
-    ObligationState(c, next)
-  )
+  And(stable_functions(next) = stable_functions(c), ObligationState(c, next))
 )
 pub def TrackedFrame<A: Type>(c: Checker, m: Mut1(A, Checker)): Prop := TrackedState(c, ck_st(m))
 pub theorem tracked_state_refl(
@@ -35,7 +32,13 @@ pub theorem tracked_state_trans(
     item => member => And::left(tail)(item, And::left(first)(item, member)),
     AndIntro(
       Eq::trans(And::left(And::right(tail)), And::left(And::right(first))),
-      obligation_state_trans(c, next, last, And::right(And::right(first)), And::right(And::right(tail)))
+      obligation_state_trans(
+        c,
+        next,
+        last,
+        And::right(And::right(first)),
+        And::right(And::right(tail))
+      )
     )
   )
 }
@@ -61,7 +64,7 @@ pub theorem tracked_bind<A: Type, B: Type>(
   first: TrackedFrame(c, m),
   tail: ∀ value: A. ∀ next: Checker. TrackedFrame(next, k(value, next))
 ): TrackedFrame(c, frame_bind(A, B, k, m)) {
-  match m: TrackedFrame(c, frame_bind(A, B, k, m)) {
+  ⊢ TrackedFrame(c, frame_bind(A, B, k, m)) from match m {
     mut1(value, next) => tracked_state_trans(
       c,
       next,
@@ -84,7 +87,7 @@ pub theorem tracked_return<A: Type, B: Type>(
   m: Mut1(A, Checker),
   frame: TrackedFrame(c, m)
 ): TrackedFrame(c, frame_return(value, m)) {
-  match m: TrackedFrame(c, frame_return(value, m)) { mut1(ignored, next) => frame }
+  ⊢ TrackedFrame(c, frame_return(value, m)) from match m { mut1(ignored, next) => frame }
 }
 pub theorem tracked_changed<A: Type>(
   c: Checker,

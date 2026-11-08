@@ -1,0 +1,58 @@
+// Singleton Product wrappers preserve the ordinary expression AST.
+// Two or more members are a product; `(x: T)` is the member at the type `T`.
+
+@ cases.plain-expression
+source = ```tauto
+fn constant(): u64 { 0 }
+```
+differential = "surface"
+
+@ cases.generic-type-argument
+source = ```tauto
+enum Box(A: Type) { Wrap(A) }
+fn read(x: Box(u64)): u64 { 0 }
+```
+differential = "surface"
+
+@ cases.operator-precedence
+source = ```tauto
+fn arithmetic(): i64 { 1 + 2 * 3 }
+```
+differential = "surface"
+
+@ cases.product-value
+source = ```tauto
+let value := #(1, "a", true)
+```
+differential = "surface"
+
+@ cases.product-type
+source = ```tauto
+fn first(p: {i64 × Text} × Bool): i64 { 0 }
+```
+differential = "surface"
+
+@ cases.typed-projection
+source = ```tauto
+fn read(p: i64 × Text): Text { (p: Text) }
+```
+differential = "surface"
+
+@ cases.tagged-product
+source = ```tauto
+let p := #(@x 1, @y 2)
+let a: i64 := (p: @x i64)
+```
+differential = "surface"
+
+@ cases.written-product-types
+source = ```tauto
+fn first(p: {i64 × Text} × Bool, q: (i64 × Text) × i64): i64 { 0 }
+```
+differential = "types"
+
+@ cases.written-product-unit
+source = ```tauto
+fn unit(p: i64 × Unit, q: Unit × Unit): i64 { 0 }
+```
+differential = "types"

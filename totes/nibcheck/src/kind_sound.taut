@@ -30,17 +30,17 @@ pub theorem kind_ne(
 }
 
 pub theorem kle_trans(a: Kind, b: Kind, c: Kind, h1: KLe(a, b), h2: KLe(b, c)): KLe(a, c) {
-  match a: (KLe(a, b)) -> (KLe(b, c)) -> KLe(a, c) {
-    KindCopy => match b: (KLe(KindCopy, b)) -> (KLe(b, c)) -> KLe(KindCopy, c) {
-      KindCopy => match c: (KLe(KindCopy, KindCopy)) -> (KLe(KindCopy, c)) -> KLe(KindCopy, c) {
+  (⊢ (KLe(a, b)) -> (KLe(b, c)) -> KLe(a, c) from match a {
+    KindCopy => ⊢ (KLe(KindCopy, b)) -> (KLe(b, c)) -> KLe(KindCopy, c) from match b {
+      KindCopy => ⊢ (KLe(KindCopy, KindCopy)) -> (KLe(KindCopy, c)) -> KLe(KindCopy, c) from match c {
         KindCopy => (x: KLe(KindCopy, KindCopy)) => (y: KLe(KindCopy, KindCopy)) => Refl
         KindShared => (x: KLe(KindCopy, KindCopy)) => (y: KLe(KindCopy, KindShared)) => Refl
         KindAffine => (x: KLe(KindCopy, KindCopy)) => (y: KLe(KindCopy, KindAffine)) => Refl
         KindLinear => (x: KLe(KindCopy, KindCopy)) => (y: KLe(KindCopy, KindLinear)) => Refl
       }
-      KindShared => match c: (
+      KindShared => ⊢ (
         KLe(KindCopy, KindShared)
-      ) -> (KLe(KindShared, c)) -> KLe(KindCopy, c) {
+      ) -> (KLe(KindShared, c)) -> KLe(KindCopy, c) from match c {
         KindCopy => (x: KLe(KindCopy, KindShared)) => (y: KLe(KindShared, KindCopy)) => False::elim(
           kind_ne(KindShared, KindCopy, y, Refl)
         )
@@ -48,37 +48,35 @@ pub theorem kle_trans(a: Kind, b: Kind, c: Kind, h1: KLe(a, b), h2: KLe(b, c)): 
         KindAffine => (x: KLe(KindCopy, KindShared)) => (y: KLe(KindShared, KindAffine)) => Refl
         KindLinear => (x: KLe(KindCopy, KindShared)) => (y: KLe(KindShared, KindLinear)) => Refl
       }
-      KindAffine => match c: (
+      KindAffine => ⊢ (
         KLe(KindCopy, KindAffine)
-      ) -> (KLe(KindAffine, c)) -> KLe(KindCopy, c) {
+      ) -> (KLe(KindAffine, c)) -> KLe(KindCopy, c) from match c {
         KindCopy => (x: KLe(KindCopy, KindAffine)) => (y: KLe(KindAffine, KindCopy)) => False::elim(
           kind_ne(KindAffine, KindCopy, y, Refl)
         )
-        KindShared => (x: KLe(KindCopy, KindAffine)) => (
-          y: KLe(KindAffine, KindShared)
-        ) => False::elim(kind_ne(KindAffine, KindShared, y, Refl))
+        KindShared => (x: KLe(KindCopy, KindAffine)) => (y: KLe(KindAffine, KindShared)) => False::elim(
+          kind_ne(KindAffine, KindShared, y, Refl)
+        )
         KindAffine => (x: KLe(KindCopy, KindAffine)) => (y: KLe(KindAffine, KindAffine)) => Refl
         KindLinear => (x: KLe(KindCopy, KindAffine)) => (y: KLe(KindAffine, KindLinear)) => Refl
       }
-      KindLinear => match c: (
+      KindLinear => ⊢ (
         KLe(KindCopy, KindLinear)
-      ) -> (KLe(KindLinear, c)) -> KLe(KindCopy, c) {
+      ) -> (KLe(KindLinear, c)) -> KLe(KindCopy, c) from match c {
         KindCopy => (x: KLe(KindCopy, KindLinear)) => (y: KLe(KindLinear, KindCopy)) => False::elim(
           kind_ne(KindLinear, KindCopy, y, Refl)
         )
-        KindShared => (x: KLe(KindCopy, KindLinear)) => (
-          y: KLe(KindLinear, KindShared)
-        ) => False::elim(kind_ne(KindLinear, KindShared, y, Refl))
-        KindAffine => (x: KLe(KindCopy, KindLinear)) => (
-          y: KLe(KindLinear, KindAffine)
-        ) => False::elim(kind_ne(KindLinear, KindAffine, y, Refl))
+        KindShared => (x: KLe(KindCopy, KindLinear)) => (y: KLe(KindLinear, KindShared)) => False::elim(
+          kind_ne(KindLinear, KindShared, y, Refl)
+        )
+        KindAffine => (x: KLe(KindCopy, KindLinear)) => (y: KLe(KindLinear, KindAffine)) => False::elim(
+          kind_ne(KindLinear, KindAffine, y, Refl)
+        )
         KindLinear => (x: KLe(KindCopy, KindLinear)) => (y: KLe(KindLinear, KindLinear)) => Refl
       }
     }
-    KindShared => match b: (KLe(KindShared, b)) -> (KLe(b, c)) -> KLe(KindShared, c) {
-      KindCopy => match c: (
-        KLe(KindShared, KindCopy)
-      ) -> (KLe(KindCopy, c)) -> KLe(KindShared, c) {
+    KindShared => ⊢ (KLe(KindShared, b)) -> (KLe(b, c)) -> KLe(KindShared, c) from match b {
+      KindCopy => ⊢ (KLe(KindShared, KindCopy)) -> (KLe(KindCopy, c)) -> KLe(KindShared, c) from match c {
         KindCopy => (x: KLe(KindShared, KindCopy)) => (y: KLe(KindCopy, KindCopy)) => False::elim(
           kind_ne(KindShared, KindCopy, x, Refl)
         )
@@ -92,9 +90,9 @@ pub theorem kle_trans(a: Kind, b: Kind, c: Kind, h1: KLe(a, b), h2: KLe(b, c)): 
           kind_ne(KindShared, KindCopy, x, Refl)
         )
       }
-      KindShared => match c: (
+      KindShared => ⊢ (
         KLe(KindShared, KindShared)
-      ) -> (KLe(KindShared, c)) -> KLe(KindShared, c) {
+      ) -> (KLe(KindShared, c)) -> KLe(KindShared, c) from match c {
         KindCopy => (x: KLe(KindShared, KindShared)) => (y: KLe(KindShared, KindCopy)) => False::elim(
           kind_ne(KindShared, KindCopy, y, Refl)
         )
@@ -102,37 +100,35 @@ pub theorem kle_trans(a: Kind, b: Kind, c: Kind, h1: KLe(a, b), h2: KLe(b, c)): 
         KindAffine => (x: KLe(KindShared, KindShared)) => (y: KLe(KindShared, KindAffine)) => Refl
         KindLinear => (x: KLe(KindShared, KindShared)) => (y: KLe(KindShared, KindLinear)) => Refl
       }
-      KindAffine => match c: (
+      KindAffine => ⊢ (
         KLe(KindShared, KindAffine)
-      ) -> (KLe(KindAffine, c)) -> KLe(KindShared, c) {
+      ) -> (KLe(KindAffine, c)) -> KLe(KindShared, c) from match c {
         KindCopy => (x: KLe(KindShared, KindAffine)) => (y: KLe(KindAffine, KindCopy)) => False::elim(
           kind_ne(KindAffine, KindCopy, y, Refl)
         )
-        KindShared => (x: KLe(KindShared, KindAffine)) => (
-          y: KLe(KindAffine, KindShared)
-        ) => False::elim(kind_ne(KindAffine, KindShared, y, Refl))
+        KindShared => (x: KLe(KindShared, KindAffine)) => (y: KLe(KindAffine, KindShared)) => False::elim(
+          kind_ne(KindAffine, KindShared, y, Refl)
+        )
         KindAffine => (x: KLe(KindShared, KindAffine)) => (y: KLe(KindAffine, KindAffine)) => Refl
         KindLinear => (x: KLe(KindShared, KindAffine)) => (y: KLe(KindAffine, KindLinear)) => Refl
       }
-      KindLinear => match c: (
+      KindLinear => ⊢ (
         KLe(KindShared, KindLinear)
-      ) -> (KLe(KindLinear, c)) -> KLe(KindShared, c) {
+      ) -> (KLe(KindLinear, c)) -> KLe(KindShared, c) from match c {
         KindCopy => (x: KLe(KindShared, KindLinear)) => (y: KLe(KindLinear, KindCopy)) => False::elim(
           kind_ne(KindLinear, KindCopy, y, Refl)
         )
-        KindShared => (x: KLe(KindShared, KindLinear)) => (
-          y: KLe(KindLinear, KindShared)
-        ) => False::elim(kind_ne(KindLinear, KindShared, y, Refl))
-        KindAffine => (x: KLe(KindShared, KindLinear)) => (
-          y: KLe(KindLinear, KindAffine)
-        ) => False::elim(kind_ne(KindLinear, KindAffine, y, Refl))
+        KindShared => (x: KLe(KindShared, KindLinear)) => (y: KLe(KindLinear, KindShared)) => False::elim(
+          kind_ne(KindLinear, KindShared, y, Refl)
+        )
+        KindAffine => (x: KLe(KindShared, KindLinear)) => (y: KLe(KindLinear, KindAffine)) => False::elim(
+          kind_ne(KindLinear, KindAffine, y, Refl)
+        )
         KindLinear => (x: KLe(KindShared, KindLinear)) => (y: KLe(KindLinear, KindLinear)) => Refl
       }
     }
-    KindAffine => match b: (KLe(KindAffine, b)) -> (KLe(b, c)) -> KLe(KindAffine, c) {
-      KindCopy => match c: (
-        KLe(KindAffine, KindCopy)
-      ) -> (KLe(KindCopy, c)) -> KLe(KindAffine, c) {
+    KindAffine => ⊢ (KLe(KindAffine, b)) -> (KLe(b, c)) -> KLe(KindAffine, c) from match b {
+      KindCopy => ⊢ (KLe(KindAffine, KindCopy)) -> (KLe(KindCopy, c)) -> KLe(KindAffine, c) from match c {
         KindCopy => (x: KLe(KindAffine, KindCopy)) => (y: KLe(KindCopy, KindCopy)) => False::elim(
           kind_ne(KindAffine, KindCopy, x, Refl)
         )
@@ -146,53 +142,51 @@ pub theorem kle_trans(a: Kind, b: Kind, c: Kind, h1: KLe(a, b), h2: KLe(b, c)): 
           kind_ne(KindAffine, KindCopy, x, Refl)
         )
       }
-      KindShared => match c: (
+      KindShared => ⊢ (
         KLe(KindAffine, KindShared)
-      ) -> (KLe(KindShared, c)) -> KLe(KindAffine, c) {
+      ) -> (KLe(KindShared, c)) -> KLe(KindAffine, c) from match c {
         KindCopy => (x: KLe(KindAffine, KindShared)) => (y: KLe(KindShared, KindCopy)) => False::elim(
           kind_ne(KindAffine, KindShared, x, Refl)
         )
-        KindShared => (x: KLe(KindAffine, KindShared)) => (
-          y: KLe(KindShared, KindShared)
-        ) => False::elim(kind_ne(KindAffine, KindShared, x, Refl))
-        KindAffine => (x: KLe(KindAffine, KindShared)) => (
-          y: KLe(KindShared, KindAffine)
-        ) => False::elim(kind_ne(KindAffine, KindShared, x, Refl))
-        KindLinear => (x: KLe(KindAffine, KindShared)) => (
-          y: KLe(KindShared, KindLinear)
-        ) => False::elim(kind_ne(KindAffine, KindShared, x, Refl))
+        KindShared => (x: KLe(KindAffine, KindShared)) => (y: KLe(KindShared, KindShared)) => False::elim(
+          kind_ne(KindAffine, KindShared, x, Refl)
+        )
+        KindAffine => (x: KLe(KindAffine, KindShared)) => (y: KLe(KindShared, KindAffine)) => False::elim(
+          kind_ne(KindAffine, KindShared, x, Refl)
+        )
+        KindLinear => (x: KLe(KindAffine, KindShared)) => (y: KLe(KindShared, KindLinear)) => False::elim(
+          kind_ne(KindAffine, KindShared, x, Refl)
+        )
       }
-      KindAffine => match c: (
+      KindAffine => ⊢ (
         KLe(KindAffine, KindAffine)
-      ) -> (KLe(KindAffine, c)) -> KLe(KindAffine, c) {
+      ) -> (KLe(KindAffine, c)) -> KLe(KindAffine, c) from match c {
         KindCopy => (x: KLe(KindAffine, KindAffine)) => (y: KLe(KindAffine, KindCopy)) => False::elim(
           kind_ne(KindAffine, KindCopy, y, Refl)
         )
-        KindShared => (x: KLe(KindAffine, KindAffine)) => (
-          y: KLe(KindAffine, KindShared)
-        ) => False::elim(kind_ne(KindAffine, KindShared, y, Refl))
+        KindShared => (x: KLe(KindAffine, KindAffine)) => (y: KLe(KindAffine, KindShared)) => False::elim(
+          kind_ne(KindAffine, KindShared, y, Refl)
+        )
         KindAffine => (x: KLe(KindAffine, KindAffine)) => (y: KLe(KindAffine, KindAffine)) => Refl
         KindLinear => (x: KLe(KindAffine, KindAffine)) => (y: KLe(KindAffine, KindLinear)) => Refl
       }
-      KindLinear => match c: (
+      KindLinear => ⊢ (
         KLe(KindAffine, KindLinear)
-      ) -> (KLe(KindLinear, c)) -> KLe(KindAffine, c) {
+      ) -> (KLe(KindLinear, c)) -> KLe(KindAffine, c) from match c {
         KindCopy => (x: KLe(KindAffine, KindLinear)) => (y: KLe(KindLinear, KindCopy)) => False::elim(
           kind_ne(KindLinear, KindCopy, y, Refl)
         )
-        KindShared => (x: KLe(KindAffine, KindLinear)) => (
-          y: KLe(KindLinear, KindShared)
-        ) => False::elim(kind_ne(KindLinear, KindShared, y, Refl))
-        KindAffine => (x: KLe(KindAffine, KindLinear)) => (
-          y: KLe(KindLinear, KindAffine)
-        ) => False::elim(kind_ne(KindLinear, KindAffine, y, Refl))
+        KindShared => (x: KLe(KindAffine, KindLinear)) => (y: KLe(KindLinear, KindShared)) => False::elim(
+          kind_ne(KindLinear, KindShared, y, Refl)
+        )
+        KindAffine => (x: KLe(KindAffine, KindLinear)) => (y: KLe(KindLinear, KindAffine)) => False::elim(
+          kind_ne(KindLinear, KindAffine, y, Refl)
+        )
         KindLinear => (x: KLe(KindAffine, KindLinear)) => (y: KLe(KindLinear, KindLinear)) => Refl
       }
     }
-    KindLinear => match b: (KLe(KindLinear, b)) -> (KLe(b, c)) -> KLe(KindLinear, c) {
-      KindCopy => match c: (
-        KLe(KindLinear, KindCopy)
-      ) -> (KLe(KindCopy, c)) -> KLe(KindLinear, c) {
+    KindLinear => ⊢ (KLe(KindLinear, b)) -> (KLe(b, c)) -> KLe(KindLinear, c) from match b {
+      KindCopy => ⊢ (KLe(KindLinear, KindCopy)) -> (KLe(KindCopy, c)) -> KLe(KindLinear, c) from match c {
         KindCopy => (x: KLe(KindLinear, KindCopy)) => (y: KLe(KindCopy, KindCopy)) => False::elim(
           kind_ne(KindLinear, KindCopy, x, Refl)
         )
@@ -206,54 +200,54 @@ pub theorem kle_trans(a: Kind, b: Kind, c: Kind, h1: KLe(a, b), h2: KLe(b, c)): 
           kind_ne(KindLinear, KindCopy, x, Refl)
         )
       }
-      KindShared => match c: (
+      KindShared => ⊢ (
         KLe(KindLinear, KindShared)
-      ) -> (KLe(KindShared, c)) -> KLe(KindLinear, c) {
+      ) -> (KLe(KindShared, c)) -> KLe(KindLinear, c) from match c {
         KindCopy => (x: KLe(KindLinear, KindShared)) => (y: KLe(KindShared, KindCopy)) => False::elim(
           kind_ne(KindLinear, KindShared, x, Refl)
         )
-        KindShared => (x: KLe(KindLinear, KindShared)) => (
-          y: KLe(KindShared, KindShared)
-        ) => False::elim(kind_ne(KindLinear, KindShared, x, Refl))
-        KindAffine => (x: KLe(KindLinear, KindShared)) => (
-          y: KLe(KindShared, KindAffine)
-        ) => False::elim(kind_ne(KindLinear, KindShared, x, Refl))
-        KindLinear => (x: KLe(KindLinear, KindShared)) => (
-          y: KLe(KindShared, KindLinear)
-        ) => False::elim(kind_ne(KindLinear, KindShared, x, Refl))
+        KindShared => (x: KLe(KindLinear, KindShared)) => (y: KLe(KindShared, KindShared)) => False::elim(
+          kind_ne(KindLinear, KindShared, x, Refl)
+        )
+        KindAffine => (x: KLe(KindLinear, KindShared)) => (y: KLe(KindShared, KindAffine)) => False::elim(
+          kind_ne(KindLinear, KindShared, x, Refl)
+        )
+        KindLinear => (x: KLe(KindLinear, KindShared)) => (y: KLe(KindShared, KindLinear)) => False::elim(
+          kind_ne(KindLinear, KindShared, x, Refl)
+        )
       }
-      KindAffine => match c: (
+      KindAffine => ⊢ (
         KLe(KindLinear, KindAffine)
-      ) -> (KLe(KindAffine, c)) -> KLe(KindLinear, c) {
+      ) -> (KLe(KindAffine, c)) -> KLe(KindLinear, c) from match c {
         KindCopy => (x: KLe(KindLinear, KindAffine)) => (y: KLe(KindAffine, KindCopy)) => False::elim(
           kind_ne(KindLinear, KindAffine, x, Refl)
         )
-        KindShared => (x: KLe(KindLinear, KindAffine)) => (
-          y: KLe(KindAffine, KindShared)
-        ) => False::elim(kind_ne(KindLinear, KindAffine, x, Refl))
-        KindAffine => (x: KLe(KindLinear, KindAffine)) => (
-          y: KLe(KindAffine, KindAffine)
-        ) => False::elim(kind_ne(KindLinear, KindAffine, x, Refl))
-        KindLinear => (x: KLe(KindLinear, KindAffine)) => (
-          y: KLe(KindAffine, KindLinear)
-        ) => False::elim(kind_ne(KindLinear, KindAffine, x, Refl))
+        KindShared => (x: KLe(KindLinear, KindAffine)) => (y: KLe(KindAffine, KindShared)) => False::elim(
+          kind_ne(KindLinear, KindAffine, x, Refl)
+        )
+        KindAffine => (x: KLe(KindLinear, KindAffine)) => (y: KLe(KindAffine, KindAffine)) => False::elim(
+          kind_ne(KindLinear, KindAffine, x, Refl)
+        )
+        KindLinear => (x: KLe(KindLinear, KindAffine)) => (y: KLe(KindAffine, KindLinear)) => False::elim(
+          kind_ne(KindLinear, KindAffine, x, Refl)
+        )
       }
-      KindLinear => match c: (
+      KindLinear => ⊢ (
         KLe(KindLinear, KindLinear)
-      ) -> (KLe(KindLinear, c)) -> KLe(KindLinear, c) {
+      ) -> (KLe(KindLinear, c)) -> KLe(KindLinear, c) from match c {
         KindCopy => (x: KLe(KindLinear, KindLinear)) => (y: KLe(KindLinear, KindCopy)) => False::elim(
           kind_ne(KindLinear, KindCopy, y, Refl)
         )
-        KindShared => (x: KLe(KindLinear, KindLinear)) => (
-          y: KLe(KindLinear, KindShared)
-        ) => False::elim(kind_ne(KindLinear, KindShared, y, Refl))
-        KindAffine => (x: KLe(KindLinear, KindLinear)) => (
-          y: KLe(KindLinear, KindAffine)
-        ) => False::elim(kind_ne(KindLinear, KindAffine, y, Refl))
+        KindShared => (x: KLe(KindLinear, KindLinear)) => (y: KLe(KindLinear, KindShared)) => False::elim(
+          kind_ne(KindLinear, KindShared, y, Refl)
+        )
+        KindAffine => (x: KLe(KindLinear, KindLinear)) => (y: KLe(KindLinear, KindAffine)) => False::elim(
+          kind_ne(KindLinear, KindAffine, y, Refl)
+        )
         KindLinear => (x: KLe(KindLinear, KindLinear)) => (y: KLe(KindLinear, KindLinear)) => Refl
       }
     }
-  }(h1, h2)
+  })(h1, h2)
 }
 
 pub theorem kle_lub(
@@ -263,19 +257,19 @@ pub theorem kle_lub(
   h1: KLe(a, c),
   h2: KLe(b, c)
 ): KLe(kind_join(a, b), c) {
-  match a: (KLe(a, c)) -> (KLe(b, c)) -> KLe(kind_join(a, b), c) {
-    KindCopy => match b: (KLe(KindCopy, c)) -> (KLe(b, c)) -> KLe(kind_join(KindCopy, b), c) {
-      KindCopy => match c: (
+  (⊢ (KLe(a, c)) -> (KLe(b, c)) -> KLe(kind_join(a, b), c) from match a {
+    KindCopy => ⊢ (KLe(KindCopy, c)) -> (KLe(b, c)) -> KLe(kind_join(KindCopy, b), c) from match b {
+      KindCopy => ⊢ (
         KLe(KindCopy, c)
-      ) -> (KLe(KindCopy, c)) -> KLe(kind_join(KindCopy, KindCopy), c) {
+      ) -> (KLe(KindCopy, c)) -> KLe(kind_join(KindCopy, KindCopy), c) from match c {
         KindCopy => (x: KLe(KindCopy, KindCopy)) => (y: KLe(KindCopy, KindCopy)) => Refl
         KindShared => (x: KLe(KindCopy, KindShared)) => (y: KLe(KindCopy, KindShared)) => Refl
         KindAffine => (x: KLe(KindCopy, KindAffine)) => (y: KLe(KindCopy, KindAffine)) => Refl
         KindLinear => (x: KLe(KindCopy, KindLinear)) => (y: KLe(KindCopy, KindLinear)) => Refl
       }
-      KindShared => match c: (
+      KindShared => ⊢ (
         KLe(KindCopy, c)
-      ) -> (KLe(KindShared, c)) -> KLe(kind_join(KindCopy, KindShared), c) {
+      ) -> (KLe(KindShared, c)) -> KLe(kind_join(KindCopy, KindShared), c) from match c {
         KindCopy => (x: KLe(KindCopy, KindCopy)) => (y: KLe(KindShared, KindCopy)) => False::elim(
           kind_ne(KindShared, KindCopy, y, Refl)
         )
@@ -283,39 +277,37 @@ pub theorem kle_lub(
         KindAffine => (x: KLe(KindCopy, KindAffine)) => (y: KLe(KindShared, KindAffine)) => Refl
         KindLinear => (x: KLe(KindCopy, KindLinear)) => (y: KLe(KindShared, KindLinear)) => Refl
       }
-      KindAffine => match c: (
+      KindAffine => ⊢ (
         KLe(KindCopy, c)
-      ) -> (KLe(KindAffine, c)) -> KLe(kind_join(KindCopy, KindAffine), c) {
+      ) -> (KLe(KindAffine, c)) -> KLe(kind_join(KindCopy, KindAffine), c) from match c {
         KindCopy => (x: KLe(KindCopy, KindCopy)) => (y: KLe(KindAffine, KindCopy)) => False::elim(
           kind_ne(KindAffine, KindCopy, y, Refl)
         )
-        KindShared => (x: KLe(KindCopy, KindShared)) => (
-          y: KLe(KindAffine, KindShared)
-        ) => False::elim(kind_ne(KindAffine, KindShared, y, Refl))
+        KindShared => (x: KLe(KindCopy, KindShared)) => (y: KLe(KindAffine, KindShared)) => False::elim(
+          kind_ne(KindAffine, KindShared, y, Refl)
+        )
         KindAffine => (x: KLe(KindCopy, KindAffine)) => (y: KLe(KindAffine, KindAffine)) => Refl
         KindLinear => (x: KLe(KindCopy, KindLinear)) => (y: KLe(KindAffine, KindLinear)) => Refl
       }
-      KindLinear => match c: (
+      KindLinear => ⊢ (
         KLe(KindCopy, c)
-      ) -> (KLe(KindLinear, c)) -> KLe(kind_join(KindCopy, KindLinear), c) {
+      ) -> (KLe(KindLinear, c)) -> KLe(kind_join(KindCopy, KindLinear), c) from match c {
         KindCopy => (x: KLe(KindCopy, KindCopy)) => (y: KLe(KindLinear, KindCopy)) => False::elim(
           kind_ne(KindLinear, KindCopy, y, Refl)
         )
-        KindShared => (x: KLe(KindCopy, KindShared)) => (
-          y: KLe(KindLinear, KindShared)
-        ) => False::elim(kind_ne(KindLinear, KindShared, y, Refl))
-        KindAffine => (x: KLe(KindCopy, KindAffine)) => (
-          y: KLe(KindLinear, KindAffine)
-        ) => False::elim(kind_ne(KindLinear, KindAffine, y, Refl))
+        KindShared => (x: KLe(KindCopy, KindShared)) => (y: KLe(KindLinear, KindShared)) => False::elim(
+          kind_ne(KindLinear, KindShared, y, Refl)
+        )
+        KindAffine => (x: KLe(KindCopy, KindAffine)) => (y: KLe(KindLinear, KindAffine)) => False::elim(
+          kind_ne(KindLinear, KindAffine, y, Refl)
+        )
         KindLinear => (x: KLe(KindCopy, KindLinear)) => (y: KLe(KindLinear, KindLinear)) => Refl
       }
     }
-    KindShared => match b: (
-      KLe(KindShared, c)
-    ) -> (KLe(b, c)) -> KLe(kind_join(KindShared, b), c) {
-      KindCopy => match c: (
+    KindShared => ⊢ (KLe(KindShared, c)) -> (KLe(b, c)) -> KLe(kind_join(KindShared, b), c) from match b {
+      KindCopy => ⊢ (
         KLe(KindShared, c)
-      ) -> (KLe(KindCopy, c)) -> KLe(kind_join(KindShared, KindCopy), c) {
+      ) -> (KLe(KindCopy, c)) -> KLe(kind_join(KindShared, KindCopy), c) from match c {
         KindCopy => (x: KLe(KindShared, KindCopy)) => (y: KLe(KindCopy, KindCopy)) => False::elim(
           kind_ne(KindShared, KindCopy, x, Refl)
         )
@@ -323,9 +315,9 @@ pub theorem kle_lub(
         KindAffine => (x: KLe(KindShared, KindAffine)) => (y: KLe(KindCopy, KindAffine)) => Refl
         KindLinear => (x: KLe(KindShared, KindLinear)) => (y: KLe(KindCopy, KindLinear)) => Refl
       }
-      KindShared => match c: (
+      KindShared => ⊢ (
         KLe(KindShared, c)
-      ) -> (KLe(KindShared, c)) -> KLe(kind_join(KindShared, KindShared), c) {
+      ) -> (KLe(KindShared, c)) -> KLe(kind_join(KindShared, KindShared), c) from match c {
         KindCopy => (x: KLe(KindShared, KindCopy)) => (y: KLe(KindShared, KindCopy)) => False::elim(
           kind_ne(KindShared, KindCopy, x, Refl)
         )
@@ -333,171 +325,167 @@ pub theorem kle_lub(
         KindAffine => (x: KLe(KindShared, KindAffine)) => (y: KLe(KindShared, KindAffine)) => Refl
         KindLinear => (x: KLe(KindShared, KindLinear)) => (y: KLe(KindShared, KindLinear)) => Refl
       }
-      KindAffine => match c: (
+      KindAffine => ⊢ (
         KLe(KindShared, c)
-      ) -> (KLe(KindAffine, c)) -> KLe(kind_join(KindShared, KindAffine), c) {
+      ) -> (KLe(KindAffine, c)) -> KLe(kind_join(KindShared, KindAffine), c) from match c {
         KindCopy => (x: KLe(KindShared, KindCopy)) => (y: KLe(KindAffine, KindCopy)) => False::elim(
           kind_ne(KindShared, KindCopy, x, Refl)
         )
-        KindShared => (x: KLe(KindShared, KindShared)) => (
-          y: KLe(KindAffine, KindShared)
-        ) => False::elim(kind_ne(KindAffine, KindShared, y, Refl))
+        KindShared => (x: KLe(KindShared, KindShared)) => (y: KLe(KindAffine, KindShared)) => False::elim(
+          kind_ne(KindAffine, KindShared, y, Refl)
+        )
         KindAffine => (x: KLe(KindShared, KindAffine)) => (y: KLe(KindAffine, KindAffine)) => Refl
         KindLinear => (x: KLe(KindShared, KindLinear)) => (y: KLe(KindAffine, KindLinear)) => Refl
       }
-      KindLinear => match c: (
+      KindLinear => ⊢ (
         KLe(KindShared, c)
-      ) -> (KLe(KindLinear, c)) -> KLe(kind_join(KindShared, KindLinear), c) {
+      ) -> (KLe(KindLinear, c)) -> KLe(kind_join(KindShared, KindLinear), c) from match c {
         KindCopy => (x: KLe(KindShared, KindCopy)) => (y: KLe(KindLinear, KindCopy)) => False::elim(
           kind_ne(KindShared, KindCopy, x, Refl)
         )
-        KindShared => (x: KLe(KindShared, KindShared)) => (
-          y: KLe(KindLinear, KindShared)
-        ) => False::elim(kind_ne(KindLinear, KindShared, y, Refl))
-        KindAffine => (x: KLe(KindShared, KindAffine)) => (
-          y: KLe(KindLinear, KindAffine)
-        ) => False::elim(kind_ne(KindLinear, KindAffine, y, Refl))
+        KindShared => (x: KLe(KindShared, KindShared)) => (y: KLe(KindLinear, KindShared)) => False::elim(
+          kind_ne(KindLinear, KindShared, y, Refl)
+        )
+        KindAffine => (x: KLe(KindShared, KindAffine)) => (y: KLe(KindLinear, KindAffine)) => False::elim(
+          kind_ne(KindLinear, KindAffine, y, Refl)
+        )
         KindLinear => (x: KLe(KindShared, KindLinear)) => (y: KLe(KindLinear, KindLinear)) => Refl
       }
     }
-    KindAffine => match b: (
-      KLe(KindAffine, c)
-    ) -> (KLe(b, c)) -> KLe(kind_join(KindAffine, b), c) {
-      KindCopy => match c: (
+    KindAffine => ⊢ (KLe(KindAffine, c)) -> (KLe(b, c)) -> KLe(kind_join(KindAffine, b), c) from match b {
+      KindCopy => ⊢ (
         KLe(KindAffine, c)
-      ) -> (KLe(KindCopy, c)) -> KLe(kind_join(KindAffine, KindCopy), c) {
+      ) -> (KLe(KindCopy, c)) -> KLe(kind_join(KindAffine, KindCopy), c) from match c {
         KindCopy => (x: KLe(KindAffine, KindCopy)) => (y: KLe(KindCopy, KindCopy)) => False::elim(
           kind_ne(KindAffine, KindCopy, x, Refl)
         )
-        KindShared => (x: KLe(KindAffine, KindShared)) => (
-          y: KLe(KindCopy, KindShared)
-        ) => False::elim(kind_ne(KindAffine, KindShared, x, Refl))
+        KindShared => (x: KLe(KindAffine, KindShared)) => (y: KLe(KindCopy, KindShared)) => False::elim(
+          kind_ne(KindAffine, KindShared, x, Refl)
+        )
         KindAffine => (x: KLe(KindAffine, KindAffine)) => (y: KLe(KindCopy, KindAffine)) => Refl
         KindLinear => (x: KLe(KindAffine, KindLinear)) => (y: KLe(KindCopy, KindLinear)) => Refl
       }
-      KindShared => match c: (
+      KindShared => ⊢ (
         KLe(KindAffine, c)
-      ) -> (KLe(KindShared, c)) -> KLe(kind_join(KindAffine, KindShared), c) {
+      ) -> (KLe(KindShared, c)) -> KLe(kind_join(KindAffine, KindShared), c) from match c {
         KindCopy => (x: KLe(KindAffine, KindCopy)) => (y: KLe(KindShared, KindCopy)) => False::elim(
           kind_ne(KindAffine, KindCopy, x, Refl)
         )
-        KindShared => (x: KLe(KindAffine, KindShared)) => (
-          y: KLe(KindShared, KindShared)
-        ) => False::elim(kind_ne(KindAffine, KindShared, x, Refl))
+        KindShared => (x: KLe(KindAffine, KindShared)) => (y: KLe(KindShared, KindShared)) => False::elim(
+          kind_ne(KindAffine, KindShared, x, Refl)
+        )
         KindAffine => (x: KLe(KindAffine, KindAffine)) => (y: KLe(KindShared, KindAffine)) => Refl
         KindLinear => (x: KLe(KindAffine, KindLinear)) => (y: KLe(KindShared, KindLinear)) => Refl
       }
-      KindAffine => match c: (
+      KindAffine => ⊢ (
         KLe(KindAffine, c)
-      ) -> (KLe(KindAffine, c)) -> KLe(kind_join(KindAffine, KindAffine), c) {
+      ) -> (KLe(KindAffine, c)) -> KLe(kind_join(KindAffine, KindAffine), c) from match c {
         KindCopy => (x: KLe(KindAffine, KindCopy)) => (y: KLe(KindAffine, KindCopy)) => False::elim(
           kind_ne(KindAffine, KindCopy, x, Refl)
         )
-        KindShared => (x: KLe(KindAffine, KindShared)) => (
-          y: KLe(KindAffine, KindShared)
-        ) => False::elim(kind_ne(KindAffine, KindShared, x, Refl))
+        KindShared => (x: KLe(KindAffine, KindShared)) => (y: KLe(KindAffine, KindShared)) => False::elim(
+          kind_ne(KindAffine, KindShared, x, Refl)
+        )
         KindAffine => (x: KLe(KindAffine, KindAffine)) => (y: KLe(KindAffine, KindAffine)) => Refl
         KindLinear => (x: KLe(KindAffine, KindLinear)) => (y: KLe(KindAffine, KindLinear)) => Refl
       }
-      KindLinear => match c: (
+      KindLinear => ⊢ (
         KLe(KindAffine, c)
-      ) -> (KLe(KindLinear, c)) -> KLe(kind_join(KindAffine, KindLinear), c) {
+      ) -> (KLe(KindLinear, c)) -> KLe(kind_join(KindAffine, KindLinear), c) from match c {
         KindCopy => (x: KLe(KindAffine, KindCopy)) => (y: KLe(KindLinear, KindCopy)) => False::elim(
           kind_ne(KindAffine, KindCopy, x, Refl)
         )
-        KindShared => (x: KLe(KindAffine, KindShared)) => (
-          y: KLe(KindLinear, KindShared)
-        ) => False::elim(kind_ne(KindAffine, KindShared, x, Refl))
-        KindAffine => (x: KLe(KindAffine, KindAffine)) => (
-          y: KLe(KindLinear, KindAffine)
-        ) => False::elim(kind_ne(KindLinear, KindAffine, y, Refl))
+        KindShared => (x: KLe(KindAffine, KindShared)) => (y: KLe(KindLinear, KindShared)) => False::elim(
+          kind_ne(KindAffine, KindShared, x, Refl)
+        )
+        KindAffine => (x: KLe(KindAffine, KindAffine)) => (y: KLe(KindLinear, KindAffine)) => False::elim(
+          kind_ne(KindLinear, KindAffine, y, Refl)
+        )
         KindLinear => (x: KLe(KindAffine, KindLinear)) => (y: KLe(KindLinear, KindLinear)) => Refl
       }
     }
-    KindLinear => match b: (
-      KLe(KindLinear, c)
-    ) -> (KLe(b, c)) -> KLe(kind_join(KindLinear, b), c) {
-      KindCopy => match c: (
+    KindLinear => ⊢ (KLe(KindLinear, c)) -> (KLe(b, c)) -> KLe(kind_join(KindLinear, b), c) from match b {
+      KindCopy => ⊢ (
         KLe(KindLinear, c)
-      ) -> (KLe(KindCopy, c)) -> KLe(kind_join(KindLinear, KindCopy), c) {
+      ) -> (KLe(KindCopy, c)) -> KLe(kind_join(KindLinear, KindCopy), c) from match c {
         KindCopy => (x: KLe(KindLinear, KindCopy)) => (y: KLe(KindCopy, KindCopy)) => False::elim(
           kind_ne(KindLinear, KindCopy, x, Refl)
         )
-        KindShared => (x: KLe(KindLinear, KindShared)) => (
-          y: KLe(KindCopy, KindShared)
-        ) => False::elim(kind_ne(KindLinear, KindShared, x, Refl))
-        KindAffine => (x: KLe(KindLinear, KindAffine)) => (
-          y: KLe(KindCopy, KindAffine)
-        ) => False::elim(kind_ne(KindLinear, KindAffine, x, Refl))
+        KindShared => (x: KLe(KindLinear, KindShared)) => (y: KLe(KindCopy, KindShared)) => False::elim(
+          kind_ne(KindLinear, KindShared, x, Refl)
+        )
+        KindAffine => (x: KLe(KindLinear, KindAffine)) => (y: KLe(KindCopy, KindAffine)) => False::elim(
+          kind_ne(KindLinear, KindAffine, x, Refl)
+        )
         KindLinear => (x: KLe(KindLinear, KindLinear)) => (y: KLe(KindCopy, KindLinear)) => Refl
       }
-      KindShared => match c: (
+      KindShared => ⊢ (
         KLe(KindLinear, c)
-      ) -> (KLe(KindShared, c)) -> KLe(kind_join(KindLinear, KindShared), c) {
+      ) -> (KLe(KindShared, c)) -> KLe(kind_join(KindLinear, KindShared), c) from match c {
         KindCopy => (x: KLe(KindLinear, KindCopy)) => (y: KLe(KindShared, KindCopy)) => False::elim(
           kind_ne(KindLinear, KindCopy, x, Refl)
         )
-        KindShared => (x: KLe(KindLinear, KindShared)) => (
-          y: KLe(KindShared, KindShared)
-        ) => False::elim(kind_ne(KindLinear, KindShared, x, Refl))
-        KindAffine => (x: KLe(KindLinear, KindAffine)) => (
-          y: KLe(KindShared, KindAffine)
-        ) => False::elim(kind_ne(KindLinear, KindAffine, x, Refl))
+        KindShared => (x: KLe(KindLinear, KindShared)) => (y: KLe(KindShared, KindShared)) => False::elim(
+          kind_ne(KindLinear, KindShared, x, Refl)
+        )
+        KindAffine => (x: KLe(KindLinear, KindAffine)) => (y: KLe(KindShared, KindAffine)) => False::elim(
+          kind_ne(KindLinear, KindAffine, x, Refl)
+        )
         KindLinear => (x: KLe(KindLinear, KindLinear)) => (y: KLe(KindShared, KindLinear)) => Refl
       }
-      KindAffine => match c: (
+      KindAffine => ⊢ (
         KLe(KindLinear, c)
-      ) -> (KLe(KindAffine, c)) -> KLe(kind_join(KindLinear, KindAffine), c) {
+      ) -> (KLe(KindAffine, c)) -> KLe(kind_join(KindLinear, KindAffine), c) from match c {
         KindCopy => (x: KLe(KindLinear, KindCopy)) => (y: KLe(KindAffine, KindCopy)) => False::elim(
           kind_ne(KindLinear, KindCopy, x, Refl)
         )
-        KindShared => (x: KLe(KindLinear, KindShared)) => (
-          y: KLe(KindAffine, KindShared)
-        ) => False::elim(kind_ne(KindLinear, KindShared, x, Refl))
-        KindAffine => (x: KLe(KindLinear, KindAffine)) => (
-          y: KLe(KindAffine, KindAffine)
-        ) => False::elim(kind_ne(KindLinear, KindAffine, x, Refl))
+        KindShared => (x: KLe(KindLinear, KindShared)) => (y: KLe(KindAffine, KindShared)) => False::elim(
+          kind_ne(KindLinear, KindShared, x, Refl)
+        )
+        KindAffine => (x: KLe(KindLinear, KindAffine)) => (y: KLe(KindAffine, KindAffine)) => False::elim(
+          kind_ne(KindLinear, KindAffine, x, Refl)
+        )
         KindLinear => (x: KLe(KindLinear, KindLinear)) => (y: KLe(KindAffine, KindLinear)) => Refl
       }
-      KindLinear => match c: (
+      KindLinear => ⊢ (
         KLe(KindLinear, c)
-      ) -> (KLe(KindLinear, c)) -> KLe(kind_join(KindLinear, KindLinear), c) {
+      ) -> (KLe(KindLinear, c)) -> KLe(kind_join(KindLinear, KindLinear), c) from match c {
         KindCopy => (x: KLe(KindLinear, KindCopy)) => (y: KLe(KindLinear, KindCopy)) => False::elim(
           kind_ne(KindLinear, KindCopy, x, Refl)
         )
-        KindShared => (x: KLe(KindLinear, KindShared)) => (
-          y: KLe(KindLinear, KindShared)
-        ) => False::elim(kind_ne(KindLinear, KindShared, x, Refl))
-        KindAffine => (x: KLe(KindLinear, KindAffine)) => (
-          y: KLe(KindLinear, KindAffine)
-        ) => False::elim(kind_ne(KindLinear, KindAffine, x, Refl))
+        KindShared => (x: KLe(KindLinear, KindShared)) => (y: KLe(KindLinear, KindShared)) => False::elim(
+          kind_ne(KindLinear, KindShared, x, Refl)
+        )
+        KindAffine => (x: KLe(KindLinear, KindAffine)) => (y: KLe(KindLinear, KindAffine)) => False::elim(
+          kind_ne(KindLinear, KindAffine, x, Refl)
+        )
         KindLinear => (x: KLe(KindLinear, KindLinear)) => (y: KLe(KindLinear, KindLinear)) => Refl
       }
     }
-  }(h1, h2)
+  })(h1, h2)
 }
 
 pub theorem kle_join_l(a: Kind, b: Kind): KLe(a, kind_join(a, b)) {
-  match a: KLe(a, kind_join(a, b)) {
-    KindCopy => match b: KLe(KindCopy, kind_join(KindCopy, b)) {
+  ⊢ KLe(a, kind_join(a, b)) from match a {
+    KindCopy => ⊢ KLe(KindCopy, kind_join(KindCopy, b)) from match b {
       KindCopy => Refl
       KindShared => Refl
       KindAffine => Refl
       KindLinear => Refl
     }
-    KindShared => match b: KLe(KindShared, kind_join(KindShared, b)) {
+    KindShared => ⊢ KLe(KindShared, kind_join(KindShared, b)) from match b {
       KindCopy => Refl
       KindShared => Refl
       KindAffine => Refl
       KindLinear => Refl
     }
-    KindAffine => match b: KLe(KindAffine, kind_join(KindAffine, b)) {
+    KindAffine => ⊢ KLe(KindAffine, kind_join(KindAffine, b)) from match b {
       KindCopy => Refl
       KindShared => Refl
       KindAffine => Refl
       KindLinear => Refl
     }
-    KindLinear => match b: KLe(KindLinear, kind_join(KindLinear, b)) {
+    KindLinear => ⊢ KLe(KindLinear, kind_join(KindLinear, b)) from match b {
       KindCopy => Refl
       KindShared => Refl
       KindAffine => Refl
@@ -507,26 +495,26 @@ pub theorem kle_join_l(a: Kind, b: Kind): KLe(a, kind_join(a, b)) {
 }
 
 pub theorem kle_join_r(a: Kind, b: Kind): KLe(b, kind_join(a, b)) {
-  match a: KLe(b, kind_join(a, b)) {
-    KindCopy => match b: KLe(b, kind_join(KindCopy, b)) {
+  ⊢ KLe(b, kind_join(a, b)) from match a {
+    KindCopy => ⊢ KLe(b, kind_join(KindCopy, b)) from match b {
       KindCopy => Refl
       KindShared => Refl
       KindAffine => Refl
       KindLinear => Refl
     }
-    KindShared => match b: KLe(b, kind_join(KindShared, b)) {
+    KindShared => ⊢ KLe(b, kind_join(KindShared, b)) from match b {
       KindCopy => Refl
       KindShared => Refl
       KindAffine => Refl
       KindLinear => Refl
     }
-    KindAffine => match b: KLe(b, kind_join(KindAffine, b)) {
+    KindAffine => ⊢ KLe(b, kind_join(KindAffine, b)) from match b {
       KindCopy => Refl
       KindShared => Refl
       KindAffine => Refl
       KindLinear => Refl
     }
-    KindLinear => match b: KLe(b, kind_join(KindLinear, b)) {
+    KindLinear => ⊢ KLe(b, kind_join(KindLinear, b)) from match b {
       KindCopy => Refl
       KindShared => Refl
       KindAffine => Refl
@@ -536,7 +524,7 @@ pub theorem kle_join_r(a: Kind, b: Kind): KLe(b, kind_join(a, b)) {
 }
 
 pub theorem kle_refl(a: Kind): KLe(a, a) {
-  match a: KLe(a, a) {
+  ⊢ KLe(a, a) from match a {
     KindCopy => Refl
     KindShared => Refl
     KindAffine => Refl
@@ -545,7 +533,7 @@ pub theorem kle_refl(a: Kind): KLe(a, a) {
 }
 
 pub theorem kle_linear(a: Kind): KLe(a, KindLinear) {
-  match a: KLe(a, KindLinear) {
+  ⊢ KLe(a, KindLinear) from match a {
     KindCopy => Refl
     KindShared => Refl
     KindAffine => Refl
@@ -554,7 +542,7 @@ pub theorem kle_linear(a: Kind): KLe(a, KindLinear) {
 }
 
 pub theorem kle_copy(a: Kind): KLe(KindCopy, a) {
-  match a: KLe(KindCopy, a) {
+  ⊢ KLe(KindCopy, a) from match a {
     KindCopy => Refl
     KindShared => Refl
     KindAffine => Refl
@@ -563,7 +551,7 @@ pub theorem kle_copy(a: Kind): KLe(KindCopy, a) {
 }
 
 pub fn dkl_pick(d: Datas, t: Ty, acc: Kind, p: Bool): Kind {
-  match p: Kind {
+  ⊢ Kind from match p {
     true => kind_join(acc, datas_kind(d, t))
     false => acc
   }
@@ -578,7 +566,7 @@ pub fn dkl_k(
   acc: Kind,
   go: Bool
 ): Kind {
-  match go: Kind {
+  ⊢ Kind from match go {
     false => acc
     true => datas_kind_list(
       d,
@@ -597,12 +585,18 @@ pub theorem dkl_unf(
   every: Bool,
   picks: List(Bool),
   acc: Kind
-): datas_kind_list(d, Cons(t, rest), every, picks, acc) = dkl_k(d, t, rest, every, picks, acc, Bool::or(every, not(Nat::eq(list_len(picks), 0)))) {
+): datas_kind_list(
+  d,
+  Cons(t, rest),
+  every,
+  picks,
+  acc
+) = dkl_k(d, t, rest, every, picks, acc, Bool::or(every, not(Nat::eq(list_len(picks), 0)))) {
   Refl
 }
 
 pub fn kn_k(d: Datas, n: Text, args: List(Ty), o: Option(Data)): Kind {
-  match o: Kind {
+  ⊢ Kind from match o {
     None => KindShared
     Some(data) => datas_kind_list(
       d,
@@ -635,7 +629,7 @@ pub theorem lht_unf(
 }
 
 pub theorem pick_ge(d: Datas, t: Ty, acc: Kind, p: Bool): KLe(acc, dkl_pick(d, t, acc, p)) {
-  match p: KLe(acc, dkl_pick(d, t, acc, p)) {
+  ⊢ KLe(acc, dkl_pick(d, t, acc, p)) from match p {
     true => kle_join_l(acc, datas_kind(d, t))
     false => kle_refl(acc)
   }
@@ -650,7 +644,7 @@ pub theorem pick_le(
   ha: KLe(acc, k),
   ht: KLe(datas_kind(d, t), k)
 ): KLe(dkl_pick(d, t, acc, p), k) {
-  match p: KLe(dkl_pick(d, t, acc, p), k) {
+  ⊢ KLe(dkl_pick(d, t, acc, p), k) from match p {
     true => kle_lub(acc, datas_kind(d, t), k, ha, ht)
     false => ha
   }
@@ -666,7 +660,7 @@ pub theorem dklk_ge(
   go: Bool,
   ih: ∀ a: Kind. KLe(a, datas_kind_list(d, rest, every, picks_tail(picks), a))
 ): KLe(acc, dkl_k(d, t, rest, every, picks, acc, go)) {
-  match go: KLe(acc, dkl_k(d, t, rest, every, picks, acc, go)) {
+  ⊢ KLe(acc, dkl_k(d, t, rest, every, picks, acc, go)) from match go {
     false => kle_refl(acc)
     true => kle_trans(
       acc,
@@ -692,7 +686,7 @@ pub theorem dkl_ge_acc(
   picks: List(Bool),
   acc: Kind
 ): KLe(acc, datas_kind_list(d, ts, every, picks, acc)) {
-  match ts: KLe(acc, datas_kind_list(d, ts, every, picks, acc)) {
+  ⊢ KLe(acc, datas_kind_list(d, ts, every, picks, acc)) from match ts {
     Nil => kle_refl(acc)
     Cons(t, rest) => Eq::subst(
       (z: Kind) => KLe(acc, z),
@@ -725,17 +719,15 @@ pub theorem dklk_append(
     KLe(datas_kind_list(d, rest, false, picks_tail(picks), a), k)
   ) -> KLe(datas_kind_list(d, List::append(rest, Cons(b, Nil(Ty))), false, picks_tail(picks), a), k)
 ): KLe(dkl_k(d, t, List::append(rest, Cons(b, Nil(Ty))), false, picks, acc, go), k) {
-  match go: (
+  (⊢ (
     KLe(dkl_k(d, t, rest, false, picks, acc, go), k)
-  ) -> KLe(dkl_k(d, t, List::append(rest, Cons(b, Nil(Ty))), false, picks, acc, go), k) {
+  ) -> KLe(dkl_k(d, t, List::append(rest, Cons(b, Nil(Ty))), false, picks, acc, go), k) from match go {
     false => (h: KLe(acc, k)) => h
-    true => (
-      h: KLe(
-        datas_kind_list(d, rest, false, picks_tail(picks), dkl_pick(d, t, acc, picks_head(false, picks))),
-        k
-      )
-    ) => ih(dkl_pick(d, t, acc, picks_head(false, picks)), h)
-  }(h1)
+    true => (h: KLe(datas_kind_list(d, rest, false, picks_tail(picks), dkl_pick(d, t, acc, picks_head(false, picks))), k)) => ih(
+      dkl_pick(d, t, acc, picks_head(false, picks)),
+      h
+    )
+  })(h1)
 }
 
 pub theorem dklk_one(
@@ -748,7 +740,7 @@ pub theorem dklk_one(
   ha: KLe(acc, k),
   hb: KLe(datas_kind(d, b), k)
 ): KLe(dkl_k(d, b, Nil(Ty), false, picks, acc, go), k) {
-  match go: KLe(dkl_k(d, b, Nil(Ty), false, picks, acc, go), k) {
+  ⊢ KLe(dkl_k(d, b, Nil(Ty), false, picks, acc, go), k) from match go {
     false => ha
     true => pick_le(d, b, acc, picks_head(false, picks), k, ha, hb)
   }
@@ -765,7 +757,7 @@ pub theorem dkl_append(
   h1: KLe(datas_kind_list(d, xs, false, picks, acc), k),
   hb: KLe(datas_kind(d, b), k)
 ): KLe(datas_kind_list(d, List::append(xs, Cons(b, Nil(Ty))), false, picks, acc), k) {
-  match xs: KLe(datas_kind_list(d, List::append(xs, Cons(b, Nil(Ty))), false, picks, acc), k) {
+  ⊢ KLe(datas_kind_list(d, List::append(xs, Cons(b, Nil(Ty))), false, picks, acc), k) from match xs {
     Nil => Eq::subst(
       (z: Kind) => KLe(z, k),
       Eq::sym(dkl_unf(d, b, Nil(Ty), false, picks, acc)),
@@ -799,7 +791,7 @@ pub theorem dkl_le_all(
   ha: KLe(acc, j),
   h: ∀ m: Ty. (Mem(Ty, m, ts)) -> KLe(datas_kind(d, m), j)
 ): KLe(datas_kind_list(d, ts, true, Nil(Bool), acc), j) {
-  match ts: KLe(datas_kind_list(d, ts, true, Nil(Bool), acc), j) {
+  ⊢ KLe(datas_kind_list(d, ts, true, Nil(Bool), acc), j) from match ts {
     Nil => ha
     Cons(t, rest) => dkl_le_all(
       d,
@@ -820,7 +812,7 @@ pub theorem leaf_le<e: Ty, ys: List(
   d: Datas,
   acc: Kind
 ): KLe(datas_kind(d, e), datas_kind_list(d, ys, true, Nil(Bool), acc)) {
-  match l: KLe(datas_kind(d, e), datas_kind_list(d, ys, true, Nil(Bool), acc)) {
+  ⊢ KLe(datas_kind(d, e), datas_kind_list(d, ys, true, Nil(Bool), acc)) from match l {
     LvHere(rest, p) => kle_trans(
       datas_kind(d, e),
       kind_join(acc, datas_kind(d, e)),
@@ -871,7 +863,7 @@ pub theorem kind_members_at(
   j: Kind,
   h: ∀ m: Ty. (Mem(Ty, m, ty_members(u))) -> KLe(datas_kind(d, m), j)
 ): KLe(datas_kind(d, u), j) {
-  match u: KLe(datas_kind(d, u), j) {
+  ⊢ KLe(datas_kind(d, u), j) from match u {
     TyUnion(zs) => dkl_le_all(d, zs, KindCopy, j, kle_copy(j), h)
     TyNever => kle_copy(j)
     _ => Eq::subst(
@@ -913,7 +905,7 @@ pub theorem pleaf_le<e: Ty, ys: List(
   d: Datas,
   acc: Kind
 ): KLe(datas_kind(d, e), datas_kind_list(d, ys, true, Nil(Bool), acc)) {
-  match l: KLe(datas_kind(d, e), datas_kind_list(d, ys, true, Nil(Bool), acc)) {
+  ⊢ KLe(datas_kind(d, e), datas_kind_list(d, ys, true, Nil(Bool), acc)) from match l {
     PlvHere(rest, p) => kle_trans(
       datas_kind(d, e),
       kind_join(acc, datas_kind(d, e)),
@@ -964,7 +956,7 @@ pub theorem pkind_members_at(
   j: Kind,
   h: ∀ m: Ty. (Mem(Ty, m, ty_pmembers(u))) -> KLe(datas_kind(d, m), j)
 ): KLe(datas_kind(d, u), j) {
-  match u: KLe(datas_kind(d, u), j) {
+  ⊢ KLe(datas_kind(d, u), j) from match u {
     TyProduct(zs) => dkl_le_all(d, zs, KindCopy, j, kle_copy(j), h)
     TyUnit => kle_copy(j)
     _ => Eq::subst(
@@ -1002,17 +994,14 @@ pub theorem kind_tagged_with(
   l: List(Text),
   z: Ty
 ): datas_kind(d, ty_tagged_with(l, z)) = datas_kind(d, z) {
-  match l: datas_kind(d, ty_tagged_with(l, z)) = datas_kind(d, z) {
+  ⊢ datas_kind(d, ty_tagged_with(l, z)) = datas_kind(d, z) from match l {
     Nil => Refl
     Cons(tg, rest) => Refl
   }
 }
 
-pub theorem kind_untagged(
-  d: Datas,
-  y: Ty
-): datas_kind(d, ty_untagged(y)) = datas_kind(d, y) {
-  match y: datas_kind(d, ty_untagged(y)) = datas_kind(d, y) {
+pub theorem kind_untagged(d: Datas, y: Ty): datas_kind(d, ty_untagged(y)) = datas_kind(d, y) {
+  ⊢ datas_kind(d, ty_untagged(y)) = datas_kind(d, y) from match y {
     TyTagged(tags, x) => Refl
     _ => Refl
   }
@@ -1026,7 +1015,10 @@ pub theorem kind_tagged(
 ): datas_kind(d, ty_tagged(tags, y)) = datas_kind(d, y) {
   Eq::trans(
     Eq::congr((z: Ty) => datas_kind(d, z), tagged_shape(tags, y)),
-    Eq::trans(kind_tagged_with(d, tags_union(tags, ty_tags(y)), ty_untagged(y)), kind_untagged(d, y))
+    Eq::trans(
+      kind_tagged_with(d, tags_union(tags, ty_tags(y)), ty_untagged(y)),
+      kind_untagged(d, y)
+    )
   )
 }
 
@@ -1040,14 +1032,21 @@ pub theorem apply_named(
   ha: KLe(kn_k(d, n, args, o), k),
   hb: KLe(datas_kind(d, b), k)
 ): KLe(kn_k(d, n, List::append(args, Cons(b, Nil(Ty))), o), k) {
-  match o: (
+  (⊢ (
     KLe(kn_k(d, n, args, o), k)
-  ) -> KLe(kn_k(d, n, List::append(args, Cons(b, Nil(Ty))), o), k) {
+  ) -> KLe(kn_k(d, n, List::append(args, Cons(b, Nil(Ty))), o), k) from match o {
     None => (h: KLe(KindShared, k)) => h
-    Some(data) => (
-      h: KLe(datas_kind_list(d, args, false, generics_picked(data.generics, data.holds), data.base), k)
-    ) => dkl_append(d, args, b, generics_picked(data.generics, data.holds), data.base, k, h, hb)
-  }(ha)
+    Some(data) => (h: KLe(datas_kind_list(d, args, false, generics_picked(data.generics, data.holds), data.base), k)) => dkl_append(
+      d,
+      args,
+      b,
+      generics_picked(data.generics, data.holds),
+      data.base,
+      k,
+      h,
+      hb
+    )
+  })(ha)
 }
 
 // `F(X)` is below what `F` and `X` are below.
@@ -1059,7 +1058,7 @@ pub theorem apply_le(
   ha: KLe(datas_kind(d, a), k),
   hb: KLe(datas_kind(d, b), k)
 ): KLe(datas_kind(d, ty_apply(a, b)), k) {
-  match a: (KLe(datas_kind(d, a), k)) -> KLe(datas_kind(d, ty_apply(a, b)), k) {
+  (⊢ (KLe(datas_kind(d, a), k)) -> KLe(datas_kind(d, ty_apply(a, b)), k) from match a {
     TyNamed(n, args) => (h: KLe(datas_kind(d, TyNamed(n, args)), k)) => Eq::subst(
       (z: Kind) => KLe(z, k),
       Eq::sym(kind_named_unf(d, n, List::append(args, Cons(b, Nil(Ty))))),
@@ -1076,11 +1075,11 @@ pub theorem apply_le(
     )
     TyParam(n, pk) => (h: KLe(pk, k)) => h
     _ => (h: KLe(datas_kind(d, a), k)) => kle_copy(k)
-  }(ha)
+  })(ha)
 }
 
 pub fn te_k(o: Ordering): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     Less => false
     Equal => true
     Greater => false
@@ -1102,17 +1101,17 @@ pub theorem te_sound(
   eo: Text::ordering(a, b) = o,
   e: te_k(o) = true
 ): a = b {
-  match o: (Text::ordering(a, b) = o) -> (te_k(o) = true) -> (a = b) {
-    Less => (x: Text::ordering(a, b) = Less) => (y: false = true) => False::elim(
-      false_ne_true(y)
+  (⊢ (Text::ordering(a, b) = o) -> (te_k(o) = true) -> (a = b) from match o {
+    Less => (x: Text::ordering(a, b) = Less) => (y: false = true) => False::elim(false_ne_true(y))
+    Equal => (x: Text::ordering(a, b) = Equal) => (y: true = true) => Ordmap::compare_text_eq(
+      a,
+      b,
+      x
     )
-    Equal => (x: Text::ordering(a, b) = Equal) => (
-      y: true = true
-    ) => Ordmap::compare_text_eq(a, b, x)
     Greater => (x: Text::ordering(a, b) = Greater) => (y: false = true) => False::elim(
       false_ne_true(y)
     )
-  }(eo, e)
+  })(eo, e)
 }
 
 pub theorem text_eq_true(a: Text, b: Text, e: Text::eq(a, b) = true): a = b {
@@ -1127,25 +1126,21 @@ pub theorem kyn_or_true(
   f1: (x = true) -> p,
   f2: (y = true) -> p
 ): p {
-  match x: (Bool::or(x, y) = true) -> ((x = true) -> p) -> p {
+  (⊢ (Bool::or(x, y) = true) -> ((x = true) -> p) -> p from match x {
     true => (e2: true = true) => (g: (true = true) -> p) => g(Refl)
     false => (e2: y = true) => (g: (false = true) -> p) => f2(e2)
-  }(e, f1)
+  })(e, f1)
 }
 
 pub theorem bool_or_right(x: Bool, y: Bool, e: y = true): Bool::or(x, y) = true {
-  match x: Bool::or(x, y) = true {
+  ⊢ Bool::or(x, y) = true from match x {
     true => Refl
     false => e
   }
 }
 
-pub theorem lht_sound(
-  xs: List(Text),
-  x: Text,
-  e: list_has_text(xs, x) = true
-): Mem(Text, x, xs) {
-  match xs: Mem(Text, x, xs) {
+pub theorem lht_sound(xs: List(Text), x: Text, e: list_has_text(xs, x) = true): Mem(Text, x, xs) {
+  ⊢ Mem(Text, x, xs) from match xs {
     Nil => False::elim(false_ne_true(e))
     Cons(y, rest) => kyn_or_true(
       Text::eq(y, x),
@@ -1161,7 +1156,7 @@ pub theorem lht_sound(
 pub theorem lht_complete<x: Text, xs: List(
   Text
 )>(m: Mem(Text, x, xs)): list_has_text(xs, x) = true {
-  match m: list_has_text(xs, x) = true {
+  ⊢ list_has_text(xs, x) = true from match m {
     MemHere(t) => Eq::subst(
       (z: Bool) => Bool::or(z, list_has_text(t, x)) = true,
       Eq::sym(text_eq_refl(x)),
@@ -1172,7 +1167,7 @@ pub theorem lht_complete<x: Text, xs: List(
 }
 
 pub fn ha_k(holds: List(Text), n: Text, b: Bool): List(Text) {
-  match b: List(Text) {
+  ⊢ List(Text) from match b {
     true => holds
     false => Cons(n, holds)
   }
@@ -1191,7 +1186,7 @@ pub theorem hak_has(
   b: Bool,
   eb: list_has_text(holds, n) = b
 ): Mem(Text, n, ha_k(holds, n, b)) {
-  match b: Mem(Text, n, ha_k(holds, n, b)) {
+  ⊢ Mem(Text, n, ha_k(holds, n, b)) from match b {
     true => lht_sound(holds, n, eb)
     false => MemHere(Text, n, holds)
   }
@@ -1212,7 +1207,7 @@ pub theorem hak_keep(
   g: Text,
   m: Mem(Text, g, holds)
 ): Mem(Text, g, ha_k(holds, n, b)) {
-  match b: Mem(Text, g, ha_k(holds, n, b)) {
+  ⊢ Mem(Text, g, ha_k(holds, n, b)) from match b {
     true => m
     false => MemThere(Text, g, n, holds, m)
   }
@@ -1232,7 +1227,7 @@ pub theorem ha_keep(
 }
 
 pub fn fkp_k(n: Text, pk: Kind, holds: List(Text), b: Bool): Pair(Kind, List(Text)) {
-  match b: Pair(Kind, List(Text)) {
+  ⊢ Pair(Kind, List(Text)) from match b {
     true => Pair { fst: KindCopy, snd: holds_add(holds, n) }
     false => Pair { fst: pk, snd: holds }
   }
@@ -1255,7 +1250,7 @@ pub fn fkd_k(
   holds: List(Text),
   o: Option(Data)
 ): Pair(Kind, List(Text)) {
-  match o: Pair(Kind, List(Text)) {
+  ⊢ Pair(Kind, List(Text)) from match o {
     None => Pair { fst: KindShared, snd: holds }
     Some(data) => field_kind_list(
       d,
@@ -1276,7 +1271,7 @@ pub fn fkn_k(
   holds: List(Text),
   b: Bool
 ): Pair(Kind, List(Text)) {
-  match b: Pair(Kind, List(Text)) {
+  ⊢ Pair(Kind, List(Text)) from match b {
     true => Pair { fst: KindCopy, snd: holds_add(holds, n) }
     false => fkd_k(d, args, gs, holds, datas_decl(d, n))
   }
@@ -1288,7 +1283,12 @@ pub theorem fk_named_unf(
   args: List(Ty),
   gs: List(Text),
   holds: List(Text)
-): field_kind(d, TyNamed(n, args), gs, holds) = fkn_k(d, n, args, gs, holds, Bool::and(ty_no_args(args), list_has_text(gs, n))) {
+): field_kind(
+  d,
+  TyNamed(n, args),
+  gs,
+  holds
+) = fkn_k(d, n, args, gs, holds, Bool::and(ty_no_args(args), list_has_text(gs, n))) {
   Refl
 }
 
@@ -1299,7 +1299,7 @@ pub fn fkl_pick(
   acc: Pair(Kind, List(Text)),
   p: Bool
 ): Pair(Kind, List(Text)) {
-  match p: Pair(Kind, List(Text)) {
+  ⊢ Pair(Kind, List(Text)) from match p {
     true => kind_pair_join(acc, field_kind(d, t, gs, acc.snd))
     false => acc
   }
@@ -1315,7 +1315,7 @@ pub fn fkl_k(
   acc: Pair(Kind, List(Text)),
   go: Bool
 ): Pair(Kind, List(Text)) {
-  match go: Pair(Kind, List(Text)) {
+  ⊢ Pair(Kind, List(Text)) from match go {
     false => acc
     true => field_kind_list(
       d,
@@ -1336,7 +1336,14 @@ pub theorem fkl_unf(
   picks: List(Bool),
   gs: List(Text),
   acc: Pair(Kind, List(Text))
-): field_kind_list(d, Cons(t, rest), every, picks, gs, acc) = fkl_k(d, t, rest, every, picks, gs, acc, Bool::or(every, not(Nat::eq(list_len(picks), 0)))) {
+): field_kind_list(
+  d,
+  Cons(t, rest),
+  every,
+  picks,
+  gs,
+  acc
+) = fkl_k(d, t, rest, every, picks, gs, acc, Bool::or(every, not(Nat::eq(list_len(picks), 0)))) {
   Refl
 }
 
@@ -1368,7 +1375,7 @@ pub theorem fkp_grow(
   g: Text,
   m: Mem(Text, g, holds)
 ): Mem(Text, g, psnd(fkp_k(n, pk, holds, b))) {
-  match b: Mem(Text, g, psnd(fkp_k(n, pk, holds, b))) {
+  ⊢ Mem(Text, g, psnd(fkp_k(n, pk, holds, b))) from match b {
     true => ha_keep(holds, n, g, m)
     false => m
   }
@@ -1397,7 +1404,7 @@ pub theorem fkd_grow(
     )
   )
 ): Mem(Text, g, psnd(fkd_k(d, args, gs, holds, o))) {
-  match o: Mem(Text, g, psnd(fkd_k(d, args, gs, holds, o))) {
+  ⊢ Mem(Text, g, psnd(fkd_k(d, args, gs, holds, o))) from match o {
     None => m
     Some(data) => ih(data)
   }
@@ -1414,7 +1421,7 @@ pub theorem fkn_grow(
   m: Mem(Text, g, holds),
   ih: Mem(Text, g, psnd(fkd_k(d, args, gs, holds, datas_decl(d, n))))
 ): Mem(Text, g, psnd(fkn_k(d, n, args, gs, holds, b))) {
-  match b: Mem(Text, g, psnd(fkn_k(d, n, args, gs, holds, b))) {
+  ⊢ Mem(Text, g, psnd(fkn_k(d, n, args, gs, holds, b))) from match b {
     true => ha_keep(holds, n, g, m)
     false => ih
   }
@@ -1430,7 +1437,7 @@ pub theorem fklp_grow(
   m: Mem(Text, g, psnd(acc)),
   iht: Mem(Text, g, psnd(field_kind(d, t, gs, psnd(acc))))
 ): Mem(Text, g, psnd(fkl_pick(d, t, gs, acc, p))) {
-  match p: Mem(Text, g, psnd(fkl_pick(d, t, gs, acc, p))) {
+  ⊢ Mem(Text, g, psnd(fkl_pick(d, t, gs, acc, p))) from match p {
     true => iht
     false => m
   }
@@ -1455,7 +1462,7 @@ pub theorem fklk_grow(
     Mem(Text, g, psnd(a))
   ) -> Mem(Text, g, psnd(field_kind_list(d, rest, every, picks_tail(picks), gs, a)))
 ): Mem(Text, g, psnd(fkl_k(d, t, rest, every, picks, gs, acc, go))) {
-  match go: Mem(Text, g, psnd(fkl_k(d, t, rest, every, picks, gs, acc, go))) {
+  ⊢ Mem(Text, g, psnd(fkl_k(d, t, rest, every, picks, gs, acc, go))) from match go {
     false => m
     true => ihr(
       fkl_pick(d, t, gs, acc, picks_head(every, picks)),
@@ -1475,7 +1482,7 @@ mutual {
     g: Text,
     m: Mem(Text, g, psnd(acc))
   ): Mem(Text, g, psnd(field_kind_list(d, ts, every, picks, gs, acc))) {
-    match ts: Mem(Text, g, psnd(field_kind_list(d, ts, every, picks, gs, acc))) {
+    ⊢ Mem(Text, g, psnd(field_kind_list(d, ts, every, picks, gs, acc))) from match ts {
       Nil => m
       Cons(t, rest) => Eq::subst(
         (z: Pair(Kind, List(Text))) => Mem(Text, g, psnd(z)),
@@ -1506,7 +1513,7 @@ mutual {
     g: Text,
     m: Mem(Text, g, holds)
   ): Mem(Text, g, psnd(field_kind(d, t, gs, holds))) {
-    match t: Mem(Text, g, psnd(field_kind(d, t, gs, holds))) {
+    ⊢ Mem(Text, g, psnd(field_kind(d, t, gs, holds))) from match t {
       TyInt(w) => m
       TyBool => m
       TyText => m
@@ -1588,7 +1595,7 @@ pub theorem fklp_fst(
   acc: Pair(Kind, List(Text)),
   p: Bool
 ): KLe(pfst(acc), pfst(fkl_pick(d, t, gs, acc, p))) {
-  match p: KLe(pfst(acc), pfst(fkl_pick(d, t, gs, acc, p))) {
+  ⊢ KLe(pfst(acc), pfst(fkl_pick(d, t, gs, acc, p))) from match p {
     true => kle_join_l(pfst(acc), pfst(field_kind(d, t, gs, psnd(acc))))
     false => kle_refl(pfst(acc))
   }
@@ -1608,7 +1615,7 @@ pub theorem fklk_fst(
     List(Text)
   ). KLe(pfst(a), pfst(field_kind_list(d, rest, every, picks_tail(picks), gs, a)))
 ): KLe(pfst(acc), pfst(fkl_k(d, t, rest, every, picks, gs, acc, go))) {
-  match go: KLe(pfst(acc), pfst(fkl_k(d, t, rest, every, picks, gs, acc, go))) {
+  ⊢ KLe(pfst(acc), pfst(fkl_k(d, t, rest, every, picks, gs, acc, go))) from match go {
     false => kle_refl(pfst(acc))
     true => kle_trans(
       pfst(acc),
@@ -1638,7 +1645,7 @@ pub theorem fkl_fst(
   gs: List(Text),
   acc: Pair(Kind, List(Text))
 ): KLe(pfst(acc), pfst(field_kind_list(d, ts, every, picks, gs, acc))) {
-  match ts: KLe(pfst(acc), pfst(field_kind_list(d, ts, every, picks, gs, acc))) {
+  ⊢ KLe(pfst(acc), pfst(field_kind_list(d, ts, every, picks, gs, acc))) from match ts {
     Nil => kle_refl(pfst(acc))
     Cons(t, rest) => Eq::subst(
       (z: Pair(Kind, List(Text))) => KLe(pfst(acc), pfst(z)),
@@ -1706,7 +1713,7 @@ pub theorem split_r(a: Kind, b: Kind, k: Kind, h: KLe(kind_join(a, b), k)): KLe(
 }
 
 pub fn sn_k(t: Ty, o: Option(Ty)): Ty {
-  match o: Ty {
+  ⊢ Ty from match o {
     Some(x) => x
     None => t
   }
@@ -1737,12 +1744,12 @@ pub theorem fk_param_ok(
   hk: KLe(pfst(fkp_k(n, pk, holds, b)), k),
   he: Env(d, map, psnd(fkp_k(n, pk, holds, b)), k)
 ): KLe(datas_kind(d, sn_k(TyParam(n, pk), o)), k) {
-  match b: KLe(datas_kind(d, sn_k(TyParam(n, pk), o)), k) {
-    true => match o: KLe(datas_kind(d, sn_k(TyParam(n, pk), o)), k) {
+  ⊢ KLe(datas_kind(d, sn_k(TyParam(n, pk), o)), k) from match b {
+    true => ⊢ KLe(datas_kind(d, sn_k(TyParam(n, pk), o)), k) from match o {
       Some(x) => he(n, x, ha_has(holds, n), eo)
       None => False::elim(mc(n, lht_sound(gs, n, eb), eo))
     }
-    false => match o: KLe(datas_kind(d, sn_k(TyParam(n, pk), o)), k) {
+    false => ⊢ KLe(datas_kind(d, sn_k(TyParam(n, pk), o)), k) from match o {
       None => hk
       Some(x) => False::elim(false_ne_true(Eq::trans(Eq::sym(eb), lht_complete(mk(n, x, eo)))))
     }
@@ -1758,7 +1765,7 @@ pub theorem fk_nil_decl(
   k: Kind,
   hk: KLe(pfst(fkd_k(d, Nil(Ty), gs, holds, o)), k)
 ): KLe(kn_k(d, n, Nil(Ty), o), k) {
-  match o: KLe(kn_k(d, n, Nil(Ty), o), k) {
+  ⊢ KLe(kn_k(d, n, Nil(Ty), o), k) from match o {
     None => hk
     Some(data) => hk
   }
@@ -1780,12 +1787,12 @@ pub theorem fk_name_ok(
   hk: KLe(pfst(fkn_k(d, n, Nil(Ty), gs, holds, c)), k),
   he: Env(d, map, psnd(fkn_k(d, n, Nil(Ty), gs, holds, c)), k)
 ): KLe(datas_kind(d, sn_k(TyNamed(n, Nil(Ty)), o)), k) {
-  match c: KLe(datas_kind(d, sn_k(TyNamed(n, Nil(Ty)), o)), k) {
-    true => match o: KLe(datas_kind(d, sn_k(TyNamed(n, Nil(Ty)), o)), k) {
+  ⊢ KLe(datas_kind(d, sn_k(TyNamed(n, Nil(Ty)), o)), k) from match c {
+    true => ⊢ KLe(datas_kind(d, sn_k(TyNamed(n, Nil(Ty)), o)), k) from match o {
       Some(x) => he(n, x, ha_has(holds, n), eo)
       None => False::elim(mc(n, lht_sound(gs, n, ec), eo))
     }
-    false => match o: KLe(datas_kind(d, sn_k(TyNamed(n, Nil(Ty)), o)), k) {
+    false => ⊢ KLe(datas_kind(d, sn_k(TyNamed(n, Nil(Ty)), o)), k) from match o {
       None => Eq::subst(
         (z: Kind) => KLe(z, k),
         Eq::sym(kind_named_unf(d, n, Nil(Ty))),
@@ -1850,7 +1857,7 @@ pub theorem fk_cons_ok(
     k
   )
 ): KLe(kn_k(d, n, ty_map_list(args, map), o), k) {
-  match o: KLe(kn_k(d, n, ty_map_list(args, map), o), k) {
+  ⊢ KLe(kn_k(d, n, ty_map_list(args, map), o), k) from match o {
     None => hk
     Some(data) => ih(
       data,
@@ -1884,7 +1891,7 @@ pub theorem fk_cons_ok(
 }
 
 pub fn sub_named_k(n: Text, args: List(Ty), map: Ordmap(Text, Ty), b: Bool): Ty {
-  match b: Ty {
+  ⊢ Ty from match b {
     true => ty_substitute_name(n, map, TyNamed(n, Nil(Ty)))
     false => TyNamed(n, ty_map_list(args, map))
   }
@@ -1898,11 +1905,8 @@ pub theorem sub_named_unf(
   Refl
 }
 
-pub theorem no_args_nil(
-  args: List(Ty),
-  e: ty_no_args(args) = true
-): args = Nil(Ty) {
-  match args: args = Nil(Ty) {
+pub theorem no_args_nil(args: List(Ty), e: ty_no_args(args) = true): args = Nil(Ty) {
+  ⊢ args = Nil(Ty) from match args {
     Nil => Refl
     Cons(a, more) => False::elim(false_ne_true(e))
   }
@@ -1965,7 +1969,7 @@ pub theorem fk_named_ok(
     k
   )
 ): KLe(datas_kind(d, sub_named_k(n, args, map, na)), k) {
-  match na: KLe(datas_kind(d, sub_named_k(n, args, map, na)), k) {
+  ⊢ KLe(datas_kind(d, sub_named_k(n, args, map, na)), k) from match na {
     true => Eq::subst(
       (z: Ty) => KLe(datas_kind(d, z), k),
       Eq::sym(sn_unf(n, map, TyNamed(n, Nil(Ty)))),
@@ -2019,7 +2023,7 @@ pub theorem fklp_ok(
   hk: KLe(pfst(fkl_pick(d, t, gs, acc, p)), k),
   he: Env(d, map, psnd(fkl_pick(d, t, gs, acc, p)), k)
 ): KLe(dkl_pick(d, sigt, kacc, p), k) {
-  match p: KLe(dkl_pick(d, sigt, kacc, p), k) {
+  ⊢ KLe(dkl_pick(d, sigt, kacc, p), k) from match p {
     true => kle_lub(
       kacc,
       datas_kind(d, sigt),
@@ -2062,7 +2066,7 @@ pub theorem fklk_ok(
   hk: KLe(pfst(fkl_k(d, t, rest, every, picks, gs, acc, go)), k),
   he: Env(d, map, psnd(fkl_k(d, t, rest, every, picks, gs, acc, go)), k)
 ): KLe(dkl_k(d, sigt, sigrest, every, picks, kacc, go), k) {
-  match go: KLe(dkl_k(d, sigt, sigrest, every, picks, kacc, go), k) {
+  ⊢ KLe(dkl_k(d, sigt, sigrest, every, picks, kacc, go), k) from match go {
     false => hacc
     true => ihr(
       fkl_pick(d, t, gs, acc, picks_head(every, picks)),
@@ -2153,7 +2157,7 @@ mutual {
     hk: KLe(pfst(field_kind_list(d, ts, every, picks, gs, acc)), k),
     he: Env(d, map, psnd(field_kind_list(d, ts, every, picks, gs, acc)), k)
   ): KLe(datas_kind_list(d, ty_map_list(ts, map), every, picks, kacc), k) {
-    match ts: KLe(datas_kind_list(d, ty_map_list(ts, map), every, picks, kacc), k) {
+    ⊢ KLe(datas_kind_list(d, ty_map_list(ts, map), every, picks, kacc), k) from match ts {
       Nil => hacc
       Cons(t, rest) => Eq::subst(
         (z: Kind) => KLe(z, k),
@@ -2219,7 +2223,7 @@ mutual {
     hk: KLe(pfst(field_kind(d, t, gs, holds)), k),
     he: Env(d, map, psnd(field_kind(d, t, gs, holds)), k)
   ): KLe(datas_kind(d, ty_substitute(t, map)), k) {
-    match t: KLe(datas_kind(d, ty_substitute(t, map)), k) {
+    ⊢ KLe(datas_kind(d, ty_substitute(t, map)), k) from match t {
       TyInt(w) => hk
       TyBool => hk
       TyText => hk
@@ -2421,7 +2425,7 @@ pub theorem fields_fst(
   gs: List(Text),
   acc: Pair(Kind, List(Text))
 ): KLe(pfst(acc), pfst(fields_kind(d, fs, gs, acc))) {
-  match fs: KLe(pfst(acc), pfst(fields_kind(d, fs, gs, acc))) {
+  ⊢ KLe(pfst(acc), pfst(fields_kind(d, fs, gs, acc))) from match fs {
     Nil => kle_refl(pfst(acc))
     Cons(f, rest) => kle_trans(
       pfst(acc),
@@ -2441,7 +2445,7 @@ pub theorem fields_grow(
   g: Text,
   m: Mem(Text, g, psnd(acc))
 ): Mem(Text, g, psnd(fields_kind(d, fs, gs, acc))) {
-  match fs: Mem(Text, g, psnd(fields_kind(d, fs, gs, acc))) {
+  ⊢ Mem(Text, g, psnd(fields_kind(d, fs, gs, acc))) from match fs {
     Nil => m
     Cons(f, rest) => fields_grow(
       d,
@@ -2460,7 +2464,7 @@ pub theorem ctors_fst(
   gs: List(Text),
   acc: Pair(Kind, List(Text))
 ): KLe(pfst(acc), pfst(ctors_kind(d, cs, gs, acc))) {
-  match cs: KLe(pfst(acc), pfst(ctors_kind(d, cs, gs, acc))) {
+  ⊢ KLe(pfst(acc), pfst(ctors_kind(d, cs, gs, acc))) from match cs {
     Nil => kle_refl(pfst(acc))
     Cons(c, rest) => kle_trans(
       pfst(acc),
@@ -2480,7 +2484,7 @@ pub theorem ctors_grow(
   g: Text,
   m: Mem(Text, g, psnd(acc))
 ): Mem(Text, g, psnd(ctors_kind(d, cs, gs, acc))) {
-  match cs: Mem(Text, g, psnd(ctors_kind(d, cs, gs, acc))) {
+  ⊢ Mem(Text, g, psnd(ctors_kind(d, cs, gs, acc))) from match cs {
     Nil => m
     Cons(c, rest) => ctors_grow(
       d,
@@ -2509,7 +2513,7 @@ pub theorem fields_ok(
   f: DataField,
   mf: Mem(DataField, f, fs)
 ): KLe(datas_kind(d, ty_substitute(fty(f), map)), k) {
-  match fs: KLe(datas_kind(d, ty_substitute(fty(f), map)), k) {
+  ⊢ KLe(datas_kind(d, ty_substitute(fty(f), map)), k) from match fs {
     Nil => Mem::nil(KLe(datas_kind(d, ty_substitute(fty(f), map)), k), mf)
     Cons(f0, rest) => Or::elim(
       mem_cons_inv(f0, rest, mf),
@@ -2593,7 +2597,7 @@ pub theorem ctors_ok(
   f: DataField,
   mf: Mem(DataField, f, cfields(c))
 ): KLe(datas_kind(d, ty_substitute(fty(f), map)), k) {
-  match cs: KLe(datas_kind(d, ty_substitute(fty(f), map)), k) {
+  ⊢ KLe(datas_kind(d, ty_substitute(fty(f), map)), k) from match cs {
     Nil => Mem::nil(KLe(datas_kind(d, ty_substitute(fty(f), map)), k), mcs)
     Cons(c0, rest) => Or::elim(
       mem_cons_inv(c0, rest, mcs),
@@ -2646,7 +2650,7 @@ pub theorem ctors_ok(
 }
 
 pub fn opt_is_some(o: Option(Ty)): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     Some(x) => true
     None => false
   }
@@ -2673,22 +2677,34 @@ pub theorem get_insert_k(
     n = g,
     Ordmap::get(Ordmap::insert(m, g, a, Ordmap::compare_text), n, Ordmap::compare_text) = Some(a)
   ),
-  Ordmap::get(Ordmap::insert(m, g, a, Ordmap::compare_text), n, Ordmap::compare_text) = Ordmap::get(m, n, Ordmap::compare_text)
+  Ordmap::get(
+    Ordmap::insert(m, g, a, Ordmap::compare_text),
+    n,
+    Ordmap::compare_text
+  ) = Ordmap::get(m, n, Ordmap::compare_text)
 ) {
-  match o: (
+  (⊢ (
     Ordmap::compare_text(n, g) = o
   ) -> Or(
     And(
       n = g,
       Ordmap::get(Ordmap::insert(m, g, a, Ordmap::compare_text), n, Ordmap::compare_text) = Some(a)
     ),
-    Ordmap::get(Ordmap::insert(m, g, a, Ordmap::compare_text), n, Ordmap::compare_text) = Ordmap::get(m, n, Ordmap::compare_text)
-  ) {
+    Ordmap::get(
+      Ordmap::insert(m, g, a, Ordmap::compare_text),
+      n,
+      Ordmap::compare_text
+    ) = Ordmap::get(m, n, Ordmap::compare_text)
+  ) from match o {
     Equal => (e: Ordmap::compare_text(n, g) = Equal) => OrInl(
       AndIntro(
         Ordmap::compare_text_eq(n, g, e),
         Eq::subst(
-          (z: Text) => Ordmap::get(Ordmap::insert(m, g, a, Ordmap::compare_text), z, Ordmap::compare_text) = Some(a),
+          (z: Text) => Ordmap::get(
+            Ordmap::insert(m, g, a, Ordmap::compare_text),
+            z,
+            Ordmap::compare_text
+          ) = Some(a),
           Eq::sym(Ordmap::compare_text_eq(n, g, e)),
           Ordmap::text_get_insert_same(m, g, a, om)
         )
@@ -2722,7 +2738,7 @@ pub theorem get_insert_k(
         om
       )
     )
-  }(eo)
+  })(eo)
 }
 
 pub theorem get_insert(
@@ -2736,7 +2752,11 @@ pub theorem get_insert(
     n = g,
     Ordmap::get(Ordmap::insert(m, g, a, Ordmap::compare_text), n, Ordmap::compare_text) = Some(a)
   ),
-  Ordmap::get(Ordmap::insert(m, g, a, Ordmap::compare_text), n, Ordmap::compare_text) = Ordmap::get(m, n, Ordmap::compare_text)
+  Ordmap::get(
+    Ordmap::insert(m, g, a, Ordmap::compare_text),
+    n,
+    Ordmap::compare_text
+  ) = Ordmap::get(m, n, Ordmap::compare_text)
 ) {
   get_insert_k(m, g, a, n, om, Ordmap::compare_text(n, g), Refl)
 }
@@ -2750,9 +2770,9 @@ pub theorem inst_keys(
   hm: MapKeys(m, all),
   sub: ∀ g: Text. (Mem(Text, g, gs)) -> Mem(Text, g, all)
 ): MapKeys(data_instance_from(gs, args, m), all) {
-  match gs: MapKeys(data_instance_from(gs, args, m), all) {
+  ⊢ MapKeys(data_instance_from(gs, args, m), all) from match gs {
     Nil => hm
-    Cons(g, rest) => match args: MapKeys(data_instance_from(Cons(g, rest), args, m), all) {
+    Cons(g, rest) => ⊢ MapKeys(data_instance_from(Cons(g, rest), args, m), all) from match args {
       Nil => hm
       Cons(a, more) => inst_keys(
         rest,
@@ -2776,9 +2796,9 @@ pub theorem inst_keys(
 }
 
 pub fn args_cover(gs: List(Text), args: List(Ty)): Bool {
-  match gs: Bool {
+  ⊢ Bool from match gs {
     Nil => true
-    Cons(g, rest) => match args: Bool {
+    Cons(g, rest) => ⊢ Bool from match args {
       Nil => false
       Cons(a, more) => args_cover(rest, more)
     }
@@ -2805,9 +2825,9 @@ pub theorem inst_cover_at(
   o: Or(Mem(Text, n, gs), Mem(Text, n, cov)),
   e: Ordmap::get(data_instance_from(gs, args, m), n, Ordmap::compare_text) = None(Ty)
 ): False {
-  match gs: False {
+  ⊢ False from match gs {
     Nil => Or::elim(o, mn => Mem::nil(False, mn), mn => hm(n, mn, e))
-    Cons(g, rest) => match args: False {
+    Cons(g, rest) => ⊢ False from match args {
       Nil => false_ne_true(ha)
       Cons(a, more) => inst_cover_at(
         rest,
@@ -2825,7 +2845,11 @@ pub theorem inst_cover_at(
               Eq::trans(
                 Eq::sym(e2),
                 Eq::subst(
-                  (z: Text) => Ordmap::get(Ordmap::insert(m, g, a, Ordmap::compare_text), z, Ordmap::compare_text) = Some(a),
+                  (z: Text) => Ordmap::get(
+                    Ordmap::insert(m, g, a, Ordmap::compare_text),
+                    z,
+                    Ordmap::compare_text
+                  ) = Some(a),
                   Eq::sym(q2),
                   Ordmap::text_get_insert_same(m, g, a, om)
                 )
@@ -2871,12 +2895,12 @@ pub theorem inst_env_at(
   mn: Mem(Text, n, hs),
   e: Ordmap::get(data_instance_from(gs, args, m), n, Ordmap::compare_text) = Some(x)
 ): KLe(datas_kind(d, x), datas_kind_list(d, args, false, generics_picked(gs, hs), acc)) {
-  match gs: KLe(datas_kind(d, x), datas_kind_list(d, args, false, generics_picked(gs, hs), acc)) {
+  ⊢ KLe(datas_kind(d, x), datas_kind_list(d, args, false, generics_picked(gs, hs), acc)) from match gs {
     Nil => hm(n, x, mn, e)
-    Cons(g, rest) => match args: KLe(
+    Cons(g, rest) => ⊢ KLe(
       datas_kind(d, x),
       datas_kind_list(d, args, false, generics_picked(Cons(g, rest), hs), acc)
-    ) {
+    ) from match args {
       Nil => hm(n, x, mn, e)
       Cons(a, more) => inst_env_at(
         d,
@@ -2917,7 +2941,13 @@ pub theorem inst_env_at(
                   kind_join(acc, datas_kind(d, a))
                 ),
                 kle_join_r(acc, datas_kind(d, a)),
-                dkl_ge_acc(d, more, false, generics_picked(rest, hs), kind_join(acc, datas_kind(d, a)))
+                dkl_ge_acc(
+                  d,
+                  more,
+                  false,
+                  generics_picked(rest, hs),
+                  kind_join(acc, datas_kind(d, a))
+                )
               )
             )
           ),
@@ -2973,9 +3003,7 @@ pub def DataOk(
 
 pub def SummaryOk(
   d: Datas
-): Prop := ∀ n: Text. ∀ data: Data. (
-  datas_decl(d, n) = Some(data)
-) -> DataOk(d, data)
+): Prop := ∀ n: Text. ∀ data: Data. (datas_decl(d, n) = Some(data)) -> DataOk(d, data)
 
 pub fn inst_bound(d: Datas, data: Data, args: List(Ty)): Kind {
   datas_kind_list(d, args, false, generics_picked(dgen(data), dholds(data)), dbase(data))

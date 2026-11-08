@@ -190,7 +190,7 @@ pub theorem inference_function_type_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_function_type(j, c, f, scheme, env, ty)) {
-  match ty: CkCheckedFrame(c, inference_function_type(j, c, f, scheme, env, ty)) {
+  ⊢ CkCheckedFrame(c, inference_function_type(j, c, f, scheme, env, ty)) from match ty {
     TyInt(pat_w) => checked_frame_return(c, Star, ordered)
     TyBool => checked_frame_return(c, Star, ordered)
     TyText => checked_frame_return(c, Star, ordered)
@@ -520,7 +520,7 @@ pub theorem inference_lambda_kind_frame_checked(
   ih: InferenceFrames_checked(j),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, inference_lambda_kind(j, c, lam, borrows, env, hint, sk)) {
-  match sk: CkCheckedFrame(c, inference_lambda_kind(j, c, lam, borrows, env, hint, sk)) {
+  ⊢ CkCheckedFrame(c, inference_lambda_kind(j, c, lam, borrows, env, hint, sk)) from match sk {
     SkVar(pat_name) => checked_frame_read(
       c,
       ck_rewrap1(ck_fresh(c)),
@@ -785,14 +785,7 @@ pub theorem inference_lambda_kind_frame_checked(
       error_frame_rewrap(c, ck_fresh(c), ck_fresh_frame_errors(c)),
       ordered
     )
-    SkStep(
-      pat_tactic,
-      pat_arg,
-      pat_call_start,
-      pat_call_end,
-      pat_before,
-      pat_arms
-    ) => checked_frame_read(
+    SkStep(pat_tactic, pat_arg, pat_call_start, pat_call_end, pat_before, pat_arms) => checked_frame_read(
       c,
       ck_rewrap1(ck_fresh(c)),
       frame_rewrap(c, ck_fresh(c), ck_fresh_frame(c)),

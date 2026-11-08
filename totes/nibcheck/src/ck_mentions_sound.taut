@@ -8,7 +8,7 @@ import "rules_ty.taut"
 import "ty.taut"
 import "unify_sound.taut"
 
-pub fn mentions_present(o: Option(Ty)): Bool { match o: Bool { None => false
+pub fn mentions_present(o: Option(Ty)): Bool { ⊢ Bool from match o { None => false
     Some(t) => true } }
 pub theorem mentions_bound(
   c: Checker,
@@ -22,7 +22,7 @@ pub theorem mentions_or_left(
   h: a = true
 ): Bool::or(a, b) = true { Eq::subst((x: Bool) => Bool::or(x, b) = true, Eq::sym(h), Refl) }
 pub theorem mentions_or_right(a: Bool, b: Bool, h: b = true): Bool::or(a, b) = true {
-  match a: Bool::or(a, b) = true { false => h
+  ⊢ Bool::or(a, b) = true from match a { false => h
     true => Refl }
 }
 
@@ -30,15 +30,21 @@ pub def MentionsHit(
   k: Nat
 ): Prop := ∀ c: Checker. ∀ ns: List(
   Text
-). ∀ n: Text. ∀ t: Ty. ∀ member: list_has_text(ns, n) = true. ∀ h: TyMentions(ck_subst_of(c), n, t). ck_mentions_in(k, c, ns, t) = true
+). ∀ n: Text. ∀ t: Ty. ∀ member: list_has_text(
+  ns,
+  n
+) = true. ∀ h: TyMentions(ck_subst_of(c), n, t). ck_mentions_in(k, c, ns, t) = true
 pub def MentionsListHit(
   k: Nat
 ): Prop := ∀ c: Checker. ∀ ns: List(
   Text
 ). ∀ n: Text. ∀ ts: List(
   Ty
-). ∀ member: list_has_text(ns, n) = true. ∀ h: TyMentionsList(ck_subst_of(c), n, ts). ck_mentions_any_in(k, c, ns, ts) = true
-pub fn mentions_kind(j: Nat, c: Checker, ns: List(Text), t: Ty): Bool { match t: Bool {
+). ∀ member: list_has_text(
+  ns,
+  n
+) = true. ∀ h: TyMentionsList(ck_subst_of(c), n, ts). ck_mentions_any_in(k, c, ns, ts) = true
+pub fn mentions_kind(j: Nat, c: Checker, ns: List(Text), t: Ty): Bool { ⊢ Bool from match t {
     TyInt(part_w) => false
     TyBool => false
     TyText => false
@@ -81,7 +87,7 @@ pub theorem mentions_kind_hit(
   member: list_has_text(ns, n) = true,
   h: TyMentions(ck_subst_of(c), n, t)
 ): mentions_kind(j, c, ns, t) = true {
-  match h: mentions_kind(j, c, ns, t) = true {
+  ⊢ mentions_kind(j, c, ns, t) = true from match h {
     MenParam(k) => member
     MenVar(inner, i, eq, inside) => mentions_bound(c, i, inner, eq)
     MenFnParam(ps, r, k, inside) => mentions_or_left(
@@ -124,7 +130,7 @@ pub theorem mentions_list_hit_step(
   member: list_has_text(ns, n) = true,
   h: TyMentionsList(ck_subst_of(c), n, ts)
 ): ck_mentions_any_in(Succ(j), c, ns, ts) = true {
-  match h: ck_mentions_any_in(Succ(j), c, ns, ts) = true {
+  ⊢ ck_mentions_any_in(Succ(j), c, ns, ts) = true from match h {
     MenHead(x, rest, inside) => mentions_or_left(
       ck_mentions_in(j, c, ns, x),
       ck_mentions_any_in(j, c, ns, rest),
@@ -138,7 +144,7 @@ pub theorem mentions_list_hit_step(
   }
 }
 pub theorem mentions_hit_all(k: Nat): And(MentionsHit(k), MentionsListHit(k)) {
-  match k: And(MentionsHit(k), MentionsListHit(k)) {
+  ⊢ And(MentionsHit(k), MentionsListHit(k)) from match k {
     Zero => AndIntro(
       c => ns => n => t => member => h => Refl,
       c => ns => n => ts => member => h => Refl
@@ -183,6 +189,6 @@ pub theorem ck_mentions_absent(
   absent: ck_mentions_in(k, c, ns, t) = false
 ): RigidAbsent(ck_subst_of(c), ns, t) {
   n => member => occurs => false_ne_true(
-      Eq::trans(Eq::sym(absent), And::left(mentions_hit_all(k))(c, ns, n, t, member, occurs))
-    )
+    Eq::trans(Eq::sym(absent), And::left(mentions_hit_all(k))(c, ns, n, t, member, occurs))
+  )
 }

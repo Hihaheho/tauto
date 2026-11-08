@@ -25,8 +25,8 @@ fn normalized_environment(
 ) -> Vec<(OsString, OsString)> {
     let mut vars: Vec<_> = vars
         .into_iter()
-        // The reusable launcher clears Cargo's validated, caller-specific
-        // library search path; the actual compiler supplies its own paths.
+        // The reusable launcher clears test-runner metadata and Cargo's
+        // validated caller library path; the compiler supplies its own paths.
         .filter(|(key, _)| !caller_metadata(key))
         .collect();
     vars.sort();
@@ -35,10 +35,15 @@ fn normalized_environment(
 
 fn caller_metadata(key: &std::ffi::OsStr) -> bool {
     key == "LD_LIBRARY_PATH"
+        || key == "DYLD_FALLBACK_LIBRARY_PATH"
+        || key == "CARGO_TARGET_DIR"
+        || key == "CARGO_BUILD_BUILD_DIR"
+        || key == "TAUTO_SELFHOST_CACHE_TRACE"
         || key == "_"
+        || key == "NEXTEST"
         || key
             .to_str()
-            .is_some_and(|k| k.starts_with("CARGO_BIN_EXE_"))
+            .is_some_and(|k| k.starts_with("CARGO_BIN_EXE_") || k.starts_with("NEXTEST_"))
 }
 
 fn normalize_command(command: &mut Command, keys: impl IntoIterator<Item = OsString>) {
@@ -47,6 +52,19 @@ fn normalize_command(command: &mut Command, keys: impl IntoIterator<Item = OsStr
             command.env_remove(key);
         }
     }
+}
+
+fn compiler_environment(
+    command: &mut Command,
+    caller_keys: impl IntoIterator<Item = OsString>,
+    compiler_target: &Path,
+    tote_target: &Path,
+) {
+    normalize_command(command, caller_keys);
+    command
+        .env("TAUTO_TARGET_DIR", tote_target)
+        .env("CARGO_TARGET_DIR", compiler_target)
+        .env("CARGO_BUILD_BUILD_DIR", compiler_target);
 }
 
 struct Digest(Sha256);
@@ -261,7 +279,7 @@ fn compiler_files(root: &Path, files: &mut BTreeSet<PathBuf>) -> Result<bool> {
         files.insert(home.join("config"));
         files.insert(home.join("config.toml"));
     }
-    let closed = files
+    let configurations: Vec<_> = files
         .iter()
         .filter(|p| {
             matches!(
@@ -269,8 +287,58 @@ fn compiler_files(root: &Path, files: &mut BTreeSet<PathBuf>) -> Result<bool> {
                 Some("config" | "config.toml")
             )
         })
-        .all(|p| fs::read_to_string(p).map_or(!p.exists(), |text| closed_config(&text)));
+        .cloned()
+        .collect();
+    let mut closed = true;
+    for path in configurations {
+        match fs::read_to_string(&path) {
+            Ok(text) => match configuration_inputs(&text) {
+                Some(inputs) => files.extend(inputs),
+                None => closed = false,
+            },
+            Err(_) => closed &= !path.exists(),
+        }
+    }
     Ok(closed && formatter_configuration(root, files))
+}
+
+/// Certificate bundles are build inputs too. Only literal absolute paths
+/// are followed; other HTTP settings leave discovery open.
+fn configuration_inputs(text: &str) -> Option<BTreeSet<PathBuf>> {
+    let mut inputs = BTreeSet::new();
+    let mut ordinary = String::new();
+    let mut http = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            http = trimmed == "[http]";
+            if http {
+                continue;
+            }
+        }
+        if http {
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let (key, value) = trimmed.split_once('=')?;
+            if key.trim() != "cainfo" {
+                return None;
+            }
+            let value = value.trim().strip_prefix('"')?.strip_suffix('"')?;
+            if value.contains(['"', '\\']) {
+                return None;
+            }
+            let path = PathBuf::from(value);
+            if !path.is_absolute() {
+                return None;
+            }
+            inputs.insert(path);
+        } else {
+            ordinary.push_str(line);
+            ordinary.push('\n');
+        }
+    }
+    closed_config(&ordinary).then_some(inputs)
 }
 
 /// Unknown configuration may name other files or arbitrary build tools. It
@@ -417,11 +485,16 @@ fn closed_environment() -> bool {
     }
     for (key, value) in std::env::vars_os() {
         if untracked_override(&key, &value) {
+            trace(&format!(
+                "untracked environment key: {}",
+                key.to_string_lossy()
+            ));
             return false;
         }
         let key = key.to_string_lossy();
         let value = value.to_string_lossy();
-        if key.starts_with("DYLD_")
+        if (key.starts_with("DYLD_")
+            && !(cfg!(target_os = "macos") && key == "DYLD_FALLBACK_LIBRARY_PATH"))
             || (key.starts_with("CARGO_TARGET_") && key.ends_with("_LINKER"))
             || (key.contains("RUSTFLAGS")
                 && !value
@@ -434,6 +507,7 @@ fn closed_environment() -> bool {
                     .file_stem()
                     .is_none_or(|s| s != "rustc"))
         {
+            trace(&format!("untracked environment key: {key}"));
             return false;
         }
     }
@@ -529,47 +603,88 @@ fn toolchain_tree_identity(sysroot: &Path) -> Result<Option<String>> {
 }
 
 fn closed_library_paths(root: &Path, sysroot: &Path) -> bool {
-    let Some(value) = std::env::var_os("LD_LIBRARY_PATH") else {
-        return true;
-    };
     let target = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("target"));
-    known_library_paths(
-        &value,
-        &tauto::program::canonical_path(&root.join(target)),
-        sysroot,
-    )
+        .or_else(|| {
+            std::env::current_exe().ok().and_then(|exe| {
+                exe.ancestors()
+                    .find(|dir| dir.join(".rustc_info.json").is_file())
+                    .map(Path::to_path_buf)
+            })
+        })
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target"));
+    let target = tauto::program::canonical_path(&root.join(target));
+    if let Some(value) = std::env::var_os("LD_LIBRARY_PATH")
+        && !known_library_paths(&value, &target, sysroot)
+    {
+        return false;
+    }
+    if let Some(value) = std::env::var_os("DYLD_FALLBACK_LIBRARY_PATH") {
+        let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+            return false;
+        };
+        if !cfg!(target_os = "macos")
+            || !known_fallback_library_paths(&value, &target, sysroot, &home)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn known_fallback_library_paths(
+    value: &std::ffi::OsStr,
+    target: &Path,
+    sysroot: &Path,
+    home: &Path,
+) -> bool {
+    let defaults = [
+        home.join("lib"),
+        PathBuf::from("/usr/local/lib"),
+        PathBuf::from("/usr/lib"),
+    ];
+    std::env::split_paths(value).all(|path| {
+        let known = defaults.contains(&path) || known_library_path(&path, target, sysroot);
+        if !known {
+            trace(&format!(
+                "untracked fallback library directory: {}",
+                path.display()
+            ));
+        }
+        known
+    })
 }
 
 fn known_library_paths(value: &std::ffi::OsStr, target: &Path, sysroot: &Path) -> bool {
-    std::env::split_paths(value).all(|path| {
-        if !path.is_absolute() {
-            return false;
-        }
-        let path = tauto::program::canonical_path(&path);
-        if path.starts_with(sysroot.join("lib")) {
-            return true;
-        }
-        let Ok(relative) = path.strip_prefix(target) else {
-            return false;
-        };
-        if !target.join(".rustc_info.json").is_file() || !path.is_dir() {
-            return false;
-        }
-        let Some(components): Option<Vec<_>> = relative.iter().map(|s| s.to_str()).collect() else {
-            return false;
-        };
-        // Only Cargo output shapes in the caller's established target are
-        // normalized. That local Cargo target is a trusted build boundary.
-        matches!(
-            components.as_slice(),
-            ["debug" | "release"]
-                | ["debug" | "release", "deps"]
-                | ["debug" | "release", "build", _, _, "out"]
-                | ["debug" | "release", "build", _, "out"]
-        )
-    })
+    std::env::split_paths(value).all(|path| known_library_path(&path, target, sysroot))
+}
+
+fn known_library_path(path: &Path, target: &Path, sysroot: &Path) -> bool {
+    if !path.is_absolute() {
+        return false;
+    }
+    let path = tauto::program::canonical_path(&path);
+    if path.starts_with(sysroot.join("lib")) {
+        return true;
+    }
+    let Ok(relative) = path.strip_prefix(target) else {
+        return false;
+    };
+    if !target.join(".rustc_info.json").is_file() {
+        return false;
+    }
+    let Some(components): Option<Vec<_>> = relative.iter().map(|s| s.to_str()).collect() else {
+        return false;
+    };
+    // Only Cargo output shapes in the caller's established target are
+    // normalized. That local Cargo target is a trusted build boundary.
+    matches!(
+        components.as_slice(),
+        ["debug" | "release"]
+            | ["debug" | "release", "deps"]
+            | ["debug" | "release", "build", _, _, "out"]
+            | ["debug" | "release", "build", _, "out"]
+    )
 }
 
 #[cfg(unix)]
@@ -579,7 +694,9 @@ fn toolchain_identity(root: &Path, rustc: &std::ffi::OsStr) -> Result<Option<Str
         return Ok(bypass("rustc has no installation directory"));
     };
     if !closed_library_paths(root, installed) {
-        return Ok(bypass("LD_LIBRARY_PATH names unknown directories"));
+        return Ok(bypass(
+            "dynamic library search paths name unknown directories",
+        ));
     }
     let mut command = Command::new(rustc);
     normalize_command(&mut command, std::env::vars_os().map(|(key, _)| key));
@@ -627,7 +744,9 @@ fn toolchain_identity(root: &Path, rustc: &std::ffi::OsStr) -> Result<Option<Str
         }
     }
     if !closed_library_paths(root, &sysroot) {
-        return Ok(bypass("LD_LIBRARY_PATH names unknown directories"));
+        return Ok(bypass(
+            "dynamic library search paths name unknown directories",
+        ));
     }
     toolchain_tree_identity(&sysroot)
 }
@@ -664,9 +783,14 @@ fn keys(
 fn input_key(root: &Path, dir: &Path) -> Result<Option<Identity>> {
     let (files, closed) = tote_files(dir)?;
     let mut compiler = BTreeSet::new();
-    let closed = compiler_files(root, &mut compiler)? && closed && closed_environment();
+    if !compiler_files(root, &mut compiler)? {
+        return Ok(bypass("open compiler configuration"));
+    }
     if !closed {
-        return Ok(bypass("open build configuration or environment"));
+        return Ok(bypass("open tote configuration"));
+    }
+    if !closed_environment() {
+        return Ok(bypass("open build environment"));
     }
     for command in [
         OsString::from(env!("CARGO")),
@@ -1005,14 +1129,16 @@ pub(super) fn build_tote(name: &str) -> Result<PathBuf> {
                     "build",
                     "--release",
                 ])
-                .arg(format!("totes/{name}"))
-                .env("TAUTO_TARGET_DIR", &tote_target)
-                .env("CARGO_TARGET_DIR", &compiler_target)
-                .env("CARGO_BUILD_BUILD_DIR", &compiler_target);
+                .arg(format!("totes/{name}"));
             if key.is_some() {
                 trace("normalized caller Cargo process metadata for compiler execution");
-                normalize_command(&mut command, std::env::vars_os().map(|(key, _)| key));
             }
+            compiler_environment(
+                &mut command,
+                std::env::vars_os().filter_map(|(name, _)| key.is_some().then_some(name)),
+                &compiler_target,
+                &tote_target,
+            );
             let out = command.output().map_err(|e| format!("cargo: {e}"))?;
             if !out.status.success() {
                 return Err(format!(
@@ -1055,6 +1181,43 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn compiler_output_directories_replace_caller_metadata() {
+        let mut command = Command::new("unused");
+        for key in [
+            "CARGO_TARGET_DIR",
+            "CARGO_BUILD_BUILD_DIR",
+            "TAUTO_TARGET_DIR",
+            "NEXTEST_RUN_ID",
+        ] {
+            command.env(key, "caller");
+        }
+        compiler_environment(
+            &mut command,
+            [
+                "CARGO_TARGET_DIR",
+                "CARGO_BUILD_BUILD_DIR",
+                "TAUTO_TARGET_DIR",
+                "NEXTEST_RUN_ID",
+            ]
+            .map(OsString::from),
+            Path::new("compiler-target"),
+            Path::new("tote-target"),
+        );
+        let env: BTreeMap<_, _> = command.get_envs().collect();
+        for key in ["CARGO_TARGET_DIR", "CARGO_BUILD_BUILD_DIR"] {
+            assert_eq!(
+                env[std::ffi::OsStr::new(key)],
+                Some(std::ffi::OsStr::new("compiler-target"))
+            );
+        }
+        assert_eq!(
+            env[std::ffi::OsStr::new("TAUTO_TARGET_DIR")],
+            Some(std::ffi::OsStr::new("tote-target"))
+        );
+        assert_eq!(env[std::ffi::OsStr::new("NEXTEST_RUN_ID")], None);
+    }
 
     struct Scratch(PathBuf);
     impl Scratch {
@@ -1528,6 +1691,20 @@ fn first(): u64 { second() }
             "CARGO_BIN_EXE_source-bundle".into(),
             "/caller/helper".into(),
         ));
+        unit.push(("CARGO_TARGET_DIR".into(), "/caller/target".into()));
+        unit.push(("CARGO_BUILD_BUILD_DIR".into(), "/caller/build".into()));
+        unit.push(("TAUTO_SELFHOST_CACHE_TRACE".into(), "1".into()));
+        unit.push((
+            "DYLD_FALLBACK_LIBRARY_PATH".into(),
+            "/validated/separately".into(),
+        ));
+        unit.push(("NEXTEST_RUN_ID".into(), "first-run".into()));
+        unit.push(("NEXTEST".into(), "1".into()));
+        unit.push(("NEXTEST_TEST_NAME".into(), "unit-test".into()));
+        integration.push(("NEXTEST_RUN_ID".into(), "second-run".into()));
+        integration.push(("NEXTEST_TEST_NAME".into(), "integration-test".into()));
+        integration.push(("NEXTEST_ATTEMPT_ID".into(), "second-run:test".into()));
+        integration.push(("NEXTEST_TEST_GLOBAL_SLOT".into(), "5".into()));
         assert_eq!(
             normalized_environment(unit),
             normalized_environment(integration.clone())
@@ -1560,6 +1737,58 @@ fn first(): u64 { second() }
         s.write("totes/app/src/data.txt", "changed again");
         assert_ne!(invalid, fixture_key(&s));
         assert_ne!(repaired, fixture_key(&s));
+    }
+
+    #[test]
+    fn cargo_darwin_fallbacks_normalize_but_custom_paths_do_not() {
+        let s = fixture();
+        let target = s.0.join("target");
+        let sysroot = s.0.join("sysroot");
+        let home = s.0.join("home");
+        s.write("target/.rustc_info.json", "{}");
+        // Cargo includes its dependency directory even before it exists.
+        assert!(!target.join("debug/deps").exists());
+        let paths = std::env::join_paths([
+            target.join("debug/deps"),
+            sysroot.join("lib"),
+            home.join("lib"),
+            PathBuf::from("/usr/local/lib"),
+            PathBuf::from("/usr/lib"),
+        ])
+        .unwrap();
+        assert!(known_fallback_library_paths(
+            &paths, &target, &sysroot, &home
+        ));
+        for path in [s.0.join("custom"), PathBuf::from("relative")] {
+            assert!(!known_fallback_library_paths(
+                path.as_os_str(),
+                &target,
+                &sysroot,
+                &home
+            ));
+        }
+        assert!(caller_metadata("DYLD_FALLBACK_LIBRARY_PATH".as_ref()));
+        assert!(!caller_metadata("DYLD_LIBRARY_PATH".as_ref()));
+    }
+
+    #[test]
+    fn absolute_certificate_inputs_invalidate_the_compiler_identity() {
+        let s = fixture();
+        let certificate = s.0.join("certificate.pem");
+        let config = format!("[http]\ncainfo = {:?}\n", certificate);
+        let files = configuration_inputs(&config).unwrap();
+        assert_eq!(files, BTreeSet::from([certificate]));
+        s.write("certificate.pem", "first certificate");
+        let first = digest_files(&files, b"compiler").unwrap();
+        s.write("certificate.pem", "replacement certificate");
+        assert_ne!(first, digest_files(&files, b"compiler").unwrap());
+        for config in [
+            "[http]\ncainfo = \"relative.pem\"",
+            "[http]\ncainfo = \"/escaped\\\\path.pem\"",
+            "[http]\nproxy = \"unknown\"",
+        ] {
+            assert!(configuration_inputs(config).is_none());
+        }
     }
 
     #[test]

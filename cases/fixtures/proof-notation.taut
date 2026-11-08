@@ -1,0 +1,34 @@
+import std::prelude::Macro
+
+syntax!(math, ```par
+{{par:math}}```) => struct Eqn, struct Paren, struct Sum, struct Sum_Rep1,
+  enum Term, fn parse
+pub fn math_term(t: math::Term): SynExpr ! {macro_error, Div} {
+  match t {
+    Num(tok) => Syn::nat(tok)
+    Paren(p) => math_sum(p.sum)
+    Embed(e) => e
+  }
+}
+
+pub fn math_rest(acc: SynExpr, rest: List(math::Sum_Rep1)): SynExpr ! {macro_error, Div} {
+  match rest {
+    Nil => acc
+    Cons(r, more) => {
+      let t := math_term(r.term)
+      math_rest(quote { $acc + $t }, more)
+    }
+  }
+}
+
+pub fn math_sum(s: math::Sum): SynExpr ! {macro_error, Div} {
+  math_rest(math_term(s.term), s.rep)
+}
+
+pub macro fn math(e: math::Eqn): SynExpr ! {macro_error, Div} {
+  let l := math_sum(e.sum)
+  let r := math_sum(e.sum_2)
+  quote { Eq(Nat, $l, $r) }
+}
+
+pub macro fn other(e: math::Eqn): SynExpr ! {macro_error, Div} { math(e) }

@@ -1,0 +1,19 @@
+// A body that ends in `return` has the function's type, not `()`.
+@ cases.trailing-return
+backends = ["rust", "javascript"]
+source = ```nib
+fn early(n: i64): i64 {
+  return n * 2
+}
+fn after_let(n: i64): i64 {
+  let m := n + 1
+  return m
+}
+fn in_branch(n: i64): i64 {
+  if n > 0 { return n } else { return 0 - n }
+}
+perform show("early", early(5))
+perform show("after_let", after_let(5))
+perform show("in_branch", in_branch(0 - 3))
+```
+shows = ["early = 10", "after_let = 6", "in_branch = 3"]

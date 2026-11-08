@@ -1,0 +1,77 @@
+// `Bytes` builtins (`std/prelude/Shared.taut`): read-only bytes whose slices
+// share their storage. `std/Bytes.taut` says what each does.
+
+@ cases.bytes-of-a-list-keep-every-byte
+source = ```nib
+import std::prelude::Shared
+
+let b := Bytes::of_list(Cons(0, Cons(255, Cons(128, Nil))))
+perform show("b", b)
+perform show("n", Bytes::len(b))
+perform show("l", Bytes::to_list(b))
+```
+shows = ["b = Bytes[0, 255, 128]", "n = 3", "l = Cons(0, Cons(255, Cons(128, Nil)))"]
+
+@ cases.bytes-get-in-and-out-of-range
+source = ```nib
+import std::prelude::Shared
+
+let b := Bytes::of_text("ab")
+perform show("in", Bytes::get(b, 1))
+perform show("out", Bytes::get(b, 2))
+```
+shows = ["in = Some(98)", "out = None"]
+
+@ cases.bytes-slice-needs-start-before-end-within-the-length
+source = ```nib
+import std::prelude::Shared
+
+let b := Bytes::of_text("hello")
+perform show("s", Bytes::slice(b, 1, 3))
+perform show("empty", Bytes::slice(b, 5, 5))
+perform show("past", Bytes::slice(b, 4, 6))
+perform show("backwards", Bytes::slice(b, 3, 1))
+```
+shows = [
+  "s = Some(Bytes[101, 108])",
+  "empty = Some(Bytes[])",
+  "past = None",
+  "backwards = None",
+]
+
+@ cases.a-slice-of-a-slice-counts-from-its-own-start
+source = ```nib
+import std::prelude::Shared
+
+let b := Bytes::of_text("abcdef")
+match Bytes::slice(b, 2, 6) {
+  Some(s) => perform show("t", Bytes::slice(s, 1, 2))
+  None => #()
+}
+```
+shows = ["t = Some(Bytes[100])"]
+
+@ cases.text-of-bytes-checks-utf-8
+source = ```nib
+import std::prelude::Shared
+
+let b := Bytes::of_text("é")
+perform show("whole", Text::of_bytes(b))
+match Bytes::slice(b, 0, 1) {
+  Some(half) => perform show("half", Text::of_bytes(half))
+  None => #()
+}
+perform show("ff", Text::of_bytes(Bytes::of_list(Cons(255, Nil))))
+```
+shows = ["whole = Some(\"é\")", "half = None", "ff = None"]
+
+@ cases.bytes-concat-and-eq
+source = ```nib
+import std::prelude::Shared
+
+let a := Bytes::concat(Bytes::of_text("h"), Bytes::of_list(Cons(255, Nil)))
+perform show("a", a)
+perform show("same", Bytes::eq(a, Bytes::of_list(Cons(104, Cons(255, Nil)))))
+perform show("other", Bytes::eq(a, Bytes::of_text("h")))
+```
+shows = ["a = Bytes[104, 255]", "same = true", "other = false"]

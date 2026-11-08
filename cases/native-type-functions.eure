@@ -1,0 +1,173 @@
+description = "Transparent native type functions normalize before Nib checking and backend lowering."
+
+@ cases.mutable-field-through-type-function
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+struct ChildPayload { count: Nat }
+struct ParentRecord { child: ChildPayload }
+fn ChildPayloadType(Env: Type): Type { ChildPayload }
+fn child_ref(&mut parent: ParentRecord): &mut ChildPayloadType(ParentRecord) { &mut parent.child }
+var parent := ParentRecord { child: ChildPayload { count: 1 } }
+{
+  let &mut child := child_ref(&mut parent)
+  child.count := 7
+}
+perform show("count", parent.child.count)
+```
+shows = ["count = 7"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["count = 7"]
+javascript_shows = ["count = 7"]
+
+@ cases.composed-type-functions-in-signatures-and-annotations
+extract = true
+source = ```tauto
+struct Boxed(A: Type) { value: A }
+fn BoxType(A: Type): Type { Boxed(A) }
+fn Nested(A: Type): Type { BoxType(BoxType(A)) }
+fn unwrap<A: Type>(box: Nested(A)): A {
+  match box { Boxed { value: inner } => match inner { Boxed { value } => value } }
+}
+let box: Nested(nat) := Boxed { value: Boxed { value: 19 } }
+perform show("value", unwrap(box))
+```
+shows = ["value = 19"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["value = 19"]
+javascript_shows = ["value = 19"]
+
+@ cases.type-functions-are-not-runtime-values
+extract = true
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct Item { value: nat }
+fn ItemType(A: Type): Type { Item }
+perform show("type", ItemType(Item))
+```
+load_error = "returns a type and cannot be used as an executable value"
+
+@ cases.unused-invalid-type-function-is-rejected
+extract = true
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct Item { value: nat }
+fn Broken(A: Type): Type { Item { value: 0 } }
+perform show("value", 0)
+```
+load_error = "native type function body must be a type expression"
+
+@ cases.recursive-native-type-functions-are-rejected
+extract = true
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct Item { value: nat }
+fn Loop(A: Type): Type { Loop(Item) }
+fn Uses(A: Type): Type { Item }
+let item: Loop(Item) := Item { value: 0 }
+perform show("value", item.value)
+```
+load_error = "recursive native type function"
+
+@ cases.unused-type-argument-still-must-be-a-type
+extract = true
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct Item { value: nat }
+fn ItemType(A: Type): Type { Item }
+let item: ItemType(4) := Item { value: 0 }
+perform show("value", item.value)
+```
+load_error = "native type function body must be a type expression"
+
+@ cases.original-child-name-collision-is-separate
+entry = "main.taut"
+extract = true
+files."main.taut" = ```tauto
+struct Child { count: Nat }
+struct Parent { child: Child }
+fn ChildType(Env: Type): Type { Child }
+fn child_ref(&mut parent: Parent): &mut ChildType(Parent) { &mut parent.child }
+var parent := Parent { child: Child { count: 1 } }
+{ let &mut child := child_ref(&mut parent); child.count := 2 }
+perform show("count", parent.child.count)
+```
+types = "ok"
+shows = ["count = 2"]
+
+@ cases.unused-type-function-rejects-undefined-nested-effect
+extract = true
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct Payload { value: nat }
+struct Boxed(A: Type) { value: A }
+fn Bad(A: Type): Type { Boxed((Payload) -> Payload ! {NoSuchEffect}) }
+perform show("ok", 0)
+```
+load_error = "effect `NoSuchEffect` in a native type function is not a declared monomorphic effect"
+
+@ cases.type-function-keeps-declared-function-effects
+extract = true
+source = ```tauto
+struct Payload { value: nat }
+effect read(): nat direct
+fn Callback(A: Type): Type { (Payload) -> Payload ! {read} }
+fn identity(payload: Payload): Payload { payload }
+let callback: Callback(Payload) := identity
+perform show("ok", 1)
+```
+shows = ["ok = 1"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["ok = 1"]
+javascript_shows = ["ok = 1"]
+
+@ cases.type-function-rejects-unknown-effect-without-native-data
+extract = true
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn Bad(A: Type): Type { (A) -> A ! {NoSuchEffect} }
+perform show("ok", 0)
+```
+load_error = "effect `NoSuchEffect` in a native type function is not a declared monomorphic effect"
+
+@ cases.unused-type-function-rejects-kind-on-nonfunction
+extract = true
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn Bad(A: Type): Type { affine nat }
+perform show("ok", 0)
+```
+load_error = "is the kind of a function type"
+
+@ cases.unused-type-function-rejects-unborrowed-slice
+extract = true
+entry = "main.taut"
+files."main.taut" = ```tauto
+import std::prelude::Affine
+fn Bad(A: Type): Type { Slice(A) }
+perform show("ok", 0)
+```
+load_error = "Slice(A) can only be borrowed"
+
+@ cases.ignored-type-argument-rejects-kind-on-nonfunction
+extract = true
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct Payload { n: nat }
+fn Constant(A: Type): Type { Payload }
+let payload: Constant(affine nat) := Payload { n: 1 }
+perform show("ok", payload.n)
+```
+load_error = "is the kind of a function type"
+
+@ cases.type-function-keeps-borrow-context-for-slice
+extract = true
+source = ```tauto
+import std::prelude::Affine
+fn View(A: Type): Type { &Slice(A) }
+perform show("ok", 1)
+```
+shows = ["ok = 1"]
+backends = ["rust", "javascript", "vm"]
+rust_shows = ["ok = 1"]
+javascript_shows = ["ok = 1"]

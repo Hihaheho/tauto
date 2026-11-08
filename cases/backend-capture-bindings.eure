@@ -1,0 +1,218 @@
+// A lexical capture keeps the defining activation across calls and resumptions.
+@ cases.borrowed-recursive-capture
+backends = ["rust", "javascript"]
+source = ```nib
+fn pure_helper(): Unit { #() }
+fn plain(n: i64, &previous: () -> i64): i64 ! {Div} {
+  var x := n
+  if n == 0 { previous() } else { plain(n - 1, () => x) }
+}
+fn with_helper(n: i64, &previous: () -> i64): i64 ! {Div} {
+  var x := n
+  if n == 0 { previous() } else { with_helper(n - 1, () => { pure_helper(); x }) }
+}
+perform show("plain", plain(1, () => 99))
+perform show("with_helper", with_helper(1, () => 99))
+```
+shows = ["plain = 1", "with_helper = 1"]
+
+@ cases.resumed-boundary-capture
+backends = ["rust", "javascript"]
+source = ```nib
+effect pause(): Unit resume ω
+fn pure_helper(): Unit { #() }
+fn resumed_plain(n: i64, &previous: () -> i64): i64 ! {Div} {
+  let x := n
+  if n == 0 { previous() } else {
+    handle { perform pause(); x } with {
+      pause(), k => resumed_plain(n - 1, () => k(#()))
+    }
+  }
+}
+fn resumed_with_helper(n: i64, &previous: () -> i64): i64 ! {Div} {
+  let x := n
+  if n == 0 { previous() } else {
+    handle { perform pause(); pure_helper(); x } with {
+      pause(), k => resumed_with_helper(n - 1, () => k(#()))
+    }
+  }
+}
+perform show("resumed_plain", resumed_plain(1, () => 99))
+perform show("resumed_with_helper", resumed_with_helper(1, () => 99))
+```
+shows = ["resumed_plain = 1", "resumed_with_helper = 1"]
+
+@ cases.resumed-operation-arm-capture
+backends = ["rust", "javascript"]
+source = ```nib
+effect pause(): Unit resume ω
+effect read(): i64 resume 1
+fn pure_helper(): Unit { #() }
+fn resumed_arm(n: i64, &previous: () -> i64): i64 ! {Div} {
+  let x := n
+  if n == 0 { previous() } else {
+    handle { perform pause(); perform read() } with {
+      pause(), k => resumed_arm(n - 1, () => k(#()))
+      read(), k => { pure_helper(); k(x) }
+    }
+  }
+}
+perform show("arm", resumed_arm(1, () => 99))
+```
+shows = ["arm = 1"]
+
+@ cases.resumed-return-arm-capture
+backends = ["rust", "javascript"]
+source = ```nib
+effect pause(): Unit resume ω
+fn pure_helper(): Unit { #() }
+fn resumed_return(n: i64, &previous: () -> i64): i64 ! {Div} {
+  let x := n
+  if n == 0 { previous() } else {
+    handle { perform pause(); 7 } with {
+      pause(), k => resumed_return(n - 1, () => k(#()))
+      return value => { pure_helper(); x }
+    }
+  }
+}
+perform show("return", resumed_return(1, () => 99))
+```
+shows = ["return = 1"]
+
+@ cases.mutable-continuation-cannot-escape-arm
+backends = ["rust", "javascript"]
+source = ```nib
+effect pause(): Unit resume ω
+fn resumed_mutable(n: i64, &previous: () -> i64): i64 ! {Div} {
+  var x := n
+  if n == 0 { previous() } else {
+    handle { perform pause(); x } with {
+      pause(), k => resumed_mutable(n - 1, () => k(#()))
+    }
+  }
+}
+perform show("mutable", resumed_mutable(1, () => 99))
+```
+lin = "error: k shares var x, so it may only be called in its arm"
+compile_errors.rust = "front: k shares var x, so it may only be called in its arm"
+compile_errors.javascript = "front: k shares var x, so it may only be called in its arm"
+
+// A top-level function passed by name to a borrowed callback parameter
+// behaves as the same function written as a closure.
+@ cases.function-name-as-borrowed-suspending-callback
+backends = ["rust", "javascript"]
+source = ```nib
+effect tick(): i64 resume 1
+fn with_tick<T, !e>(&body: () -> T ! {tick} ∪ e): T ! e {
+  handle { body() } with {
+    tick(), k => k(5)
+  }
+}
+fn movement(): i64 ! {tick} { perform tick() + 1 }
+perform show("named", with_tick(movement))
+perform show("closure", with_tick(() => movement()))
+```
+shows = ["named = 6", "closure = 6"]
+
+// A function item whose parameter has a larger row than the callback the
+// caller hands it accepts that callback, since a parameter is contravariant
+// in its effects; the backend lifts the callback to the parameter's tier.
+@ cases.function-name-with-higher-tier-parameter
+backends = ["rust", "javascript"]
+source = ```tauto
+effect ask(): i64
+fn apply2<!h>(run: (() -> i64 ! {}) -> i64 ! h): i64 ! h { run(() => 1) }
+fn wants(k: () -> i64 ! {ask}): i64 ! {ask} { k() + perform ask() }
+fn asked(): i64 ! {ask} { apply2(wants) }
+perform show("lifted", handle { asked() } with {
+  ask(), k => k(10)
+  return v => v
+})
+```
+shows = ["lifted = 11"]
+
+// A function item lent with `&` to a borrowed parameter whose row has a
+// handler is called in that parameter's tier, as the item lent without `&` is.
+@ cases.borrowed-fn-item-explicit-ref
+backends = ["rust", "javascript"]
+source = ```tauto
+effect tick(): i64
+fn run<T>(start: i64, &body: () -> T ! {tick}): Pair(T, i64) ! {Div} {
+  var n := start
+  let v := handle { body() } with {
+    tick(), k => {
+      n := n + 1
+      k(n)
+    }
+  }
+  Pair { fst: v, snd: n }
+}
+fn session(): i64 ! {tick} {
+  let a := perform tick()
+  perform tick()
+}
+perform show("borrowed", run(0, &session).fst)
+perform show("owned", run(0, session).fst)
+```
+shows = ["borrowed = 2", "owned = 2"]
+
+// A closure that matches on a captured var and assigns it in an arm.
+@ cases.captured-var-assigned-in-match-arm
+backends = ["rust", "javascript"]
+source = ```nib
+fn pop_twice(): i64 {
+  var stack := Cons(1, Cons(2, Cons(3, Nil)))
+  let pop := () => {
+    match stack {
+      Nil => #()
+      Cons(_, rest) => { stack := rest }
+    }
+  }
+  pop()
+  pop()
+  match stack { Nil => 0, Cons(o, _) => o }
+}
+perform show("left", pop_twice())
+```
+shows = ["left = 3"]
+
+// A borrowing closure that calls an owned function that suspends borrows the
+// function, and each call of the closure calls it again.
+@ cases.borrowing-closure-calls-owned-suspending-fn
+backends = ["rust", "javascript", "vm"]
+source = ```nib
+import std::prelude::Par
+fn call<T, !e>(&body: () -> T ! e): T ! e { body() }
+fn twice<!e>(&body: () -> u64 ! e): u64 ! e { body() + body() }
+fn render(draw: () -> Text ! {wait}): Text ! {wait} { call(() => draw()) }
+fn render_twice(draw: () -> u64 ! {wait}): u64 ! {wait} { twice(() => draw()) }
+perform show("html", render(() => "ok"))
+perform show("twice", render_twice(() => 21))
+```
+shows = ["html = \"ok\"", "twice = 42"]
+
+// A handler with a direct arm, around a body that suspends, answers with a
+// local of the handling function. The direct arm reads the local itself; the
+// handler of the suspending body keeps a clone of its own.
+@ cases.direct-arm-local-around-suspending-body
+backends = ["rust", "javascript", "vm"]
+source = ```nib
+import std::prelude::Par { wait, Ref, Semaphore }
+shared struct Rt { next: Ref(i64), gate: Semaphore }
+effect ask(): Rt direct
+fn run<T, !e>(&body: () -> T ! {ask} ∪ e): T ! {Div, wait} ∪ e {
+  let r := Rt { next: Ref::new(1), gate: Semaphore::new(1) }
+  handle { body() } with {
+    ask(), k => k(r)
+    return v => v
+  }
+}
+fn read(): i64 ! {ask, wait} {
+  let r := perform ask()
+  Semaphore::acquire(r.gate)
+  Semaphore::release(r.gate)
+  Ref::get(r.next)
+}
+perform show("s", run(() => read()))
+```
+shows = ["s = 1"]

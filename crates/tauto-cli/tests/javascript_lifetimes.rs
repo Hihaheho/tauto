@@ -595,6 +595,94 @@ await assert.rejects(drive((c,k)=>recur(c,[],k),()=>{},{},{steps:3}),/step limit
 }
 
 #[test]
+fn retained_aggregate_spines_own_callbacks_once_and_copy_only_written_paths() {
+    runtime(
+        r#"let owners=1,releases=0;
+const callback=retainedLeaf(Object.assign(()=>0,{retain(){owners++;},release(){assert(owners>0);owners--;releases++;}}));
+const cons=(head,tail)=>construct('Cons',[null,null],[head,tail],[0,1],false,'List',true);
+let value=construct('Nil',[],[],[],false,'List',true);
+for(let i=0;i<20000;i++)value=cons(i===0?callback:copyValue(callback),value);
+assert.equal(owners,20000);
+const alias=copyValue(value);assert.equal(alias,value);assert.equal(owners,20000);
+const hostCopy=thaw(copyValue(value));assert.equal(owners,40000);assert(!Object.isFrozen(hostCopy));
+dropValue(hostCopy);assert.equal(owners,20000);releases=0;
+forgetStableData();assert.equal(copyValue(value),value);dropValue(value);
+let root=value;
+projectionRef(reference(()=>root,x=>{root=x;}),{parent:{parent:null,key:1},key:0}).set(7n);
+assert.equal(root.fields[1].fields[0],7n);assert.equal(alias.fields[1].fields[0],callback);
+assert.equal(root.fields[1].fields[1],alias.fields[1].fields[1]);
+dropValue(root);assert.equal(releases,1);dropValue(alias);assert.equal(owners,0);assert.equal(releases,20001);
+// Crossing the host boundary transfers an owner to independent mutable nodes.
+owners=1;releases=0;
+const source=cons(callback,construct('Nil',[],[],[],false,'List',true)),held=copyValue(source);
+const host=thaw(source);assert.notEqual(host,held);assert(!Object.isFrozen(host));assert.equal(owners,2);
+dropValue(held);assert.equal(owners,1);dropValue(host);assert.equal(owners,0);
+// A host borrowing a nested node owns a copy, not its parent's live edge.
+owners=1;releases=0;
+const child=cons(callback,construct('Nil',[],[],[],false,'List',true));
+let parent=construct('Box',[null],[child],[0],true,'Box',true);
+const parentAlias=copyValue(parent),nested=projectionRef(reference(()=>parent,x=>{parent=x;}),{parent:null,key:0});
+thawReference(nested);assert.notEqual(parent,parentAlias);assert.equal(owners,2);assert.equal(releases,0);
+assert(!Object.isFrozen(nested.get()));assert.equal(parentAlias.fields[0],child);
+dropValue(parent);assert.equal(owners,1);dropValue(parentAlias);assert.equal(owners,0);
+// A mutable ancestor owns the retained edge replaced by a field write.
+owners=1;releases=0;
+const selected=cons(callback,construct('Nil',[],[],[],false,'List',true)),selectedAlias=copyValue(selected);
+let mutable={fields:[selected],names:[null]};
+projectionRef(reference(()=>mutable,x=>{mutable=x;}),{parent:{parent:null,key:0},key:0}).set(3n);
+assert.equal(owners,1);dropValue(mutable);assert.equal(owners,1);dropValue(selectedAlias);assert.equal(owners,0);
+// Internal path copies do not dispatch through a host-replaced array map.
+owners=1;releases=0;
+let guarded=cons(callback,construct('Nil',[],[],[],false,'List',true));
+const guardedAlias=copyValue(guarded),arrayMap=Array.prototype.map;
+try{
+    Array.prototype.map=()=>{throw new Error('host map must not own internal fields');};
+    projectionRef(reference(()=>guarded,x=>{guarded=x;}),{parent:null,key:0}).set(5n);
+}finally{Array.prototype.map=arrayMap;}
+assert.equal(guarded.fields[0],5n);dropValue(guarded);assert.equal(owners,1);dropValue(guardedAlias);assert.equal(owners,0);
+// A type hint alone cannot certify unknown values or custom copy hooks.
+owners=1;
+const unknown={fields:[callback],names:[null]};
+const fallback=cons(unknown,construct('Nil',[],[],[],false,'List',true));
+assert(!retainedGraphs.has(fallback));
+const copied=copyValue(fallback);assert.notEqual(copied,fallback);assert.notEqual(copied.fields[0],unknown);
+dropValue(fallback);dropValue(copied);assert.equal(owners,0);
+const order=[],leaf=n=>retainedLeaf({retain(){},release(){order.push(n);}});
+const ordered=construct('Pair',[null,null],[leaf(1),leaf(2)],[0,1],true,'Pair',true);
+copyValue(ordered);dropValue(ordered);assert.deepEqual(order,[]);
+dropValue(ordered);assert.deepEqual(order,[2,1]);
+// Every resumption owns its root; only the last root releases the leaf.
+owners=1;releases=0;
+const graph=cons(callback,construct('Nil',[],[],[],false,'List',true));
+const body=sequence([defineLocal(1,false,pure(graph)),performValue('pause','many',[]),readLocal(1,false,true)]);
+const arm={op:'pause',pats:[],k:2,guard:pure(true),body:(c,k)=>{
+    const resume=c.env[2].value;
+    return resume(c,[null],(d,first)=>{assert.equal(first,graph);dropValue(first);
+        return resume(d,[null],(e,second)=>{assert.equal(second,graph);dropValue(second);assert.equal(releases,0);return k(e,null);});});
+}};
+await drive(handleValue(body,[arm],null),()=>{},{});
+assert.equal(owners,0);assert.equal(releases,1);
+"#,
+    );
+}
+
+#[test]
+fn owned_borrow_captures_survive_their_original_slots() {
+    runtime(
+        r#"let value=17n,saved;
+await drive(sequence([
+    defineLocal(1,false,pure(reference(()=>value,x=>{value=x;}))),
+    // Keep the closure outside the call that created its borrowed capture.
+    (c,k)=>closureValue(readLocal(1,true,true),[],[1],false,[],false,[],[],false,[1])(c,(d,f)=>{saved=f;return k(d,null);})
+]),()=>{},{});
+value=99n;
+for(let i=0;i<2;i++)assert.equal(await drive(callFunction(pure(copyValue(saved)),[],false),()=>{},{}),17n);
+dropValue(saved);
+"#,
+    );
+}
+
+#[test]
 fn aggregate_copy_is_stack_safe_without_sharing_mutable_copies() {
     runtime(
         r#"// A proven graph is shared by its copies, frozen, and stays proven.
@@ -1488,15 +1576,15 @@ perform show("w0", match Vec::get(&w, 0) { Some(x) => x, None => 0 })"####
             }
             "backend-tail-self-call/pure-tail-count" => {
                 r####"fn count(n: Nat, done: Nat): Nat {
-    match n: Nat { Zero => done, Succ(rest) => count(rest, done + 1) }
+    ⊢ Nat from match n { Zero => done, Succ(rest) => count(rest, done + 1) }
 }
 perform show("count", count(60000, 0))"####
             }
             "backend-tail-self-call/pure-non-tail-count" => {
                 r####"fn count(n: Nat): Nat {
-    match n: Nat { Zero => 0, Succ(rest) => 1 + count(rest) }
+    ⊢ Nat from match n { Zero => 1, Succ(rest) => 2 * count(rest) }
 }
-perform show("count", count(32))"####
+perform show("count", count(5))"####
             }
             _ => panic!("no copied input {name}"),
         }

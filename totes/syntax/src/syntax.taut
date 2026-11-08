@@ -27,9 +27,9 @@ pub(open) inductive SyntaxTables: Type {
 }
 
 pub fn syntax_has_name(names: List(Text), name: Text): Bool {
-  match names: Bool {
+  ⊢ Bool from match names {
     Nil => false
-    Cons(n, rest) => match n == name: Bool {
+    Cons(n, rest) => ⊢ Bool from match n == name {
       true => true
       false => syntax_has_name(rest, name)
     }
@@ -37,7 +37,7 @@ pub fn syntax_has_name(names: List(Text), name: Text): Bool {
 }
 
 pub fn syntax_flags_of(non_terminals: List(Text), declared: List(Text)): List(Bool) {
-  match non_terminals: List(Bool) {
+  ⊢ List(Bool) from match non_terminals {
     Nil => Nil
     Cons(name, rest) => Cons(syntax_has_name(declared, name), syntax_flags_of(rest, declared))
   }
@@ -62,15 +62,15 @@ pub fn syntax_tables_read(
   non_terminal_names: Text,
   declared: Text
 ): Option(SyntaxTables) {
-  match scan_tables_read(scan_meta, scan_classes, scan_states, scan_rows): Option(SyntaxTables) {
+  ⊢ Option(SyntaxTables) from match scan_tables_read(scan_meta, scan_classes, scan_states, scan_rows) {
     None => None
-    Some(scan) => match llk_tables_read(
+    Some(scan) => ⊢ Option(SyntaxTables) from match llk_tables_read(
       parser_meta,
       skip,
       lookahead_meta,
       lookahead_cells,
       productions
-    ): Option(SyntaxTables) {
+    ) {
       None => None
       Some(llk) => Some(
         SyntaxTables {
@@ -135,9 +135,9 @@ pub fn cst_empty(s: CstSpan): Bool {
 
 // `Span::merge` of `cst.rs`: an empty span at 0 is no span.
 pub fn cst_merge(a: CstSpan, b: CstSpan): CstSpan {
-  match cst_empty(a): CstSpan {
+  ⊢ CstSpan from match cst_empty(a) {
     true => b
-    false => match cst_empty(b): CstSpan {
+    false => ⊢ CstSpan from match cst_empty(b) {
       true => a
       false => CstSpan { start: Nat::min(a.start, b.start), end: Nat::max(a.end, b.end) }
     }
@@ -154,7 +154,7 @@ pub fn cst_is_trivia(kinds: Array(Text), terminal: Nat): Bool {
 // The node of `non_terminal` that a frame closes into. Without `keep` it has
 // no `children`, which saves the box they would be in.
 pub fn cst_closed(&t: SyntaxTables, keep: Bool, non_terminal: Nat, frame: CstFrame): CstNode {
-  match keep: CstNode {
+  ⊢ CstNode from match keep {
     true => CstNode {
       kind: CstNonTerminal(non_terminal),
       name: syntax_name(t.non_terminal_kinds, non_terminal),
@@ -189,7 +189,7 @@ pub fn cst_add_token(
   r#from: Nat,
   to: Nat
 ): Unit {
-  match Stack::pop(&mut frames): Unit {
+  ⊢ Unit from match Stack::pop(&mut frames) {
     None => #()
     Some(parent) => {
       let trivia := cst_is_trivia(t.terminal_kinds, terminal)
@@ -207,15 +207,15 @@ pub fn cst_add_token(
       Stack::push(
         &mut frames,
         CstFrame {
-          span: match trivia: CstSpan {
+          span: ⊢ CstSpan from match trivia {
             true => parent.span
             false => cst_merge(parent.span, CstSpan { start: r#from, end: to })
           },
-          children: match keep: List(CstNode) {
+          children: ⊢ List(CstNode) from match keep {
             true => Cons(node, parent.children)
             false => parent.children
           },
-          flat: match trivia: List(CstNode) {
+          flat: ⊢ List(CstNode) from match trivia {
             true => parent.flat
             false => Cons(node, parent.flat)
           }
@@ -229,11 +229,11 @@ pub fn cst_add_token(
 pub fn cst_add_node(keep: Bool, parent: CstFrame, span: CstSpan, node: CstNode): CstFrame {
   CstFrame {
     span: cst_merge(parent.span, span),
-    children: match keep: List(CstNode) {
+    children: ⊢ List(CstNode) from match keep {
       true => Cons(node, parent.children)
       false => parent.children
     },
-    flat: match node.declared: List(CstNode) {
+    flat: ⊢ List(CstNode) from match node.declared {
       true => Cons(node, parent.flat)
       false => List::append(node.flat, parent.flat)
     }
@@ -254,11 +254,11 @@ pub fn cst_build_in(
   &mut frames: Stack(CstFrame),
   root: Option(CstNode)
 ): Option(CstNode) {
-  match fuel: Option(CstNode) {
+  ⊢ Option(CstNode) from match fuel {
     Zero => root
-    Succ(f) => match Stack::pop(&mut events): Option(CstNode) {
+    Succ(f) => ⊢ Option(CstNode) from match Stack::pop(&mut events) {
       None => root
-      Some(event) => match event: Option(CstNode) {
+      Some(event) => ⊢ Option(CstNode) from match event {
         LlkClose => {
           Stack::push(
             &mut frames,
@@ -266,9 +266,9 @@ pub fn cst_build_in(
           )
           cst_build_in(f, &t, keep, &mut events, &mut frames, root)
         }
-        LlkOpen(non_terminal) => match Stack::pop(&mut frames): Option(CstNode) {
+        LlkOpen(non_terminal) => ⊢ Option(CstNode) from match Stack::pop(&mut frames) {
           None => cst_build_in(f, &t, keep, &mut events, &mut frames, root)
-          Some(frame) => match Stack::pop(&mut frames): Option(CstNode) {
+          Some(frame) => ⊢ Option(CstNode) from match Stack::pop(&mut frames) {
             None => cst_build_in(
               f,
               &t,
@@ -304,7 +304,7 @@ pub fn cst_at_depth(
   depth: Nat,
   rest: List(Pair(CstNode, Nat))
 ): List(Pair(CstNode, Nat)) {
-  match nodes: List(Pair(CstNode, Nat)) {
+  ⊢ List(Pair(CstNode, Nat)) from match nodes {
     Nil => rest
     Cons(node, more) => Cons(Pair { fst: node, snd: depth }, cst_at_depth(more, depth, rest))
   }
@@ -334,9 +334,9 @@ pub fn cst_line(node: CstNode, depth: Nat): Text {
 // The lines of at most `fuel` nodes of `todo` and their children, parents
 // first, after `lines` (last first).
 pub fn cst_dump_in(fuel: Nat, todo: List(Pair(CstNode, Nat)), lines: List(Text)): List(Text) {
-  match fuel: List(Text) {
+  ⊢ List(Text) from match fuel {
     Zero => lines
-    Succ(f) => match todo: List(Text) {
+    Succ(f) => ⊢ List(Text) from match todo {
       Nil => lines
       Cons(item, rest) => cst_dump_in(
         f,
@@ -356,7 +356,7 @@ pub fn cst_dump(node: CstNode, size: Nat): Text {
 // The events of the parse of `source` are left on `events`, the last on top.
 pub fn syntax_events(&t: SyntaxTables, source: Text, &mut events: Stack(LlkEvent)): Bool {
   let tokens := llk_tokens(t.llk, scan_all(t.scan, source), Text::len(source))
-  match llk_parse(llk_fuel(t.llk, tokens), t.llk, tokens, &mut events): Bool {
+  ⊢ Bool from match llk_parse(llk_fuel(t.llk, tokens), t.llk, tokens, &mut events) {
     LlkFailed(error) => false
     LlkParsed => true
   }
@@ -364,7 +364,7 @@ pub fn syntax_events(&t: SyntaxTables, source: Text, &mut events: Stack(LlkEvent
 
 pub fn syntax_parse(&t: SyntaxTables, source: Text): Option(CstNode) {
   var events: Stack(LlkEvent) := Stack::new()
-  match syntax_events(&t, source, &mut events): Option(CstNode) {
+  ⊢ Option(CstNode) from match syntax_events(&t, source, &mut events) {
     false => None
     true => cst_build(&t, false, &mut events)
   }
@@ -375,11 +375,11 @@ pub fn syntax_parse(&t: SyntaxTables, source: Text): Option(CstNode) {
 // than events.
 pub fn syntax_dump(&t: SyntaxTables, source: Text): Option(Text) {
   var events: Stack(LlkEvent) := Stack::new()
-  match syntax_events(&t, source, &mut events): Option(Text) {
+  ⊢ Option(Text) from match syntax_events(&t, source, &mut events) {
     false => None
     true => {
       let size := Stack::len(&events)
-      match cst_build(&t, true, &mut events): Option(Text) {
+      ⊢ Option(Text) from match cst_build(&t, true, &mut events) {
         None => None
         Some(tree) => Some(cst_dump(tree, size))
       }

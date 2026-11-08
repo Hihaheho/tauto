@@ -86,7 +86,10 @@ pub fn em_clipped_syms(xs: List(MSym), pi: u64, pos: u64): List(Text) {
     Nil => Nil
     Cons(s, rest) => match s {
       MT(t, clipped) => if clipped {
-        Cons(Text::of_u64(pi), Cons(Text::of_u64(pos), Cons("1", em_clipped_syms(rest, pi, pos + 1))))
+        Cons(
+          Text::of_u64(pi),
+          Cons(Text::of_u64(pos), Cons("1", em_clipped_syms(rest, pi, pos + 1)))
+        )
       } else {
         em_clipped_syms(rest, pi, pos + 1)
       }
@@ -113,6 +116,21 @@ pub fn em_title(m: MModel): Text {
   match m.title {
     Some(t) => Text::concat_all(Cons("title ", Cons(t, Nil)))
     None => "title -"
+  }
+}
+
+// One line per `%describe`: `describe <terminal> <what it means, to the end of the line>`.
+pub fn em_describes(m: MModel): List(Text) {
+  em_describe_lines(m.describes)
+}
+
+pub fn em_describe_lines(xs: List(Pair(Text, Text))): List(Text) {
+  match xs {
+    Nil => Nil
+    Cons(x, rest) => Cons(
+      Text::concat_all(Cons("describe ", Cons(x.fst, Cons(" ", Cons(x.snd, Nil))))),
+      em_describe_lines(rest)
+    )
   }
 }
 

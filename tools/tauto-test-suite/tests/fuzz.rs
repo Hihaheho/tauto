@@ -2,7 +2,8 @@
 //! JavaScript backend: each seed names a random well-typed program
 //! (`tauto_test_suite::fuzz`), every backend runs it, and their observations
 //! must be the same: the shows in order, and whether the run ends normally or
-//! with which run-time error.
+//! with which run-time error. Interaction programs also compare those events
+//! against an independent scalar model, even when all backends agree.
 //!
 //! `cargo test -p tauto-test-suite --test fuzz -- [<count> [<first seed>]]
 //! [eval,rust,javascript]` runs `count` seeds (default 300) from `first seed`
@@ -15,8 +16,7 @@ use std::time::{Duration, Instant};
 
 use tauto_test_suite::fuzz;
 
-/// The seeds a run without a count tries: about a second of one core each, so
-/// a run takes one to two minutes on a machine with several cores.
+/// The default corpus size; the quick profile is an explicit smoke run.
 const DEFAULT_COUNT: u64 = 300;
 
 /// What a run is seen to do.
@@ -225,6 +225,41 @@ fn javascript(text: &str, dir: &Path) -> Observation {
     observed(status, shows, &std::fs::read_to_string(&err_file).unwrap())
 }
 
+fn observations(
+    program: &fuzz::Program,
+    backends: &[&str],
+    work: &Path,
+    target: &Path,
+) -> Vec<(String, Observation)> {
+    let text = program.full();
+    backends
+        .iter()
+        .map(|&b| {
+            let observed = match b {
+                "eval" => eval(program),
+                "rust" => rust(&text, work, target),
+                "javascript" => javascript(&text, work),
+                other => panic!("unknown backend {other}"),
+            };
+            (b.to_string(), observed)
+        })
+        .collect()
+}
+
+// Keep the failing backend set while shrinking; do not replace a semantic
+// counterexample with a newly rejected program or a build/infrastructure error.
+fn oracle_failures(seen: &[(String, Observation)], expected: &[String]) -> Option<Vec<String>> {
+    if seen.iter().any(|(_, o)| o.error.is_some()) {
+        return None;
+    }
+    Some(
+        seen.iter()
+            .filter(|(_, o)| o.shows != expected)
+            .map(|(b, _)| b.clone())
+            .collect(),
+    )
+}
+
 fn main() -> ExitCode {
     tauto_test_suite::with_deep_stack(run)
 }
@@ -234,7 +269,15 @@ fn run() -> ExitCode {
         return ExitCode::SUCCESS;
     };
     let mut numbers = args.iter().filter_map(|a| a.parse::<u64>().ok());
-    let count = numbers.next().unwrap_or(DEFAULT_COUNT);
+    let profile = std::env::var("TAUTO_FUZZ_PROFILE").unwrap_or_else(|_| "stress".into());
+    let default_count = match profile.as_str() {
+        "quick" => 9,
+        "stress" => DEFAULT_COUNT,
+        other => panic!("unknown TAUTO_FUZZ_PROFILE {other}; use quick or stress"),
+    };
+    let count = numbers.next().unwrap_or(default_count);
+    let interactions = std::env::var_os("TAUTO_FUZZ_INTERACTIONS").is_some();
+    let started = Instant::now();
     let first = numbers.next().unwrap_or(0);
     let backends: Vec<&str> = args
         .iter()
@@ -245,15 +288,32 @@ fn run() -> ExitCode {
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
         .join("tauto-fuzz");
+    let run_dir = base.join(format!("run-{}", std::process::id()));
     // `TAUTO_FUZZ_FILE=<path>` runs that program instead, to cut a
     // disagreement down by hand.
     let file = std::env::var_os("TAUTO_FUZZ_FILE").map(|p| std::fs::read_to_string(p).unwrap());
+    // Explicit oracle input keeps a saved shared-backend bug reproducible.
+    // Never infer expectations from an unrelated neighboring file.
+    let replay_expected = std::env::var_os("TAUTO_FUZZ_EXPECTED").map(|path| {
+        assert!(
+            file.is_some(),
+            "TAUTO_FUZZ_EXPECTED requires TAUTO_FUZZ_FILE"
+        );
+        std::fs::read_to_string(path)
+            .expect("read TAUTO_FUZZ_EXPECTED")
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    });
     let (first, count) = if file.is_some() {
         (0, 1)
     } else {
         (first, count)
     };
-    let seeds: Vec<u64> = (first..first + count).collect();
+    let end = first.checked_add(count).expect("seed range overflows u64");
+    assert!(count > 0, "count must be positive");
+    assert!(!backends.is_empty(), "at least one backend is required");
+    let seeds: Vec<u64> = (first..end).collect();
     // Seeds are independent. Each worker builds the generated crates in a work
     // and a target directory of its own (rustc's incremental cache and Cargo's
     // lock allow one build at a time), and the verdicts are printed in seed
@@ -261,30 +321,38 @@ fn run() -> ExitCode {
     let verdicts = tauto_test_suite::parallel_map(
         &seeds,
         |worker| {
-            let work = base.join(format!("work-{worker}"));
+            let work = run_dir.join(format!("work-{worker}"));
             std::fs::create_dir_all(&work).unwrap();
             (work, base.join(format!("target-{worker}")))
         },
         |(work, target), _, &seed| {
-            let program = match &file {
-                Some(text) => fuzz::Program::from_text(text),
-                None => fuzz::program(seed),
+            let seed_started = Instant::now();
+            let interaction = (interactions && file.is_none())
+                .then(|| fuzz::interactions::Interaction::new(seed));
+            let program = match (&file, &interaction) {
+                (Some(text), _) => fuzz::Program::from_text(text),
+                (_, Some(case)) => case.program(),
+                _ => fuzz::program(seed),
             };
             let text = program.full();
-            let mut seen: Vec<(&str, Observation)> = Vec::new();
-            for &b in &backends {
-                let o = match b {
-                    "eval" => eval(&program),
-                    "rust" => rust(&text, work, target),
-                    "javascript" => javascript(&text, work),
-                    other => panic!("unknown backend {other}"),
-                };
-                seen.push((b, o));
-            }
+            let seen = observations(&program, &backends, work, target);
             let rejected = seen.iter().any(|(b, o)| {
-                *b == "eval" && o.error.as_deref().is_some_and(|e| e.contains(REJECTED))
+                b == "eval" && o.error.as_deref().is_some_and(|e| e.contains(REJECTED))
             });
-            let agree = !rejected && seen.windows(2).all(|w| w[0].1 == w[1].1);
+            let expected = interaction
+                .as_ref()
+                .map(|case| case.expected())
+                .or_else(|| replay_expected.clone());
+            let oracle_ok = seen.iter().all(|(_, o)| {
+                fuzz::matches_expected(&o.shows, o.error.is_none(), expected.as_deref())
+            });
+            let runtime_ok = seen.iter().all(|(_, o)| {
+                o.error
+                    .as_deref()
+                    .is_none_or(|e| matches!(e, "the number is too large" | "division by zero"))
+            });
+            let agree =
+                !rejected && runtime_ok && oracle_ok && seen.windows(2).all(|w| w[0].1 == w[1].1);
             let mut out = String::new();
             if rejected || !agree {
                 out.push_str(&if rejected {
@@ -296,9 +364,54 @@ fn run() -> ExitCode {
                     out.push_str(&format!("  {b}: {o:?}\n"));
                 }
                 out.push_str(&format!("--- program ---\n{text}---\n"));
+                let artifact = run_dir.join(format!("failure-{seed}"));
+                std::fs::create_dir_all(&artifact).unwrap();
+                std::fs::write(artifact.join("original.taut"), &text).unwrap();
+                if let Some(want) = &expected {
+                    std::fs::write(artifact.join("original-expected.txt"), want.join("\n"))
+                        .unwrap();
+                    out.push_str(&format!("  expected: {want:?}\n"));
+                }
+                if let (Some(mut case), Some(want)) = (interaction, expected.as_ref()) {
+                    out.push_str(&format!("  family: {}\n", case.family()));
+                    if let Some(failing) = oracle_failures(&seen, want).filter(|bs| !bs.is_empty())
+                    {
+                        // The scalar measure strictly decreases; a cap also bounds
+                        // expensive backend recompilations on a failing smoke run.
+                        let mut attempts = 0;
+                        'shrink: while attempts < 20 {
+                            for smaller in case.smaller() {
+                                attempts += 1;
+                                let trial =
+                                    observations(&smaller.program(), &backends, work, target);
+                                if oracle_failures(&trial, &smaller.expected()).as_ref()
+                                    == Some(&failing)
+                                {
+                                    case = smaller;
+                                    continue 'shrink;
+                                }
+                                if attempts >= 20 {
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                        std::fs::write(artifact.join("reduced.taut"), case.program().full())
+                            .unwrap();
+                        std::fs::write(artifact.join("expected.txt"), case.expected().join("\n"))
+                            .unwrap();
+                        out.push_str(&format!("  structural shrink attempts: {attempts}\n"));
+                    }
+                }
+                std::fs::write(artifact.join("report.txt"), &out).unwrap();
+                out.push_str(&format!("  artifacts: {}\n", artifact.display()));
             } else {
                 out.push_str(&format!("seed {seed}: agree {:?}\n", seen[0].1));
             }
+            out.push_str(&format!(
+                "seed {seed}: elapsed {:.3}s\n",
+                seed_started.elapsed().as_secs_f64()
+            ));
             (agree, out)
         },
     );
@@ -309,7 +422,10 @@ fn run() -> ExitCode {
             disagreements += 1;
         }
     }
-    println!("{disagreements} of {count} seeds disagree");
+    println!(
+        "{disagreements} of {count} seeds failed; elapsed {:.3}s; profile {profile}",
+        started.elapsed().as_secs_f64()
+    );
     if disagreements == 0 {
         ExitCode::SUCCESS
     } else {

@@ -1,0 +1,119 @@
+// A set of effects names its effects in a row (`effect Talk { log, stdout }`),
+// and bounds a row variable (`<!h: Host>`): a task's body may perform effects of
+// its caller when their handler is in the body.
+
+@ cases.set-in-row-names-its-effects
+source = ```tauto
+import std::prelude::Os
+
+effect log(m: Text): Unit resume 1
+effect Inner {log}
+effect Talk {Inner, stdout}
+
+fn hello(): Unit ! {Talk} {
+  perform log("hi")
+  perform stdout("hello")
+}
+
+fn apply(g: () -> Unit ! {Talk}): Unit ! {Talk} { g() }
+
+handle { apply(hello) } with {
+  log(m), k => k(#())
+  return v => v
+}
+```
+stdout = "hello"
+// The Rust backend does not yet build a named function passed as a callback
+// under a handler; that is not about sets.
+backends = ["javascript"]
+
+@ cases.set-in-row-cannot-hide-effects
+source = ```tauto
+effect log(m: Text): Unit resume 1
+effect Talk {log}
+fn hello(): Unit ! {Talk} { perform show("x", 1) }
+```
+rows = "error: `hello` may perform show"
+
+@ cases.own-effect-hides-the-prelude-set
+source = ```tauto
+effect Host(): i64 resume 1
+fn f(): i64 ! {Host} { perform Host() }
+let x := handle { f() } with {
+  Host(), k => k(7)
+  return v => v
+}
+perform show("x", x)
+```
+shows = ["x = 7"]
+
+@ cases.task-body-uses-caller-effect-through-its-own-handler
+backends = ["rust", "javascript"]
+source = ```tauto
+import std::prelude::Os
+import std::prelude::Par
+
+effect log(m: Text): Unit resume 1
+
+fn with_log(body: () -> i64 ! {log, stdout}): i64 ! {stdout} {
+  handle { body() } with {
+    log(m), k => {
+      perform stdout(m)
+      k(#())
+    }
+    return v => v
+  }
+}
+
+// A library: it starts a task and knows nothing of `log`.
+fn serve<!h: Host>(conn: (n: i64) -> i64 ! h): i64 ! {∀ T. spawn(T), wait} ∪ h {
+  let t := perform spawn(() => conn(1))
+  Task::join(t)
+}
+
+fn hook(n: i64): i64 ! {log} {
+  perform log("in-task ")
+  n + 1
+}
+
+let r := serve((n) => with_log(() => hook(n)))
+perform show("r", r)
+```
+stdout = "in-task "
+shows = ["r = 2"]
+
+@ cases.bounded-row-variable-rejects-effects-outside-its-set
+source = ```tauto
+effect log(m: Text): Unit resume 1
+fn serve<!h: Host>(conn: () -> i64 ! h): i64 ! {∀ T. spawn(T), wait} ∪ h {
+  Task::join(perform spawn(() => conn()))
+}
+fn bad(): i64 ! {log} { perform log("x"); 1 }
+fn main(): i64 ! {log} { serve(bad) }
+```
+rows = "error: log is not in Host, which bounds h"
+
+@ cases.bounded-row-variable-is-in-the-row-of-the-spawn
+source = ```tauto
+fn serve<!h: Host>(conn: () -> i64 ! h): i64 ! {∀ T. spawn(T), wait} {
+  Task::join(perform spawn(() => conn()))
+}
+```
+rows = "error: `serve` may perform |h"
+
+@ cases.task-body-with-an-outer-effect-says-where-the-handler-goes
+source = ```tauto
+effect log(m: Text): Unit resume 1
+fn go(): i64 ! {∀ T. spawn(T), log} {
+  Task::join(perform spawn(() => { perform log("x"); 1 }))
+}
+```
+rows = "error: a function value may perform log but its type permits {Div, argv, env, fs_canonicalize, fs_copy, fs_create_dir, fs_list_dir, fs_read, fs_read_bytes, fs_read_bytes_under, fs_read_link, fs_read_under, fs_remove, fs_rename, fs_stat, fs_temp_dir, fs_write, fs_write_bytes, fs_write_new, monotonic_clock, net, net_addr, net_resolve, permission, proc_close, proc_close_stdin, proc_read, proc_run, proc_spawn, proc_wait, proc_write, random, secure_random, shutdown_token, sleep, stderr, stdin_bytes, stdout, stdout_flush, tcp_accept, tcp_close, tcp_connect, tcp_listen, tcp_read, tcp_shutdown, tcp_unlisten, tcp_write, tls_accept, tls_close, tls_connect, tls_read, tls_shutdown, tls_write, wait, wall_clock}; a task runs apart from the handlers around its `spawn`, so its handler goes in the task's body: `spawn(() => handler(f))`"
+
+@ cases.a-source-effect-with-a-host-display-is-not-a-host-operation
+source = ```tauto
+effect stdout(number: i64): i64 resume 1
+let value := perform stdout(7)
+perform show("value", value)
+```
+rows = "error: unhandled effect main::stdout at the top level"

@@ -31,7 +31,7 @@ pub theorem data_fact_after_result<P: Prop>(
   clean: DiagnosticClean(ck_st(run_after_data_result(prelude, program, own, m))),
   prepared: ∀ accepted: DiagnosticClean(ck_st(m)). P
 ): P {
-  match m: P {
+  ⊢ P from match m {
     mut1(ignored, next) => prepared(
       And::right(run_after_datas_frame_checked(next, prelude, program, own, ordered))(clean)
     )
@@ -45,7 +45,7 @@ pub theorem run_after_builtins_prepared_data_fact<P: Prop>(
   clean: DiagnosticClean(ck_st(run_after_builtins(prelude, program, m))),
   prepared: PreparedDataFact(P, prelude, program)
 ): P {
-  match m: P {
+  ⊢ P from match m {
     mut1(v, next) => data_fact_after_result(
       P,
       prelude,
@@ -94,7 +94,7 @@ pub theorem run_after_module_errors_prepared_data_fact<P: Prop>(
   clean: DiagnosticReportClean(run_after_module_errors(prelude, program, m)),
   prepared: PreparedDataFact(P, prelude, program)
 ): P {
-  match m: P {
+  ⊢ P from match m {
     mut1(v, next) => run_finish_after_fact(
       P,
       ck_run(next, prelude, program),
@@ -132,7 +132,9 @@ pub theorem types_check_prepared_data_fact<P: Prop>(
 ): P {
   ck_types_run_prepared_data_fact(
     P,
-    checker_new(Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))),
+    checker_new(
+      Nat::mul(16, Nat::add(Nat::add(program_extent(prelude), program_extent(program)), 1))
+    ),
     prelude,
     program,
     errors,

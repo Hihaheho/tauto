@@ -29,8 +29,7 @@ fn llk_nibcheck_scan_text_proofs_check() {
     // Every proof is checked again, without the proof cache
     // (`crates/tauto-kernel/src/check/cache.rs`).
     // The kernel normalizes under the arms of a stuck `match`, so comparing
-    // with a large literal recurses deeply. These checks use a deep stack, as
-    // does `crates/tauto/tests/tauto_lib.rs`.
+    // with a large literal recurses deeply. These checks use a deep stack.
     let checked = std::thread::Builder::new()
         .stack_size(256 << 20)
         .spawn(move || check_tote_files(&files, false).unwrap())

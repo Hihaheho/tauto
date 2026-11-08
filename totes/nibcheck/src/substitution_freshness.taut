@@ -15,7 +15,9 @@ import "unify_sound.taut"
 pub def SubstFutureEmpty(
   limit: Nat,
   subst: Ordmap(Nat, Ty)
-): Prop := ∀ index: Nat. ∀ future: (Nat::le(limit, index) = true). Ordmap::get(subst, index, Ordmap::compare_nat) = None
+): Prop := ∀ index: Nat. ∀ future: (
+  Nat::le(limit, index) = true
+). Ordmap::get(subst, index, Ordmap::compare_nat) = None
 pub def CheckerFresh(c: Checker): Prop := SubstFutureEmpty(ck_next_of(c), ck_subst_of(c))
 
 pub theorem subst_future_empty_weaken(
@@ -35,7 +37,7 @@ pub theorem subst_future_empty_at(
   empty(limit, Nat::le_refl(limit))
 }
 pub theorem fresh_strict_not_self(index: Nat): Nat::le(Succ(index), index) = false {
-  match index: Nat::le(Succ(index), index) = false {
+  ⊢ Nat::le(Succ(index), index) = false from match index {
     Zero => Refl
     Succ(previous) => fresh_strict_not_self(previous)
   }
@@ -70,10 +72,10 @@ pub theorem subst_future_empty_insert(
 ): SubstFutureEmpty(limit, Ordmap::insert(subst, allocated, value, Ordmap::compare_nat)) {
   index => future => Ordering::cases(
     (order: Ordering) => Ordmap::get(
-        Ordmap::insert(subst, allocated, value, Ordmap::compare_nat),
-        index,
-        Ordmap::compare_nat
-      ) = None,
+      Ordmap::insert(subst, allocated, value, Ordmap::compare_nat),
+      index,
+      Ordmap::compare_nat
+    ) = None,
     Ordmap::compare_nat(index, allocated),
     less => Eq::trans(
       Ordmap::get_insert_other(

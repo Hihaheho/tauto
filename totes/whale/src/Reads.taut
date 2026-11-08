@@ -13,12 +13,12 @@ import "Cycle.taut"
 // more than asked for nor than any read node's, and a level above every read node's.
 
 theorem cons_ne_nil<A>(x: A, t: List(A), e: Cons(x, t) = Nil): False {
-  match e: False {
+  ⊢ False from match e {
   }
 }
 
 fn min_pick(a: Nat, b: Nat, o: Bool): Nat {
-  match o: Nat {
+  ⊢ Nat from match o {
     false => b
     true => a
   }
@@ -30,7 +30,7 @@ theorem nat_min_pick_le(
   o: Bool,
   h: Nat::lt(a, b) = o
 ): Nat::le(min_pick(a, b, o), a) = true ∧ Nat::le(min_pick(a, b, o), b) = true {
-  match o: Nat::le(min_pick(a, b, o), a) = true ∧ Nat::le(min_pick(a, b, o), b) = true {
+  ⊢ Nat::le(min_pick(a, b, o), a) = true ∧ Nat::le(min_pick(a, b, o), b) = true from match o {
     false => AndIntro(nat_not_lt_le(a, b, h), Nat::le_refl(b))
     true => AndIntro(
       Nat::le_refl(a),
@@ -57,7 +57,7 @@ theorem resolve_if_holds<K>(
     Resolved::Mk(resolved_deps(f), resolved_durability(f), Succ(resolved_level(f)))
   )
 ): holds(resolve_if(m, f), p) {
-  match m: holds(resolve_if(m, f), p) {
+  ⊢ holds(resolve_if(m, f), p) from match m {
     Nil => hm(Refl)
     Cons(k, ks) => Trivial
   }
@@ -74,7 +74,7 @@ module Found {
     o: Option(Node(K, T)),
     hk: nodes_get(ns, k) = o
   ): deps_fresh(ns, resolved_deps(resolve_one(k, o, rest))) = true where Ord(K) {
-    match o: deps_fresh(ns, resolved_deps(resolve_one(k, o, rest))) = true {
+    ⊢ deps_fresh(ns, resolved_deps(resolve_one(k, o, rest))) = true from match o {
       None => ih
       Some(n) => Eq::trans(
         Eq::congr(
@@ -94,7 +94,7 @@ module Found {
     ids: List(K),
     dur: Nat
   ): deps_fresh(ns, resolved_deps(resolve_found(ns, ids, dur))) = true where Ord(K) {
-    match ids: deps_fresh(ns, resolved_deps(resolve_found(ns, ids, dur))) = true {
+    ⊢ deps_fresh(ns, resolved_deps(resolve_found(ns, ids, dur))) = true from match ids {
       Nil => Refl
       Cons(k, rest) => Found::fresh_at(
         ns,
@@ -143,9 +143,9 @@ module Found {
   ): dep_ids(
     resolved_deps(resolve_one(k, o, resolve_found(ns, rest, dur)))
   ) = Cons(k, rest) where Ord(K) {
-    match o: dep_ids(
+    ⊢ dep_ids(
       resolved_deps(resolve_one(k, o, resolve_found(ns, rest, dur)))
-    ) = Cons(k, rest) {
+    ) = Cons(k, rest) from match o {
       None => False::elim(cons_ne_nil(k, missing_ids(ns, rest), hm))
       Some(n) => Eq::congr((l: List(K)) => Cons(k, l), ih(hm))
     }
@@ -157,7 +157,7 @@ module Found {
     dur: Nat,
     e: missing_ids(ns, ids) = Nil
   ): dep_ids(resolved_deps(resolve_found(ns, ids, dur))) = ids where Ord(K) {
-    match ids: dep_ids(resolved_deps(resolve_found(ns, ids, dur))) = ids {
+    ⊢ dep_ids(resolved_deps(resolve_found(ns, ids, dur))) = ids from match ids {
       Nil => Refl
       Cons(k, rest) => {
         let ek: missing_pick(k, nodes_get(ns, k), missing_ids(ns, rest)) = Nil := e
@@ -200,7 +200,7 @@ pub theorem resolve_ids<K, T>(
 // ---- durability -------------------------------------------------------------
 
 fn durable_one<K, T>(o: Option(Node(K, T)), d: Nat): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     None => true
     Some(n) => Nat::le(d, Node::durability(n))
   }
@@ -208,7 +208,7 @@ fn durable_one<K, T>(o: Option(Node(K, T)), d: Nat): Bool {
 
 // `d` is no more than the durability of any node of `ids`.
 fn durable_reads<K, T>(ns: List(K × Node(K, T)), ids: List(K), d: Nat): Bool where Ord(K) {
-  match ids: Bool {
+  ⊢ Bool from match ids {
     Nil => true
     Cons(k, rest) => Bool::and(durable_one(nodes_get(ns, k), d), durable_reads(ns, rest, d))
   }
@@ -225,7 +225,7 @@ theorem durable_one_mono<K, T>(
   h: Nat::le(d2, d) = true,
   hd: durable_one(o, d) = true
 ): durable_one(o, d2) = true {
-  match o: durable_one(o, d2) = true {
+  ⊢ durable_one(o, d2) = true from match o {
     None => Refl
     Some(n) => Nat::le_trans(d2, d, Node::durability(n), h, hd)
   }
@@ -239,7 +239,7 @@ theorem durable_mono<K, T>(
   h: Nat::le(d2, d) = true,
   e: durable_reads(ns, ids, d) = true
 ): durable_reads(ns, ids, d2) = true where Ord(K) {
-  match ids: durable_reads(ns, ids, d2) = true {
+  ⊢ durable_reads(ns, ids, d2) = true from match ids {
     Nil => Refl
     Cons(k, rest) => true_and_true(
       durable_one(nodes_get(ns, k), d2),
@@ -281,14 +281,14 @@ module Found {
     Cons(k, rest),
     resolved_durability(resolve_one(k, o, resolve_found(ns, rest, d0)))
   ) = true where Ord(K) {
-    match o: Nat::le(
+    ⊢ Nat::le(
       resolved_durability(resolve_one(k, o, resolve_found(ns, rest, d0))),
       d0
     ) = true ∧ durable_reads(
       ns,
       Cons(k, rest),
       resolved_durability(resolve_one(k, o, resolve_found(ns, rest, d0)))
-    ) = true {
+    ) = true from match o {
       None => AndIntro(
         ih_le,
         true_and_true(
@@ -357,10 +357,10 @@ module Found {
     ids,
     resolved_durability(resolve_found(ns, ids, d0))
   ) = true where Ord(K) {
-    match ids: Nat::le(
+    ⊢ Nat::le(
       resolved_durability(resolve_found(ns, ids, d0)),
       d0
-    ) = true ∧ durable_reads(ns, ids, resolved_durability(resolve_found(ns, ids, d0))) = true {
+    ) = true ∧ durable_reads(ns, ids, resolved_durability(resolve_found(ns, ids, d0))) = true from match ids {
       Nil => AndIntro(Nat::le_refl(d0), Refl)
       Cons(k, rest) => Found::dur_at(
         ns,
@@ -414,7 +414,7 @@ theorem resolve_durability<K, T>(
 // ---- levels -----------------------------------------------------------------
 
 fn below_one<K, T>(o: Option(Node(K, T)), l: Nat): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     None => true
     Some(n) => Nat::lt(Node::level(n), l)
   }
@@ -422,7 +422,7 @@ fn below_one<K, T>(o: Option(Node(K, T)), l: Nat): Bool {
 
 // Every node of `ids` has a level below `l`.
 fn below_reads<K, T>(ns: List(K × Node(K, T)), ids: List(K), l: Nat): Bool where Ord(K) {
-  match ids: Bool {
+  ⊢ Bool from match ids {
     Nil => true
     Cons(k, rest) => Bool::and(below_one(nodes_get(ns, k), l), below_reads(ns, rest, l))
   }
@@ -435,7 +435,7 @@ theorem below_one_mono<K, T>(
   h: Nat::le(l, l2) = true,
   hb: below_one(o, Succ(l)) = true
 ): below_one(o, Succ(l2)) = true {
-  match o: below_one(o, Succ(l2)) = true {
+  ⊢ below_one(o, Succ(l2)) = true from match o {
     None => Refl
     Some(n) => Nat::le_trans(Node::level(n), l, l2, hb, h)
   }
@@ -449,7 +449,7 @@ theorem below_mono<K, T>(
   h: Nat::le(l, l2) = true,
   e: below_reads(ns, ids, Succ(l)) = true
 ): below_reads(ns, ids, Succ(l2)) = true where Ord(K) {
-  match ids: below_reads(ns, ids, Succ(l2)) = true {
+  ⊢ below_reads(ns, ids, Succ(l2)) = true from match ids {
     Nil => Refl
     Cons(k, rest) => true_and_true(
       below_one(nodes_get(ns, k), Succ(l2)),
@@ -491,11 +491,11 @@ module Found {
     Cons(k, rest),
     Succ(resolved_level(resolve_one(k, o, resolve_found(ns, rest, d0))))
   ) = true where Ord(K) {
-    match o: below_reads(
+    ⊢ below_reads(
       ns,
       Cons(k, rest),
       Succ(resolved_level(resolve_one(k, o, resolve_found(ns, rest, d0))))
-    ) = true {
+    ) = true from match o {
       None => true_and_true(
         below_one(nodes_get(ns, k), Succ(resolved_level(resolve_found(ns, rest, d0)))),
         below_reads(ns, rest, Succ(resolved_level(resolve_found(ns, rest, d0)))),
@@ -545,7 +545,7 @@ module Found {
     ids: List(K),
     d0: Nat
   ): below_reads(ns, ids, Succ(resolved_level(resolve_found(ns, ids, d0)))) = true where Ord(K) {
-    match ids: below_reads(ns, ids, Succ(resolved_level(resolve_found(ns, ids, d0)))) = true {
+    ⊢ below_reads(ns, ids, Succ(resolved_level(resolve_found(ns, ids, d0)))) = true from match ids {
       Nil => Refl
       Cons(k, rest) => Found::level_at(
         ns,
@@ -593,7 +593,7 @@ pub theorem register_from<K, T>(
   p: (Whale(K, T) × Written) -> Prop,
   hp: ∀ res: Resolved(K). (q(res)) -> p(write_changed(w, k, x, res))
 ): holds(register_with(w, k, x, o), p) where Ord(K) {
-  match o: holds(register_with(w, k, x, o), p) {
+  ⊢ holds(register_with(w, k, x, o), p) from match o {
     Absent(ks) => Trivial
     Done(res) => hp(res)(hq)
   }
@@ -660,15 +660,15 @@ theorem dep_ids_core<K, T>(
   (n: Node(K, T)) => Node::dep_ids(n),
   o
 ) = Option::map((n: Node(K, T)) => Node::dep_ids(n), core_of(o)) {
-  match o: Option::map(
+  ⊢ Option::map(
     (n: Node(K, T)) => Node::dep_ids(n),
     o
-  ) = Option::map((n: Node(K, T)) => Node::dep_ids(n), core_of(o)) {
+  ) = Option::map((n: Node(K, T)) => Node::dep_ids(n), core_of(o)) from match o {
     None => Refl
-    Some(n) => match n: Option::map(
+    Some(n) => ⊢ Option::map(
       (q: Node(K, T)) => Node::dep_ids(q),
       Some(n)
-    ) = Option::map((q: Node(K, T)) => Node::dep_ids(q), core_of(Some(n))) {
+    ) = Option::map((q: Node(K, T)) => Node::dep_ids(q), core_of(Some(n))) from match n {
       Mk(x, d, v, c, l, ds, rs) => Refl
     }
   }

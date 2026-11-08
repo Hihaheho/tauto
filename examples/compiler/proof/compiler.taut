@@ -8,7 +8,7 @@ pub theorem comp_correct(
   k: List(Instr),
   st: List(Nat)
 ): run_code(comp_expr(e, k), st) = run_code(k, Cons(eval_expr(e), st)) {
-  match e: run_code(comp_expr(e, k), st) = run_code(k, Cons(eval_expr(e), st)) {
+  ⊢ run_code(comp_expr(e, k), st) = run_code(k, Cons(eval_expr(e), st)) from match e {
     ELit(n) => Refl
     EAdd(a, b) => Eq::trans(
       comp_correct(a, comp_expr(b, Cons(IAdd, k)), st),
@@ -31,8 +31,8 @@ pub theorem fold_add_correct(
   a: Expr,
   b: Expr
 ): eval_expr(fold_add(a, b)) = Nat::add(eval_expr(a), eval_expr(b)) {
-  match a: eval_expr(fold_add(a, b)) = Nat::add(eval_expr(a), eval_expr(b)) {
-    ELit(n) => match b: eval_expr(fold_add(ELit(n), b)) = Nat::add(n, eval_expr(b)) {
+  ⊢ eval_expr(fold_add(a, b)) = Nat::add(eval_expr(a), eval_expr(b)) from match a {
+    ELit(n) => ⊢ eval_expr(fold_add(ELit(n), b)) = Nat::add(n, eval_expr(b)) from match b {
       ELit(m) => Refl
       EAdd(b1, b2) => Refl
       EMul(b1, b2) => Refl
@@ -46,8 +46,8 @@ pub theorem fold_mul_correct(
   a: Expr,
   b: Expr
 ): eval_expr(fold_mul(a, b)) = Nat::mul(eval_expr(a), eval_expr(b)) {
-  match a: eval_expr(fold_mul(a, b)) = Nat::mul(eval_expr(a), eval_expr(b)) {
-    ELit(n) => match b: eval_expr(fold_mul(ELit(n), b)) = Nat::mul(n, eval_expr(b)) {
+  ⊢ eval_expr(fold_mul(a, b)) = Nat::mul(eval_expr(a), eval_expr(b)) from match a {
+    ELit(n) => ⊢ eval_expr(fold_mul(ELit(n), b)) = Nat::mul(n, eval_expr(b)) from match b {
       ELit(m) => Refl
       EAdd(b1, b2) => Refl
       EMul(b1, b2) => Refl
@@ -58,7 +58,7 @@ pub theorem fold_mul_correct(
 }
 
 pub theorem fold_correct(e: Expr): eval_expr(fold_expr(e)) = eval_expr(e) {
-  match e: eval_expr(fold_expr(e)) = eval_expr(e) {
+  ⊢ eval_expr(fold_expr(e)) = eval_expr(e) from match e {
     ELit(n) => Refl
     EAdd(a, b) => Eq::trans(
       fold_add_correct(fold_expr(a), fold_expr(b)),

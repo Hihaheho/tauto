@@ -1,0 +1,78 @@
+// A part on `Nat` under a constructor (`Some(Succ(n))`) is read by the
+// kernel as a match on that part inside the arm: extracted, the arms of one
+// shape are one arm whose body tests the part, and the program's `match`
+// covers every value without a guard.
+@ cases.nat-under-two-constructors-deep
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn d(o: Option(Option(Nat))): Nat {
+  match o {
+    Some(Some(Zero)) => 1
+    None => 0
+    Some(Some(Succ(n))) => n + 3
+    Some(None) => 2
+  }
+}
+
+perform show("none", d(None))
+perform show("inner-none", d(Some(None)))
+perform show("zero", d(Some(Some(0))))
+perform show("four", d(Some(Some(4))))
+```
+shows = ["none = 0", "inner-none = 2", "zero = 1", "four = 6"]
+rust_shows = ["none = 0", "inner-none = 2", "zero = 1", "four = 6"]
+javascript_shows = ["none = 0", "inner-none = 2", "zero = 1", "four = 6"]
+
+@ cases.nat-under-an-option-with-a-default
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn f(o: Option(Nat)): Nat {
+  match o {
+    Some(Zero) => 1
+    _ => 2
+  }
+}
+
+perform show("zero", f(Some(0)))
+perform show("one", f(Some(1)))
+perform show("none", f(None))
+```
+shows = ["zero = 1", "one = 2", "none = 2"]
+rust_shows = ["zero = 1", "one = 2", "none = 2"]
+javascript_shows = ["zero = 1", "one = 2", "none = 2"]
+
+@ cases.nat-under-two-constructors
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+fn k(o: Option(Nat)): Nat {
+  match o {
+    None => 0
+    Some(Zero) => 1
+    Some(Succ(n)) => n + 5
+  }
+}
+
+perform show("none", k(None))
+perform show("zero", k(Some(0)))
+perform show("four", k(Some(4)))
+```
+shows = ["none = 0", "zero = 1", "four = 8"]
+rust_shows = ["none = 0", "zero = 1", "four = 8"]
+javascript_shows = ["none = 0", "zero = 1", "four = 8"]
+
+// A constructor matched where it is built is extracted in parentheses: the record it builds is
+// not read as the arms of the `match`.
+@ cases.a-constructor-built-in-the-match-subject
+extract = true
+imports = [path`../std/Base.taut`]
+source = ```tauto
+inductive Item: Type { Mk(value: Nat): Item }
+fn answer(): Nat { ⊢ Nat from match Item::Mk(42) { Item::Mk(value) => value } }
+perform show("value", answer())
+```
+shows = ["value = 42"]
+rust_shows = ["value = 42"]
+javascript_shows = ["value = 42"]

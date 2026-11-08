@@ -1,0 +1,1344 @@
+description = "Checked dependent programs, extracted Nib declarations, and execution results."
+
+@ cases.vec-check
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+inductive Vec(A: Type): (Nat) -> Type {
+  Nil: Vec(A, Zero)
+  Cons(n: Nat, x: A, xs: Vec(A, n)): Vec(A, Succ(n))
+}
+
+fn plus(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n { Zero => m
+    Succ(k) => Succ(plus(k, m)) }
+}
+fn head<A>(n: Nat, v: Vec(A, Succ(n))): A {
+  ⊢ A from match v {
+    Cons(k, x, xs) => x }
+}
+fn append<A>(n: Nat, m: Nat, xs: Vec(A, n), ys: Vec(A, m)): Vec(A, plus(n, m)) {
+  ⊢ Vec(A, plus(n, m)) from match xs {
+    Nil => ys
+
+    Cons(k, x, rest) => Cons(plus(k, m), x, append(k, m, rest, ys))
+  }
+}
+theorem head_cons<A>(n: Nat, x: A, xs: Vec(A, n)): head(n, Cons(n, x, xs)) = x { Refl }
+fn demo(): Nat {
+  let left := Cons(Zero, 10, Nil)
+  let right := Cons(Zero, 20, Nil)
+  let joined := append(Succ(Zero), Succ(Zero), left, right)
+  head(Succ(Zero), joined)
+}
+```
+checks_all = "ok"
+
+@ cases.vec-run
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+
+inductive Vec(A: Type): (Nat) -> Type {
+  Nil: Vec(A, Zero)
+  Cons(n: Nat, x: A, xs: Vec(A, n)): Vec(A, Succ(n))
+}
+
+fn plus(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n { Zero => m
+    Succ(k) => Succ(plus(k, m)) }
+}
+fn head<A>(n: Nat, v: Vec(A, Succ(n))): A {
+  ⊢ A from match v {
+    Cons(k, x, xs) => x }
+}
+fn append<A>(n: Nat, m: Nat, xs: Vec(A, n), ys: Vec(A, m)): Vec(A, plus(n, m)) {
+  ⊢ Vec(A, plus(n, m)) from match xs {
+    Nil => ys
+
+    Cons(k, x, rest) => Cons(plus(k, m), x, append(k, m, rest, ys))
+  }
+}
+theorem head_cons<A>(n: Nat, x: A, xs: Vec(A, n)): head(n, Cons(n, x, xs)) = x { Refl }
+fn demo(): Nat {
+  let left := Cons(Zero, 10, Nil)
+  let right := Cons(Zero, 20, Nil)
+  let joined := append(Succ(Zero), Succ(Zero), left, right)
+  head(Succ(Zero), joined)
+}
+perform show("result", demo())
+```
+shows = ["result = 10"]
+backends = ["rust", "javascript"]
+rust_shows = ["result = 10"]
+javascript_shows = ["result = 10"]
+extracted_nib."TautoErased*" = ```nib
+fn TautoErasedApply_1(f: TautoErasedValue_1, args: List(TautoErasedValue_1)): TautoErasedValue_1 { match f {
+  TautoErasedValue_1::TautoErasedFunction_1(arity, call) => {
+    let count := TautoErasedLength_1(args)
+    if count < arity { TautoErasedValue_1::TautoErasedFunction_1(arity - count, (rest: List(TautoErasedValue_1)) => call(TautoErasedConcat_1(args, rest))) } else if count == arity { call(args) } else { TautoErasedApply_1(call(TautoErasedTake_1(arity, args)), TautoErasedDrop_1(arity, args)) }
+  }
+  TautoErasedUnit_1 => TautoErasedUnit_1
+  _ => extract_unreachable()
+} }
+fn TautoErasedConcat_1(xs: List(TautoErasedValue_1), ys: List(TautoErasedValue_1)): List(TautoErasedValue_1) { match xs {
+  Nil => ys
+  List::Cons(x, tail) => List::Cons(x, TautoErasedConcat_1(tail, ys))
+} }
+fn TautoErasedDrop_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { xs } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => TautoErasedDrop_1(n - 1, tail)
+} } }
+fn TautoErasedFn1_1(n: TautoErasedValue_1, m: TautoErasedValue_1, xs: TautoErasedValue_1, ys: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject2_1 := xs
+  match TautoErasedSubject2_1 {
+    TautoErasedCtor3_1 => ys
+    TautoErasedValue_1::TautoErasedCtor4_1(k, x, rest) => TautoErasedValue_1::TautoErasedCtor4_1(TautoErasedFn5_1(k, m), x, TautoErasedFn1_1(k, m, rest, ys))
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn5_1(n: TautoErasedValue_1, m: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject6_1 := n
+  match TautoErasedSubject6_1 {
+    TautoErasedValue_1::TautoErasedNat_1(0) => m
+    TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat7_1) if TautoErasedNat7_1 > 0 => {
+      let k := TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat7_1 - 1)
+      TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedFn5_1(k, m)) + 1)
+    }
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn8_1(): TautoErasedValue_1 {
+  let left: TautoErasedValue_1 := TautoErasedValue_1::TautoErasedCtor4_1(TautoErasedValue_1::TautoErasedNat_1(0), TautoErasedValue_1::TautoErasedNat_1(10), TautoErasedValue_1::TautoErasedCtor3_1)
+  let right: TautoErasedValue_1 := TautoErasedValue_1::TautoErasedCtor4_1(TautoErasedValue_1::TautoErasedNat_1(0), TautoErasedValue_1::TautoErasedNat_1(20), TautoErasedValue_1::TautoErasedCtor3_1)
+  let joined: TautoErasedValue_1 := TautoErasedFn1_1(TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedValue_1::TautoErasedNat_1(0)) + 1), TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedValue_1::TautoErasedNat_1(0)) + 1), left, right)
+  TautoErasedFn9_1(TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedValue_1::TautoErasedNat_1(0)) + 1), joined)
+}
+fn TautoErasedFn9_1(n: TautoErasedValue_1, v: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject10_1 := v
+  match TautoErasedSubject10_1 {
+    TautoErasedValue_1::TautoErasedCtor4_1(k, x, xs) => x
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedGetBool_1(v: TautoErasedValue_1): Bool { match v {
+  TautoErasedValue_1::TautoErasedBool_1(b) => b
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetI64_1(v: TautoErasedValue_1): i64 { match v {
+  TautoErasedValue_1::TautoErasedI64_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetNat_1(v: TautoErasedValue_1): nat { match v {
+  TautoErasedValue_1::TautoErasedNat_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetText_1(v: TautoErasedValue_1): Text { match v {
+  TautoErasedValue_1::TautoErasedText_1(t) => t
+  _ => extract_unreachable()
+} }
+fn TautoErasedLength_1(xs: List(TautoErasedValue_1)): nat { match xs {
+  Nil => 0
+  List::Cons(x, tail) => 1 + TautoErasedLength_1(tail)
+} }
+fn TautoErasedTake_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { List::Nil } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => List::Cons(x, TautoErasedTake_1(n - 1, tail))
+} } }
+shared enum TautoErasedValue_1 {
+  TautoErasedNat_1(nat)
+  TautoErasedBool_1(Bool)
+  TautoErasedI64_1(i64)
+  TautoErasedText_1(Text)
+  TautoErasedUnit_1
+  TautoErasedFunction_1(nat, (List(TautoErasedValue_1)) -> TautoErasedValue_1 ! {Div})
+  TautoErasedCtor4_1(TautoErasedValue_1, TautoErasedValue_1, TautoErasedValue_1)
+  TautoErasedCtor3_1
+}
+```
+extracted_nib.demo = ```nib
+pub fn demo(): nat { TautoErasedGetNat_1(TautoErasedFn8_1()) }
+```
+
+@ cases.fin-check
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+inductive Fin: (Nat) -> Type {
+  First(n: Nat): Fin(Succ(n))
+  Next(n: Nat, i: Fin(n)): Fin(Succ(n))
+}
+
+fn to_nat(n: Nat, i: Fin(n)): Nat {
+  ⊢ Nat from match i { First(k) => Zero
+    Next(k, rest) => Succ(to_nat(k, rest)) }
+}
+fn demo(): Nat { to_nat(2, Next(1, First(0))) }
+```
+checks_all = "ok"
+
+@ cases.fin-run
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+
+inductive Fin: (Nat) -> Type {
+  First(n: Nat): Fin(Succ(n))
+  Next(n: Nat, i: Fin(n)): Fin(Succ(n))
+}
+
+fn to_nat(n: Nat, i: Fin(n)): Nat {
+  ⊢ Nat from match i { First(k) => Zero
+    Next(k, rest) => Succ(to_nat(k, rest)) }
+}
+fn demo(): Nat { to_nat(2, Next(1, First(0))) }
+perform show("result", demo())
+```
+shows = ["result = 1"]
+backends = ["rust", "javascript"]
+rust_shows = ["result = 1"]
+javascript_shows = ["result = 1"]
+extracted_nib."TautoErased*" = ```nib
+fn TautoErasedApply_1(f: TautoErasedValue_1, args: List(TautoErasedValue_1)): TautoErasedValue_1 { match f {
+  TautoErasedValue_1::TautoErasedFunction_1(arity, call) => {
+    let count := TautoErasedLength_1(args)
+    if count < arity { TautoErasedValue_1::TautoErasedFunction_1(arity - count, (rest: List(TautoErasedValue_1)) => call(TautoErasedConcat_1(args, rest))) } else if count == arity { call(args) } else { TautoErasedApply_1(call(TautoErasedTake_1(arity, args)), TautoErasedDrop_1(arity, args)) }
+  }
+  TautoErasedUnit_1 => TautoErasedUnit_1
+  _ => extract_unreachable()
+} }
+fn TautoErasedConcat_1(xs: List(TautoErasedValue_1), ys: List(TautoErasedValue_1)): List(TautoErasedValue_1) { match xs {
+  Nil => ys
+  List::Cons(x, tail) => List::Cons(x, TautoErasedConcat_1(tail, ys))
+} }
+fn TautoErasedDrop_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { xs } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => TautoErasedDrop_1(n - 1, tail)
+} } }
+fn TautoErasedFn1_1(): TautoErasedValue_1 { TautoErasedFn4_1(TautoErasedValue_1::TautoErasedNat_1(2), TautoErasedValue_1::TautoErasedCtor3_1(TautoErasedValue_1::TautoErasedNat_1(1), TautoErasedValue_1::TautoErasedCtor2_1(TautoErasedValue_1::TautoErasedNat_1(0)))) }
+fn TautoErasedFn4_1(n: TautoErasedValue_1, i: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject5_1 := i
+  match TautoErasedSubject5_1 {
+    TautoErasedValue_1::TautoErasedCtor2_1(k) => TautoErasedValue_1::TautoErasedNat_1(0)
+    TautoErasedValue_1::TautoErasedCtor3_1(k, rest) => TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedFn4_1(k, rest)) + 1)
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedGetBool_1(v: TautoErasedValue_1): Bool { match v {
+  TautoErasedValue_1::TautoErasedBool_1(b) => b
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetI64_1(v: TautoErasedValue_1): i64 { match v {
+  TautoErasedValue_1::TautoErasedI64_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetNat_1(v: TautoErasedValue_1): nat { match v {
+  TautoErasedValue_1::TautoErasedNat_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetText_1(v: TautoErasedValue_1): Text { match v {
+  TautoErasedValue_1::TautoErasedText_1(t) => t
+  _ => extract_unreachable()
+} }
+fn TautoErasedLength_1(xs: List(TautoErasedValue_1)): nat { match xs {
+  Nil => 0
+  List::Cons(x, tail) => 1 + TautoErasedLength_1(tail)
+} }
+fn TautoErasedTake_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { List::Nil } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => List::Cons(x, TautoErasedTake_1(n - 1, tail))
+} } }
+shared enum TautoErasedValue_1 {
+  TautoErasedNat_1(nat)
+  TautoErasedBool_1(Bool)
+  TautoErasedI64_1(i64)
+  TautoErasedText_1(Text)
+  TautoErasedUnit_1
+  TautoErasedFunction_1(nat, (List(TautoErasedValue_1)) -> TautoErasedValue_1 ! {Div})
+  TautoErasedCtor2_1(TautoErasedValue_1)
+  TautoErasedCtor3_1(TautoErasedValue_1, TautoErasedValue_1)
+}
+```
+extracted_nib.demo = ```nib
+pub fn demo(): nat { TautoErasedGetNat_1(TautoErasedFn1_1()) }
+```
+
+@ cases.expr-check
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+inductive Expr: (Type) -> Type1 {
+  Number(n: Nat): Expr(Nat)
+  Truth(b: Bool): Expr(Bool)
+}
+fn eval(T: Type, e: Expr(T)): T {
+  ⊢ T from match e { Number(n) => n
+    Truth(b) => b }
+}
+fn demo(): Nat {
+  ⊢ Nat from match eval(Bool, Truth(true)) {
+    false => 0
+    true => eval(Nat, Number(17))
+  }
+}
+```
+checks_all = "ok"
+
+@ cases.expr-run
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+
+inductive Expr: (Type) -> Type1 {
+  Number(n: Nat): Expr(Nat)
+  Truth(b: Bool): Expr(Bool)
+}
+fn eval(T: Type, e: Expr(T)): T {
+  ⊢ T from match e { Number(n) => n
+    Truth(b) => b }
+}
+fn demo(): Nat {
+  ⊢ Nat from match eval(Bool, Truth(true)) {
+    false => 0
+    true => eval(Nat, Number(17))
+  }
+}
+perform show("result", demo())
+```
+shows = ["result = 17"]
+backends = ["rust", "javascript"]
+rust_shows = ["result = 17"]
+javascript_shows = ["result = 17"]
+extracted_nib."TautoErased*" = ```nib
+fn TautoErasedApply_1(f: TautoErasedValue_1, args: List(TautoErasedValue_1)): TautoErasedValue_1 { match f {
+  TautoErasedValue_1::TautoErasedFunction_1(arity, call) => {
+    let count := TautoErasedLength_1(args)
+    if count < arity { TautoErasedValue_1::TautoErasedFunction_1(arity - count, (rest: List(TautoErasedValue_1)) => call(TautoErasedConcat_1(args, rest))) } else if count == arity { call(args) } else { TautoErasedApply_1(call(TautoErasedTake_1(arity, args)), TautoErasedDrop_1(arity, args)) }
+  }
+  TautoErasedUnit_1 => TautoErasedUnit_1
+  _ => extract_unreachable()
+} }
+fn TautoErasedConcat_1(xs: List(TautoErasedValue_1), ys: List(TautoErasedValue_1)): List(TautoErasedValue_1) { match xs {
+  Nil => ys
+  List::Cons(x, tail) => List::Cons(x, TautoErasedConcat_1(tail, ys))
+} }
+fn TautoErasedDrop_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { xs } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => TautoErasedDrop_1(n - 1, tail)
+} } }
+fn TautoErasedFn1_1(): TautoErasedValue_1 {
+  let TautoErasedSubject6_1 := TautoErasedFn3_1(TautoErasedValue_1::TautoErasedCtor2_1(TautoErasedValue_1::TautoErasedBool_1(true)))
+  match TautoErasedSubject6_1 {
+    TautoErasedValue_1::TautoErasedBool_1(false) => TautoErasedValue_1::TautoErasedNat_1(0)
+    TautoErasedValue_1::TautoErasedBool_1(true) => TautoErasedFn3_1(TautoErasedValue_1::TautoErasedCtor5_1(TautoErasedValue_1::TautoErasedNat_1(17)))
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn3_1(e: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject4_1 := e
+  match TautoErasedSubject4_1 {
+    TautoErasedValue_1::TautoErasedCtor5_1(n) => n
+    TautoErasedValue_1::TautoErasedCtor2_1(b) => b
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedGetBool_1(v: TautoErasedValue_1): Bool { match v {
+  TautoErasedValue_1::TautoErasedBool_1(b) => b
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetI64_1(v: TautoErasedValue_1): i64 { match v {
+  TautoErasedValue_1::TautoErasedI64_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetNat_1(v: TautoErasedValue_1): nat { match v {
+  TautoErasedValue_1::TautoErasedNat_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetText_1(v: TautoErasedValue_1): Text { match v {
+  TautoErasedValue_1::TautoErasedText_1(t) => t
+  _ => extract_unreachable()
+} }
+fn TautoErasedLength_1(xs: List(TautoErasedValue_1)): nat { match xs {
+  Nil => 0
+  List::Cons(x, tail) => 1 + TautoErasedLength_1(tail)
+} }
+fn TautoErasedTake_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { List::Nil } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => List::Cons(x, TautoErasedTake_1(n - 1, tail))
+} } }
+shared enum TautoErasedValue_1 {
+  TautoErasedNat_1(nat)
+  TautoErasedBool_1(Bool)
+  TautoErasedI64_1(i64)
+  TautoErasedText_1(Text)
+  TautoErasedUnit_1
+  TautoErasedFunction_1(nat, (List(TautoErasedValue_1)) -> TautoErasedValue_1 ! {Div})
+  TautoErasedCtor5_1(TautoErasedValue_1)
+  TautoErasedCtor2_1(TautoErasedValue_1)
+}
+```
+extracted_nib.demo = ```nib
+pub fn demo(): nat { TautoErasedGetNat_1(TautoErasedFn1_1()) }
+```
+
+@ cases.dependent-pair-check
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+inductive Vec(A: Type): (Nat) -> Type {
+  Nil: Vec(A, Zero)
+  Cons(n: Nat, x: A, xs: Vec(A, n)): Vec(A, Succ(n))
+}
+
+inductive Packed(A: Type): Type {
+  Pack(n: Nat, xs: Vec(A, n)): Packed(A)
+}
+fn length<A>(p: Packed(A)): Nat {
+  ⊢ Nat from match p { Pack(n, xs) => n }
+}
+fn demo(): Nat { length(Pack(1, Cons(0, 7, Nil))) }
+```
+checks_all = "ok"
+
+@ cases.dependent-pair-run
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+
+inductive Vec(A: Type): (Nat) -> Type {
+  Nil: Vec(A, Zero)
+  Cons(n: Nat, x: A, xs: Vec(A, n)): Vec(A, Succ(n))
+}
+
+inductive Packed(A: Type): Type {
+  Pack(n: Nat, xs: Vec(A, n)): Packed(A)
+}
+fn length<A>(p: Packed(A)): Nat {
+  ⊢ Nat from match p { Pack(n, xs) => n }
+}
+fn demo(): Nat { length(Pack(1, Cons(0, 7, Nil))) }
+perform show("result", demo())
+```
+shows = ["result = 1"]
+backends = ["rust", "javascript"]
+rust_shows = ["result = 1"]
+javascript_shows = ["result = 1"]
+extracted_nib."TautoErased*" = ```nib
+fn TautoErasedApply_1(f: TautoErasedValue_1, args: List(TautoErasedValue_1)): TautoErasedValue_1 { match f {
+  TautoErasedValue_1::TautoErasedFunction_1(arity, call) => {
+    let count := TautoErasedLength_1(args)
+    if count < arity { TautoErasedValue_1::TautoErasedFunction_1(arity - count, (rest: List(TautoErasedValue_1)) => call(TautoErasedConcat_1(args, rest))) } else if count == arity { call(args) } else { TautoErasedApply_1(call(TautoErasedTake_1(arity, args)), TautoErasedDrop_1(arity, args)) }
+  }
+  TautoErasedUnit_1 => TautoErasedUnit_1
+  _ => extract_unreachable()
+} }
+fn TautoErasedConcat_1(xs: List(TautoErasedValue_1), ys: List(TautoErasedValue_1)): List(TautoErasedValue_1) { match xs {
+  Nil => ys
+  List::Cons(x, tail) => List::Cons(x, TautoErasedConcat_1(tail, ys))
+} }
+fn TautoErasedDrop_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { xs } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => TautoErasedDrop_1(n - 1, tail)
+} } }
+fn TautoErasedFn1_1(): TautoErasedValue_1 { TautoErasedFn5_1(TautoErasedValue_1::TautoErasedCtor4_1(TautoErasedValue_1::TautoErasedNat_1(1), TautoErasedValue_1::TautoErasedCtor3_1(TautoErasedValue_1::TautoErasedNat_1(0), TautoErasedValue_1::TautoErasedNat_1(7), TautoErasedValue_1::TautoErasedCtor2_1))) }
+fn TautoErasedFn5_1(p: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject6_1 := p
+  match TautoErasedSubject6_1 {
+    TautoErasedValue_1::TautoErasedCtor4_1(n, xs) => n
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedGetBool_1(v: TautoErasedValue_1): Bool { match v {
+  TautoErasedValue_1::TautoErasedBool_1(b) => b
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetI64_1(v: TautoErasedValue_1): i64 { match v {
+  TautoErasedValue_1::TautoErasedI64_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetNat_1(v: TautoErasedValue_1): nat { match v {
+  TautoErasedValue_1::TautoErasedNat_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetText_1(v: TautoErasedValue_1): Text { match v {
+  TautoErasedValue_1::TautoErasedText_1(t) => t
+  _ => extract_unreachable()
+} }
+fn TautoErasedLength_1(xs: List(TautoErasedValue_1)): nat { match xs {
+  Nil => 0
+  List::Cons(x, tail) => 1 + TautoErasedLength_1(tail)
+} }
+fn TautoErasedTake_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { List::Nil } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => List::Cons(x, TautoErasedTake_1(n - 1, tail))
+} } }
+shared enum TautoErasedValue_1 {
+  TautoErasedNat_1(nat)
+  TautoErasedBool_1(Bool)
+  TautoErasedI64_1(i64)
+  TautoErasedText_1(Text)
+  TautoErasedUnit_1
+  TautoErasedFunction_1(nat, (List(TautoErasedValue_1)) -> TautoErasedValue_1 ! {Div})
+  TautoErasedCtor4_1(TautoErasedValue_1, TautoErasedValue_1)
+  TautoErasedCtor3_1(TautoErasedValue_1, TautoErasedValue_1, TautoErasedValue_1)
+  TautoErasedCtor2_1
+}
+```
+extracted_nib.demo = ```nib
+pub fn demo(): nat { TautoErasedGetNat_1(TautoErasedFn1_1()) }
+```
+
+@ cases.higher-order-check
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+inductive Fin: (Nat) -> Type {
+  First(n: Nat): Fin(Succ(n))
+  Next(n: Nat, i: Fin(n)): Fin(Succ(n))
+}
+
+fn first(n: Nat): Fin(Succ(n)) { First(n) }
+fn use(n: Nat, f: (k: Nat) -> Fin(Succ(k))): Nat {
+  ⊢ Nat from match f(n) { First(k) => 0
+    Next(k, rest) => 1 }
+}
+fn demo(): Nat { use(2, first) }
+```
+checks_all = "ok"
+
+@ cases.higher-order-run
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+
+inductive Fin: (Nat) -> Type {
+  First(n: Nat): Fin(Succ(n))
+  Next(n: Nat, i: Fin(n)): Fin(Succ(n))
+}
+
+fn first(n: Nat): Fin(Succ(n)) { First(n) }
+fn use(n: Nat, f: (k: Nat) -> Fin(Succ(k))): Nat {
+  ⊢ Nat from match f(n) { First(k) => 0
+    Next(k, rest) => 1 }
+}
+fn demo(): Nat { use(2, first) }
+perform show("result", demo())
+```
+shows = ["result = 0"]
+backends = ["rust", "javascript"]
+rust_shows = ["result = 0"]
+javascript_shows = ["result = 0"]
+extracted_nib."TautoErased*" = ```nib
+fn TautoErasedApply_1(f: TautoErasedValue_1, args: List(TautoErasedValue_1)): TautoErasedValue_1 { match f {
+  TautoErasedValue_1::TautoErasedFunction_1(arity, call) => {
+    let count := TautoErasedLength_1(args)
+    if count < arity { TautoErasedValue_1::TautoErasedFunction_1(arity - count, (rest: List(TautoErasedValue_1)) => call(TautoErasedConcat_1(args, rest))) } else if count == arity { call(args) } else { TautoErasedApply_1(call(TautoErasedTake_1(arity, args)), TautoErasedDrop_1(arity, args)) }
+  }
+  TautoErasedUnit_1 => TautoErasedUnit_1
+  _ => extract_unreachable()
+} }
+fn TautoErasedConcat_1(xs: List(TautoErasedValue_1), ys: List(TautoErasedValue_1)): List(TautoErasedValue_1) { match xs {
+  Nil => ys
+  List::Cons(x, tail) => List::Cons(x, TautoErasedConcat_1(tail, ys))
+} }
+fn TautoErasedDrop_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { xs } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => TautoErasedDrop_1(n - 1, tail)
+} } }
+fn TautoErasedFn1_1(): TautoErasedValue_1 { TautoErasedFn6_1(TautoErasedValue_1::TautoErasedNat_1(2), TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs5_1: List(TautoErasedValue_1)) => match TautoErasedArgs5_1 {
+  List::Cons(TautoErasedArg2_1, Nil) => TautoErasedFn3_1(TautoErasedArg2_1)
+  _ => extract_unreachable()
+})) }
+fn TautoErasedFn3_1(n: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedCtor4_1(n) }
+fn TautoErasedFn6_1(n: TautoErasedValue_1, f: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject7_1 := TautoErasedApply_1(f, List::Cons(n, List::Nil))
+  match TautoErasedSubject7_1 {
+    TautoErasedValue_1::TautoErasedCtor4_1(k) => TautoErasedValue_1::TautoErasedNat_1(0)
+    TautoErasedValue_1::TautoErasedCtor8_1(k, rest) => TautoErasedValue_1::TautoErasedNat_1(1)
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedGetBool_1(v: TautoErasedValue_1): Bool { match v {
+  TautoErasedValue_1::TautoErasedBool_1(b) => b
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetI64_1(v: TautoErasedValue_1): i64 { match v {
+  TautoErasedValue_1::TautoErasedI64_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetNat_1(v: TautoErasedValue_1): nat { match v {
+  TautoErasedValue_1::TautoErasedNat_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetText_1(v: TautoErasedValue_1): Text { match v {
+  TautoErasedValue_1::TautoErasedText_1(t) => t
+  _ => extract_unreachable()
+} }
+fn TautoErasedLength_1(xs: List(TautoErasedValue_1)): nat { match xs {
+  Nil => 0
+  List::Cons(x, tail) => 1 + TautoErasedLength_1(tail)
+} }
+pub struct TautoErasedOpaque9_1 {
+  value: TautoErasedValue_1
+}
+fn TautoErasedTake_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { List::Nil } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => List::Cons(x, TautoErasedTake_1(n - 1, tail))
+} } }
+shared enum TautoErasedValue_1 {
+  TautoErasedNat_1(nat)
+  TautoErasedBool_1(Bool)
+  TautoErasedI64_1(i64)
+  TautoErasedText_1(Text)
+  TautoErasedUnit_1
+  TautoErasedFunction_1(nat, (List(TautoErasedValue_1)) -> TautoErasedValue_1 ! {Div})
+  TautoErasedCtor4_1(TautoErasedValue_1)
+  TautoErasedCtor8_1(TautoErasedValue_1, TautoErasedValue_1)
+}
+```
+extracted_nib.demo = ```nib
+pub fn demo(): nat { TautoErasedGetNat_1(TautoErasedFn1_1()) }
+```
+
+@ cases.changing-type-recursion-check
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn grow(A: Type, n: Nat, x: A): Nat {
+  ⊢ Nat from match n {
+    Zero => 0
+
+    Succ(k) => Succ(grow(List(A), k, Cons(x, Nil)))
+  }
+}
+fn demo(): Nat { grow(Nat, 3, 7) }
+```
+checks_all = "ok"
+
+@ cases.changing-type-recursion-run
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+
+fn grow(A: Type, n: Nat, x: A): Nat {
+  ⊢ Nat from match n {
+    Zero => 0
+
+    Succ(k) => Succ(grow(List(A), k, Cons(x, Nil)))
+  }
+}
+fn demo(): Nat { grow(Nat, 3, 7) }
+perform show("result", demo())
+```
+shows = ["result = 3"]
+backends = ["rust", "javascript"]
+rust_shows = ["result = 3"]
+javascript_shows = ["result = 3"]
+extracted_nib."TautoErased*" = ```nib
+fn TautoErasedApply_1(f: TautoErasedValue_1, args: List(TautoErasedValue_1)): TautoErasedValue_1 { match f {
+  TautoErasedValue_1::TautoErasedFunction_1(arity, call) => {
+    let count := TautoErasedLength_1(args)
+    if count < arity { TautoErasedValue_1::TautoErasedFunction_1(arity - count, (rest: List(TautoErasedValue_1)) => call(TautoErasedConcat_1(args, rest))) } else if count == arity { call(args) } else { TautoErasedApply_1(call(TautoErasedTake_1(arity, args)), TautoErasedDrop_1(arity, args)) }
+  }
+  TautoErasedUnit_1 => TautoErasedUnit_1
+  _ => extract_unreachable()
+} }
+fn TautoErasedConcat_1(xs: List(TautoErasedValue_1), ys: List(TautoErasedValue_1)): List(TautoErasedValue_1) { match xs {
+  Nil => ys
+  List::Cons(x, tail) => List::Cons(x, TautoErasedConcat_1(tail, ys))
+} }
+fn TautoErasedDrop_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { xs } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => TautoErasedDrop_1(n - 1, tail)
+} } }
+fn TautoErasedFn1_1(): TautoErasedValue_1 { TautoErasedFn2_1(TautoErasedValue_1::TautoErasedNat_1(3), TautoErasedValue_1::TautoErasedNat_1(7)) }
+fn TautoErasedFn2_1(n: TautoErasedValue_1, x: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject3_1 := n
+  match TautoErasedSubject3_1 {
+    TautoErasedValue_1::TautoErasedNat_1(0) => TautoErasedValue_1::TautoErasedNat_1(0)
+    TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat4_1) if TautoErasedNat4_1 > 0 => {
+      let k := TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat4_1 - 1)
+      TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedFn2_1(k, TautoErasedValue_1::TautoErasedCtor6_1(x, TautoErasedValue_1::TautoErasedCtor5_1))) + 1)
+    }
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedGetBool_1(v: TautoErasedValue_1): Bool { match v {
+  TautoErasedValue_1::TautoErasedBool_1(b) => b
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetI64_1(v: TautoErasedValue_1): i64 { match v {
+  TautoErasedValue_1::TautoErasedI64_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetNat_1(v: TautoErasedValue_1): nat { match v {
+  TautoErasedValue_1::TautoErasedNat_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetText_1(v: TautoErasedValue_1): Text { match v {
+  TautoErasedValue_1::TautoErasedText_1(t) => t
+  _ => extract_unreachable()
+} }
+fn TautoErasedLength_1(xs: List(TautoErasedValue_1)): nat { match xs {
+  Nil => 0
+  List::Cons(x, tail) => 1 + TautoErasedLength_1(tail)
+} }
+fn TautoErasedTake_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { List::Nil } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => List::Cons(x, TautoErasedTake_1(n - 1, tail))
+} } }
+shared enum TautoErasedValue_1 {
+  TautoErasedNat_1(nat)
+  TautoErasedBool_1(Bool)
+  TautoErasedI64_1(i64)
+  TautoErasedText_1(Text)
+  TautoErasedUnit_1
+  TautoErasedFunction_1(nat, (List(TautoErasedValue_1)) -> TautoErasedValue_1 ! {Div})
+  TautoErasedCtor6_1(TautoErasedValue_1, TautoErasedValue_1)
+  TautoErasedCtor5_1
+}
+```
+extracted_nib.demo = ```nib
+pub fn demo(): nat { TautoErasedGetNat_1(TautoErasedFn1_1()) }
+```
+
+@ cases.runtime-index-check
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+inductive Vec(A: Type): (Nat) -> Type {
+  Nil: Vec(A, Zero)
+  Cons(n: Nat, x: A, xs: Vec(A, n)): Vec(A, Succ(n))
+}
+
+fn repeat<A>(n: Nat, x: A): Vec(A, n) {
+  ⊢ Vec(A, n) from match n {
+    Zero => Nil
+
+    Succ(k) => Cons(k, x, repeat(k, x))
+  }
+}
+fn count<A>(n: Nat, xs: Vec(A, n)): Nat {
+  ⊢ Nat from match xs { Nil => 0
+    Cons(k, x, rest) => Succ(count(k, rest)) }
+}
+fn roundtrip(n: Nat): Nat { count(n, repeat(n, 7)) }
+fn demo(): Nat { roundtrip(4) }
+```
+checks_all = "ok"
+
+@ cases.runtime-index-run
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+
+inductive Vec(A: Type): (Nat) -> Type {
+  Nil: Vec(A, Zero)
+  Cons(n: Nat, x: A, xs: Vec(A, n)): Vec(A, Succ(n))
+}
+
+fn repeat<A>(n: Nat, x: A): Vec(A, n) {
+  ⊢ Vec(A, n) from match n {
+    Zero => Nil
+
+    Succ(k) => Cons(k, x, repeat(k, x))
+  }
+}
+fn count<A>(n: Nat, xs: Vec(A, n)): Nat {
+  ⊢ Nat from match xs { Nil => 0
+    Cons(k, x, rest) => Succ(count(k, rest)) }
+}
+fn roundtrip(n: Nat): Nat { count(n, repeat(n, 7)) }
+fn demo(): Nat { roundtrip(4) }
+perform show("result", demo())
+```
+shows = ["result = 4"]
+backends = ["rust", "javascript"]
+rust_shows = ["result = 4"]
+javascript_shows = ["result = 4"]
+extracted_nib."TautoErased*" = ```nib
+fn TautoErasedApply_1(f: TautoErasedValue_1, args: List(TautoErasedValue_1)): TautoErasedValue_1 { match f {
+  TautoErasedValue_1::TautoErasedFunction_1(arity, call) => {
+    let count := TautoErasedLength_1(args)
+    if count < arity { TautoErasedValue_1::TautoErasedFunction_1(arity - count, (rest: List(TautoErasedValue_1)) => call(TautoErasedConcat_1(args, rest))) } else if count == arity { call(args) } else { TautoErasedApply_1(call(TautoErasedTake_1(arity, args)), TautoErasedDrop_1(arity, args)) }
+  }
+  TautoErasedUnit_1 => TautoErasedUnit_1
+  _ => extract_unreachable()
+} }
+fn TautoErasedConcat_1(xs: List(TautoErasedValue_1), ys: List(TautoErasedValue_1)): List(TautoErasedValue_1) { match xs {
+  Nil => ys
+  List::Cons(x, tail) => List::Cons(x, TautoErasedConcat_1(tail, ys))
+} }
+fn TautoErasedDrop_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { xs } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => TautoErasedDrop_1(n - 1, tail)
+} } }
+fn TautoErasedFn1_1(n: TautoErasedValue_1, xs: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject2_1 := xs
+  match TautoErasedSubject2_1 {
+    TautoErasedCtor3_1 => TautoErasedValue_1::TautoErasedNat_1(0)
+    TautoErasedValue_1::TautoErasedCtor4_1(k, x, rest) => TautoErasedValue_1::TautoErasedNat_1(TautoErasedGetNat_1(TautoErasedFn1_1(k, rest)) + 1)
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn5_1(): TautoErasedValue_1 { TautoErasedFn6_1(TautoErasedValue_1::TautoErasedNat_1(4)) }
+fn TautoErasedFn6_1(n: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedFn1_1(n, TautoErasedFn7_1(n, TautoErasedValue_1::TautoErasedNat_1(7))) }
+fn TautoErasedFn7_1(n: TautoErasedValue_1, x: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject8_1 := n
+  match TautoErasedSubject8_1 {
+    TautoErasedValue_1::TautoErasedNat_1(0) => TautoErasedValue_1::TautoErasedCtor3_1
+    TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat9_1) if TautoErasedNat9_1 > 0 => {
+      let k := TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat9_1 - 1)
+      TautoErasedValue_1::TautoErasedCtor4_1(k, x, TautoErasedFn7_1(k, x))
+    }
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedGetBool_1(v: TautoErasedValue_1): Bool { match v {
+  TautoErasedValue_1::TautoErasedBool_1(b) => b
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetI64_1(v: TautoErasedValue_1): i64 { match v {
+  TautoErasedValue_1::TautoErasedI64_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetNat_1(v: TautoErasedValue_1): nat { match v {
+  TautoErasedValue_1::TautoErasedNat_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetText_1(v: TautoErasedValue_1): Text { match v {
+  TautoErasedValue_1::TautoErasedText_1(t) => t
+  _ => extract_unreachable()
+} }
+fn TautoErasedLength_1(xs: List(TautoErasedValue_1)): nat { match xs {
+  Nil => 0
+  List::Cons(x, tail) => 1 + TautoErasedLength_1(tail)
+} }
+fn TautoErasedTake_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { List::Nil } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => List::Cons(x, TautoErasedTake_1(n - 1, tail))
+} } }
+shared enum TautoErasedValue_1 {
+  TautoErasedNat_1(nat)
+  TautoErasedBool_1(Bool)
+  TautoErasedI64_1(i64)
+  TautoErasedText_1(Text)
+  TautoErasedUnit_1
+  TautoErasedFunction_1(nat, (List(TautoErasedValue_1)) -> TautoErasedValue_1 ! {Div})
+  TautoErasedCtor4_1(TautoErasedValue_1, TautoErasedValue_1, TautoErasedValue_1)
+  TautoErasedCtor3_1
+}
+```
+extracted_nib.demo = ```nib
+pub fn demo(): nat { TautoErasedGetNat_1(TautoErasedFn5_1()) }
+```
+
+@ cases.refined-check
+imports = [path`../std/Nat.taut`, path`../std/Refined.taut`]
+source = ```tauto
+fn is_pos(n: Nat): Bool {
+  ⊢ Bool from match n { Zero => false
+    Succ(k) => true }
+}
+fn pos_pred(n: Nat, h: is_pos(n) = true): Nat {
+  ⊢ Nat from match n { Zero => ⊢ Nat from match h {}
+    Succ(k) => k }
+}
+fn pred_of(r: Refined(Nat, y => is_pos(y) = true)): Nat {
+  ⊢ Nat from match r { Mk(v, h) => pos_pred(v, h) }
+}
+fn checked_pred(n: Nat): Nat {
+  ⊢ Nat from match refine_by(is_pos, n) {
+    None => 0
+    Some(r) => pred_of(r)
+  }
+}
+fn demo(): Nat { checked_pred(7) }
+```
+checks_all = "ok"
+
+@ cases.refined-run
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+import std::Refined
+
+fn is_pos(n: Nat): Bool {
+  ⊢ Bool from match n { Zero => false
+    Succ(k) => true }
+}
+fn pos_pred(n: Nat, h: is_pos(n) = true): Nat {
+  ⊢ Nat from match n { Zero => ⊢ Nat from match h {}
+    Succ(k) => k }
+}
+fn pred_of(r: Refined(Nat, y => is_pos(y) = true)): Nat {
+  ⊢ Nat from match r { Mk(v, h) => pos_pred(v, h) }
+}
+fn checked_pred(n: Nat): Nat {
+  ⊢ Nat from match refine_by(is_pos, n) {
+    None => 0
+    Some(r) => pred_of(r)
+  }
+}
+fn demo(): Nat { checked_pred(7) }
+perform show("result", demo())
+```
+shows = ["result = 6"]
+backends = ["rust", "javascript"]
+rust_shows = ["result = 6"]
+javascript_shows = ["result = 6"]
+extracted_nib."TautoErased*" = ```nib
+fn TautoErasedApply_1(f: TautoErasedValue_1, args: List(TautoErasedValue_1)): TautoErasedValue_1 { match f {
+  TautoErasedValue_1::TautoErasedFunction_1(arity, call) => {
+    let count := TautoErasedLength_1(args)
+    if count < arity { TautoErasedValue_1::TautoErasedFunction_1(arity - count, (rest: List(TautoErasedValue_1)) => call(TautoErasedConcat_1(args, rest))) } else if count == arity { call(args) } else { TautoErasedApply_1(call(TautoErasedTake_1(arity, args)), TautoErasedDrop_1(arity, args)) }
+  }
+  TautoErasedUnit_1 => TautoErasedUnit_1
+  _ => extract_unreachable()
+} }
+fn TautoErasedConcat_1(xs: List(TautoErasedValue_1), ys: List(TautoErasedValue_1)): List(TautoErasedValue_1) { match xs {
+  Nil => ys
+  List::Cons(x, tail) => List::Cons(x, TautoErasedConcat_1(tail, ys))
+} }
+fn TautoErasedDrop_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { xs } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => TautoErasedDrop_1(n - 1, tail)
+} } }
+fn TautoErasedFn13_1(r: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject14_1 := r
+  match TautoErasedSubject14_1 {
+    TautoErasedValue_1::TautoErasedCtor9_1(v) => TautoErasedFn15_1(v)
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn15_1(n: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject16_1 := n
+  match TautoErasedSubject16_1 {
+    TautoErasedValue_1::TautoErasedNat_1(0) => extract_unreachable()
+    TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat17_1) if TautoErasedNat17_1 > 0 => {
+      let k := TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat17_1 - 1)
+      k
+    }
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn18_1(): TautoErasedValue_1 { TautoErasedFn1_1(TautoErasedValue_1::TautoErasedNat_1(7)) }
+fn TautoErasedFn1_1(n: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject12_1 := TautoErasedFn7_1(TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs6_1: List(TautoErasedValue_1)) => match TautoErasedArgs6_1 {
+    List::Cons(TautoErasedArg2_1, Nil) => TautoErasedFn3_1(TautoErasedArg2_1)
+    _ => extract_unreachable()
+  }), n)
+  match TautoErasedSubject12_1 {
+    TautoErasedCtor11_1 => TautoErasedValue_1::TautoErasedNat_1(0)
+    TautoErasedValue_1::TautoErasedCtor10_1(r) => TautoErasedFn13_1(r)
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn3_1(n: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject4_1 := n
+  match TautoErasedSubject4_1 {
+    TautoErasedValue_1::TautoErasedNat_1(0) => TautoErasedValue_1::TautoErasedBool_1(false)
+    TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat5_1) if TautoErasedNat5_1 > 0 => {
+      let k := TautoErasedValue_1::TautoErasedNat_1(TautoErasedNat5_1 - 1)
+      TautoErasedValue_1::TautoErasedBool_1(true)
+    }
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn7_1(p: TautoErasedValue_1, x: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject8_1 := TautoErasedApply_1(p, List::Cons(x, List::Nil))
+  match TautoErasedSubject8_1 {
+    TautoErasedValue_1::TautoErasedBool_1(true) => TautoErasedValue_1::TautoErasedCtor10_1(TautoErasedValue_1::TautoErasedCtor9_1(x))
+    TautoErasedValue_1::TautoErasedBool_1(false) => TautoErasedValue_1::TautoErasedCtor11_1
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedGetBool_1(v: TautoErasedValue_1): Bool { match v {
+  TautoErasedValue_1::TautoErasedBool_1(b) => b
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetI64_1(v: TautoErasedValue_1): i64 { match v {
+  TautoErasedValue_1::TautoErasedI64_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetNat_1(v: TautoErasedValue_1): nat { match v {
+  TautoErasedValue_1::TautoErasedNat_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetText_1(v: TautoErasedValue_1): Text { match v {
+  TautoErasedValue_1::TautoErasedText_1(t) => t
+  _ => extract_unreachable()
+} }
+fn TautoErasedLength_1(xs: List(TautoErasedValue_1)): nat { match xs {
+  Nil => 0
+  List::Cons(x, tail) => 1 + TautoErasedLength_1(tail)
+} }
+pub struct TautoErasedOpaque19_1 {
+  value: TautoErasedValue_1
+}
+fn TautoErasedTake_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { List::Nil } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => List::Cons(x, TautoErasedTake_1(n - 1, tail))
+} } }
+shared enum TautoErasedValue_1 {
+  TautoErasedNat_1(nat)
+  TautoErasedBool_1(Bool)
+  TautoErasedI64_1(i64)
+  TautoErasedText_1(Text)
+  TautoErasedUnit_1
+  TautoErasedFunction_1(nat, (List(TautoErasedValue_1)) -> TautoErasedValue_1 ! {Div})
+  TautoErasedCtor11_1
+  TautoErasedCtor10_1(TautoErasedValue_1)
+  TautoErasedCtor9_1(TautoErasedValue_1)
+}
+```
+extracted_nib.demo = ```nib
+pub fn demo(): nat { TautoErasedGetNat_1(TautoErasedFn18_1()) }
+```
+
+@ cases.fixed-width-run
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+import std::SInt
+import std::Int
+
+inductive Vec(A: Type): (Nat) -> Type {
+  Nil: Vec(A, Zero)
+  Cons(n: Nat, x: A, xs: Vec(A, n)): Vec(A, Succ(n))
+}
+fn singleton(v: Int): Option(Vec(I64, 1)) {
+  ⊢ Option(Vec(I64, 1)) from match I64::of_int(v) {
+    None => None
+    Some(x) => Some(Cons(0, x, Nil))
+  }
+}
+fn first(v: Vec(I64, 1)): I64 {
+  ⊢ I64 from match v { Cons(k, x, xs) => x }
+}
+fn proved(): Vec(I64, 1) { Cons(0, I64::Mk(IntOfNat(12), Refl), Nil) }
+fn read(v: Vec(I64, 1)): Int {
+  ⊢ Int from match first(v) { I64::Mk(x, h) => x }
+}
+perform show("proved", first(proved()))
+perform show("read", read(proved()))
+match singleton(IntOfNat(10)) {
+  None => perform show("missing", true)
+  Some(v) => perform show("value", first(v))
+}
+match singleton(IntOfNat(9223372036854775808)) {
+  None => perform show("overflow", true)
+  Some(v) => perform show("unexpected", first(v))
+}
+match singleton(IntOfNat(9223372036854775807)) {
+  None => perform show("missing-max", true)
+  Some(v) => perform show("max", first(v))
+}
+match singleton(IntNegSucc(9223372036854775807)) {
+  None => perform show("missing-min", true)
+  Some(v) => perform show("min", first(v))
+}
+match singleton(IntNegSucc(9223372036854775808)) {
+  None => perform show("underflow", true)
+  Some(v) => perform show("unexpected-min", first(v))
+}
+```
+shows = ["proved = 12", "read = IntOfNat(12)", "value = 10", "overflow = true", "max = 9223372036854775807", "min = -9223372036854775808", "underflow = true"]
+backends = ["rust", "javascript"]
+rust_shows = ["proved = 12", "read = IntOfNat(12)", "value = 10", "overflow = true", "max = 9223372036854775807", "min = -9223372036854775808", "underflow = true"]
+javascript_shows = ["proved = 12", "read = IntOfNat(12)", "value = 10", "overflow = true", "max = 9223372036854775807", "min = -9223372036854775808", "underflow = true"]
+extracted_nib."TautoErased*" = ```nib
+fn TautoErasedApply_1(f: TautoErasedValue_1, args: List(TautoErasedValue_1)): TautoErasedValue_1 { match f {
+  TautoErasedValue_1::TautoErasedFunction_1(arity, call) => {
+    let count := TautoErasedLength_1(args)
+    if count < arity { TautoErasedValue_1::TautoErasedFunction_1(arity - count, (rest: List(TautoErasedValue_1)) => call(TautoErasedConcat_1(args, rest))) } else if count == arity { call(args) } else { TautoErasedApply_1(call(TautoErasedTake_1(arity, args)), TautoErasedDrop_1(arity, args)) }
+  }
+  TautoErasedUnit_1 => TautoErasedUnit_1
+  _ => extract_unreachable()
+} }
+fn TautoErasedConcat_1(xs: List(TautoErasedValue_1), ys: List(TautoErasedValue_1)): List(TautoErasedValue_1) { match xs {
+  Nil => ys
+  List::Cons(x, tail) => List::Cons(x, TautoErasedConcat_1(tail, ys))
+} }
+fn TautoErasedDrop_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { xs } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => TautoErasedDrop_1(n - 1, tail)
+} } }
+fn TautoErasedFn11_1(v: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject15_1 := TautoErasedFn12_1(v)
+  match TautoErasedSubject15_1 {
+    TautoErasedCtor13_1 => TautoErasedCtor13_1
+    TautoErasedValue_1::TautoErasedCtor14_1(x) => TautoErasedValue_1::TautoErasedCtor14_1(TautoErasedValue_1::TautoErasedCtor3_1(TautoErasedValue_1::TautoErasedNat_1(0), x, TautoErasedValue_1::TautoErasedCtor7_1))
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn12_1(v: TautoErasedValue_1): TautoErasedValue_1 { TautoErasedPack6_1(extract_i64_of_int(TautoErasedUnpack4_1(v))) }
+fn TautoErasedFn1_1(v: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject2_1 := v
+  match TautoErasedSubject2_1 {
+    TautoErasedValue_1::TautoErasedCtor3_1(k, x, xs) => x
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn4_1(): TautoErasedValue_1 { TautoErasedValue_1::TautoErasedCtor3_1(TautoErasedValue_1::TautoErasedNat_1(0), TautoErasedValue_1::TautoErasedI64_1(extract_i64_of_fitting(TautoErasedUnpack4_1(TautoErasedValue_1::TautoErasedCtor5_1(TautoErasedValue_1::TautoErasedNat_1(12))))), TautoErasedValue_1::TautoErasedCtor7_1) }
+fn TautoErasedFn8_1(v: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject9_1 := TautoErasedFn1_1(v)
+  match TautoErasedSubject9_1 {
+    TautoErasedValue_1::TautoErasedI64_1(TautoErasedInteger10_1) => {
+      let x := TautoErasedPack4_1(extract_i64_int(TautoErasedInteger10_1))
+      x
+    }
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedGetBool_1(v: TautoErasedValue_1): Bool { match v {
+  TautoErasedValue_1::TautoErasedBool_1(b) => b
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetI64_1(v: TautoErasedValue_1): i64 { match v {
+  TautoErasedValue_1::TautoErasedI64_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetNat_1(v: TautoErasedValue_1): nat { match v {
+  TautoErasedValue_1::TautoErasedNat_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetText_1(v: TautoErasedValue_1): Text { match v {
+  TautoErasedValue_1::TautoErasedText_1(t) => t
+  _ => extract_unreachable()
+} }
+fn TautoErasedLength_1(xs: List(TautoErasedValue_1)): nat { match xs {
+  Nil => 0
+  List::Cons(x, tail) => 1 + TautoErasedLength_1(tail)
+} }
+pub struct TautoErasedOpaque16_1 {
+  value: TautoErasedValue_1
+}
+fn TautoErasedPack23_1(value: Option(TautoErasedOpaque16_1)): TautoErasedValue_1 { match value {
+  None => TautoErasedValue_1::TautoErasedCtor13_1
+  Option::Some(item) => TautoErasedValue_1::TautoErasedCtor14_1(item.value)
+} }
+fn TautoErasedPack4_1(value: Int): TautoErasedValue_1 { match value {
+  Int::IntOfNat(v) => TautoErasedValue_1::TautoErasedCtor5_1(TautoErasedValue_1::TautoErasedNat_1(v))
+  Int::IntNegSucc(v) => TautoErasedValue_1::TautoErasedCtor6_1(TautoErasedValue_1::TautoErasedNat_1(v))
+} }
+fn TautoErasedPack6_1(value: Option(i64)): TautoErasedValue_1 { match value {
+  None => TautoErasedValue_1::TautoErasedCtor13_1
+  Option::Some(item) => TautoErasedValue_1::TautoErasedCtor14_1(TautoErasedValue_1::TautoErasedI64_1(item))
+} }
+fn TautoErasedTake_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { List::Nil } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => List::Cons(x, TautoErasedTake_1(n - 1, tail))
+} } }
+fn TautoErasedUnpack23_1(value: TautoErasedValue_1): Option(TautoErasedOpaque16_1) { match value {
+  TautoErasedCtor13_1 => Option::None
+  TautoErasedValue_1::TautoErasedCtor14_1(item) => Option::Some(TautoErasedOpaque16_1::Mk { value: item })
+  _ => extract_unreachable()
+} }
+fn TautoErasedUnpack4_1(value: TautoErasedValue_1): Int { match value {
+  TautoErasedValue_1::TautoErasedCtor5_1(v) => Int::IntOfNat(TautoErasedGetNat_1(v))
+  TautoErasedValue_1::TautoErasedCtor6_1(v) => Int::IntNegSucc(TautoErasedGetNat_1(v))
+  _ => extract_unreachable()
+} }
+fn TautoErasedUnpack6_1(value: TautoErasedValue_1): Option(i64) { match value {
+  TautoErasedCtor13_1 => Option::None
+  TautoErasedValue_1::TautoErasedCtor14_1(item) => Option::Some(TautoErasedGetI64_1(item))
+  _ => extract_unreachable()
+} }
+shared enum TautoErasedValue_1 {
+  TautoErasedNat_1(nat)
+  TautoErasedBool_1(Bool)
+  TautoErasedI64_1(i64)
+  TautoErasedText_1(Text)
+  TautoErasedUnit_1
+  TautoErasedFunction_1(nat, (List(TautoErasedValue_1)) -> TautoErasedValue_1 ! {Div})
+  TautoErasedCtor6_1(TautoErasedValue_1)
+  TautoErasedCtor5_1(TautoErasedValue_1)
+  TautoErasedCtor13_1
+  TautoErasedCtor14_1(TautoErasedValue_1)
+  TautoErasedCtor3_1(TautoErasedValue_1, TautoErasedValue_1, TautoErasedValue_1)
+  TautoErasedCtor7_1
+}
+```
+extracted_nib.first = ```nib
+pub fn first(v: TautoErasedOpaque16_1): i64 { TautoErasedGetI64_1(TautoErasedFn1_1(v.value)) }
+```
+extracted_nib.singleton = ```nib
+pub fn singleton(v: Int): Option(TautoErasedOpaque16_1) { TautoErasedUnpack23_1(TautoErasedFn11_1(TautoErasedPack4_1(v))) }
+```
+
+@ cases.existential-run
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Package: Type1 {
+  Pack(T: Type, value: T, measure: (T) -> Nat): Package
+}
+fn unpack(p: Package): Nat {
+  ⊢ Nat from match p { Pack(T, value, measure) => measure(value) }
+}
+fn identity(n: Nat): Nat { n }
+fn score(b: Bool): Nat { ⊢ Nat from match b { false => 0
+  true => 7 } }
+fn choose(b: Bool): Package {
+  ⊢ Package from match b {
+    false => Pack(Nat, 11, identity)
+    true => Pack(Bool, true, score)
+  }
+}
+perform show("nat", unpack(choose(false)))
+perform show("bool", unpack(choose(true)))
+```
+shows = ["nat = 11", "bool = 7"]
+backends = ["rust", "javascript"]
+rust_shows = ["nat = 11", "bool = 7"]
+javascript_shows = ["nat = 11", "bool = 7"]
+extracted_nib."TautoErased*" = ```nib
+fn TautoErasedApply_1(f: TautoErasedValue_1, args: List(TautoErasedValue_1)): TautoErasedValue_1 { match f {
+  TautoErasedValue_1::TautoErasedFunction_1(arity, call) => {
+    let count := TautoErasedLength_1(args)
+    if count < arity { TautoErasedValue_1::TautoErasedFunction_1(arity - count, (rest: List(TautoErasedValue_1)) => call(TautoErasedConcat_1(args, rest))) } else if count == arity { call(args) } else { TautoErasedApply_1(call(TautoErasedTake_1(arity, args)), TautoErasedDrop_1(arity, args)) }
+  }
+  TautoErasedUnit_1 => TautoErasedUnit_1
+  _ => extract_unreachable()
+} }
+fn TautoErasedConcat_1(xs: List(TautoErasedValue_1), ys: List(TautoErasedValue_1)): List(TautoErasedValue_1) { match xs {
+  Nil => ys
+  List::Cons(x, tail) => List::Cons(x, TautoErasedConcat_1(tail, ys))
+} }
+fn TautoErasedDrop_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { xs } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => TautoErasedDrop_1(n - 1, tail)
+} } }
+fn TautoErasedFn11_1(p: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject12_1 := p
+  match TautoErasedSubject12_1 {
+    TautoErasedValue_1::TautoErasedCtor6_1(value, measure) => TautoErasedApply_1(measure, List::Cons(value, List::Nil))
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn1_1(b: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject2_1 := b
+  match TautoErasedSubject2_1 {
+    TautoErasedValue_1::TautoErasedBool_1(false) => TautoErasedValue_1::TautoErasedCtor6_1(TautoErasedValue_1::TautoErasedNat_1(11), TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs5_1: List(TautoErasedValue_1)) => match TautoErasedArgs5_1 {
+      List::Cons(TautoErasedArg3_1, Nil) => TautoErasedFn4_1(TautoErasedArg3_1)
+      _ => extract_unreachable()
+    }))
+    TautoErasedValue_1::TautoErasedBool_1(true) => TautoErasedValue_1::TautoErasedCtor6_1(TautoErasedValue_1::TautoErasedBool_1(true), TautoErasedValue_1::TautoErasedFunction_1(1, (TautoErasedArgs10_1: List(TautoErasedValue_1)) => match TautoErasedArgs10_1 {
+      List::Cons(TautoErasedArg7_1, Nil) => TautoErasedFn8_1(TautoErasedArg7_1)
+      _ => extract_unreachable()
+    }))
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedFn4_1(n: TautoErasedValue_1): TautoErasedValue_1 { n }
+fn TautoErasedFn8_1(b: TautoErasedValue_1): TautoErasedValue_1 {
+  let TautoErasedSubject9_1 := b
+  match TautoErasedSubject9_1 {
+    TautoErasedValue_1::TautoErasedBool_1(false) => TautoErasedValue_1::TautoErasedNat_1(0)
+    TautoErasedValue_1::TautoErasedBool_1(true) => TautoErasedValue_1::TautoErasedNat_1(7)
+    _ => extract_unreachable()
+  }
+}
+fn TautoErasedGetBool_1(v: TautoErasedValue_1): Bool { match v {
+  TautoErasedValue_1::TautoErasedBool_1(b) => b
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetI64_1(v: TautoErasedValue_1): i64 { match v {
+  TautoErasedValue_1::TautoErasedI64_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetNat_1(v: TautoErasedValue_1): nat { match v {
+  TautoErasedValue_1::TautoErasedNat_1(n) => n
+  _ => extract_unreachable()
+} }
+fn TautoErasedGetText_1(v: TautoErasedValue_1): Text { match v {
+  TautoErasedValue_1::TautoErasedText_1(t) => t
+  _ => extract_unreachable()
+} }
+fn TautoErasedLength_1(xs: List(TautoErasedValue_1)): nat { match xs {
+  Nil => 0
+  List::Cons(x, tail) => 1 + TautoErasedLength_1(tail)
+} }
+pub struct TautoErasedOpaque13_1 {
+  value: TautoErasedValue_1
+}
+fn TautoErasedTake_1(n: nat, xs: List(TautoErasedValue_1)): List(TautoErasedValue_1) { if n == 0 { List::Nil } else { match xs {
+  Nil => extract_unreachable()
+  List::Cons(x, tail) => List::Cons(x, TautoErasedTake_1(n - 1, tail))
+} } }
+shared enum TautoErasedValue_1 {
+  TautoErasedNat_1(nat)
+  TautoErasedBool_1(Bool)
+  TautoErasedI64_1(i64)
+  TautoErasedText_1(Text)
+  TautoErasedUnit_1
+  TautoErasedFunction_1(nat, (List(TautoErasedValue_1)) -> TautoErasedValue_1 ! {Div})
+  TautoErasedCtor6_1(TautoErasedValue_1, TautoErasedValue_1)
+}
+```
+extracted_nib.choose = ```nib
+pub fn choose(b: Bool): TautoErasedOpaque13_1 { TautoErasedOpaque13_1::Mk { value: TautoErasedFn1_1(TautoErasedValue_1::TautoErasedBool_1(b)) } }
+```
+extracted_nib.unpack = ```nib
+pub fn unpack(p: TautoErasedOpaque13_1): nat { TautoErasedGetNat_1(TautoErasedFn11_1(p.value)) }
+```
+
+
+@ cases.fixed-width-proof-rejected
+imports = [path`../std/SInt.taut`, path`../std/Int.taut`]
+source = ```tauto
+fn bad(): I64 { I64::Mk(IntOfNat(9223372036854775808), Refl) }
+```
+checks.bad = "error: type mismatch"
+
+@ cases.declaration-only
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app"
+version = "0.1.0" }'
+extract = true
+files."app/src/main.taut" = ```tauto
+import std::Nat
+inductive Vec(A: Type): (Nat) -> Type {
+  Nil: Vec(A, Zero)
+  Cons(n: Nat, x: A, xs: Vec(A, n)): Vec(A, Succ(n))
+}
+perform show("ready", true)
+```
+shows = ["ready = true"]
+backends = ["rust", "javascript"]
+rust_shows = ["ready = true"]
+javascript_shows = ["ready = true"]
+extracted_nib.TautoErasedValue_1 = ```nib
+shared enum TautoErasedValue_1 {
+  TautoErasedNat_1(nat)
+  TautoErasedBool_1(Bool)
+  TautoErasedI64_1(i64)
+  TautoErasedText_1(Text)
+  TautoErasedUnit_1
+  TautoErasedFunction_1(nat, (List(TautoErasedValue_1)) -> TautoErasedValue_1 ! {Div})
+}
+```

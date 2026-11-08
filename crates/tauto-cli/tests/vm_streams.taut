@@ -1,0 +1,73 @@
+import std::prelude::Os
+import std::prelude::Par
+import std::prelude::Shared
+
+// An accept waits in a task while the main task connects and writes; the
+// task reads what was written.
+fn serve(l: TcpListener): Result(Bytes, IoError) ! {tcp_accept, tcp_read, tcp_close} {
+  let forever: Option(i64) := None
+  match perform tcp_accept(l, forever) {
+    Ok(s) => {
+      let r := perform tcp_read(s, 5, forever)
+      perform tcp_close(s)
+      r
+    }
+    Err(e) => Err(e)
+  }
+}
+
+// A read waiting in a task wakes at the end of the stream when the main task
+// shuts the stream down.
+fn read_woken(s: TcpStream): Result(Bytes, IoError) ! {∀ T. spawn(T), sleep, tcp_read, tcp_shutdown, wait} {
+  let forever: Option(i64) := None
+  let t := perform spawn(() => perform tcp_read(s, 8, forever))
+  perform sleep(50)
+  match perform tcp_shutdown(s, ShutdownRead) {
+    Ok(u) => Task::join(t)
+    Err(e) => {
+      let r := Task::join(t)
+      Err(e)
+    }
+  }
+}
+
+let forever: Option(i64) := None
+match perform tcp_listen("127.0.0.1:0") {
+  Ok(l) => {
+    let t := perform spawn(() => serve(l))
+    match perform tcp_connect(l.address, forever) {
+      Ok(c) => {
+        perform show("write", perform tcp_write(c, Bytes::of_text("hello"), forever))
+        perform show("served", Task::join(t))
+        perform tcp_close(c)
+      }
+      Err(e) => {
+        perform show("connect", io_message(e))
+        perform show("served", Task::join(t))
+      }
+    }
+    match perform tcp_connect(l.address, forever) {
+      Ok(c) => match perform tcp_accept(l, forever) {
+        Ok(s) => {
+          perform show("read", read_woken(s))
+          perform tcp_close(c)
+        }
+        Err(e) => perform show("accept", io_message(e))
+      }
+      Err(e) => perform show("connect", io_message(e))
+    }
+  }
+  Err(e) => perform show("listen", io_message(e))
+}
+
+// A started program is written to, waited for and read.
+let p := Process { program: "sh", args: ["-c", "read x; printf \"$x\""], dir: "", env: [], stdin: Bytes::of_text("") }
+match perform proc_spawn(p, ProcessIo { stdin: StdioPiped, stdout: StdioPiped, stderr: StdioPiped }) {
+  Ok(c) => {
+    perform show("input", perform proc_write(c, Bytes::of_text("hi\n")))
+    perform show("wait", perform proc_wait(c, forever))
+    perform show("output", perform proc_read(c, ChildStdout, 100, forever))
+    perform proc_close(c)
+  }
+  Err(e) => perform show("spawn", io_message(e))
+}

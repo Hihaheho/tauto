@@ -66,6 +66,7 @@ kernel-mutual-mixed = a mutual block holds only inductive families, or only func
 kernel-mutual-plain-generics = `{ $name }` is not defined by a match, so its calls in the block are written out, and a function written out has no generics
 kernel-mutual-plain-cycle = `{ $name }` reaches itself through functions not defined by a match: a recursion in a mutual block goes through a function defined by a match
 kernel-mutual-plain-partial = `{ $name }` is not defined by a match, so the block writes out its calls, and `{ $user }` uses it without all its arguments
+kernel-mutual-plain-too-large = writing out the calls of the functions not defined by a match would make the block { $growth } times as large: `{ $name }` would be copied { $times } times. Pass the results of the recursive calls to `{ $name }` as arguments, so that it no longer calls the block and is not written out
 kernel-mutual-result-type = a function of a mutual block has a result type
 kernel-mutual-param-typed = a parameter of a mutual block is typed
 kernel-mutual-no-effects = a function of a mutual block has no effects; a function with effects is executable code, and needs no `mutual` to call the others
@@ -85,6 +86,7 @@ kernel-not-kernel-term-text = not a kernel term: text (a text literal is read as
 kernel-not-kernel-term-kind = not a kernel term: { $kind }
 kernel-block-value = a block in a proof ends with its value
 kernel-block-lets = a block in a proof holds only `let x: T := e` before its value
+kernel-statement-discarded = the value of this statement is not used, so its type would never be checked
 kernel-let-unused = `{ $name }` is defined but not used
 kernel-mismatch = type mismatch: expected `{ $expected }`, found `{ $found }`
 kernel-mismatch-line =
@@ -140,7 +142,7 @@ kernel-deq-alias = it is an alias
 kernel-deq-no-ctors = it has no constructors
 kernel-deq-proposition = it is a proposition
 kernel-deq-not-declared = `{ $name }` is not declared
-kernel-deq-field = the field `{ $field }` of `{ $ctor }` has type `{ $ty }`, which has no decidable equality (a type that has one lists `fn T_beq, theorem T_beq_refl, theorem T_beq_sound, theorem T_deq` after its sort)
+kernel-deq-field = the field `{ $field }` of `{ $ctor }` has type `{ $ty }`, which has no decidable equality (a type that has one lists `fn T::beq, theorem T::beq_refl, theorem T::beq_sound, theorem T::deq` after its sort)
 kernel-deq-no-parse = the generated text does not parse
 kernel-deq-no-check = the generated declarations do not check
 kernel-deq-not-generated = it was not generated
@@ -149,8 +151,8 @@ kernel-deq-list-mismatch = `{ $name }`: the list after its sort does not match w
 kernel-match-the-matched-value = the matched value
 kernel-match-the-parameter = the parameter `{ $name }`
 kernel-match-arm-hides = the arm `{ $arm }` names a variable `{ $name }`, which is also the name of { $what }; rename the variable
-kernel-match-mutual-by-match = a function of a mutual block is defined by a match
-kernel-match-on-parameter = a match is on a parameter
+kernel-match-mutual-by-match = a function of a mutual block must be defined by a match
+kernel-match-on-parameter = a match must be on a parameter
 kernel-match-as-variable = `eqn` names the equation of a match on a term; a match on a variable has the variable itself
 kernel-match-not-variable = `{ $name }` is not a variable in scope that a match can eliminate
 kernel-match-lambda-type = the type of `{ $name }` is not known here: a λ's parameter has the type the called function gives it, once the arguments outside a `match` fix its generics, or the type written on it: `({ $name }: T) => …`
@@ -178,7 +180,7 @@ kernel-match-same-family-indices = two functions of a block match on the same fa
 kernel-match-missing-case = missing case `{ $name }`
 kernel-match-same-family-function = two functions of a block match on the same family, which has a function-typed field; this is not supported
 kernel-match-not-compiled = a match could not be compiled
-kernel-match-result-type = the type of this match is not known here, so it needs its result type: `match x: T {"{"} … {"}"}` (it is known as a declaration's body, an arm's body, a λ's body with a known type, and an argument of a call whose other arguments fix the parameter's type)
+kernel-match-result-type = the type of this match is not known here, so it needs its result type: `⊢ T from match x {"{"} … {"}"}` (it is known as a declaration's body, an arm's body, a λ's body with a known type, and an argument of a call whose other arguments fix the parameter's type)
 kernel-match-param-written = the parameter `{ $name }` is written as `{ $written }`, but here it is a `{ $given }`
 kernel-field-not-inductive = `.` is on a value of an inductive type
 kernel-field-many-ctors = `{ $family }` has more than one constructor: `.{ $name }` is a match
@@ -186,13 +188,12 @@ kernel-field-of-type = `{ $family }` is a type, and a field is read from a value
 kernel-field-none = `{ $family }` has no field `{ $name }`
 kernel-field-depends = the type of `{ $name }` depends on another field
 kernel-ascribe-mismatch = `{ $have }` is not `{ $want }`, nor a product with its members
-kernel-product-not-pair = `{ $have }` does not fit `{ $want }`: a product `#(…)` or `A × B` is not a `Pair` written by its name, nor a `Pair` a product
 kernel-ascribe-no-member = `{ $product }` has no member of the type `{ $member }`
 kernel-ascribe-clash = two members of a product have the type `{ $member }`, so the members cannot be matched by their types; write the members by position, or tell them apart with a label (`@x { $member }`)
 kernel-ascribe-open = `{ $have }` and `{ $want }` are matched by the types of their members only where neither mentions a type variable; write the members in the same order, by position, or give each a label (`@x T`)
-kernel-eq-no-deq = `==` is on `Nat`, `Bool`, `Text` or a type with a decidable equality, not `{ $ty }`; an inductive has one when it lists `=> fn { $head }_beq, theorem { $head }_beq_refl, theorem { $head }_beq_sound, theorem { $head }_deq` after its sort
+kernel-eq-no-deq = `==` is on `Nat`, `Bool`, `Text` or a type with a decidable equality, not `{ $ty }`; an inductive has one when it lists `=> fn { $head }::beq, theorem { $head }::beq_refl, theorem { $head }::beq_sound, theorem { $head }::deq` after its sort
 kernel-eq-type-open = Neither side of `=` has a type to take: a numeric literal, `[]`, a hole, a λ, or a constructor with parameters written without arguments (`Nil`, `None`) leaves it open. Write `Eq(T, a, b)`
-kernel-if-type-open = Neither branch of this `if` has a type to take: a numeric literal, `[]`, a hole, a λ, or a constructor with parameters written without arguments (`Nil`, `None`) leaves it open. Write its type: `match c: T {"{"} true => a  false => b {"}"}`
+kernel-if-type-open = Neither branch of this `if` has a type to take: a numeric literal, `[]`, a hole, a λ, or a constructor with parameters written without arguments (`Nil`, `None`) leaves it open. Write its type: `⊢ T from match c {"{"} true => a  false => b {"}"}`
 kernel-if-no-else = an `if` in a kernel term needs an `else` branch
 kernel-eq-not-declared = `==` here is `{ $name }`, which is not declared
 kernel-match-arm-goal = the goal of this arm is `{ $computed }`, not `{ $written }`
@@ -282,6 +283,12 @@ kernel-ind-negative = `{ $families }` occurs in a negative or nested position in
 kernel-implicit-nullary = `{ $name }` has no parameters and is named without `()`: write `{ $name }()` to call it
 kernel-implicit-not-defined = `{ $name }` is not defined
 kernel-implicit-fewer-params = `{ $name }` has fewer parameters than implicit ones
+kernel-implicit-named-unknown = `{ $name }` has no implicit parameter `{ $field }`
+kernel-implicit-named-twice = the implicit argument `{ $field }` is written twice
+kernel-implicit-named-mismatch = the implicit argument `{ $field }` of `{ $name }` disagrees with what the call fixes
+kernel-implicit-named-none = implicit arguments are written by name only in a call to a declaration with implicit parameters
+kernel-implicit-named-partial = a call writing implicit arguments by name writes all { $count } explicit arguments of `{ $name }`
+kernel-implicit-positional = `{ $name }` is given more arguments than its explicit parameters: implicit arguments are written by name, `{ $name }(<x: v>, …)`
 kernel-implicit-no-match = cannot infer the implicit arguments of `{ $name }`: `{ $expected }` does not match `{ $found }`
 kernel-implicit-cannot-infer = cannot infer all the implicit arguments of `{ $name }`
 kernel-implicit-generic = cannot infer the generic `{ $generic }` of `{ $name }`: neither its arguments nor the expected type fix it; write the generics as its first arguments, `{ $name }({ $generics }, …)`
@@ -295,7 +302,7 @@ kernel-mut-field-family = `&mut { $name }.…` needs `{ $name }` typed by a fami
 kernel-mut-lends = `&mut` lends a `var`, a `&mut` parameter or a field of one
 kernel-mut-argument = `&mut` is an argument of a call
 kernel-mut-lambda = a lambda does not change the state
-kernel-mut-match-type = a `match` that changes the state needs its type: `let x: T := match …` or `match e: T`
+kernel-mut-match-type = a `match` that changes the state needs its type: `let x: T := match …` or `⊢ T from match e …`
 kernel-mut-var-type = `var { $name }` needs its type to be changed in a `match`: `var { $name }: T := …`
 kernel-mut-term = this term does not change the state in a function in the proof language
 kernel-mut-assign = `{ $name } :=` assigns a `var` or a `&mut` parameter
@@ -329,3 +336,9 @@ kernel-pattern-unknown-implicit = `{ $name }` has no implicit argument named `{ 
 kernel-nested-field-numbers = `{ $name }` is written with different numbers of fields
 kernel-nested-numeral-type = `{ $name }` is not a `Nat`: a numeral pattern is a natural number
 kernel-nested-numeral-large = the numeral pattern `{ $numeral }` is larger than { $max }: it is read as { $numeral } nested `Succ`s; compare with `Nat::eq` instead
+
+kernel-class-argument-arity = class argument count does not match its parameter telescope
+kernel-instance-first-order = instance arguments must be first-order constructor heads, literals, or generics
+kernel-instance-ambiguous = instance selection is ambiguous
+kernel-instance-resolution-cycle = instance resolution contains a cyclic constraint
+kernel-instance-resolution-depth = instance resolution exceeds the nesting limit

@@ -188,3 +188,11 @@ mod tests {
         assert_eq!(Message::from("as it is").to_string(), "as it is");
     }
 }
+
+/// Writes a message as text, for code that still carries its errors as
+/// `String`: `?` turns a [`Message`] into such an error.
+impl From<Message> for String {
+    fn from(message: Message) -> String {
+        message.to_string()
+    }
+}

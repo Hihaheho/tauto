@@ -24,26 +24,26 @@ pub theorem declaration_field_kind_sound(
   declared: Kind,
   accepted: declaration_field_bad(actual, declared) = false
 ): KLe(actual, declared) {
-  match actual: KLe(actual, declared) {
-    KindCopy => match declared: KLe(KindCopy, declared) {
+  ⊢ KLe(actual, declared) from match actual {
+    KindCopy => ⊢ KLe(KindCopy, declared) from match declared {
       KindCopy => Refl
       KindShared => Refl
       KindAffine => Refl
       KindLinear => Refl
     }
-    KindShared => match declared: KLe(KindShared, declared) {
+    KindShared => ⊢ KLe(KindShared, declared) from match declared {
       KindCopy => False::elim(false_ne_true(Eq::sym(accepted)))
       KindShared => Refl
       KindAffine => Refl
       KindLinear => Refl
     }
-    KindAffine => match declared: KLe(KindAffine, declared) {
+    KindAffine => ⊢ KLe(KindAffine, declared) from match declared {
       KindCopy => False::elim(false_ne_true(Eq::sym(accepted)))
       KindShared => False::elim(false_ne_true(Eq::sym(accepted)))
       KindAffine => Refl
       KindLinear => Refl
     }
-    KindLinear => match declared: KLe(KindLinear, declared) {
+    KindLinear => ⊢ KLe(KindLinear, declared) from match declared {
       KindCopy => False::elim(false_ne_true(Eq::sym(accepted)))
       KindShared => False::elim(false_ne_true(Eq::sym(accepted)))
       KindAffine => False::elim(false_ne_true(Eq::sym(accepted)))
@@ -61,8 +61,8 @@ pub fn declaration_field_step(
   f: DataField,
   bad: Bool
 ): Option(Text) {
-  match bad: Option(Text) {
-    true => Some(cat5("declared ", kind_name(declared), " but field ", match f.name: Text { Some(n) => n
+  ⊢ Option(Text) from match bad {
+    true => Some(cat5("declared ", kind_name(declared), " but field ", ⊢ Text from match f.name { Some(n) => n
  None => cat3(Text::of_nat(i), " of ", cname) }, cat2(" is ", kind_name(datas_kind(d, ty_substitute(f.ty, map))))))
     false => ck_declared_fields(fs, d, cname, map, declared, i + 1)
   }
@@ -75,16 +75,23 @@ pub theorem declaration_fields_unf(
   map: Ordmap(Text, Ty),
   declared: Kind,
   i: Nat
-): ck_declared_fields(Cons(f, fs), d, cname, map, declared, i) = declaration_field_step(
-    fs,
-    d,
-    cname,
-    map,
-    declared,
-    i,
-    f,
-    declaration_field_bad(datas_kind(d, ty_substitute(declaration_field_ty(f), map)), declared)
-  ) { Refl }
+): ck_declared_fields(
+  Cons(f, fs),
+  d,
+  cname,
+  map,
+  declared,
+  i
+) = declaration_field_step(
+  fs,
+  d,
+  cname,
+  map,
+  declared,
+  i,
+  f,
+  declaration_field_bad(datas_kind(d, ty_substitute(declaration_field_ty(f), map)), declared)
+) { Refl }
 
 pub theorem declaration_fields_step_sound(
   fs: List(DataField),
@@ -96,15 +103,11 @@ pub theorem declaration_fields_step_sound(
   f: DataField,
   bad: Bool,
   accepted: declaration_field_step(fs, d, cname, map, declared, i, f, bad) = None
-): And(
-  bad = false,
-  ck_declared_fields(fs, d, cname, map, declared, i + 1) = None
-) {
-  match bad: And(
-    bad = false,
-    ck_declared_fields(fs, d, cname, map, declared, i + 1) = None
-  ) {
-    true => False::elim(false_ne_true(Eq::sym(Eq::congr((o: Option(Text)) => Option::is_some(o), accepted))))
+): And(bad = false, ck_declared_fields(fs, d, cname, map, declared, i + 1) = None) {
+  ⊢ And(bad = false, ck_declared_fields(fs, d, cname, map, declared, i + 1) = None) from match bad {
+    true => False::elim(
+      false_ne_true(Eq::sym(Eq::congr((o: Option(Text)) => Option::is_some(o), accepted)))
+    )
     false => AndIntro(Refl, accepted)
   }
 }
@@ -117,14 +120,14 @@ pub theorem ck_declared_fields_sound(
   i: Nat,
   accepted: ck_declared_fields(fs, d, cname, map, declared, i) = None
 ): DeclaredFieldKinds(d, map, declared, fs) {
-  match fs: DeclaredFieldKinds(d, map, declared, fs) {
+  ⊢ DeclaredFieldKinds(d, map, declared, fs) from match fs {
     Nil => DeclaredFieldsNil
     Cons(f, rest) => {
       let step: And(
         declaration_field_bad(
-            datas_kind(d, ty_substitute(declaration_field_ty(f), map)),
-            declared
-          ) = false,
+          datas_kind(d, ty_substitute(declaration_field_ty(f), map)),
+          declared
+        ) = false,
         ck_declared_fields(rest, d, cname, map, declared, i + 1) = None
       ) := declaration_fields_step_sound(
         rest,
@@ -157,7 +160,7 @@ pub fn declaration_ctor_step(
   declared: Kind,
   fields: Option(Text)
 ): Option(Text) {
-  match fields: Option(Text) {
+  ⊢ Option(Text) from match fields {
     Some(message) => Some(message)
     None => ck_declared_ctors(rest, d, map, declared)
   }
@@ -168,13 +171,18 @@ pub theorem declaration_ctors_unf(
   d: Datas,
   map: Ordmap(Text, Ty),
   declared: Kind
-): ck_declared_ctors(Cons(k, rest), d, map, declared) = declaration_ctor_step(
-    rest,
-    d,
-    map,
-    declared,
-    ck_declared_fields(declaration_ctor_fields(k), d, declaration_ctor_name(k), map, declared, 0)
-  ) { Refl }
+): ck_declared_ctors(
+  Cons(k, rest),
+  d,
+  map,
+  declared
+) = declaration_ctor_step(
+  rest,
+  d,
+  map,
+  declared,
+  ck_declared_fields(declaration_ctor_fields(k), d, declaration_ctor_name(k), map, declared, 0)
+) { Refl }
 pub theorem declaration_ctors_step_sound(
   rest: List(DataCtor),
   d: Datas,
@@ -182,14 +190,8 @@ pub theorem declaration_ctors_step_sound(
   declared: Kind,
   fields: Option(Text),
   accepted: declaration_ctor_step(rest, d, map, declared, fields) = None
-): And(
-  fields = None,
-  ck_declared_ctors(rest, d, map, declared) = None
-) {
-  match fields: And(
-    fields = None,
-    ck_declared_ctors(rest, d, map, declared) = None
-  ) {
+): And(fields = None, ck_declared_ctors(rest, d, map, declared) = None) {
+  ⊢ And(fields = None, ck_declared_ctors(rest, d, map, declared) = None) from match fields {
     Some(message) => False::elim(
       false_ne_true(Eq::sym(Eq::congr((o: Option(Text)) => Option::is_some(o), accepted)))
     )
@@ -203,18 +205,18 @@ pub theorem ck_declared_ctors_sound(
   declared: Kind,
   accepted: ck_declared_ctors(cs, d, map, declared) = None
 ): DeclaredConstructorKinds(d, map, declared, cs) {
-  match cs: DeclaredConstructorKinds(d, map, declared, cs) {
+  ⊢ DeclaredConstructorKinds(d, map, declared, cs) from match cs {
     Nil => DeclaredCtorsNil
     Cons(k, rest) => {
       let step: And(
         ck_declared_fields(
-            declaration_ctor_fields(k),
-            d,
-            declaration_ctor_name(k),
-            map,
-            declared,
-            0
-          ) = None,
+          declaration_ctor_fields(k),
+          d,
+          declaration_ctor_name(k),
+          map,
+          declared,
+          0
+        ) = None,
         ck_declared_ctors(rest, d, map, declared) = None
       ) := declaration_ctors_step_sound(
         rest,
@@ -253,7 +255,7 @@ pub fn declaration_recursive_message(
   declared: Kind,
   bad: Bool
 ): Option(Text) {
-  match bad: Option(Text) {
+  ⊢ Option(Text) from match bad {
     true => Some(
       cat5("declared ", kind_name(declared), " but `", s.name, "` holds itself, so it is shared")
     )
@@ -264,12 +266,16 @@ pub theorem declaration_recursive_unf(
   s: SurfaceData,
   data: Data,
   declared: Kind
-): ck_declared_message(s, data, declared) = declaration_recursive_message(
-    s,
-    data,
-    declared,
-    Bool::and(drec(data), Nat::lt(kind_rank(declared), kind_rank(KindShared)))
-  ) { Refl }
+): ck_declared_message(
+  s,
+  data,
+  declared
+) = declaration_recursive_message(
+  s,
+  data,
+  declared,
+  Bool::and(drec(data), Nat::lt(kind_rank(declared), kind_rank(KindShared)))
+) { Refl }
 pub theorem declaration_recursive_test(
   s: SurfaceData,
   data: Data,
@@ -277,8 +283,10 @@ pub theorem declaration_recursive_test(
   bad: Bool,
   accepted: declaration_recursive_message(s, data, declared, bad) = None
 ): bad = false {
-  match bad: bad = false {
-    true => False::elim(false_ne_true(Eq::sym(Eq::congr((o: Option(Text)) => Option::is_some(o), accepted))))
+  ⊢ bad = false from match bad {
+    true => False::elim(
+      false_ne_true(Eq::sym(Eq::congr((o: Option(Text)) => Option::is_some(o), accepted)))
+    )
     false => Refl
   }
 }
@@ -287,9 +295,9 @@ pub theorem declaration_recursive_kind(
   declared: Kind,
   accepted: Bool::and(recursive, Nat::lt(kind_rank(declared), kind_rank(KindShared))) = false
 ): RecursiveDeclarationKind(recursive, declared) {
-  match recursive: RecursiveDeclarationKind(recursive, declared) {
+  ⊢ RecursiveDeclarationKind(recursive, declared) from match recursive {
     false => DeclarationNonrecursive(declared)
-    true => match declared: RecursiveDeclarationKind(true, declared) {
+    true => ⊢ RecursiveDeclarationKind(true, declared) from match declared {
       KindCopy => False::elim(false_ne_true(Eq::sym(accepted)))
       KindShared => DeclarationRecursiveShared
       KindAffine => DeclarationRecursiveAffine
@@ -322,7 +330,7 @@ pub fn declaration_finish_annotation(
   data: Data,
   annotation: Option(Kind)
 ): Option(Text) {
-  match annotation: Option(Text) {
+  ⊢ Option(Text) from match annotation {
     None => None
     Some(declared) => declaration_ctor_step(
       dctors(data),
@@ -334,7 +342,7 @@ pub fn declaration_finish_annotation(
   }
 }
 pub fn declaration_finish_lookup(d: Datas, s: SurfaceData, entry: Option(Data)): Option(Text) {
-  match entry: Option(Text) {
+  ⊢ Option(Text) from match entry {
     None => None
     Some(data) => declaration_finish_annotation(d, s, data, declaration_annotation(data))
   }
@@ -342,7 +350,10 @@ pub fn declaration_finish_lookup(d: Datas, s: SurfaceData, entry: Option(Data)):
 pub theorem declaration_finish_unf(
   d: Datas,
   s: SurfaceData
-): ck_finish_message(d, s) = declaration_finish_lookup(d, s, datas_decl(d, declaration_surface_name(s))) { Refl }
+): ck_finish_message(
+  d,
+  s
+) = declaration_finish_lookup(d, s, datas_decl(d, declaration_surface_name(s))) { Refl }
 pub theorem ck_finish_message_sound(
   d: Datas,
   s: SurfaceData,
@@ -360,18 +371,23 @@ pub theorem ck_finish_message_sound(
     dctors(data)
   )
 ) {
-  let lookup: declaration_finish_annotation(d, s, data, declaration_annotation(data)) = None := Eq::subst(
+  let lookup: declaration_finish_annotation(
+    d,
+    s,
+    data,
+    declaration_annotation(data)
+  ) = None := Eq::subst(
     (entry: Option(Data)) => declaration_finish_lookup(d, s, entry) = None,
     found,
     Eq::trans(Eq::sym(declaration_finish_unf(d, s)), accepted)
   )
   let kind: declaration_ctor_step(
-      dctors(data),
-      d,
-      ck_param_generics(dgen(data), KindCopy, Ordmap::empty()),
-      declared,
-      ck_declared_message(s, data, declared)
-    ) = None := Eq::subst(
+    dctors(data),
+    d,
+    ck_param_generics(dgen(data), KindCopy, Ordmap::empty()),
+    declared,
+    ck_declared_message(s, data, declared)
+  ) = None := Eq::subst(
     (a: Option(Kind)) => declaration_finish_annotation(d, s, data, a) = None,
     annotation,
     lookup
@@ -379,11 +395,11 @@ pub theorem ck_finish_message_sound(
   let checked: And(
     ck_declared_message(s, data, declared) = None,
     ck_declared_ctors(
-        dctors(data),
-        d,
-        ck_param_generics(dgen(data), KindCopy, Ordmap::empty()),
-        declared
-      ) = None
+      dctors(data),
+      d,
+      ck_param_generics(dgen(data), KindCopy, Ordmap::empty()),
+      declared
+    ) = None
   ) := declaration_ctors_step_sound(
     dctors(data),
     d,
@@ -410,14 +426,8 @@ pub theorem declaration_finish_accepts(
   s: SurfaceData,
   message: Option(Text),
   clean: DiagnosticClean(ck_st(summary_finish_decl_k(c, s, message)))
-): And(
-  message = None,
-  summary_finish_decl_k(c, s, message) = mut1(Star, c)
-) {
-  match message: And(
-    message = None,
-    summary_finish_decl_k(c, s, message) = mut1(Star, c)
-  ) {
+): And(message = None, summary_finish_decl_k(c, s, message) = mut1(Star, c)) {
+  ⊢ And(message = None, summary_finish_decl_k(c, s, message) = mut1(Star, c)) from match message {
     None => AndIntro(Refl, Refl)
     Some(m) => False::elim(diagnostic_error_impossible(c, m, declaration_span(s), clean))
   }
@@ -426,10 +436,7 @@ pub theorem ck_finish_decl_accepts(
   c: Checker,
   s: SurfaceData,
   clean: DiagnosticClean(ck_st(ck_finish_decl(c, s)))
-): And(
-  ck_finish_message(ck_datas_of(c), s) = None,
-  ck_finish_decl(c, s) = mut1(Star, c)
-) {
+): And(ck_finish_message(ck_datas_of(c), s) = None, ck_finish_decl(c, s) = mut1(Star, c)) {
   let checked: And(
     ck_finish_message(ck_datas_of(c), s) = None,
     summary_finish_decl_k(c, s, ck_finish_message(ck_datas_of(c), s)) = mut1(Star, c)

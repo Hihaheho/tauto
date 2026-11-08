@@ -1,0 +1,55 @@
+// `∃ x: D. P` is the prelude's `Exists(D, x => P)`: a `fn -> Prop` with an
+// `∃` body is checked like any other kernel term, not skipped.
+
+@ cases.exists-body-of-a-prop-fn-is-checked
+parses = true
+source = ```tauto
+fn has_pred(n: Nat): Prop {
+  (∃ m: Nat. Succ(m) = n)
+}
+theorem one_has_pred(): has_pred(1) { ExIntro(0, Refl) }
+```
+checks.has_pred = "ok"
+checks.one_has_pred = "ok"
+
+@ cases.an-ill-typed-exists-body-is-rejected
+parses = true
+source = ```tauto
+fn bad(n: Nat): Prop {
+  (∃ m: Nat. m = true)
+}
+```
+checks.bad = "error: type mismatch"
+
+@ cases.exists-in-a-theorem-type
+parses = true
+source = ```tauto
+theorem some_nat(): ∃ m: Nat. m = 2 { ExIntro(2, Refl) }
+theorem wrong_witness(): ∃ m: Nat. m = 2 { ExIntro(3, Refl) }
+```
+checks.some_nat = "ok"
+checks.wrong_witness = "error: type mismatch"
+
+@ cases.exists-is-eliminated-by-its-recursor
+parses = true
+source = ```tauto
+theorem weaken(A: Type, P: (A) -> Prop, Q: Prop, e: ∃ x: A. P(x), f: (x: A) -> (P(x)) -> Q): Q {
+  Exists::ind(A, P, t => Q, w => h => f(w, h), e)
+}
+```
+checks.weaken = "ok"
+
+@ cases.an-unparenthesized-exists-starts-a-prop-fn-body
+parses = true
+source = ```tauto
+fn has_pred(n: Nat): Prop {
+  ∃ m: Nat. Succ(m) = n
+}
+theorem one_has_pred(): has_pred(1) { ExIntro(0, Refl) }
+fn bad(n: Nat): Prop {
+  ∃ m: Nat. m = true
+}
+```
+checks.has_pred = "ok"
+checks.one_has_pred = "ok"
+checks.bad = "error: type mismatch"

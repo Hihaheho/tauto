@@ -37,10 +37,10 @@ pub theorem literal_records_bind_requirements<A: Type, B: Type>(
   first: LiteralRecordsFrame_requirements(c, m),
   tail: ∀ value: A. ∀ next: Checker. LiteralRecordsFrame_requirements(next, k(value, next))
 ): LiteralRecordsFrame_requirements(c, frame_bind(A, B, k, m)) {
-  match m: LiteralRecordsFrame_requirements(
+  ⊢ LiteralRecordsFrame_requirements(
     c,
     frame_bind(A, B, k, m)
-  ) { mut1(value, next) => Eq::trans(tail(value, next), first) }
+  ) from match m { mut1(value, next) => Eq::trans(tail(value, next), first) }
 }
 pub theorem literal_records_rewrap_requirements<A: Type>(
   c: Checker,
@@ -57,7 +57,7 @@ pub theorem literal_default_records_requirements(
   c: Checker,
   t: Ty
 ): LiteralRecordsFrame_requirements(c, finish_default(c, t)) {
-  match t: LiteralRecordsFrame_requirements(c, finish_default(c, t)) {
+  ⊢ LiteralRecordsFrame_requirements(c, finish_default(c, t)) from match t {
     TyInt(w) => Refl
     TyBool => Refl
     TyText => Refl
@@ -92,7 +92,7 @@ pub theorem ck_default_ints_records_requirements(
   vs: List(Pair(Nat, Bool)),
   c: Checker
 ): LiteralRecordsFrame_requirements(c, ck_default_ints(vs, c)) {
-  match vs: LiteralRecordsFrame_requirements(c, ck_default_ints(vs, c)) {
+  ⊢ LiteralRecordsFrame_requirements(c, ck_default_ints(vs, c)) from match vs {
     Nil => Refl
     Cons(v, rest) => Eq::subst(
       (m: Mut1(Unit, Checker)) => LiteralRecordsFrame_requirements(c, m),
@@ -133,7 +133,7 @@ pub theorem literal_finish_default_records_requirements(
   first: LiteralRecordsFrame_requirements(c, m),
   clean: DiagnosticReportClean(diagnostic_finish_default_result(m))
 ): LiteralRecordsFrame_requirements(c, diagnostic_finish_default_result(m)) {
-  match m: LiteralRecordsFrame_requirements(c, diagnostic_finish_default_result(m)) {
+  ⊢ LiteralRecordsFrame_requirements(c, diagnostic_finish_default_result(m)) from match m {
     mut1(value, next) => Eq::trans(
       literal_after_defaults_records_requirements(
         next,
@@ -164,7 +164,9 @@ pub theorem ck_finish_requirements_frame(
   c: Checker,
   clean: DiagnosticReportClean(ck_finish(c))
 ): RequirementFrame(c, ck_finish(c)) {
-  let equal: finish_requirements_view(ck_st(ck_finish(c))) = finish_requirements_view(c) := ck_finish_literal_records_requirements(c, clean)
+  let equal: finish_requirements_view(
+    ck_st(ck_finish(c))
+  ) = finish_requirements_view(c) := ck_finish_literal_records_requirements(c, clean)
   AndIntro(
     item => member => Eq::subst(
       (items: List(TyBound)) => Mem(TyBound, item, items),

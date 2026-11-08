@@ -1,5 +1,5 @@
 //! Judgments recorded during core checking. These observations do not authorize declarations.
-use crate::surface::SurfaceTerm;
+use crate::surface::{Name, SurfaceTerm};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InferenceRule {
@@ -18,12 +18,12 @@ pub enum InferenceRule {
 
 #[derive(Clone, Debug)]
 pub struct Derivation {
-    pub context: Vec<(String, SurfaceTerm)>,
+    pub context: Vec<(Name, SurfaceTerm)>,
     pub term: SurfaceTerm,
     pub ty: SurfaceTerm,
     pub rule: InferenceRule,
     /// New local assumptions, discharged by an introduction.
-    pub introduced: Vec<(String, SurfaceTerm)>,
+    pub introduced: Vec<(Name, SurfaceTerm)>,
     pub premises: Vec<Derivation>,
 }
 
@@ -49,7 +49,7 @@ mod tests {
         let left = var("a");
         let right = var("b");
         let term = SurfaceTerm::app(
-            "Eq",
+            &tauto_surface::bindings::library_name("Eq"),
             vec![var("Nat"), left.clone(), right.clone()],
             Default::default(),
         );
@@ -113,7 +113,7 @@ mod tests {
             pi("x", var("P"), var("P")),
             apply(lam("x", var("P")), var("a")),
         ];
-        let declared = |_: &str| None;
+        let declared = |_: &Name| None;
         for term in &terms {
             for ty in &types {
                 let mut normal = Core::new();
@@ -138,7 +138,7 @@ mod tests {
         }
     }
     fn recheck(d: &Derivation) {
-        let declared = |_: &str| None;
+        let declared = |_: &Name| None;
         assert!(
             Core::new()
                 .type_in(&d.context, &d.term, Ask::Check(&d.ty), &declared, &[])
@@ -157,7 +157,7 @@ mod tests {
             ("B".into(), pi("x", var("P"), var("Prop"))),
             ("k".into(), pi("x", var("P"), apply(var("B"), var("x")))),
         ];
-        let declared = |_: &str| None;
+        let declared = |_: &Name| None;
         let result = apply(var("B"), var("a"));
         let mut core = Core::new();
         let tree = core
@@ -187,7 +187,7 @@ mod tests {
             ("a".into(), var("P")),
             ("f".into(), pi("x", var("P"), var("Q"))),
         ];
-        let declared = |_: &str| None;
+        let declared = |_: &Name| None;
         let mut c = Core::new();
         let term = lam("a", apply(var("f"), var("a")));
         let tree = c
@@ -197,15 +197,15 @@ mod tests {
             .unwrap();
         assert_eq!(tree.rule, InferenceRule::Introduction);
         assert_eq!(tree.context.len(), 4);
-        assert_eq!(tree.introduced[0].0, "a'1");
+        assert_eq!(tree.introduced[0].0.as_str(), "a'1");
         let body = &tree.premises[0];
         assert_eq!(body.rule, InferenceRule::Application);
         assert_eq!(body.context.len(), 5);
         assert_eq!(body.premises.len(), 2);
         assert_eq!(body.premises[0].rule, InferenceRule::Assumption);
         assert_eq!(body.premises[1].rule, InferenceRule::Assumption);
-        assert!(matches!(&*body.premises[1].term.kind,TermKind::Var(n) if n=="a'1"));
-        assert!(matches!(&*body.ty.kind,TermKind::Var(n) if n=="Q"));
+        assert!(matches!(&*body.premises[1].term.kind,TermKind::Var(n) if n.as_str()=="a'1"));
+        assert!(matches!(&*body.ty.kind,TermKind::Var(n) if n.as_str()=="Q"));
     }
     #[test]
     fn presentation_queries_distinguish_proofs_from_types_and_unknowns() {
@@ -229,7 +229,7 @@ mod tests {
         let reduced = inspect
             .reduce(&context, &apply(lam("x", var("P")), var("h")))
             .expect("beta reduction");
-        assert!(matches!(&*reduced.normal.kind,TermKind::Var(n) if n=="P"));
+        assert!(matches!(&*reduced.normal.kind,TermKind::Var(n) if n.as_str()=="P"));
         assert!(reduced.unfolded.is_empty());
     }
 
@@ -238,19 +238,26 @@ mod tests {
         let mut kernel = crate::check::Kernel::new();
         kernel
             .core
-            .add_decl("Alias", &var("Type"), Some(&var("Prop")), true)
+            .add_decl(&"Alias".into(), &var("Type"), Some(&var("Prop")), true)
             .unwrap();
         let mut inspect = kernel.proof_inspector();
         let reduced = inspect
             .reduce(&[], &var("Alias"))
             .expect("a transparent definition");
-        assert!(matches!(&*reduced.normal.kind,TermKind::Var(n) if n=="Prop"));
-        assert_eq!(reduced.unfolded, vec!["Alias"]);
+        assert!(matches!(&*reduced.normal.kind,TermKind::Var(n) if n.as_str()=="Prop"));
+        assert_eq!(
+            reduced
+                .unfolded
+                .iter()
+                .map(Name::as_str)
+                .collect::<Vec<_>>(),
+            vec!["Alias"]
+        );
         let before = kernel
             .core
             .type_in(&Vec::new(), &var("Alias"), Ask::Infer, &|_| None, &[])
             .unwrap_or_else(|_| panic!("the original environment is intact"));
-        assert!(matches!(&*before.ty.unwrap().kind,TermKind::Var(n) if n=="Type"));
+        assert!(matches!(&*before.ty.unwrap().kind,TermKind::Var(n) if n.as_str()=="Type"));
     }
 }
 
@@ -258,12 +265,12 @@ mod tests {
 /// the environment and reduction budget never accepts or changes a declaration.
 pub struct ProofInspector {
     core: super::core::Core,
-    declared: std::collections::HashMap<String, SurfaceTerm>,
+    declared: std::collections::HashMap<Name, SurfaceTerm>,
 }
 
 pub struct ProofReduction {
     pub normal: SurfaceTerm,
-    pub unfolded: Vec<String>,
+    pub unfolded: Vec<Name>,
 }
 
 impl super::Kernel {
@@ -299,7 +306,7 @@ impl ProofInspector {
 
     pub fn reduce(
         &mut self,
-        context: &[(String, SurfaceTerm)],
+        context: &[(Name, SurfaceTerm)],
         term: &SurfaceTerm,
     ) -> Option<ProofReduction> {
         self.core.proof_reduction_in(context, term)
@@ -309,7 +316,7 @@ impl ProofInspector {
     /// distinguishes cumulativity. Exhaustion leaves the explanation unknown.
     pub fn definitionally_equal(
         &mut self,
-        context: &[(String, SurfaceTerm)],
+        context: &[(Name, SurfaceTerm)],
         a: &SurfaceTerm,
         b: &SurfaceTerm,
     ) -> Option<bool> {

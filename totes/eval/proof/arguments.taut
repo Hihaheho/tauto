@@ -45,7 +45,7 @@ pub theorem e_compile_arguments_cons(
   same: e_compile_state(c_all(fuel, rest, k, cs)) = cs
 ): c_all(Succ(fuel), Cons(e, rest), k, cs) =
 c_expr(fuel, e, e_code(c_all(fuel, rest, k, cs)), cs) {
-  Eq::congr((compiled: CR) => match compiled: CR {
+  Eq::congr((compiled: CR) => ⊢ CR from match compiled {
     Cr(code, state) => c_expr(fuel, e, code, state)
   }, e_compile_parts(c_all(fuel, rest, k, cs), cs, same))
 }
@@ -57,7 +57,7 @@ pub theorem e_operation_wrong_arity(
   args: List(MVal),
   wrong: Nat::eq(m_op_arity(op), List::length(args)) = false
 ): e_operation(ctors, cx, op, args) = ErError("internal: a primitive has the wrong arity") {
-  Eq::congr((same: Bool) => match same: EResult(MVal) {
+  Eq::congr((same: Bool) => ⊢ EResult(MVal) from match same {
     true => e_primitive_out(m_op(ctors, cx, op, args))
     false => ErError("internal: a primitive has the wrong arity")
   }, wrong)
@@ -72,7 +72,7 @@ pub theorem e_operation_value_arity(
   final: MCx,
   done: e_operation(ctors, cx, op, args) = ErValue(v, final)
 ): m_op_arity(op) = List::length(args) {
-  match Nat::eq(m_op_arity(op), List::length(args)) eqn same: m_op_arity(op) = List::length(args) {
+  ⊢ m_op_arity(op) = List::length(args) from match Nat::eq(m_op_arity(op), List::length(args)) eqn same {
     true => ⊢ m_op_arity(op) = List::length(args) from
     Nat::eq_sound(m_op_arity(op), List::length(args), same)
     false => ⊢ m_op_arity(op) = List::length(args) from {
@@ -82,7 +82,7 @@ pub theorem e_operation_value_arity(
         ErValue(v, final)
       ) :=
       Eq::trans(Eq::sym(e_operation_wrong_arity(ctors, cx, op, args, same)), done)
-      match impossible: m_op_arity(op) = List::length(args) {}
+      ⊢ m_op_arity(op) = List::length(args) from match impossible {}
     }
   }
 }
@@ -227,10 +227,7 @@ pub theorem e_arguments_cons_result<n: Nat, m: Nat>(
     Mstate(k, slots, e_argument_stack(values, Cons(v, stack)), frames, final),
     And::right(later)
   )
-  Eq::subst(
-    CR,
-    c_expr(fuel, e, e_code(c_all(fuel, rest, k, cs)), cs),
-    c_all(Succ(fuel), Cons(e, rest), k, cs),
+  Eq::subst(<A: CR, a: c_expr(fuel, e, e_code(c_all(fuel, rest, k, cs)), cs), b: c_all(Succ(fuel), Cons(e, rest), k, cs)>,
     (compiled: CR) => ECodeResult(
       p,
       Nat::add(m, n),
@@ -247,10 +244,7 @@ pub theorem e_arguments_cons_result<n: Nat, m: Nat>(
     Eq::sym(e_compile_arguments_cons(fuel, e, rest, k, cs, And::left(later))),
     AndIntro(
       And::left(first),
-      Eq::subst(
-        List(MVal),
-        e_argument_stack(values, Cons(v, stack)),
-        e_argument_stack(Cons(v, values), stack),
+      Eq::subst(<A: List(MVal), a: e_argument_stack(values, Cons(v, stack)), b: e_argument_stack(Cons(v, values), stack)>,
         (result: List(MVal)) => ERuns(
           p,
           Nat::add(m, n),
@@ -280,7 +274,7 @@ pub theorem e_compile_sequence_cons(
   same: e_compile_state(c_seq_from(fuel, next, rest, k, cs)) = cs
 ): c_seq_from(Succ(fuel), first, Cons(next, rest), k, cs) =
 c_expr(fuel, first, McPop(e_code(c_seq_from(fuel, next, rest, k, cs))), cs) {
-  Eq::congr((compiled: CR) => match compiled: CR {
+  Eq::congr((compiled: CR) => ⊢ CR from match compiled {
     Cr(code, state) => c_expr(fuel, first, McPop(code), state)
   }, e_compile_parts(c_seq_from(fuel, next, rest, k, cs), cs, same))
 }
@@ -356,10 +350,7 @@ pub theorem e_sequence_cons_result<n: Nat, m: Nat>(
     Mstate(e_code(c_seq_from(fuel, next, rest, k, cs)), slots, stack, frames, heap),
     Refl
   )
-  Eq::subst(
-    CR,
-    c_expr(fuel, e, McPop(e_code(c_seq_from(fuel, next, rest, k, cs))), cs),
-    c_seq_from(Succ(fuel), e, Cons(next, rest), k, cs),
+  Eq::subst(<A: CR, a: c_expr(fuel, e, McPop(e_code(c_seq_from(fuel, next, rest, k, cs))), cs), b: c_seq_from(Succ(fuel), e, Cons(next, rest), k, cs)>,
     (compiled: CR) => ECodeResult(
       p,
       Nat::add(m, Succ(n)),

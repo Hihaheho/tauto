@@ -20,7 +20,7 @@ pub theorem mark_preserves_view<A: Type>(
   entries: List(Pair(Text, Data)),
   c: Checker
 ): r#view(ck_st(ck_mark_recursive(entries, c))) = r#view(c) {
-  match entries: r#view(ck_st(ck_mark_recursive(entries, c))) = r#view(c) {
+  ⊢ r#view(ck_st(ck_mark_recursive(entries, c))) = r#view(c) from match entries {
     Nil => Refl
     Cons(entry, rest) => Eq::trans(
       Eq::congr(
@@ -63,7 +63,7 @@ pub theorem finish_datas_after_input_clean(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(summary_finish_datas_k(program, m)))
 ): DiagnosticClean(ck_st(m)) {
-  match m: DiagnosticClean(ck_st(m)) {
+  ⊢ DiagnosticClean(ck_st(m)) from match m {
     mut1(ignored, next) => finish_stmts_input_clean(
       program,
       summary_replace(next, datas_summarize(ck_datas_of(next))),
@@ -107,7 +107,7 @@ pub theorem finish_datas_after_context(
   m: Mut1(Unit, Checker),
   clean: DiagnosticClean(ck_st(summary_finish_datas_k(program, m)))
 ): written_context(ck_st(summary_finish_datas_k(program, m))) = written_context(ck_st(m)) {
-  match m: written_context(ck_st(summary_finish_datas_k(program, m))) = written_context(ck_st(m)) {
+  ⊢ written_context(ck_st(summary_finish_datas_k(program, m))) = written_context(ck_st(m)) from match m {
     mut1(ignored, next) => Eq::congr(
       (r: Mut1(Unit, Checker)) => written_context(ck_st(r)),
       Eq::trans(

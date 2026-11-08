@@ -1,0 +1,84 @@
+import "../../../std/Base.taut"
+
+// A finite queue snapshot. The two projections use the same requested limit.
+pub fn batch_items<A>(limit: Nat, pending: List(A)): List(A) {
+  List::take(limit, pending)
+}
+
+pub fn batch_remaining<A>(limit: Nat, pending: List(A)): List(A) {
+  List::drop(limit, pending)
+}
+
+// Equality of lists preserves order and duplicates, not just membership.
+pub theorem batch_reassembles<A: Type>(
+  limit: Nat,
+  pending: List(A)
+): List::append(batch_items(limit, pending), batch_remaining(limit, pending)) = pending {
+  ⊢ List::append(batch_items(limit, pending), batch_remaining(limit, pending)) = pending from match limit {
+    Zero => Refl
+    Succ(k) => match pending {
+      Nil => Refl
+      Cons(job, tail) => Eq::congr(
+        (rest: List(A)) => Cons(job, rest),
+        batch_reassembles(k, tail)
+      )
+    }
+  }
+}
+
+pub theorem batch_size_bounded<A: Type>(
+  limit: Nat,
+  pending: List(A)
+): Nat::le(List::length(batch_items(limit, pending)), limit) = true {
+  ⊢ Nat::le(List::length(batch_items(limit, pending)), limit) = true from match limit {
+    Zero => Refl
+    Succ(k) => match pending {
+      Nil => Refl
+      Cons(job, tail) => batch_size_bounded(k, tail)
+    }
+  }
+}
+
+// A batch is full whenever the snapshot contains at least `limit` jobs.
+pub theorem batch_fills<A: Type>(
+  limit: Nat,
+  pending: List(A),
+  enough: Nat::le(limit, List::length(pending)) = true
+): List::length(batch_items(limit, pending)) = limit {
+  ⊢ List::length(batch_items(limit, pending)) = limit from match limit {
+    Zero => Refl
+    Succ(k) => match pending {
+      Nil => False::elim(false_ne_true(enough))
+      Cons(job, tail) => Eq::congr(Succ, batch_fills(k, tail, enough))
+    }
+  }
+}
+
+// A short final batch contains the entire snapshot, rather than rejecting it.
+pub theorem batch_short_queue<A: Type>(
+  limit: Nat,
+  pending: List(A),
+  fits: Nat::le(List::length(pending), limit) = true
+): batch_items(limit, pending) = pending {
+  ⊢ batch_items(limit, pending) = pending from match limit {
+    Zero => match pending {
+      Nil => Refl
+      Cons(job, tail) => False::elim(false_ne_true(fits))
+    }
+    Succ(k) => match pending {
+      Nil => Refl
+      Cons(job, tail) => Eq::congr(
+        (rest: List(A)) => Cons(job, rest),
+        batch_short_queue(k, tail, fits)
+      )
+    }
+  }
+}
+
+pub theorem batch_zero_keeps_queue<A: Type>(pending: List(A)): batch_remaining(Zero, pending) = pending {
+  Refl
+}
+
+pub theorem batch_positive_consumes_head<A: Type>(limit: Nat, job: A, tail: List(A)): batch_remaining(Succ(limit), Cons(job, tail)) = List::drop(limit, tail) {
+  Refl
+}

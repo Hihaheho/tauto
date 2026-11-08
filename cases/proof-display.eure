@@ -1,0 +1,467 @@
+@ cases.views
+files."main.taut" = ```tauto
+pub theorem identity(P: Prop, h: P): P { h }
+pub theorem compose(P: Prop, Q: Prop, R: Prop, f: (P) -> Q, g: (Q) -> R): (P) -> R {
+  p => g(f(p))
+}
+```
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { name => "identity", format => "tree", output => path`expected/proof-display/views-01-tree.txt`, failed => false, incomplete => false },
+  { name => "compose", format => "natural", output => path`expected/proof-display/views-02-natural.txt` },
+  { name => "compose", format => "block", output => path`expected/proof-display/views-03-block.html` },
+  { name => "compose", format => "node", output => path`expected/proof-display/views-04-node.html` },
+  { name => "missing", error => "proof: no matching theorem with a body in the entry file" },
+]
+
+@ cases.hole
+files."main.taut" = "pub theorem unfinished(P: Prop, h: P): P { ?todo }"
+entry = "main.taut"
+checks.unfinished = "incomplete: ?todo"
+proofs = [
+  { name => "unfinished", format => "tree", output => path`expected/proof-display/hole-01-tree.txt`, failed => false, incomplete => true },
+  { name => "unfinished", format => "natural", output => path`expected/proof-display/hole-02-natural.txt` },
+]
+
+@ cases.axiom
+files."main.taut" = ```tauto
+pub axiom assumed(): False
+pub theorem dependent(): False { assumed() }
+```
+entry = "main.taut"
+checks.dependent = "axioms: assumed"
+proofs = [
+  { name => "dependent", output => path`expected/proof-display/axiom-01-natural.txt`, failed => false },
+]
+
+@ cases.failure
+files."main.taut" = "pub theorem wrong(): False { 0 }"
+entry = "main.taut"
+checks.wrong = "error: "
+proofs = [
+  { name => "wrong", output => path`expected/proof-display/failure-01-natural.txt`, failed => true },
+]
+
+@ cases.import-selection
+files."lib.taut" = "pub theorem imported(P: Prop, h: P): P { h }"
+files."main.taut" = ```tauto
+import "lib.taut"
+pub theorem own(P: Prop, h: P): P { imported(P, h) }
+```
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { output => path`expected/proof-display/import-selection-01-natural.txt` },
+  { name => "imported", error => "proof: no matching theorem with a body in the entry file" },
+]
+
+@ cases.escape
+files."main.taut" = ```tauto
+import std::Text
+pub theorem text_refl(): Eq(Text, "<script>alert(1)</script>&", "<script>alert(1)</script>&") {
+  Refl(Text, "<script>alert(1)</script>&")
+}
+```
+entry = "main.taut"
+checks.text_refl = "ok"
+proofs = [
+  { format => "block", output => path`expected/proof-display/escape-01-block.html` },
+  { format => "node", output => path`expected/proof-display/escape-02-node.html` },
+]
+
+@ cases.match-let
+files."main.taut" = ```tauto
+pub theorem refl_nat(n: Nat): Eq(Nat, n, n) {
+  ⊢ Eq(Nat, n, n) from match n {
+    Zero => Refl(Nat, Zero)
+    Succ(k) => {
+      let h: Eq(Nat, Succ(k), Succ(k)) := Refl(Nat, Succ(k))
+      h
+    }
+  }
+}
+```
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { format => "tree", output => path`expected/proof-display/match-let-01-tree.txt` },
+  { format => "natural", output => path`expected/proof-display/match-let-02-natural.txt` },
+]
+
+@ cases.import-failure
+files."lib.taut" = "pub theorem wrong(): False { 0 }"
+files."main.taut" = ```tauto
+import "lib.taut"
+pub theorem own(P: Prop, h: P): P { h }
+```
+entry = "main.taut"
+checks.own = "ok"
+checks.wrong = "error: "
+proofs = [
+  { name => "own", output => path`expected/proof-display/import-failure-01-natural.txt`, failed => true },
+]
+
+@ cases.duplicate-name
+files."main.taut" = ```tauto
+pub theorem same(P: Prop, h: P): P { h }
+pub theorem same(P: Prop, h: P): P { h }
+```
+entry = "main.taut"
+proofs = [
+  { name => "same", error => "proof: ambiguous theorem name same" },
+]
+
+@ cases.conversion
+files."main.taut" = "pub theorem arithmetic(): Eq(Nat, 2 + 2, 4) { Refl(Nat, 4) }"
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { format => "tree", output => path`expected/proof-display/conversion-01-tree.txt` },
+  { format => "natural", output => path`expected/proof-display/conversion-02-natural.txt` },
+  { format => "block", output => path`expected/proof-display/conversion-03-block.html` },
+  { format => "node", output => path`expected/proof-display/conversion-04-node.html` },
+]
+
+@ cases.open-introduction
+files."main.taut" = "pub theorem unfinished(P: Prop): (P) -> P { p => ?body }"
+entry = "main.taut"
+checks.unfinished = "incomplete: ?body"
+proofs = [
+  { format => "tree", output => path`expected/proof-display/open-introduction-01-tree.txt` },
+  { format => "natural", output => path`expected/proof-display/open-introduction-02-natural.txt` },
+  { format => "block", output => path`expected/proof-display/open-introduction-03-block.html` },
+  { format => "node", output => path`expected/proof-display/open-introduction-04-node.html` },
+]
+
+@ cases.unproved-reference
+files."main.taut" = ```tauto
+pub theorem missing(P: Prop): P { ?h }
+pub theorem dependent(P: Prop): P { missing(P) }
+```
+entry = "main.taut"
+checks.missing = "incomplete: ?h"
+checks.dependent = "incomplete: uses missing"
+proofs = [
+  { name => "dependent", format => "natural", output => path`expected/proof-display/unproved-reference-01-natural.txt` },
+  { name => "dependent", format => "node", output => path`expected/proof-display/unproved-reference-02-node.html` },
+]
+
+@ cases.tree-html
+files."main.taut" = ```tauto
+pub theorem identity(P: Prop, h: P): P { h }
+pub theorem compose(P: Prop, Q: Prop, R: Prop, f: (P) -> Q, g: (Q) -> R): (P) -> R {
+  p => g(f(p))
+}
+```
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { name => "compose", format => "tree-html", output => path`expected/proof-display/tree-html-01-tree-html.html` },
+  { name => "identity", format => "tree-html", output => path`expected/proof-display/tree-html-02-tree-html.html` },
+  { name => "compose", format => "tree", output => path`expected/proof-display/tree-html-03-tree.txt` },
+]
+
+@ cases.natural-default
+files."main.taut" = "pub theorem identity(P: Prop, h: P): P { h }"
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { name => "identity", output => path`expected/proof-display/natural-default-01-natural.txt` },
+]
+
+@ cases.natural-congruence
+files."main.taut" = ```tauto
+pub fn pred(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(k) => k
+  }
+}
+pub theorem succ_inj<a: Nat, b: Nat>(h: Succ(a) = Succ(b)): a = b { Eq::congr(pred, h) }
+```
+entry = "main.taut"
+checks.succ_inj = "ok"
+proofs = [
+  { name => "succ_inj", output => path`expected/proof-display/natural-congruence-01-natural.txt` },
+]
+
+@ cases.natural-sharing
+files."main.taut" = ```tauto
+pub theorem repeated(P: Prop, Q: Prop, f: (P) -> Q, h: P): Q ∧ Q { AndIntro(f(h), f(h)) }
+```
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { output => path`expected/proof-display/natural-sharing-01-natural.txt` },
+]
+
+@ cases.natural-scopes
+files."main.taut" = ```tauto
+pub theorem branches(A: Prop, B: Prop, C: Prop, h: (A) -> B, f: (B) -> C, g: (B) -> C): ((A) -> C) ∧ ((A) -> C) {
+  AndIntro(p => f(h(p)), p => g(h(p)))
+}
+```
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { output => path`expected/proof-display/natural-scopes-01-natural.txt` },
+]
+
+@ cases.natural-witness
+files."main.taut" = ```tauto
+pub theorem witness(): ∃ n: Nat. n = n { ExIntro(3, Refl(Nat, 3)) }
+```
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { output => path`expected/proof-display/natural-witness-01-natural.txt` },
+]
+
+@ cases.natural-cumulativity
+files."main.taut" = "pub theorem lift(A: Type): Type1 { A }"
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { output => path`expected/proof-display/natural-cumulativity-01-natural.txt` },
+]
+
+@ cases.natural-proof-irrelevance
+files."main.taut" = "pub theorem proof_irrel_convert(P: Prop, p: P, q: P, F: (P) -> Type, v: F(p)): F(q) { v }"
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { output => path`expected/proof-display/natural-proof-irrelevance-01-natural.txt` },
+]
+
+@ cases.json-derivation
+files."main.taut" = "pub theorem identity(P: Prop, h: P): P { h }"
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { format => "json", output => path`expected/proof-display/json-derivation-01-json.json` },
+  { format => "json", full => true, output => path`expected/proof-display/json-derivation-02-json-full.json` },
+]
+
+@ cases.json-open
+files."main.taut" = "pub theorem missing(P: Prop): P { ?h }"
+entry = "main.taut"
+checks.missing = "incomplete: ?h"
+proofs = [
+  { format => "json", output => path`expected/proof-display/json-open-01-json.json`, incomplete => true },
+]
+
+@ cases.json-failure
+files."main.taut" = "pub theorem wrong(): False { 0 }"
+entry = "main.taut"
+checks.wrong = "error: "
+proofs = [
+  { format => "json", output => path`expected/proof-display/json-failure-01-json.json`, failed => true },
+]
+
+@ cases.json-axiom
+files."main.taut" = ```tauto
+pub axiom assumed(): False
+pub theorem dependent(): False { assumed() }
+```
+entry = "main.taut"
+checks.dependent = "axioms: assumed"
+proofs = [
+  { name => "dependent", format => "json", output => path`expected/proof-display/json-axiom-01-json.json` },
+]
+
+@ cases.full-natural
+files."main.taut" = "pub theorem reflexive(): Eq(Nat, 0, 0) { Refl(Nat, 0) }"
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { format => "natural", output => path`expected/proof-display/full-natural-01-natural.txt` },
+  { format => "natural", full => true, output => path`expected/proof-display/full-natural-02-natural-full.txt` },
+]
+
+@ cases.full-parameters
+files."main.taut" = "pub theorem identity(P: Prop, h: P): P { h }"
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { format => "tree", output => path`expected/proof-display/full-parameters-01-tree.txt` },
+  { format => "tree", full => true, output => path`expected/proof-display/full-parameters-02-tree-full.txt` },
+  { format => "block", full => true, output => path`expected/proof-display/full-parameters-03-block-full.html` },
+  { format => "node", full => true, output => path`expected/proof-display/full-parameters-04-node-full.html` },
+  { format => "tree-html", full => true, output => path`expected/proof-display/full-parameters-05-tree-html-full.html` },
+]
+
+@ cases.full-open
+files."main.taut" = "pub theorem missing(P: Prop): (P) -> P { h => ?body }"
+entry = "main.taut"
+checks.missing = "incomplete: ?body"
+proofs = [
+  { full => true, output => path`expected/proof-display/full-open-01-natural-full.txt` },
+]
+
+@ cases.literal-labels
+files."expr.taut" = ```tauto
+import std::prelude::Macro
+pub macro fn identity_expr(e: SynExpr): SynExpr { e }
+```
+files."main.taut" = ```tauto
+import std::Text
+import "expr.taut"
+pub theorem literal_labels(): identity_expr!(Eq(Text, "[1] [2]", "[1] [2]")) {
+  Refl(Text, "[1] [2]")
+}
+```
+entry = "main.taut"
+checks.literal_labels = "ok"
+proofs = [
+  { output => path`expected/proof-display/literal-labels-01-natural.txt` },
+  { full => true, output => path`expected/proof-display/literal-labels-02-natural-full.txt` },
+]
+
+@ cases.reference-uses
+files."main.taut" = ```tauto
+pub theorem unused_intermediate(P: Prop, Q: Prop, g: (P) -> Q, h: P, f: (Q) -> Nat): Eq(Nat, f(g(h)), f(g(h))) {
+  Refl(Nat, f(g(h)))
+}
+pub theorem nested_reference(P: Prop, Q: Prop, R: Prop, g: (P) -> Q, h: P,
+  f: (Q) -> Nat, k: (Nat) -> R): R {
+  k(f(g(h)))
+}
+pub theorem renumbered_reference(P: Prop, Q: Prop, S: Prop, g: (P) -> Q, h: P,
+  f: (Q) -> Nat, j: (Eq(Nat, f(g(h)), f(g(h)))) -> S): S {
+  j(Refl(Nat, f(g(h))))
+}
+```
+entry = "main.taut"
+checks.unused_intermediate = "ok"
+checks.nested_reference = "ok"
+checks.renumbered_reference = "ok"
+proofs = [
+  { output => path`expected/proof-display/reference-uses-01-natural.txt` },
+]
+
+@ cases.macro-failure
+files."main.taut" = ```tauto
+pub theorem blocked(P: Prop): missing!(P) { P }
+```
+entry = "main.taut"
+macro_error = "macro.unknown: there is no macro named `missing`"
+proofs = [
+  { error => "macro.unknown: there is no macro named `missing`" },
+  { name => "blocked", error => "macro.unknown: there is no macro named `missing`" },
+  { format => "json", error => "macro.unknown: there is no macro named `missing`" },
+]
+
+@ cases.natural-congr2
+files."main.taut" = ```tauto
+pub theorem congr2<A: Type, B: Type, C: Type, f: (A) -> (B) -> C, a: A, b: A, c: B, d: B>(ab: a = b, cd: c = d): f(a, c) = f(b, d) {
+  let first: f(a, c) = f(b, c) := Eq::congr(x => f(x, c), ab);
+  let second: f(b, c) = f(b, d) := Eq::congr(y => f(b, y), cd);
+  Eq::trans(first, second)
+}
+```
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { output => path`expected/proof-display/natural-congr2.txt` },
+]
+
+@ cases.natural-decomposition
+files."main.taut" = ```tauto
+pub inductive Bundle(P: Prop, Q: Prop): Prop {
+  Mk(p: P, q: Q): Bundle(P, Q)
+}
+pub theorem first<P: Prop, Q: Prop>(bundle: Bundle(P, Q)): P {
+  match bundle {
+    Bundle::Mk(p, q) => p
+  }
+}
+```
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { output => path`expected/proof-display/natural-decomposition.txt` },
+]
+
+@ cases.natural-open-annotation
+files."main.taut" = ```tauto
+pub theorem incomplete(P: Prop): P {
+  let result: P := ?missing;
+  result
+}
+```
+entry = "main.taut"
+checks.incomplete = "incomplete: ?missing"
+proofs = [
+  { output => path`expected/proof-display/natural-open-annotation.txt`, incomplete => true },
+]
+
+@ cases.natural-divisibility
+files."main.taut" = ```tauto
+import std::Base
+import std::Nat
+pub(open) inductive Divides(a: Nat, b: Nat): Prop {
+  By(k: Nat, equation: Nat::mul(a, k) = b): Divides(a, b)
+}
+pub theorem divides_trans(a: Nat, b: Nat, c: Nat, ab: Divides(a, b), bc: Divides(b, c)): Divides(a, c) {
+  ⊢ Divides(a, c) from match ab {
+    By(k, hk) => ⊢ Divides(a, c) from match bc {
+      By(l, hl) => By(Nat::mul(k, l), Eq::trans(
+        Eq::sym(Nat::mul_assoc(a, k, l)),
+        Eq::trans(Eq::congr((x: Nat) => Nat::mul(x, l), hk), hl)))
+    }
+  }
+}
+```
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { output => path`expected/proof-display/natural-divisibility.txt` },
+]
+
+@ cases.natural-dependent-cases
+files."main.taut" = ```tauto
+pub inductive Indexed: (n: Nat) -> Prop {
+  AtZero: Indexed(Zero)
+  AtSucc(k: Nat): Indexed(Succ(k))
+}
+pub theorem indexed_refl(n: Nat, witness: Indexed(n)): n = n {
+  match witness {
+    Indexed::AtZero => Refl(Nat, Zero)
+    Indexed::AtSucc(k) => Refl(Nat, Succ(k))
+  }
+}
+```
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { output => path`expected/proof-display/natural-dependent-cases.txt` },
+]
+
+@ cases.natural-shared-equation
+files."main.taut" = ```tauto
+pub theorem shared_equation<A: Type, a: A, b: A>(h: a = b): (b = a) ∧ (b = a) {
+  let reversed: b = a := Eq::sym(h);
+  AndIntro(reversed, reversed)
+}
+```
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { output => path`expected/proof-display/natural-shared-equation.txt` },
+]
+
+@ cases.natural-induction-hypothesis
+files."main.taut" = ```tauto
+pub theorem refl_induction(n: Nat): n = n {
+  match n {
+    Zero => Refl(Nat, Zero)
+    Succ(k) => Eq::congr(Succ, refl_induction(k))
+  }
+}
+```
+entry = "main.taut"
+checks_all = "ok"
+proofs = [
+  { output => path`expected/proof-display/natural-induction-hypothesis.txt` },
+]

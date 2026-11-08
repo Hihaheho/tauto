@@ -60,11 +60,14 @@ pub fn scan_number(a: Array(Nat), i: Nat): Nat {
 // The first run in `lo` to `hi` that starts after `code` (a binary search).
 // The range halves each time, so `fuel` is its length.
 pub fn scan_search(fuel: Nat, starts: Array(Nat), code: Nat, lo: Nat, hi: Nat): Nat {
-  match fuel: Nat {
+  ⊢ Nat from match fuel {
     Zero => lo
-    Succ(f) => match lo < hi: Nat {
+    Succ(f) => ⊢ Nat from match lo < hi {
       false => lo
-      true => match scan_number(starts, Nat::div_nz(lo + hi, 2, Nat::ne_zero(2, Refl))) <= code: Nat {
+      true => ⊢ Nat from match scan_number(
+        starts,
+        Nat::div_nz(lo + hi, 2, Nat::ne_zero(2, Refl))
+      ) <= code {
         true => scan_search(f, starts, code, Nat::div_nz(lo + hi, 2, Nat::ne_zero(2, Refl)) + 1, hi)
         false => scan_search(f, starts, code, lo, Nat::div_nz(lo + hi, 2, Nat::ne_zero(2, Refl)))
       }
@@ -75,9 +78,9 @@ pub fn scan_search(fuel: Nat, starts: Array(Nat), code: Nat, lo: Nat, hi: Nat): 
 // The class + 1 of a code point by the runs: the last run that starts at or
 // before it, if it ends at or after it.
 pub fn scan_run_class(starts: Array(Nat), ends: Array(Nat), classes: Array(Nat), code: Nat): Nat {
-  match scan_search(Array::len(starts), starts, code, 0, Array::len(starts)): Nat {
+  ⊢ Nat from match scan_search(Array::len(starts), starts, code, 0, Array::len(starts)) {
     Zero => 0
-    Succ(j) => match code <= scan_number(ends, j): Nat {
+    Succ(j) => ⊢ Nat from match code <= scan_number(ends, j) {
       true => scan_number(classes, j) + 1
       false => 0
     }
@@ -85,11 +88,11 @@ pub fn scan_run_class(starts: Array(Nat), ends: Array(Nat), classes: Array(Nat),
 }
 
 pub fn scan_char_length(first: Nat): Nat {
-  match first < 128: Nat {
+  ⊢ Nat from match first < 128 {
     true => 1
-    false => match first < 224: Nat {
+    false => ⊢ Nat from match first < 224 {
       true => 2
-      false => match first < 240: Nat {
+      false => ⊢ Nat from match first < 240 {
         true => 3
         false => 4
       }
@@ -98,7 +101,7 @@ pub fn scan_char_length(first: Nat): Nat {
 }
 
 pub fn scan_column(k: Nat, a: Array(Nat), at: Nat, step: Nat): List(Nat) {
-  match k: List(Nat) {
+  ⊢ List(Nat) from match k {
     Zero => Nil
     Succ(k2) => Cons(scan_number(a, at), scan_column(k2, a, at + step, step))
   }
@@ -112,7 +115,7 @@ pub fn scan_classes_from(
   classes: Array(Nat),
   code: Nat
 ): List(Nat) {
-  match k: List(Nat) {
+  ⊢ List(Nat) from match k {
     Zero => Nil
     Succ(k2) => Cons(
       scan_run_class(starts, ends, classes, code),
@@ -128,7 +131,7 @@ pub fn scan_changes_in(
   p: Nat,
   done: List(ScanModeChange)
 ): List(ScanModeChange) {
-  match k: List(ScanModeChange) {
+  ⊢ List(ScanModeChange) from match k {
     Zero => done
     Succ(k2) => scan_changes_in(
       k2,
@@ -153,7 +156,7 @@ pub fn scan_modes_in(
   p: Nat,
   done: List(List(ScanModeChange))
 ): Pair(List(List(ScanModeChange)), Nat) {
-  match k: Pair(List(List(ScanModeChange)), Nat) {
+  ⊢ Pair(List(List(ScanModeChange)), Nat) from match k {
     Zero => Pair { fst: done, snd: p }
     Succ(k2) => scan_modes_in(
       k2,
@@ -183,14 +186,14 @@ pub(open) inductive ScanBuild: Type {
 }
 
 pub fn scan_repeat_onto(n: Nat, x: Nat, l: List(Nat)): List(Nat) {
-  match n: List(Nat) {
+  ⊢ List(Nat) from match n {
     Zero => l
     Succ(n2) => scan_repeat_onto(n2, x, Cons(x, l))
   }
 }
 
 pub fn scan_accepts_in(k: Nat, s: Array(Nat), b: ScanBuild): ScanBuild {
-  match k: ScanBuild {
+  ⊢ ScanBuild from match k {
     Zero => b
     Succ(k2) => scan_accepts_in(
       k2,
@@ -214,16 +217,10 @@ pub fn scan_accepts_in(k: Nat, s: Array(Nat), b: ScanBuild): ScanBuild {
 // A state's row, run by run, once `filled` classes are: each run is a count
 // and a next state (0 for none). Each run fills one class at least, so
 // `fuel` is the number of classes.
-pub fn scan_row_in(
-  fuel: Nat,
-  n_classes: Nat,
-  r: Array(Nat),
-  filled: Nat,
-  b: ScanBuild
-): ScanBuild {
-  match fuel: ScanBuild {
+pub fn scan_row_in(fuel: Nat, n_classes: Nat, r: Array(Nat), filled: Nat, b: ScanBuild): ScanBuild {
+  ⊢ ScanBuild from match fuel {
     Zero => b
-    Succ(f) => match filled < n_classes: ScanBuild {
+    Succ(f) => ⊢ ScanBuild from match filled < n_classes {
       false => b
       true => scan_row_in(
         f,
@@ -242,7 +239,7 @@ pub fn scan_row_in(
           built_accept_dfa: b.built_accept_dfa,
           built_rows: scan_repeat_onto(
             scan_number(r, b.rp),
-            match scan_number(r, b.rp + 1): Nat {
+            ⊢ Nat from match scan_number(r, b.rp + 1) {
               Zero => 0
               Succ(v) => b.total + Succ(v)
             },
@@ -261,7 +258,7 @@ pub fn scan_states_in(
   r: Array(Nat),
   b: ScanBuild
 ): ScanBuild {
-  match k: ScanBuild {
+  ⊢ ScanBuild from match k {
     Zero => b
     Succ(k2) => scan_states_in(
       k2,
@@ -310,14 +307,8 @@ pub fn scan_add_states(n: Nat, b: ScanBuild): ScanBuild {
   }
 }
 
-pub fn scan_dfas_in(
-  k: Nat,
-  n_classes: Nat,
-  s: Array(Nat),
-  r: Array(Nat),
-  b: ScanBuild
-): ScanBuild {
-  match k: ScanBuild {
+pub fn scan_dfas_in(k: Nat, n_classes: Nat, s: Array(Nat), r: Array(Nat), b: ScanBuild): ScanBuild {
+  ⊢ ScanBuild from match k {
     Zero => b
     Succ(k2) => scan_dfas_in(
       k2,
@@ -391,20 +382,17 @@ pub fn scan_tables_from(
   let n_states := scan_number(d, 0)
   let dyn_states := scan_dyn_states_in(n_states, d, 1, Nil)
   let dyns := scan_dyns_in(scan_number(d, 1 + n_states * 3), d, 2 + n_states * 3, Nil)
-  let dyn_end := match Array::len(d): Nat {
+  let dyn_end := ⊢ Nat from match Array::len(d) {
     Zero => 0
     Succ(x) => dyns.snd
   }
-  match scan_within(
+  ⊢ Option(ScanTables) from match scan_within(
     modes.snd,
     m
   ) && scan_within(
     1 + n_runs * 3,
     c
-  ) && scan_within(
-    b.sp,
-    s
-  ) && scan_within(b.rp, r) && scan_within(dyn_end, d): Option(ScanTables) {
+  ) && scan_within(b.sp, s) && scan_within(b.rp, r) && scan_within(dyn_end, d) {
     false => None
     true => Some(
       ScanTables {
@@ -455,7 +443,7 @@ pub fn scan_tables_read_dynamic(
 
 // The code point at byte `i` of a text that has a character there.
 pub fn scan_code_point(text: Text, i: Nat, first: Nat): Nat {
-  match text_decode(text, i): Nat {
+  ⊢ Nat from match text_decode(text, i) {
     None => first
     Some(#(@code code, @len _)) => code
   }
@@ -463,7 +451,7 @@ pub fn scan_code_point(text: Text, i: Nat, first: Nat): Nat {
 
 // The class + 1 of the character at byte `i` (the first byte is `first`).
 pub fn scan_class(&t: ScanTables, text: Text, i: Nat, first: Nat): Nat {
-  match first < 128: Nat {
+  ⊢ Nat from match first < 128 {
     true => scan_number(t.ascii, first)
     false => scan_run_class(t.run_start, t.run_end, t.run_class, scan_code_point(text, i, first))
   }
@@ -471,7 +459,7 @@ pub fn scan_class(&t: ScanTables, text: Text, i: Nat, first: Nat): Nat {
 
 // The state after the character at `i` in `state`, plus one; 0 for none.
 pub fn scan_next(&t: ScanTables, text: Text, state: Nat, i: Nat): Nat {
-  match scan_class(t, text, i, Text::byte_value(text, i)): Nat {
+  ⊢ Nat from match scan_class(t, text, i, Text::byte_value(text, i)) {
     Zero => 0
     Succ(c) => scan_number(t.rows, state * t.classes + c)
   }
@@ -482,18 +470,25 @@ pub fn scan_next(&t: ScanTables, text: Text, state: Nat, i: Nat): Nat {
 // says true at the first one, so how much longer it could read does not
 // matter.
 pub fn scan_probe_in(k: Nat, &t: ScanTables, text: Text, state: Nat, i: Nat, n: Nat): Bool {
-  match k: Bool {
+  ⊢ Bool from match k {
     Zero => false
-    Succ(k2) => match i < n: Bool {
+    Succ(k2) => ⊢ Bool from match i < n {
       false => false
-      true => match scan_next(t, text, state, i): Bool {
+      true => ⊢ Bool from match scan_next(t, text, state, i) {
         Zero => false
-        Succ(s2) => match scan_number(
+        Succ(s2) => ⊢ Bool from match scan_number(
           t.accept_first,
           s2
-        ) < scan_number(t.accept_first, Succ(s2)): Bool {
+        ) < scan_number(t.accept_first, Succ(s2)) {
           true => true
-          false => scan_probe_in(k2, t, text, s2, i + scan_char_length(Text::byte_value(text, i)), n)
+          false => scan_probe_in(
+            k2,
+            t,
+            text,
+            s2,
+            i + scan_char_length(Text::byte_value(text, i)),
+            n
+          )
         }
       }
     }
@@ -509,9 +504,9 @@ pub fn scan_probe(&t: ScanTables, text: Text, dfa: Nat, r#from: Nat, n: Nat): Bo
 // Whether the accept entry `j` holds at byte `i`: its lookahead, and what
 // its terminal asks of the states of the scanner.
 pub fn scan_holds(&t: ScanTables, text: Text, j: Nat, i: Nat, n: Nat): Bool {
-  match scan_number(t.accept_kind, j): Bool {
+  ⊢ Bool from match scan_number(t.accept_kind, j) {
     Zero => scan_dyn_ok(t, text, scan_number(t.accept_token, j), i)
-    Succ(kind) => match kind: Bool {
+    Succ(kind) => ⊢ Bool from match kind {
       Zero => scan_probe(
         t,
         text,
@@ -519,13 +514,9 @@ pub fn scan_holds(&t: ScanTables, text: Text, j: Nat, i: Nat, n: Nat): Bool {
         i,
         n
       ) && scan_dyn_ok(t, text, scan_number(t.accept_token, j), i)
-      Succ(other) => not(scan_probe(
-        t,
-        text,
-        scan_number(t.accept_dfa, j),
-        i,
-        n
-      )) && scan_dyn_ok(t, text, scan_number(t.accept_token, j), i)
+      Succ(other) => not(
+        scan_probe(t, text, scan_number(t.accept_dfa, j), i, n)
+      ) && scan_dyn_ok(t, text, scan_number(t.accept_token, j), i)
     }
   }
 }
@@ -545,11 +536,11 @@ pub fn scan_ends_in(
   to: Nat,
   done: List(Nat)
 ): List(Nat) {
-  match k: List(Nat) {
+  ⊢ List(Nat) from match k {
     Zero => done
-    Succ(k2) => match i < to: List(Nat) {
+    Succ(k2) => ⊢ List(Nat) from match i < to {
       false => done
-      true => match scan_next(t, text, state, i): List(Nat) {
+      true => ⊢ List(Nat) from match scan_next(t, text, state, i) {
         Zero => done
         Succ(s2) => scan_ends_in(
           k2,
@@ -558,7 +549,7 @@ pub fn scan_ends_in(
           s2,
           i + scan_char_length(Text::byte_value(text, i)),
           to,
-          match scan_accepting(t, s2): List(Nat) {
+          ⊢ List(Nat) from match scan_accepting(t, s2) {
             true => Cons(i + scan_char_length(Text::byte_value(text, i)), done)
             false => done
           }
@@ -579,7 +570,7 @@ pub fn scan_ends(&t: ScanTables, text: Text, dfa: Nat, r#from: Nat, to: Nat): Li
       scan_number(t.dfa_first, dfa),
       r#from,
       to,
-      match scan_accepting(t, scan_number(t.dfa_first, dfa)): List(Nat) {
+      ⊢ List(Nat) from match scan_accepting(t, scan_number(t.dfa_first, dfa)) {
         true => Cons(r#from, Nil)
         false => Nil
       }
@@ -588,9 +579,9 @@ pub fn scan_ends(&t: ScanTables, text: Text, dfa: Nat, r#from: Nat, to: Nat): Li
 }
 
 pub fn scan_has(l: List(Nat), x: Nat): Bool {
-  match l: Bool {
+  ⊢ Bool from match l {
     Nil => false
-    Cons(y, rest) => match y == x: Bool {
+    Cons(y, rest) => ⊢ Bool from match y == x {
       true => true
       false => scan_has(rest, x)
     }
@@ -603,9 +594,9 @@ pub fn scan_exact(&t: ScanTables, text: Text, dfa: Nat, r#from: Nat, to: Nat): B
 
 // How many units follow one another from `at` before `to`, `max` at most.
 pub fn scan_units(k: Nat, text: Text, unit: Text, at: Nat, to: Nat, count: Nat): Nat {
-  match k: Nat {
+  ⊢ Nat from match k {
     Zero => count
-    Succ(k2) => match at + Text::len(unit) <= to && text_starts_with(text, unit, at): Nat {
+    Succ(k2) => ⊢ Nat from match at + Text::len(unit) <= to && text_starts_with(text, unit, at) {
       false => count
       true => scan_units(k2, text, unit, at + Text::len(unit), to, Succ(count))
     }
@@ -624,13 +615,13 @@ pub fn scan_count_down(
   min: Nat,
   c: Nat
 ): Option(Nat) {
-  match k: Option(Nat) {
+  ⊢ Option(Nat) from match k {
     Zero => None
-    Succ(k2) => match c < min: Option(Nat) {
+    Succ(k2) => ⊢ Option(Nat) from match c < min {
       true => None
-      false => match scan_exact(t, text, d.suffix, p + c * Text::len(d.unit), to): Option(Nat) {
+      false => ⊢ Option(Nat) from match scan_exact(t, text, d.suffix, p + c * Text::len(d.unit), to) {
         true => Some(c)
-        false => match c: Option(Nat) {
+        false => ⊢ Option(Nat) from match c {
           Zero => None
           Succ(c2) => scan_count_down(k2, t, text, d, p, to, min, c2)
         }
@@ -640,11 +631,11 @@ pub fn scan_count_down(
 }
 
 pub fn scan_max_option(a: Option(Nat), b: Option(Nat)): Option(Nat) {
-  match a: Option(Nat) {
+  ⊢ Option(Nat) from match a {
     None => b
-    Some(x) => match b: Option(Nat) {
+    Some(x) => ⊢ Option(Nat) from match b {
       None => a
-      Some(y) => match x < y: Option(Nat) {
+      Some(y) => ⊢ Option(Nat) from match x < y {
         true => b
         false => a
       }
@@ -663,7 +654,7 @@ pub fn scan_count_best(
   to: Nat,
   best: Option(Nat)
 ): Option(Nat) {
-  match ends: Option(Nat) {
+  ⊢ Option(Nat) from match ends {
     Nil => best
     Cons(p, rest) => {
       let fit := scan_units(st.max, text, d.unit, p, to, 0)
@@ -681,7 +672,7 @@ pub fn scan_count_best(
 }
 
 pub fn scan_wider(best: Option(@start Nat × @end Nat), p: Nat, e: Nat): Bool {
-  match best: Bool {
+  ⊢ Bool from match best {
     None => true
     Some(#(@start start, @end end)) => end - start < e - p
   }
@@ -696,7 +687,7 @@ pub fn scan_capture_from(
   to: Nat,
   best: Option(@start Nat × @end Nat)
 ): Option(@start Nat × @end Nat) {
-  match es: Option(@start Nat × @end Nat) {
+  ⊢ Option(@start Nat × @end Nat) from match es {
     Nil => best
     Cons(e, rest) => scan_capture_from(
       t,
@@ -705,7 +696,7 @@ pub fn scan_capture_from(
       p,
       rest,
       to,
-      match scan_wider(best, p, e) && scan_exact(t, text, d.suffix, e, to): Option(@start Nat × @end Nat) {
+      ⊢ Option(@start Nat × @end Nat) from match scan_wider(best, p, e) && scan_exact(t, text, d.suffix, e, to) {
         true => Some(#(@start p, @end e))
         false => best
       }
@@ -724,7 +715,7 @@ pub fn scan_capture_best(
   to: Nat,
   best: Option(@start Nat × @end Nat)
 ): Option(@start Nat × @end Nat) {
-  match ends: Option(@start Nat × @end Nat) {
+  ⊢ Option(@start Nat × @end Nat) from match ends {
     Nil => best
     Cons(p, rest) => scan_capture_best(
       t,
@@ -745,15 +736,15 @@ pub fn scan_text_between(
   ends: List(Nat),
   to: Nat
 ): Bool {
-  match ends: Bool {
+  ⊢ Bool from match ends {
     Nil => false
-    Cons(p, rest) => match p + Text::len(
+    Cons(p, rest) => ⊢ Bool from match p + Text::len(
       stored
     ) <= to && text_starts_with(
       text,
       stored,
       p
-    ) && scan_exact(t, text, d.suffix, p + Text::len(stored), to): Bool {
+    ) && scan_exact(t, text, d.suffix, p + Text::len(stored), to) {
       true => true
       false => scan_text_between(t, text, d, stored, rest, to)
     }
@@ -761,7 +752,7 @@ pub fn scan_text_between(
 }
 
 pub fn scan_is_some<A>(o: Option(A)): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     None => false
     Some(x) => true
   }
@@ -772,20 +763,20 @@ pub fn scan_is_some<A>(o: Option(A)): Bool {
 pub fn scan_dyn_holds(&t: ScanTables, text: Text, d: ScanDyn, r#from: Nat, to: Nat): Bool {
   let st := scan_dyn_state_at(t.dyn_states, d.state)
   let ends := scan_ends(t, text, d.prefix, r#from, to)
-  match d.op: Bool {
+  ⊢ Bool from match d.op {
     Zero => scan_is_some(scan_count_best(t, text, d, st, ends, to, None))
-    Succ(op1) => match op1: Bool {
-      Zero => match scan_held_at(t.held, d.state): Bool {
-        ScanHeldCount(stored) => match scan_count_best(t, text, d, st, ends, to, None): Bool {
+    Succ(op1) => ⊢ Bool from match op1 {
+      Zero => ⊢ Bool from match scan_held_at(t.held, d.state) {
+        ScanHeldCount(stored) => ⊢ Bool from match scan_count_best(t, text, d, st, ends, to, None) {
           None => false
           Some(c) => scan_count_fits(d, c, stored)
         }
         ScanHeldText(x) => false
         ScanHeldNone => false
       }
-      Succ(op2) => match op2: Bool {
+      Succ(op2) => ⊢ Bool from match op2 {
         Zero => scan_is_some(scan_capture_best(t, text, d, ends, to, None))
-        Succ(op3) => match scan_held_at(t.held, d.state): Bool {
+        Succ(op3) => ⊢ Bool from match scan_held_at(t.held, d.state) {
           ScanHeldText(stored) => scan_text_between(t, text, d, stored, ends, to)
           ScanHeldCount(x) => false
           ScanHeldNone => false
@@ -798,7 +789,7 @@ pub fn scan_dyn_holds(&t: ScanTables, text: Text, d: ScanDyn, r#from: Nat, to: N
 // Whether what the terminal `token` asks of the states holds for the token
 // that ends at `i` (it starts at `t.start`).
 pub fn scan_dyn_ok(&t: ScanTables, text: Text, token: Nat, i: Nat): Bool {
-  match scan_dyn_of(t.dyns, token): Bool {
+  ⊢ Bool from match scan_dyn_of(t.dyns, token) {
     None => true
     Some(d) => scan_dyn_holds(t, text, d, t.start, i)
   }
@@ -807,20 +798,20 @@ pub fn scan_dyn_ok(&t: ScanTables, text: Text, token: Nat, i: Nat): Bool {
 // What the states hold after the token `token` from `from` to `to`: a
 // `%capture` stores its count or text.
 pub fn scan_commit(&t: ScanTables, text: Text, token: Nat, r#from: Nat, to: Nat): List(ScanHeld) {
-  match scan_dyn_of(t.dyns, token): List(ScanHeld) {
+  ⊢ List(ScanHeld) from match scan_dyn_of(t.dyns, token) {
     None => t.held
     Some(d) => {
       let st := scan_dyn_state_at(t.dyn_states, d.state)
       let ends := scan_ends(t, text, d.prefix, r#from, to)
-      match d.op: List(ScanHeld) {
-        Zero => match scan_count_best(t, text, d, st, ends, to, None): List(ScanHeld) {
+      ⊢ List(ScanHeld) from match d.op {
+        Zero => ⊢ List(ScanHeld) from match scan_count_best(t, text, d, st, ends, to, None) {
           None => scan_held_set(t.held, d.state, ScanHeldNone)
           Some(c) => scan_held_set(t.held, d.state, ScanHeldCount(c))
         }
-        Succ(op1) => match op1: List(ScanHeld) {
+        Succ(op1) => ⊢ List(ScanHeld) from match op1 {
           Zero => t.held
-          Succ(op2) => match op2: List(ScanHeld) {
-            Zero => match scan_capture_best(t, text, d, ends, to, None): List(ScanHeld) {
+          Succ(op2) => ⊢ List(ScanHeld) from match op2 {
+            Zero => ⊢ List(ScanHeld) from match scan_capture_best(t, text, d, ends, to, None) {
               None => scan_held_set(t.held, d.state, ScanHeldNone)
               Some(#(@start start, @end end)) => scan_held_set(
                 t.held,
@@ -858,9 +849,9 @@ pub fn scan_at(&t: ScanTables, held: List(ScanHeld), start: Nat): ScanTables {
 }
 
 pub fn scan_accept_in(k: Nat, &t: ScanTables, text: Text, j: Nat, i: Nat, n: Nat): Option(Nat) {
-  match k: Option(Nat) {
+  ⊢ Option(Nat) from match k {
     Zero => None
-    Succ(k2) => match scan_holds(t, text, j, i, n): Option(Nat) {
+    Succ(k2) => ⊢ Option(Nat) from match scan_holds(t, text, j, i, n) {
       true => Some(scan_number(t.accept_token, j))
       false => scan_accept_in(k2, t, text, Succ(j), i, n)
     }
@@ -889,11 +880,11 @@ pub fn scan_find_in(
   n: Nat,
   best: Option(Pair(Nat, Nat))
 ): Option(Pair(Nat, Nat)) {
-  match k: Option(Pair(Nat, Nat)) {
+  ⊢ Option(Pair(Nat, Nat)) from match k {
     Zero => best
-    Succ(k2) => match i < n: Option(Pair(Nat, Nat)) {
+    Succ(k2) => ⊢ Option(Pair(Nat, Nat)) from match i < n {
       false => best
-      true => match scan_next(t, text, state, i): Option(Pair(Nat, Nat)) {
+      true => ⊢ Option(Pair(Nat, Nat)) from match scan_next(t, text, state, i) {
         Zero => best
         Succ(s2) => scan_find_in(
           k2,
@@ -902,7 +893,7 @@ pub fn scan_find_in(
           s2,
           i + scan_char_length(Text::byte_value(text, i)),
           n,
-          match scan_accept(t, text, s2, i + scan_char_length(Text::byte_value(text, i)), n): Option(Pair(Nat, Nat)) {
+          ⊢ Option(Pair(Nat, Nat)) from match scan_accept(t, text, s2, i + scan_char_length(Text::byte_value(text, i)), n) {
             None => best
             Some(token) => Some(Pair { fst: i + scan_char_length(Text::byte_value(text, i)), snd: token })
           }
@@ -925,20 +916,20 @@ pub(open) inductive ScanMode: Type {
 }
 
 pub fn scan_pop(mode: ScanMode): ScanMode {
-  match mode.pushed: ScanMode {
+  ⊢ ScanMode from match mode.pushed {
     Nil => mode
     Cons(Before, more) => ScanMode { current: Before, pushed: more }
   }
 }
 
 pub fn scan_change_with(changes: List(ScanModeChange), mode: ScanMode, token: Nat): ScanMode {
-  match changes: ScanMode {
+  ⊢ ScanMode from match changes {
     Nil => mode
-    Cons(change, rest) => match change.token == token: ScanMode {
+    Cons(change, rest) => ⊢ ScanMode from match change.token == token {
       false => scan_change_with(rest, mode, token)
-      true => match change.kind: ScanMode {
+      true => ⊢ ScanMode from match change.kind {
         Zero => ScanMode { current: change.target, pushed: mode.pushed }
-        Succ(kind) => match kind: ScanMode {
+        Succ(kind) => ⊢ ScanMode from match kind {
           Zero => ScanMode { current: change.target, pushed: Cons(mode.current, mode.pushed) }
           Succ(other) => scan_pop(mode)
         }
@@ -963,17 +954,11 @@ pub fn scan_all_in(
   held: List(ScanHeld),
   done: List(ScanToken)
 ): List(ScanToken) {
-  match k: List(ScanToken) {
+  ⊢ List(ScanToken) from match k {
     Zero => List::reverse(done)
-    Succ(k2) => match pos < n: List(ScanToken) {
+    Succ(k2) => ⊢ List(ScanToken) from match pos < n {
       false => List::reverse(done)
-      true => match scan_find(
-        scan_at(t, held, pos),
-        text,
-        mode.current,
-        pos,
-        n
-      ): List(ScanToken) {
+      true => ⊢ List(ScanToken) from match scan_find(scan_at(t, held, pos), text, mode.current, pos, n) {
         None => scan_all_in(
           k2,
           t,

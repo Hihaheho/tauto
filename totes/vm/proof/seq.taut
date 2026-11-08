@@ -37,7 +37,7 @@ pub theorem ms_len_correct<A>(d: A, s: MSeq(A)): ms_len(s) = List::length(ms_to_
   }
 }
 
-pub theorem ms_read_range_nth<A>(d: A, items: Ordmap(Nat, A), start: Nat, count: Nat, i: Nat): List::nth(ms_read_range(d, items, start, count), i) = (match Nat::lt(i, count): Option(A) {
+pub theorem ms_read_range_nth<A>(d: A, items: Ordmap(Nat, A), start: Nat, count: Nat, i: Nat): List::nth(ms_read_range(d, items, start, count), i) = (⊢ Option(A) from match Nat::lt(i, count) {
     true => Some(ms_read(d, items, Nat::add(start, i)))
     false => None
   }) {
@@ -50,7 +50,7 @@ pub theorem ms_read_range_nth<A>(d: A, items: Ordmap(Nat, A), start: Nat, count:
       Zero => Refl
       Succ(j) => Eq::trans(
         ms_read_range_nth(d, items, Succ(start), n, j),
-        Eq::congr((at: Nat) => match Nat::lt(j, n): Option(A) {
+        Eq::congr((at: Nat) => ⊢ Option(A) from match Nat::lt(j, n) {
           true => Some(ms_read(d, items, at))
           false => None
         }, Nat::add_succ_left(start, j))
@@ -67,7 +67,7 @@ pub theorem ms_get_correct<A>(
   match s {
     Mseq(n, items) => Eq::sym(Eq::trans(
       ms_read_range_nth(d, items, 0, n, i),
-      Eq::congr((at: Nat) => match Nat::lt(i, n): Option(A) {
+      Eq::congr((at: Nat) => ⊢ Option(A) from match Nat::lt(i, n) {
         true => Some(ms_read(d, items, at))
         false => None
       }, Nat::add_zero_left(i))
@@ -89,11 +89,11 @@ pub theorem ms_push_last<A>(
 ): ms_get(d, ms_push(s, v), ms_len(s)) = Some(v) {
   match s {
     Mseq(n, items) => Eq::trans(
-      Eq::congr((inside: Bool) => match inside: Option(A) {
+      Eq::congr((inside: Bool) => ⊢ Option(A) from match inside {
         true => Some(ms_read(d, Ordmap::insert(items, n, v, Ordmap::compare_nat), n))
         false => None
       }, ms_lt_self_succ(n)),
-      Eq::congr((found: Option(A)) => Some(match found: A {
+      Eq::congr((found: Option(A)) => Some(⊢ A from match found {
         None => d
         Some(x) => x
       }), Ordmap::nat_get_insert_same(items, n, v, ordered))
@@ -107,21 +107,21 @@ pub theorem ms_read_insert<A>(
   ordered: Ordmap::ordered(items, Ordmap::compare_nat)
 ): Eq(A,
   ms_read(d, Ordmap::insert(items, i, v, Ordmap::compare_nat), j),
-  match Ordmap::compare_nat(j, i): A {
+  ⊢ A from match Ordmap::compare_nat(j, i) {
     Less => ms_read(d, items, j)
     Equal => v
     Greater => ms_read(d, items, j)
   }
 ) {
   Ordering::cases(
-    (o: Ordering) => ms_read(d, Ordmap::insert(items, i, v, Ordmap::compare_nat), j) = (match o: A {
+    (o: Ordering) => ms_read(d, Ordmap::insert(items, i, v, Ordmap::compare_nat), j) = (⊢ A from match o {
         Less => ms_read(d, items, j)
         Equal => v
         Greater => ms_read(d, items, j)
       }),
     Ordmap::compare_nat(j, i),
     (h: Ordmap::compare_nat(j, i) = Less) => Eq::congr(
-      (found: Option(A)) => match found: A {
+      (found: Option(A)) => ⊢ A from match found {
         None => d
         Some(x) => x
       },
@@ -131,14 +131,14 @@ pub theorem ms_read_insert<A>(
     (h: Ordmap::compare_nat(j, i) = Equal) => Eq::subst(
       (at: Nat) => ms_read(d, Ordmap::insert(items, i, v, Ordmap::compare_nat), at) = v,
       Eq::sym(Ordmap::compare_nat_eq(j, i, h)),
-      Eq::congr((found: Option(A)) => match found: A {
+      Eq::congr((found: Option(A)) => ⊢ A from match found {
         None => d
         Some(x) => x
       },
         Ordmap::nat_get_insert_same(items, i, v, ordered))
     ),
     (h: Ordmap::compare_nat(j, i) = Greater) => Eq::congr(
-      (found: Option(A)) => match found: A {
+      (found: Option(A)) => ⊢ A from match found {
         None => d
         Some(x) => x
       },
@@ -148,11 +148,7 @@ pub theorem ms_read_insert<A>(
   )
 }
 
-pub theorem ms_lt_succ(
-  i: Nat,
-  n: Nat,
-  h: Nat::lt(i, n) = true
-): Nat::lt(i, Succ(n)) = true {
+pub theorem ms_lt_succ(i: Nat, n: Nat, h: Nat::lt(i, n) = true): Nat::lt(i, Succ(n)) = true {
   match n {
     Zero => match i {
       Zero => False::elim(false_ne_true(h))
@@ -175,20 +171,20 @@ pub theorem ms_push_prefix<A>(
 ): ms_get(d, ms_push(s, v), i) = ms_get(d, s, i) {
   match s {
     Mseq(n, items) => Eq::trans(
-      Eq::congr((inside: Bool) => match inside: Option(A) {
+      Eq::congr((inside: Bool) => ⊢ Option(A) from match inside {
         true => Some(ms_read(d, Ordmap::insert(items, n, v, Ordmap::compare_nat), i))
         false => None
       }, ms_lt_succ(i, n, h)),
       Eq::trans(
         Eq::congr((x: A) => Some(x), Eq::trans(
           ms_read_insert(d, items, n, v, i, ordered),
-          Eq::congr((o: Ordering) => match o: A {
+          Eq::congr((o: Ordering) => ⊢ A from match o {
             Less => ms_read(d, items, i)
             Equal => v
             Greater => ms_read(d, items, i)
           }, Ordmap::select_of_true(Nat::lt(i, n), Nat::lt(n, i), h))
         )),
-        Eq::sym(Eq::congr((inside: Bool) => match inside: Option(A) {
+        Eq::sym(Eq::congr((inside: Bool) => ⊢ Option(A) from match inside {
           true => Some(ms_read(d, items, i))
           false => None
         }, h))
@@ -197,8 +193,8 @@ pub theorem ms_push_prefix<A>(
   }
 }
 
-pub theorem ms_empty_ordered<A>(): ms_ordered(ms_empty(A)) {
-  Ordmap::empty_ordered(Nat, A, Ordmap::compare_nat)
+pub theorem ms_empty_ordered<A>(): ms_ordered(ms_empty(<A: A>)) {
+  Ordmap::empty_ordered(<K: Nat, V: A>, Ordmap::compare_nat)
 }
 
 pub theorem ms_push_ordered<A>(
@@ -226,7 +222,7 @@ pub theorem ms_put_ordered<A>(
 ): ms_ordered(ms_put(s, i, v)) {
   match s {
     Mseq(n, items) => Bool::cases(
-      (inside: Bool) => ms_ordered(match inside: MSeq(A) {
+      (inside: Bool) => ms_ordered(⊢ MSeq(A) from match inside {
         false => Mseq(n, items)
         true => Mseq(n, Ordmap::insert(items, i, v, Ordmap::compare_nat))
       }),
@@ -266,7 +262,7 @@ pub theorem ms_of_list_ordered<A>(xs: List(A)): ms_ordered(ms_of_list(xs)) {
 pub theorem ms_put_len<A>(s: MSeq(A), i: Nat, v: A): ms_len(ms_put(s, i, v)) = ms_len(s) {
   match s {
     Mseq(n, items) => Bool::cases(
-      (inside: Bool) => ms_len(match inside: MSeq(A) {
+      (inside: Bool) => ms_len(⊢ MSeq(A) from match inside {
         false => Mseq(n, items)
         true => Mseq(n, Ordmap::insert(items, i, v, Ordmap::compare_nat))
       }) = n,
@@ -284,7 +280,7 @@ pub theorem ms_put_outside<A>(
   outside: Nat::lt(i, ms_len(s)) = false
 ): ms_put(s, i, v) = s {
   match s {
-    Mseq(n, items) => Eq::congr((inside: Bool) => match inside: MSeq(A) {
+    Mseq(n, items) => Eq::congr((inside: Bool) => ⊢ MSeq(A) from match inside {
       false => Mseq(n, items)
       true => Mseq(n, Ordmap::insert(items, i, v, Ordmap::compare_nat))
     }, outside)
@@ -298,7 +294,7 @@ pub theorem ms_get_outside<A>(
   outside: Nat::lt(i, ms_len(s)) = false
 ): ms_get(d, s, i) = None {
   match s {
-    Mseq(n, items) => Eq::congr((inside: Bool) => match inside: Option(A) {
+    Mseq(n, items) => Eq::congr((inside: Bool) => ⊢ Option(A) from match inside {
       false => None
       true => Some(ms_read(d, items, i))
     }, outside)
@@ -312,10 +308,10 @@ pub theorem ms_get_or_inside<A>(
   i: Nat,
   h: Nat::lt(i, n) = true
 ): ms_get_or(d, Mseq(n, items), i) = ms_read(d, items, i) {
-  Eq::congr((inside: Bool) => match (match inside: Option(A) {
+  Eq::congr((inside: Bool) => ⊢ A from match (⊢ Option(A) from match inside {
     false => None
     true => Some(ms_read(d, items, i))
-  }): A {
+  }) {
     None => d
     Some(x) => x
   }, h)
@@ -323,9 +319,9 @@ pub theorem ms_get_or_inside<A>(
 
 pub theorem ms_put_get<A>(d: A, s: MSeq(A), i: Nat, v: A, j: Nat,
   ordered: ms_ordered(s), inside: Nat::lt(i, ms_len(s)) = true
-): ms_get(d, ms_put(s, i, v), j) = (match Nat::lt(j, ms_len(s)): Option(A) {
+): ms_get(d, ms_put(s, i, v), j) = (⊢ Option(A) from match Nat::lt(j, ms_len(s)) {
     false => None
-    true => Some(match Ordmap::compare_nat(j, i): A {
+    true => Some(⊢ A from match Ordmap::compare_nat(j, i) {
       Less => ms_get_or(d, s, j)
       Equal => v
       Greater => ms_get_or(d, s, j)
@@ -333,17 +329,17 @@ pub theorem ms_put_get<A>(d: A, s: MSeq(A), i: Nat, v: A, j: Nat,
   }) {
   match s {
     Mseq(n, items) => Eq::trans(
-      Eq::congr((allowed: Bool) => ms_get(d, match allowed: MSeq(A) {
+      Eq::congr((allowed: Bool) => ms_get(d, ⊢ MSeq(A) from match allowed {
         false => Mseq(n, items)
         true => Mseq(n, Ordmap::insert(items, i, v, Ordmap::compare_nat))
       }, j), inside),
       Bool::cases(
-        (in_range: Bool) => (match in_range: Option(A) {
+        (in_range: Bool) => (⊢ Option(A) from match in_range {
             false => None
             true => Some(ms_read(d, Ordmap::insert(items, i, v, Ordmap::compare_nat), j))
-          }) = (match in_range: Option(A) {
+          }) = (⊢ Option(A) from match in_range {
             false => None
-            true => Some(match Ordmap::compare_nat(j, i): A {
+            true => Some(⊢ A from match Ordmap::compare_nat(j, i) {
               Less => ms_get_or(d, Mseq(n, items), j)
               Equal => v
               Greater => ms_get_or(d, Mseq(n, items), j)
@@ -353,7 +349,7 @@ pub theorem ms_put_get<A>(d: A, s: MSeq(A), i: Nat, v: A, j: Nat,
         (h: Nat::lt(j, n) = false) => Refl,
         (h: Nat::lt(j, n) = true) => Eq::trans(
           Eq::congr((x: A) => Some(x), ms_read_insert(d, items, i, v, j, ordered)),
-          Eq::sym(Eq::congr((old: A) => Some(match Ordmap::compare_nat(j, i): A {
+          Eq::sym(Eq::congr((old: A) => Some(⊢ A from match Ordmap::compare_nat(j, i) {
             Less => old
             Equal => v
             Greater => old
@@ -406,10 +402,15 @@ pub theorem ms_range_snoc<A>(
   items: Ordmap(Nat, A),
   start: Nat,
   count: Nat
-): ms_read_range(d, items, start, Succ(count)) = List::append(
-    ms_read_range(d, items, start, count),
-    Cons(ms_read(d, items, Nat::add(start, count)), Nil)
-  ) {
+): ms_read_range(
+  d,
+  items,
+  start,
+  Succ(count)
+) = List::append(
+  ms_read_range(d, items, start, count),
+  Cons(ms_read(d, items, Nat::add(start, count)), Nil)
+) {
   match count {
     Zero => Refl
     Succ(n) => Eq::trans(
@@ -434,11 +435,16 @@ pub theorem ms_prefix_insert<A>(
   n: Nat,
   v: A,
   ordered: Ordmap::ordered(items, Ordmap::compare_nat)
-): ms_read_range(d, Ordmap::insert(items, n, v, Ordmap::compare_nat), 0, n) = ms_read_range(d, items, 0, n) {
+): ms_read_range(
+  d,
+  Ordmap::insert(items, n, v, Ordmap::compare_nat),
+  0,
+  n
+) = ms_read_range(d, items, 0, n) {
   ms_range_congr(d, Ordmap::insert(items, n, v, Ordmap::compare_nat), items, 0, n,
     (i: Nat) => (inside: Nat::lt(i, n) = true) => Eq::trans(
       ms_read_insert(d, items, n, v, Nat::add(0, i), ordered),
-      Eq::congr((o: Ordering) => match o: A {
+      Eq::congr((o: Ordering) => ⊢ A from match o {
         Less => ms_read(d, items, Nat::add(0, i))
         Equal => v
         Greater => ms_read(d, items, Nat::add(0, i))
@@ -463,7 +469,7 @@ pub theorem ms_push_correct<A>(
             Nat::add_zero_left(n)),
           Eq::trans(
             Eq::congr((xs: List(A)) => List::append(xs, Cons(ms_read(d, next, n), Nil)), ms_prefix_insert(d, items, n, v, ordered)),
-            Eq::congr((found: Option(A)) => List::append(ms_read_range(d, items, 0, n), Cons(match found: A {
+            Eq::congr((found: Option(A)) => List::append(ms_read_range(d, items, 0, n), Cons(⊢ A from match found {
               None => d
               Some(x) => x
             }, Nil)), Ordmap::nat_get_insert_same(items, n, v, ordered))
@@ -492,23 +498,20 @@ pub theorem ms_push_all_correct<A>(
   }
 }
 
-pub theorem ms_of_list_correct<A>(
-  d: A,
-  xs: List(A)
-): ms_to_list(d, ms_of_list(xs)) = xs {
+pub theorem ms_of_list_correct<A>(d: A, xs: List(A)): ms_to_list(d, ms_of_list(xs)) = xs {
   ms_push_all_correct(d, ms_empty(), xs, ms_empty_ordered())
 }
 
 pub theorem ms_min_zero(n: Nat): Nat::min(n, 0) = 0 {
-  Eq::congr((before: Bool) => match before: Nat {
+  Eq::congr((before: Bool) => ⊢ Nat from match before {
     false => 0
     true => n
   }, Nat::lt_zero_false(n))
 }
 
 pub theorem ms_min_succ(n: Nat, k: Nat): Nat::min(Succ(n), Succ(k)) = Succ(Nat::min(n, k)) {
-  Bool::cases((before: Bool) => (match before: Nat { false => Succ(k)
-      true => Succ(n) }) = Succ(match before: Nat { false => k
+  Bool::cases((before: Bool) => (⊢ Nat from match before { false => Succ(k)
+      true => Succ(n) }) = Succ(⊢ Nat from match before { false => k
       true => n }), Nat::lt(n, k),
     (h: Nat::lt(n, k) = false) => Refl,
     (h: Nat::lt(n, k) = true) => Refl)
@@ -520,7 +523,12 @@ pub theorem ms_range_take<A>(
   start: Nat,
   n: Nat,
   count: Nat
-): ms_read_range(d, items, start, Nat::min(n, count)) = List::take(count, ms_read_range(d, items, start, n)) {
+): ms_read_range(
+  d,
+  items,
+  start,
+  Nat::min(n, count)
+) = List::take(count, ms_read_range(d, items, start, n)) {
   match count {
     Zero => Eq::congr((k: Nat) => ms_read_range(d, items, start, k), ms_min_zero(n))
     Succ(k) => match n {
@@ -549,7 +557,10 @@ pub theorem ms_take_correct<A>(
 pub theorem ms_init_correct<A>(
   d: A,
   s: MSeq(A)
-): ms_to_list(d, ms_init(s)) = List::take(Nat::sub(List::length(ms_to_list(d, s)), 1), ms_to_list(d, s)) {
+): ms_to_list(
+  d,
+  ms_init(s)
+) = List::take(Nat::sub(List::length(ms_to_list(d, s)), 1), ms_to_list(d, s)) {
   Eq::trans(
     ms_take_correct(d, s, Nat::sub(ms_len(s), 1)),
     Eq::congr((n: Nat) => List::take(Nat::sub(n, 1), ms_to_list(d, s)), ms_len_correct(d, s))
@@ -561,7 +572,9 @@ pub theorem ms_range_last<A>(
   items: Ordmap(Nat, A),
   start: Nat,
   n: Nat
-): List::last(ms_read_range(d, items, start, Succ(n))) = Some(ms_read(d, items, Nat::add(start, n))) {
+): List::last(
+  ms_read_range(d, items, start, Succ(n))
+) = Some(ms_read(d, items, Nat::add(start, n))) {
   match n {
     Zero => Refl
     Succ(k) => Eq::trans(
@@ -571,15 +584,12 @@ pub theorem ms_range_last<A>(
   }
 }
 
-pub theorem ms_last_correct<A>(
-  d: A,
-  s: MSeq(A)
-): ms_last(d, s) = List::last(ms_to_list(d, s)) {
+pub theorem ms_last_correct<A>(d: A, s: MSeq(A)): ms_last(d, s) = List::last(ms_to_list(d, s)) {
   match s {
     Mseq(n, items) => match n {
       Zero => Refl
       Succ(k) => Eq::trans(
-        Eq::congr((inside: Bool) => match inside: Option(A) {
+        Eq::congr((inside: Bool) => ⊢ Option(A) from match inside {
           false => None
           true => Some(ms_read(d, items, k))
         }, ms_lt_self_succ(k)),
@@ -591,9 +601,9 @@ pub theorem ms_last_correct<A>(
 }
 
 pub theorem ms_swap_results_ordered<A>(s: MSeq(A), i: Nat, j: Nat, ai: Option(A), aj: Option(A), ordered: ms_ordered(s)): ms_ordered(
-  match ai: MSeq(A) {
+  ⊢ MSeq(A) from match ai {
     None => s
-    Some(a) => match aj: MSeq(A) {
+    Some(a) => ⊢ MSeq(A) from match aj {
       None => s
       Some(b) => ms_put(ms_put(s, i, b), j, a)
     }

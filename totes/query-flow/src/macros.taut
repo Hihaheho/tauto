@@ -34,14 +34,18 @@ fn here(): SynSpan { Syn::call_span() }
 
 fn gvar(name: Text): SynExpr { ExVar(Syn::global(name)) }
 
+fn binder(name: Text): SynIdent {
+  SynIdent { declaration: None, name: name, ctx: SynCtx { scopes: Nil }, span: here() }
+}
+
 fn gcall(f: SynExpr, args: List(SynExpr)): SynExpr { ExApp(f, args, here()) }
 
 fn text_lit(t: Text): SynExpr { ExText(t, here()) }
 
 fn list_of(es: List(SynExpr)): SynExpr {
   match es {
-    Nil => gvar("Nil")
-    Cons(e, rest) => gcall(gvar("Cons"), Cons(e, Cons(list_of(rest), Nil)))
+    Nil => gvar("List::Nil")
+    Cons(e, rest) => gcall(gvar("List::Cons"), Cons(e, Cons(list_of(rest), Nil)))
   }
 }
 
@@ -105,12 +109,14 @@ fn record_of(e: SynExpr): Option(SynIdent × List(SynExpr × Text)) {
     ExMatch(a, b, c, d, f) => None
     ExBorrow(a, b, c) => None
     ExUnion(a, b) => None
+    ExProduct(a, b) => None
     ExTagged(a, b, c) => None
     ExExists(a, b, c, d) => None
     ExFnKind(a, b, c) => None
     ExBorrowLam(a, b, c) => None
     ExMacroCall(a, b, c) => None
     ExMacroExpr(a, b, c) => None
+    ExStep(a, b, c, d, e) => None
     ExHole(a, b) => None
     ExUnit(a) => None
   }
@@ -313,7 +319,7 @@ fn query_made(
         None => bad("query-flow: write the output type of the query")
         Some(out) => {
           let ks := keyed(fs, params)
-          let dbv := Syn::global("query_flow_db")
+          let dbv := binder("query_flow_db")
           let run := ExLam(
             Cons(BName(dbv, Some(gvar("Db"))), Nil),
             gcall(ExVar(f.name), Cons(ExVar(dbv), vars_of(params))),
@@ -334,6 +340,7 @@ fn query_made(
             StFn(SynFn {
               name: name,
               generics: Nil,
+              generic_types: Nil,
               bounds: Nil,
               params: params,
               borrows: nones(params),
@@ -447,9 +454,9 @@ fn fields_read(
 // `fn S::codec(): Codec(S)`: the struct `S` written as the fields of its fields' texts.
 fn struct_codec(d: SynData, fs: List(SynIdent × SynExpr)): SynStmt ! {macro_error, Div} {
   let ty := ExVar(d.name)
-  let kv := Syn::global("query_flow_k")
-  let tv := Syn::global("query_flow_t")
-  let tsv := Syn::global("query_flow_ts")
+  let kv := binder("query_flow_k")
+  let tv := binder("query_flow_t")
+  let tsv := binder("query_flow_ts")
   let enc := ExLam(
     Cons(BName(kv, Some(ty)), Nil),
     gcall(gvar("fields"), Cons(list_of(field_texts(ExVar(kv), fs, field_names(fs))), Nil)),
@@ -476,6 +483,7 @@ fn struct_codec(d: SynData, fs: List(SynIdent × SynExpr)): SynStmt ! {macro_err
   StFn(SynFn {
     name: Syn::decl_name(d.name, concat(d.name.name, "::codec")),
     generics: Nil,
+    generic_types: Nil,
     bounds: Nil,
     params: Nil,
     borrows: Nil,
@@ -500,9 +508,9 @@ fn asset_made(
     None => bad("query-flow: write the type of the asset's value, `Name { asset: T }`")
     Some(t) => {
       let c := codec_of(t)
-      let av := Syn::global("query_flow_a")
-      let bv := Syn::global("query_flow_b")
-      let kv := Syn::global("query_flow_k")
+      let av := binder("query_flow_a")
+      let bv := binder("query_flow_b")
+      let kv := binder("query_flow_k")
       let same := match option_of(fs, "asset_eq") {
         Some(eq) => eq
         None => ExLam(
@@ -537,6 +545,7 @@ fn asset_made(
           StFn(SynFn {
             name: name,
             generics: Nil,
+            generic_types: Nil,
             bounds: Nil,
             params: Nil,
             borrows: Nil,

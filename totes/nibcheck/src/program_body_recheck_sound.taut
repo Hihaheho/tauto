@@ -37,7 +37,7 @@ pub theorem body_registered_recheck(
     )
   )
 ): DataBodyChecked(ck_datas_of(c), source) {
-  match registered: DataBodyChecked(ck_datas_of(c), source) {
+  ⊢ DataBodyChecked(ck_datas_of(c), source) from match registered {
     Mk(constructors, found, known) => DataBodyChecked::Mk(
       constructors,
       found,
@@ -84,12 +84,16 @@ pub theorem body_recheck_tail(
   ih: ∀ next: Checker. ∀ present: DataBodyRegistered(
     ck_datas_of(next),
     source
-  ). ∀ ordinary_next: frame_under_borrow(next) = false. ∀ position_next: frame_constructor_position(next) = false. ∀ clean: DiagnosticClean(
+  ). ∀ ordinary_next: frame_under_borrow(
+    next
+  ) = false. ∀ position_next: frame_constructor_position(
+    next
+  ) = false. ∀ clean: DiagnosticClean(
     ck_st(ck_recheck_datas(rest, next))
   ). DataBodyChecked(ck_datas_of(next), source),
   clean: DiagnosticClean(ck_st(body_recheck_after(rest, m)))
 ): DataBodyChecked(ck_datas_of(c), source) {
-  match m: DataBodyChecked(ck_datas_of(c), source) {
+  ⊢ DataBodyChecked(ck_datas_of(c), source) from match m {
     mut1(ignored, next) => Eq::subst(
       (env: Datas) => DataBodyChecked(env, source),
       Eq::congr(frame_read_datas, read),
@@ -117,7 +121,7 @@ pub theorem ck_recheck_datas_body<datas: List(
   position: frame_constructor_position(c) = false,
   clean: DiagnosticClean(ck_st(ck_recheck_datas(datas, c)))
 ): DataBodyChecked(ck_datas_of(c), source) {
-  match member: DataBodyChecked(ck_datas_of(c), source) {
+  ⊢ DataBodyChecked(ck_datas_of(c), source) from match member {
     MemHere(rest) => body_registered_recheck(
       c,
       source,

@@ -14,6 +14,7 @@ namespace Proto.Macro
 one unit of fuel and a scope of its own; the term it makes is flipped by that
 scope and then expanded. `none`: the fuel ran out, or `μ` refused. -/
 def expand (μ : Nat → String → Option Tm) : Nat → Supply → Tm → Option (Tm × Supply)
+  | _, sup, .global reference => some (.global reference, sup)
   | _, sup, .var i => some (.var i, sup)
   | _, sup, .atom n => some (.atom n, sup)
   | fuel, sup, .lam b body =>
@@ -45,6 +46,11 @@ theorem expand_done (μ : Nat → String → Option Tm) :
   | _ fuel ih =>
     intro sup t
     induction t generalizing sup with
+    | global reference =>
+      intro t' sup' h
+      simp [expand] at h
+      obtain ⟨rfl, _⟩ := h
+      rfl
     | var i =>
       intro t' sup' h
       simp [expand] at h
@@ -98,6 +104,7 @@ theorem expand_call_free (μ : Nat → String → Option Tm) :
     ∀ (fuel : Nat) (sup : Supply) (t : Tm), t.hasCall = false → expand μ fuel sup t = some (t, sup) := by
   intro fuel sup t
   induction t generalizing sup with
+  | global reference => intro _; simp [expand]
   | var i => intro _; simp [expand]
   | atom n => intro _; simp [expand]
   | lam b body ih =>
@@ -109,5 +116,11 @@ theorem expand_call_free (μ : Nat → String → Option Tm) :
     simp [Tm.hasCall] at h
     simp [expand, ihf sup h.1, iha sup h.2]
   | call m text => intro h; simp [Tm.hasCall] at h
+
+/-- Expansion neither resolves nor replaces a declaration reference. -/
+theorem expand_global (μ : Nat → String → Option Tm) (fuel : Nat)
+    (sup : Supply) (reference : DeclRef) :
+    expand μ fuel sup (.global reference) = some (.global reference, sup) := by
+  simp [expand]
 
 end Proto.Macro

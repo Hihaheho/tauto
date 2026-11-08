@@ -4,16 +4,16 @@
 @ cases.a-hole-leaves-a-declaration-incomplete
 parses = true
 source = ```tauto
-fn plus(n: Nat, m: Nat) -> Nat {
-  match n -> Nat {
-    zero => m
-    succ(k) => succ(plus(k, m))
+fn plus(n: Nat, m: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => m
+    Succ(k) => Succ(plus(k, m))
   }
 }
-theorem plus_zero(n: Nat): Eq(Nat, plus(n, zero), n) {
-  match n -> Eq(Nat, plus(n, zero), n) {
-    zero => refl(Nat, zero)
-    succ(k) => ?step
+theorem plus_zero(n: Nat): plus(n, Zero) = n {
+  ⊢ plus(n, Zero) = n from match n {
+    Zero => Refl(Nat, Zero)
+    Succ(k) => ?step
   }
 }
 ```
@@ -24,7 +24,7 @@ checks.plus_zero = "incomplete: ?step"
 parses = true
 source = ```tauto
 theorem both<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
-  and_intro(?l, ?r)
+  AndIntro(?l, ?r)
 }
 theorem again<A: Prop, B: Prop>(p: And(A, B)): And(B, A) { both(p) }
 ```
@@ -34,7 +34,7 @@ checks.again = "incomplete: uses both"
 @ cases.a-hole-is-not-a-type
 parses = true
 source = ```tauto
-theorem t(p: {?P}): True { star }
+theorem t(p: {?P}): True { Star }
 ```
 checks.t = "error: type of the hole `?P`"
 
@@ -42,7 +42,7 @@ checks.t = "error: type of the hole `?P`"
 parses = true
 source = ```tauto
 theorem both<A: Prop, B: Prop>(p: And(A, B)): And(B, A) {
-  and_intro(?x, ?x)
+  AndIntro(?x, ?x)
 }
 ```
 checks.both = "error: written twice"

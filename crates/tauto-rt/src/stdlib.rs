@@ -7,6 +7,18 @@
 //! `out_of_bounds`) returns `Result<_, Abort>` and takes the place of the
 //! call.
 
+pub type SynDeclaration = crate::identity::DeclRef;
+
+pub fn syn_same_declaration(a: SynDeclaration, b: SynDeclaration) -> bool {
+    a == b
+}
+
+/// The eliminator (`::ind`) of the inductive type `d`, by its declaration: the
+/// same reference the checker gives the type's induction principle.
+pub fn syn_eliminator(d: SynDeclaration) -> SynDeclaration {
+    d.generated(crate::identity::Generation::Induction)
+}
+
 use crate::a::Abort;
 pub use crate::ct::*;
 use crate::{Loc, Op, Text, error, messages};
@@ -495,12 +507,45 @@ pub fn os_stat_vec(path: Text) -> Result<Vec<Text>, Text> {
         .map_err(Text::from)
 }
 
+/// Where the link at `path` points: empty when what is there is not a link; see
+/// [`crate::host::Host::read_link`].
+pub fn os_read_link_vec(path: Text) -> Result<Vec<Text>, Text> {
+    crate::host::get()
+        .read_link(&path)
+        .map(|found| found.map(Text::from).into_iter().collect())
+        .map_err(Text::from)
+}
+
+/// A file made where nothing is; see [`crate::host::Host::create_new`].
+pub fn os_write_new(path: Text, contents: Text) -> Result<(), Text> {
+    crate::host::get()
+        .create_new(&path, contents.as_bytes())
+        .map_err(Text::from)
+}
+
 pub fn os_move_path(from: Text, to: Text) -> Result<(), Text> {
     crate::host::get().rename(&from, &to).map_err(Text::from)
 }
 
 pub fn os_copy_file(from: Text, to: Text) -> Result<(), Text> {
     crate::host::get().copy(&from, &to).map_err(Text::from)
+}
+
+/// The contents of `path` under `root`, as UTF-8; see
+/// [`crate::host::Host::read_bytes_under`].
+pub fn os_read_under(root: Text, path: Text) -> Result<Text, Text> {
+    let bytes = crate::host::get().read_bytes_under(&root, &path)?;
+    String::from_utf8(bytes)
+        .map(Text::from)
+        .map_err(|_| Text::from(format!("{path}: not UTF-8")))
+}
+
+/// The bytes of `path` under `root`.
+pub fn os_read_bytes_under(root: Text, path: Text) -> Result<Bytes, Text> {
+    crate::host::get()
+        .read_bytes_under(&root, &path)
+        .map(Bytes::from)
+        .map_err(Text::from)
 }
 
 pub fn os_canonicalize(path: Text) -> Result<Text, Text> {
@@ -610,6 +655,10 @@ pub fn os_read_line() -> Option<Text> {
 /// Up to `max` bytes of standard input, as soon as any arrive; none at its end.
 pub fn os_read_stdin(max: u64) -> Bytes {
     Bytes::from(crate::host::get().read_stdin(max.min(1 << 24) as usize))
+}
+
+pub fn os_on_shutdown(s: Signal) {
+    crate::shutdown::register(s)
 }
 
 pub fn os_flush() {
@@ -1096,7 +1145,9 @@ pub use crate::exec::{
 };
 #[cfg(feature = "sync")]
 pub use crate::exec::{pending_spawn, pending_spawn_o};
-pub use crate::signal::Signal;
+pub use crate::signal::{
+    Signal, signal_either, signal_fresh, signal_is_raised, signal_listen, signal_raise,
+};
 pub use cells::*;
 
 /// The stream requests generated code calls by name (`std/prelude/Os.taut`);
@@ -1158,3 +1209,6 @@ mod net_tests {
         assert!(err.contains("not an IP address"), "{err}");
     }
 }
+
+// The source capability and its read-only view share a flag at run time.
+pub type CancelSource = Signal;

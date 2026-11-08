@@ -38,6 +38,12 @@ fn driver_guards_checkout_identity_and_keeps_the_full_gate_unfiltered() {
     for repo in &repos {
         fs::create_dir_all(repo.join("scripts")).unwrap();
         fs::copy(&script, repo.join("scripts/test.sh")).unwrap();
+        for dir in ["std", "std/prelude", "meta"] {
+            fs::create_dir_all(repo.join(dir)).unwrap();
+        }
+        for file in ["std/a.taut", "std/prelude/p.taut", "meta/m.taut"] {
+            fs::write(repo.join(file), "").unwrap();
+        }
     }
     let repos = repos.map(|repo| repo.canonicalize().unwrap());
     let log = root.join("commands");
@@ -114,18 +120,32 @@ fn driver_guards_checkout_identity_and_keeps_the_full_gate_unfiltered() {
     assert!(run(&repos[0], &["full"], &[]).status.success());
     let commands = fs::read_to_string(&log).unwrap();
     let lines: Vec<_> = commands.lines().collect();
-    assert_eq!(lines.len(), 4);
+    assert_eq!(lines.len(), 7);
     assert!(lines[0].contains(" test --locked -p tauto-build --test build_rs|"));
     assert!(lines[1].contains(" test --locked --workspace|"));
-    assert!(lines[2].contains("check meta/KernelSafe.taut"));
-    assert!(lines[3].contains("fmt --check"));
+    assert!(lines[2].contains(" build --locked -p tauto-cli --bin tauto|"));
+    // Each top-level library file is checked by its own parallel process, so their order varies.
+    let mut checked: Vec<_> = lines[3..5]
+        .iter()
+        .map(|line| line.split('|').next().unwrap().rsplit(' ').next().unwrap())
+        .collect();
+    checked.sort();
+    assert_eq!(checked, ["meta/m.taut", "std/a.taut"]);
+    assert!(lines[3..5].iter().all(|line| line.contains(" -- check ")));
+    assert!(lines[5].contains(" -- lint std/a.taut std/prelude/p.taut meta/m.taut|"));
+    assert!(lines[6].contains(" -- fmt --check std/a.taut std/prelude/p.taut meta/m.taut|"));
+    let gate = lines.len();
     assert_eq!(
         run(&repos[0], &["full"], &[("FAIL_TEST", Path::new("1"))])
             .status
             .code(),
         Some(17)
     );
-    assert_eq!(count(), 5, "a failed workspace gate stops later commands");
+    assert_eq!(
+        count(),
+        gate + 1,
+        "a failed workspace gate stops later commands"
+    );
     let target = repos[0].join("target");
     reject(run(&repos[1], &["full"], &[("CARGO_TARGET_DIR", &target)]));
     let unowned = root.join("unowned");
@@ -136,7 +156,7 @@ fn driver_guards_checkout_identity_and_keeps_the_full_gate_unfiltered() {
         fs::read_to_string(unowned.join("keep")).unwrap(),
         "preserve"
     );
-    assert_eq!(count(), 5);
+    assert_eq!(count(), gate + 1);
     let regular = root.join("not-a-directory");
     fs::write(&regular, "keep").unwrap();
     reject(run(&repos[0], &["full"], &[("CARGO_TARGET_DIR", &regular)]));
@@ -161,7 +181,7 @@ fn driver_guards_checkout_identity_and_keeps_the_full_gate_unfiltered() {
             .file_type()
             .is_fifo()
     );
-    assert_eq!(count(), 5);
+    assert_eq!(count(), gate + 1);
     let exact = root.join("exact");
     let build = root.join("build output \"日本語\"");
     let overrides = [

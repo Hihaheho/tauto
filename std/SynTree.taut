@@ -1,0 +1,701 @@
+import "Text.taut" { Text }
+import std::prelude::Std { List, Option, Pair }
+import std::prelude::Macro {
+  Syn,
+  SynArm,
+  SynBinder,
+  SynCtor,
+  SynCtx,
+  SynData,
+  SynEffect,
+  SynExpr,
+  SynFn,
+  SynHandler,
+  SynIdent,
+  SynIndCtor,
+  SynInductive,
+  SynParam,
+  SynPattern,
+  SynSpan,
+  SynStepArm,
+  SynStmt,
+  SynTheorem
+}
+
+// The syntax a macro reads and makes (`SynExpr` and the types it holds), as
+// `inductive` types the proofs see. Spans and scopes are left out, as for the
+// trees `inductive_syntax!` makes. A name keeps the position it was written
+// at (`at`), which tells one occurrence from another, so a tree made from these
+// names can be turned back into the names it was read from. Numbers of the
+// machine (`u64`, `i64`) are their decimal text.
+
+mutual {
+  pub(open) inductive SynIdentI: Type {
+    IdentI(name: Text, at: Text): SynIdentI
+  }
+  pub(open) inductive SynBinderI: Type {
+    BNameI(name: SynIdentI, ty: Option(SynExprI)): SynBinderI
+    BAtomI(atom: Text, ty: Option(SynExprI)): SynBinderI
+  }
+  pub(open) inductive SynParamI: Type {
+    ParamI(name: Option(SynIdentI), ty: SynExprI): SynParamI
+  }
+  pub(open) inductive SynFieldI: Type {
+    FieldI(value: SynExprI, name: Text): SynFieldI
+  }
+  pub(open) inductive SynExprI: Type {
+    ExVarI(name: SynIdentI): SynExprI
+    ExAtomI(atom: Text): SynExprI
+    ExNatI(digits: Text): SynExprI
+    ExTextI(text: Text): SynExprI
+    ExBoolI(value: Bool): SynExprI
+    ExAppI(function: SynExprI, arguments: List(SynExprI)): SynExprI
+    ExPiI(params: List(SynParamI), result: SynExprI, effects: Option(List(Text))): SynExprI
+    ExLamI(binders: List(SynBinderI), body: SynExprI): SynExprI
+    ExIfI(condition: SynExprI, yes: SynExprI, no: Option(SynExprI)): SynExprI
+    ExFieldI(base: SynExprI, field: Text): SynExprI
+    ExBlockI(stmts: List(SynStmtI)): SynExprI
+    ExPerformI(op: SynIdentI, arguments: List(SynExprI)): SynExprI
+    ExHandleI(body: SynExprI, handlers: List(SynHandlerI)): SynExprI
+    ExBudgetI(limit: SynExprI, body: SynExprI): SynExprI
+    ExBudgetMemoryI(limit: SynExprI, body: SynExprI): SynExprI
+    ExMatchI(
+      subject: SynExprI,
+      motive: Option(SynExprI),
+      arms: List(SynArmI),
+      equation: Option(SynIdentI)
+    ): SynExprI
+    ExRecordI(name: SynIdentI, fields: List(SynFieldI)): SynExprI
+    ExBorrowI(exclusive: Bool, value: SynExprI): SynExprI
+    ExUnionI(members: List(SynExprI)): SynExprI
+    ExProductI(members: List(SynExprI)): SynExprI
+    ExTaggedI(tag: Text, value: SynExprI): SynExprI
+    ExExistsI(binder: SynBinderI, ty: SynExprI, body: SynExprI): SynExprI
+    ExFnKindI(kind: Text, ty: SynExprI): SynExprI
+    ExBorrowLamI(borrows: List(Option(Bool)), body: SynExprI): SynExprI
+    ExMacroCallI(name: SynIdentI, text: Text): SynExprI
+    ExMacroExprI(name: SynIdentI, argument: SynExprI): SynExprI
+    ExHoleI(name: Text): SynExprI
+    ExUnitI: SynExprI
+    ExStepI(
+      tactic: SynIdentI,
+      argument: SynExprI,
+      before: Option(SynExprI),
+      arms: List(SynStepArmI)
+    ): SynExprI
+  }
+  pub(open) inductive SynStepArmI: Type {
+    StepArmI(binders: List(SynBinderI), goal: SynExprI, body: SynExprI): SynStepArmI
+  }
+  pub(open) inductive SynPatternFieldI: Type {
+    PatternFieldI(pattern: SynPatternI, name: Text): SynPatternFieldI
+  }
+  pub(open) inductive SynPatternI: Type {
+    PtWildI: SynPatternI
+    PtBindI(name: SynIdentI): SynPatternI
+    PtIntI(digits: Text): SynPatternI
+    PtBoolI(value: Bool): SynPatternI
+    PtTextI(text: Text): SynPatternI
+    PtCtorI(name: SynIdentI, args: List(SynPatternI)): SynPatternI
+    PtRecordI(name: SynIdentI, fields: List(SynPatternFieldI)): SynPatternI
+  }
+  pub(open) inductive SynArmI: Type {
+    ArmI(
+      pattern: SynPatternI,
+      guard: Option(SynExprI),
+      goal: Option(SynExprI),
+      body: SynExprI
+    ): SynArmI
+  }
+  pub(open) inductive SynHandlerI: Type {
+    HReturnI(pattern: SynPatternI, body: SynExprI): SynHandlerI
+    HOpI(
+      op: SynIdentI,
+      patterns: List(SynPatternI),
+      continuation: Option(SynIdentI),
+      ty: Option(SynExprI),
+      body: SynExprI,
+      binds: List(Text),
+      type_args: List(SynExprI)
+    ): SynHandlerI
+  }
+  pub(open) inductive SynTypedI: Type {
+    TypedI(ty: SynExprI, name: SynIdentI): SynTypedI
+  }
+  pub(open) inductive SynFnI: Type {
+    FnI(
+      name: SynIdentI,
+      generics: List(Text),
+      generic_types: List(SynExprI),
+      bounds: List(Option(Text)),
+      params: List(SynIdentI),
+      borrows: List(Option(Bool)),
+      param_types: List(Option(SynExprI)),
+      result: Option(SynExprI),
+      effects: Option(List(Text)),
+      body: SynExprI
+    ): SynFnI
+  }
+  pub(open) inductive SynTheoremI: Type {
+    TheoremI(
+      name: SynIdentI,
+      implicit: Text,
+      params: List(SynTypedI),
+      ty: SynExprI,
+      body: Option(SynExprI)
+    ): SynTheoremI
+  }
+  pub(open) inductive SynCtorFieldI: Type {
+    CtorFieldI(name: Option(SynIdentI), ty: SynExprI): SynCtorFieldI
+  }
+  pub(open) inductive SynCtorI: Type {
+    CtorI(name: SynIdentI, fields: List(SynCtorFieldI)): SynCtorI
+  }
+  pub(open) inductive SynIndCtorI: Type {
+    IndCtorI(
+      name: SynIdentI,
+      implicit: Text,
+      params: List(SynTypedI),
+      result: SynExprI
+    ): SynIndCtorI
+  }
+  pub(open) inductive SynInductiveI: Type {
+    InductiveI(
+      name: SynIdentI,
+      params: List(SynTypedI),
+      sort: SynExprI,
+      ctors: List(SynIndCtorI)
+    ): SynInductiveI
+  }
+  pub(open) inductive SynDataI: Type {
+    DataI(
+      kind: Option(Text),
+      name: SynIdentI,
+      generics: List(Text),
+      ctors: List(SynCtorI)
+    ): SynDataI
+  }
+  pub(open) inductive SynEffectI: Type {
+    EffectI(
+      name: SynIdentI,
+      generics: List(Text),
+      params: List(Option(SynExprI)),
+      result: Option(SynExprI),
+      resumes: Option(Text)
+    ): SynEffectI
+  }
+  pub(open) inductive SynStmtI: Type {
+    StLetI(
+      name: SynIdentI,
+      ty: Option(SynExprI),
+      value: SynExprI,
+      is_shared: Bool,
+      is_affine: Bool
+    ): SynStmtI
+    StVarI(name: SynIdentI, ty: Option(SynExprI), value: SynExprI, is_shared: Bool): SynStmtI
+    StAssignI(name: SynIdentI, value: SynExprI): SynStmtI
+    StFnI(decl: SynFnI): SynStmtI
+    StExprI(value: SynExprI): SynStmtI
+    StWhileI(condition: SynExprI, body: SynExprI): SynStmtI
+    StReturnI(value: Option(SynExprI)): SynStmtI
+    StTheoremI(decl: SynTheoremI): SynStmtI
+    StDefI(decl: SynTheoremI): SynStmtI
+    StStructI(decl: SynDataI): SynStmtI
+    StEnumI(decl: SynDataI): SynStmtI
+    StInductiveI(decl: SynInductiveI): SynStmtI
+    StEffectI(decl: SynEffectI): SynStmtI
+    StMutualI(stmts: List(SynStmtI)): SynStmtI
+    StMacroCallI(name: SynIdentI, text: Text): SynStmtI
+  }
+}
+
+// From what a macro reads to the trees the proofs see. This step is not proved.
+module SynTree {
+  fn map<A, B, !e>(f: (A) -> B ! e, xs: List(A)): List(B) ! e {
+    match xs {
+      Nil => Nil
+      Cons(x, rest) => Cons(f(x), SynTree::map(f, rest))
+    }
+  }
+
+  fn opt<A, B, !e>(f: (A) -> B ! e, o: Option(A)): Option(B) ! e {
+    match o {
+      None => None
+      Some(x) => Some(f(x))
+    }
+  }
+
+  pub fn ident(i: SynIdent): SynIdentI { IdentI(i.name, std::prelude::Text::of_u64(i.span.id)) }
+
+  pub fn binder(b: SynBinder): SynBinderI {
+    match b {
+      BName(i, t) => BNameI(SynTree::ident(i), SynTree::opt(SynTree::expr, t))
+      BAtom(a, t) => BAtomI(std::prelude::Text::of_u64(a), SynTree::opt(SynTree::expr, t))
+    }
+  }
+
+  pub fn param(p: SynParam): SynParamI {
+    ParamI(SynTree::opt(SynTree::ident, p.name), SynTree::expr(p.ty))
+  }
+
+  pub fn expr(e: SynExpr): SynExprI {
+    match e {
+      ExVar(i) => ExVarI(SynTree::ident(i))
+      ExAtom(a, sp) => ExAtomI(std::prelude::Text::of_u64(a))
+      ExNat(t, sp) => ExNatI(t)
+      ExText(t, sp) => ExTextI(t)
+      ExBool(b, sp) => ExBoolI(b)
+      ExApp(f, xs, sp) => ExAppI(SynTree::expr(f), SynTree::map(SynTree::expr, xs))
+      ExPi(ps, r, fx, sp) => ExPiI(SynTree::map(SynTree::param, ps), SynTree::expr(r), fx)
+      ExLam(bs, b, sp) => ExLamI(SynTree::map(SynTree::binder, bs), SynTree::expr(b))
+      ExIf(c, t, f, sp) => ExIfI(SynTree::expr(c), SynTree::expr(t), SynTree::opt(SynTree::expr, f))
+      ExField(b, n, sp) => ExFieldI(SynTree::expr(b), n)
+      ExBlock(ss, sp) => ExBlockI(SynTree::map(SynTree::stmt, ss))
+      ExPerform(op, xs, sp) => ExPerformI(SynTree::ident(op), SynTree::map(SynTree::expr, xs))
+      ExHandle(b, hs, sp) => ExHandleI(SynTree::expr(b), SynTree::map(SynTree::handler, hs))
+      ExBudget(l, b, sp) => ExBudgetI(SynTree::expr(l), SynTree::expr(b))
+      ExBudgetMemory(l, b, sp) => ExBudgetMemoryI(SynTree::expr(l), SynTree::expr(b))
+      ExMatch(s, m, arms, eq, sp) => ExMatchI(
+        SynTree::expr(s),
+        SynTree::opt(SynTree::expr, m),
+        SynTree::map(SynTree::arm, arms),
+        SynTree::opt(SynTree::ident, eq)
+      )
+      ExRecord(n, fs, sp) => ExRecordI(
+        SynTree::ident(n),
+        SynTree::map((f: SynExpr × Text) => match f { #(v, n) => FieldI(SynTree::expr(v), n) }, fs)
+      )
+      ExBorrow(m, v, sp) => ExBorrowI(m, SynTree::expr(v))
+      ExUnion(xs, sp) => ExUnionI(SynTree::map(SynTree::expr, xs))
+      ExProduct(xs, sp) => ExProductI(SynTree::map(SynTree::expr, xs))
+      ExTagged(t, v, sp) => ExTaggedI(t, SynTree::expr(v))
+      ExExists(b, t, body, sp) => ExExistsI(
+        SynTree::binder(b),
+        SynTree::expr(t),
+        SynTree::expr(body)
+      )
+      ExFnKind(k, t, sp) => ExFnKindI(k, SynTree::expr(t))
+      ExBorrowLam(bs, b, sp) => ExBorrowLamI(bs, SynTree::expr(b))
+      ExMacroCall(n, t, sp) => ExMacroCallI(SynTree::ident(n), t)
+      ExMacroExpr(n, a, sp) => ExMacroExprI(SynTree::ident(n), SynTree::expr(a))
+      ExHole(n, sp) => ExHoleI(n)
+      ExUnit(sp) => ExUnitI
+      ExStep(t, a, g, arms, sp) => ExStepI(
+        SynTree::ident(t),
+        SynTree::expr(a),
+        SynTree::opt(SynTree::expr, g),
+        SynTree::map(
+          (m: SynStepArm) => StepArmI(
+            SynTree::map(SynTree::binder, m.binders),
+            SynTree::expr(m.goal),
+            SynTree::expr(m.body)
+          ),
+          arms
+        )
+      )
+    }
+  }
+
+  pub fn pattern(p: SynPattern): SynPatternI {
+    match p {
+      PtWild => PtWildI
+      PtBind(i) => PtBindI(SynTree::ident(i))
+      PtInt(n) => PtIntI(std::prelude::Text::of_i64(n))
+      PtBool(b) => PtBoolI(b)
+      PtText(t) => PtTextI(t)
+      PtCtor(n, ps) => PtCtorI(SynTree::ident(n), SynTree::map(SynTree::pattern, ps))
+      PtRecord(n, fs) => PtRecordI(
+        SynTree::ident(n),
+        SynTree::map(
+          (f: SynPattern × Text) => match f { #(q, n) => PatternFieldI(SynTree::pattern(q), n) },
+          fs
+        )
+      )
+    }
+  }
+
+  pub fn arm(a: SynArm): SynArmI {
+    ArmI(
+      SynTree::pattern(a.pattern),
+      SynTree::opt(SynTree::expr, a.guard),
+      SynTree::opt(SynTree::expr, a.goal),
+      SynTree::expr(a.body)
+    )
+  }
+
+  pub fn handler(h: SynHandler): SynHandlerI {
+    match h {
+      HReturn(p, b) => HReturnI(SynTree::pattern(p), SynTree::expr(b))
+      HOp(op, ps, k, t, b, binds, args) => HOpI(
+        SynTree::ident(op),
+        SynTree::map(SynTree::pattern, ps),
+        SynTree::opt(SynTree::ident, k),
+        SynTree::opt(SynTree::expr, t),
+        SynTree::expr(b),
+        binds,
+        SynTree::map(SynTree::expr, args)
+      )
+    }
+  }
+
+  fn typed(p: SynExpr × SynIdent): SynTypedI {
+    match p { #(t, n) => TypedI(SynTree::expr(t), SynTree::ident(n)) }
+  }
+
+  pub fn fn_decl(f: SynFn): SynFnI {
+    FnI(
+      SynTree::ident(f.name),
+      f.generics,
+      SynTree::map(SynTree::expr, f.generic_types),
+      f.bounds,
+      SynTree::map(SynTree::ident, f.params),
+      f.borrows,
+      SynTree::map((t: Option(SynExpr)) => SynTree::opt(SynTree::expr, t), f.param_types),
+      SynTree::opt(SynTree::expr, f.result),
+      f.effects,
+      SynTree::expr(f.body)
+    )
+  }
+
+  pub fn theorem_decl(t: SynTheorem): SynTheoremI {
+    TheoremI(
+      SynTree::ident(t.name),
+      std::prelude::Text::of_u64(t.implicit),
+      SynTree::map(SynTree::typed, t.params),
+      SynTree::expr(t.ty),
+      SynTree::opt(SynTree::expr, t.body)
+    )
+  }
+
+  pub fn ctor(c: SynCtor): SynCtorI {
+    CtorI(
+      SynTree::ident(c.name),
+      SynTree::map(
+        (f: Option(SynIdent) × SynExpr) => match f {
+          #(n, t) => CtorFieldI(SynTree::opt(SynTree::ident, n), SynTree::expr(t))
+        },
+        c.fields
+      )
+    )
+  }
+
+  pub fn ind_ctor(c: SynIndCtor): SynIndCtorI {
+    IndCtorI(
+      SynTree::ident(c.name),
+      std::prelude::Text::of_u64(c.implicit),
+      SynTree::map(SynTree::typed, c.params),
+      SynTree::expr(c.result)
+    )
+  }
+
+  pub fn inductive_decl(d: SynInductive): SynInductiveI {
+    InductiveI(
+      SynTree::ident(d.name),
+      SynTree::map(SynTree::typed, d.params),
+      SynTree::expr(d.sort),
+      SynTree::map(SynTree::ind_ctor, d.ctors)
+    )
+  }
+
+  pub fn data(d: SynData): SynDataI {
+    DataI(d.kind, SynTree::ident(d.name), d.generics, SynTree::map(SynTree::ctor, d.ctors))
+  }
+
+  pub fn effect_decl(e: SynEffect): SynEffectI {
+    EffectI(
+      SynTree::ident(e.name),
+      e.generics,
+      SynTree::map((t: Option(SynExpr)) => SynTree::opt(SynTree::expr, t), e.params),
+      SynTree::opt(SynTree::expr, e.result),
+      e.r#resume
+    )
+  }
+
+  pub fn stmt(s: SynStmt): SynStmtI {
+    match s {
+      StLet(n, t, v, a, b, sp) => StLetI(
+        SynTree::ident(n),
+        SynTree::opt(SynTree::expr, t),
+        SynTree::expr(v),
+        a,
+        b
+      )
+      StVar(n, t, v, a, sp) => StVarI(
+        SynTree::ident(n),
+        SynTree::opt(SynTree::expr, t),
+        SynTree::expr(v),
+        a
+      )
+      StAssign(n, v, sp) => StAssignI(SynTree::ident(n), SynTree::expr(v))
+      StFn(f) => StFnI(SynTree::fn_decl(f))
+      StExpr(v) => StExprI(SynTree::expr(v))
+      StWhile(c, b) => StWhileI(SynTree::expr(c), SynTree::expr(b))
+      StReturn(v) => StReturnI(SynTree::opt(SynTree::expr, v))
+      StTheorem(t) => StTheoremI(SynTree::theorem_decl(t))
+      StDef(t) => StDefI(SynTree::theorem_decl(t))
+      StStruct(d) => StStructI(SynTree::data(d))
+      StEnum(d) => StEnumI(SynTree::data(d))
+      StInductive(d) => StInductiveI(SynTree::inductive_decl(d))
+      StEffect(e) => StEffectI(SynTree::effect_decl(e))
+      StMutual(ss, sp) => StMutualI(SynTree::map(SynTree::stmt, ss))
+      StMacroCall(n, t, sp) => StMacroCallI(SynTree::ident(n), t)
+    }
+  }
+}
+
+// From the trees the proofs see back to what a macro makes. A name written at
+// a position is made again there, with no scopes; a name with no position is a
+// declaration of the standard library, and one marked `local` a fresh binder.
+module SynTreeBack {
+  fn map<A, B, !e>(f: (A) -> B ! e, xs: List(A)): List(B) ! e {
+    match xs {
+      Nil => Nil
+      Cons(x, rest) => Cons(f(x), SynTreeBack::map(f, rest))
+    }
+  }
+
+  fn opt<A, B, !e>(f: (A) -> B ! e, o: Option(A)): Option(B) ! e {
+    match o {
+      None => None
+      Some(x) => Some(f(x))
+    }
+  }
+
+  fn digits(t: Text, i: u64, acc: u64): u64 {
+    match std::prelude::Text::byte(t, i) {
+      None => acc
+      Some(b) => SynTreeBack::digits(t, i + 1, acc * 10 + (std::prelude::U64::of_u8(b) - 48))
+    }
+  }
+
+  // A written integer pattern: the digits, after a `-` when negative.
+  fn int(t: Text): i64 {
+    match std::prelude::Text::byte(t, 0) {
+      None => std::prelude::I64::of_u64(0)
+      Some(b) => if b == 45 {
+        std::prelude::I64::of_u64(0) - std::prelude::I64::of_u64(SynTreeBack::digits(t, 1, 0))
+      } else {
+        std::prelude::I64::of_u64(SynTreeBack::digits(t, 0, 0))
+      }
+    }
+  }
+
+  fn at(): SynSpan { SynSpan { id: 0 } }
+
+  pub fn ident(i: SynIdentI): SynIdent {
+    match i {
+      IdentI(name, written) => if written == "" {
+        Syn::global(name)
+      } else if written == "local" {
+        SynIdent {
+          name: name,
+          ctx: SynCtx { scopes: Nil },
+          span: SynTreeBack::at(),
+          declaration: None
+        }
+      } else {
+        SynIdent {
+          name: name,
+          ctx: SynCtx { scopes: Nil },
+          span: SynSpan { id: SynTreeBack::digits(written, 0, 0) },
+          declaration: None
+        }
+      }
+    }
+  }
+
+  pub fn binder(b: SynBinderI): SynBinder {
+    match b {
+      BNameI(i, t) => BName(SynTreeBack::ident(i), SynTreeBack::opt(SynTreeBack::expr, t))
+      BAtomI(a, t) => BAtom(SynTreeBack::digits(a, 0, 0), SynTreeBack::opt(SynTreeBack::expr, t))
+    }
+  }
+
+  pub fn param(p: SynParamI): SynParam {
+    match p {
+      ParamI(n, t) => SynParam {
+        name: SynTreeBack::opt(SynTreeBack::ident, n),
+        ty: SynTreeBack::expr(t)
+      }
+    }
+  }
+
+  pub fn pattern(p: SynPatternI): SynPattern {
+    match p {
+      PtWildI => PtWild
+      PtBindI(i) => PtBind(SynTreeBack::ident(i))
+      PtIntI(d) => PtInt(SynTreeBack::int(d))
+      PtBoolI(b) => PtBool(b)
+      PtTextI(t) => PtText(t)
+      PtCtorI(n, ps) => PtCtor(SynTreeBack::ident(n), SynTreeBack::map(SynTreeBack::pattern, ps))
+      PtRecordI(n, fs) => PtRecord(
+        SynTreeBack::ident(n),
+        SynTreeBack::map(
+          (f: SynPatternFieldI) => match f { PatternFieldI(q, m) => #(SynTreeBack::pattern(q), m) },
+          fs
+        )
+      )
+    }
+  }
+
+  pub fn arm(a: SynArmI): SynArm {
+    match a {
+      ArmI(p, g, goal, b) => SynArm {
+        pattern: SynTreeBack::pattern(p),
+        guard: SynTreeBack::opt(SynTreeBack::expr, g),
+        goal: SynTreeBack::opt(SynTreeBack::expr, goal),
+        body: SynTreeBack::expr(b)
+      }
+    }
+  }
+
+  pub fn handler(h: SynHandlerI): SynHandler {
+    match h {
+      HReturnI(p, b) => HReturn(SynTreeBack::pattern(p), SynTreeBack::expr(b))
+      HOpI(op, ps, k, t, b, binds, args) => HOp(
+        SynTreeBack::ident(op),
+        SynTreeBack::map(SynTreeBack::pattern, ps),
+        SynTreeBack::opt(SynTreeBack::ident, k),
+        SynTreeBack::opt(SynTreeBack::expr, t),
+        SynTreeBack::expr(b),
+        binds,
+        SynTreeBack::map(SynTreeBack::expr, args)
+      )
+    }
+  }
+
+  pub fn stmt(s: SynStmtI): SynStmt {
+    match s {
+      StLetI(n, t, v, a, b) => StLet(
+        SynTreeBack::ident(n),
+        SynTreeBack::opt(SynTreeBack::expr, t),
+        SynTreeBack::expr(v),
+        a,
+        b,
+        SynTreeBack::at()
+      )
+      StExprI(v) => StExpr(SynTreeBack::expr(v))
+      StVarI(n, t, v, a) => StVar(
+        SynTreeBack::ident(n),
+        SynTreeBack::opt(SynTreeBack::expr, t),
+        SynTreeBack::expr(v),
+        a,
+        SynTreeBack::at()
+      )
+      StAssignI(n, v) => StAssign(SynTreeBack::ident(n), SynTreeBack::expr(v), SynTreeBack::at())
+      StWhileI(c, b) => StWhile(SynTreeBack::expr(c), SynTreeBack::expr(b))
+      StReturnI(v) => StReturn(SynTreeBack::opt(SynTreeBack::expr, v))
+      StMutualI(ss) => StMutual(SynTreeBack::map(SynTreeBack::stmt, ss), SynTreeBack::at())
+      StMacroCallI(n, t) => StMacroCall(SynTreeBack::ident(n), t, SynTreeBack::at())
+      // A declaration inside a proof is not something Proof-lang makes.
+      StFnI(d) => StExpr(ExUnit(SynTreeBack::at()))
+      StTheoremI(d) => StExpr(ExUnit(SynTreeBack::at()))
+      StDefI(d) => StExpr(ExUnit(SynTreeBack::at()))
+      StStructI(d) => StExpr(ExUnit(SynTreeBack::at()))
+      StEnumI(d) => StExpr(ExUnit(SynTreeBack::at()))
+      StInductiveI(d) => StExpr(ExUnit(SynTreeBack::at()))
+      StEffectI(d) => StExpr(ExUnit(SynTreeBack::at()))
+    }
+  }
+
+  pub fn expr(e: SynExprI): SynExpr {
+    match e {
+      ExVarI(i) => ExVar(SynTreeBack::ident(i))
+      ExAtomI(a) => ExAtom(SynTreeBack::digits(a, 0, 0), SynTreeBack::at())
+      ExNatI(d) => ExNat(d, SynTreeBack::at())
+      ExTextI(t) => ExText(t, SynTreeBack::at())
+      ExBoolI(b) => ExBool(b, SynTreeBack::at())
+      ExAppI(f, xs) => ExApp(
+        SynTreeBack::expr(f),
+        SynTreeBack::map(SynTreeBack::expr, xs),
+        SynTreeBack::at()
+      )
+      ExPiI(ps, r, fx) => ExPi(
+        SynTreeBack::map(SynTreeBack::param, ps),
+        SynTreeBack::expr(r),
+        fx,
+        SynTreeBack::at()
+      )
+      ExLamI(bs, b) => ExLam(
+        SynTreeBack::map(SynTreeBack::binder, bs),
+        SynTreeBack::expr(b),
+        SynTreeBack::at()
+      )
+      ExIfI(c, y, n) => ExIf(
+        SynTreeBack::expr(c),
+        SynTreeBack::expr(y),
+        SynTreeBack::opt(SynTreeBack::expr, n),
+        SynTreeBack::at()
+      )
+      ExFieldI(b, n) => ExField(SynTreeBack::expr(b), n, SynTreeBack::at())
+      ExBlockI(ss) => ExBlock(SynTreeBack::map(SynTreeBack::stmt, ss), SynTreeBack::at())
+      ExPerformI(op, xs) => ExPerform(
+        SynTreeBack::ident(op),
+        SynTreeBack::map(SynTreeBack::expr, xs),
+        SynTreeBack::at()
+      )
+      ExHandleI(b, hs) => ExHandle(
+        SynTreeBack::expr(b),
+        SynTreeBack::map(SynTreeBack::handler, hs),
+        SynTreeBack::at()
+      )
+      ExBudgetI(l, b) => ExBudget(SynTreeBack::expr(l), SynTreeBack::expr(b), SynTreeBack::at())
+      ExBudgetMemoryI(l, b) => ExBudgetMemory(
+        SynTreeBack::expr(l),
+        SynTreeBack::expr(b),
+        SynTreeBack::at()
+      )
+      ExMatchI(s, m, arms, q) => ExMatch(
+        SynTreeBack::expr(s),
+        SynTreeBack::opt(SynTreeBack::expr, m),
+        SynTreeBack::map(SynTreeBack::arm, arms),
+        SynTreeBack::opt(SynTreeBack::ident, q),
+        SynTreeBack::at()
+      )
+      ExRecordI(n, fs) => ExRecord(
+        SynTreeBack::ident(n),
+        SynTreeBack::map(
+          (f: SynFieldI) => match f { FieldI(v, m) => #(SynTreeBack::expr(v), m) },
+          fs
+        ),
+        SynTreeBack::at()
+      )
+      ExBorrowI(m, v) => ExBorrow(m, SynTreeBack::expr(v), SynTreeBack::at())
+      ExUnionI(ms) => ExUnion(SynTreeBack::map(SynTreeBack::expr, ms), SynTreeBack::at())
+      ExProductI(ms) => ExProduct(SynTreeBack::map(SynTreeBack::expr, ms), SynTreeBack::at())
+      ExTaggedI(t, v) => ExTagged(t, SynTreeBack::expr(v), SynTreeBack::at())
+      ExExistsI(b, t, body) => ExExists(
+        SynTreeBack::binder(b),
+        SynTreeBack::expr(t),
+        SynTreeBack::expr(body),
+        SynTreeBack::at()
+      )
+      ExFnKindI(k, t) => ExFnKind(k, SynTreeBack::expr(t), SynTreeBack::at())
+      ExBorrowLamI(bs, b) => ExBorrowLam(bs, SynTreeBack::expr(b), SynTreeBack::at())
+      ExMacroCallI(n, t) => ExMacroCall(SynTreeBack::ident(n), t, SynTreeBack::at())
+      ExMacroExprI(n, a) => ExMacroExpr(
+        SynTreeBack::ident(n),
+        SynTreeBack::expr(a),
+        SynTreeBack::at()
+      )
+      ExHoleI(n) => ExHole(n, SynTreeBack::at())
+      ExUnitI => ExUnit(SynTreeBack::at())
+      ExStepI(t, a, g, arms) => ExStep(
+        SynTreeBack::ident(t),
+        SynTreeBack::expr(a),
+        SynTreeBack::opt(SynTreeBack::expr, g),
+        SynTreeBack::map(
+          (m: SynStepArmI) => match m {
+            StepArmI(bs, goal, body) => SynStepArm {
+              binders: SynTreeBack::map(SynTreeBack::binder, bs),
+              goal: SynTreeBack::expr(goal),
+              body: SynTreeBack::expr(body)
+            }
+          },
+          arms
+        ),
+        SynTreeBack::at()
+      )
+    }
+  }
+}

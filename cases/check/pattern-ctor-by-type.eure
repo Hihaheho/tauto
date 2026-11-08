@@ -1,0 +1,209 @@
+// A constructor written in a pattern by its short name is read as the
+// constructor of that name of the matched value's type, when that type is
+// written where the value is bound: two imported types may share
+// constructor names, and the pattern still names one.
+
+@ cases.a-pattern-constructor-is-the-one-of-the-matched-type
+files."a.taut" = ```tauto
+pub(open) inductive Fault: Type {
+  Short: Fault
+  Long: Fault
+}
+```
+files."b.taut" = ```tauto
+pub(open) inductive Error: Type {
+  Short: Error
+  Long: Error
+  Odd: Error
+}
+```
+files."main.nib" = ```tauto
+import "a.taut"
+import "b.taut"
+fn code(f: Fault): Nat {
+  ⊢ Nat from match f {
+    Short => 1
+    Long => 2
+  }
+}
+fn ecode(e: Error): Nat {
+  ⊢ Nat from match e {
+    Short => 1
+    Long => 2
+    Odd => 3
+  }
+}
+theorem code_short(): code(a.Short) = 1 { Refl }
+theorem ecode_short(): ecode(b.Short) = 1 { Refl }
+```
+checks.code = "ok"
+checks.ecode = "ok"
+checks.code_short = "ok"
+checks.ecode_short = "ok"
+
+@ cases.a-let-with-a-written-type-gives-the-matched-type
+files."a.taut" = ```tauto
+pub(open) inductive Fault: Type {
+  Short: Fault
+  Long: Fault
+}
+```
+files."b.taut" = ```tauto
+pub(open) inductive Error: Type {
+  Short: Error
+  Long: Error
+  Odd: Error
+}
+```
+files."main.nib" = ```tauto
+import "a.taut"
+import "b.taut"
+fn code(): Nat {
+  let f: Fault := a.Long
+  ⊢ Nat from match f {
+    Short => 1
+    Long => 2
+  }
+}
+```
+checks.code = "ok"
+
+@ cases.a-constructor-of-another-type-is-refused
+files."a.taut" = ```tauto
+pub(open) inductive Fault: Type {
+  Short: Fault
+  Long: Fault
+}
+```
+files."b.taut" = ```tauto
+pub(open) inductive Error: Type {
+  Short: Error
+  Long: Error
+  Odd: Error
+}
+```
+files."main.nib" = ```tauto
+import "a.taut"
+import "b.taut"
+fn code(f: Fault): Nat {
+  ⊢ Nat from match f {
+    Short => 1
+    Odd => 2
+  }
+}
+```
+checks.code = "error: `Error::Odd` is a constructor of `Error`, not `Fault`; a name in a pattern that is a constructor matches that constructor, so to bind the value write a name that is not one, like `odd_`"
+
+@ cases.a-shared-name-the-matched-type-lacks-is-refused
+files."a.taut" = ```tauto
+pub(open) inductive Fault: Type {
+  Short: Fault
+  Long: Fault
+}
+```
+files."b.taut" = ```tauto
+pub(open) inductive Error: Type {
+  Short: Error
+  Long: Error
+  Odd: Error
+}
+```
+files."c.taut" = ```tauto
+pub(open) inductive Other: Type {
+  Only: Other
+}
+```
+files."main.nib" = ```tauto
+import "a.taut"
+import "b.taut"
+import "c.taut"
+fn code(o: Other): Nat {
+  ⊢ Nat from match o {
+    Short => 1
+  }
+}
+```
+checks."main.nib::macro" = "error: `Short` is not a constructor of `Other`, the type of the matched value; it is declared as `a::Fault::Short` and `b::Error::Short`"
+
+@ cases.a-synthesized-scrutinee-type-picks-a-shared-constructor
+files."a.taut" = ```tauto
+pub(open) inductive Fault: Type {
+  Short: Fault
+  Long: Fault
+}
+```
+files."b.taut" = ```tauto
+pub(open) inductive Error: Type {
+  Short: Error
+  Long: Error
+  Odd: Error
+}
+```
+files."main.nib" = ```tauto
+import "a.taut"
+import "b.taut"
+fn code(): Nat {
+  ⊢ Nat from match a::Fault::Long {
+    Short => 1
+    a::Fault::Long => 2
+  }
+}
+```
+checks.code = "ok"
+
+// A name in a pattern that some visible constructor has is that
+// constructor, whatever type is matched: it never quietly becomes a binder,
+// so importing a file cannot change what a pattern means. The error says
+// how to bind instead.
+@ cases.a-binder-named-like-a-constructor-is-refused-with-a-hint
+files."a.taut" = ```tauto
+pub(open) inductive Item: Type {
+  Cert(n: Nat, m: Nat): Item
+}
+```
+files."main.nib" = ```tauto
+import "a.taut"
+fn first(xs: List(Nat)): Nat {
+  ⊢ Nat from match xs {
+    Nil => 0
+    Cons(Cert, rest) => Cert
+  }
+}
+fn first_(xs: List(Nat)): Nat {
+  ⊢ Nat from match xs {
+    Nil => 0
+    Cons(cert_, rest) => cert_
+  }
+}
+```
+checks.first = "error: `Item::Cert` is a constructor of `Item`, not `Nat`; a name in a pattern that is a constructor matches that constructor, so to bind the value write a name that is not one, like `cert_`"
+checks.first_ = "ok"
+
+// A pattern's head that is no constructor is refused at that pattern, with
+// the matched type's constructor of a near spelling (here the lower-case
+// spelling of `Mk`).
+@ cases.a-misspelled-constructor-names-the-near-one
+files."main.nib" = ```tauto
+inductive Pair: Type {
+  Mk(a: Nat, b: Nat): Pair
+}
+fn pair_fst(p: Pair): Nat {
+  ⊢ Nat from match p {
+    mk(x, y) => x
+  }
+}
+```
+checks.pair_fst = "error: `mk` is not a constructor; did you mean `main::Pair::Mk`?"
+
+@ cases.a-name-near-no-constructor-has-no-hint
+files."main.nib" = ```tauto
+inductive Pair: Type {
+  Mk(a: Nat, b: Nat): Pair
+}
+fn pair_fst(p: Pair): Nat {
+  ⊢ Nat from match p {
+    Triple(x, y) => x
+  }
+}
+```
+checks.pair_fst = "error: `Triple` is not a constructor"

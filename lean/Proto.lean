@@ -45,4 +45,14 @@ import Proto.Kernel.WhNorm
 import Proto.Kernel.ConvComplete
 import Proto.Kernel.BidirComplete
 import Proto.Kernel.Normalization
+import Proto.Kernel.Quotient
+import Proto.Kernel.QuotEq
+import Proto.Kernel.PerModel
+import Proto.Kernel.QuotSound
 import Proto.Macro
+import Proto.Cycle
+import Proto.Handlers
+import Proto.Collect
+import Proto.Analysis
+import Proto.Nib.KeptFrames
+import Proto.Memory

@@ -9,7 +9,7 @@ import "unify_sound.taut"
 // Syntactic variable scope, independent of whether a variable is solved.
 mutual {
   pub fn TypeAllocated(limit: Nat, ty: Ty): Prop {
-    match ty: Prop {
+    ⊢ Prop from match ty {
       TyInt(width) => True
       TyBool => True
       TyText => True
@@ -34,7 +34,7 @@ mutual {
     }
   }
   pub fn TypeListAllocated(limit: Nat, types: List(Ty)): Prop {
-    match types: Prop {
+    ⊢ Prop from match types {
       Nil => True
       Cons(head, tail) => And(TypeAllocated(limit, head), TypeListAllocated(limit, tail))
     }
@@ -48,7 +48,7 @@ mutual {
     advanced: Nat::le(before, after) = true,
     h: TypeAllocated(before, ty)
   ): TypeAllocated(after, ty) {
-    match ty: TypeAllocated(after, ty) {
+    ⊢ TypeAllocated(after, ty) from match ty {
       TyInt(width) => Trivial
       TyBool => Trivial
       TyText => Trivial
@@ -82,7 +82,7 @@ mutual {
     advanced: Nat::le(before, after) = true,
     h: TypeListAllocated(before, types)
   ): TypeListAllocated(after, types) {
-    match types: TypeListAllocated(after, types) {
+    ⊢ TypeListAllocated(after, types) from match types {
       Nil => Trivial
       Cons(head, tail) => AndIntro(
         type_allocated_weaken(head, before, after, advanced, And::left(h)),

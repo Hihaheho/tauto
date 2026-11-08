@@ -1,10 +1,20 @@
 //! Checked pattern decomposition and fall-through.
 use super::*;
 
+fn selected(site: &CtorSite, written: &Name) -> bool {
+    site.written == *written
+        || matches!(written, Name::Selection(selection)
+        if site.written.as_global().is_some_and(|reference| selection.candidates().contains(reference)))
+}
+
 impl Eraser<'_> {
     pub(super) fn prop(&self, t: &SurfaceTerm) -> bool {
         match &*t.kind {
-            TermKind::Var(n) => self.checked.props.contains(n) || n == "Prop" || n == "=",
+            TermKind::Var(n) => {
+                self.checked.props.contains(n)
+                    || n.sort_symbol() == Some(tauto_surface::identity::SortSymbol::Proposition)
+                    || tauto_surface::bindings::is_library(n, "=")
+            }
             TermKind::App { function, .. } => self.prop(function),
             TermKind::Pi { result, .. } => self.prop(result),
             _ => false,
@@ -15,7 +25,7 @@ impl Eraser<'_> {
         s: &SurfaceTerm,
         arms: &[MatchArm],
         locals: &Scope,
-    ) -> Result<String, String> {
+    ) -> Result<String, Message> {
         if arms.is_empty() {
             return Ok("extract_unreachable()".into());
         }
@@ -28,7 +38,9 @@ impl Eraser<'_> {
                 .checked
                 .ctor_sites
                 .iter()
-                .find(|site| site.span == arm.body.span && site.written == *written)
+                .find(|site| {
+                    !site.expression && site.occurrence == arm.body.id() && selected(site, written)
+                })
                 .map_or(written, |site| &site.resolved);
             self.checked
                 .families
@@ -37,7 +49,7 @@ impl Eraser<'_> {
         });
         if proof_match {
             let [arm] = arms else {
-                return Err(msg!("tauto-extract-a-match-on-a-proof").to_string());
+                return Err(msg!("tauto-extract-a-match-on-a-proof"));
             };
             let mut inner = locals.clone();
             inner.erase_pattern(&arm.pattern);
@@ -53,7 +65,7 @@ impl Eraser<'_> {
                 .checked
                 .ctor_sites
                 .iter()
-                .filter(|s| s.span == arm.body.span)
+                .filter(|s| !s.expression && s.occurrence == arm.body.id())
                 .collect();
             let mut inner = locals.clone();
             let mut tests = Vec::new();
@@ -115,15 +127,15 @@ impl Eraser<'_> {
         locals: &mut Scope,
         tests: &mut Vec<String>,
         binds: &mut Vec<String>,
-    ) -> Result<String, String> {
+    ) -> Result<String, Message> {
         let (written, args) = match p {
             Pattern::Wild => return Ok("_".into()),
             Pattern::Bind(n)
                 if !self.checked.signatures.contains_key(n)
-                    && !notes.get(*at).is_some_and(|s| s.written == *n) =>
+                    && !notes.get(*at).is_some_and(|s| selected(s, n)) =>
             {
                 locals.insert(n.clone());
-                return Ok(raw(n));
+                return Ok(self.symbol(n));
             }
             Pattern::Bind(n) => (n, &[][..]),
             Pattern::Ctor { name, args } => (name, args.as_slice()),
@@ -132,7 +144,7 @@ impl Eraser<'_> {
             _ => return Err("dependent extraction: unsupported pattern".into()),
         };
         let name = if let Some(site) = notes.get(*at)
-            && site.written == *written
+            && selected(site, written)
         {
             *at += 1;
             site.resolved.clone()
@@ -164,7 +176,7 @@ impl Eraser<'_> {
                 locals.insert(value.clone());
                 binds.push(format!(
                     "let {} := {}",
-                    raw(value),
+                    self.symbol(value),
                     pack.replace("$v", &format!("extract_i64_int({n})"))
                 ));
                 return Ok(format!("TautoErasedI64#r0({n})"));
@@ -209,17 +221,17 @@ impl Eraser<'_> {
         binds: &mut Vec<String>,
         value: &str,
         depth: usize,
-    ) -> Result<(), String> {
+    ) -> Result<(), Message> {
         let name = match pattern {
-            Pattern::Bind(n) | Pattern::Ctor { name: n, .. } => Some(n.as_str()),
+            Pattern::Bind(n) | Pattern::Ctor { name: n, .. } => Some(n),
             _ => None,
         };
         let resolved = name.map(|n| {
             if let Some(site) = notes.get(*at)
-                && site.written == n
+                && selected(site, n)
             {
                 *at += 1;
-                site.resolved.as_str()
+                &site.resolved
             } else {
                 n
             }
@@ -246,7 +258,10 @@ impl Eraser<'_> {
                     format!("{value} >= {depth}")
                 });
                 locals.insert(n.clone());
-                binds.push(format!("let {} := {NAT}({value} - {depth})", raw(n)));
+                binds.push(format!(
+                    "let {} := {NAT}({value} - {depth})",
+                    self.symbol(n)
+                ));
                 Ok(())
             }
             (_, Pattern::Wild) => {

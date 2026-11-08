@@ -1,0 +1,185 @@
+import std::prelude::Macro { Syn, SynHighlight, SynTok }
+import std::prelude::Std { List, Option }
+import std::prelude::Shared { concat }
+
+// How `tauto fmt` lays a Proof-lang document out, and how an editor colours it.
+// The indentation decides how the sentences nest, so every line keeps the
+// column it starts at; only the white space inside a line changes. A run of
+// blank lines becomes one. The Proof-code puts one label's entry on a line.
+module ProofLayout {
+  fn repeat(t: Text, n: u64): Text ! {Div} {
+    if n == 0 { "" } else { concat(t, ProofLayout::repeat(t, n - 1)) }
+  }
+
+  // The number of line breaks of a `Line` token, and the column after the last.
+  fn breaks(t: Text, i: u64, count: u64, column: u64): u64 × u64 ! {Div} {
+    match std::prelude::Text::byte(t, i) {
+      None => #(count, column)
+      Some(b) => if b == 10 {
+        ProofLayout::breaks(t, i + 1, count + 1, 0)
+      } else if b == 13 {
+        ProofLayout::breaks(t, i + 1, count, column)
+      } else {
+        ProofLayout::breaks(t, i + 1, count, column + 1)
+      }
+    }
+  }
+
+  fn white(t: SynTok): Bool { t.skipped || t.kind == "Line" || t.kind == "Space" }
+
+  // Whether the token that follows `previous` is written against it.
+  fn tight(previous: Text, t: Text): Bool {
+    t == "." || t == "," || t == ":" || t == ")" || t == "]" || previous == "(" || previous == "["
+  }
+
+  fn word_like(kind: Text): Bool {
+    kind == "Name" || kind == "Number" || kind == "TautoExpr" || kind == "Lambda"
+  }
+
+  // Proof-prose: `base` is the column of the first sentence, `line` whether
+  // nothing is written yet on the current line, `space` whether white space
+  // was written before the next token.
+  fn prose(
+    ts: List(SynTok),
+    base: u64,
+    started: Bool,
+    line: Bool,
+    space: Bool,
+    previous: Text
+  ): Text ! {Div} {
+    match ts {
+      Nil => "\n"
+      Cons(t, rest) => if t.skipped {
+        ProofLayout::prose(rest, base, started, line, space, previous)
+      } else if t.kind == "Space" {
+        if started {
+          ProofLayout::prose(rest, base, started, line, true, previous)
+        } else {
+          let column := std::prelude::Text::len(t.text)
+          concat(
+            ProofLayout::repeat(" ", column),
+            ProofLayout::prose(rest, column, started, true, false, previous)
+          )
+        }
+      } else if t.kind == "Line" {
+        match ProofLayout::breaks(t.text, 0, 0, 0) {
+          #(count, column) => if ProofLayout::next_text(rest) == "" {
+            "\n"
+          } else if started {
+            let lines := if count > 2 { 2 } else { count }
+            concat(
+              ProofLayout::repeat("\n", lines),
+              concat(
+                ProofLayout::repeat(" ", column),
+                ProofLayout::prose(rest, base, started, true, false, previous)
+              )
+            )
+          } else {
+            concat(
+              ProofLayout::repeat(" ", column),
+              ProofLayout::prose(rest, column, started, true, false, previous)
+            )
+          }
+        }
+      } else if t.kind == "Divider" {
+        let prefix := if line { "" } else { concat("\n\n", ProofLayout::repeat(" ", base)) }
+        concat(prefix, concat(t.text, ProofLayout::code(rest, base, t.text, "Divider")))
+      } else {
+        let gap := not(line) && (space || previous == "." || previous == ",") && not(
+          ProofLayout::tight(previous, t.text)
+        )
+        concat(
+          if gap { " " } else { "" },
+          concat(t.text, ProofLayout::prose(rest, base, true, false, false, t.text))
+        )
+      }
+    }
+  }
+
+  // Proof-code: an entry `[label] item; item` to a line, at the column of the first sentence.
+  fn code(ts: List(SynTok), base: u64, previous: Text, kind: Text): Text ! {Div} {
+    match ts {
+      Nil => "\n"
+      Cons(t, rest) => if ProofLayout::white(t) {
+        ProofLayout::code(rest, base, previous, kind)
+      } else {
+        let prefix := if t.text == "[" {
+          concat("\n", ProofLayout::repeat(" ", base))
+        } else if previous == "]" || previous == ";" || previous == "," || previous == "." {
+          " "
+        } else if ProofLayout::word_like(kind) && ProofLayout::word_like(t.kind) {
+          " "
+        } else {
+          ""
+        }
+        concat(prefix, concat(t.text, ProofLayout::code(rest, base, t.text, t.kind)))
+      }
+    }
+  }
+
+  fn mark(
+    t: SynTok,
+    kind: Text
+  ): SynHighlight { SynHighlight { start: t.start, end: t.end, kind: kind } }
+
+  fn key(t: SynTok): SynHighlight {
+    ProofLayout::mark(t, if Syn::all_digits(t.text, 0) { "number" } else { "variable" })
+  }
+
+  fn punctuation(t: Text): Bool {
+    t == "[" || t == "]" || t == "." || t == "," || t == ":" || t == "=" || t == ":=" || t == "(" || t == ")" || t == ";" || t == "%%"
+  }
+
+  fn next_text(ts: List(SynTok)): Text {
+    match ts {
+      Nil => ""
+      Cons(t, rest) => if ProofLayout::white(t) { ProofLayout::next_text(rest) } else { t.text }
+    }
+  }
+
+  // The first word of each clause, the word that names its sentence form, is a keyword.
+  // `clause` is whether the next word starts a clause, `label` whether it is in a label.
+  fn marks(ts: List(SynTok), code: Bool, clause: Bool, label: Bool): List(SynHighlight) ! {Div} {
+    match ts {
+      Nil => Nil
+      Cons(t, rest) => if ProofLayout::white(t) || t.kind == "TautoExpr" {
+        ProofLayout::marks(rest, code, clause, label)
+      } else if label && t.text != "]" {
+        Cons(ProofLayout::key(t), ProofLayout::marks(rest, code, clause, label))
+      } else if ProofLayout::punctuation(t.text) {
+        Cons(
+          ProofLayout::mark(t, "operator"),
+          ProofLayout::marks(
+            rest,
+            code || t.text == "%%",
+            if t.text == "." { true } else { clause },
+            t.text == "["
+          )
+        )
+      } else if t.kind == "Number" {
+        Cons(ProofLayout::mark(t, "number"), ProofLayout::marks(rest, code, false, false))
+      } else if code {
+        let kind := if t.kind == "Lambda" {
+          "keyword"
+        } else if ProofLayout::next_text(rest) == "(" {
+          "function"
+        } else {
+          "variable"
+        }
+        Cons(ProofLayout::mark(t, kind), ProofLayout::marks(rest, code, false, false))
+      } else if clause {
+        Cons(ProofLayout::mark(t, "keyword"), ProofLayout::marks(rest, code, false, false))
+      } else {
+        ProofLayout::marks(rest, code, false, false)
+      }
+    }
+  }
+
+  pub fn format(ts: List(SynTok), width: u64): Option(Text) ! {Div} {
+    Some(ProofLayout::prose(ts, 0, false, true, false, ""))
+  }
+
+  pub fn tokens(ts: List(SynTok)): List(SynHighlight) ! {Div} {
+    ProofLayout::marks(ts, false, true, false)
+  }
+}

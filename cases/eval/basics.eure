@@ -3,8 +3,8 @@
 
 @ cases.arithmetic
 source = ```nib
-let a = 1 + 2 * 3
-let f = (x, y) => x * y
+let a := 1 + 2 * 3
+let f := (x, y) => x * y
 perform show("a", a)
 perform show("b", f(a, 2))
 ```
@@ -12,9 +12,9 @@ shows = ["a = 7", "b = 14"]
 
 @ cases.a-loop
 source = ```nib
-fn sum(n: i64) -> i64 {
-  var i = 0
-  var s = 0
+fn sum(n: i64): i64 {
+  var i := 0
+  var s := 0
   while i < n {
     i := i + 1
     s := s + i
@@ -27,8 +27,8 @@ shows = ["r = 5050"]
 
 @ cases.a-continuation-resumes-twice
 source = ```nib
-effect ask: (n: i64) -> i64 resume ω
-let c = handle { perform ask(5) + 1 } with {
+effect ask(n: i64): i64 resume ω
+let c := handle { perform ask(5) + 1 } with {
   ask(n), k => k(n) + k(n + 1)
   return v => v
 }
@@ -36,12 +36,40 @@ perform show("c", c)
 ```
 shows = ["c = 13"]
 
+@ cases.a-handle-directly-in-a-handle-body-keeps-its-own-arms
+description = "the inner handle's arms and return arm belong to it alone; the outer handle gets only its own"
+source = ```nib
+effect emit(x: i64): Unit resume ω
+effect fetch(i: i64): i64 resume ω
+let c := handle {
+  handle { perform emit(1) } with {
+    emit(x), k => 100
+    return v => 7
+  }
+} with {
+  fetch(i), k => k(i)
+  return v => v
+}
+let d := handle {
+  handle { perform fetch(5) + 1 } with {
+    emit(x), k => k(#())
+    return v => v * 2
+  }
+} with {
+  fetch(i), k => k(i * 10)
+  return v => v + 1000
+}
+perform show("c", c)
+perform show("d", d)
+```
+shows = ["c = 100", "d = 1102"]
+
 @ cases.show-is-ordered-with-the-handled-computation
 source = ```nib
-effect ask: () -> i64 resume ω
-let c = handle {
+effect ask(): i64 resume ω
+let c := handle {
   perform show("before", 1)
-  let v = perform ask()
+  let v := perform ask()
   perform show("after", v)
   v
 } with {
@@ -53,11 +81,11 @@ shows = ["before = 1", "after = 2", "after = 3", "c = 5"]
 
 @ cases.a-budget-is-an-effect
 source = ```nib
-fn spin() -> i64 {
+fn spin(): i64 {
   while true { }
   0
 }
-let d = handle { budget(steps: 50) { spin() } } with {
+let d := handle { budget(steps: 50) { spin() } } with {
   exceeded(info), k => k(0 - 1)
 }
 perform show("d", d)
@@ -67,12 +95,12 @@ shows = ["d = -1"]
 @ cases.more-steps-resume-the-body
 description = "info.more(m) goes back into the stopped body; what it showed before stopping stays shown once"
 source = ```nib
-fn count(n: i64) -> i64 {
-  var i = 0
+fn count(n: i64): i64 {
+  var i := 0
   while i < n { i := i + 1 }
   i
 }
-let d = handle {
+let d := handle {
   budget(steps: 40) {
     perform show("start", 0)
     count(100)
@@ -86,17 +114,32 @@ shows = ["start = 0", "d = 100"]
 
 @ cases.unbounded-runs-the-body-to-the-end
 source = ```nib
-fn count(n: i64) -> i64 {
-  var i = 0
+fn count(n: i64): i64 {
+  var i := 0
   while i < n { i := i + 1 }
   i
 }
-let d = handle { budget(steps: 10) { count(1000) } } with {
+let d := handle { budget(steps: 10) { count(1000) } } with {
   exceeded(info), k => info.unbounded()
 }
 perform show("d", d)
 ```
 shows = ["d = 1000"]
+
+@ cases.the-arm-that-does-not-resume-gives-its-own-value
+description = "an exceeded arm that does not call k ends the handle with its own value"
+source = ```nib
+fn count(n: i64): i64 {
+  var i := 0
+  while i < n { i := i + 1 }
+  i
+}
+let d := handle { budget(steps: 10) { count(1000) } } with {
+  exceeded(info), k => 0
+}
+perform show("d", d)
+```
+shows = ["d = 0"]
 
 @ cases.div-and-mod
 source = ```nib
@@ -108,36 +151,294 @@ shows = ["q = 3", "r = 1", "n = -3"]
 
 @ cases.i32-overflows-at-its-width
 source = ```nib
-let a: i32 = 2147483647
+let a: i32 := 2147483647
 perform show("a", a + 1)
 ```
 run_error = "too large"
 
 @ cases.i64-holds-it
 source = ```nib
-let a: i64 = 2147483647
+let a: i64 := 2147483647
 perform show("a", a + 1)
 ```
 shows = ["a = 2147483648"]
+
+@ cases.i32-div-overflows-at-its-width
+source = ```nib
+fn f(a: i32, b: i32): i32 { div(a, b) }
+perform show("q", f(0 - 2147483647 - 1, 0 - 1))
+```
+run_error = "too large"
+
+@ cases.i64-div-holds-the-i32-minimum-over-minus-one
+source = ```nib
+fn f(a: i64, b: i64): i64 { div(a, b) }
+perform show("q", f(0 - 2147483647 - 1, 0 - 1))
+```
+shows = ["q = 2147483648"]
 
 @ cases.division-by-zero
 source = "perform show(\"q\", div(1, 0))"
 run_error = "division by zero"
 
+@ cases.stop-with-a-message
+source = ```nib
+fn first(xs: List(i64)): i64 ! {stop} {
+  match xs {
+    Cons(x, _) => x
+    Nil => perform stop("the list is empty")
+  }
+}
+perform show("a", first(Cons(1, Nil)))
+perform show("b", first(Nil))
+```
+run_error = "the list is empty"
+
+@ cases.a-handler-answers-stop
+source = ```nib
+import std::prelude::Os
+
+fn positive(x: i64): i64 ! {stop} {
+  if x > 0 { x } else { perform stop("not positive") }
+}
+let r := handle { positive(0 - 1) } with { stop(m) => m }
+perform show("r", r)
+```
+shows = ["r = \"not positive\""]
+
 @ cases.spawn-and-join-under-run-eager
 source = ```nib
-let r = run_eager(() => {
-  let a = perform spawn(() => 20)
-  let b = perform spawn(() => 22)
-  task_join(a) + task_join(b)
-})
+import std::prelude::Par
+
+let r := {
+  let a := perform spawn(() => 20)
+  let b := perform spawn(() => 22)
+  Task::join(a) + Task::join(b)
+}
 perform show("r", r)
 ```
 shows = ["r = 42"]
 
 @ cases.par-pairs-two-results
 source = ```nib
-let p = run_eager(() => par(() => 1 + 1, () => "x"))
+import std::prelude::Par
+
+let p := par(() => 1 + 1, () => "x")
 perform show("p", p)
 ```
-shows = ["p = Pair { fst: 2, snd: \"x\" }"]
+shows = ["p = #(2, \"x\")"]
+
+@ cases.spawn-all-starts-every-body-before-joining
+source = ```nib
+import std::prelude::Par
+
+let xs := spawn_all([() => 1, () => 2, () => 3])
+perform show("xs", xs)
+```
+shows = ["xs = Cons(1, Cons(2, Cons(3, Nil)))"]
+
+@ cases.a-channel-hands-values-over-in-order
+source = ```nib
+import std::prelude::Par
+
+let ch := Channel::new(3)
+let r := {
+  let t := perform spawn(() => {
+    Channel::send(ch, 1)
+    Channel::send(ch, 2)
+    Channel::send(ch, 3)
+  })
+  Task::join(t)
+  let a := Channel::recv(ch)
+  let b := Channel::recv(ch)
+  Channel::send(ch, 4)
+  Channel::close(ch)
+  let c := Channel::recv(ch)
+  let d := Channel::recv(ch)
+  let e := Channel::recv(ch)
+  let f := Channel::recv(ch)
+  [a, b, c, d, e, f]
+}
+perform show("r", r)
+```
+shows = ["r = Cons(Some(1), Cons(Some(2), Cons(Some(3), Cons(Some(4), Cons(None, Cons(None, Nil))))))"]
+
+@ cases.a-semaphore-gives-back-what-is-released
+source = ```nib
+import std::prelude::Par
+
+let s := Semaphore::new(2)
+Semaphore::acquire(s)
+Semaphore::acquire(s)
+Semaphore::release(s)
+Semaphore::acquire(s)
+Semaphore::release(s)
+Semaphore::release(s)
+let left := {
+  let g := Mutex::lock(s.count)
+  let &n := MutexGuard::get(&g)
+  n + 0
+}
+perform show("left", left)
+```
+shows = ["left = 2"]
+
+@ cases.task-poll-gives-the-result-of-an-ended-task
+source = ```nib
+import std::prelude::Par
+
+let r := {
+  let t := perform spawn(() => 7)
+  match Task::poll(t) {
+    Finished(v) => v
+    Running(t) => Task::join(t)
+  }
+}
+perform show("r", r)
+```
+shows = ["r = 7"]
+
+@ cases.a-match-on-a-match-uses-the-inner-value
+source = ```nib
+let x := match match 1 {
+  1 => 2
+  other => 3
+} {
+  2 => 100
+  other => 6
+}
+perform show("x", x)
+```
+shows = ["x = 100"]
+
+@ cases.mutex-take-and-put-round-trips
+source = ```nib
+import std::prelude::Par
+
+let m := Mutex::new(1)
+let a := Mutex::take(m)
+Mutex::put(m, a + 1)
+perform show("b", Mutex::take(m))
+```
+shows = ["b = 2"]
+
+@ cases.mutex-take-of-an-empty-mutex-is-a-deadlock
+source = ```nib
+let m := Mutex::new(#())
+let a := Mutex::take(m)
+let b := Mutex::take(m)
+perform show("b", b)
+```
+run_error = "deadlock"
+
+@ cases.a-memory-budget-stops-allocation
+description = "budget(memory: n) counts the cells its body allocates; a body that allocates more performs exceeded"
+source = ```nib
+enum L { Nil, Cons(i64, L) }
+fn build(n: i64, acc: L): L ! {Div} {
+  if n == 0 { acc } else { build(n - 1, Cons(n, acc)) }
+}
+fn len(l: L): i64 ! {Div} {
+  match l { Nil => 0, Cons(_, t) => 1 + len(t) }
+}
+let d := handle { budget(steps: 1000000, memory: 50) { len(build(1000, Nil)) } } with {
+  exceeded(info), k => k(0 - 1)
+}
+perform show("d", d)
+let e := handle { budget(memory: 50) { len(build(10, Nil)) } } with {
+  exceeded(info), k => k(0 - 1)
+}
+perform show("e", e)
+```
+shows = ["d = -1", "e = 10"]
+
+@ cases.more-memory-resumes-the-body
+description = "info.more(m) gives a stopped memory budget m more cells"
+source = ```nib
+enum L { Nil, Cons(i64, L) }
+fn build(n: i64, acc: L): L ! {Div} {
+  if n == 0 { acc } else { build(n - 1, Cons(n, acc)) }
+}
+fn len(l: L): i64 ! {Div} {
+  match l { Nil => 0, Cons(_, t) => 1 + len(t) }
+}
+var stops := 0
+let f := handle { budget(memory: 50) { len(build(100, Nil)) } } with {
+  exceeded(info), k => {
+    stops := stops + 1
+    info.more(50)
+  }
+}
+perform show("f", f)
+perform show("stopped", stops > 0)
+```
+shows = ["f = 100", "stopped = true"]
+
+// A program the row check rejects does not run, as `tauto run` does not run
+// it: a lambda that loops may diverge, which `twice`'s parameter does not allow.
+@ cases.a-program-the-row-check-rejects-does-not-run
+source = ```nib
+fn twice(f: (i64) -> i64, x: i64): i64 { f(f(x)) }
+perform show("r", twice((n) => {
+  var i := n
+  while i < 3 { i := i + 1 }
+  i
+}, 0))
+```
+run_error = "a function value may perform Div but its type permits {}"
+compile_errors.rust = "front: a function value may perform Div but its type permits {}"
+compile_errors.javascript = "front: a function value may perform Div but its type permits {}"
+compile_errors.vm = "front: a function value may perform Div but its type permits {}"
+
+// An `if` that gives a variable of a written struct type in one branch and a
+// literal of that struct in the other is a value of that type: the type
+// writes out the row of the function the struct holds.
+
+@ cases.a-variable-joined-with-a-struct-literal-holding-a-function
+source = ```nib
+shared struct Tool { run: (i64) -> i64 ! {Div} }
+shared struct Holder { tool: Tool, n: i64 }
+fn pick(h: Holder, b: Bool): Pair(Holder, i64) ! {Div} {
+  let next := if b { h } else { Holder { tool: h.tool, n: h.n } }
+  Pair { fst: next, snd: 1 }
+}
+let h := Holder { tool: Tool { run: (x: i64) => x * 2 }, n: 0 }
+let p := pick(h, false)
+perform show("snd", p.snd)
+perform show("run", (p.fst.tool.run)(3))
+```
+shows = ["snd = 1", "run = 6"]
+
+// The literal branch is still read against that type: a function it holds
+// that performs more than the type permits is rejected.
+@ cases.a-struct-literal-joined-with-a-variable-is-read-against-its-type
+source = ```nib
+effect ask(): i64
+shared struct Tool { run: (i64) -> i64 ! {Div} }
+shared struct Holder { tool: Tool, n: i64 }
+fn pick(h: Holder, b: Bool): Pair(Holder, i64) ! {Div} {
+  let next := if b { h } else { Holder { tool: Tool { run: (x: i64) => perform ask() }, n: h.n } }
+  Pair { fst: next, snd: 1 }
+}
+let h := Holder { tool: Tool { run: (x: i64) => x * 2 }, n: 0 }
+perform show("snd", pick(h, true).snd)
+```
+run_error = "a function value may perform ask but its type permits {Div}"
+compile_errors.rust = "front: a function value may perform ask but its type permits {Div}"
+compile_errors.javascript = "front: a function value may perform ask but its type permits {Div}"
+compile_errors.vm = "front: a function value may perform ask but its type permits {Div}"
+
+// A handler's argument is what the operation's parameter type says it is: a
+// function it takes performs the row of that type, so the arm may call it.
+@ cases.a-handler-calls-a-function-the-operation-takes
+source = ```tauto
+effect ask(ready: () -> Bool): Unit
+fn go(body: () -> i64 ! {ask}): i64 {
+  handle { body() } with {
+    ask(ready), k => { if ready() { k(#()) } else { 0 } }
+    return v => v
+  }
+}
+perform show("v", go(() => { perform ask(() => true); 1 }))
+```
+shows = ["v = 1"]

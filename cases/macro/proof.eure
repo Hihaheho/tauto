@@ -1,0 +1,206 @@
+@ cases.addition-proofs
+source = path`../../examples/nat/proof/Add.taut`
+checks.succ_inj = "ok"
+checks.succ_cong = "ok"
+checks.add_zero_r = "ok"
+checks.add_succ_r = "ok"
+checks.add_zero_l = "ok"
+checks.add_succ_l = "ok"
+checks.add_comm = "ok"
+checks.add_assoc = "ok"
+checks.add_cancel_r = "ok"
+checks.add_cancel_l = "ok"
+checks.add_left_comm = "ok"
+checks.add_eq_zero_l = "ok"
+diagnostics = []
+
+@ cases.a-false-goal
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by }
+
+theorem t(): Zero = Succ(Zero) {
+  proof!(```
+    By Refl.
+    ```)
+}
+````
+checks.t = "error: type mismatch"
+
+@ cases.a-false-conversion
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_we }
+
+theorem t(n: Nat): n = n {
+  proof!(```
+    We have n = Succ(n) = n.
+    ```)
+}
+````
+checks.t = "error: type mismatch"
+
+@ cases.a-false-conversion-after-evidence
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_we }
+
+theorem t(a: Nat, b: Nat, h: a = b): a = a {
+  proof!(```
+    We have a = b by h = a.
+    ```)
+}
+````
+checks.t = "error: type mismatch"
+
+@ cases.an-equation-chain
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_we }
+
+theorem t(a: Nat, b: Nat, c: Nat, h1: a = b, h2: b = c): a = c {
+  proof!(```
+    We have a = b by h1 = c by h2.
+    ```)
+}
+````
+checks.t = "ok"
+diagnostics = []
+
+@ cases.a-step-by-an-equation-the-other-way
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_we }
+
+theorem t(a: Nat, b: Nat, h: b = a): a = b {
+  proof!(```
+    We have a = b by h.
+    ```)
+}
+````
+checks.t = "ok"
+diagnostics = []
+
+// A name the file writes only in the literal (`lem(n)`) is a use of the
+// import that lists it.
+@ cases.a-name-written-only-in-the-prose-uses-its-import
+entry = "main.taut"
+files."Lib.taut" = ```tauto
+pub theorem lem(n: Nat): n = n { Refl }
+```
+files."main.taut" = ````tauto
+import "Lib.taut" { lem }
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by }
+
+pub theorem t(n: Nat): n = n {
+  proof!(```
+    By lem(n).
+    ```)
+}
+````
+checks.t = "ok"
+diagnostics = []
+
+// Inside `module M`, a short name in the literal means `M`'s declaration, as it
+// does outside the literal.
+@ cases.a-short-name-in-the-prose-means-the-module-s-declaration
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_we }
+
+module M {
+  pub fn g(n: Nat): Nat { n }
+  pub theorem t(n: Nat): g(n) = g(n) {
+    proof!(```
+      We have g(n) = g(n).
+      ```)
+  }
+}
+````
+checks."M::t" = "ok"
+diagnostics = []
+
+// Every sentence ends with `.`; a line without it continues the sentence.
+@ cases.a-sentence-without-its-dot-is-rejected
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_we }
+
+theorem t(a: Nat, b: Nat, h: a = b): a = b {
+  proof!(```
+    We have a
+      = b by h
+    ```)
+}
+````
+macro_error = "macro.syntax_error"
+
+// `tauto fmt` keeps the column each line starts at, which decides how the
+// sentences nest, and only tidies the white space inside a line.
+@ cases.format-keeps-the-indentation
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By   induction on n .
+      Case Zero.By Refl.
+
+
+
+      [succ] Case Succ(k)  .  By Eq::congr.
+    %%
+    [succ]   (Succ ,ih)
+    ```)
+}
+````
+format_literals = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      Case Zero. By Refl.
+
+      [succ] Case Succ(k). By Eq::congr.
+    %%
+    [succ] (Succ, ih)
+    ```)
+}
+````
+format_literals_warnings = []
+
+// The first word of each clause, which names its sentence form, is a keyword.
+@ cases.highlight-forms-labels-and-proof-code
+entry = "main.taut"
+files."main.taut" = ````tauto
+import std::Base
+import std::proof::Lang { proof }
+import std::proof::Forms { proof_by, proof_case }
+
+theorem add_zero_left(n: Nat): Nat::add(0, n) = n {
+  proof!(```
+    By induction on n.
+      Case Zero. By Refl.
+
+      [succ] Case Succ(k). By Eq::congr.
+    %%
+    [succ] (Succ, ih)
+    ```)
+}
+````
+editor_tokens = ["7:5 keyword By", "7:22 operator .", "8:7 keyword Case", "8:16 operator .", "8:18 keyword By", "8:25 operator .", "10:7 operator [", "10:8 variable succ", "10:12 operator ]", "10:14 keyword Case", "10:23 operator (", "10:25 operator )", "10:26 operator .", "10:28 keyword By", "10:40 operator .", "11:5 operator %%", "12:5 operator [", "12:6 variable succ", "12:10 operator ]", "12:12 operator (", "12:13 variable Succ", "12:17 operator ,", "12:19 variable ih", "12:21 operator )"]
+editor_token_warnings = []

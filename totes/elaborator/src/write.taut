@@ -1,4 +1,6 @@
 import "program.taut"
+import "elaborate.taut"
+import "../../kernel/src/data.taut"
 import "../../kernel/src/level.taut"
 import "../../kernel/src/term.taut"
 import "../../text/src/text.taut"
@@ -7,19 +9,19 @@ import std::Text
 
 pub fn elab_words(xs: List(Text)): Text { text_join(xs, " ") }
 pub fn elab_write_levels(xs: List(Pair(Text, Nat))): List(Text) {
-  match xs: List(Text) {
+  ⊢ List(Text) from match xs {
     Nil => Nil
     Cons(p, rest) => Cons(p.fst, Cons(Text::of_nat(p.snd), elab_write_levels(rest)))
   }
 }
 pub fn elab_write_digits(xs: List(Nat)): List(Text) {
-  match xs: List(Text) {
+  ⊢ List(Text) from match xs {
     Nil => Nil
     Cons(n, rest) => Cons(Text::of_nat(n), elab_write_digits(rest))
   }
 }
 pub fn elab_write_sort(s: KernelSort): Text {
-  match s: Text {
+  ⊢ Text from match s {
     KernelProp => "P"
     KernelType(l) => elab_words(
       Cons(
@@ -33,25 +35,25 @@ pub fn elab_write_sort(s: KernelSort): Text {
   }
 }
 pub fn elab_write_term(t: KernelTerm): Text {
-  match t: Text {
+  ⊢ Text from match t {
     KernelBVar(i) => Text::concat("b ", Text::of_nat(i))
     KernelFVar(i) => Text::concat("f ", Text::of_nat(i))
     KernelSortTerm(s) => Text::concat("s ", elab_write_sort(s))
     KernelConst(n) => Text::concat("c ", n)
-    KernelPi(a, b) => elab_words(Cons("p", Cons(elab_write_term(a), Cons(elab_write_term(b), Nil))))
-    KernelLam(b) => Text::concat("l ", elab_write_term(b))
-    KernelApp(f, a) => elab_words(
+    KernelPi(a, b, d) => elab_words(Cons("p", Cons(elab_write_term(a), Cons(elab_write_term(b), Nil))))
+    KernelLam(b, d) => Text::concat("l ", elab_write_term(b))
+    KernelApp(f, a, d) => elab_words(
       Cons("a", Cons(elab_write_term(f), Cons(elab_write_term(a), Nil)))
     )
-    KernelLit(ds) => elab_words(
-      Cons("n", Cons(Text::of_nat(List::length(ds)), elab_write_digits(ds)))
-    )
-    KernelBool(b) => if b { "z 1" } else { "z 0" }
+    KernelLit(n) => {
+      let ds := elab_digits(5, n)
+      elab_words(Cons("n", Cons(Text::of_nat(List::length(ds)), elab_write_digits(ds))))
+    }
   }
 }
 pub fn elab_transparent(t: Bool): Text { if t { "1" } else { "0" } }
 pub fn elab_write_declarations(ds: List(ElabDeclaration)): Text {
-  match ds: Text {
+  ⊢ Text from match ds {
     Nil => ""
     Cons(d, rest) => Text::concat_all(
       Cons(
@@ -73,5 +75,51 @@ pub fn elab_write_declarations(ds: List(ElabDeclaration)): Text {
         Cons(text_newline(), Cons(elab_write_declarations(rest), Nil))
       )
     )
+  }
+}
+pub fn elab_write_ctors(cs: List(Pair(Text, KernelTerm))): List(Text) {
+  ⊢ List(Text) from match cs {
+    Nil => Nil
+    Cons(c, rest) => Cons(c.fst, Cons(elab_write_term(c.snd), elab_write_ctors(rest)))
+  }
+}
+pub fn elab_write_families(fs: List(KernelFamily)): List(Text) {
+  ⊢ List(Text) from match fs {
+    Nil => Nil
+    Cons(f, rest) => Cons(
+      f.name,
+      Cons(
+        elab_write_term(f.ty),
+        Cons(Text::of_nat(List::length(f.constructors)), List::append(elab_write_ctors(f.constructors), elab_write_families(rest)))
+      )
+    )
+  }
+}
+// The host wire form of an inductive command, of one family or a mutual group.
+pub fn elab_write_inductive(params: Nat, sort: KernelSort, fs: List(KernelFamily)): Text {
+  elab_words(
+    Cons(
+      "I",
+      Cons(Text::of_nat(params), Cons(elab_write_sort(sort), Cons(Text::of_nat(List::length(fs)), elab_write_families(fs))))
+    )
+  )
+}
+pub fn elab_write_items(xs: List(ElabItem)): Text {
+  ⊢ Text from match xs {
+    Nil => ""
+    Cons(x, rest) => {
+      let line := ⊢ Text from match x {
+        ItemDeclaration(d) => elab_write_declarations(Cons(d, Nil))
+        ItemDeclarations(ds) => elab_write_declarations(ds)
+        ItemFunction(d) => Text::concat_all(
+          Cons(
+            elab_write_declarations(Cons(d, Nil)),
+            Cons(elab_words(Cons("V", Cons(d.name, Cons(elab_write_term(d.value), Nil)))), Cons(text_newline(), Nil))
+          )
+        )
+        ItemInductive(params, sort, f) => Text::concat(elab_write_inductive(params, sort, f), text_newline())
+      }
+      Text::concat(line, elab_write_items(rest))
+    }
   }
 }

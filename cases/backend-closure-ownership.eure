@@ -1,0 +1,130 @@
+@ cases.copy-captures-remain-readable
+backends = ["rust", "javascript"]
+source = ```nib
+copy struct Stamp { value: i64 }
+let original := Stamp { value: 17 }
+let read := () => original.value
+perform show("first", read())
+perform show("original", original.value)
+perform show("second", read())
+```
+shows = ["first = 17", "original = 17", "second = 17"]
+
+@ cases.shared-capture-last-use-remains-repeatable
+backends = ["rust", "javascript"]
+source = ```nib
+fn make_read(): () -> Text {
+  let text := "kept"
+  () => text
+}
+let read := make_read()
+perform show("first", read())
+perform show("second", read())
+```
+shows = ["first = \"kept\"", "second = \"kept\""]
+
+@ cases.nested-affine-capture
+backends = ["rust", "javascript"]
+source = ```nib
+affine struct Token { value: i64 }
+let original := Token { value: 23 }
+let outer: affine () -> affine () -> Token := () => () => original
+let inner := outer()
+let result := inner()
+perform show("nested", match result { Token { value } => value })
+```
+shows = ["nested = 23"]
+
+@ cases.linear-capture-is-consumed
+backends = ["rust", "javascript"]
+source = ```nib
+linear struct Token { value: i64 }
+let original := Token { value: 31 }
+let consume: linear () -> Token := () => original
+let result := consume()
+perform show("linear", match result { Token { value } => value })
+```
+shows = ["linear = 31"]
+
+@ cases.linear-capture-cannot-be-abandoned
+backends = ["rust", "javascript"]
+source = ```nib
+linear struct Token {}
+fn invalid(value: Token): Unit {
+  let unused: linear () -> Token := () => value
+  #()
+}
+```
+lin = "error: unused is not used"
+compile_errors.rust = "front: unused is not used"
+compile_errors.javascript = "front: unused is not used"
+
+@ cases.borrowed-capture-is-not-consumed
+backends = ["rust", "javascript"]
+source = ```nib
+fn twice(&read: () -> i64): i64 { read() + read() }
+var value := 7
+perform show("before", twice(() => value))
+value := 9
+perform show("after", twice(() => value))
+perform show("original", value)
+```
+shows = ["before = 14", "after = 18", "original = 9"]
+
+@ cases.generic-struct-of-closures-clones-without-bound
+backends = ["rust", "javascript"]
+source = ```nib
+struct Codec(A: Type) { encode: (A) -> Text, decode: (Text) -> A }
+struct Opaque { inner: i64 }
+fn twice<A>(c: Codec(A)): Codec(A) {
+  let r#copy := c
+  Codec { encode: (x) => r#copy.encode(x), decode: (t) => c.decode(t) }
+}
+let c := twice(Codec { encode: (o: Opaque) => "opaque", decode: (t: Text) => Opaque { inner: 5 } })
+perform show("encoded", c.encode(Opaque { inner: 1 }))
+perform show("decoded", match c.decode("x") { Opaque { inner } => inner })
+```
+shows = ["encoded = \"opaque\"", "decoded = 5"]
+
+@ cases.match-keeps-reused-closure-owner
+backends = ["rust", "javascript"]
+source = ```nib
+enum Action { Ready(() -> i64), Empty }
+fn keep(action: Action): Action {
+  match action { Empty => Empty, _ => action }
+}
+fn run(): i64 {
+  let offset := 12
+  let action := Ready(() => offset + 3)
+  match keep(keep(action)) { Ready(read) => read(), Empty => 0 }
+}
+perform show("kept", run())
+```
+shows = ["kept = 15"]
+
+@ cases.a-borrowed-callback-keeps-earlier-owned-reads-live
+backends = ["rust", "javascript"]
+source = ```nib
+import std::prelude::Shared
+effect pause(): Unit resume 1
+fn apply<T>(&f: () -> T ! {pause}): T ! {pause} { f() }
+fn identity(value: Text): Text { value }
+fn twice(value: Text): Text ! {pause} {
+  let first := identity(value)
+  concat(first, apply(() => { perform pause(); value }))
+}
+let answer := handle { twice("kept") } with { pause(), k => k(#()) }
+perform show("twice", answer)
+```
+shows = ["twice = \"keptkept\""]
+
+@ cases.nested-owned-callback-retains-a-shared-borrow
+backends = ["javascript"]
+source = ```nib
+fn apply<T>(&f: () -> T): T { f() }
+fn keep(&name: Text): () -> Text { apply(() => () => name) }
+let read := keep("mission")
+perform show("first", read())
+perform show("second", read())
+```
+shows = ["first = \"mission\"", "second = \"mission\""]

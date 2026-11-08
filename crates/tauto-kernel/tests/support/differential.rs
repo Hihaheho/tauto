@@ -9,14 +9,14 @@ pub(super) fn prefix() -> String {
 def NN(): Type := (Nat) -> Nat
 
 fn double(n: Nat): Nat {
-  match n: Nat {
+  ⊢ Nat from match n {
     Zero => Zero
     Succ(m) => Succ(Succ(double(m)))
   }
 }
 
 fn add2(n: Nat, m: Nat): Nat {
-  match n: Nat {
+  ⊢ Nat from match n {
     Zero => m
     Succ(k) => Succ(add2(k, m))
   }
@@ -554,7 +554,7 @@ impl Gen {
             String::new()
         };
         format!(
-            "fn {name}(n: Nat): Nat{by} {{\n  match n: Nat {{\n    Zero => {}\n    Succ({m}) => {}\n  }}\n}}\n",
+            "fn {name}(n: Nat): Nat{by} {{\n  ⊢ Nat from match n {{\n    Zero => {}\n    Succ({m}) => {}\n  }}\n}}\n",
             show(&zero),
             show(&body)
         )

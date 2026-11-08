@@ -176,6 +176,8 @@ pub struct Tables {
     pub(crate) title: Option<String>,
     pub(crate) max_k: usize,
     pub(crate) terminals: Vec<String>,
+    /// What a terminal means (`%describe`), by terminal number.
+    pub(crate) describes: Vec<Option<String>>,
     pub(crate) non_terminals: Vec<String>,
     pub(crate) nt_kinds: Vec<NtKind>,
     pub(crate) start: u32,
@@ -239,6 +241,7 @@ impl Tables {
         let mut sha256 = None;
         let mut generator = String::new();
         let mut title = None;
+        let mut describes: Vec<(String, String)> = Vec::new();
         let mut max_k = 0;
         let mut t = Tables {
             source: text.to_owned(),
@@ -247,6 +250,7 @@ impl Tables {
             title: None,
             max_k: 0,
             terminals: Vec::new(),
+            describes: Vec::new(),
             non_terminals: Vec::new(),
             nt_kinds: Vec::new(),
             start: 0,
@@ -279,6 +283,10 @@ impl Tables {
             match name {
                 "grammar_sha256" => sha256 = Some(rest.trim().to_string()),
                 "generator" => generator = rest.trim().to_string(),
+                "describe" => {
+                    let (terminal, meaning) = rest.split_once(' ').unwrap_or((rest, ""));
+                    describes.push((terminal.to_string(), meaning.trim().to_string()));
+                }
                 "title" => title = (rest.trim() != "-").then(|| rest.trim().to_string()),
                 "max_k" => max_k = c.num()?,
                 "terminals" => t.terminals = names(&mut c)?,
@@ -472,7 +480,7 @@ impl Tables {
                 "schema" => t.schema = schema(&mut c)?,
                 _ => return Err(TableError(format!("unknown section {name:?}"))),
             }
-            if !matches!(name, "grammar_sha256" | "generator" | "title") {
+            if !matches!(name, "grammar_sha256" | "generator" | "title" | "describe") {
                 c.end()?;
             }
         }
@@ -496,6 +504,21 @@ impl Tables {
             return Err(TableError("section lookahead (or lr) is missing".into()));
         }
         t.dynamic = vec![None; t.terminals.len()];
+        t.describes = vec![None; t.terminals.len()];
+        for (terminal, meaning) in describes {
+            let at = t
+                .terminals
+                .iter()
+                .position(|n| *n == terminal)
+                .ok_or_else(|| {
+                    TableError(format!("describe names an unknown terminal {terminal:?}"))
+                })?;
+            if meaning.is_empty() || t.describes[at].replace(meaning).is_some() {
+                return Err(TableError(format!(
+                    "describe {terminal:?} has no meaning or is given twice"
+                )));
+            }
+        }
         for (terminal, d) in dynamic {
             *t.dynamic
                 .get_mut(terminal as usize)
@@ -677,6 +700,15 @@ impl Tables {
 
     pub fn terminals(&self) -> &[String] {
         &self.terminals
+    }
+
+    /// How a syntax error names a terminal: what the grammar says it means
+    /// (`%describe`), or else its name.
+    pub fn terminal_phrase(&self, terminal: u32) -> &str {
+        match &self.describes[terminal as usize] {
+            Some(meaning) => meaning,
+            None => &self.terminals[terminal as usize],
+        }
     }
 
     pub fn non_terminals(&self) -> &[String] {

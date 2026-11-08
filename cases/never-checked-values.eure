@@ -1,0 +1,73 @@
+description = "A value that nothing uses is still type checked: a function body with an unused `let` or a discarded statement is refused, not skipped, and a `$` of a `quote` takes only what fills an expression."
+
+@ cases.an_unused_let_in_a_function_is_refused
+source = ```tauto
+fn f(n: Nat): Nat {
+  let unused: Nat := true
+  n
+}
+```
+checks."f" = "error: is defined but not used"
+
+@ cases.an_unused_let_without_a_type_in_a_function_is_refused
+source = ```tauto
+fn f(n: Nat): Nat {
+  let u := Nat::add(true, 1)
+  n
+}
+```
+checks."f" = "error: is defined but not used"
+
+@ cases.a_discarded_statement_in_a_function_is_refused
+source = ```tauto
+fn f(n: Nat): Nat {
+  Nat::add(true, 1)
+  n
+}
+```
+checks."f" = "error: the value of this statement is not used"
+
+@ cases.a_discarded_statement_in_a_theorem_is_refused
+source = ```tauto
+theorem t(n: Nat): Nat {
+  n
+  n
+}
+```
+checks."t" = "error: the value of this statement is not used"
+
+@ cases.a_used_let_in_a_function_still_checks
+source = ```tauto
+fn f(n: Nat): Nat {
+  let m: Nat := n
+  m
+}
+```
+checks."f" = "checked"
+
+@ cases.a_splice_of_a_number_is_a_type_error
+source = ```tauto
+import std::prelude::Macro
+fn s(): SynExpr {
+  quote { 1 + $(42) }
+}
+```
+types = "error: a `$` in an expression of a `quote` takes a SynExpr, a SynIdent or a Judgement, not i64"
+
+@ cases.a_splice_of_text_by_name_is_a_type_error
+source = ```tauto
+import std::prelude::Macro
+fn s(t: Text): SynExpr {
+  quote { $t }
+}
+```
+types = "error: a `$` in an expression of a `quote` takes a SynExpr, a SynIdent or a Judgement, not Text"
+
+@ cases.splices_of_syntax_values_check
+source = ```tauto
+import std::prelude::Macro
+fn s(e: SynExpr, x: SynIdent): SynExpr {
+  quote { $e + $(x) }
+}
+```
+types = "ok"

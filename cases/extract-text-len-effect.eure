@@ -1,0 +1,50 @@
+description = "A function with an effect row calls the function the checker resolved: `Text::len` of a file that imports std::Text is the library's (a Nat), and the prelude's builtin only when it is written by its full name."
+
+// The library's `Text::len` in a pure function, for comparison.
+@ cases.text-len-in-a-pure-function
+extract = true
+source = ```tauto
+import std::Base
+import std::Text
+fn before(index: Nat, source: Text): Bool { index < Text::len(source) }
+perform show("before", before(1, "abc"))
+```
+shows = ["before = true"]
+
+// The same call in a function with an effect row, which the kernel does not
+// read: it means the library's function, not the builtin of the same short name.
+@ cases.text-len-in-an-effectful-function
+extract = true
+source = ```tauto
+import std::Base
+import std::Text
+fn before(index: Nat, source: Text): Bool ! {Div} { index < Text::len(source) }
+perform show("before", before(1, "abc"))
+```
+shows = ["before = true"]
+
+@ cases.text-len-in-a-recursive-effectful-function
+extract = true
+source = ```tauto
+import std::Base
+import std::Text
+fn count(index: Nat, source: Text): Nat ! {Div} {
+  ⊢ Nat from match index < Text::len(source) {
+    true => count(Succ(index), source)
+    false => index
+  }
+}
+perform show("count", count(0, "abc"))
+```
+shows = ["count = 3"]
+
+// The builtin written by its full name stays the builtin: a u64.
+@ cases.builtin-text-len-by-its-full-name-in-an-effectful-function
+extract = true
+source = ```tauto
+import std::Base
+import std::Text
+fn size(t: Text): u64 ! {Div} { std::prelude::Text::len(t) + 1 }
+perform show("size", size("abc"))
+```
+shows = ["size = 4"]

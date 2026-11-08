@@ -11,17 +11,15 @@ pub(open) inductive IxTrust: Type {
   Mk(index: Nat, source: Nat, pin: IxPoint): IxTrust
 }
 
-pub fn ix_trust_index(
-  value: IxTrust
-): Nat { match value: Nat { Mk(index, source, pin) => index } }
+pub fn ix_trust_index(value: IxTrust): Nat { ⊢ Nat from match value { Mk(index, source, pin) => index } }
 
 pub fn ix_trust_source(
   value: IxTrust
-): Nat { match value: Nat { Mk(index, source, pin) => source } }
+): Nat { ⊢ Nat from match value { Mk(index, source, pin) => source } }
 
 pub fn ix_trust_pin(
   value: IxTrust
-): IxPoint { match value: IxPoint { Mk(index, source, pin) => pin } }
+): IxPoint { ⊢ IxPoint from match value { Mk(index, source, pin) => pin } }
 
 pub(open) inductive IxOrigin: Type {
   Mk(index: Nat, source: Nat, head: IxPoint, checked: Nat): IxOrigin
@@ -29,19 +27,19 @@ pub(open) inductive IxOrigin: Type {
 
 pub fn ix_origin_index(
   value: IxOrigin
-): Nat { match value: Nat { Mk(index, source, head, checked) => index } }
+): Nat { ⊢ Nat from match value { Mk(index, source, head, checked) => index } }
 
 pub fn ix_origin_source(
   value: IxOrigin
-): Nat { match value: Nat { Mk(index, source, head, checked) => source } }
+): Nat { ⊢ Nat from match value { Mk(index, source, head, checked) => source } }
 
 pub fn ix_origin_head(
   value: IxOrigin
-): IxPoint { match value: IxPoint { Mk(index, source, head, checked) => head } }
+): IxPoint { ⊢ IxPoint from match value { Mk(index, source, head, checked) => head } }
 
 pub fn ix_origin_checked(
   value: IxOrigin
-): Nat { match value: Nat { Mk(index, source, head, checked) => checked } }
+): Nat { ⊢ Nat from match value { Mk(index, source, head, checked) => checked } }
 
 pub(open) inductive IxLimits: Type {
   Mk(age: Nat, lifetime: Nat, source_age: Nat): IxLimits
@@ -49,15 +47,15 @@ pub(open) inductive IxLimits: Type {
 
 pub fn ix_limits_age(
   value: IxLimits
-): Nat { match value: Nat { Mk(age, lifetime, source_age) => age } }
+): Nat { ⊢ Nat from match value { Mk(age, lifetime, source_age) => age } }
 
 pub fn ix_limits_lifetime(
   value: IxLimits
-): Nat { match value: Nat { Mk(age, lifetime, source_age) => lifetime } }
+): Nat { ⊢ Nat from match value { Mk(age, lifetime, source_age) => lifetime } }
 
 pub fn ix_limits_source_age(
   value: IxLimits
-): Nat { match value: Nat { Mk(age, lifetime, source_age) => source_age } }
+): Nat { ⊢ Nat from match value { Mk(age, lifetime, source_age) => source_age } }
 
 pub(open) inductive IxWitness: Type {
   IxLocal: IxWitness
@@ -112,7 +110,7 @@ pub fn ix_origin_matches(
 // A snapshot has ONE latest authenticated ref reply per index. Historical checks
 // must not coexist here: an old matching head must not mask a newer unmatched head.
 pub fn ix_origins_unique(origins: List(IxOrigin)): Bool {
-  match origins: Bool {
+  ⊢ Bool from match origins {
     Nil => true
     Cons(origin, rest) => Bool::and(
       not(
@@ -155,7 +153,7 @@ pub fn ix_grounded(
 }
 
 pub fn ix_find_state(index: Nat, states: List(IxState)): Option(IxState) {
-  match states: Option(IxState) {
+  ⊢ Option(IxState) from match states {
     Nil => None
     Cons(state, rest) => ix_choose(
       Nat::eq(index, ix_state_index(state)),
@@ -210,7 +208,7 @@ pub fn ix_receipt_ready(
 }
 
 pub fn ix_on_some<A>(predicate: (A) -> Bool, value: Option(A)): Bool {
-  match value: Bool {
+  ⊢ Bool from match value {
     None => false
     Some(item) => predicate(item)
   }
@@ -227,7 +225,7 @@ pub fn ix_witness_ready(
   limits: IxLimits,
   witness: IxWitness
 ): Bool {
-  match witness: Bool {
+  ⊢ Bool from match witness {
     IxLocal => ix_any(
       (receipt: IxReceipt) => ix_receipt_ready(
         trust,
@@ -366,7 +364,7 @@ pub fn ix_trust_distinct(left: IxTrust, right: IxTrust): Bool {
 }
 
 pub fn ix_observers_unique(observers: List(IxTrust)): Bool {
-  match observers: Bool {
+  ⊢ Bool from match observers {
     Nil => true
     Cons(trust, rest) => Bool::and(
       ix_all((peer: IxTrust) => ix_trust_distinct(trust, peer), rest),
@@ -376,12 +374,12 @@ pub fn ix_observers_unique(observers: List(IxTrust)): Bool {
 }
 
 pub fn ix_witness_distinct(left: IxWitness, right: IxWitness): Bool {
-  match left: Bool {
-    IxLocal => match right: Bool {
+  ⊢ Bool from match left {
+    IxLocal => ⊢ Bool from match right {
       IxLocal => false
       IxRemote(peer) => true
     }
-    IxRemote(trust) => match right: Bool {
+    IxRemote(trust) => ⊢ Bool from match right {
       IxLocal => true
       IxRemote(peer) => ix_trust_distinct(trust, peer)
     }
@@ -389,7 +387,7 @@ pub fn ix_witness_distinct(left: IxWitness, right: IxWitness): Bool {
 }
 
 pub fn ix_witnesses_unique(witnesses: List(IxWitness)): Bool {
-  match witnesses: Bool {
+  ⊢ Bool from match witnesses {
     Nil => true
     Cons(witness, rest) => Bool::and(
       ix_all((peer: IxWitness) => ix_witness_distinct(witness, peer), rest),
@@ -399,14 +397,14 @@ pub fn ix_witnesses_unique(witnesses: List(IxWitness)): Bool {
 }
 
 pub fn ix_witness_independent(observers: List(IxTrust), witness: IxWitness): Bool {
-  match witness: Bool {
+  ⊢ Bool from match witness {
     IxLocal => true
     IxRemote(trust) => ix_all((observer: IxTrust) => ix_trust_distinct(trust, observer), observers)
   }
 }
 
 pub fn ix_states_unique(states: List(IxState)): Bool {
-  match states: Bool {
+  ⊢ Bool from match states {
     Nil => true
     Cons(state, rest) => Bool::and(
       not(

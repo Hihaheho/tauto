@@ -42,7 +42,7 @@ fn a_nat_put_in_a_u64_field_is_rejected() {
         report.json().render()
     );
     assert!(
-        failure(&report).contains("field `n`: nat does not fit u64"),
+        failure(&report).contains("field `n`: expected u64, found nat, a different type"),
         "{}",
         report.json().render()
     );
@@ -66,7 +66,7 @@ fn a_nat_passed_for_a_u64_is_rejected() {
         "{}",
         report.json().render()
     );
-    assert!(failure(&report).contains("nat does not fit u64"));
+    assert!(failure(&report).contains("expected u64, found nat, a different type"));
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn a_tote_is_rejected_as_run_reads_it() {
         "{}",
         report.json().render()
     );
-    assert!(failure(&report).contains("field `n`: nat does not fit u64"));
+    assert!(failure(&report).contains("field `n`: expected u64, found nat, a different type"));
 }
 
 /// An effect the file declares is read in proofs whatever its name: one
@@ -123,7 +123,7 @@ fn an_effect_named_like_a_prelude_function_is_read_in_proofs() {
     let a = report
         .entries
         .iter()
-        .find(|e| e.entry.name == "a")
+        .find(|e| e.entry.name.as_str() == "a")
         .expect("a is reported");
     assert!(
         matches!(a.entry.verdict, Verdict::Checked { .. }),
@@ -139,7 +139,7 @@ fn a_top_level_let_does_not_take_a_name_of_an_imported_file() {
     std::fs::write(
         d.join("lib.taut"),
         "inductive Mark: Type {\n  Marked: Mark\n  Unmarked: Mark\n}\n\n\
-         fn mark_of(y: Bool): Mark {\n  match y: Mark {\n    true => Marked\n    false => Unmarked\n  }\n}\n\n\
+         fn mark_of(y: Bool): Mark {\n  ⊢ Mark from match y {\n    true => Marked\n    false => Unmarked\n  }\n}\n\n\
          theorem mark_true(): mark_of(true) = Marked {\n  Refl\n}\n",
     )
     .unwrap();
@@ -174,7 +174,7 @@ fn a_file_with_a_main_function_is_checked_as_run_reads_it() {
         report.json().render()
     );
     assert!(
-        failure(&report).contains("nat does not fit u64"),
+        failure(&report).contains("expected u64, found nat, a different type"),
         "{}",
         report.json().render()
     );
@@ -201,7 +201,7 @@ fn a_file_of_a_tote_is_checked_as_its_program() {
         report.json().render()
     );
     assert!(
-        failure(&report).contains("nat does not fit u64"),
+        failure(&report).contains("expected u64, found nat, a different type"),
         "{}",
         report.json().render()
     );
@@ -221,7 +221,28 @@ fn a_stray_pub_is_rejected() {
         panic!("a stray `pub` was checked");
     };
     assert!(
-        message.contains("`pub` is a keyword and cannot be used as a name"),
+        message
+            .to_string()
+            .contains("`pub` is a keyword and cannot be used as a name"),
         "{message}"
+    );
+}
+
+#[test]
+fn invalid_native_type_function_is_reported_by_check() {
+    tauto_messages::install();
+    let path = dir("native-type-function").join("main.taut");
+    std::fs::write(&path, "struct Payload { value: nat }\nfn Broken(A: Type): Type { Payload { value: 0 } }\nperform show(\"value\", 0)\n").unwrap();
+    let report = check_report(&path, None).unwrap();
+    assert_eq!(
+        report.status(),
+        Status::Failed,
+        "{}",
+        report.json().render()
+    );
+    assert!(
+        failure(&report).contains("native type function body must be a type expression"),
+        "{}",
+        report.json().render()
     );
 }

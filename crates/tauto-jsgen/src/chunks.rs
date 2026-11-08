@@ -54,12 +54,20 @@ pub(crate) fn entries(pkg: &Package, options: &Options) -> R<BTreeMap<InstId, St
         }
         for name in names {
             let Some(export) = pkg.exports.iter().find(|e| &e.name == name) else {
-                return Err(
-                    msg!("jsgen-chunk-not-function", chunk = chunk, name = name).to_string()
-                );
+                return Err(msg!(
+                    "jsgen-chunk-not-function",
+                    chunk = chunk,
+                    name = name.to_string()
+                )
+                .to_string());
             };
             if Some(export.inst) == pkg.top {
-                return Err(msg!("jsgen-chunk-names-start", chunk = chunk, name = name).to_string());
+                return Err(msg!(
+                    "jsgen-chunk-names-start",
+                    chunk = chunk,
+                    name = name.to_string()
+                )
+                .to_string());
             }
             if let Some(other) = out.insert(export.inst, chunk.clone()) {
                 return Err(msg!(

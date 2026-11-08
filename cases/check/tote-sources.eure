@@ -1,0 +1,177 @@
+// A tote's default source is `src`, named by its path from `src`; an
+// additional source is named with its own path first.
+
+@ cases.a-file-of-src-is-named-by-its-path-from-src
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/lw.taut" = `pub fn lw(): Nat { 2 }`
+files."lib/src/deep/dw.taut" = `pub fn dw(): Nat { 4 }`
+files."app/src/main.taut" = ```tauto
+import lib::lw
+import lib::deep::dw
+perform show("p", lw() + dw())
+```
+shows = ["p = 6"]
+
+@ cases.a-file-of-an-additional-source-is-named-with-the-source-first
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" additional-sources = ["proof"] }'
+files."lib/proof/pw.taut" = `pub fn pw(): Nat { 3 }`
+files."app/src/main.taut" = ```tauto
+import lib::proof::pw
+perform show("p", pw())
+```
+shows = ["p = 3"]
+
+@ cases.a-file-of-src-and-one-of-an-additional-source-with-the-same-name-are-two-modules
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" additional-sources = ["proof"] }'
+files."lib/src/x.taut" = `pub fn from_src(): Nat { 1 }`
+files."lib/proof/x.taut" = `pub fn from_proof(): Nat { 10 }`
+files."app/src/main.taut" = ```tauto
+import lib::x
+import lib::proof::x
+perform show("p", from_src() + from_proof())
+```
+shows = ["p = 11"]
+
+@ cases.a-module-path-that-only-an-additional-source-names-is-not-found-without-it
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" additional-sources = ["proof"] }'
+files."lib/proof/pw.taut" = `pub fn pw(): Nat { 3 }`
+files."app/src/main.taut" = ```tauto
+import lib::pw
+perform show("p", pw())
+```
+load_error = "lib has no module pw"
+
+@ cases.a-directory-of-src-named-like-an-additional-source-is-an-error
+files_tote = "lib"
+files."lib/Tauto.eure" = 'package { name = "lib" additional-sources = ["proof"] }'
+files."lib/src/proof/y.taut" = `pub fn y(): Nat { 1 }`
+files."lib/proof/y.taut" = `pub fn z(): Nat { 2 }`
+files."lib/src/main.taut" = `perform show("p", 1)`
+load_error = "names the same modules as an entry of `src`"
+
+@ cases.package-sources-is-not-accepted
+files_tote = "lib"
+files."lib/Tauto.eure" = 'package { name = "lib" sources = ["src"] }'
+files."lib/src/main.taut" = `perform show("p", 1)`
+load_error = "`package.sources` is not accepted"
+
+@ cases.an-additional-source-inside-src-is-an-error
+files_tote = "lib"
+files."lib/Tauto.eure" = 'package { name = "lib" additional-sources = ["src/extra"] }'
+files."lib/src/extra/e.taut" = `pub fn e(): Nat { 1 }`
+files."lib/src/main.taut" = `perform show("p", 1)`
+load_error = "is inside `src`"
+
+@ cases.the-import-suggestion-for-a-file-of-the-same-tote-is-a-relative-path
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/types.taut" = `pub fn widget(): Nat { 1 }`
+files."app/src/main.taut" = `perform show("p", widget())`
+load_error = "`widget` is declared by `app::src::types`, which this file does not import (what another file or a dependency imports does not reach this one); `import \"types.taut\"` in this file"
+
+@ cases.the-import-suggestion-for-a-file-of-a-dependency-is-its-module-path
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" }'
+files."lib/src/lw.taut" = `pub fn lw(): Nat { 2 }`
+files."app/src/main.taut" = `perform show("p", lw())`
+load_error = "`lw` is declared by `lib::src::lw`, which this file does not import (what another file or a dependency imports does not reach this one); `import lib::lw` in this file"
+
+@ cases.the-import-suggestion-for-a-file-of-an-additional-source-names-the-source
+files_tote = "app"
+files."app/Tauto.eure" = ```eure
+package { name = "app" }
+dependencies { lib { path = "../lib" } }
+```
+files."lib/Tauto.eure" = 'package { name = "lib" additional-sources = ["proof"] }'
+files."lib/proof/pw.taut" = `pub fn pw(): Nat { 3 }`
+files."app/src/main.taut" = `perform show("p", pw())`
+load_error = "`pw` is declared by `lib::proof::pw`, which this file does not import (what another file or a dependency imports does not reach this one); `import lib::proof::pw` in this file"
+
+@ cases.an-additional-source-that-is-a-file-is-an-error
+files_tote = "lib"
+files."lib/Tauto.eure" = 'package { name = "lib" additional-sources = ["extra.taut"] }'
+files."lib/extra.taut" = `pub fn e(): Nat { 1 }`
+files."lib/src/main.taut" = `perform show("p", 1)`
+load_error = "is a file; additional sources are directories"
+
+@ cases.a-tote-without-the-prelude-does-not-see-its-names-without-an-import
+files_tote = "lib"
+files."lib/Tauto.eure" = 'package { name = "lib" prelude = false }'
+files."lib/src/main.taut" = ```tauto
+fn first(): Option(Nat) { None }
+perform show("p", 1)
+```
+load_error = "`Option` is declared by `std::prelude::Std`, which this file does not import"
+
+@ cases.a-tote-without-the-prelude-sees-what-it-imports-of-it
+files_tote = "lib"
+files."lib/Tauto.eure" = 'package { name = "lib" prelude = false }'
+files."lib/src/main.taut" = ```tauto
+import std::prelude::Std { Option }
+fn first(): Option(Nat) { Some(3) }
+perform show(
+  "p",
+  match first() {
+    None => 0
+    Some(n) => n
+  }
+)
+```
+shows = ["p = 3"]
+
+@ cases.a-tote-without-the-prelude-still-sees-the-kernel-s
+files_tote = "lib"
+files."lib/Tauto.eure" = 'package { name = "lib" prelude = false }'
+files."lib/src/main.taut" = ```tauto
+theorem two(): 1 + 1 = 2 { Refl }
+perform show("p", 1 + 1)
+```
+shows = ["p = 2"]
+
+@ cases.the-import-suggestion-for-a-file-with-a-hyphen-is-its-file-name
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."app/src/catalog-data.taut" = `pub fn catalog(): Nat { 1 }`
+files."app/src/main.taut" = `perform show("p", catalog())`
+load_error = "`import \"catalog-data.taut\"` in this file"
+
+@ cases.the-import-suggestion-for-a-file-of-a-tote-that-is-not-a-dependency-is-a-relative-path
+files_tote = "app"
+files."app/Tauto.eure" = 'package { name = "app" }'
+files."other/Tauto.eure" = 'package { name = "other" }'
+files."other/src/signal.taut" = `pub fn signal(): Nat { 2 }`
+files."app/src/wire.taut" = ```tauto
+import "../../other/src/signal.taut"
+
+pub fn wire(): Nat { signal() }
+```
+files."app/src/main.taut" = ```tauto
+import "wire.taut"
+
+perform show("p", signal())
+```
+load_error = "`import \"../../other/src/signal.taut\"` in this file"

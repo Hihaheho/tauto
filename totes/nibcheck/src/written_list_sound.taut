@@ -68,7 +68,9 @@ pub theorem written_each_after_sound(
   ihhead: ∀ clean: DiagnosticClean(
     ck_st(m)
   ). WrittenTerm(ck_datas_of(c), generics, frame_constructor_position(c), false, first, ck_val(m)),
-  ihtail: ∀ next: Checker. ∀ ordinary: frame_under_borrow(next) = false. ∀ clean: DiagnosticClean(
+  ihtail: ∀ next: Checker. ∀ ordinary: frame_under_borrow(
+    next
+  ) = false. ∀ clean: DiagnosticClean(
     ck_st(ck_written_each(rest, next, generics))
   ). WrittenTerms(
     ck_datas_of(next),
@@ -85,13 +87,13 @@ pub theorem written_each_after_sound(
   Cons(first, rest),
   ck_val(written_each_after(rest, generics, m))
 ) {
-  match m: WrittenTerms(
+  ⊢ WrittenTerms(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
     Cons(first, rest),
     ck_val(written_each_after(rest, generics, m))
-  ) {
+  ) from match m {
     mut1(head, next) => {
       let tail_clean: DiagnosticClean(
         ck_st(ck_written_each(rest, next, generics))
@@ -154,7 +156,9 @@ pub theorem written_each_cons_sound(
     first,
     ck_val(ck_written_in(first, c, generics))
   ),
-  ihtail: ∀ next: Checker. ∀ ordinary: frame_under_borrow(next) = false. ∀ clean: DiagnosticClean(
+  ihtail: ∀ next: Checker. ∀ ordinary: frame_under_borrow(
+    next
+  ) = false. ∀ clean: DiagnosticClean(
     ck_st(ck_written_each(rest, next, generics))
   ). WrittenTerms(
     ck_datas_of(next),
@@ -192,10 +196,8 @@ pub theorem written_terms_length<env: Datas, generics: Ordmap(
   SurfaceTerm
 ), types: List(
   Ty
-)>(
-  meaning: WrittenTerms(env, generics, partial, terms, types)
-): list_len(terms) = list_len(types) {
-  match meaning: list_len(terms) = list_len(types) {
+)>(meaning: WrittenTerms(env, generics, partial, terms, types)): list_len(terms) = list_len(types) {
+  ⊢ list_len(terms) = list_len(types) from match meaning {
     WrittenTermsNil(empty_generics, empty_partial) => Refl
     WrittenTermsCons(first, rest, t, ts, head, tail) => Eq::congr(Succ, written_terms_length(tail))
   }

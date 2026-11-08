@@ -1,0 +1,31 @@
+description = "A program that imports std::Base runs once it is extracted: the proof language's functions of std (`plus`, on `Succ`) are mapped by extraction, not run as written."
+
+@ cases.a-program-importing-std-base-runs
+extract = true
+source = ```tauto
+import std::Base
+perform show("one", 1)
+```
+shows = ["one = 1"]
+
+@ cases.a-macro-library-importing-std-base-runs
+extract = true
+files."binding-defs.taut" = ````taut
+import std::Base
+import std::prelude::Macro
+import std::prelude::Par
+fn unrelated(): Unit {
+  let cell := Ref::new(false)
+  Ref::set(cell, true)
+}
+fn choose(first: Bool, value: SynExpr): SynExpr {
+  if first { value } else { quote { 0 } }
+}
+macro fn answer(value: SynExpr): SynExpr { choose(true, value) }
+````
+files."binding.taut" = ````taut
+import "binding-defs.taut"
+perform show("answer", answer!(42))
+````
+entry = "binding.taut"
+shows = ["answer = 42"]

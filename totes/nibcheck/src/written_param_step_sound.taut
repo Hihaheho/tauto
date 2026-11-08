@@ -14,7 +14,7 @@ import "written_parameters_sound.taut"
 import "../../surface/src/surface.taut"
 
 pub fn written_param_body(p: SurfaceParam): SurfaceTerm {
-  match p: SurfaceTerm { SurfaceParamMk(name, body) => body }
+  ⊢ SurfaceTerm from match p { SurfaceParamMk(name, body) => body }
 }
 pub theorem written_param_step(
   name: Option(Text),
@@ -65,7 +65,9 @@ pub theorem written_params_cons_step(
   generics: Ordmap(Text, Ty),
   skip: Nat,
   ordinary: frame_under_borrow(c) = false,
-  ihparam: ∀ state: Checker. ∀ ordinary_state: frame_under_borrow(state) = false. ∀ clean: DiagnosticClean(
+  ihparam: ∀ state: Checker. ∀ ordinary_state: frame_under_borrow(
+    state
+  ) = false. ∀ clean: DiagnosticClean(
     ck_st(ck_written_param(p, state, generics))
   ). WrittenTerm(
     ck_datas_of(state),
@@ -75,7 +77,9 @@ pub theorem written_params_cons_step(
     written_param_body(p),
     ck_val(ck_written_param(p, state, generics))
   ),
-  ihtail: ∀ state: Checker. ∀ count: Nat. ∀ ordinary_state: frame_under_borrow(state) = false. ∀ clean: DiagnosticClean(
+  ihtail: ∀ state: Checker. ∀ count: Nat. ∀ ordinary_state: frame_under_borrow(
+    state
+  ) = false. ∀ clean: DiagnosticClean(
     ck_st(ck_written_params(rest, state, generics, count))
   ). WrittenParameters(
     ck_datas_of(state),
@@ -92,13 +96,13 @@ pub theorem written_params_cons_step(
   written_drop_parameters(Cons(p, rest), skip),
   ck_val(ck_written_params(Cons(p, rest), c, generics, skip))
 ) {
-  match skip: WrittenParameters(
+  ⊢ WrittenParameters(
     ck_datas_of(c),
     generics,
     frame_constructor_position(c),
     written_drop_parameters(Cons(p, rest), skip),
     ck_val(ck_written_params(Cons(p, rest), c, generics, skip))
-  ) {
+  ) from match skip {
     Succ(count) => written_transfer(
       List(Ty),
       (types: List(Ty)) => WrittenParameters(
@@ -117,13 +121,13 @@ pub theorem written_params_cons_step(
       ihtail(c, count, ordinary),
       clean
     )
-    Zero => match p: WrittenParameters(
+    Zero => ⊢ WrittenParameters(
       ck_datas_of(c),
       generics,
       frame_constructor_position(c),
       Cons(p, rest),
       ck_val(ck_written_params(Cons(p, rest), c, generics, 0))
-    ) {
+    ) from match p {
       SurfaceParamMk(name, body) => written_transfer(
         List(Ty),
         (types: List(Ty)) => WrittenParameters(

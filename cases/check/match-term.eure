@@ -1,0 +1,353 @@
+@ cases.the-equation-of-a-match-on-a-term-is-in-each-arm
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+theorem via(
+  f: (Nat) -> Ordering,
+  g: (Nat) -> Ordering,
+  n: Nat,
+  h: g(n) = f(n)
+): Or(g(n) = Less, Or(g(n) = Equal, g(n) = Greater)) {
+  ⊢ Or(g(n) = Less, Or(g(n) = Equal, g(n) = Greater)) from match f(n) eqn e {
+    Less => OrInl(h)
+    Equal => OrInr(OrInl(h))
+    Greater => OrInr(OrInr(h))
+  }
+}
+```
+checks_all = "ok"
+checks.via = "ok"
+
+@ cases.the-term-is-put-for-the-matched-value-where-a-function-shows-it-once-unfolded
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+fn flag(f: (Nat) -> Ordering, n: Nat): Nat {
+  ⊢ Nat from match f(n) {
+    Less => 0
+    Equal => 1
+    Greater => 2
+  }
+}
+
+theorem hidden(
+  f: (Nat) -> Ordering,
+  n: Nat
+): Or(flag(f, n) = 0, Or(flag(f, n) = 1, flag(f, n) = 2)) {
+  ⊢ Or(flag(f, n) = 0, Or(flag(f, n) = 1, flag(f, n) = 2)) from match f(n) eqn e {
+    Less => ⊢ Or(Eq(Nat, 0, 0), Or(Eq(Nat, 0, 1), Eq(Nat, 0, 2))) from OrInl(Refl)
+    Equal => OrInr(OrInl(Refl))
+    Greater => OrInr(OrInr(Refl))
+  }
+}
+```
+checks_all = "ok"
+checks.flag = "ok"
+checks.hidden = "ok"
+
+@ cases.a-function-without-parameters-stays-called-where-the-matched-value-is-put-once-unfolded
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+fn ctx0(): Nat {
+  0
+}
+
+fn pick(f: (Nat) -> Ordering, n: Nat): List(Nat) {
+  Cons(⊢ Nat from match f(n) {
+    Less => 0
+    Equal => 1
+    Greater => 2
+  }, Cons(ctx0(), Nil))
+}
+
+theorem kept(f: (Nat) -> Ordering, n: Nat): pick(f, n) = pick(f, n) {
+  ⊢ pick(f, n) = pick(f, n) from match f(n) eqn e {
+    Less => Refl
+    Equal => Refl
+    Greater => Refl
+  }
+}
+```
+checks_all = "ok"
+checks.ctx0 = "ok"
+checks.pick = "ok"
+checks.kept = "ok"
+
+@ cases.a-goal-written-on-an-arm-that-is-not-the-one-computed-is-refused
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+theorem t(f: (Nat) -> Ordering, n: Nat): f(n) = f(n) {
+  ⊢ f(n) = f(n) from match f(n) {
+    Less => ⊢ Equal = Equal from Refl
+    Equal => Refl
+    Greater => Refl
+  }
+}
+```
+checks_all = "ok"
+checks.t = "error: the goal of this arm is `Ordering::Less = Ordering::Less`, not `Ordering::Equal = Ordering::Equal`"
+
+@ cases.as-names-the-equation-of-a-term-not-of-a-variable
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+theorem t(o: Ordering): o = o {
+  ⊢ o = o from match o eqn e {
+    Less => Refl
+    Equal => Refl
+    Greater => Refl
+  }
+}
+```
+checks_all = "ok"
+checks.t = "error: `eqn` names the equation"
+
+@ cases.the-term-is-put-for-the-matched-value-in-an-argument-where-a-function-shows-it-once-unfolded
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+fn quote_as(p: Bool, l: List(Nat)): List(Nat) {
+  ⊢ List(Nat) from match p {
+    true => l
+    false => Cons(34, l)
+  }
+}
+
+fn plain(l: List(Nat)): Bool {
+  ⊢ Bool from match l {
+    Nil => true
+    Cons(c, r) => Bool::and(Nat::eq(c, 34), plain(r))
+  }
+}
+
+fn r#quote(l: List(Nat)): List(Nat) {
+  quote_as(plain(l), l)
+}
+
+fn quote_step(s: Bool, next: (Bool) -> Nat): Nat {
+  ⊢ Nat from match s {
+    true => Succ(next(false))
+    false => next(true)
+  }
+}
+
+fn walk(s: Bool, l: List(Nat)): Nat {
+  ⊢ Nat from match l {
+    Nil => Zero
+    Cons(c, r) => quote_step(s, (s2: Bool) => walk(s2, r))
+  }
+}
+
+theorem quoted(
+  l: List(Nat),
+  x: List(Nat)
+): walk(true, List::append(r#quote(l), x)) = walk(true, List::append(r#quote(l), x)) {
+  ⊢ walk(true, List::append(r#quote(l), x)) = walk(true, List::append(r#quote(l), x)) from match plain(l) eqn e {
+    true => ⊢ walk(true, List::append(l, x)) = walk(true, List::append(l, x)) from Refl
+    false => ⊢ Succ(walk(false, List::append(l, x))) = Succ(walk(false, List::append(l, x))) from Refl
+  }
+}
+```
+checks_all = "ok"
+checks.walk = "ok"
+checks.quoted = "ok"
+
+@ cases.the-term-is-put-for-the-matched-value-in-an-assumption-and-where-a-recursive-function-shows-it-once-unfolded
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+fn step(o: Ordering, next: (Bool) -> Nat): Nat {
+  ⊢ Nat from match o {
+    Less => next(true)
+    Equal => Zero
+    Greater => Succ(next(false))
+  }
+}
+
+fn count(f: (Nat) -> Ordering, s: Bool, l: List(Nat)): Nat {
+  ⊢ Nat from match l {
+    Nil => Zero
+    Cons(c, r) => step(f(c), (s2: Bool) => count(f, s2, r))
+  }
+}
+
+theorem unfolded(
+  f: (Nat) -> Ordering,
+  c: Nat,
+  t: List(Nat),
+  x: List(Nat),
+  h: f(c) = f(c)
+): count(f, true, List::append(Cons(c, t), x)) = count(f, true, List::append(Cons(c, t), x)) {
+  (⊢ (f(c) = f(c)) -> (count(f, true, List::append(Cons(c, t), x)) = count(f, true, List::append(Cons(c, t), x))) from match f(c) eqn e {
+    Less => ⊢ (Less = Less) -> (count(f, true, List::append(t, x)) = count(f, true, List::append(t, x))) from (hc: Less = Less) => Refl
+    Equal => ⊢ (Equal = Equal) -> (Zero = Zero) from (hc: Equal = Equal) => Refl
+    Greater => (hc: Greater = Greater) => Refl
+  })(h)
+}
+```
+checks_all = "ok"
+checks.unfolded = "ok"
+
+@ cases.a-let-whose-type-shows-the-matched-term-has-the-constructor-in-each-arm
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+theorem t(f: (Nat) -> Bool, n: Nat, q: f(n) = true): f(n) = true {
+  let p: f(n) = true := q
+  ⊢ f(n) = true from match f(n) eqn e {
+    true => Refl
+    false => False::elim(false_ne_true(p))
+  }
+}
+```
+checks_all = "ok"
+checks.t = "ok"
+
+@ cases.a-match-on-a-term-is-convertible-with-the-same-match-in-a-function
+files."main.nib" = ```tauto
+fn pick(s: Bool, a: Nat, b: Nat): Nat {
+  ⊢ Nat from match s {
+    true => a
+    false => b
+  }
+}
+fn pick_inline(a: Nat, b: Nat): Nat {
+  ⊢ Nat from match Nat::eq(a, a) {
+    true => a
+    false => b
+  }
+}
+theorem factored(a: Nat, b: Nat): pick_inline(a, b) = pick(Nat::eq(a, a), a, b) {
+  Refl
+}
+fn dep(s: Bool, h: s = true, n: Nat): Nat {
+  ⊢ Nat from match s {
+    true => n
+    false => Zero
+  }
+}
+theorem dep_true(n: Nat): dep(true, Refl(Bool, true), n) = n {
+  Refl
+}
+```
+checks_all = "ok"
+checks.factored = "ok"
+checks.dep_true = "ok"
+
+@ cases.an-arm-written-with-the-goal-as-it-reads-is-checked-against-the-goal-not-unfolded
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+fn put(f: (Nat) -> Nat, k: Nat, a: Nat): (Nat) -> Nat {
+  (x: Nat) => ⊢ Nat from match Nat::eq(x, k) {
+    true => a
+    false => f(x)
+  }
+}
+theorem put_hit(f: (Nat) -> Nat, k: Nat, a: Nat, x: Nat, e: Nat::eq(x, k) = true): put(f, k, a)(x) = a {
+  ⊢ put(f, k, a)(x) = a from match Nat::eq(x, k) eqn e2 {
+    true => Refl
+    false => False::elim(false_ne_true(e))
+  }
+}
+theorem kept(f: (Nat) -> Nat, k: Nat, a: Nat, x: Nat, m: Nat, h: put(f, k, a)(x) = m): put(f, k, a)(x) = m {
+  (⊢ (∀ h2: put(f, k, a)(x) = m. Eq(Nat, put(f, k, a)(x), m)) from match Nat::eq(x, k) eqn e {
+    true => (h2: put(f, k, a)(x) = m) => Eq::trans(Eq::trans(put_hit(f, k, a, x, e), Eq::sym(put_hit(f, k, a, x, e))), h2)
+    false => (h2: put(f, k, a)(x) = m) => h2
+  })(h)
+}
+```
+checks_all = "ok"
+checks.put_hit = "ok"
+checks.kept = "ok"
+
+@ cases.a-closed-part-of-the-goal-is-not-unfolded-to-find-the-matched-term
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+fn spin(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(m) => spin(m)
+  }
+}
+
+fn pick(a: Nat, f: (Nat) -> Ordering, n: Nat): Nat {
+  ⊢ Nat from match f(n) {
+    Less => a
+    Equal => a
+    Greater => a
+  }
+}
+
+theorem closed(
+  f: (Nat) -> Ordering,
+  n: Nat
+): pick(spin(200000), f, n) = pick(spin(200000), f, n) {
+  ⊢ pick(spin(200000), f, n) = pick(spin(200000), f, n) from match f(n) eqn e {
+    Less => Refl
+    Equal => Refl
+    Greater => Refl
+  }
+}
+```
+checks_all = "ok"
+checks.spin = "ok"
+checks.pick = "ok"
+checks.closed = "ok"
+
+@ cases.an-assumption-whose-type-shows-the-matched-term-has-the-constructor-in-each-arm
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+fn bit(s: Bool): Nat {
+  ⊢ Nat from match s {
+    true => 1
+    false => 0
+  }
+}
+
+theorem t(f: (Nat) -> Bool, n: Nat, q: f(n) = true): bit(f(n)) = 1 {
+  ⊢ bit(f(n)) = 1 from match f(n) eqn e {
+    true => Refl
+    false => False::elim(false_ne_true(q))
+  }
+}
+```
+checks_all = "ok"
+checks.t = "ok"
+
+@ cases.an-arm-that-rewrites-an-assumption-with-the-equation-still-has-the-assumption-as-written
+files."Base.taut" = path`../../std/Base.taut`
+files."Std.taut" = path`../../std/Std.taut`
+files."main.nib" = ```tauto
+import "Base.taut"
+fn bit(s: Bool): Nat {
+  ⊢ Nat from match s {
+    true => 1
+    false => 0
+  }
+}
+
+theorem t(f: (Nat) -> Bool, n: Nat, q: f(n) = true): bit(f(n)) = 1 {
+  ⊢ bit(f(n)) = 1 from match f(n) eqn e {
+    true => Refl
+    false => False::elim(false_ne_true(Eq::trans(Eq::sym(e), q)))
+  }
+}
+```
+checks_all = "ok"
+checks.t = "ok"

@@ -5,7 +5,7 @@
 # Requirements: Bash, curl, unzip, and sha256sum or shasum.
 # No sudo, elan, PATH changes, remote installer scripts, or project dependencies.
 # The destination must not already exist. This script does not execute Lean.
-# Pins verified on 2026-10-21 (Asia/Tokyo) against:
+# Pins verified against:
 # https://api.github.com/repos/leanprover/lean4/releases/tags/v4.34.1
 # https://lean-lang.org/doc/reference/latest/releases/v4.34.1/
 # These hashes pin the GitHub assets; they are not an independent signature.

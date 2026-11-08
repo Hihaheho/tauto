@@ -2,36 +2,36 @@
 
 @ cases.raise-ok
 source = ```nib
-let r: Result(i64, Text) = Ok(1)
-let v = catch(() => raise(r) + 1)
+let r: Result(i64, Text) := Ok(1)
+let v := catch(() => raise(r) + 1)
 perform show("v", v)
 ```
 shows = ["v = Ok(2)"]
 
 @ cases.raise-err-stops
 source = ```nib
-let r: Result(i64, Text) = Err("bad")
-let v = catch(() => raise(r) + 1)
+let r: Result(i64, Text) := Err("bad")
+let v := catch(() => raise(r) + 1)
 perform show("v", v)
 ```
 shows = ["v = Err(\"bad\")"]
 
 @ cases.raise-needs-row
 source = ```nib
-fn f(r: Result(i64, Text)) -> i64 ! {} { raise(r) }
+fn f(r: Result(i64, Text)): i64 ! {} { raise(r) }
 ```
 rows = "error: `f` may perform fail"
 
 @ cases.catch-removes-fail
 source = ```nib
-fn f(r: Result(i64, Text)) -> Result(i64, Text) ! {} { catch(() => raise(r)) }
+fn f(r: Result(i64, Text)): Result(i64, Text) ! {} { catch(() => raise(r)) }
 ```
 rows = "ok"
 
 @ cases.catch-keeps-other-effects
 source = ```nib
-effect ask: () -> i64
-fn f(r: Result(i64, Text)) -> Result(i64, Text) ! {} {
+effect ask(): i64
+fn f(r: Result(i64, Text)): Result(i64, Text) ! {} {
   catch(() => raise(r) + perform ask())
 }
 ```
@@ -43,7 +43,7 @@ unimplemented = "the row check does not yet tell effects apart by their type arg
 source = ```nib
 struct IoError { code: i64 }
 struct ParseError { line: i64 }
-fn f(a: Result(i64, IoError), b: Result(i64, ParseError)) -> Result(i64, IoError) ! {} {
+fn f(a: Result(i64, IoError), b: Result(i64, ParseError)): Result(i64, IoError) ! {} {
   catch(() => raise(a) + raise(b))
 }
 ```
@@ -51,10 +51,10 @@ rows = "error: fail is ambiguous here"
 
 @ cases.affine-across-raise
 source = ```nib
-fn f(r: Result(u64, Text)) -> u64 ! {fail} {
-  var v = vec_new()
-  vec_push(&mut v, 1)
-  raise(r) + vec_len(&v)
+fn f(r: Result(u64, Text)): u64 ! {fail(Text)} {
+  var v := Vec::new()
+  Vec::push(&mut v, 1)
+  raise(r) + Vec::len(&v)
 }
 ```
 lin = "ok"
@@ -62,39 +62,41 @@ lin = "ok"
 @ cases.linear-across-raise
 source = ```nib
 linear struct H {}
-fn hello() -> H { H {} }
-fn finish(h: H) -> i64 { match h { H {} => 0 } }
-fn f(r: Result(i64, Text)) -> i64 ! {fail} {
-  let h = hello()
-  let v = raise(r)
+fn hello(): H { H {} }
+fn finish(h: H): i64 { match h { H {} => 0 } }
+fn f(r: Result(i64, Text)): i64 ! {fail(Text)} {
+  let h := hello()
+  let v := raise(r)
   finish(h) + v
 }
 ```
-lin = "error: h is live across fail, which may not resume"
+lin = "error: h is live across fail(Text), which may not resume"
 
 @ cases.slice-only-borrowed
 source = ```nib
-fn f(s: Slice(i64)) -> u64 { 0 }
+fn f(s: Slice(i64)): u64 { 0 }
 ```
 types = "error: Slice(A) can only be borrowed"
 
 @ cases.slice-in-a-vec-is-rejected
 source = ```nib
-fn f(&v: Vec(Slice(i64))) -> u64 { 0 }
+fn f(&v: Vec(Slice(i64))): u64 { 0 }
 ```
 types = "error: Slice(A) can only be borrowed"
 
 @ cases.slice-borrowed-is-fine
 source = ```nib
-fn f(&s: Slice(i64)) -> u64 { slice_len(&s) }
+fn f(&s: Slice(i64)): u64 { Slice::len(&s) }
 ```
 types = "ok"
 
 @ cases.slice-len
 source = ```nib
-var v = vec_new()
-vec_push(&mut v, 1)
-let &s = vec_as_slice(&v)
-perform show("n", slice_len(&s))
+import std::prelude::Affine
+
+var v := Vec::new()
+Vec::push(&mut v, 1)
+let &s := Vec::as_slice(&v)
+perform show("n", Slice::len(&s))
 ```
 shows = ["n = 1"]

@@ -18,7 +18,7 @@ module Float {
   // The number a finite `x` stands for, `None` for NaN and the infinities.
   // Both zeros are 0.
   pub fn val(x: Float): Option(Rat) {
-    match is_nan(x) || is_infinite(x): Option(Rat) {
+    ⊢ Option(Rat) from match is_nan(x) || is_infinite(x) {
       true => None
       false => Some(val_of(raw(x)))
     }
@@ -26,7 +26,7 @@ module Float {
 
   // `±m * 2^(e - 4000)`.
   pub fn val_of(n: Nat): Rat {
-    match 4000 <= e_of(n): Rat {
+    ⊢ Rat from match 4000 <= e_of(n) {
       true => Rat::of_int(signed(sign_of(n), m_of(n) * Nat::pow2(e_of(n) - 4000)))
       false => Rat::Mk(signed(sign_of(n), m_of(n)), Nat::pow2(4000 - e_of(n)) - 1)
     }
@@ -40,7 +40,7 @@ module Float {
   // large, `+0` for 0, and a zero with the sign of `r` when `r` rounds to
   // zero.
   pub fn of_rat(r: Rat): Float {
-    match Rat::num(r): Float {
+    ⊢ Float from match Rat::num(r) {
       IntOfNat(p) => of_raw(of_frac(0, p, Rat::den(r)))
       IntNegSucc(p) => of_raw(of_frac(1, Succ(p), Rat::den(r)))
     }
@@ -58,7 +58,7 @@ module Float {
   }
 
   pub fn of_frac(s: Nat, p: Nat, q: Nat): Nat {
-    match p == 0: Nat {
+    ⊢ Nat from match p == 0 {
       true => 0
       false => of_scaled(Float::pack, inf_raw(s), s, p, q, 56 + rat_len(q), rat_len(p))
     }
@@ -76,15 +76,15 @@ module Float {
     up: Nat,
     down: Nat
   ): Nat {
-    match down <= up: Nat {
+    ⊢ Nat from match down <= up {
       // Scaled up by `k = up - down`: the exponent is `4000 - k - 1`, and
       // what lies below `2^-2100` is far below the smallest subnormal.
-      true => match up - down < 2100: Nat {
+      true => ⊢ Nat from match up - down < 2100 {
         true => pack(s, sticky(p * Nat::pow2(up - down), q), 3999 - (up - down))
         false => pack(s, 0, 0)
       }
       // Scaled down by `k = down - up`: beyond `2^1100` it is infinite.
-      false => match down - up < 1100: Nat {
+      false => ⊢ Nat from match down - up < 1100 {
         true => pack(s, sticky(p, q * Nat::pow2(down - up)), 3999 + (down - up))
         false => inf
       }
@@ -94,11 +94,8 @@ module Float {
   // `2 * (n / q)`, plus 1 when `q` does not divide `n`. A `q` of 0 (never
   // passed) is read as dividing nothing: 1 for an `n` that is not 0.
   pub fn sticky(n: Nat, q: Nat): Nat {
-    match q == 0 eqn h: Nat {
-      true => match n == 0: Nat {
-        true => 0
-        false => 1
-      }
+    ⊢ Nat from match q == 0 eqn h {
+      true => ⊢ Nat from match n == 0 { true => 0, false => 1 }
       false => 2 * Nat::div_nz(
         n,
         q,
@@ -109,14 +106,11 @@ module Float {
 
   // 1 for a remainder, 0 for none.
   pub fn rem_bit(r: Nat): Nat {
-    match r == 0: Nat {
-      true => 0
-      false => 1
-    }
+    ⊢ Nat from match r == 0 { true => 0, false => 1 }
   }
 
   pub fn near(y: Float, r: Rat, eps: Rat): Bool {
-    match val(y): Bool {
+    ⊢ Bool from match val(y) {
       None => false
       Some(v) => Rat::le(Rat::dist(v, r), eps)
     }
@@ -129,17 +123,14 @@ module Float {
   }
 
   pub fn cmp_nat(a: Nat, b: Nat): Ordering {
-    match a < b: Ordering {
+    ⊢ Ordering from match a < b {
       true => Less
-      false => match a == b: Ordering {
-        true => Equal
-        false => Greater
-      }
+      false => ⊢ Ordering from match a == b { true => Equal, false => Greater }
     }
   }
 
   pub fn total_key(n: Nat): Nat {
-    match sign_of(n) == 0: Nat {
+    ⊢ Nat from match sign_of(n) == 0 {
       true => 9223372036854775808 + n
       false => 18446744073709551615 - n
     }
@@ -158,14 +149,14 @@ module Float {
 module Float32 {
   // The nearest `Float32` to `r`, as `Float::of_rat` the nearest `Float`.
   pub fn of_rat(r: Rat): Float32 {
-    match Rat::num(r): Float32 {
+    ⊢ Float32 from match Rat::num(r) {
       IntOfNat(p) => of_raw(of_frac(0, p, Rat::den(r)))
       IntNegSucc(p) => of_raw(of_frac(1, Succ(p), Rat::den(r)))
     }
   }
 
   pub fn of_frac(s: Nat, p: Nat, q: Nat): Nat {
-    match p == 0: Nat {
+    ⊢ Nat from match p == 0 {
       true => 0
       false => Float::of_scaled(
         Float32::pack,
@@ -193,7 +184,7 @@ pub def Refines(g: (Float) -> Float, f: (Rat) -> Rat, eps: Rat): Prop :=
 
 module Rat {
   pub fn of_float_example(x: Float): Rat {
-    match Float::val(x): Rat {
+    ⊢ Rat from match Float::val(x) {
       None => of_nat(0)
       Some(r) => r
     }

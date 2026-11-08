@@ -1,0 +1,179 @@
+@ cases.a-call-on-a-field-matched-again-stays-structural-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive L: Type {
+  Nl: L
+  Cs(rest: L): L
+}
+
+// `rest` is matched again; the call on it is still a call on a field.
+fn drop_last(xs: L): L {
+  ⊢ L from match xs {
+    Nl => Nl
+    Cs(rest) => ⊢ L from match rest {
+      Nl => Nl
+      Cs(more) => Cs(drop_last(rest))
+    }
+  }
+}
+
+theorem drops_last(): drop_last(Cs(Cs(Cs(Nl)))) = Cs(Cs(Nl)) {
+  Refl
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::L" = "ok"
+checks."input/main.taut::drop_last" = "ok"
+checks."input/main.taut::drops_last" = "ok"
+
+@ cases.the-matched-variable-in-a-recursive-arm-is-the-arm-constructor-in-recursive-calls-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive T: Type {
+  Lf: T
+  Nd(l: T, r: T): T
+}
+
+// `t` in the inner arm is `Nd(l, r)`, whatever the outermost call was given.
+fn keep(t: T): T {
+  ⊢ T from match t {
+    Lf => Lf
+    Nd(l, r) => ⊢ T from match keep(l) {
+      Lf => t
+      Nd(a, b) => Nd(keep(l), r)
+    }
+  }
+}
+
+theorem keeps(): keep(Nd(Nd(Lf, Lf), Lf)) = Nd(Nd(Lf, Lf), Lf) {
+  Refl
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::T" = "ok"
+checks."input/main.taut::keep" = "ok"
+checks."input/main.taut::keeps" = "ok"
+
+@ cases.a-call-on-a-matched-part-written-as-its-arm-constructor-is-structural-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive L: Type {
+  Nl: L
+  Cs(rest: L): L
+}
+
+// `Cs(more)` in the inner arm is `rest`, rebuilt from its fields.
+fn drop_last(xs: L): L {
+  ⊢ L from match xs {
+    Nl => Nl
+    Cs(rest) => ⊢ L from match rest {
+      Nl => Nl
+      Cs(more) => Cs(drop_last(Cs(more)))
+    }
+  }
+}
+
+theorem drops_last(): drop_last(Cs(Cs(Cs(Nl)))) = Cs(Cs(Nl)) {
+  Refl
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::L" = "ok"
+checks."input/main.taut::drop_last" = "ok"
+checks."input/main.taut::drops_last" = "ok"
+
+@ cases.a-call-on-a-rebuilt-part-has-the-type-of-the-arm-constructor-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive L: Type {
+  Nl: L
+  Cs(rest: L): L
+}
+
+inductive U: Type {
+  Mk: U
+}
+
+fn T(xs: L): Type {
+  ⊢ Type from match xs {
+    Nl => U
+    Cs(r) => T(r)
+  }
+}
+
+// The arm's goal is `T(Cs(more))`, which a call on `rest` would not have.
+fn mk(xs: L, a: T(xs)): T(xs) {
+  ⊢ T(xs) from match xs {
+    Nl => a
+    Cs(rest) => (⊢ (T(rest)) -> T(rest) from match rest {
+      Nl => (p) => p
+      Cs(more) => (p) => mk(Cs(more), p)
+    })(a)
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::L" = "ok"
+checks."input/main.taut::U" = "ok"
+checks."input/main.taut::T" = "ok"
+checks."input/main.taut::mk" = "ok"
+
+@ cases.a-match-applied-to-its-hypotheses-one-at-a-time-is-structural-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive L: Type {
+  Nl: L
+  Cs(rest: L): L
+}
+
+// `(match …)(a)(b)` is `(match …)(a, b)`.
+theorem same(xs: L, a: xs = xs, b: xs = xs): xs = xs {
+  (⊢ (xs = xs) -> (xs = xs) -> xs = xs from match xs {
+    Nl => (p) => (q) => p
+    Cs(rest) => (p) => (q) => ⊢ Cs(rest) = Cs(rest) from match same(rest, Refl, Refl) {
+      Refl => p
+    }
+  })(a)(b)
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::L" = "ok"
+checks."input/main.taut::same" = "ok"
+
+@ cases.the-matched-value-rebuilt-or-a-rebuilt-part-under-a-binder-is-not-structural-0
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+inductive L: Type {
+  Nl: L
+  Cs(rest: L): L
+}
+
+// `Cs(rest)` is `xs` itself, not a part of it.
+fn again(xs: L): L {
+  ⊢ L from match xs {
+    Nl => Nl
+    Cs(rest) => again(Cs(rest))
+  }
+}
+
+// Under the λ, `more` is the λ's parameter, so `Cs(more)` is not `rest`.
+fn under(xs: L): L {
+  ⊢ L from match xs {
+    Nl => Nl
+    Cs(rest) => ⊢ L from match rest {
+      Nl => Nl
+      Cs(more) => ((more: L) => under(Cs(more)))(Cs(rest))
+    }
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::L" = "ok"
+checks."input/main.taut::again" = "error: "
+checks."input/main.taut::under" = "error: "

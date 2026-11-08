@@ -1,0 +1,2037 @@
+import std::prelude::Macro {
+  Elab,
+  Judgement,
+  Syn,
+  SynArm,
+  SynBinder,
+  SynCtx,
+  SynExpr,
+  SynIdent,
+  SynParam,
+  SynPattern,
+  SynSpan,
+  SynStepArm,
+  elab,
+  macro_error
+}
+import std::prelude::Std { List, Option, Result }
+import std::prelude::Shared { concat }
+import "Lang.taut" { ProofClause, ProofCore }
+
+// The sentence forms of the standard library. Each is a macro placed in a
+// proof: it is given the goal and context of its place and its clause, as
+// `proof!` reads it, and makes the proof of its place. A form for another
+// field is written the same way, as a macro named `proof_<first word>`.
+
+pub(open) struct ProofTaken { item: Option(SynExpr), rest: List(SynExpr) }
+
+// The parts of a term the sentence forms look at; every other term is `ShapeOther`.
+pub(open) enum ProofShape {
+  ShapeVar(SynIdent)
+  ShapeAtom(u64, SynSpan)
+  ShapeText(Text)
+  ShapeBool(Bool)
+  ShapeApp(SynExpr, List(SynExpr), SynSpan)
+  ShapePi(List(SynParam), SynExpr, Option(List(Text)), SynSpan)
+  ShapeLam(List(SynBinder), SynExpr, SynSpan)
+  ShapeMacroCall(Text)
+  ShapeMacroExpr(SynIdent, SynExpr, SynSpan)
+  ShapeOther
+}
+
+module ProofShapes {
+  pub fn shape(e: SynExpr): ProofShape {
+    match e {
+      ExVar(i) => ShapeVar(i)
+      ExAtom(a, sp) => ShapeAtom(a, sp)
+      ExNat(t, sp) => ShapeOther
+      ExText(t, sp) => ShapeText(t)
+      ExBool(b, sp) => ShapeBool(b)
+      ExApp(f, xs, sp) => ShapeApp(f, xs, sp)
+      ExPi(ps, r, fx, sp) => ShapePi(ps, r, fx, sp)
+      ExLam(bs, body, sp) => ShapeLam(bs, body, sp)
+      ExIf(c, y, n, sp) => ShapeOther
+      ExField(base, n, sp) => ShapeOther
+      ExBlock(ss, sp) => ShapeOther
+      ExPerform(op, xs, sp) => ShapeOther
+      ExHandle(body, hs, sp) => ShapeOther
+      ExBudget(l, body, sp) => ShapeOther
+      ExBudgetMemory(l, body, sp) => ShapeOther
+      ExMatch(s, m, arms, q, sp) => ShapeOther
+      ExRecord(n, fs, sp) => ShapeOther
+      ExBorrow(m, v, sp) => ShapeOther
+      ExUnion(ms, sp) => ShapeOther
+      ExProduct(ms, sp) => ShapeOther
+      ExTagged(t, v, sp) => ShapeOther
+      ExExists(bd, t, body, sp) => ShapeOther
+      ExFnKind(k, t, sp) => ShapeOther
+      ExBorrowLam(bs, body, sp) => ShapeOther
+      ExMacroCall(n, t, sp) => ShapeMacroCall(t)
+      ExMacroExpr(n, arg, sp) => ShapeMacroExpr(n, arg, sp)
+      ExStep(st, sa, sb, sarms, sp) => ShapeOther
+      ExHole(n, sp) => ShapeOther
+      ExUnit(sp) => ShapeOther
+    }
+  }
+}
+
+// What an induction hypothesis states: the goal with the variable of the induction replaced and the
+// generalized variables bound again.
+pub(open) struct ProofMotive {
+  goal: SynExpr,
+  index: u64,
+  later: List(Judgement::Binder),
+  generalized: List(SynIdent)
+}
+
+module ProofForms {
+  fn map<A, B>(f: (A) -> B ! {Div}, xs: List(A)): List(B) ! {Div} {
+    match xs {
+      Nil => Nil
+      Cons(x, rest) => Cons(f(x), ProofForms::map(f, rest))
+    }
+  }
+
+  fn append<A>(xs: List(A), ys: List(A)): List(A) ! {Div} {
+    match xs {
+      Nil => ys
+      Cons(x, rest) => Cons(x, ProofForms::append(rest, ys))
+    }
+  }
+
+  fn word(e: SynExpr): Text {
+    match Syn::ident_of(e) {
+      Some(i) => i.name
+      None => match ProofShapes::shape(e) {
+        ShapeText(t) => t
+        ShapeVar(_) => ""
+        ShapeAtom(_, _) => ""
+        ShapeBool(_) => ""
+        ShapeApp(_, _, _) => ""
+        ShapePi(_, _, _, _) => ""
+        ShapeLam(_, _, _) => ""
+        ShapeMacroCall(_) => ""
+        ShapeMacroExpr(_, _, _) => ""
+        ShapeOther => ""
+      }
+    }
+  }
+
+  fn tail<A>(xs: List(A)): List(A) {
+    match xs {
+      Nil => Nil
+      Cons(_, rest) => rest
+    }
+  }
+
+  // The words of `ws` before the first that reads `w`, and those after it.
+  fn before(ws: List(SynExpr), w: Text): List(SynExpr) ! {Div} {
+    match ws {
+      Nil => Nil
+      Cons(x, rest) => if ProofForms::word(x) == w { Nil } else {
+        Cons(x, ProofForms::before(rest, w))
+      }
+    }
+  }
+
+  fn after(ws: List(SynExpr), w: Text): List(SynExpr) ! {Div} {
+    match ws {
+      Nil => Nil
+      Cons(x, rest) => if ProofForms::word(x) == w { rest } else { ProofForms::after(rest, w) }
+    }
+  }
+
+  fn reads(ws: List(SynExpr), expected: List(Text)): Bool ! {Div} {
+    match expected {
+      Nil => true
+      Cons(e, es) => match ws {
+        Nil => false
+        Cons(w, rest) => ProofForms::word(w) == e && ProofForms::reads(rest, es)
+      }
+    }
+  }
+
+  fn drop<A: Shared>(xs: List(A), n: u64): List(A) ! {Div} {
+    if n == 0 { xs } else { ProofForms::drop(ProofForms::tail(xs), n - 1) }
+  }
+
+  // The next item of the Proof-code.
+  fn take(code: List(SynExpr)): ProofTaken {
+    match code {
+      Nil => ProofTaken { item: None, rest: Nil }
+      Cons(x, rest) => ProofTaken { item: Some(x), rest: rest }
+    }
+  }
+
+  // `L` applied to an item of the Proof-code: a tuple gives its elements.
+  fn apply(l: SynExpr, item: Option(SynExpr), at: SynSpan): SynExpr ! {Div} {
+    match item {
+      None => l
+      Some(x) => match Syn::app_parts(x) {
+        Some(#(xs, f)) => if ProofForms::word(f) == "proof_tuple" { ExApp(l, xs, at) } else {
+          ExApp(l, [x], at)
+        }
+        None => ExApp(l, [x], at)
+      }
+    }
+  }
+
+  fn global(name: Text): SynExpr { ExVar(Syn::global(name)) }
+
+  fn fresh(name: Text, at: SynSpan): SynIdent {
+    SynIdent { name: name, ctx: SynCtx { scopes: Nil }, span: at, declaration: None }
+  }
+
+  // The clause with `x` read as `r` in what follows it: its later clauses,
+  // its Proof-code and the sentences under it.
+  fn named(c: ProofClause, x: Text, r: SynExpr): ProofClause ! {Div} {
+    ProofClause {
+      words: c.words
+      rest: ProofForms::map(
+        (ws: List(SynExpr)) => ProofForms::map((w: SynExpr) => ProofForms::substitute(w, x, r), ws),
+        c.rest
+      )
+      code: ProofForms::map((w: SynExpr) => ProofForms::substitute(w, x, r), c.code)
+      children: ProofForms::map((w: SynExpr) => ProofForms::substitute(w, x, r), c.children)
+      span: c.span
+    }
+  }
+
+  // `e` with the name `x` replaced by `r`, in the data of a clause too.
+  fn substitute(e: SynExpr, x: Text, r: SynExpr): SynExpr ! {Div} {
+    match ProofShapes::shape(e) {
+      ShapeVar(i) => if i.name == x { r } else { e }
+      ShapeApp(f, xs, sp) => ExApp(
+        ProofForms::substitute(f, x, r),
+        ProofForms::map((y: SynExpr) => ProofForms::substitute(y, x, r), xs),
+        sp
+      )
+      ShapeMacroExpr(m, a, sp) => ExMacroExpr(m, ProofForms::substitute(a, x, r), sp)
+      ShapeLam(bs, b, sp) => ExLam(bs, ProofForms::substitute(b, x, r), sp)
+      ShapeAtom(_, _) => e
+      ShapeText(_) => e
+      ShapeBool(_) => e
+      ShapePi(_, _, _, _) => e
+      ShapeMacroCall(_) => e
+      ShapeOther => e
+    }
+  }
+
+  // A proposition as Proof-prose writes it: one term, or `a = b`.
+  fn proposition(ws: List(SynExpr), at: SynSpan): SynExpr ! {macro_error, Div} {
+    match ws {
+      Cons(p, Nil) => p
+      Cons(a, Cons(eq, Cons(b, Nil))) => if ProofForms::word(eq) == "=" { quote { $a = $b } } else {
+        ProofCore::fail(at, "a proposition is a term or `a = b`")
+      }
+      Nil => ProofCore::fail(at, "a proposition is a term or `a = b`")
+      Cons(_, Cons(_, Nil)) => ProofCore::fail(at, "a proposition is a term or `a = b`")
+      Cons(_, Cons(_, Cons(_, Cons(_, _)))) => ProofCore::fail(
+        at,
+        "a proposition is a term or `a = b`"
+      )
+    }
+  }
+
+  // ---- The context ----
+
+  fn index_of(
+    bs: List(Judgement::Binder),
+    name: Text,
+    i: u64,
+    found: Option(u64)
+  ): Option(u64) ! {Div} {
+    match bs {
+      Nil => found
+      Cons(b, rest) => ProofForms::index_of(
+        rest,
+        name,
+        i + 1,
+        if ProofForms::base(b.name) == ProofForms::base(name) { Some(i) } else { found }
+      )
+    }
+  }
+
+  // A name without the mark of the scopes it was made in (`#…`, or `\u{1}…` in a name not yet shown).
+  fn base(name: Text): Text ! {Div} {
+    match std::prelude::Text::slice(name, 0, ProofForms::mark_at(name, 0)) {
+      Some(t) => t
+      None => name
+    }
+  }
+
+  fn mark_at(name: Text, i: u64): u64 ! {Div} {
+    match std::prelude::Text::byte(name, i) {
+      None => i
+      Some(b) => if b == 1 || b == 35 { i } else { ProofForms::mark_at(name, i + 1) }
+    }
+  }
+
+  fn nth(bs: List(Judgement::Binder), i: u64): Option(Judgement::Binder) ! {Div} {
+    match bs {
+      Nil => None
+      Cons(b, rest) => if i == 0 { Some(b) } else { ProofForms::nth(rest, i - 1) }
+    }
+  }
+
+  // `e` with the variables of the atoms in `subst` replaced.
+  fn replace_atoms(e: SynExpr, subst: List(u64 × SynExpr)): SynExpr ! {Div} {
+    match ProofShapes::shape(e) {
+      ShapeAtom(b, sp) => ProofForms::lookup(subst, b, e)
+      ShapeApp(f, xs, sp) => ExApp(
+        ProofForms::replace_atoms(f, subst),
+        ProofForms::map((x: SynExpr) => ProofForms::replace_atoms(x, subst), xs),
+        sp
+      )
+      ShapePi(ps, r, fx, sp) => ExPi(
+        ProofForms::map(
+          (p: SynParam) => SynParam { name: p.name, ty: ProofForms::replace_atoms(p.ty, subst) },
+          ps
+        ),
+        ProofForms::replace_atoms(r, subst),
+        fx,
+        sp
+      )
+      ShapeVar(_) => e
+      ShapeText(_) => e
+      ShapeBool(_) => e
+      ShapeLam(_, _, _) => e
+      ShapeMacroCall(_) => e
+      ShapeMacroExpr(_, _, _) => e
+      ShapeOther => e
+    }
+  }
+
+  fn lookup(subst: List(u64 × SynExpr), b: u64, e: SynExpr): SynExpr ! {Div} {
+    match subst {
+      Nil => e
+      Cons(#(a, r), rest) => if a == b { r } else { ProofForms::lookup(rest, b, e) }
+    }
+  }
+
+  // `e` with the names of the context as its atoms, as the checker reads it.
+  fn atomize(at: Judgement, e: SynExpr): SynExpr ! {Div} {
+    match ProofShapes::shape(e) {
+      ShapeApp(f, Cons(field, rest), sp) => match ProofForms::field_hypothesis(at, f, field) {
+        Some(a) => match rest {
+          Nil => ExAtom(a, sp)
+          Cons(_, _) => ExApp(
+            ExAtom(a, sp),
+            ProofForms::map((x: SynExpr) => ProofForms::atomize(at, x), rest),
+            sp
+          )
+        }
+        None => ExApp(
+          ProofForms::atomize(at, f),
+          ProofForms::map((x: SynExpr) => ProofForms::atomize(at, x), Cons(field, rest)),
+          sp
+        )
+      }
+      ShapeVar(i) => match ProofForms::index_of(Judgement::ctx(at), i.name, 0, None) {
+        Some(k) => match ProofForms::nth(Judgement::ctx(at), k) {
+          Some(b) => ExAtom(b.atom, i.span)
+          None => e
+        }
+        None => e
+      }
+      ShapeApp(f, xs, sp) => ExApp(
+        ProofForms::atomize(at, f),
+        ProofForms::map((x: SynExpr) => ProofForms::atomize(at, x), xs),
+        sp
+      )
+      ShapeAtom(_, _) => e
+      ShapeText(_) => e
+      ShapeBool(_) => e
+      ShapePi(_, _, _, _) => e
+      ShapeLam(_, _, _) => e
+      ShapeMacroCall(_) => e
+      ShapeMacroExpr(_, _, _) => e
+      ShapeOther => e
+    }
+  }
+
+  // A term Proof-prose wrote, as the checker reads it: its notation expanded and
+  // the names of the context as their atoms.
+  fn term(at: Judgement, e: SynExpr): SynExpr ! {Div} {
+    // What the checker gave has its atoms already, and nothing to expand.
+    // Only a term with a macro call in it is expanded: expanding binds its names.
+    if ProofForms::has_atom(e) { e } else if ProofForms::has_macro(e) {
+      ProofForms::atomize(at, Syn::expand(e))
+    } else { ProofForms::atomize(at, e) }
+  }
+
+  fn has_macro(e: SynExpr): Bool ! {Div} {
+    match ProofShapes::shape(e) {
+      ShapeMacroCall(_) => true
+      ShapeMacroExpr(_, _, _) => true
+      ShapeApp(f, xs, _) => ProofForms::has_macro(f) || ProofForms::any_macro(xs)
+      ShapeVar(_) => false
+      ShapeAtom(_, _) => false
+      ShapeText(_) => false
+      ShapeBool(_) => false
+      ShapePi(_, _, _, _) => false
+      ShapeLam(_, _, _) => false
+      ShapeOther => false
+    }
+  }
+
+  fn any_macro(xs: List(SynExpr)): Bool ! {Div} {
+    match xs {
+      Nil => false
+      Cons(x, rest) => ProofForms::has_macro(x) || ProofForms::any_macro(rest)
+    }
+  }
+
+  fn has_atom(e: SynExpr): Bool ! {Div} {
+    match ProofShapes::shape(e) {
+      ShapeAtom(_, _) => true
+      ShapeApp(f, xs, _) => ProofForms::has_atom(f) || ProofForms::any_atom(xs)
+      ShapePi(ps, r, _, _) => ProofForms::has_atom(r)
+      ShapeVar(_) => false
+      ShapeText(_) => false
+      ShapeBool(_) => false
+      ShapeLam(_, _, _) => false
+      ShapeMacroCall(_) => false
+      ShapeMacroExpr(_, _, _) => false
+      ShapeOther => false
+    }
+  }
+
+  fn any_atom(xs: List(SynExpr)): Bool ! {Div} {
+    match xs {
+      Nil => false
+      Cons(x, rest) => ProofForms::has_atom(x) || ProofForms::any_atom(rest)
+    }
+  }
+
+  // `ih(f, …)`: the atom of the induction hypothesis of the field `f`, when there are several.
+  fn field_hypothesis(at: Judgement, f: SynExpr, field: SynExpr): Option(u64) ! {Div} {
+    if ProofForms::word(f) == "ih" {
+      match Syn::ident_of(field) {
+        Some(i) => match ProofForms::index_of(Judgement::ctx(at), concat("ih'", i.name), 0, None) {
+          Some(k) => match ProofForms::nth(Judgement::ctx(at), k) {
+            Some(b) => Some(b.atom)
+            None => None
+          }
+          None => None
+        }
+        None => None
+      }
+    } else {
+      None
+    }
+  }
+
+  // `l` applied to the next item of the Proof-code when `l` is a function, and the items left.
+  fn use_code(
+    at: Judgement,
+    l: SynExpr,
+    code: List(SynExpr),
+    sp: SynSpan
+  ): SynExpr × List(SynExpr) ! {elab, Div} {
+    let function := match Elab::check(ProofForms::term(at, l), at, None) {
+      Ok(j) => match ProofShapes::shape(Elab::whnf(Judgement::type_of(j)).term) {
+        ShapePi(_, _, _, _) => true
+        ShapeVar(_) => false
+        ShapeAtom(_, _) => false
+        ShapeText(_) => false
+        ShapeBool(_) => false
+        ShapeApp(_, _, _) => false
+        ShapeLam(_, _, _) => false
+        ShapeMacroCall(_) => false
+        ShapeMacroExpr(_, _, _) => false
+        ShapeOther => false
+      }
+      Err(_) => false
+    }
+    match code {
+      Cons(x, rest) => if function { #(ProofForms::apply(l, Some(x), sp), rest) } else {
+        #(l, code)
+      }
+      Nil => #(l, Nil)
+    }
+  }
+
+  // ---- Cases and induction ----
+
+  // The pattern of a case: the constructor and the names of what it holds.
+  fn pattern(e: SynExpr, at: SynSpan): SynIdent × List(SynIdent) ! {macro_error, Div} {
+    match Syn::ident_of(e) {
+      Some(c) => #(c, Nil)
+      None => match Syn::app_parts(e) {
+        Some(#(xs, f)) => match Syn::ident_of(f) {
+          Some(c) => #(c, ProofForms::names(xs, at))
+          None => ProofCore::fail(at, "a case names a constructor")
+        }
+        None => ProofCore::fail(at, "a case names a constructor")
+      }
+    }
+  }
+
+  fn names(xs: List(SynExpr), at: SynSpan): List(SynIdent) ! {macro_error, Div} {
+    match xs {
+      Nil => Nil
+      Cons(x, rest) => match Syn::ident_of(x) {
+        Some(i) => Cons(
+          SynIdent { name: i.name, ctx: i.ctx, span: i.span, declaration: None },
+          ProofForms::names(rest, at)
+        )
+        None => ProofCore::fail(at, "a case binds names")
+      }
+    }
+  }
+
+  // Two types are the same inductive type when they apply the same name; parameters are uniform.
+  fn same_type(a: SynExpr, b: SynExpr): Bool ! {Div} {
+    ProofForms::head_name(a) == ProofForms::head_name(b)
+  }
+
+  // Which fields of the constructor are of the type itself: those get an induction hypothesis.
+  // A constructor in a case is written bare (`Cons`) or qualified (`List::Cons`).
+  fn recursive(c: SynIdent, ty: SynExpr, at: Judgement): List(Bool) ! {elab, Div} {
+    match Elab::resolve(c, at) {
+      Some(j) => ProofForms::fields_of(j, ty)
+      None => match Elab::resolve(
+        ProofForms::fresh(concat(concat(ProofForms::head_name(ty), "::"), c.name), c.span),
+        at
+      ) {
+        Some(j) => ProofForms::fields_of(j, ty)
+        None => Nil
+      }
+    }
+  }
+
+  fn fields_of(j: Judgement, ty: SynExpr): List(Bool) ! {Div} {
+    ProofForms::params_of(Judgement::type_of(j).term, ty)
+  }
+
+  // Each parameter of a function type, through nested `Π`s: whether it is of the type `ty`.
+  fn params_of(t: SynExpr, ty: SynExpr): List(Bool) ! {Div} {
+    match ProofShapes::shape(t) {
+      ShapePi(ps, result, _, _) => ProofForms::append(
+        ProofForms::map((p: SynParam) => ProofForms::same_type(p.ty, ty), ps),
+        ProofForms::params_of(result, ty)
+      )
+      ShapeVar(_) => Nil
+      ShapeAtom(_, _) => Nil
+      ShapeText(_) => Nil
+      ShapeBool(_) => Nil
+      ShapeApp(_, _, _) => Nil
+      ShapeLam(_, _, _) => Nil
+      ShapeMacroCall(_) => Nil
+      ShapeMacroExpr(_, _, _) => Nil
+      ShapeOther => Nil
+    }
+  }
+
+  // The induction hypotheses, one for each recursive field: `ih`, or `ih'f` for
+  // the field `f` when there are several. Proof-code names them `ih` and `ih(f, …)`.
+  fn hypotheses(
+    fields: List(SynIdent),
+    recursive: List(Bool),
+    m: ProofMotive
+  ): List(SynBinder) ! {Div} {
+    ProofForms::hypotheses_named(fields, recursive, ProofForms::count_true(recursive) > 1, m)
+  }
+
+  // The statement of the induction hypothesis for the field `f`.
+  fn hypothesis(m: ProofMotive, f: SynIdent): SynExpr ! {Div} {
+    let subst := Cons(#(m.index, ExVar(f)), ProofForms::pairs(m.later, m.generalized))
+    let body := ProofForms::replace_atoms(m.goal, subst)
+    match ProofForms::params(m.later, m.generalized, subst) {
+      Nil => body
+      Cons(p, ps) => ExPi(Cons(p, ps), body, None, f.span)
+    }
+  }
+
+  fn count_true(xs: List(Bool)): u64 ! {Div} {
+    match xs {
+      Nil => 0
+      Cons(x, rest) => (if x { 1 } else { 0 }) + ProofForms::count_true(rest)
+    }
+  }
+
+  fn hypotheses_named(
+    fields: List(SynIdent),
+    recursive: List(Bool),
+    several: Bool,
+    m: ProofMotive
+  ): List(SynBinder) ! {Div} {
+    match fields {
+      Nil => Nil
+      Cons(f, more) => match recursive {
+        Nil => Nil
+        Cons(r, rs) => if r {
+          Cons(
+            BName(
+              ProofForms::fresh(if several { concat("ih'", f.name) } else { "ih" }, f.span),
+              Some(ProofForms::hypothesis(m, f))
+            ),
+            ProofForms::hypotheses_named(more, rs, several, m)
+          )
+        } else {
+          ProofForms::hypotheses_named(more, rs, several, m)
+        }
+      }
+    }
+  }
+
+  // The first clause of a sentence under this one.
+  fn child_clause(k: SynExpr, at: SynSpan): ProofClause ! {macro_error, Div} {
+    match ProofShapes::shape(k) {
+      ShapeMacroExpr(_, arg, _) => ProofCore::clause(arg, at)
+      ShapeVar(_) => ProofCore::fail(at, "a case is a sentence under this one")
+      ShapeAtom(_, _) => ProofCore::fail(at, "a case is a sentence under this one")
+      ShapeText(_) => ProofCore::fail(at, "a case is a sentence under this one")
+      ShapeBool(_) => ProofCore::fail(at, "a case is a sentence under this one")
+      ShapeApp(_, _, _) => ProofCore::fail(at, "a case is a sentence under this one")
+      ShapePi(_, _, _, _) => ProofCore::fail(at, "a case is a sentence under this one")
+      ShapeLam(_, _, _) => ProofCore::fail(at, "a case is a sentence under this one")
+      ShapeMacroCall(_) => ProofCore::fail(at, "a case is a sentence under this one")
+      ShapeOther => ProofCore::fail(at, "a case is a sentence under this one")
+    }
+  }
+
+  // `Case C(x, …)`, or `Case h: P`: what the case writes after `Case`.
+  fn case_words(k: SynExpr, at: SynSpan): List(SynExpr) ! {macro_error, Div} {
+    let c := ProofForms::child_clause(k, at)
+    if ProofForms::word(match c.words { Cons(w, _) => w, Nil => ExUnit(at) }) == "Case" {
+      ProofForms::tail(c.words)
+    } else {
+      ProofCore::fail(at, "a sentence under a case analysis begins with Case")
+    }
+  }
+
+  // `By induction on x.`: the eliminator of the type of `x`, with the
+  // variables after `x` generalized, as a `match` generalizes them.
+  fn induction(at: Judgement, c: ProofClause, x: SynExpr): SynExpr ! {macro_error, elab, Div} {
+    let sp := Judgement::span(at)
+    let xi := match Syn::ident_of(x) {
+      Some(i) => i
+      None => ProofCore::fail(sp, "induction is on a variable")
+    }
+    let ctx := Judgement::ctx(at)
+    let i := match ProofForms::index_of(ctx, xi.name, 0, None) {
+      Some(i) => i
+      None => ProofCore::fail(sp, concat("no variable named ", xi.name))
+    }
+    let b := match ProofForms::nth(ctx, i) {
+      Some(b) => b
+      None => ProofCore::fail(sp, "no variable")
+    }
+    let later := ProofForms::generalizable(at, ProofForms::drop(ctx, i + 1), b.atom)
+    let t := ProofForms::fresh("proof_index", sp)
+    let generalized := ProofForms::map(
+      (l: Judgement::Binder) => ProofForms::fresh(l.name, sp),
+      later
+    )
+    let subst := Cons(#(b.atom, ExVar(t)), ProofForms::pairs(later, generalized))
+    let params := ProofForms::params(later, generalized, subst)
+    let body := ProofForms::replace_atoms(at.ty, subst)
+    let motive := ExLam(
+      [BName(t, None)],
+      match params { Nil => body, Cons(_, _) => ExPi(params, body, None, sp) },
+      sp
+    )
+    let elim := ProofForms::eliminator(b.ty, sp)
+    let m := ProofMotive { goal: at.ty, index: b.atom, later: later, generalized: generalized }
+    let arms := ProofForms::arms(at, c.children, b.ty, m, sp)
+    let generalized_args := ProofForms::map((l: Judgement::Binder) => ExAtom(l.atom, sp), later)
+    // The parameters of the type come first: `List::ind(A, motive, …)` for `List(A)`.
+    ExApp(
+      elim,
+      ProofForms::append(
+        ProofForms::type_args(b.ty),
+        Cons(motive, ProofForms::append(arms, Cons(x, generalized_args)))
+      ),
+      sp
+    )
+  }
+
+  // The variables after the one of the induction that it generalizes: those the goal
+  // mentions, those whose type depends on the variable (or on one it generalizes), and
+  // those the type of one it generalizes mentions. A `let` the goal does not mention,
+  // such as a lemma proved in the body, stays as it is: the hypothesis does not take
+  // it as a premise, and the cases use it by its name.
+  fn generalizable(
+    at: Judgement,
+    bs: List(Judgement::Binder),
+    x: u64
+  ): List(Judgement::Binder) ! {Div} {
+    ProofForms::keep_mentioned(at, ProofForms::depending(at, bs, Cons(x, Nil)), at.ty)
+  }
+
+  fn mentions(at: Judgement, e: SynExpr, n: u64): Bool {
+    Judgement::mentions(Judgement::sub(at, e), n)
+  }
+
+  fn mentions_any(at: Judgement, e: SynExpr, ns: List(u64)): Bool ! {Div} {
+    match ns {
+      Nil => false
+      Cons(n, rest) => ProofForms::mentions(at, e, n) || ProofForms::mentions_any(at, e, rest)
+    }
+  }
+
+  // Each binder with whether its type depends on `deps` or on an earlier one that does.
+  fn depending(
+    at: Judgement,
+    bs: List(Judgement::Binder),
+    deps: List(u64)
+  ): List(Judgement::Binder × Bool) ! {Div} {
+    match bs {
+      Nil => Nil
+      Cons(b, rest) => if ProofForms::mentions_any(at, b.ty, deps) {
+        Cons(#(b, true), ProofForms::depending(at, rest, Cons(b.atom, deps)))
+      } else {
+        Cons(#(b, false), ProofForms::depending(at, rest, deps))
+      }
+    }
+  }
+
+  // The binders that depend, or that the goal or the type of a later kept binder mentions.
+  fn keep_mentioned(
+    at: Judgement,
+    bs: List(Judgement::Binder × Bool),
+    goal: SynExpr
+  ): List(Judgement::Binder) ! {Div} {
+    match bs {
+      Nil => Nil
+      Cons(#(b, dep), rest) => {
+        let kept := ProofForms::keep_mentioned(at, rest, goal)
+        if dep || ProofForms::mentions(
+          at,
+          goal,
+          b.atom
+        ) || ProofForms::mentioned_by(at, kept, b.atom) {
+          Cons(b, kept)
+        } else {
+          kept
+        }
+      }
+    }
+  }
+
+  fn mentioned_by(at: Judgement, bs: List(Judgement::Binder), n: u64): Bool ! {Div} {
+    match bs {
+      Nil => false
+      Cons(b, rest) => ProofForms::mentions(at, b.ty, n) || ProofForms::mentioned_by(at, rest, n)
+    }
+  }
+
+  // A hypothesis that generalizes variables is `∀ b. …`: when what is written for it is not
+  // a `∀`, the names it generalizes, to say so and how to use it.
+  fn not_generalized(at: Judgement, p: SynExpr): Option(Text) ! {Div} {
+    match ProofForms::index_of(Judgement::ctx(at), "ih", 0, None) {
+      None => None
+      Some(i) => match ProofForms::nth(Judgement::ctx(at), i) {
+        None => None
+        Some(h) => match ProofShapes::shape(h.ty) {
+          ShapePi(params, _, _, _) => match ProofShapes::shape(p) {
+            ShapePi(_, _, _, _) => None
+            ShapeMacroExpr(_, _, _) => None
+            ShapeMacroCall(_) => None
+            ShapeVar(_) => Some(ProofForms::param_names(params))
+            ShapeAtom(_, _) => Some(ProofForms::param_names(params))
+            ShapeText(_) => Some(ProofForms::param_names(params))
+            ShapeBool(_) => Some(ProofForms::param_names(params))
+            ShapeApp(_, _, _) => Some(ProofForms::param_names(params))
+            ShapeLam(_, _, _) => Some(ProofForms::param_names(params))
+            ShapeOther => Some(ProofForms::param_names(params))
+          }
+          ShapeVar(_) => None
+          ShapeAtom(_, _) => None
+          ShapeText(_) => None
+          ShapeBool(_) => None
+          ShapeApp(_, _, _) => None
+          ShapeLam(_, _, _) => None
+          ShapeMacroCall(_) => None
+          ShapeMacroExpr(_, _, _) => None
+          ShapeOther => None
+        }
+      }
+    }
+  }
+
+  fn generalized_message(names: Text): Text {
+    concat(
+      concat(
+        concat("the induction hypothesis is `∀ ", names),
+        ". …`: the induction generalizes the variables after the one it is on. Write `h: ∀ "
+      ),
+      concat(names, ". …` and apply it, as `${h(…)}`")
+    )
+  }
+
+  fn param_names(ps: List(SynParam)): Text ! {Div} {
+    match ps {
+      Nil => ""
+      Cons(p, Nil) => ProofForms::param_name(p)
+      Cons(p, rest) => concat(
+        concat(ProofForms::param_name(p), ", "),
+        ProofForms::param_names(rest)
+      )
+    }
+  }
+
+  fn param_name(p: SynParam): Text {
+    match p.name {
+      Some(i) => ProofForms::base(i.name)
+      None => "_"
+    }
+  }
+
+  // The eliminator of the inductive type `ty` (`List::ind` for `List(A)`),
+  // by the declaration its head names: it is found wherever the type is
+  // declared, and not by building its name.
+  fn eliminator(ty: SynExpr, sp: SynSpan): SynExpr ! {macro_error, Div} {
+    let head := match Syn::app_parts(ty) {
+      Some(#(_, f)) => f
+      None => ty
+    }
+    match Syn::ident_of(head) {
+      Some(i) => match i.declaration {
+        Some(d) => ExVar(SynIdent {
+          name: concat(i.name, "::ind"),
+          ctx: SynCtx { scopes: Nil },
+          span: sp,
+          declaration: Some(Syn::eliminator(d))
+        })
+        None => ProofCore::fail(
+          sp,
+          concat("induction on a variable of an unresolved type ", i.name)
+        )
+      }
+      None => ProofCore::fail(sp, "induction is on a variable of an inductive type")
+    }
+  }
+
+  // The arguments a type applies: `[A]` for `List(A)`.
+  fn type_args(ty: SynExpr): List(SynExpr) ! {Div} {
+    match Syn::app_parts(ty) {
+      Some(#(xs, _)) => xs
+      None => Nil
+    }
+  }
+
+  // The name of the type a type applies: `List` for `List(A)`.
+  fn head_name(ty: SynExpr): Text ! {Div} {
+    match ProofShapes::shape(ty) {
+      ShapeApp(f, _, _) => ProofForms::head_name(f)
+      ShapeVar(_) => ProofForms::word(ty)
+      ShapeAtom(_, _) => ProofForms::word(ty)
+      ShapeText(_) => ProofForms::word(ty)
+      ShapeBool(_) => ProofForms::word(ty)
+      ShapePi(_, _, _, _) => ProofForms::word(ty)
+      ShapeLam(_, _, _) => ProofForms::word(ty)
+      ShapeMacroCall(_) => ProofForms::word(ty)
+      ShapeMacroExpr(_, _, _) => ProofForms::word(ty)
+      ShapeOther => ProofForms::word(ty)
+    }
+  }
+
+  fn pairs(bs: List(Judgement::Binder), ids: List(SynIdent)): List(u64 × SynExpr) ! {Div} {
+    match bs {
+      Nil => Nil
+      Cons(b, rest) => match ids {
+        Nil => Nil
+        Cons(i, more) => Cons(#(b.atom, ExVar(i)), ProofForms::pairs(rest, more))
+      }
+    }
+  }
+
+  fn params(
+    bs: List(Judgement::Binder),
+    ids: List(SynIdent),
+    subst: List(u64 × SynExpr)
+  ): List(SynParam) ! {Div} {
+    match bs {
+      Nil => Nil
+      Cons(b, rest) => match ids {
+        Nil => Nil
+        Cons(i, more) => Cons(
+          SynParam { name: Some(i), ty: ProofForms::replace_atoms(b.ty, subst) },
+          ProofForms::params(rest, more, subst)
+        )
+      }
+    }
+  }
+
+  fn arms(
+    at: Judgement,
+    ks: List(SynExpr),
+    ty: SynExpr,
+    m: ProofMotive,
+    sp: SynSpan
+  ): List(SynExpr) ! {macro_error, elab, Div} {
+    match ks {
+      Nil => Nil
+      Cons(k, more) => {
+        let pat := match ProofForms::case_words(k, sp) {
+          Cons(p, _) => p
+          Nil => ProofCore::fail(sp, "a case names its constructor")
+        }
+        match ProofForms::pattern(pat, sp) {
+          #(ctor, fields) => {
+            let bs := ProofForms::append(
+              ProofForms::map((f: SynIdent) => BName(f, None), fields),
+              ProofForms::append(
+                ProofForms::hypotheses(
+                  fields,
+                  ProofForms::last(ProofForms::recursive(ctor, ty, at), ProofForms::length(fields)),
+                  m
+                ),
+                ProofForms::map((g: SynIdent) => BName(g, None), m.generalized)
+              )
+            )
+            let arm := match bs {
+              Nil => k
+              Cons(_, _) => ExLam(bs, k, sp)
+            }
+            Cons(arm, ProofForms::arms(at, more, ty, m, sp))
+          }
+        }
+      }
+    }
+  }
+
+  // `Consider x.`: a `match` on `x`, with an arm for each case under this sentence.
+  fn consider(at: Judgement, c: ProofClause, x: SynExpr): SynExpr ! {macro_error, Div} {
+    let sp := Judgement::span(at)
+    ExMatch(x, Some(at.ty), ProofForms::match_arms(c.children, sp), None, sp)
+  }
+
+  fn match_arms(ks: List(SynExpr), sp: SynSpan): List(SynArm) ! {macro_error, Div} {
+    match ks {
+      Nil => Nil
+      Cons(k, more) => {
+        let pat := match ProofForms::case_words(k, sp) {
+          Cons(p, _) => p
+          Nil => ProofCore::fail(sp, "a case names its constructor")
+        }
+        match ProofForms::pattern(pat, sp) {
+          #(ctor, fields) => Cons(
+            SynArm {
+              pattern: PtCtor(ctor, ProofForms::map((f: SynIdent) => PtBind(f), fields)),
+              guard: None,
+              goal: None,
+              body: k
+            },
+            ProofForms::match_arms(more, sp)
+          )
+        }
+      }
+    }
+  }
+
+  // Whether a condition says its proposition is false: `¬P`, `not(P)` or `false`.
+  fn negative(e: SynExpr): Bool {
+    match ProofShapes::shape(e) {
+      ShapeMacroCall(text) => std::prelude::Text::byte(text, 0) == Some(194)
+      ShapeMacroExpr(_, arg, _) => ProofForms::negative(arg)
+      ShapeApp(f, _, _) => ProofForms::word(f) == "not"
+      ShapeVar(i) => i.name == "false"
+      ShapeAtom(_, _) => false
+      ShapeText(_) => false
+      ShapeBool(_) => false
+      ShapePi(_, _, _, _) => false
+      ShapeLam(_, _, _) => false
+      ShapeOther => false
+    }
+  }
+
+  // `Consider whether P holds.`: a `match` on `P` with an equation, the cases
+  // `Case h: ¬P` (false) and `Case h: P` (true) naming it.
+  fn whether(at: Judgement, c: ProofClause, p: SynExpr): SynExpr ! {macro_error, Div} {
+    let sp := Judgement::span(at)
+    let equation := ProofForms::fresh("proof_eqn", sp)
+    // A match on a variable puts the case's value for the variable itself and
+    // has no equation (`eqn` is for a match on a term): the case's hypothesis
+    // is then the value equal to itself.
+    let variable := match Syn::ident_of(p) {
+      Some(_) => true
+      None => false
+    }
+    ExMatch(
+      p,
+      Some(at.ty),
+      ProofForms::bool_arms(
+        at,
+        at.ty,
+        c.children,
+        p,
+        if variable { None } else { Some(equation) },
+        sp
+      ),
+      if variable { None } else { Some(equation) },
+      sp
+    )
+  }
+
+  fn bool_arms(
+    at: Judgement,
+    goal: SynExpr,
+    ks: List(SynExpr),
+    subject: SynExpr,
+    equation: Option(SynIdent),
+    sp: SynSpan
+  ): List(SynArm) ! {macro_error, Div} {
+    match ks {
+      Nil => Nil
+      Cons(k, more) => match ProofForms::case_words(k, sp) {
+        Cons(h, Cons(colon, Cons(cond, _))) => match Syn::ident_of(h) {
+          Some(hi) => Cons(
+            SynArm {
+              pattern: PtBool(not(ProofForms::negative(cond)))
+              guard: None
+              goal: None
+              body: {
+                let value := ExBool(not(ProofForms::negative(cond)), sp)
+                let name := SynIdent { name: hi.name, ctx: hi.ctx, span: hi.span, declaration: None }
+                // The case reads its hypothesis as the equation of the `match`, or, on
+                // a variable, as the value equal to itself.
+                let proof := match equation {
+                  Some(e) => ExVar(e)
+                  None => ExApp(ProofForms::global("the"), [quote { $value = $value }, ProofForms::global("Refl")], sp)
+                }
+                ProofForms::substitute(k, name.name, proof)
+              }
+            },
+            ProofForms::bool_arms(at, goal, more, subject, equation, sp)
+          )
+          None => ProofCore::fail(sp, "a case names its hypothesis: `Case h: P.`")
+        }
+        Nil => ProofCore::fail(sp, "a case names its hypothesis: `Case h: P.`")
+        Cons(_, Nil) => ProofCore::fail(sp, "a case names its hypothesis: `Case h: P.`")
+        Cons(_, Cons(_, Nil)) => ProofCore::fail(sp, "a case names its hypothesis: `Case h: P.`")
+      }
+    }
+  }
+
+  // ---- Contradiction ----
+
+  fn is_bool(e: SynExpr, b: Bool): Bool {
+    match ProofShapes::shape(e) {
+      ShapeBool(v) => v == b
+      ShapeVar(i) => i.name == if b { "true" } else { "false" }
+      ShapeAtom(_, _) => false
+      ShapeText(_) => false
+      ShapeApp(_, _, _) => false
+      ShapePi(_, _, _, _) => false
+      ShapeLam(_, _, _) => false
+      ShapeMacroCall(_) => false
+      ShapeMacroExpr(_, _, _) => false
+      ShapeOther => false
+    }
+  }
+
+  // `e` in weak head normal form.
+  fn reduced(at: Judgement, e: SynExpr): SynExpr ! {elab, Div} {
+    match Elab::check(ProofForms::term(at, e), at, None) {
+      Ok(j) => Elab::whnf(j).term
+      Err(_) => e
+    }
+  }
+
+  // A proof of `False` from `t`: `t` itself, or `t` proving `true = false` or `false = true`.
+  fn absurd(at: Judgement, t: SynExpr): SynExpr ! {macro_error, elab, Div} {
+    let sp := Judgement::span(at)
+    match Elab::check(ProofForms::term(at, t), at, None) {
+      Err(d) => ProofCore::fail(sp, d.message)
+      Ok(j) => match ProofShapes::shape(Elab::whnf(Judgement::type_of(j)).term) {
+        ShapeApp(f, Cons(_, Cons(a0, Cons(b0, Nil))), _) => {
+          let a := ProofForms::reduced(at, a0)
+          let b := ProofForms::reduced(at, b0)
+          if ProofForms::is_bool(a, true) && ProofForms::is_bool(b, false) {
+            ExApp(ProofForms::global("true_ne_false"), [t], sp)
+          } else if ProofForms::is_bool(a, false) && ProofForms::is_bool(b, true) {
+            ExApp(ProofForms::global("false_ne_true"), [t], sp)
+          } else {
+            t
+          }
+        }
+        ShapeVar(_) => t
+        ShapeAtom(_, _) => t
+        ShapeText(_) => t
+        ShapeBool(_) => t
+        ShapeApp(_, _, _) => t
+        ShapePi(_, _, _, _) => t
+        ShapeLam(_, _, _) => t
+        ShapeMacroCall(_) => t
+        ShapeMacroExpr(_, _, _) => t
+        ShapeOther => t
+      }
+    }
+  }
+
+  // `This contradicts h.`: the goal from `False`.
+  fn contradicts(at: Judgement, c: ProofClause, h: SynExpr): SynExpr ! {macro_error, elab, Div} {
+    let t := match ProofForms::use_code(at, h, c.code, c.span) {
+      #(t, _) => t
+    }
+    ExApp(
+      ProofForms::global("False::elim"),
+      [ProofForms::absurd(at, ProofForms::term(at, t))],
+      c.span
+    )
+  }
+
+  // ---- Rewriting ----
+
+  fn occurs(e: SynExpr, x: SynExpr): Bool ! {Div} {
+    if Syn::same(e, x) || ProofForms::same_atom(e, x) {
+      true
+    } else {
+      match ProofShapes::shape(e) {
+        ShapeApp(f, xs, _) => ProofForms::occurs(f, x) || ProofForms::any_occurs(xs, x)
+        ShapeVar(_) => false
+        ShapeAtom(_, _) => false
+        ShapeText(_) => false
+        ShapeBool(_) => false
+        ShapePi(_, _, _, _) => false
+        ShapeLam(_, _, _) => false
+        ShapeMacroCall(_) => false
+        ShapeMacroExpr(_, _, _) => false
+        ShapeOther => false
+      }
+    }
+  }
+
+  fn any_occurs(xs: List(SynExpr), x: SynExpr): Bool ! {Div} {
+    match xs {
+      Nil => false
+      Cons(y, rest) => ProofForms::occurs(y, x) || ProofForms::any_occurs(rest, x)
+    }
+  }
+
+  fn same_atom(a: SynExpr, b: SynExpr): Bool {
+    match ProofShapes::shape(a) {
+      ShapeAtom(x, _) => match ProofShapes::shape(b) {
+        ShapeAtom(y, _) => x == y
+        ShapeVar(_) => false
+        ShapeText(_) => false
+        ShapeBool(_) => false
+        ShapeApp(_, _, _) => false
+        ShapePi(_, _, _, _) => false
+        ShapeLam(_, _, _) => false
+        ShapeMacroCall(_) => false
+        ShapeMacroExpr(_, _, _) => false
+        ShapeOther => false
+      }
+      ShapeVar(_) => false
+      ShapeText(_) => false
+      ShapeBool(_) => false
+      ShapeApp(_, _, _) => false
+      ShapePi(_, _, _, _) => false
+      ShapeLam(_, _, _) => false
+      ShapeMacroCall(_) => false
+      ShapeMacroExpr(_, _, _) => false
+      ShapeOther => false
+    }
+  }
+
+  fn replace(e: SynExpr, l: SynExpr, r: SynExpr): SynExpr ! {Div} {
+    if Syn::same(e, l) || ProofForms::same_atom(e, l) {
+      r
+    } else {
+      match ProofShapes::shape(e) {
+        ShapeApp(f, xs, sp) => ExApp(
+          ProofForms::replace(f, l, r),
+          ProofForms::map((x: SynExpr) => ProofForms::replace(x, l, r), xs),
+          sp
+        )
+        ShapeVar(_) => e
+        ShapeAtom(_, _) => e
+        ShapeText(_) => e
+        ShapeBool(_) => e
+        ShapePi(_, _, _, _) => e
+        ShapeLam(_, _, _) => e
+        ShapeMacroCall(_) => e
+        ShapeMacroExpr(_, _, _) => e
+        ShapeOther => e
+      }
+    }
+  }
+
+  // The sides of an equation `e` proves, and the goal after rewriting `goal` with it.
+  fn rewrite(
+    at: Judgement,
+    goal: SynExpr,
+    e: SynExpr,
+    inner: SynExpr
+  ): SynExpr ! {macro_error, elab, Div} {
+    let sp := Judgement::span(at)
+    match Elab::check(ProofForms::term(at, e), at, None) {
+      Err(d) => ProofCore::fail(sp, d.message)
+      Ok(j) => match ProofShapes::shape(Judgement::type_of(j).term) {
+        ShapeApp(f, Cons(_, Cons(a, Cons(b, Nil))), _) => {
+          let z := ProofForms::fresh("proof_place", sp)
+          if ProofForms::occurs(goal, b) {
+            ExApp(
+              ProofForms::global("Eq::subst"),
+              [
+                ExLam([BName(z, None)], ProofForms::replace(goal, b, ExVar(z)), sp),
+                ProofForms::term(at, e),
+                inner
+              ],
+              sp
+            )
+          } else if ProofForms::occurs(goal, a) {
+            ExApp(
+              ProofForms::global("Eq::subst"),
+              [
+                ExLam([BName(z, None)], ProofForms::replace(goal, a, ExVar(z)), sp),
+                ExApp(ProofForms::global("Eq::sym"), [ProofForms::term(at, e)], sp),
+                inner
+              ],
+              sp
+            )
+          } else {
+            ProofCore::fail(sp, "neither side of the equation is in the goal")
+          }
+        }
+        ShapeVar(_) => ProofCore::fail(sp, "using … rewrites with an equation")
+        ShapeAtom(_, _) => ProofCore::fail(sp, "using … rewrites with an equation")
+        ShapeText(_) => ProofCore::fail(sp, "using … rewrites with an equation")
+        ShapeBool(_) => ProofCore::fail(sp, "using … rewrites with an equation")
+        ShapeApp(_, _, _) => ProofCore::fail(sp, "using … rewrites with an equation")
+        ShapePi(_, _, _, _) => ProofCore::fail(sp, "using … rewrites with an equation")
+        ShapeLam(_, _, _) => ProofCore::fail(sp, "using … rewrites with an equation")
+        ShapeMacroCall(_) => ProofCore::fail(sp, "using … rewrites with an equation")
+        ShapeMacroExpr(_, _, _) => ProofCore::fail(sp, "using … rewrites with an equation")
+        ShapeOther => ProofCore::fail(sp, "using … rewrites with an equation")
+      }
+    }
+  }
+
+  fn rewritten(at: Judgement, goal: SynExpr, e: SynExpr): SynExpr ! {macro_error, elab, Div} {
+    let sp := Judgement::span(at)
+    match Elab::check(ProofForms::term(at, e), at, None) {
+      Err(d) => ProofCore::fail(sp, d.message)
+      Ok(j) => match ProofShapes::shape(Judgement::type_of(j).term) {
+        ShapeApp(f, Cons(_, Cons(a, Cons(b, Nil))), _) => if ProofForms::occurs(goal, b) {
+          ProofForms::replace(goal, b, a)
+        } else {
+          ProofForms::replace(goal, a, b)
+        }
+        ShapeVar(_) => goal
+        ShapeAtom(_, _) => goal
+        ShapeText(_) => goal
+        ShapeBool(_) => goal
+        ShapeApp(_, _, _) => goal
+        ShapePi(_, _, _, _) => goal
+        ShapeLam(_, _, _) => goal
+        ShapeMacroCall(_) => goal
+        ShapeMacroExpr(_, _, _) => goal
+        ShapeOther => goal
+      }
+    }
+  }
+
+  // `Using e1 and e2, the claim follows from L.`: rewrite the goal with each
+  // equation in turn, then apply `L`.
+  fn using(at: Judgement, c: ProofClause): SynExpr ! {macro_error, elab, Div} {
+    let eqs := ProofForms::equations(ProofForms::before(ProofForms::tail(c.words), ","))
+    let rest := ProofForms::after(c.words, ",")
+    let l := match ProofForms::after(rest, "from") {
+      Cons(l, Nil) => l
+      Nil => ProofCore::fail(c.span, "Using … reads `Using e and …, the claim follows from L.`")
+      Cons(_, Cons(_, _)) => ProofCore::fail(
+        c.span,
+        "Using … reads `Using e and …, the claim follows from L.`"
+      )
+    }
+    match ProofForms::use_code(at, l, c.code, c.span) {
+      #(last, _) => ProofForms::rewrites(at, at.ty, eqs, ProofForms::term(at, last))
+    }
+  }
+
+  fn equations(ws: List(SynExpr)): List(SynExpr) ! {Div} {
+    match ws {
+      Nil => Nil
+      Cons(w, rest) => if ProofForms::word(w) == "and" { ProofForms::equations(rest) } else {
+        Cons(w, ProofForms::equations(rest))
+      }
+    }
+  }
+
+  fn rewrites(
+    at: Judgement,
+    goal: SynExpr,
+    eqs: List(SynExpr),
+    last: SynExpr
+  ): SynExpr ! {macro_error, elab, Div} {
+    match eqs {
+      Nil => last
+      Cons(e, more) => ProofForms::rewrite(
+        at,
+        goal,
+        e,
+        ProofForms::rewrites(at, ProofForms::rewritten(at, goal, e), more, last)
+      )
+    }
+  }
+
+  // ---- Chains ----
+
+  fn judged(at: Judgement, e: SynExpr): Option(Judgement) ! {elab, Div} {
+    match Elab::check(ProofForms::term(at, e), at, None) {
+      Ok(j) => Some(j)
+      Err(_) => None
+    }
+  }
+
+  fn defeq(at: Judgement, a: SynExpr, b: SynExpr): Bool ! {elab, Div} {
+    match ProofForms::judged(at, a) {
+      Some(x) => match ProofForms::judged(at, b) {
+        Some(y) => Elab::defeq(x, y)
+        None => false
+      }
+      None => false
+    }
+  }
+
+  // The sides of the equation the term `t` proves.
+  fn sides(at: Judgement, t: SynExpr): Option(SynExpr × SynExpr) ! {elab, Div} {
+    match ProofForms::judged(at, t) {
+      Some(j) => match ProofShapes::shape(Elab::whnf(Judgement::type_of(j)).term) {
+        ShapeApp(_, Cons(_, Cons(l, Cons(r, Nil))), _) => Some(#(l, r))
+        ShapeVar(_) => None
+        ShapeAtom(_, _) => None
+        ShapeText(_) => None
+        ShapeBool(_) => None
+        ShapeApp(_, _, _) => None
+        ShapePi(_, _, _, _) => None
+        ShapeLam(_, _, _) => None
+        ShapeMacroCall(_) => None
+        ShapeMacroExpr(_, _, _) => None
+        ShapeOther => None
+      }
+      None => None
+    }
+  }
+
+  // `a` with the place where it differs from `b` replaced by `z`, and the two
+  // subterms there. The place is the first one on the way down whose two
+  // subterms are the sides `l` and `r` of the equation, either way round:
+  // `i ⋆ (a ⋆ b)` against `i ⋆ (a ⋆ c)` by `a ⋆ b = a ⋆ c` is at `a ⋆ b`, not
+  // at `b`, where the two first differ.
+  fn difference(
+    at: Judgement,
+    l: SynExpr,
+    r: SynExpr,
+    a: SynExpr,
+    b: SynExpr,
+    z: SynExpr
+  ): Option(SynExpr × SynExpr × SynExpr) ! {elab, Div} {
+    if Syn::same(a, b) || ProofForms::same_atom(a, b) {
+      None
+    } else if (
+      ProofForms::defeq(at, a, l) && ProofForms::defeq(at, b, r)
+    ) || (ProofForms::defeq(at, a, r) && ProofForms::defeq(at, b, l)) {
+      Some(#(z, a, b))
+    } else {
+      match ProofShapes::shape(a) {
+        ShapeApp(f, xs, sp) => match ProofShapes::shape(b) {
+          ShapeApp(g, ys, _) => if (
+            Syn::same(f, g) || ProofForms::same_atom(f, g)
+          ) && ProofForms::length(xs) == ProofForms::length(ys) {
+            match ProofForms::difference_all(at, l, r, xs, ys, z) {
+              Some(#(zs, d, e)) => Some(#(ExApp(f, zs, sp), d, e))
+              // Several arguments differ: the place is this application.
+              None => Some(#(z, a, b))
+            }
+          } else {
+            Some(#(z, a, b))
+          }
+          ShapeVar(_) => Some(#(z, a, b))
+          ShapeAtom(_, _) => Some(#(z, a, b))
+          ShapeText(_) => Some(#(z, a, b))
+          ShapeBool(_) => Some(#(z, a, b))
+          ShapePi(_, _, _, _) => Some(#(z, a, b))
+          ShapeLam(_, _, _) => Some(#(z, a, b))
+          ShapeMacroCall(_) => Some(#(z, a, b))
+          ShapeMacroExpr(_, _, _) => Some(#(z, a, b))
+          ShapeOther => Some(#(z, a, b))
+        }
+        ShapeVar(_) => Some(#(z, a, b))
+        ShapeAtom(_, _) => Some(#(z, a, b))
+        ShapeText(_) => Some(#(z, a, b))
+        ShapeBool(_) => Some(#(z, a, b))
+        ShapePi(_, _, _, _) => Some(#(z, a, b))
+        ShapeLam(_, _, _) => Some(#(z, a, b))
+        ShapeMacroCall(_) => Some(#(z, a, b))
+        ShapeMacroExpr(_, _, _) => Some(#(z, a, b))
+        ShapeOther => Some(#(z, a, b))
+      }
+    }
+  }
+
+  // The arguments with the one place that differs replaced; `None` when none or several differ.
+  fn difference_all(
+    at: Judgement,
+    l: SynExpr,
+    r: SynExpr,
+    xs: List(SynExpr),
+    ys: List(SynExpr),
+    z: SynExpr
+  ): Option(List(SynExpr) × SynExpr × SynExpr) ! {elab, Div} {
+    match xs {
+      Nil => None
+      Cons(x, more) => match ys {
+        Nil => None
+        Cons(y, rest) => match ProofForms::difference(at, l, r, x, y, z) {
+          None => match ProofForms::difference_all(at, l, r, more, rest, z) {
+            Some(#(zs, d, e)) => Some(#(Cons(x, zs), d, e))
+            None => None
+          }
+          Some(#(w, d, e)) => if ProofForms::all_same(
+            more,
+            rest
+          ) { Some(#(Cons(w, more), d, e)) } else { None }
+        }
+      }
+    }
+  }
+
+  fn all_same(xs: List(SynExpr), ys: List(SynExpr)): Bool ! {Div} {
+    match xs {
+      Nil => true
+      Cons(x, more) => match ys {
+        Nil => true
+        Cons(y, rest) => (
+          Syn::same(x, y) || ProofForms::same_atom(x, y)
+        ) && ProofForms::all_same(more, rest)
+      }
+    }
+  }
+
+  // The last `n` elements; the parameters of the type come before the fields in a constructor type.
+  fn last<A: Shared>(xs: List(A), n: u64): List(A) ! {Div} {
+    let m := ProofForms::length(xs)
+    if m > n { ProofForms::drop(xs, m - n) } else { xs }
+  }
+
+  fn length<A>(xs: List(A)): u64 ! {Div} {
+    match xs {
+      Nil => 0
+      Cons(_, rest) => 1 + ProofForms::length(rest)
+    }
+  }
+
+  // A proof of `a = b` by `t`: `t` itself, `t` the other way, or congruence
+  // with `t` at the one place where `a` and `b` differ.
+  fn link(
+    at: Judgement,
+    a: SynExpr,
+    b: SynExpr,
+    t: SynExpr,
+    sp: SynSpan
+  ): SynExpr ! {macro_error, elab, Div} {
+    let t := ProofForms::instantiated(at, t, sp)
+    match ProofForms::sides(at, t) {
+      None => ProofCore::fail(sp, "a step of the chain is by an equation")
+      Some(#(l, r)) => if ProofForms::defeq(at, l, a) && ProofForms::defeq(at, r, b) {
+        t
+      } else if ProofForms::defeq(at, l, b) && ProofForms::defeq(at, r, a) {
+        ExApp(ProofForms::global("Eq::sym"), [t], sp)
+      } else {
+        let z := ProofForms::fresh("proof_place", sp)
+        match ProofForms::difference(
+          at,
+          l,
+          r,
+          ProofForms::term(at, a),
+          ProofForms::term(at, b),
+          ExVar(z)
+        ) {
+          None => t
+          Some(#(motive, d, e)) => {
+            let oriented := if ProofForms::defeq(
+              at,
+              l,
+              d
+            ) { t } else { ExApp(ProofForms::global("Eq::sym"), [t], sp) }
+            let ty := match ProofForms::judged(at, d) {
+              Some(j) => Some(Judgement::type_of(j).term)
+              None => None
+            }
+            ExApp(
+              ProofForms::global("Eq::congr"),
+              [ExLam([BName(z, ty)], motive, sp), oriented],
+              sp
+            )
+          }
+        }
+      }
+    }
+  }
+
+  // A reason whose type is `∀ y …. P`, applied to the variables of the context named `y` …
+  // (the variables a `By induction` generalized), and annotated with its type in weak head normal form.
+  fn instantiated(at: Judgement, t: SynExpr, sp: SynSpan): SynExpr ! {elab, Div} {
+    match ProofForms::judged(at, t) {
+      None => t
+      Some(j) => {
+        let ty := Elab::whnf(Judgement::type_of(j)).term
+        match ProofShapes::shape(ty) {
+          ShapePi(ps, _, _, _) => ProofForms::instantiated(
+            at,
+            ExApp(
+              t,
+              ProofForms::map(
+                (p: SynParam) => match p.name {
+                  Some(i) => ProofForms::atomize(at, ExVar(ProofForms::fresh(ProofForms::base(i.name), sp))),
+                  None => ExVar(ProofForms::fresh("_", sp))
+                },
+                ps
+              ),
+              sp
+            ),
+            sp
+          )
+          ShapeVar(_) => ExApp(ProofForms::global("the"), [ty, t], sp)
+          ShapeAtom(_, _) => ExApp(ProofForms::global("the"), [ty, t], sp)
+          ShapeText(_) => t
+          ShapeBool(_) => t
+          ShapeApp(_, _, _) => ExApp(ProofForms::global("the"), [ty, t], sp)
+          ShapeLam(_, _, _) => t
+          ShapeMacroCall(_) => t
+          ShapeMacroExpr(_, _, _) => t
+          ShapeOther => t
+        }
+      }
+    }
+  }
+
+  // The reason after `by`: the induction hypothesis, or a term.
+  fn reason(ws: List(SynExpr), model: SynExpr): Option(SynExpr) ! {Div} {
+    if ProofForms::reads(ws, ["the", "induction", "hypothesis"]) {
+      match Syn::ident_of(model) {
+        Some(i) => Some(ExVar(ProofForms::fresh("ih", i.span)))
+        None => None
+      }
+    } else {
+      match ws {
+        Cons(r, Nil) => Some(r)
+        Nil => None
+        Cons(_, Cons(_, _)) => None
+      }
+    }
+  }
+
+  // `x0 = x1 by R1 = x2 = …`: each step with its reason, if any.
+  fn steps(ws: List(SynExpr)): List(SynExpr × List(SynExpr)) ! {Div} {
+    match ws {
+      Nil => Nil
+      Cons(eq, Cons(x, rest)) => if ProofForms::word(eq) == "=" {
+        let why := ProofForms::before(rest, "=")
+        Cons(
+          #(x, if ProofForms::reads(why, ["by"]) { ProofForms::tail(why) } else { Nil }),
+          ProofForms::steps(ProofForms::from_eq(rest))
+        )
+      } else {
+        Nil
+      }
+      Cons(_, Nil) => Nil
+    }
+  }
+
+  fn from_eq(ws: List(SynExpr)): List(SynExpr) ! {Div} {
+    match ws {
+      Nil => Nil
+      Cons(w, rest) => if ProofForms::word(w) == "=" { ws } else { ProofForms::from_eq(rest) }
+    }
+  }
+
+  fn chain(
+    at: Judgement,
+    model: SynExpr,
+    x: SynExpr,
+    steps: List(SynExpr × List(SynExpr)),
+    code: List(SynExpr),
+    sp: SynSpan
+  ): SynExpr ! {macro_error, elab, Div} {
+    match steps {
+      Nil => ProofCore::fail(sp, "a chain has a step")
+      Cons(#(y, why), more) => {
+        let proof := match why {
+          Nil => #(
+            ExApp(
+              ProofForms::global("the"),
+              [ProofForms::term(at, quote { $x = $y }), ProofForms::global("Refl")],
+              sp
+            ),
+            code
+          )
+          Cons(_, _) => match ProofForms::reason(why, model) {
+            None => ProofCore::fail(sp, "a step is `= x by R`")
+            Some(r) => match ProofForms::tactic(r) {
+              // `= y by $t!(e)`: the tactic proves the step as written, with no goal left.
+              Some(#(m, a, tsp)) => #(
+                ProofForms::step(m, a, ProofForms::term(at, quote { $x = $y }), Nil, tsp),
+                code
+              )
+              None => match ProofForms::use_code(at, r, code, sp) {
+                // The step is annotated with the equation it is written as, so `Eq::trans` reads its sides.
+                #(t, left) => #(
+                  ExApp(
+                    ProofForms::global("the"),
+                    [
+                      ProofForms::term(at, quote { $x = $y }),
+                      ProofForms::link(at, x, y, ProofForms::term(at, t), sp)
+                    ],
+                    sp
+                  ),
+                  left
+                )
+              }
+            }
+          }
+        }
+        match proof {
+          #(p, left) => match more {
+            Nil => p
+            Cons(_, _) => ExApp(
+              ProofForms::global("Eq::trans"),
+              [p, ProofForms::chain(at, model, y, more, left, sp)],
+              sp
+            )
+          }
+        }
+      }
+    }
+  }
+
+  // A tactic written as a reason, `$t!(e)`: its name, its argument and where it is.
+  fn tactic(r: SynExpr): Option(SynIdent × SynExpr × SynSpan) {
+    match ProofShapes::shape(r) {
+      ShapeMacroExpr(m, a, sp) => Some(#(m, a, sp))
+      ShapeVar(_) => None
+      ShapeAtom(_, _) => None
+      ShapeText(_) => None
+      ShapeBool(_) => None
+      ShapeApp(_, _, _) => None
+      ShapePi(_, _, _, _) => None
+      ShapeLam(_, _, _) => None
+      ShapeMacroCall(_) => None
+      ShapeOther => None
+    }
+  }
+
+  // The step `by m!(a): goal { arms }`. The goal is written, as every step's is; the
+  // tactic's term is checked against it and against each arm's goal by the kernel.
+  fn step(m: SynIdent, a: SynExpr, goal: SynExpr, arms: List(SynStepArm), sp: SynSpan): SynExpr {
+    ExStep(m, a, Some(goal), arms, sp)
+  }
+
+  // How many `=` a clause has.
+  fn count_eq(ws: List(SynExpr)): u64 ! {Div} {
+    match ws {
+      Nil => 0
+      Cons(w, rest) => (if ProofForms::word(w) == "=" { 1 } else { 0 }) + ProofForms::count_eq(rest)
+    }
+  }
+
+  // `We have h: x0 = x1 by R1 = x2 ….`: the chain named `h`, a proof of `x0 = xn`, for what follows.
+  // Its reasons are written out in the sentence; the Proof-code is left to what follows.
+  fn named_chain(
+    at: Judgement,
+    c: ProofClause,
+    hi: SynIdent,
+    more: List(SynExpr)
+  ): SynExpr ! {macro_error, elab, Div} {
+    match more {
+      Nil => ProofCore::fail(c.span, "We have h: x = y by R = ….")
+      Cons(x, rest) => {
+        let steps := ProofForms::steps(rest)
+        let last := ProofForms::last_step(steps, x)
+        let value := ProofForms::chain(at, ExVar(hi), x, steps, Nil, c.span)
+        let after := ProofForms::named(
+          c,
+          hi.name,
+          ExApp(
+            ProofForms::global("the"),
+            [ProofForms::term(at, quote { $x = $last }), value],
+            c.span
+          )
+        )
+        ProofCore::next(after, after.code)
+      }
+    }
+  }
+
+  fn last_step(steps: List(SynExpr × List(SynExpr)), x: SynExpr): SynExpr ! {Div} {
+    match steps {
+      Nil => x
+      Cons(#(y, _), more) => ProofForms::last_step(more, y)
+    }
+  }
+
+  // `We have h: P by R.` names a fact for what follows; `We have x = y by R = ….`
+  // proves the place by the chain.
+  pub fn we_form(at: Judgement, s: SynExpr): SynExpr ! {macro_error, elab, Div} {
+    let c := ProofCore::clause(s, Judgement::span(at))
+    let ws := ProofForms::tail(c.words)
+    if not(ProofForms::reads(ws, ["have"])) {
+      ProofCore::fail(c.span, "We have …")
+    } else {
+      match ProofForms::tail(ws) {
+        Cons(h, Cons(colon, more)) => if ProofForms::word(colon) == ":" {
+          match Syn::ident_of(h) {
+            None => ProofCore::fail(c.span, "We have h: P by R.")
+            Some(hi) => if ProofForms::count_eq(more) > 1 {
+              ProofForms::named_chain(at, c, hi, more)
+            } else {
+              let p := ProofForms::proposition(ProofForms::before(more, "by"), c.span)
+              match ProofForms::reason(ProofForms::after(more, "by"), h) {
+                None => ProofCore::fail(c.span, "We have h: P by R.")
+                Some(r) => match match ProofForms::tactic(r) {
+                  // `We have h: P by $t!(e).`: the tactic proves `P` as written, with no goal left.
+                  Some(#(m, a, tsp)) => #(ProofForms::step(m, a, p, Nil, tsp), c.code)
+                  None => ProofForms::use_code(at, r, c.code, c.span)
+                } {
+                  #(value, left) => {
+                    let after := ProofForms::named(
+                      ProofClause {
+                        words: c.words,
+                        rest: c.rest,
+                        code: left,
+                        children: c.children,
+                        span: c.span
+                      },
+                      hi.name,
+                      ExApp(ProofForms::global("the"), [p, value], c.span)
+                    )
+                    ProofCore::next(after, after.code)
+                  }
+                }
+              }
+            }
+          }
+        } else {
+          ProofForms::chain(
+            at,
+            match c.words { Cons(w, _) => w, Nil => h },
+            h,
+            ProofForms::steps(Cons(colon, more)),
+            c.code,
+            c.span
+          )
+        }
+        Nil => ProofCore::fail(c.span, "We have …")
+        Cons(_, Nil) => ProofCore::fail(c.span, "We have …")
+      }
+    }
+  }
+
+  // ---- Steps ----
+
+  // `By $t!(e).`, `By $t!(e), it suffices to show G.`, or `By $t!(e).` with a sentence
+  // under it for each goal the tactic leaves: the step `by t!(e): G0 { … }`. `G0` is the
+  // goal of the place, and each goal the tactic leaves is written in the prose.
+  fn by_tactic(
+    at: Judgement,
+    c: ProofClause,
+    m: SynIdent,
+    a: SynExpr,
+    sp: SynSpan,
+    more: List(SynExpr)
+  ): SynExpr ! {macro_error, Div} {
+    match more {
+      Nil => match c.rest {
+        Nil => ProofForms::step(m, a, at.ty, ProofForms::step_arms(c.children, c.span), sp)
+        Cons(_, _) => ProofCore::fail(
+          c.span,
+          "`By $t!(e).` proves the place; write what is left to show as `By $t!(e), it suffices to show G.`"
+        )
+      }
+      Cons(comma, ws) => if ProofForms::word(comma) == "," && ProofForms::reads(
+        ws,
+        ["it", "suffices", "to", "show"]
+      ) {
+        let goal := ProofForms::proposition(ProofForms::drop(ws, 4), c.span)
+        ProofForms::step(
+          m,
+          a,
+          at.ty,
+          [SynStepArm { binders: Nil, goal: goal, body: ProofForms::proof_after(c) }],
+          sp
+        )
+      } else {
+        ProofCore::fail(c.span, "By $t!(e). or By $t!(e), it suffices to show G.")
+      }
+    }
+  }
+
+  // The proof of what a clause leaves to show: the clauses after it, or the one sentence under it.
+  fn proof_after(c: ProofClause): SynExpr ! {macro_error, Div} {
+    match c.rest {
+      Cons(_, _) => ProofCore::next(c, c.code)
+      Nil => match c.children {
+        Cons(k, Nil) => k
+        Nil => ProofCore::fail(c.span, "the sentence ends before its proof")
+        Cons(_, Cons(_, _)) => ProofCore::fail(
+          c.span,
+          "what is left to show is proved by the clauses after it, or by one sentence under it"
+        )
+      }
+    }
+  }
+
+  // The goals a tactic leaves, as the sentences under the step write them:
+  // `Let x: A and assume h: P. We show G.` and then its proof, or `We show G.` and its proof.
+  fn step_arms(ks: List(SynExpr), sp: SynSpan): List(SynStepArm) ! {macro_error, Div} {
+    match ks {
+      Nil => Nil
+      Cons(k, more) => Cons(
+        ProofForms::step_arm(ProofForms::child_clause(k, sp)),
+        ProofForms::step_arms(more, sp)
+      )
+    }
+  }
+
+  fn step_arm(c: ProofClause): SynStepArm ! {macro_error, Div} {
+    if ProofForms::reads(c.words, ["Let"]) {
+      match c.rest {
+        Nil => ProofCore::fail(c.span, "Let x: A and assume h: P. We show G.")
+        Cons(show, rest) => {
+          let shown := ProofForms::shown(
+            ProofClause {
+              words: show,
+              rest: rest,
+              code: c.code,
+              children: c.children,
+              span: c.span
+            }
+          )
+          SynStepArm {
+            binders: ProofForms::arm_binders(ProofForms::tail(c.words), c.span),
+            goal: shown.goal,
+            body: shown.body
+          }
+        }
+      }
+    } else {
+      ProofForms::shown(c)
+    }
+  }
+
+  // `We show G.` and the proof after it: an arm with no variables of its own.
+  fn shown(c: ProofClause): SynStepArm ! {macro_error, Div} {
+    if ProofForms::reads(c.words, ["We", "show"]) {
+      SynStepArm {
+        binders: Nil,
+        goal: ProofForms::proposition(ProofForms::drop(c.words, 2), c.span),
+        body: ProofForms::proof_after(c)
+      }
+    } else {
+      ProofCore::fail(c.span, "a goal the tactic leaves is written `We show G.`")
+    }
+  }
+
+  // `x: A and assume h: P`: the variables of an arm, in order.
+  fn arm_binders(ws: List(SynExpr), sp: SynSpan): List(SynBinder) ! {macro_error, Div} {
+    match ws {
+      Nil => Nil
+      Cons(_, _) => {
+        let part := ProofForms::before(ws, "and")
+        let named := if ProofForms::reads(part, ["assume"]) { ProofForms::tail(part) } else { part }
+        let b := match named {
+          Cons(x, Cons(colon, ty)) => match Syn::ident_of(x) {
+            Some(xi) => if ProofForms::word(colon) == ":" {
+              BName(xi, Some(ProofForms::proposition(ty, sp)))
+            } else {
+              ProofCore::fail(sp, "Let x: A and assume h: P.")
+            }
+            None => ProofCore::fail(sp, "Let x: A and assume h: P.")
+          }
+          Nil => ProofCore::fail(sp, "Let x: A and assume h: P.")
+          Cons(_, Nil) => ProofCore::fail(sp, "Let x: A and assume h: P.")
+        }
+        Cons(b, ProofForms::arm_binders(ProofForms::after(ws, "and"), sp))
+      }
+    }
+  }
+
+  // ---- The forms ----
+
+  pub fn by_form(at: Judgement, s: SynExpr): SynExpr ! {macro_error, elab, Div} {
+    let c := ProofCore::clause(s, Judgement::span(at))
+    let ws := ProofForms::tail(c.words)
+    match match ws { Cons(r, _) => ProofForms::tactic(r), Nil => None } {
+      Some(#(m, a, tsp)) => ProofForms::by_tactic(at, c, m, a, tsp, ProofForms::tail(ws))
+      None => ProofForms::by_other(at, c, ws)
+    }
+  }
+
+  fn by_other(
+    at: Judgement,
+    c: ProofClause,
+    ws: List(SynExpr)
+  ): SynExpr ! {macro_error, elab, Div} {
+    if ProofForms::reads(ws, ["induction", "on"]) {
+      match ProofForms::drop(ws, 2) {
+        Cons(x, Nil) => ProofForms::induction(at, c, x)
+        Nil => ProofCore::fail(c.span, "By induction on x.")
+        Cons(_, Cons(_, _)) => ProofCore::fail(c.span, "By induction on x.")
+      }
+    } else if ProofForms::reads(ws, ["the", "induction", "hypothesis", ","]) {
+      // `By the induction hypothesis, h: P.` names what the hypothesis gives.
+      match ProofForms::drop(ws, 4) {
+        Cons(h, Cons(colon, ps)) => match Syn::ident_of(h) {
+          Some(hi) => {
+            let p := match ProofForms::not_generalized(at, ProofForms::proposition(ps, c.span)) {
+              None => ProofForms::proposition(ps, c.span)
+              Some(names) => ProofCore::fail(c.span, ProofForms::generalized_message(names))
+            }
+            let ih := ExVar(ProofForms::fresh("ih", hi.span))
+            match ProofForms::use_code(at, ih, c.code, c.span) {
+              #(value, rest) => {
+                let proof := ExApp(ProofForms::global("the"), [p, value], c.span)
+                let after := ProofForms::named(
+                  ProofClause {
+                    words: c.words,
+                    rest: c.rest,
+                    code: rest,
+                    children: c.children,
+                    span: c.span
+                  },
+                  hi.name,
+                  proof
+                )
+                ProofCore::next(after, after.code)
+              }
+            }
+          }
+          None => ProofCore::fail(c.span, "By the induction hypothesis, h: P.")
+        }
+        Nil => ProofCore::fail(c.span, "By the induction hypothesis, h: P.")
+        Cons(_, Nil) => ProofCore::fail(c.span, "By the induction hypothesis, h: P.")
+      }
+    } else if ProofForms::reads(ws, ["the", "induction", "hypothesis"]) {
+      // `By the induction hypothesis.`: the hypothesis `ih`, applied to the variables of the case
+      // named like the ones it is generalized over, as a step of a chain applies it.
+      match ProofForms::drop(ws, 3) {
+        Nil => match ProofForms::index_of(Judgement::ctx(at), "ih", 0, None) {
+          Some(_) => ProofForms::instantiated(
+            at,
+            ProofForms::term(at, ExVar(ProofForms::fresh("ih", c.span))),
+            c.span
+          )
+          None => ProofCore::fail(
+            c.span,
+            "`By the induction hypothesis.` needs the case to have one; with one for each recursive field, write `By ih(f).` for the field `f`"
+          )
+        }
+        Cons(_, _) => ProofCore::fail(
+          c.span,
+          "By … reads `By induction on x.`, `By the induction hypothesis.`, `By the induction hypothesis, h: P.` or `By L.`"
+        )
+      }
+    } else {
+      match ws {
+        Cons(l, Nil) => match ProofForms::use_code(at, l, c.code, c.span) {
+          #(t, _) => ProofForms::term(at, t)
+        }
+        Nil => ProofCore::fail(
+          c.span,
+          "By … reads `By induction on x.`, `By the induction hypothesis.`, `By the induction hypothesis, h: P.` or `By L.`"
+        )
+        Cons(_, Cons(_, _)) => ProofCore::fail(
+          c.span,
+          "By … reads `By induction on x.`, `By the induction hypothesis.`, `By the induction hypothesis, h: P.` or `By L.`"
+        )
+      }
+    }
+  }
+
+  pub fn case_form(at: Judgement, s: SynExpr): SynExpr ! {macro_error, Div} {
+    let c := ProofCore::clause(s, Judgement::span(at))
+    ProofCore::next(c, c.code)
+  }
+
+  pub fn consider_form(at: Judgement, s: SynExpr): SynExpr ! {macro_error, Div} {
+    let c := ProofCore::clause(s, Judgement::span(at))
+    let ws := ProofForms::tail(c.words)
+    if ProofForms::reads(ws, ["whether"]) {
+      match ProofForms::drop(ws, 1) {
+        Cons(p, Cons(holds, Nil)) => ProofForms::whether(at, c, p)
+        Nil => ProofCore::fail(c.span, "Consider whether P holds.")
+        Cons(_, Nil) => ProofCore::fail(c.span, "Consider whether P holds.")
+        Cons(_, Cons(_, Cons(_, _))) => ProofCore::fail(c.span, "Consider whether P holds.")
+      }
+    } else {
+      match ws {
+        Cons(x, Nil) => ProofForms::consider(at, c, x)
+        Nil => ProofCore::fail(c.span, "Consider x. or Consider whether P holds.")
+        Cons(_, Cons(_, _)) => ProofCore::fail(c.span, "Consider x. or Consider whether P holds.")
+      }
+    }
+  }
+
+  pub fn this_form(at: Judgement, s: SynExpr): SynExpr ! {macro_error, elab, Div} {
+    let c := ProofCore::clause(s, Judgement::span(at))
+    match ProofForms::tail(c.words) {
+      Cons(w, Cons(h, Nil)) => if ProofForms::word(w) == "contradicts" {
+        ProofForms::contradicts(at, c, h)
+      } else {
+        ProofCore::fail(c.span, "This contradicts h.")
+      }
+      Nil => ProofCore::fail(c.span, "This contradicts h.")
+      Cons(_, Nil) => ProofCore::fail(c.span, "This contradicts h.")
+      Cons(_, Cons(_, Cons(_, _))) => ProofCore::fail(c.span, "This contradicts h.")
+    }
+  }
+
+  pub fn using_form(at: Judgement, s: SynExpr): SynExpr ! {macro_error, elab, Div} {
+    ProofForms::using(at, ProofCore::clause(s, Judgement::span(at)))
+  }
+
+  // `Let x = e.`
+  pub fn let_form(at: Judgement, s: SynExpr): SynExpr ! {macro_error, Div} {
+    let c := ProofCore::clause(s, Judgement::span(at))
+    match ProofForms::tail(c.words) {
+      Cons(x, Cons(eq, Cons(e, Nil))) => match Syn::ident_of(x) {
+        // The rest of the sentence, its Proof-code and the sentences under it read `x` as `e`.
+        Some(xi) => {
+          let after := ProofForms::named(c, xi.name, e)
+          ProofCore::next(after, after.code)
+        }
+        None => ProofCore::fail(c.span, "Let x = e.")
+      }
+      Nil => ProofCore::fail(c.span, "Let x = e.")
+      Cons(_, Nil) => ProofCore::fail(c.span, "Let x = e.")
+      Cons(_, Cons(_, Nil)) => ProofCore::fail(c.span, "Let x = e.")
+      Cons(_, Cons(_, Cons(_, Cons(_, _)))) => ProofCore::fail(c.span, "Let x = e.")
+    }
+  }
+}
+
+pub macro fn proof_by(
+  at: Judgement,
+  s: SynExpr
+): SynExpr ! {macro_error, elab, Div} { ProofForms::by_form(at, s) }
+pub macro fn proof_case(
+  at: Judgement,
+  s: SynExpr
+): SynExpr ! {macro_error, Div} { ProofForms::case_form(at, s) }
+pub macro fn proof_consider(
+  at: Judgement,
+  s: SynExpr
+): SynExpr ! {macro_error, Div} { ProofForms::consider_form(at, s) }
+pub macro fn proof_this(
+  at: Judgement,
+  s: SynExpr
+): SynExpr ! {macro_error, elab, Div} { ProofForms::this_form(at, s) }
+pub macro fn proof_using(
+  at: Judgement,
+  s: SynExpr
+): SynExpr ! {macro_error, elab, Div} { ProofForms::using_form(at, s) }
+pub macro fn proof_let(
+  at: Judgement,
+  s: SynExpr
+): SynExpr ! {macro_error, Div} { ProofForms::let_form(at, s) }
+pub macro fn proof_we(
+  at: Judgement,
+  s: SynExpr
+): SynExpr ! {macro_error, elab, Div} { ProofForms::we_form(at, s) }

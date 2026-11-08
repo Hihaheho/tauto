@@ -56,6 +56,8 @@ pub fn e_continue(p: MProgram, fuel: Nat, r: MStep): MStep {
     MstepShow(name, v, s) => MstepShow(name, v, s)
     MstepAsk(name, args, s) => MstepAsk(name, args, s)
     MstepSleep(until, cx) => MstepSleep(until, cx)
+    MstepStart(name, args, q, cx) => MstepStart(name, args, q, cx)
+    MstepIdle(cx) => MstepIdle(cx)
     MstepError(message) => MstepError(message)
   }
 }
@@ -69,10 +71,10 @@ pub theorem e_meval_add(
 ): meval(p, Nat::add(m, n), s) = e_continue(p, m, meval(p, n, s)) {
   match n {
     Zero => Refl
-    Succ(f) => match step(
+    Succ(f) => ⊢ meval(p, Succ(Nat::add(m, f)), s) = e_continue(p, m, meval(p, Succ(f), s)) from match step(
       p,
       s
-    ) eqn first: meval(p, Succ(Nat::add(m, f)), s) = e_continue(p, m, meval(p, Succ(f), s)) {
+    ) eqn first {
       MstepNext(middle) => ⊢ meval(p, Nat::add(m, f), middle) =
       e_continue(p, m, meval(p, f, middle)) from e_meval_add(f, m, p, middle)
       MstepDone => ⊢ Eq(MStep, MstepDone, MstepDone) from Refl
@@ -88,6 +90,12 @@ pub theorem e_meval_add(
         MstepAsk(name, args, middle)
       ) from Refl
       MstepSleep(until, cx) => ⊢ Eq(MStep, MstepSleep(until, cx), MstepSleep(until, cx)) from Refl
+      MstepStart(name, args, q, cx) => ⊢ Eq(
+        MStep,
+        MstepStart(name, args, q, cx),
+        MstepStart(name, args, q, cx)
+      ) from Refl
+      MstepIdle(cx) => ⊢ Eq(MStep, MstepIdle(cx), MstepIdle(cx)) from Refl
       MstepError(message) => ⊢ Eq(MStep, MstepError(message), MstepError(message)) from Refl
     }
   }
@@ -101,6 +109,8 @@ pub fn e_resume(p: MProgram, fuel: Nat, r: MStep): MStep {
     MstepShow(name, v, s) => MstepShow(name, v, s)
     MstepAsk(name, args, s) => MstepAsk(name, args, s)
     MstepSleep(until, cx) => MstepSleep(until, cx)
+    MstepStart(name, args, q, cx) => MstepStart(name, args, q, cx)
+    MstepIdle(cx) => MstepIdle(cx)
     MstepError(message) => MstepError(message)
   }
 }
@@ -117,6 +127,8 @@ pub theorem e_resume_correct(
     MstepShow(name, v, s) => Refl
     MstepAsk(name, args, s) => Refl
     MstepSleep(until, cx) => Refl
+    MstepStart(name, args, q, cx) => Refl
+    MstepIdle(cx) => Refl
     MstepError(message) => Refl
   }
 }
@@ -169,40 +181,52 @@ pub theorem e_meval_runs(
   done: meval(p, fuel, a) = MstepNext(b)
 ): ERuns(p, fuel, a, b) {
   match fuel {
-    Zero => match done: ERuns(p, Zero, a, b) {
+    Zero => ⊢ ERuns(p, Zero, a, b) from match done {
       Refl => ⊢ ERuns(p, Zero, a, a) from ErunRefl(a)
     }
     Succ(f) => {
       let advanced: e_continue(p, f, step(p, a)) = MstepNext(b) := done
-      match step(p, a) eqn edge: ERuns(p, Succ(f), a, b) {
+      ⊢ ERuns(p, Succ(f), a, b) from match step(p, a) eqn edge {
         MstepNext(middle) => ⊢ ERuns(p, Succ(f), a, b) from
         ErunStep(edge, e_meval_runs(f, p, middle, b, advanced))
-        MstepDone => ⊢ ERuns(p, Succ(f), a, b) from match advanced: ERuns(p, Succ(f), a, b) {}
-        MstepExit(code) => ⊢ ERuns(p, Succ(f), a, b) from match advanced: ERuns(p, Succ(f), a, b) {}
+        MstepDone => ⊢ ERuns(p, Succ(f), a, b) from match advanced {}
+        MstepExit(code) => ⊢ ERuns(p, Succ(f), a, b) from match advanced {}
         MstepShow(name, value, middle) => ⊢ ERuns(
           p,
           Succ(f),
           a,
           b
-        ) from match advanced: ERuns(p, Succ(f), a, b) {}
+        ) from ⊢ ERuns(p, Succ(f), a, b) from match advanced {}
         MstepAsk(name, args, middle) => ⊢ ERuns(
           p,
           Succ(f),
           a,
           b
-        ) from match advanced: ERuns(p, Succ(f), a, b) {}
+        ) from ⊢ ERuns(p, Succ(f), a, b) from match advanced {}
         MstepSleep(until, cx) => ⊢ ERuns(
           p,
           Succ(f),
           a,
           b
-        ) from match advanced: ERuns(p, Succ(f), a, b) {}
+        ) from ⊢ ERuns(p, Succ(f), a, b) from match advanced {}
+        MstepStart(name, args, q, cx) => ⊢ ERuns(
+          p,
+          Succ(f),
+          a,
+          b
+        ) from ⊢ ERuns(p, Succ(f), a, b) from match advanced {}
+        MstepIdle(cx) => ⊢ ERuns(
+          p,
+          Succ(f),
+          a,
+          b
+        ) from ⊢ ERuns(p, Succ(f), a, b) from match advanced {}
         MstepError(message) => ⊢ ERuns(
           p,
           Succ(f),
           a,
           b
-        ) from match advanced: ERuns(p, Succ(f), a, b) {}
+        ) from ⊢ ERuns(p, Succ(f), a, b) from match advanced {}
       }
     }
   }
@@ -233,7 +257,7 @@ pub theorem e_reaches_trans<p: MProgram, a: MState, b: MState, c: MState>(
   second: EReaches(p, b, c)
 ): EReaches(p, a, c) {
   match first {
-    ExIntro(n, run1) => match second: EReaches(p, a, c) {
+    ExIntro(n, run1) => ⊢ EReaches(p, a, c) from match second {
       ExIntro(m, run2) => ExIntro(Nat::add(m, n), e_runs_trans(run1, m, c, run2))
     }
   }

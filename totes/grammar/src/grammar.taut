@@ -102,7 +102,7 @@ DecreasingBy: KwDecreasingBy Cond ;
 // steps a block may run.
 DeclBudget: KwBudget Integer ;
 WhereClause: KwWhere Constraint { Comma Constraint } ;
-Constraint: Ident LParen Type RParen ;
+Constraint: Ident LParen Type { Comma Type } RParen ;
 // A declaration's result type, and the effects the function may leave unhandled:
 // `fn f(): i64 ! {Clock, Ask} ∪ e`. A row after the last operand of a type binds to the nearest
 // arrow, `(A) -> i64 ! {Clock}`, and to the declaration when there is none.
@@ -213,7 +213,10 @@ TypeCallArg: Expr | EffectRow ;
 // and `×` is the one operator it takes.
 AngleType: Postfix { TimesSign Postfix } [ ThinArrow AngleType ] ;
 // After `=>`, a list of kinds and names is not a lambda's body: it is what a macro call statement or a `decreasing_by` makes.
-Expr: Seq [ FatArrow Gap ( Expr | Generated { Comma Generated } ) ] ;
+Expr: GoalExpr | Seq [ FatArrow Gap ( Expr | Generated { Comma Generated } ) ] ;
+// `⊢ G from e` checks `e` against the goal `G`. On a `match` with no result type, `G` is its result
+// type: `⊢ G from match l { … }`. `e` reaches as far right as the body of `=>` does.
+GoalExpr: Turnstile BodyType KwFrom Gap Expr ;
 // `&x` and `&mut x` borrow; where a borrow may stand is the checker's. `¬P` and a binder `∀ x: A.`
 // stand before a sequence of operators.
 Operand: { PrefixOp } Postfix ;
@@ -224,7 +227,12 @@ Binder: Quantifier Ident Colon Type { Comma Ident Colon Type } QDot ;
 Quantifier: KwForall | KwExists ;
 Postfix: Primary { PostOp } ;
 PostOp: Call | Field ;
-Call: LParen [ Item { Comma Item } ] RParen ;
+// `f(<x: v, y: w>, h)` passes the implicit arguments `x` and `y` by name, before the explicit ones;
+// no expression starts with `<`. A value is a postfix expression, so a `>` in it is never a
+// comparison; an operation is written in parentheses.
+Call: LParen [ ( CallImplicits [ Comma Item { Comma Item } ] | Item { Comma Item } ) ] RParen ;
+CallImplicits: Lt CallImplicit { Comma CallImplicit } Gt ;
+CallImplicit: Ident Colon Postfix ;
 // An argument, or a lambda parameter with its type: `(x: i64) => x * 2`. Alone in parentheses, a
 // term at a written type: `(p: i64)`. A label that is a reserved word is written `r#view: x`.
 Item: Expr [ Colon Type ] | EffectRow ;
@@ -240,24 +248,22 @@ CondOperand: { PrefixOp } CondPostfix ;
 CondPostfix: CondPrimary { PostOp } ;
 CondPrimary: Number | Text | True | False | CondPath | Paren | Brace | IfExpr | MatchExpr | LoopExpr
        | PerformExpr | HandleExpr | BudgetExpr | HoleExpr | SyntaxLit | MacroCall | QuoteExpr | SpliceExpr
-       | StepExpr | ListLit | TupleLit | CalcExpr | CongrExpr | BoxHole ;
+       | StepExpr | ListLit | TupleLit | CongrExpr | BoxHole ;
 CondPath: Ident ;
 Primary: Number | Text | True | False | PathExpr | Paren | Brace | IfExpr | MatchExpr | LoopExpr
        | PerformExpr | HandleExpr | BudgetExpr | HoleExpr | SyntaxLit | MacroCall | QuoteExpr | SpliceExpr
-       | StepExpr | ListLit | TupleLit | CalcExpr | CongrExpr | BoxHole ;
-// `#(a, b)` is a product's value, `()` the value without components.
-TupleLit: TupleStart [ Expr { Comma Expr } ] RParen ;
-// `calc a { = b from p … }`: a chain of `=` or `↔`, each line taking the expression of the one before.
-CalcExpr: KwCalc Cond LBrace CalcSteps RBrace ;
-CalcSteps: { MemberSep } [ CalcStep CalcStepsTail ] ;
-CalcStepsTail: [ MemberSep { MemberSep } [ CalcStep CalcStepsTail ] ] ;
-CalcStep: CalcRel Gap Expr KwFrom Gap Expr ;
-CalcRel: Eq | IffSign ;
+       | StepExpr | ListLit | TupleLit | CongrExpr | BoxHole ;
+// `#(a, b)` is a product's value, `()` the value without components; a member may be at a written
+// type, `#(a: A, b: B)`, as `(a: A)` is.
+TupleLit: TupleStart [ Item { Comma Item } ] RParen ;
 // `⟦and(or(x1, □), y)⟧` is a function of the one hole `□` in it.
 CongrExpr: LLBracket Expr RRBracket ;
 BoxHole: Square ;
 // `[a, b, c]` is `Cons(a, Cons(b, Cons(c, Nil)))`, and `[]` is `Nil`.
-ListLit: LBracket [ Expr { Comma Expr } ] RBracket ;
+// `[a, ..rest]` is `Cons(a, rest)`: the rest, only last, takes the place of `Nil`.
+ListLit: LBracket [ ListItems ] RBracket ;
+ListItems: ListRest | Expr [ Comma ListItems ] ;
+ListRest: DotDot Expr ;
 // A named hole, `?h`, stands for a term not written yet. It is never part of
 // an accepted declaration: the checker reports its goal and the declaration
 // stays incomplete (`tauto goals` shows the goal).
@@ -273,7 +279,9 @@ PerformExpr: KwPerform OperationName Call ;
 // The operation a `perform` or an arm names.
 OperationName: Ident ;
 // `ask<Text, i64>(k)`: the instance an arm answers.
-OperationTypes: Lt AngleType { Comma AngleType } Gt ;
+// An argument is a type, or a row, `cur<!{out}>(k)`, for an effect with a row parameter.
+OperationTypes: Lt OperationType { Comma OperationType } Gt ;
+OperationType: AngleType | EffectRow ;
 // `x`, and with fields a struct literal `Point { x: 1, y: 2 }`,
 // which may end with the value the other fields come from: `Point { x: 1, ..p }`.
 PathExpr: Ident [ RecordBody ] ;
@@ -282,8 +290,12 @@ PathExpr: Ident [ RecordBody ] ;
 Number: Float | Decimal | Integer ;
 // `()` is the empty parameter list of `() -> T` and `() => e`, and nothing else: the unit is `()`.
 Paren: LParen [ Item { Comma Item } ] RParen ;
-// A block, or a record without a name, `#{ x: 1, y: 2 }`: a `{` is always a block.
-Brace: AnonRecord | Block ;
+// A block, a record type `{ x: U64, y: U64 }`, or a record without a name, `#{ x: 1, y: 2 }`. A `{`
+// whose first field `x:` follows it, on its line or after newlines, is a record type; any other `{` is a block.
+Brace: AnonRecord | LBrace BraceBody ;
+BraceBody: Nl BraceBody | RecordType | Semi Stmts RBrace | Stmt StmtsTail RBrace | RBrace ;
+RecordType: FieldDecl RecordTypeTail RBrace ;
+RecordTypeTail: { MemberSep } [ FieldDecl RecordTypeTail ] ;
 Block: LBrace Stmts RBrace ;
 RecordBody: LBrace Gap ( RBrace | FieldInit RecordTail RBrace ) ;
 // `#{ x: 1, y: 2 }`: a record without a name.
@@ -295,12 +307,11 @@ FieldInit: Ident Colon Gap Expr ;
 IfExpr: KwIf Cond Block [ KwElse ElseBranch ] ;
 ElseBranch: IfExpr | Block ;
 LoopExpr: KwLoop Block ;
-// A dependent match gives its result type, which may mention the scrutinee:
-// `match v: Vector(i64, n) { ... }`. On a term that is not a variable,
-// `eqn e` names the equation between the term and each arm's constructor.
-// The `:` is a type ascription: its right is the type of the whole `match`. A scrutinee that
-// carries its own type is parenthesized, `match (e: T): G { ... }`.
-MatchExpr: KwMatch Cond [ KwEqn Ident ] [ Colon BodyType ] LBrace Arms RBrace ;
+// `match x: T { ... }`: the `:` is a type ascription of the scrutinee, as `(x: T)` is. A result type,
+// which may mention the scrutinee, is the goal written before the match: `⊢ G from match v { ... }`.
+// On a term that is not a variable, `eqn e` names the equation between the term and each arm's
+// constructor: `match f(x): T eqn e { ... }`.
+MatchExpr: KwMatch Cond [ Colon BodyType ] [ KwEqn Ident ] LBrace Arms RBrace ;
 // `extern { fn file_open(&path: Text): Result(File, IoError) }`: the
 // signatures of functions the host defines, trusted as axioms. Which Rust
 // function each one is lives in `Tauto.eure`, not in the source.
@@ -315,17 +326,17 @@ ExternInstance: KwInstance Ident LParen Type RParen ;
 ExternType: [ Kind ] KwType Ident ;
 
 // `class Ord(A: Linear) { fn compare(&a: A, &b: A): Ordering }`: methods are
-// signatures; a law states a proposition.
+// signatures; a `theorem` states a law, a proposition about them.
 ClassDecl: KwClass Ident TypeParams ClassBody ;
 ClassBody: LBrace ClassItems RBrace ;
 ClassItems: { MemberSep } [ ClassItem ClassItemsTail ] ;
 ClassItemsTail: [ MemberSep { MemberSep } [ ClassItem ClassItemsTail ] ] ;
 ClassItem: ExternFn | LawDecl ;
-// `law trans<a: A>(h: P): Q`, with a proof in a block where an instance gives one.
-LawDecl: KwLaw Ident [ Generics ] LParen [ Param { Comma Param } ] RParen Colon BodyType [ Block ] ;
+// `theorem trans<a: A>(h: P): Q`, with a proof in a block where an instance gives one.
+LawDecl: KwTheorem Ident [ Generics ] LParen [ Param { Comma Param } ] RParen Colon BodyType [ Block ] ;
 
 // `instance<A> Ord(List(A)) where Ord(A) { fn compare(…) … }`
-InstanceDecl: KwInstance [ Generics ] Ident LParen Type RParen [ WhereClause ] InstanceBody ;
+InstanceDecl: KwInstance [ Generics ] Ident LParen Type { Comma Type } RParen [ WhereClause ] InstanceBody ;
 InstanceBody: LBrace InstanceItems RBrace ;
 InstanceItems: { MemberSep } [ InstanceItem InstanceItemsTail ] ;
 InstanceItemsTail: [ MemberSep { MemberSep } [ InstanceItem InstanceItemsTail ] ] ;
@@ -336,7 +347,7 @@ ArmsTail: [ MemberSep { MemberSep } [ Arm ArmsTail ] ] ;
 // `Less => ⊢ G from body` states the goal of the arm, which the kernel compares with the one it computes;
 // `from` introduces the proof term of the goal written before it.
 Arm: Pattern [ KwIf Cond ] FatArrow Gap ArmBody ;
-ArmBody: Turnstile BodyType KwFrom Gap Expr | Expr ;
+ArmBody: Expr ;
 // A step of a proof: `by rewrite!(e): G0 { h: P ⊢ G1 from p }`. The tactic, the
 // goal it starts from and the goals it leaves, each with the variables it adds,
 // are written; the tactic writes the term between them.
@@ -353,7 +364,11 @@ StepBinder: Ident Colon Type ;
 // An implicit argument is taken by name: `GAlt<n: m>(en, …)`.
 // `@name n` is the pattern `n` on the member labelled `@name` (`#(@name n, @value v)`).
 Pattern: PatternAlt { Pipe PatternAlt } ;
-PatternAlt: PathPattern | LiteralPattern | TuplePattern | LabelPattern ;
+PatternAlt: PathPattern | LiteralPattern | TuplePattern | ListPattern | LabelPattern ;
+// `[x, y, ..rest]` is `Cons(x, Cons(y, rest))`, and `[]` is `Nil`: the rest, only last, is a name or `_`.
+ListPattern: LBracket [ ListPatternItems ] RBracket ;
+ListPatternItems: ListPatternRest | Pattern [ Comma ListPatternItems ] ;
+ListPatternRest: DotDot Ident ;
 LabelPattern: TagPrefix PatternAlt ;
 TuplePattern: TupleStart [ Pattern { Comma Pattern } ] RParen ;
 PathPattern: Ident [ PatternImplicits ] [ PatternArgs ] ;
@@ -397,12 +412,10 @@ KwExists: <INITIAL, InParen, InBrace>/∃|\\exists/ ;
 KwDecreasingBy: <INITIAL, InParen, InBrace>'decreasing_by' ;
 // `opaque` before `fn`: a function the kernel does not unfold.
 KwOpaque: <INITIAL, InParen, InBrace>'opaque' ;
-// `eqn` names the equation of a match on a term: `match f(x) eqn e: G {`.
+// `eqn` names the equation of a match on a term: `match f(x): T eqn e {`.
 KwEqn: <INITIAL, InParen, InBrace>'eqn' ;
 // `by` before a tactic's call, `by rewrite!(e)`.
 KwBy: <INITIAL, InParen, InBrace>'by' ;
-// `calc a { = b from p }`, a chain of equations.
-KwCalc: <INITIAL, InParen, InBrace>'calc' ;
 // `⟦ … □ … ⟧`, a context with one hole; the ASCII escapes are `\llbracket \rrbracket \square`.
 LLBracket: <INITIAL, InParen, InBrace>/⟦|\\llbracket/ ;
 RRBracket: <INITIAL, InParen, InBrace>/⟧|\\rrbracket/ ;
@@ -444,7 +457,6 @@ KwModule: <INITIAL, InParen, InBrace>'module' ;
 KwWhere: <INITIAL, InParen, InBrace>'where' ;
 KwClass: <INITIAL, InParen, InBrace>'class' ;
 KwInstance: <INITIAL, InParen, InBrace>'instance' ;
-KwLaw: <INITIAL, InParen, InBrace>'law' ;
 KwExtern: <INITIAL, InParen, InBrace>'extern' ;
 KwType: <INITIAL, InParen, InBrace>'type' ;
 Omega: <INITIAL, InParen, InBrace>/ω|\\omega/ ;
@@ -561,7 +573,8 @@ MacroName: <INITIAL, InParen, InBrace>/[\p{L}_][\p{L}\p{N}_]*!/ ;
 MacroCall: MacroName LParen [ Expr ] RParen ;
 // `quote { … }` is a SynExpr, `quote stmts { … }` a List(SynStmt). A name that
 // starts with `$` is filled in with a value, `$xs...` with each value of a list
-// (where a list goes); `$(e)` fills in an expression.
+// (where a list goes); `$(e)` fills in an expression. A hole is named like any name: `$r#view`
+// and `${r#view}` are the hole of the name `r#view`, and `${name}` is `$name`.
 KwQuote: <INITIAL, InParen, InBrace>'quote' ;
 QuoteExpr: KwQuote [ Ident ] Block ;
 Dollar: <INITIAL, InParen, InBrace>/\$/ ?= /\(/ ;
@@ -569,7 +582,7 @@ SpliceExpr: Dollar LParen Expr RParen ;
 // A name is a path of names joined by `::` (`List::map`, `Option::None`, `M::T::C`, `import std::List`), one
 // token: what stands left of `::` is a declaration's name, never an expression; `.` only takes a field. `r#name` is the name `name` (`r#_` is not a
 // name): it is how a name spelled like a reserved word is written where a name is declared or used.
-Ident: <INITIAL, InParen, InBrace>/\$[\p{L}_][\p{L}\p{N}_]*\.\.\.|\$?[\p{L}_][\p{L}\p{N}_]*(::[\p{L}_][\p{L}\p{N}_]*)*|r#[\p{L}_][\p{L}\p{N}_]*/ ;
+Ident: <INITIAL, InParen, InBrace>/\$(r#)?[\p{L}_][\p{L}\p{N}_]*\.\.\.|\$\{(r#)?[\p{L}_][\p{L}\p{N}_]*\}|\$r#[\p{L}_][\p{L}\p{N}_]*|\$?[\p{L}_][\p{L}\p{N}_]*(::[\p{L}_][\p{L}\p{N}_]*)*|r#[\p{L}_][\p{L}\p{N}_]*/ ;
 
 // ---------------------------------------------------------------------------
 // Tauto's own rules: dependent types and proofs, which Nib
@@ -618,17 +631,17 @@ ConstructorsTail: [ MemberSep { MemberSep } [ Constructor ConstructorsTail ] ] ;
 Constructor: ( Ident | True | False ) [ Generics ] [ LParen Param { Comma Param } RParen ] Colon Type ;
 ``````) =>
   struct AngleType, struct AngleType_Rep1, struct AngleType_Opt1, struct AnonRecord, struct Arm,
-  struct Arm_Opt1, enum ArmBody, struct Arms, struct Arms_Opt1, struct ArmsTail,
+  struct Arm_Opt1, struct ArmBody, struct Arms, struct Arms_Opt1, struct ArmsTail,
   struct ArmsTail_Opt1, struct ArmsTail_Opt2, struct AttrGenerates, struct AttrGenerates_Rep1,
   struct Attribute, struct AxiomDecl, struct AxiomDecl_Opt1, struct AxiomDecl_Rep1, struct Binder,
   struct Binder_Rep1, struct Block, struct BodyType, struct BodyType_Rep1, struct Borrow,
-  struct BoxHole, enum Brace, struct BreakStmt, struct BudgetExpr, struct BudgetExpr_Rep1,
-  struct CalcExpr, enum CalcRel, struct CalcStep, struct CalcSteps, struct CalcSteps_Opt1,
-  struct CalcStepsTail, struct CalcStepsTail_Opt1, struct CalcStepsTail_Opt2, struct Call,
-  struct Call_Opt1, struct Call_Rep1, struct ClassBody, struct ClassDecl, enum ClassItem,
+  struct BoxHole, enum Brace, enum BraceBody, struct BreakStmt, struct BudgetExpr, struct BudgetExpr_Rep1,
+  struct Call,
+  enum Call_Group1, struct Call_Opt1, struct Call_Rep1, struct Call_Rep2, struct CallImplicit,
+  struct CallImplicits, struct CallImplicits_Rep1, struct ClassBody, struct ClassDecl, enum ClassItem,
   struct ClassItems, struct ClassItems_Opt1, struct ClassItemsTail, struct ClassItemsTail_Opt1,
   struct ClassItemsTail_Opt2, struct Cond, struct Cond_Rep1, enum CondOp, struct CondOperand,
-  struct CondPath, struct CondPostfix, enum CondPrimary, struct CongrExpr, struct Constraint,
+  struct CondPath, struct CondPostfix, enum CondPrimary, struct CongrExpr, struct Constraint, struct Constraint_Rep1,
   struct Constructor, enum Constructor_Group1, struct Constructor_Opt1, struct Constructor_Rep1,
   struct Constructors, struct Constructors_Opt1, struct ConstructorsTail,
   struct ConstructorsTail_Opt1, struct ConstructorsTail_Opt2, struct ContinueStmt, enum DataKind,
@@ -638,7 +651,7 @@ Constructor: ( Ident | True | False ) [ Generics ] [ LParen Param { Comma Param 
   struct EffectLit, struct EffectLit_Opt1, struct EffectLit_Rep1, enum EffectMode,
   struct EffectName, struct EffectParams, struct EffectParams_Opt1, struct EffectParams_Rep1,
   struct EffectRow, struct EffectSet, struct EffectSet_Rep1, struct EffectSignature,
-  enum EffectTerm, enum ElseBranch, struct EnumDecl, struct Expr, struct Expr_Opt1,
+  enum EffectTerm, enum ElseBranch, struct EnumDecl, enum Expr, struct Expr_Opt1,
   enum Expr_Group1, struct Expr_Rep1, struct ExprStmt, struct ExprStmt_Opt1, struct ExternDecl,
   struct ExternFn, struct ExternFn_Opt1, struct ExternFn_Rep1, struct ExternInstance,
   enum ExternItem, struct ExternItems, struct ExternItems_Opt1, struct ExternTail,
@@ -650,17 +663,18 @@ Constructor: ( Ident | True | False ) [ Generics ] [ LParen Param { Comma Param 
   struct FnDecl_Opt1, struct FnDecl_Rep1, struct FnKind, struct FnName, enum FnResult, struct Gap,
   struct Generated, enum GeneratedKind, struct Generates, struct Generates_Rep1, enum Generic,
   struct Generic_Opt1, struct Generic_Opt2, struct GenericKind, struct Generics,
-  struct Generics_Rep1, struct HandleExpr, struct HandleSubject, struct HandleTail,
+  struct Generics_Rep1, struct GoalExpr, struct HandleExpr, struct HandleSubject, struct HandleTail,
   struct HandleWith, enum Handler, struct Handlers, struct Handlers_Opt1, struct HandlersTail,
   struct HandlersTail_Opt1, struct HandlersTail_Opt2, struct HoleExpr, struct IfExpr,
   struct IfExpr_Opt1, struct ImportDecl, enum ImportDecl_Group1, struct ImportList,
   struct ImportNames, struct ImportNames_Opt1, struct ImportNamesTail,
   struct ImportNamesTail_Opt1, struct ImportNamesTail_Opt2, struct InductiveDecl,
-  struct InductiveDecl_Opt1, struct InductiveDecl_Rep1, struct InstanceBody, struct InstanceDecl,
+  struct InductiveDecl_Opt1, struct InductiveDecl_Rep1, struct InstanceBody, struct InstanceDecl, struct InstanceDecl_Rep1,
   enum InstanceItem, struct InstanceItems, struct InstanceItems_Opt1, struct InstanceItemsTail,
   struct InstanceItemsTail_Opt1, struct InstanceItemsTail_Opt2, enum Item, struct Item_Opt1,
   enum Kind, struct LabelPattern, struct LawDecl, struct LawDecl_Opt1, struct LawDecl_Rep1,
-  struct LetDecl, struct LetDecl_Opt1, struct ListLit, struct ListLit_Opt1, struct ListLit_Rep1,
+  struct LetDecl, struct LetDecl_Opt1, struct ListLit, enum ListItems, struct ListItems_Opt1, struct ListPattern,
+  enum ListPatternItems, struct ListPatternItems_Opt1, struct ListPatternRest, struct ListRest,
   enum LiteralPattern, struct LoopExpr, enum MacroBlock, struct MacroBlock3,
   enum MacroBlock3_Group1, struct MacroBlock4, enum MacroBlock4_Group1, struct MacroBlock5,
   enum MacroBlock5_Group1, struct MacroBlock6, enum MacroBlock6_Group1, struct MacroCall,
@@ -671,13 +685,13 @@ Constructor: ( Ident | True | False ) [ Generics ] [ LParen Param { Comma Param 
   struct MutualItems_Opt1, enum MutualMember, struct MutualTail, struct MutualTail_Opt1,
   struct MutualTail_Opt2, enum Number, enum Op, struct Operand, struct OperationHandler,
   struct OperationHandler_Opt1, struct OperationHandler_Rep1, struct OperationHandler_Opt2,
-  struct OperationHandler_Opt3, struct OperationName, struct OperationTypes,
+  struct OperationHandler_Opt3, struct OperationName, enum OperationType, struct OperationTypes,
   struct OperationTypes_Rep1, enum OtherStmt, struct Param, struct Param_Opt1, struct Paren,
   struct Paren_Opt1, struct Paren_Rep1, struct PathExpr, struct PathPattern, struct Pattern,
   struct Pattern_Rep1, enum PatternAlt, enum PatternArgs, struct PatternArgs_Rep1,
   struct PatternImplicit, struct PatternImplicits, struct PatternImplicits_Rep1,
   struct PerformExpr, enum PostOp, struct Postfix, enum PrefixOp, enum Primary, struct Program,
-  enum Quant, enum Quantifier, struct QuoteExpr, struct RecordBase, struct RecordBody,
+  enum Quant, enum Quantifier, struct QuoteExpr, struct RecordBase, struct RecordBody, struct RecordType, struct RecordTypeTail, struct RecordTypeTail_Opt1,
   enum RecordBody_Group1, struct RecordTail, enum RecordTail_Group1, struct ReturnHandler,
   struct ReturnStmt, enum RowBound, enum Sep, struct Seq, struct Seq_Rep1, struct SpliceExpr,
   struct StepArm, struct StepArm_Opt1, struct StepArm_Rep1, struct StepArms, struct StepArms_Opt1,

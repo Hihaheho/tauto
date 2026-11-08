@@ -29,6 +29,9 @@ import std::prelude::Std { List, Option, Result }
 syntax!(mode, ```par
 %start Spec
 %title "mode"
+%describe RoleIn "'in'"
+%describe RoleRec "'rec'"
+%describe RoleOut "'out'"
 %%
 Spec: Name LParen Role { Comma Role } RParen Arrow Answer { Clause };
 Role: RoleKind Name;
@@ -93,7 +96,7 @@ pub(open) struct Split { rec: Option(SynExpr), ins: List(SynExpr), out: Option(S
 module Mo {
   // A name the macro makes: it is the macro's own, and the caller cannot see it.
   pub fn name(at: SynSpan, name: Text): SynIdent {
-    SynIdent { name: name, ctx: SynCtx { scopes: Nil }, span: at }
+    SynIdent { declaration: None, name: name, ctx: SynCtx { scopes: Nil }, span: at }
   }
 
   // A name of the macro's own file, which resolves there (a constructor, `Type`).
@@ -220,12 +223,10 @@ module Mo {
           let s := Mo::split(rr, ar, at)
           if (r: Text) == "in" {
             Split { rec: s.rec, ins: Cons(a, s.ins), out: s.out }
+          } else if (r: Text) == "rec" {
+            Split { rec: Some(a), ins: s.ins, out: s.out }
           } else {
-            if (r: Text) == "rec" {
-              Split { rec: Some(a), ins: s.ins, out: s.out }
-            } else {
-              Split { rec: s.rec, ins: s.ins, out: Some(a) }
-            }
+            Split { rec: s.rec, ins: s.ins, out: Some(a) }
           }
         }
       }
@@ -414,7 +415,9 @@ module Mo {
   // `a = b` arrives as `=` applied to its two sides; the kernel reads it as the
   // relation `Eq`, so a premise written that way names `Eq` too.
   pub fn relation_name(n: SynIdent): SynIdent {
-    if n.name == "=" { SynIdent { name: "Eq", ctx: n.ctx, span: n.span } } else { n }
+    if n.name == "=" { SynIdent { declaration: None, name: "Eq", ctx: n.ctx, span: n.span } } else {
+      n
+    }
   }
 
   pub fn is_premise(g: Gen, ty: SynExpr): Bool {
@@ -572,23 +575,24 @@ module Mo {
   }
 
   pub fn head(e: SynExpr, at: SynSpan): SynIdent ! {macro_error, Div, elab} {
-    if Syn::same(e, quote { true }) { Mo::name(at, "true") } else {
-      if Syn::same(e, quote { false }) { Mo::name(at, "false") } else {
-        match Syn::ident_of(e) {
-          Some(c) => c
-          None => match Syn::app_parts(e) {
-            Some(q) => match Syn::ident_of((q: SynExpr)) {
-              Some(c) => c
-              None => Syn::error(
-                at,
-                "mode: an input of a rule is a name or a constructor applied to names"
-              )
-            }
+    if Syn::same(
+      e,
+      quote { true }
+    ) { Syn::global("true") } else if Syn::same(e, quote { false }) { Syn::global("false") } else {
+      match Syn::ident_of(e) {
+        Some(c) => c
+        None => match Syn::app_parts(e) {
+          Some(q) => match Syn::ident_of((q: SynExpr)) {
+            Some(c) => c
             None => Syn::error(
               at,
               "mode: an input of a rule is a name or a constructor applied to names"
             )
           }
+          None => Syn::error(
+            at,
+            "mode: an input of a rule is a name or a constructor applied to names"
+          )
         }
       }
     }
@@ -723,6 +727,7 @@ module Mo {
     let f := SynFn {
       name: g.fname
       generics: Nil
+      generic_types: Nil
       bounds: Nil
       params: Mo::first_names(params)
       borrows: Mo::nones(params)
@@ -986,9 +991,9 @@ module Mp {
 
       Nil => Syn::error(at, concat("mode: no premise ", name.name))
 
-      Cons(p, rest) => if (
-        p: SynIdent
-      ).name == name.name { (p: SynExpr) } else { Mp::param(rest, name, at) }
+      Cons(p, rest) => if (p: SynIdent).name == name.name { (p: SynExpr) } else {
+        Mp::param(rest, name, at)
+      }
     }
   }
   pub fn after(ps: List(SynExpr × SynIdent), name: SynIdent): List(SynExpr × SynIdent) {
@@ -1161,12 +1166,14 @@ module Mp {
         ExRecord(_, _, _) => e
         ExBorrow(_, _, _) => e
         ExUnion(_, _) => e
+        ExProduct(_, _) => e
         ExTagged(_, _, _) => e
         ExExists(_, _, _, _) => e
         ExFnKind(_, _, _) => e
         ExBorrowLam(_, _, _) => e
         ExMacroCall(_, _, _) => e
         ExMacroExpr(_, _, _) => e
+        ExStep(_, _, _, _, _) => e
         ExHole(_, _) => e
         ExUnit(_) => e
       }
@@ -1606,12 +1613,23 @@ module Mp {
       )
     )
   }
-  pub fn eq_item(items: List(SpecItem), ty: SynExpr, at: SynSpan): SpecItem ! {macro_error, Div} {
+  pub fn eq_type(q: SpecItem, at: SynSpan): SynExpr ! {macro_error, Div, elab} {
+    let name := Mo::arg(q, 0, at)
+    match Elab::global(name.name) {
+      Some(code) => code.term
+      None => Syn::error(at, concat("mode: unknown equality type ", name.name))
+    }
+  }
+  pub fn eq_item(
+    items: List(SpecItem),
+    ty: SynExpr,
+    at: SynSpan
+  ): SpecItem ! {macro_error, Div, elab} {
     match items {
 
       Nil => Syn::error(at, "mode: no eq clause for the compared output type")
 
-      Cons(q, rest) => if Syn::same(ExVar(Mo::arg(q, 0, at)), ty) {
+      Cons(q, rest) => if Syn::same(Mp::eq_type(q, at), ty) {
         if Mp::has_eq(
           rest,
           ty,
@@ -1620,10 +1638,10 @@ module Mp {
       } else { Mp::eq_item(rest, ty, at) }
     }
   }
-  pub fn has_eq(items: List(SpecItem), ty: SynExpr, at: SynSpan): Bool ! {macro_error, Div} {
+  pub fn has_eq(items: List(SpecItem), ty: SynExpr, at: SynSpan): Bool ! {macro_error, Div, elab} {
     match items {
       Nil => false
-      Cons(q, rest) => Syn::same(ExVar(Mo::arg(q, 0, at)), ty) || Mp::has_eq(rest, ty, at) }
+      Cons(q, rest) => Syn::same(Mp::eq_type(q, at), ty) || Mp::has_eq(rest, ty, at) }
   }
   pub fn output(
     g: Gen,
@@ -1722,7 +1740,7 @@ module Mp {
   ): SynExpr ! {macro_error, Div, elab} {
     if Syn::same(shape, field) { subject } else {
       let c := Mo::head(shape, g.at)
-      let siblings := match Elab::siblings(c.name) {
+      let siblings := match Elab::siblings(c) {
         Some(xs) => xs
         None => Syn::error(g.at, "mode: a compared field is under a constructor") }
       Mo::match_expr(
@@ -1754,7 +1772,7 @@ module Mp {
   }
   pub fn project_arms(
     g: Gen,
-    names: List(Text),
+    names: List(SynIdent),
     c: SynIdent,
     shapes: List(SynExpr),
     field: SynExpr,
@@ -1765,9 +1783,9 @@ module Mp {
     match names {
       Nil => Nil
       Cons(name, rest) => {
-        let ctor := Mo::name(g.at, name)
+        let ctor := name
         let fields := Mp::ctor_fields(ctor, scope, g.at)
-        let body := if name == c.name {
+        let body := if Syn::same_ident(name, c) {
           Mp::project_args(
             g,
             shapes,
@@ -1892,10 +1910,10 @@ module Mp {
       Syn::append(Mp::pairs(Mo::ctor_args(pat), Mo::vars(fields)), rest)
     )
     let arm := Mo::arm(PtCtor(c, Mo::pats(fields)), Mp::lam(Cons(hp, Cons(up, Nil)), body, g.at))
-    let siblings := match Elab::siblings(c.name) {
+    let siblings := match Elab::siblings(c) {
       Some(xs) => xs
       None => Syn::error(g.at, concat("mode: not a constructor: ", c.name)) }
-    let arms := Cons(arm, Mp::output_missing(g, w, hp, up, whole, subject, c.name, siblings))
+    let arms := Cons(arm, Mp::output_missing(g, w, hp, up, whole, subject, c, siblings))
     ExApp(
       Mo::match_expr(subject, Mp::pi(params, Mo::motive(g, w.cur), g.at), arms, g.at),
       Cons(ExVar(h), Cons(ExVar(u), Nil)),
@@ -1914,7 +1932,7 @@ module Mp {
     scope: List(Text),
     at: SynSpan
   ): List(SynIdent) ! {macro_error, Div, elab} {
-    match Elab::constructor_arity(c.name) {
+    match Elab::constructor_arity(c) {
       Some(n) => Mp::nfields(n, scope, at)
       None => Syn::error(at, concat("mode: not a constructor: ", c.name))
     }
@@ -1926,15 +1944,15 @@ module Mp {
     u: SynIdent,
     whole: SynExpr,
     subject: SynExpr,
-    matched: Text,
-    siblings: List(Text)
+    matched: SynIdent,
+    siblings: List(SynIdent)
   ): List(SynArm) ! {macro_error, Div, elab} {
     match siblings {
       Nil => Nil
       Cons(name, tail) => {
         let rest := Mp::output_missing(g, w, h, u, whole, subject, matched, tail)
-        if name == matched { rest } else {
-          let c := Mo::name(g.at, name)
+        if Syn::same_ident(name, matched) { rest } else {
+          let c := name
           let fields := Mp::ctor_fields(
             c,
             Syn::append(w.row.vars, Mo::expr_names(Cons(whole, Nil))),
@@ -2034,7 +2052,7 @@ module Mp {
             Cons(Mp::pats_row(row, Syn::append(Mp::remove(row.pats, k), Mo::vars(fields))), tail)
           }
 
-          None => if Mo::head(pat, at).name == c.name {
+          None => if Syn::same_ident(Mo::head(pat, at), c) {
             Cons(Mp::pats_row(r, Syn::append(Mp::remove(r.pats, k), Mo::ctor_args(pat))), tail)
           } else { tail }
         }
@@ -2072,7 +2090,7 @@ module Mp {
   }
   pub fn input_arms(
     g: Gen,
-    names: List(Text),
+    names: List(SynIdent),
     rows: List(MoRow),
     cur: List(SynExpr),
     subjects: List(SynExpr),
@@ -2081,7 +2099,7 @@ module Mp {
     match names {
       Nil => Nil
       Cons(name, rest) => {
-        let c := Mo::name(g.at, name)
+        let c := name
         let fields := Mp::ctor_fields(
           c,
           Syn::append(Mp::rows_scope(rows), Mo::expr_names(cur)),
@@ -2134,7 +2152,7 @@ module Mp {
           let first := match reps {
             Cons(rep, _) => Mo::head(Mo::nth(rep.pats, k, g.at), g.at)
             Nil => Syn::error(g.at, "mode: a constructor pattern is required") }
-          let names := match Elab::siblings(first.name) {
+          let names := match Elab::siblings(first) {
             Some(xs) => xs
             None => Syn::error(g.at, concat("mode: not a constructor: ", first.name)) }
           let arms := Mp::input_arms(g, names, rows, cur, subjects, k)
@@ -2236,7 +2254,7 @@ module Mp {
           } else { Cons(v.name, seen) }
           None => {
             let ctor := Mo::head(e, r.rule.span)
-            let arity := match Elab::constructor_arity(ctor.name) {
+            let arity := match Elab::constructor_arity(ctor) {
               Some(n) => n
               None => Syn::error(
                 r.rule.span,
@@ -2449,7 +2467,7 @@ module Mp {
     requirement: Text,
     at: SynSpan
   ): Unit ! {macro_error, Div, elab} {
-    match Elab::constructor_arity(name.name) {
+    match Elab::constructor_arity(name) {
       Some(n) => if n == fields { #() } else {
         Syn::error(at, concat("mode: ", concat(requirement, concat(" in ", name.name))))
       }

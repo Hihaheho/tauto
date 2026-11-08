@@ -1,0 +1,165 @@
+@ cases.a-label-tells-apart-members-of-one-type
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn width(p: @w Nat × @h Nat): @w Nat { (p: @w Nat) }
+
+fn height(p: @w Nat × @h Nat): @h Nat { (p: @h Nat) }
+
+fn flipped(p: @w Nat × @h Nat): @h Nat × @w Nat { (p: @h Nat × @w Nat) }
+```
+
+checks_all = "ok"
+checks."input/main.taut::width" = "ok"
+checks."input/main.taut::height" = "ok"
+checks."input/main.taut::flipped" = "ok"
+
+@ cases.labels-of-other-names-are-other-types
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn other(x: @w Nat): @h Nat { (x: @h Nat) }
+
+fn missing(p: @w Nat × @h Nat): @d Nat { (p: @d Nat) }
+```
+
+checks_all = "ok"
+checks."input/main.taut::other" = "error: "
+checks."input/main.taut::missing" = "error: "
+
+@ cases.a-labelled-type-is-a-subtype-of-what-it-labels
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn unlabel(x: @w Nat): Nat { (x: Nat) }
+
+fn label(n: Nat): @w Nat { (n: @w Nat) }
+
+fn member(p: @w Nat × Bool): Nat { (p: Nat) }
+
+fn clash(p: @w Nat × @h Nat): Nat { (p: Nat) }
+
+theorem round(n: Nat): Eq(Nat, ((n: @w Nat): Nat), n) { Refl(Nat, n) }
+```
+
+checks_all = "ok"
+checks."input/main.taut::unlabel" = "ok"
+checks."input/main.taut::label" = "ok"
+checks."input/main.taut::member" = "ok"
+checks."input/main.taut::clash" = "error: "
+checks."input/main.taut::round" = "ok"
+
+@ cases.a-labelled-value-and-pattern
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::Text
+
+fn attribute(): @name Text × @value Text { #(@name "style", @value "display:contents") }
+
+fn value_of(a: @name Text × @value Text): Text {
+  ⊢ Text from match a {
+    #(@name n, @value v) => v
+  }
+}
+
+fn wrapped(n: Nat): @w Nat { @w n }
+
+theorem read_back(): Eq(Text, value_of(attribute()), "display:contents") { Refl(Text, "display:contents") }
+```
+
+checks_all = "ok"
+checks."input/main.taut::attribute" = "ok"
+checks."input/main.taut::value_of" = "ok"
+checks."input/main.taut::wrapped" = "ok"
+checks."input/main.taut::read_back" = "ok"
+
+@ cases.a-tuple-pattern-takes-its-members-by-position-and-label
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::Data
+
+fn cur(pr: @b Nat × @a Bool): Nat {
+  ⊢ Nat from match pr {
+    #(@b c, @a r) => c
+  }
+}
+
+fn rest(pr: @b Nat × @a Bool × Nat): Bool {
+  ⊢ Bool from match pr {
+    #(@b c, @a r, n) => r
+  }
+}
+
+theorem read_back(): Eq(Nat, cur(#(@b 7, @a true)), 7) { Refl(Nat, 7) }
+```
+
+checks_all = "ok"
+checks."input/main.taut::cur" = "ok"
+checks."input/main.taut::rest" = "ok"
+checks."input/main.taut::read_back" = "ok"
+
+@ cases.a-labelled-product-matches-without-the-library
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn attribute(): @name Nat × @value Nat { #(@name 1, @value 2) }
+
+fn value_of(a: @name Nat × @value Nat): Nat {
+  ⊢ Nat from match a {
+    #(@name n, @value v) => v
+  }
+}
+
+theorem read_back(): Eq(Nat, value_of(attribute()), 2) { Refl(Nat, 2) }
+```
+
+checks_all = "ok"
+checks."input/main.taut::attribute" = "ok"
+checks."input/main.taut::value_of" = "ok"
+checks."input/main.taut::read_back" = "ok"
+
+@ cases.a-label-pattern-takes-only-its-label
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn wrong(x: @w Nat): Nat {
+  ⊢ Nat from match x {
+    @h n => n
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::wrong" = "error: "
+
+@ cases.a-labelled-unit-is-a-value
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn marker(): @done Unit { @done #() }
+
+fn pair(n: Nat): @count Nat × @done Unit { #(@count n, @done #()) }
+
+fn count(p: @count Nat × @done Unit): Nat { p }
+```
+
+checks_all = "ok"
+checks."input/main.taut::marker" = "ok"
+checks."input/main.taut::pair" = "ok"
+checks."input/main.taut::count" = "ok"
+
+@ cases.a-labelled-pattern-rebuilds-the-product
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::Data
+
+fn step(pr: @cur Nat × @rest Bool): @cur Nat × @rest Bool {
+  ⊢ @cur Nat × @rest Bool from match pr {
+    #(@cur cur, @rest rest) => #(@cur cur, @rest rest)
+  }
+}
+
+fn swap_names(pr: @cur Nat × @rest Bool): @cur Nat × @rest Bool {
+  ⊢ @cur Nat × @rest Bool from match pr {
+    #(@cur rest, @rest cur) => #(@cur rest, @rest cur)
+  }
+}
+```
+
+checks_all = "ok"
+checks."input/main.taut::step" = "ok"
+checks."input/main.taut::swap_names" = "ok"

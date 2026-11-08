@@ -14,7 +14,7 @@ pub(open) inductive Text: Type =>
 
 module Text {
   pub fn bytes(t: Text): List(Nat) {
-    match t: List(Nat) {
+    ⊢ List(Nat) from match t {
       Mk(bs) => bs
     }
   }
@@ -30,7 +30,7 @@ module Text {
   }
 
   pub fn byte_value(t: Text, i: Nat): Nat {
-    match byte(t, i): Nat {
+    ⊢ Nat from match byte(t, i) {
       None => Zero
       Some(b) => b
     }
@@ -39,8 +39,8 @@ module Text {
   // Whether a character starts at `i`: the end, or a byte that is not
   // `10xxxxxx`.
   pub fn boundary(t: Text, i: Nat): Bool {
-    match byte(t, i): Bool {
-      None => i == len(t)
+    ⊢ Bool from match byte(t, i) {
+      None => i == Text::len(t)
       Some(b) => b < 128 || 192 <= b
     }
   }
@@ -48,14 +48,14 @@ module Text {
   // Mapped: the bytes from `start` to `end`, when both are boundaries of
   // characters in order.
   pub fn slice(t: Text, start: Nat, end: Nat): Option(Text) {
-    match start <= end && (boundary(t, start) && boundary(t, end)): Option(Text) {
+    ⊢ Option(Text) from match start <= end && (boundary(t, start) && boundary(t, end)) {
       false => None
       true => Some(Text::Mk(List::take(end - start, List::drop(start, bytes(t)))))
     }
   }
 
   pub fn slice_or_empty(t: Text, start: Nat, end: Nat): Text {
-    match slice(t, start, end): Text {
+    ⊢ Text from match slice(t, start, end) {
       None => ""
       Some(s) => s
     }
@@ -68,25 +68,25 @@ module Text {
 
   // Mapped: the parts one after another.
   pub fn concat_all(parts: List(Text)): Text {
-    match parts: Text {
+    ⊢ Text from match parts {
       Nil => Text::Mk(Nil)
-      Cons(p, rest) => concat(p, concat_all(rest))
+      Cons(p, rest) => Text::concat(p, concat_all(rest))
     }
   }
 }
 
 module Bytes {
   pub fn compare(a: List(Nat), b: List(Nat)): Ordering {
-    match a: Ordering {
-      Nil => match b: Ordering {
+    ⊢ Ordering from match a {
+      Nil => ⊢ Ordering from match b {
         Nil => Equal
         Cons(y, ys) => Less
       }
-      Cons(x, xs) => match b: Ordering {
+      Cons(x, xs) => ⊢ Ordering from match b {
         Nil => Greater
-        Cons(y, ys) => match x < y: Ordering {
+        Cons(y, ys) => ⊢ Ordering from match x < y {
           true => Less
-          false => match y < x: Ordering {
+          false => ⊢ Ordering from match y < x {
             true => Greater
             false => compare(xs, ys)
           }
@@ -105,11 +105,7 @@ module Text {
 
   // Mapped.
   pub fn eq(a: Text, b: Text): Bool {
-    match ordering(a, b): Bool {
-      Less => false
-      Equal => true
-      Greater => false
-    }
+    ⊢ Bool from match ordering(a, b) { Less => false, Equal => true, Greater => false }
   }
 }
 
@@ -117,9 +113,9 @@ module Nat {
   // The decimal digits of `n` before `acc`; `fuel` is more than the number
   // of digits.
   pub fn digits(fuel: Nat, n: Nat, acc: List(Nat)): List(Nat) {
-    match fuel: List(Nat) {
+    ⊢ List(Nat) from match fuel {
       Zero => acc
-      Succ(f) => match Nat::div_nz(n, 10, Nat::ne_zero(10, Refl)) == 0: List(Nat) {
+      Succ(f) => ⊢ List(Nat) from match Nat::div_nz(n, 10, Nat::ne_zero(10, Refl)) == 0 {
         true => Cons(Nat::add(Nat::rem_nz(n, 10, Nat::ne_zero(10, Refl)), 48), acc)
         false => digits(
           f,
@@ -144,7 +140,7 @@ module Text {
   // Mapped: the character `c`, or `None` when `c` is not one (a surrogate,
   // or past 0x10FFFF).
   pub fn of_code_point(c: Nat): Option(Text) {
-    match (55296 <= c && c < 57344) || 1114112 <= c: Option(Text) {
+    ⊢ Option(Text) from match (55296 <= c && c < 57344) || 1114112 <= c {
       true => None
       false => Some(utf8_of_code_point(c))
     }
@@ -152,18 +148,18 @@ module Text {
 
   // Mapped: the UTF-8 encoding of the character `c`; "" when `c` is not one.
   pub fn utf8_of_code_point(c: Nat): Text {
-    match c < 128: Text {
+    ⊢ Text from match c < 128 {
       true => Text::Mk([c])
-      false => match c < 2048: Text {
+      false => ⊢ Text from match c < 2048 {
         true => Text::Mk(
           Cons(
             Nat::add(Nat::div_nz(c, 64, Nat::ne_zero(64, Refl)), 192),
             Cons(Nat::add(Nat::rem_nz(c, 64, Nat::ne_zero(64, Refl)), 128), Nil)
           )
         )
-        false => match 55296 <= c && c < 57344: Text {
+        false => ⊢ Text from match 55296 <= c && c < 57344 {
           true => Text::Mk(Nil)
-          false => match c < 65536: Text {
+          false => ⊢ Text from match c < 65536 {
             true => Text::Mk(
               Cons(
                 Nat::add(Nat::div_nz(c, 4096, Nat::ne_zero(4096, Refl)), 224),
@@ -180,7 +176,7 @@ module Text {
                 )
               )
             )
-            false => match c < 1114112: Text {
+            false => ⊢ Text from match c < 1114112 {
               true => Text::Mk(
                 Cons(
                   Nat::add(Nat::div_nz(c, 262144, Nat::ne_zero(262144, Refl)), 240),
@@ -224,47 +220,41 @@ pub fn utf8_continuation(b: Nat): Bool {
 // The least second byte after the first byte `b` of three or four: below
 // it would be an overlong encoding.
 pub fn utf8_second_min(b: Nat): Nat {
-  match b == 224: Nat {
+  ⊢ Nat from match b == 224 {
     true => 160
-    false => match b == 240: Nat {
-      true => 144
-      false => 128
-    }
+    false => ⊢ Nat from match b == 240 { true => 144, false => 128 }
   }
 }
 
 // The greatest second byte after the first byte `b` of three or four:
 // past it would be a surrogate or past 0x10FFFF.
 pub fn utf8_second_max(b: Nat): Nat {
-  match b == 237: Nat {
+  ⊢ Nat from match b == 237 {
     true => 159
-    false => match b == 244: Nat {
-      true => 143
-      false => 191
-    }
+    false => ⊢ Nat from match b == 244 { true => 143, false => 191 }
   }
 }
 
 // Whether `bs` is well-formed UTF-8: each character in the shortest
 // encoding, no surrogate, nothing past 0x10FFFF.
 pub fn utf8_valid(bs: List(Nat)): Bool {
-  match bs: Bool {
+  ⊢ Bool from match bs {
     Nil => true
-    Cons(b, r1) => match b < 128: Bool {
+    Cons(b, r1) => ⊢ Bool from match b < 128 {
       true => utf8_valid(r1)
-      false => match r1: Bool {
+      false => ⊢ Bool from match r1 {
         Nil => false
-        Cons(c1, r2) => match Nat::between(194, 223, b): Bool {
+        Cons(c1, r2) => ⊢ Bool from match Nat::between(194, 223, b) {
           true => utf8_continuation(c1) && utf8_valid(r2)
-          false => match r2: Bool {
+          false => ⊢ Bool from match r2 {
             Nil => false
-            Cons(c2, r3) => match Nat::between(224, 239, b): Bool {
+            Cons(c2, r3) => ⊢ Bool from match Nat::between(224, 239, b) {
               true => Nat::between(
                 utf8_second_min(b),
                 utf8_second_max(b),
                 c1
               ) && (utf8_continuation(c2) && utf8_valid(r3))
-              false => match r3: Bool {
+              false => ⊢ Bool from match r3 {
                 Nil => false
                 Cons(c3, r4) => Nat::between(
                   240,
@@ -289,7 +279,7 @@ pub fn utf8_valid(bs: List(Nat)): Bool {
 module Text {
   // Mapped: the text whose bytes are `bs`, when they are well-formed UTF-8.
   pub fn of_utf8(bs: List(Nat)): Option(Text) {
-    match utf8_valid(bs): Option(Text) {
+    ⊢ Option(Text) from match utf8_valid(bs) {
       true => Some(Text::Mk(bs))
       false => None
     }
@@ -299,7 +289,7 @@ module Text {
     Refl
   }
 
-  pub theorem concat_ab(): concat("a", "b") = "ab" {
+  pub theorem concat_ab(): Text::concat("a", "b") = "ab" {
     Refl
   }
 

@@ -14,7 +14,7 @@ pub theorem ty_then_equal(
   b: Ordering,
   e: ty_then(a, b) = Equal
 ): And(a = Equal, b = Equal) {
-  match a: And(a = Equal, b = Equal) {
+  ⊢ And(a = Equal, b = Equal) from match a {
     Less => False::elim(less_ne_equal(e))
     Equal => AndIntro(Refl, e)
     Greater => False::elim(greater_ne_equal(e))
@@ -27,41 +27,37 @@ pub theorem ty_nat_ne(x: Nat, y: Nat, e: x = y, h: Nat::eq(x, y) = false): False
   )
 }
 
-pub theorem width_rank_inj(
-  a: Width,
-  b: Width,
-  e: width_rank(a) = width_rank(b)
-): a = b {
-  match a: a = b {
-    Width32 => match b: Width32 = b {
+pub theorem width_rank_inj(a: Width, b: Width, e: width_rank(a) = width_rank(b)): a = b {
+  ⊢ a = b from match a {
+    Width32 => ⊢ Width32 = b from match b {
       Width32 => Refl
       Width64 => False::elim(ty_nat_ne(0, 1, e, Refl))
       WidthU8 => False::elim(ty_nat_ne(0, 2, e, Refl))
       WidthU32 => False::elim(ty_nat_ne(0, 3, e, Refl))
       WidthU64 => False::elim(ty_nat_ne(0, 4, e, Refl))
     }
-    Width64 => match b: Width64 = b {
+    Width64 => ⊢ Width64 = b from match b {
       Width32 => False::elim(ty_nat_ne(1, 0, e, Refl))
       Width64 => Refl
       WidthU8 => False::elim(ty_nat_ne(1, 2, e, Refl))
       WidthU32 => False::elim(ty_nat_ne(1, 3, e, Refl))
       WidthU64 => False::elim(ty_nat_ne(1, 4, e, Refl))
     }
-    WidthU8 => match b: WidthU8 = b {
+    WidthU8 => ⊢ WidthU8 = b from match b {
       Width32 => False::elim(ty_nat_ne(2, 0, e, Refl))
       Width64 => False::elim(ty_nat_ne(2, 1, e, Refl))
       WidthU8 => Refl
       WidthU32 => False::elim(ty_nat_ne(2, 3, e, Refl))
       WidthU64 => False::elim(ty_nat_ne(2, 4, e, Refl))
     }
-    WidthU32 => match b: WidthU32 = b {
+    WidthU32 => ⊢ WidthU32 = b from match b {
       Width32 => False::elim(ty_nat_ne(3, 0, e, Refl))
       Width64 => False::elim(ty_nat_ne(3, 1, e, Refl))
       WidthU8 => False::elim(ty_nat_ne(3, 2, e, Refl))
       WidthU32 => Refl
       WidthU64 => False::elim(ty_nat_ne(3, 4, e, Refl))
     }
-    WidthU64 => match b: WidthU64 = b {
+    WidthU64 => ⊢ WidthU64 = b from match b {
       Width32 => False::elim(ty_nat_ne(4, 0, e, Refl))
       Width64 => False::elim(ty_nat_ne(4, 1, e, Refl))
       WidthU8 => False::elim(ty_nat_ne(4, 2, e, Refl))
@@ -70,31 +66,27 @@ pub theorem width_rank_inj(
     }
   }
 }
-pub theorem kind_rank_inj(
-  a: Kind,
-  b: Kind,
-  e: kind_rank(a) = kind_rank(b)
-): a = b {
-  match a: a = b {
-    KindCopy => match b: KindCopy = b {
+pub theorem kind_rank_inj(a: Kind, b: Kind, e: kind_rank(a) = kind_rank(b)): a = b {
+  ⊢ a = b from match a {
+    KindCopy => ⊢ KindCopy = b from match b {
       KindCopy => Refl
       KindShared => False::elim(ty_nat_ne(0, 1, e, Refl))
       KindAffine => False::elim(ty_nat_ne(0, 2, e, Refl))
       KindLinear => False::elim(ty_nat_ne(0, 3, e, Refl))
     }
-    KindShared => match b: KindShared = b {
+    KindShared => ⊢ KindShared = b from match b {
       KindCopy => False::elim(ty_nat_ne(1, 0, e, Refl))
       KindShared => Refl
       KindAffine => False::elim(ty_nat_ne(1, 2, e, Refl))
       KindLinear => False::elim(ty_nat_ne(1, 3, e, Refl))
     }
-    KindAffine => match b: KindAffine = b {
+    KindAffine => ⊢ KindAffine = b from match b {
       KindCopy => False::elim(ty_nat_ne(2, 0, e, Refl))
       KindShared => False::elim(ty_nat_ne(2, 1, e, Refl))
       KindAffine => Refl
       KindLinear => False::elim(ty_nat_ne(2, 3, e, Refl))
     }
-    KindLinear => match b: KindLinear = b {
+    KindLinear => ⊢ KindLinear = b from match b {
       KindCopy => False::elim(ty_nat_ne(3, 0, e, Refl))
       KindShared => False::elim(ty_nat_ne(3, 1, e, Refl))
       KindAffine => False::elim(ty_nat_ne(3, 2, e, Refl))
@@ -103,28 +95,24 @@ pub theorem kind_rank_inj(
   }
 }
 pub theorem bool_rank_inj(a: Bool, b: Bool, e: bool_rank(a) = bool_rank(b)): a = b {
-  match a: a = b {
-    false => match b: false = b {
+  ⊢ a = b from match a {
+    false => ⊢ false = b from match b {
       false => Refl
       true => False::elim(ty_nat_ne(0, 1, e, Refl))
     }
-    true => match b: true = b {
+    true => ⊢ true = b from match b {
       false => False::elim(ty_nat_ne(1, 0, e, Refl))
       true => Refl
     }
   }
 }
-pub theorem cmp_text_list_eq(
-  a: List(Text),
-  b: List(Text),
-  e: cmp_text_list(a, b) = Equal
-): a = b {
-  match a: a = b {
-    Nil => match b: Nil = b {
+pub theorem cmp_text_list_eq(a: List(Text), b: List(Text), e: cmp_text_list(a, b) = Equal): a = b {
+  ⊢ a = b from match a {
+    Nil => ⊢ Nil = b from match b {
       Nil => Refl
       Cons(y, ys) => False::elim(less_ne_equal(e))
     }
-    Cons(x, xs) => match b: Cons(x, xs) = b {
+    Cons(x, xs) => ⊢ Cons(x, xs) = b from match b {
       Nil => False::elim(greater_ne_equal(e))
       Cons(y, ys) => Eq::trans(
         Eq::congr(
@@ -153,15 +141,15 @@ pub theorem cmp_generics_eq(
   b: List(Pair(Text, Kind)),
   e: cmp_generics(a, b) = Equal
 ): a = b {
-  match a: a = b {
-    Nil => match b: Nil = b {
+  ⊢ a = b from match a {
+    Nil => ⊢ Nil = b from match b {
       Nil => Refl
       Cons(y, ys) => False::elim(less_ne_equal(e))
     }
-    Cons(x, xs) => match b: Cons(x, xs) = b {
+    Cons(x, xs) => ⊢ Cons(x, xs) = b from match b {
       Nil => False::elim(greater_ne_equal(e))
-      Cons(y, ys) => match x: Cons(x, xs) = Cons(y, ys) {
-        Pair { fst: xn, snd: xk } => match y: Cons(Pair { fst: xn, snd: xk }, xs) = Cons(y, ys) {
+      Cons(y, ys) => ⊢ Cons(x, xs) = Cons(y, ys) from match x {
+        Pair { fst: xn, snd: xk } => ⊢ Cons(Pair { fst: xn, snd: xk }, xs) = Cons(y, ys) from match y {
           Pair { fst: yn, snd: yk } => Eq::trans(
             Eq::congr(
               (z: Text) => Cons(Pair { fst: z, snd: xk }, xs),
@@ -245,12 +233,12 @@ mutual {
     b: List(Ty),
     e: ty_compare_list(a, b) = Equal
   ): a = b {
-    match a: a = b {
-      Nil => match b: Nil = b {
+    ⊢ a = b from match a {
+      Nil => ⊢ Nil = b from match b {
         Nil => Refl
         Cons(y, ys) => False::elim(less_ne_equal(e))
       }
-      Cons(x, xs) => match b: Cons(x, xs) = b {
+      Cons(x, xs) => ⊢ Cons(x, xs) = b from match b {
         Nil => False::elim(greater_ne_equal(e))
         Cons(y, ys) => Eq::trans(
           Eq::congr(
@@ -275,8 +263,8 @@ mutual {
   }
 
   pub theorem ty_compare_eq(a: Ty, b: Ty, e: ty_compare(a, b) = Equal): a = b {
-    match a: a = b {
-      TyInt(wa) => match b: TyInt(wa) = b {
+    ⊢ a = b from match a {
+      TyInt(wa) => ⊢ TyInt(wa) = b from match b {
         TyInt(wb) => Eq::congr(
           (z: Width) => TyInt(z),
           width_rank_inj(wa, wb, Ordmap::compare_nat_eq(width_rank(wa), width_rank(wb), e))
@@ -299,7 +287,7 @@ mutual {
         TyPoly(gb, xb) => False::elim(less_ne_equal(e))
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyBool => match b: TyBool = b {
+      TyBool => ⊢ TyBool = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => Refl
         TyText => False::elim(less_ne_equal(e))
@@ -319,7 +307,7 @@ mutual {
         TyPoly(gb, xb) => False::elim(less_ne_equal(e))
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyText => match b: TyText = b {
+      TyText => ⊢ TyText = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => False::elim(greater_ne_equal(e))
         TyText => Refl
@@ -339,7 +327,7 @@ mutual {
         TyPoly(gb, xb) => False::elim(less_ne_equal(e))
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyUnit => match b: TyUnit = b {
+      TyUnit => ⊢ TyUnit = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => False::elim(greater_ne_equal(e))
         TyText => False::elim(greater_ne_equal(e))
@@ -359,7 +347,7 @@ mutual {
         TyPoly(gb, xb) => False::elim(less_ne_equal(e))
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyNever => match b: TyNever = b {
+      TyNever => ⊢ TyNever = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => False::elim(greater_ne_equal(e))
         TyText => False::elim(greater_ne_equal(e))
@@ -379,7 +367,7 @@ mutual {
         TyPoly(gb, xb) => False::elim(less_ne_equal(e))
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyDecimal => match b: TyDecimal = b {
+      TyDecimal => ⊢ TyDecimal = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => False::elim(greater_ne_equal(e))
         TyText => False::elim(greater_ne_equal(e))
@@ -399,7 +387,7 @@ mutual {
         TyPoly(gb, xb) => False::elim(less_ne_equal(e))
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyFloat => match b: TyFloat = b {
+      TyFloat => ⊢ TyFloat = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => False::elim(greater_ne_equal(e))
         TyText => False::elim(greater_ne_equal(e))
@@ -419,7 +407,7 @@ mutual {
         TyPoly(gb, xb) => False::elim(less_ne_equal(e))
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyFn(pa, ra, ka) => match b: TyFn(pa, ra, ka) = b {
+      TyFn(pa, ra, ka) => ⊢ TyFn(pa, ra, ka) = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => False::elim(greater_ne_equal(e))
         TyText => False::elim(greater_ne_equal(e))
@@ -506,7 +494,7 @@ mutual {
         TyPoly(gb, xb) => False::elim(less_ne_equal(e))
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyUnion(xa) => match b: TyUnion(xa) = b {
+      TyUnion(xa) => ⊢ TyUnion(xa) = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => False::elim(greater_ne_equal(e))
         TyText => False::elim(greater_ne_equal(e))
@@ -526,7 +514,7 @@ mutual {
         TyPoly(gb, xb) => False::elim(less_ne_equal(e))
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyProduct(xa) => match b: TyProduct(xa) = b {
+      TyProduct(xa) => ⊢ TyProduct(xa) = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => False::elim(greater_ne_equal(e))
         TyText => False::elim(greater_ne_equal(e))
@@ -546,7 +534,7 @@ mutual {
         TyPoly(gb, xb) => False::elim(less_ne_equal(e))
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyTagged(ta, xa) => match b: TyTagged(ta, xa) = b {
+      TyTagged(ta, xa) => ⊢ TyTagged(ta, xa) = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => False::elim(greater_ne_equal(e))
         TyText => False::elim(greater_ne_equal(e))
@@ -583,7 +571,7 @@ mutual {
         TyPoly(gb, xb) => False::elim(less_ne_equal(e))
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyNamed(na, xa) => match b: TyNamed(na, xa) = b {
+      TyNamed(na, xa) => ⊢ TyNamed(na, xa) = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => False::elim(greater_ne_equal(e))
         TyText => False::elim(greater_ne_equal(e))
@@ -620,7 +608,7 @@ mutual {
         TyPoly(gb, xb) => False::elim(less_ne_equal(e))
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyParam(na, ka) => match b: TyParam(na, ka) = b {
+      TyParam(na, ka) => ⊢ TyParam(na, ka) = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => False::elim(greater_ne_equal(e))
         TyText => False::elim(greater_ne_equal(e))
@@ -673,7 +661,7 @@ mutual {
         TyPoly(gb, xb) => False::elim(less_ne_equal(e))
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyInfo(xa) => match b: TyInfo(xa) = b {
+      TyInfo(xa) => ⊢ TyInfo(xa) = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => False::elim(greater_ne_equal(e))
         TyText => False::elim(greater_ne_equal(e))
@@ -693,7 +681,7 @@ mutual {
         TyPoly(gb, xb) => False::elim(less_ne_equal(e))
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyBorrow(xa, ma) => match b: TyBorrow(xa, ma) = b {
+      TyBorrow(xa, ma) => ⊢ TyBorrow(xa, ma) = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => False::elim(greater_ne_equal(e))
         TyText => False::elim(greater_ne_equal(e))
@@ -715,7 +703,11 @@ mutual {
               xa,
               xb,
               And::left(
-                ty_then_equal(ty_compare(xa, xb), Ordmap::compare_nat(bool_rank(ma), bool_rank(mb)), e)
+                ty_then_equal(
+                  ty_compare(xa, xb),
+                  Ordmap::compare_nat(bool_rank(ma), bool_rank(mb)),
+                  e
+                )
               )
             )
           ),
@@ -728,7 +720,11 @@ mutual {
                 bool_rank(ma),
                 bool_rank(mb),
                 And::right(
-                  ty_then_equal(ty_compare(xa, xb), Ordmap::compare_nat(bool_rank(ma), bool_rank(mb)), e)
+                  ty_then_equal(
+                    ty_compare(xa, xb),
+                    Ordmap::compare_nat(bool_rank(ma), bool_rank(mb)),
+                    e
+                  )
                 )
               )
             )
@@ -738,7 +734,7 @@ mutual {
         TyPoly(gb, xb) => False::elim(less_ne_equal(e))
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyVar(va) => match b: TyVar(va) = b {
+      TyVar(va) => ⊢ TyVar(va) = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => False::elim(greater_ne_equal(e))
         TyText => False::elim(greater_ne_equal(e))
@@ -758,7 +754,7 @@ mutual {
         TyPoly(gb, xb) => False::elim(less_ne_equal(e))
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyPoly(ga, xa) => match b: TyPoly(ga, xa) = b {
+      TyPoly(ga, xa) => ⊢ TyPoly(ga, xa) = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => False::elim(greater_ne_equal(e))
         TyText => False::elim(greater_ne_equal(e))
@@ -795,7 +791,7 @@ mutual {
         )
         TyApp(hb, xb) => False::elim(less_ne_equal(e))
       }
-      TyApp(ha, xa) => match b: TyApp(ha, xa) = b {
+      TyApp(ha, xa) => ⊢ TyApp(ha, xa) = b from match b {
         TyInt(wb) => False::elim(greater_ne_equal(e))
         TyBool => False::elim(greater_ne_equal(e))
         TyText => False::elim(greater_ne_equal(e))
@@ -837,7 +833,7 @@ mutual {
 }
 
 pub fn ty_eq_step(o: Ordering): Bool {
-  match o: Bool {
+  ⊢ Bool from match o {
     Equal => true
     _ => false
   }

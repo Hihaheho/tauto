@@ -1,0 +1,65 @@
+description = "A family of data whose parameter is a predicate or a value, used only by a proof field, is extracted without that parameter: the extracted family takes its types only, and the functions and constructors that name it read back."
+
+@ cases.predicate-param-run
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+inductive Sub(A: Type, P: (A) -> Prop): Type {
+  SubMk(val: A, ok: P(val)): Sub(A, P)
+}
+
+fn Pos(n: Nat): Prop { ¬(n = 0) }
+
+fn sub_val(A: Type, P: (A) -> Prop, s: Sub(A, P)): A {
+  ⊢ A from match s {
+    SubMk(v, h) => v
+  }
+}
+
+fn safe_pred(n: Sub(Nat, Pos)): Nat {
+  ⊢ Nat from match sub_val(Nat, Pos, n) {
+    Zero => 0
+    Succ(k) => k
+  }
+}
+
+fn three(): Nat {
+  safe_pred(SubMk(Nat, Pos, 4, (h: Eq(Nat, 4, 0)) => ⊢ False from match h {
+  }))
+}
+perform show("v", three())
+```
+shows = ["v = 3"]
+
+@ cases.value-param-run
+extract = true
+imports = [path`../std/Nat.taut`]
+source = ```tauto
+fn is_pos(n: Nat): Bool {
+  ⊢ Bool from match n {
+    Zero => false
+    Succ(k) => true
+  }
+}
+
+inductive Checked(A: Type, p: (A) -> Bool): Type {
+  Mk(val: A, ok: p(val) = true): Checked(A, p)
+}
+
+fn check<A>(p: (A) -> Bool, x: A): Option(Checked(A, p)) {
+  ⊢ Option(Checked(A, p)) from match p(x) eqn h {
+    true => ⊢ Option(Checked(A, p)) from Some(Checked::Mk(x, h))
+    false => ⊢ Option(Checked(A, p)) from None
+  }
+}
+
+fn go(n: Nat): Nat {
+  ⊢ Nat from match check(is_pos, n) {
+    None => 0
+    Some(c) => Nat::sub(c.val, 1)
+  }
+}
+perform show("a", go(5))
+perform show("b", go(0))
+```
+shows = ["a = 4", "b = 0"]

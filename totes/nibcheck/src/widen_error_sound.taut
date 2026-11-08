@@ -15,7 +15,7 @@ pub theorem widen_store_frame_checked(
   occurs: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_store(c, rv, value, occurs)) {
-  match occurs: CkCheckedFrame(c, widen_store(c, rv, value, occurs)) {
+  ⊢ CkCheckedFrame(c, widen_store(c, rv, value, occurs)) from match occurs {
     false => checked_frame_return(c, Star, ordered)
     true => checked_frame_rewrap(
       c,
@@ -49,7 +49,7 @@ pub theorem widen_attempt_frame_checked(
   success: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_attempt(c, rv, wide, success)) {
-  match success: CkCheckedFrame(c, widen_attempt(c, rv, wide, success)) {
+  ⊢ CkCheckedFrame(c, widen_attempt(c, rv, wide, success)) from match success {
     true => widen_store_true_frame_checked(c, rv, ck_resolve(c, wide), ordered)
     false => checked_frame_return(c, false, ordered)
   }
@@ -67,12 +67,17 @@ pub theorem widen_fn_allowed_frame_checked(
   allowed: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) {
-  match allowed: CkCheckedFrame(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) {
+  ⊢ CkCheckedFrame(c, widen_fn_allowed(c, pa, ra, ka, pb, rb, kb, rv, allowed)) from match allowed {
     true => checked_frame_bind(
       Bool,
       Bool,
       c,
-      (success: Bool, c1: Checker) => widen_attempt(c1, rv, TyFn(pb, rb, kind_join(ka, kb)), success),
+      (success: Bool, c1: Checker) => widen_attempt(
+        c1,
+        rv,
+        TyFn(pb, rb, kind_join(ka, kb)),
+        success
+      ),
       ck_attempt_unify(c, TyFn(pa, ra, kind_join(ka, kb)), TyFn(pb, rb, kind_join(ka, kb))),
       ck_attempt_unify_run_frame_checked(
         c,
@@ -101,7 +106,7 @@ pub theorem widen_fn_current_frame_checked(
   current: Ty,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_fn_current(c, pa, ra, ka, rv, current)) {
-  match current: CkCheckedFrame(c, widen_fn_current(c, pa, ra, ka, rv, current)) {
+  ⊢ CkCheckedFrame(c, widen_fn_current(c, pa, ra, ka, rv, current)) from match current {
     TyInt(w) => checked_frame_return(c, false, ordered)
     TyBool => checked_frame_return(c, false, ordered)
     TyText => checked_frame_return(c, false, ordered)
@@ -141,7 +146,7 @@ pub theorem widen_fn_arm_frame_checked(
   arm: Ty,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_fn_arm(c, current, rv, arm)) {
-  match arm: CkCheckedFrame(c, widen_fn_arm(c, current, rv, arm)) {
+  ⊢ CkCheckedFrame(c, widen_fn_arm(c, current, rv, arm)) from match arm {
     TyInt(w) => checked_frame_return(c, false, ordered)
     TyBool => checked_frame_return(c, false, ordered)
     TyText => checked_frame_return(c, false, ordered)
@@ -184,7 +189,7 @@ pub theorem widen_fits_if_frame_checked(
   allowed: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_fits_if(c, a, b, allowed)) {
-  match allowed: CkCheckedFrame(c, widen_fits_if(c, a, b, allowed)) {
+  ⊢ CkCheckedFrame(c, widen_fits_if(c, a, b, allowed)) from match allowed {
     true => checked_frame_rewrap(
       c,
       ck_attempt_fits(c, a, b),
@@ -201,7 +206,7 @@ pub theorem widen_borrow_current_frame_checked(
   current: Ty,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_borrow_current(c, a, rv, current)) {
-  match current: CkCheckedFrame(c, widen_borrow_current(c, a, rv, current)) {
+  ⊢ CkCheckedFrame(c, widen_borrow_current(c, a, rv, current)) from match current {
     TyInt(w) => checked_frame_return(c, false, ordered)
     TyBool => checked_frame_return(c, false, ordered)
     TyText => checked_frame_return(c, false, ordered)
@@ -262,7 +267,7 @@ pub theorem widen_borrow_arm_frame_checked(
   arm: Ty,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_borrow_arm(c, current, arm)) {
-  match arm: CkCheckedFrame(c, widen_borrow_arm(c, current, arm)) {
+  ⊢ CkCheckedFrame(c, widen_borrow_arm(c, current, arm)) from match arm {
     TyInt(w) => checked_frame_return(c, false, ordered)
     TyBool => checked_frame_return(c, false, ordered)
     TyText => checked_frame_return(c, false, ordered)
@@ -311,7 +316,7 @@ pub theorem widen_final_fits_frame_checked(
   failed: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_final_fits(c, a, current, rv, failed)) {
-  match failed: CkCheckedFrame(c, widen_final_fits(c, a, current, rv, failed)) {
+  ⊢ CkCheckedFrame(c, widen_final_fits(c, a, current, rv, failed)) from match failed {
     true => checked_frame_rewrap(
       c,
       ck_set_subst(c, rv, ty_union(Cons(current, Cons(ck_resolve(c, a), Nil)))),
@@ -334,7 +339,7 @@ pub theorem widen_after_arm_frame_checked(
   failed: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_after_arm(c, a, current, rv, failed)) {
-  match failed: CkCheckedFrame(c, widen_after_arm(c, a, current, rv, failed)) {
+  ⊢ CkCheckedFrame(c, widen_after_arm(c, a, current, rv, failed)) from match failed {
     true => checked_frame_bind(
       Bool,
       Unit,
@@ -363,7 +368,7 @@ pub theorem widen_after_current_frame_checked(
   failed: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_after_current(c, a, current, rv, failed)) {
-  match failed: CkCheckedFrame(c, widen_after_current(c, a, current, rv, failed)) {
+  ⊢ CkCheckedFrame(c, widen_after_current(c, a, current, rv, failed)) from match failed {
     true => checked_frame_bind(
       Bool,
       Unit,
@@ -371,14 +376,7 @@ pub theorem widen_after_current_frame_checked(
       (success: Bool, c1: Checker) => widen_after_arm(c1, a, current, rv, not(success)),
       ck_widen_borrowed_arm(c, a, current),
       ck_widen_borrowed_arm_run_frame_checked(c, a, current, ordered),
-      success => c1 => o_c1 => widen_after_arm_frame_checked(
-        c1,
-        a,
-        current,
-        rv,
-        not(success),
-        o_c1
-      )
+      success => c1 => o_c1 => widen_after_arm_frame_checked(c1, a, current, rv, not(success), o_c1)
     )
     false => checked_frame_return(c, Star, ordered)
   }
@@ -392,7 +390,7 @@ pub theorem widen_after_fn_frame_checked(
   failed: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, widen_after_fn(c, a, current, rv, failed)) {
-  match failed: CkCheckedFrame(c, widen_after_fn(c, a, current, rv, failed)) {
+  ⊢ CkCheckedFrame(c, widen_after_fn(c, a, current, rv, failed)) from match failed {
     true => checked_frame_bind(
       Bool,
       Unit,

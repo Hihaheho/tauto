@@ -33,13 +33,13 @@ pub theorem where_duplicate_sound(
   previous,
   ck_val(signature_pred_duplicate(c, source, previous, name, duplicate))
 ) {
-  match duplicate: WhereConstraint(
+  ⊢ WhereConstraint(
     where_classes(c),
     generics,
     source,
     previous,
     ck_val(signature_pred_duplicate(c, source, previous, name, duplicate))
-  ) {
+  ) from match duplicate {
     true => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     false => WhereConstraint::Mk(
       name,
@@ -66,13 +66,13 @@ pub theorem where_generic_constraint_sound(
   previous,
   ck_val(signature_pred_generic(c, source, function, previous, named))
 ) {
-  match named: WhereConstraint(
+  ⊢ WhereConstraint(
     where_classes(c),
     generics,
     source,
     previous,
     ck_val(signature_pred_generic(c, source, function, previous, named))
-  ) {
+  ) from match named {
     None => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     Some(name) => where_duplicate_sound(
       c,
@@ -106,13 +106,13 @@ pub theorem where_missing_constraint_sound(
   previous,
   ck_val(signature_pred_missing(c, source, generics, function, previous, missing))
 ) {
-  match missing: WhereConstraint(
+  ⊢ WhereConstraint(
     where_classes(c),
     generics,
     source,
     previous,
     ck_val(signature_pred_missing(c, source, generics, function, previous, missing))
-  ) {
+  ) from match missing {
     true => False::elim(false_ne_true(Eq::congr(decl_names_empty, clean)))
     false => where_generic_constraint_sound(
       c,

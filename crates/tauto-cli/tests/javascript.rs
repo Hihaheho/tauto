@@ -14,35 +14,6 @@ fn directory() -> std::path::PathBuf {
     fs::create_dir_all(&p).unwrap();
     p
 }
-fn compare(source: &str) {
-    let program = tauto::surface::parse_program(source).unwrap();
-    let reference = tauto::eval::run_program_with(&program, 1_000_000, Default::default()).unwrap();
-    let expected = reference
-        .outputs
-        .iter()
-        .map(|(n, v)| format!("{n} = {v}\n"))
-        .collect::<String>();
-    let pkg = tauto_nir::compile(source).unwrap();
-    let js = tauto_jsgen::generate(&pkg).unwrap();
-    let dir = directory();
-    fs::write(dir.join("program.mjs"), js).unwrap();
-    fs::write(
-        dir.join("main.mjs"),
-        "import {run} from './program.mjs';await run();",
-    )
-    .unwrap();
-    let out = Command::new("node")
-        .arg(dir.join("main.mjs"))
-        .output()
-        .expect("node is required for JavaScript backend tests");
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(String::from_utf8(out.stdout).unwrap(), expected, "{source}");
-    fs::remove_dir_all(dir).unwrap();
-}
 #[test]
 fn cli_build_run_and_errors() {
     let dir = directory();
@@ -195,7 +166,11 @@ fn generation_modes_and_invalid_combinations() {
         );
         let entry = fs::read_to_string(output.join("main.mjs")).unwrap();
         assert_eq!(entry.contains("process."), target == "node");
-        assert!(entry.contains("await run(console.log,externs,"));
+        assert!(entry.contains(if target == "node" {
+            "await runUntilIdle(run(console.log,externs,"
+        } else {
+            "await run(console.log,externs,"
+        }));
         let out = Command::new("node")
             .arg(output.join("main.mjs"))
             .output()
@@ -328,4 +303,47 @@ perform show("answer", host(40, increment))"#;
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(String::from_utf8(out.stdout).unwrap(), "answer = 42\n");
+}
+
+/// A top level that reaches only `wait` needs no host handler, so the browser
+/// target, which has no host primitives, builds it.
+#[test]
+fn browser_builds_a_top_level_that_waits() {
+    let dir = directory();
+    let input = dir.join("input.taut");
+    let output = dir.join("out");
+    fs::write(
+        &input,
+        r#"import std::prelude::Par { wait }
+
+fn start(): Unit ! {Div, wait} {
+  #()
+}
+
+start()
+perform show("n", 1)"#,
+    )
+    .unwrap();
+    for target in ["node", "browser"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_tauto"))
+            .args(["build", "--backend", "javascript", "--target", target, "-o"])
+            .arg(&output)
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(output.join("main.mjs").exists());
+        if target == "node" {
+            let out = Command::new("node")
+                .arg(output.join("main.mjs"))
+                .output()
+                .unwrap();
+            assert_eq!(String::from_utf8(out.stdout).unwrap(), "n = 1\n");
+        }
+    }
+    fs::remove_dir_all(dir).unwrap();
 }

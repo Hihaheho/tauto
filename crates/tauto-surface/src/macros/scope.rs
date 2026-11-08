@@ -1,10 +1,10 @@
 //! Names with the scopes they carry.
 //!
-//! An expansion's output is read back into the surface syntax, where a name is
-//! a string. A name a macro made carries the expansions that made it after a
+//! An unresolved identifier in an expansion carries its scopes after a
 //! separator: `tmp\u{1}3`. [`crate::macros::resolve`] gives each such
-//! binder a name of its own and ties each such name to the binder that
-//! matches, then no name carries one.
+//! binder a display of its own and ties its uses to that binder, then removes
+//! the marks. An identifier carrying a declaration reference is copied
+//! unchanged; its display and scopes do not participate in resolution.
 
 /// Between a name and the scopes it carries.
 pub const SEP: char = '\u{1}';
@@ -68,38 +68,19 @@ pub fn resolve(stmts: Vec<Stmt>, ctors: &HashSet<String>) -> Vec<Stmt> {
     resolve_with(stmts, ctors, SEP.encode_utf8(&mut [0; 4]))
 }
 
-/// Where a global a macro wrote comes from, by the scopes it carries and its
-/// name: the file of the macro whose expansion wrote it, and the declaration
-/// that file means by the name when that is not the name itself.
-pub type Seeing<'s> = &'s dyn Fn(&[u64], &str) -> Option<(usize, Option<String>)>;
-
-/// [`resolve`], with each global a macro wrote read as its file reads it:
-/// a name means what it means where the macro is written, not what the
-/// files around the call make of it.
-pub fn resolve_seeing(stmts: Vec<Stmt>, ctors: &HashSet<String>, seeing: Seeing) -> Vec<Stmt> {
-    resolve_full(stmts, ctors, SEP.encode_utf8(&mut [0; 4]), Some(seeing))
-}
-
 /// [`resolve`] for names whose scopes follow `sep`.
 pub fn resolve_with(stmts: Vec<Stmt>, ctors: &HashSet<String>, sep: &str) -> Vec<Stmt> {
-    resolve_full(stmts, ctors, sep, None)
+    resolve_full(stmts, ctors, sep)
 }
 
-fn resolve_full(
-    stmts: Vec<Stmt>,
-    ctors: &HashSet<String>,
-    sep: &str,
-    seeing: Option<Seeing>,
-) -> Vec<Stmt> {
+fn resolve_full(stmts: Vec<Stmt>, ctors: &HashSet<String>, sep: &str) -> Vec<Stmt> {
     let mut probe = stmts.clone();
     let mut first = Resolver::new(ctors, sep, HashSet::new());
-    first.seeing = seeing;
     first.top(&mut probe);
     if first.captured.is_empty() {
         return probe;
     }
     let mut again = Resolver::new(ctors, sep, first.captured);
-    again.seeing = seeing;
     let mut out = stmts;
     again.top(&mut out);
     out
@@ -114,9 +95,6 @@ struct Binder {
 
 struct Resolver<'c> {
     ctors: &'c HashSet<String>,
-    seeing: Option<Seeing<'c>>,
-    /// The file of the macro that wrote the global just resolved.
-    origin: Option<usize>,
     sep: &'c str,
     env: Vec<Binder>,
     /// Declarations made by an expansion, by name and marks.
@@ -133,8 +111,6 @@ impl<'c> Resolver<'c> {
     fn new(ctors: &'c HashSet<String>, sep: &'c str, rename: HashSet<usize>) -> Self {
         Resolver {
             ctors,
-            seeing: None,
-            origin: None,
             sep,
             env: Vec::new(),
             globals: HashMap::new(),
@@ -145,6 +121,31 @@ impl<'c> Resolver<'c> {
         }
     }
 
+    fn reference_name(&mut self, name: &crate::identity::Name) -> crate::identity::Name {
+        match name {
+            crate::identity::Name::Spelled(text) => self.reference(text).into(),
+            crate::identity::Name::Global(_) => {
+                // A resolved global cannot be captured. Keep its printed use
+                // distinct from a lexical binder with the same display too.
+                for binder in &self.env {
+                    if binder.plain == name.as_str() {
+                        self.captured.insert(binder.id);
+                    }
+                }
+                name.clone()
+            }
+            _ => name.clone(),
+        }
+    }
+
+    fn bind_name(&mut self, name: &crate::identity::Name) -> crate::identity::Name {
+        match name {
+            crate::identity::Name::Spelled(text) => self.bind(text).into(),
+            _ => name.clone(),
+        }
+    }
+
+    /// A binder: the name to write for it.
     fn bind(&mut self, name: &str) -> String {
         let (plain, marks) = split_on(name, self.sep);
         let id = self.counter;
@@ -170,21 +171,6 @@ impl<'c> Resolver<'c> {
     fn reference(&mut self, name: &str) -> String {
         let (plain, marks) = split_on(name, self.sep);
         if let Some((head, rest)) = plain.split_once("::") {
-            // A function of a module (`Text::of_nat`) means, as a whole,
-            // what the macro's file means by it: the prelude's builtin
-            // where the file reads it so, whatever the caller imports.
-            if !marks.is_empty() && !self.env.iter().any(|b| b.plain == head) {
-                if let Some((file, to)) = self.seeing.and_then(|f| {
-                    let scopes: Vec<u64> =
-                        marks.split(',').filter_map(|s| s.parse().ok()).collect();
-                    f(&scopes, plain)
-                }) {
-                    self.origin = Some(file);
-                    if let Some(to) = to {
-                        return to;
-                    }
-                }
-            }
             let head = self.reference_one(head, marks);
             return format!("{head}::{rest}");
         }
@@ -203,18 +189,6 @@ impl<'c> Resolver<'c> {
         if !marks.is_empty() {
             if let Some(u) = self.globals.get(&(plain.to_string(), marks.to_string())) {
                 return u.clone();
-            }
-            // A global, read as the macro's file reads it: the file goes with
-            // the name (`SurfaceTerm::origin`), and a name the file means by
-            // another name is written so, a full name no local of the caller has.
-            if let Some((file, to)) = self.seeing.and_then(|f| {
-                let scopes: Vec<u64> = marks.split(',').filter_map(|s| s.parse().ok()).collect();
-                f(&scopes, plain)
-            }) {
-                self.origin = Some(file);
-                if let Some(to) = to.filter(|to| to != plain) {
-                    return to;
-                }
             }
             // A global; a local of the caller with this name must not take it.
             for b in &self.env {
@@ -237,7 +211,10 @@ impl<'c> Resolver<'c> {
     /// Declarations an expansion made at the top, and in `mutual`/`module`.
     fn collect_globals(&mut self, stmts: &mut [Stmt]) {
         for s in stmts {
-            let declare = |this: &mut Self, name: &mut String| {
+            let declare = |this: &mut Self, reference: &mut crate::identity::Name| {
+                let crate::identity::Name::Spelled(name) = reference else {
+                    return;
+                };
                 let (plain, marks) = split_on(name, this.sep);
                 if !marks.is_empty() {
                     this.unique += 1;
@@ -299,18 +276,18 @@ impl<'c> Resolver<'c> {
             } => {
                 self.opt(ty);
                 self.term(value);
-                *name = self.bind(name);
+                *name = self.bind_name(name);
             }
             Stmt::Var {
                 name, ty, value, ..
             } => {
                 self.opt(ty);
                 self.term(value);
-                *name = self.bind(name);
+                *name = self.bind_name(name);
             }
             Stmt::Assign { name, value, .. } => {
                 self.term(value);
-                *name = self.reference(name);
+                *name = self.reference_name(name);
             }
             Stmt::Fn(f) => self.fn_decl(f),
             Stmt::Theorem(d) | Stmt::Def(d) => self.theorem(d),
@@ -339,13 +316,13 @@ impl<'c> Resolver<'c> {
     }
 
     fn fn_decl(&mut self, f: &mut FnDecl) {
-        f.name = self.reference(&f.name);
+        f.name = self.reference_name(&f.name);
         let mark = self.mark();
         for i in 0..f.params.len() {
             if let Some(t) = f.param_types.get_mut(i) {
                 self.opt(t);
             }
-            f.params[i] = self.bind(&f.params[i].clone());
+            f.params[i] = self.bind_name(&f.params[i].clone());
         }
         self.opt(&mut f.result);
         self.term(&mut f.body);
@@ -353,11 +330,11 @@ impl<'c> Resolver<'c> {
     }
 
     fn theorem(&mut self, d: &mut TheoremDecl) {
-        d.name = self.reference(&d.name);
+        d.name = self.reference_name(&d.name);
         let mark = self.mark();
         for (n, t) in &mut d.params {
             self.term(t);
-            *n = self.bind(n);
+            *n = self.bind_name(n);
         }
         self.term(&mut d.ty);
         self.opt(&mut d.body);
@@ -365,9 +342,9 @@ impl<'c> Resolver<'c> {
     }
 
     fn data(&mut self, d: &mut DataDecl) {
-        d.name = self.reference(&d.name);
+        d.name = self.reference_name(&d.name);
         for c in &mut d.constructors {
-            c.name = self.reference(&c.name);
+            c.name = self.reference_name(&c.name);
             for (_, t) in &mut c.fields {
                 self.term(t);
             }
@@ -375,7 +352,7 @@ impl<'c> Resolver<'c> {
     }
 
     fn effect(&mut self, e: &mut EffectDecl) {
-        e.name = self.reference(&e.name);
+        e.name = self.reference_name(&e.name);
         for p in e.params.iter_mut() {
             self.opt(p);
         }
@@ -383,19 +360,19 @@ impl<'c> Resolver<'c> {
     }
 
     fn inductive(&mut self, d: &mut InductiveDecl) {
-        d.name = self.reference(&d.name);
+        d.name = self.reference_name(&d.name);
         let mark = self.mark();
         for (n, t) in &mut d.params {
             self.term(t);
-            *n = self.bind(n);
+            *n = self.bind_name(n);
         }
         self.term(&mut d.sort);
         for c in &mut d.constructors {
-            c.name = self.reference(&c.name);
+            c.name = self.reference_name(&c.name);
             let inner = self.mark();
             for (n, t) in &mut c.params {
                 self.term(t);
-                *n = self.bind(n);
+                *n = self.bind_name(n);
             }
             self.term(&mut c.result);
             self.pop(inner);
@@ -409,22 +386,22 @@ impl<'c> Resolver<'c> {
                 let (plain, _) = split_on(n, self.sep);
                 let is_ctor = self.ctors.contains(plain);
                 if is_ctor {
-                    *n = self.reference(n);
+                    *n = self.reference_name(n);
                 } else {
-                    *n = self.bind(n);
+                    *n = self.bind_name(n);
                 }
             }
             Pattern::Ctor { name, args } => {
                 // `@a p`: a label, which names no declaration.
                 if !name.starts_with('@') {
-                    *name = self.reference(name);
+                    *name = self.reference_name(name);
                 }
                 for a in args {
                     self.pattern(a);
                 }
             }
             Pattern::Record { name, fields } => {
-                *name = self.reference(name);
+                *name = self.reference_name(name);
                 for (_, f) in fields {
                     self.pattern(f);
                 }
@@ -467,12 +444,12 @@ impl<'c> Resolver<'c> {
                 ..
             } => {
                 // The instance is left as a row's entries are.
-                *effect = self.reference(effect);
+                *effect = self.reference_name(effect);
                 for p in patterns {
                     self.pattern(p);
                 }
                 if let Some(k) = cont {
-                    *k = self.bind(k);
+                    *k = self.bind_name(k);
                 }
                 self.opt(guard);
                 self.term(body);
@@ -481,26 +458,14 @@ impl<'c> Resolver<'c> {
         self.pop(mark);
     }
 
-    /// A term, with the file of the macro that wrote the global it names
-    /// (a variable, a record's type, an effect performed) kept on it.
+    /// Resolve lexical references while preserving declaration payloads.
     fn term(&mut self, t: &mut SurfaceTerm) {
-        self.origin = None;
-        let origin = self.names(t);
-        if origin.is_some() {
-            t.set_origin(origin);
-        }
-    }
-
-    /// The names of `t` resolved; the file of the macro that wrote the one
-    /// `t` itself names, if a macro wrote it.
-    fn names(&mut self, t: &mut SurfaceTerm) -> Option<usize> {
-        let mut origin = None;
         match Arc::make_mut(&mut t.kind) {
             TermKind::Var(n) => {
-                *n = self.reference(n);
-                origin = self.origin.take();
+                *n = self.reference_name(n);
             }
-            TermKind::Nat(_)
+            TermKind::Declaration(_)
+            | TermKind::Nat(_)
             | TermKind::Float(_)
             | TermKind::Text(_)
             | TermKind::Bool(_)
@@ -524,7 +489,7 @@ impl<'c> Resolver<'c> {
                 for (n, ty) in params {
                     self.term(ty);
                     if let Some(n) = n {
-                        *n = self.bind(n);
+                        *n = self.bind_name(n);
                     }
                 }
                 self.term(result);
@@ -537,7 +502,7 @@ impl<'c> Resolver<'c> {
             } => {
                 self.term(domain);
                 let mark = self.mark();
-                *binder = self.bind(binder);
+                *binder = self.bind_name(binder);
                 self.term(body);
                 self.pop(mark);
             }
@@ -551,7 +516,7 @@ impl<'c> Resolver<'c> {
                 }
                 let mark = self.mark();
                 for p in params.iter_mut() {
-                    *p = self.bind(p);
+                    *p = self.bind_name(p);
                 }
                 self.term(body);
                 self.pop(mark);
@@ -583,9 +548,7 @@ impl<'c> Resolver<'c> {
             }
             TermKind::Block(stmts) => self.stmts(stmts),
             TermKind::Perform { effect, args } => {
-                self.origin = None;
-                *effect = self.reference(effect);
-                origin = self.origin.take();
+                *effect = self.reference_name(effect);
                 for a in args {
                     self.term(a);
                 }
@@ -613,7 +576,7 @@ impl<'c> Resolver<'c> {
                 }
                 let mark = self.mark();
                 if let Some(h) = binder {
-                    *h = self.bind(h);
+                    *h = self.bind_name(h);
                 }
                 for a in arms {
                     self.arm(a);
@@ -621,9 +584,7 @@ impl<'c> Resolver<'c> {
                 self.pop(mark);
             }
             TermKind::Record { name, fields, base } => {
-                self.origin = None;
-                *name = self.reference(name);
-                origin = self.origin.take();
+                *name = self.reference_name(name);
                 for (_, v) in fields {
                     self.term(v);
                 }
@@ -641,7 +602,7 @@ impl<'c> Resolver<'c> {
                     let mark = self.mark();
                     for (n, ty) in &mut a.binders {
                         self.term(ty);
-                        *n = self.bind(n);
+                        *n = self.bind_name(n);
                     }
                     self.term(&mut a.goal);
                     self.term(&mut a.body);
@@ -649,7 +610,6 @@ impl<'c> Resolver<'c> {
                 }
             }
         }
-        origin
     }
 }
 

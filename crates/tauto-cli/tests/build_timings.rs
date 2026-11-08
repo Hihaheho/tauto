@@ -20,10 +20,9 @@ impl Fixture {
         Self(dir)
     }
 
-    fn main(&self) -> PathBuf {
-        let src = self.0.join("src/main.taut");
-        if src.is_file() {
-            src
+    fn input(&self) -> PathBuf {
+        if self.0.join("Tauto.eure").is_file() {
+            self.0.clone()
         } else {
             self.0.join("main.taut")
         }
@@ -35,7 +34,7 @@ impl Fixture {
         cmd.env("TAUTO_LANG", "en");
         cmd.arg("build")
             .args(flags)
-            .arg(self.main())
+            .arg(self.input())
             .arg("-o")
             .arg(self.0.join("out"))
             .env("TAUTO_TARGET_DIR", self.0.join("target"))

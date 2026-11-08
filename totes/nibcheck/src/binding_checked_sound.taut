@@ -25,10 +25,10 @@ pub theorem binding_scope_only_frame_checked<A: Type>(
   m: Mut1(A, Scope),
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, binding_scope_only(c, m)) {
-  match m: CkScopeChecked(
+  ⊢ CkScopeChecked(
     c,
     binding_scope_only(c, m)
-  ) { mut1(v, env) => AndIntro(ordered, (clean_errors => clean_errors)) }
+  ) from match m { mut1(v, env) => AndIntro(ordered, (clean_errors => clean_errors)) }
 }
 
 pub theorem binding_mark_frame_checked(
@@ -37,7 +37,7 @@ pub theorem binding_mark_frame_checked(
   vb: Bool,
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, binding_mark(c, env, vb)) {
-  match vb: CkScopeChecked(c, binding_mark(c, env, vb)) {
+  ⊢ CkScopeChecked(c, binding_mark(c, env, vb)) from match vb {
     true => binding_scope_only_frame_checked(c, ck_mark_view(env), ordered)
     false => pattern_return_frame_checked(c, env, Star, ordered)
   }
@@ -131,10 +131,10 @@ pub theorem binding_let_if_frame_checked(
   borrow: Bool,
   ordered: CkOrdered(c)
 ): CkScopeChecked(c, binding_let_if(c, env, name, r#view, bm, resolved, value, borrow)) {
-  match borrow: CkScopeChecked(
+  ⊢ CkScopeChecked(
     c,
     binding_let_if(c, env, name, r#view, bm, resolved, value, borrow)
-  ) {
+  ) from match borrow {
     true => pattern_lift_frame_checked(
       c,
       env,
@@ -271,7 +271,7 @@ pub theorem binding_assign_borrow_frame_checked(
   mutable: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, binding_assign_borrow(c, name, v, value, inner, mutable)) {
-  match mutable: CkCheckedFrame(c, binding_assign_borrow(c, name, v, value, inner, mutable)) {
+  ⊢ CkCheckedFrame(c, binding_assign_borrow(c, name, v, value, inner, mutable)) from match mutable {
     true => checked_frame_rewrap(
       c,
       ck_expect(c, v, inner, span_of(value), cat3("`", name, "`")),
@@ -303,7 +303,7 @@ pub theorem binding_assign_type_frame_checked(
   t: Ty,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, binding_assign_type(c, name, v, value, t)) {
-  match t: CkCheckedFrame(c, binding_assign_type(c, name, v, value, t)) {
+  ⊢ CkCheckedFrame(c, binding_assign_type(c, name, v, value, t)) from match t {
     TyInt(pat_w) => checked_frame_read(
       c,
       ck_rewrap1(ck_error(c, cat3("`", name, "` is not a var"), span_of(value))),
@@ -572,7 +572,7 @@ pub theorem binding_assign_mutable_frame_checked(
   mutable: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, binding_assign_mutable(c, name, v, value, l, mutable)) {
-  match mutable: CkCheckedFrame(c, binding_assign_mutable(c, name, v, value, l, mutable)) {
+  ⊢ CkCheckedFrame(c, binding_assign_mutable(c, name, v, value, l, mutable)) from match mutable {
     true => checked_frame_rewrap(
       c,
       ck_expect(c, v, leaf_local_ty(l), span_of(value), cat3("`", name, "`")),
@@ -605,7 +605,7 @@ pub theorem binding_assign_view_frame_checked(
   r#view: Bool,
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, binding_assign_view(c, name, v, value, l, r#view)) {
-  match r#view: CkCheckedFrame(c, binding_assign_view(c, name, v, value, l, r#view)) {
+  ⊢ CkCheckedFrame(c, binding_assign_view(c, name, v, value, l, r#view)) from match r#view {
     true => checked_frame_read(
       c,
       ck_rewrap1(ck_error(c, "a view var cannot be reassigned", span_of(value))),
@@ -641,7 +641,7 @@ pub theorem binding_assign_frame_checked(
   found: Option(Local),
   ordered: CkOrdered(c)
 ): CkCheckedFrame(c, binding_assign(c, name, v, value, found)) {
-  match found: CkCheckedFrame(c, binding_assign(c, name, v, value, found)) {
+  ⊢ CkCheckedFrame(c, binding_assign(c, name, v, value, found)) from match found {
     None => checked_frame_read(
       c,
       ck_rewrap1(ck_error(c, cat2(name, " is not defined"), span_of(value))),

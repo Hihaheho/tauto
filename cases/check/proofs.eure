@@ -3,8 +3,8 @@
 @ cases.computation-in-conversion
 parses = true
 source = ```tauto
-theorem good(): Eq(Nat, 2 + 2, 4) { refl(Nat, 4) }
-theorem bad(): Eq(Nat, 2 + 2, 5) { refl(Nat, 4) }
+theorem good(): 2 + 2 = 4 { Refl(Nat, 4) }
+theorem bad(): 2 + 2 = 5 { Refl(Nat, 4) }
 ```
 checks.good = "ok"
 checks.bad = "error: type mismatch"
@@ -14,7 +14,7 @@ parses = true
 source = ```tauto
 axiom em(P: Prop): P ∨ ¬P
 theorem a(P: Prop): P ∨ ¬P { em(P) }
-theorem b(): True { trivial }
+theorem b(): True { Trivial }
 ```
 checks.a = "axioms: em"
 checks.b = "ok"
@@ -22,8 +22,8 @@ checks.b = "ok"
 @ cases.negative-occurrence-is-rejected
 parses = true
 source = ```tauto
-inductive Bad(): Type {
-  mk(f: (Bad) -> Nat): Bad
+inductive Bad: Type {
+  Mk(f: (Bad) -> Nat): Bad
 }
 ```
 checks.Bad = "error: negative"
@@ -40,16 +40,16 @@ checks.compose = "ok"
 @ cases.generics-are-implicit-arguments
 parses = true
 source = ```tauto
-theorem sym2<A: Type, a: A, b: A>(e: Eq(A, a, b)): Eq(A, b, a) {
-  Eq_sym(e)
+theorem sym2<A: Type, a: A, b: A>(e: a = b): b = a {
+  Eq::sym(e)
 }
-theorem both(a: Nat, b: Nat, e: Eq(Nat, a, b)): Eq(Nat, b, a) {
+theorem both(a: Nat, b: Nat, e: a = b): b = a {
   sym2(e)
 }
-theorem full(a: Nat, b: Nat, e: Eq(Nat, a, b)): Eq(Nat, b, a) {
+theorem full(a: Nat, b: Nat, e: a = b): b = a {
   sym2(Nat, a, b, e)
 }
-theorem four(): Eq(Nat, 4, 4) { refl() }
+theorem four(): Eq(Nat, 4, 4) { Refl }
 ```
 checks.sym2 = "ok"
 checks.both = "ok"
@@ -59,7 +59,7 @@ checks.four = "ok"
 @ cases.an-implicit-argument-nothing-determines-is-rejected
 parses = true
 source = ```tauto
-theorem pick<A: Type>(): Eq(Nat, 0, 0) { refl() }
+theorem pick<A: Type>(): Eq(Nat, 0, 0) { Refl }
 theorem use(): Eq(Nat, 0, 0) { pick() }
 ```
 checks.pick = "ok"
@@ -69,9 +69,89 @@ checks.use = "error: cannot infer"
 parses = true
 source = ```tauto
 inductive Seq(A: Type): Type {
-  nil(): Seq(A)
-  cons(h: A, t: Seq(A)): Seq(A)
+  Nil: Seq(A)
+  Cons(h: A, t: Seq(A)): Seq(A)
 }
-theorem same(): Eq(Seq(Nat), cons(1, nil), cons(1, nil())) { refl() }
+theorem same(): Cons(1, Nil) = Cons(1, Nil) { Refl }
 ```
 checks.same = "ok"
+
+@ cases.a-generic-nothing-fixes-is-named-with-where-to-write-it
+parses = true
+source = ```tauto
+fn nothing<A>(m: Bool): List(A) {
+  ⊢ List(A) from match m {
+    true => Nil
+    false => Nil
+  }
+}
+fn len<A>(l: List(A)): Nat {
+  ⊢ Nat from match l {
+    Nil => 0
+    Cons(h, t) => Succ(len(t))
+  }
+}
+theorem unfixed(): len(nothing(true)) = 0 { Refl }
+theorem written(): len(nothing(Nat, true)) = 0 { Refl }
+```
+checks.unfixed = "error: cannot infer the generic `A` of `nothing`: neither its arguments nor the expected type fix it; write the generics as its first arguments, `nothing(A, …)`"
+checks.written = "ok"
+
+@ cases.implicit-arguments-take-the-expected-type-first
+parses = true
+source = ```tauto
+fn dbl(n: Nat): Nat {
+  ⊢ Nat from match n {
+    Zero => Zero
+    Succ(k) => Succ(Succ(dbl(k)))
+  }
+}
+fn walk(acc: Nat, l: List(Nat)): Nat {
+  ⊢ Nat from match l {
+    Nil => acc
+    Cons(a, t) => walk(dbl(acc), t)
+  }
+}
+inductive W(acc: Nat, l: List(Nat)): Prop {
+  Mk(n: Nat, e: n = walk(acc, l)): W(acc, l)
+}
+inductive V(acc: Nat, l: List(Nat)): Prop {
+  Mk(n: Nat, e: n = walk(acc, l), f: (m: Nat) -> (m = walk(acc, l)) -> True): V(acc, l)
+}
+theorem step(acc: Nat, a: Nat, t: List(Nat), n: Nat, e: n = walk(dbl(acc), t)): W(acc, Cons(a, t)) {
+  W::Mk(n, e)
+}
+theorem arm(acc: Nat, a: Nat, t: List(Nat), n: Nat, e: n = walk(dbl(acc), t)): V(acc, Cons(a, t)) {
+  V::Mk(n, e, (m: Nat) => (h: m = walk(acc, Cons(a, t))) => ⊢ True from match m {
+    Zero => Trivial
+    Succ(k) => Trivial
+  })
+}
+theorem pick(acc: Nat, a: Nat, t: List(Nat), n: Nat, P: Prop, h: Or(P, n = walk(dbl(acc), t))): Or(P, n = walk(acc, Cons(a, t))) {
+  Or::elim(h, (p: P) => OrInl(p), (r: n = walk(dbl(acc), t)) => OrInr(r))
+}
+theorem unrelated(acc: Nat, t: List(Nat), n: Nat, e: n = walk(dbl(acc), t)): W(dbl(acc), t) {
+  W::Mk(n, e)
+}
+theorem wrong(acc: Nat, a: Nat, t: List(Nat), n: Nat, e: n = walk(dbl(acc), t)): W(dbl(acc), Cons(a, t)) {
+  W::Mk(n, e)
+}
+```
+checks.step = "ok"
+checks.arm = "ok"
+checks.pick = "ok"
+checks.unrelated = "ok"
+checks.wrong = "error: type mismatch: expected `n = walk(dbl(acc), List::Cons(Nat, a, t))`, found `n = walk(dbl(acc), t)`\n  differing part: expected `List::Cons(Nat, a, t)`, found `t`\n  argument 2 of `W::Mk`, which the expected type `W(dbl(acc), List::Cons(Nat, a, t))` of the call fixes"
+
+@ cases.a-quantifier-starts-a-prop-function-body
+parses = true
+source = ```tauto
+fn all_eq(n: Nat): Prop {
+  ∀ m: Nat. n = m
+}
+fn some_eq(n: Nat): Prop {
+  ∃ m: Nat. n = m
+}
+```
+checks.all_eq = "ok"
+checks.some_eq = "ok"

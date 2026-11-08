@@ -44,7 +44,7 @@ impl<'a> Lowerer<'a> {
         };
         let mut out = Vec::new();
         let mut catch_all = false;
-        let mut covered: Vec<String> = Vec::new();
+        let mut covered: Vec<Name> = Vec::new();
         let written = self.written_type(cx, scrutinee);
         for arm in arms {
             let mark = cx.bindings.len();
@@ -97,7 +97,8 @@ impl<'a> Lowerer<'a> {
         })
     }
 
-    fn covers_all(&self, ty: &TTy, covered: &[String]) -> bool {
+    /// Whether the constructors listed are all of the type's.
+    fn covers_all(&self, ty: &TTy, covered: &[Name]) -> bool {
         let TTy::Named(n, _) = ty else {
             return false;
         };
@@ -131,13 +132,19 @@ impl<'a> Lowerer<'a> {
             let i = self.find(cx, name)?;
             return cx.written.get(&cx.bindings[i].local.id).cloned();
         }
+        if let TermKind::Field { base, name } = &*scrutinee.kind {
+            return self
+                .types
+                .term(base)
+                .and_then(|b| self.named_field_term(b, name));
+        }
         let TermKind::App { function, .. } = &*scrutinee.kind else {
             return None;
         };
         let TermKind::Var(name) = &*function.kind else {
             return None;
         };
-        self.fns.get(name.as_str())?.decl.result.clone()
+        self.fns.get(name)?.decl.result.clone()
     }
 
     /// The types the fields of `ctor` take in a value written as `written`:
@@ -146,7 +153,7 @@ impl<'a> Lowerer<'a> {
     /// parameters in order (the tail of a list) takes `written`.
     pub(crate) fn written_fields(
         &self,
-        ctor: &str,
+        ctor: &Name,
         ty: &TTy,
         written: Option<&SurfaceTerm>,
     ) -> Vec<Option<SurfaceTerm>> {
@@ -206,12 +213,15 @@ impl<'a> Lowerer<'a> {
         if let Some(flat) = tauto::surface::qualify::flatten_pair_pattern(p) {
             return self.pattern_written(cx, &flat, ty, at, by_ref, written);
         }
-        if let Some(pat) = self.product_pattern(cx, p, ty, at, by_ref)? {
-            return Ok(pat);
+        if let Some(reordered) = self.labelled_pattern(p, ty) {
+            return self.pattern_written(cx, &reordered, ty, at, by_ref, written);
         }
         // `#(p, q)` is matched as the nested `Pair` its value is lowered to.
         if let Pattern::Tuple(_) = p {
-            let pair = tauto::surface::qualify::tuple_pattern_as_pairs(p, "Pair");
+            let pair = tauto::surface::qualify::tuple_pattern_as_pairs(
+                p,
+                &tauto::bindings::library_name("Pair::Mk"),
+            );
             return self.pattern_written(cx, &pair, ty, at, by_ref, written);
         }
         // `@a p`: a label is not on the value, which `p` matches.
@@ -263,6 +273,12 @@ impl<'a> Lowerer<'a> {
                     celled: false,
                 });
                 Pat::Bind(local, nty)
+            }
+            // `#()` takes the one value of `Unit`.
+            Pattern::Ctor { args, .. }
+                if args.is_empty() && matches!(ty.unborrowed(), TTy::Unit) =>
+            {
+                Pat::Wild
             }
             Pattern::Ctor { name, args } => {
                 let Some(ctor) = self.ctor_ref_in(name, Some(ty)) else {
@@ -326,60 +342,36 @@ impl<'a> Lowerer<'a> {
         })
     }
 
-    /// A pattern in a field. A name bound to a function the field's type
-    /// (or the type argument it takes) writes a row for is called at the
-    /// tier of that row.
-    /// `#(p, q, …)` on a value of a product type, as the checker reads it:
-    /// each member by its label, or else by position. `None`
-    /// for another pattern or type, which is matched as it is written.
-    fn product_pattern(
-        &mut self,
-        cx: &mut Cx,
-        p: &Pattern,
-        ty: &TTy,
-        at: tauto::surface::TermId,
-        by_ref: bool,
-    ) -> R<Option<Pat>> {
-        let TTy::Product(order) = ty.unborrowed().clone() else {
-            return Ok(None);
-        };
+    /// `#(@b p, @a q)` on a product `@a A × @b B`: the members by their labels, put in the
+    /// order of the type. `None` for another pattern or type, or for one in that order
+    /// already, which is matched as the `Pair`s it nests to.
+    fn labelled_pattern(&self, p: &Pattern, ty: &TTy) -> Option<Pattern> {
         let Pattern::Tuple(items) = p else {
-            return Ok(None);
+            return None;
         };
-        let pats: Vec<Pattern> = items.clone();
-        if pats.len() != order.len() {
-            return Ok(None);
+        let order = self.product_members(ty.unborrowed());
+        if order.len() < 2 || items.len() != order.len() {
+            return None;
         }
-        let labels: Option<Vec<&str>> = pats.iter().map(|q| q.label().map(|(l, _)| l)).collect();
-        let places: Option<Vec<usize>> = match labels {
-            Some(labels) => labels
-                .iter()
-                .map(|l| {
-                    order
-                        .iter()
-                        .position(|m| matches!(m, TTy::Tagged(ts, _) if ts.contains(*l)))
-                })
-                .collect(),
-            None => Some((0..pats.len()).collect()),
-        };
-        let Some(places) = places else {
-            return Ok(None);
-        };
-        let mut fields = vec![Pat::Wild; order.len()];
-        for (q, i) in pats.iter().zip(places) {
-            fields[i] = self.sub_pattern(cx, q, &order[i], at, by_ref, None, None)?;
+        let places: Vec<usize> = items
+            .iter()
+            .map(|q| {
+                let (label, _) = q.label()?;
+                order
+                    .iter()
+                    .position(|m| matches!(m, TTy::Tagged(ts, _) if ts.contains(label)))
+            })
+            .collect::<Option<_>>()?;
+        if places.iter().enumerate().all(|(i, &at)| i == at) {
+            return None;
         }
-        let n = fields.len();
-        let ctor = CtorRef {
-            data: DataRef::Product,
-            name: "Product".to_string(),
-            index: 0,
-            indirect: vec![Indirect::None; n],
-            linear: false,
-            fields: vec![None; n],
-            nullary: false,
-        };
-        Ok(Some(Pat::Ctor { ctor, fields }))
+        let mut placed: Vec<Option<Pattern>> = vec![None; order.len()];
+        for (q, at) in items.iter().zip(places) {
+            if placed[at].replace(q.clone()).is_some() {
+                return None;
+            }
+        }
+        Some(Pattern::Tuple(placed.into_iter().collect::<Option<_>>()?))
     }
 
     fn sub_pattern(
@@ -412,7 +404,9 @@ impl<'a> Lowerer<'a> {
             let row: Row = if tier == Tier::O {
                 row
             } else {
-                row.into_iter().filter(|e| e != "Div").collect()
+                row.into_iter()
+                    .filter(|e| !tauto::bindings::is_library(&e, "Div"))
+                    .collect()
             };
             if let Some(b) = cx
                 .bindings

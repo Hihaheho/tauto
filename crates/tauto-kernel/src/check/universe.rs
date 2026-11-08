@@ -18,6 +18,7 @@
 //! `max(1, 2)`), or, inside a template, levels over its variables
 //! (`u + 1`, `max(u, v)`): there is no level inference, so every call writes them.
 
+use crate::surface::Name;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -37,25 +38,35 @@ pub(super) struct Template {
     body: Body,
     levels: usize,
     /// The declaration that owns this name (a constructor belongs to its family).
-    owner: String,
+    owner: Name,
     member: Member,
 }
 
 #[derive(Clone, Debug)]
 enum Member {
     Declaration,
-    Constructor(String),
+    Constructor(Name),
     Eliminator(&'static str),
 }
 
 impl Template {
-    fn instance_name(&self, levels: &[Level]) -> String {
+    fn instance_name(&self, levels: &[Level]) -> Name {
         match &self.member {
             Member::Declaration => mangle(&self.owner, levels),
-            Member::Constructor(name) => mangle(name, levels),
+            Member::Constructor(name) => {
+                let Body::Inductive(decl) = &self.body else {
+                    unreachable!()
+                };
+                let index = decl
+                    .constructors
+                    .iter()
+                    .position(|ctor| ctor.name == *name)
+                    .expect("template constructor");
+                constructor_instance(&self.owner, name, index, levels)
+            }
             // The eliminators are named after the instance family
             // (`UBox@1::rec`), as `declare` names them.
-            Member::Eliminator(suffix) => format!("{}::{suffix}", mangle(&self.owner, levels)),
+            Member::Eliminator(suffix) => eliminator(&mangle(&self.owner, levels), suffix),
         }
     }
 }
@@ -64,11 +75,12 @@ fn level_count(d: &TheoremDecl) -> usize {
     d.params
         .iter()
         .take(d.implicit)
-        .take_while(|(_, t)| matches!(&*t.kind, TermKind::Var(n) if n == "Level"))
+        .take_while(|(_, t)| matches!(&*t.kind, TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "Level")))
         .count()
 }
 
-fn level_names(body: &Body, levels: usize) -> Vec<String> {
+/// The names of a template's level parameters, in order.
+fn level_names(body: &Body, levels: usize) -> Vec<Name> {
     let params = match body {
         Body::Theorem(d, _) => &d.params,
         Body::Inductive(d) => &d.params,
@@ -81,11 +93,28 @@ impl Kernel {
     /// as a use of its instance, the instances declared before the statement.
     pub(super) fn level_pass(&mut self, stmts: &[Stmt], entries: &mut Vec<Entry>) -> Vec<Stmt> {
         let mut out = Vec::new();
-        let mut occupied: HashSet<String> = self
+        let mut occupied: Vec<(String, Option<Name>)> = self
             .globals
             .keys()
             .chain(self.templates.keys())
-            .cloned()
+            .filter(|name| !tauto_surface::bindings::is_library(name, name.as_str()))
+            .map(|name| {
+                let owner = self
+                    .ctors
+                    .get(name)
+                    .map(|(owner, _)| owner.clone())
+                    .or_else(|| {
+                        self.templates.get(name).and_then(|template| {
+                            matches!(template.member, Member::Constructor(_))
+                                .then(|| template.owner.clone())
+                        })
+                    });
+                let slot = owner.as_ref().map_or_else(
+                    || name.to_string(),
+                    |owner| constructor_source_slot(owner, name),
+                );
+                (slot, owner)
+            })
             .collect();
         for stmt in stmts {
             let source_names = declaration_names(stmt);
@@ -94,30 +123,70 @@ impl Kernel {
                 Stmt::Inductive(d) => d
                     .params
                     .first()
-                    .is_some_and(|(_, t)| matches!(&*t.kind, TermKind::Var(n) if n == "Level")),
+                    .is_some_and(|(_, t)| matches!(&*t.kind, TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "Level"))),
                 _ => false,
             };
+            let source_slot = |name: &Name| -> String {
+                if let Stmt::Inductive(decl) = stmt
+                    && decl.constructors.iter().any(|ctor| ctor.name == *name)
+                {
+                    return constructor_source_slot(&decl.name, name);
+                }
+                name.to_string()
+            };
+            let constructor_owner = |name: &Name| -> Option<Name> {
+                match stmt {
+                    Stmt::Inductive(decl)
+                        if decl.constructors.iter().any(|ctor| ctor.name == *name) =>
+                    {
+                        Some(decl.name.clone())
+                    }
+                    _ => None,
+                }
+            };
+            let conflicts =
+                |slot: &str, owner: &Option<Name>, other_slot: &str, other_owner: &Option<Name>| {
+                    slot == other_slot
+                        && (owner.is_none() || other_owner.is_none() || owner == other_owner)
+                };
             let mut local = HashSet::new();
             let collision = source_names.iter().find(|name| {
+                let slot = source_slot(name);
+                let owner = constructor_owner(name);
                 if polymorphic {
                     super::is_reserved(name)
-                        || occupied.contains(*name)
-                        || !local.insert((*name).clone())
+                        || occupied.iter().any(|(other_slot, other_owner)| {
+                            conflicts(&slot, &owner, other_slot, other_owner)
+                        })
+                        || !local.insert((slot, owner))
                 } else {
-                    self.templates.contains_key(*name)
+                    self.templates.iter().any(|(other, template)| {
+                        let (other_slot, other_owner) = match &template.member {
+                            Member::Constructor(ctor) => (
+                                constructor_source_slot(&template.owner, ctor),
+                                Some(template.owner.clone()),
+                            ),
+                            _ => (other.to_string(), None),
+                        };
+                        conflicts(&slot, &owner, &other_slot, &other_owner)
+                    })
                 }
             });
             if let Some(name) = collision {
                 entries.push(Entry {
-                    name: name.clone(),
+                    name: source_slot(name).into(),
                     verdict: Verdict::Failed(Diagnostic::new(
-                        msg!("kernel-universe-name-taken", name = name),
+                        msg!("kernel-universe-name-taken", name = source_slot(name)),
                         None,
                     )),
                 });
                 continue;
             }
-            occupied.extend(source_names);
+            occupied.extend(
+                source_names
+                    .iter()
+                    .map(|name| (source_slot(name), constructor_owner(name))),
+            );
 
             let (decl, def) = match stmt {
                 Stmt::Theorem(d) => (Some(d), false),
@@ -144,7 +213,7 @@ impl Kernel {
                 let n = d
                     .params
                     .iter()
-                    .take_while(|(_, t)| matches!(&*t.kind, TermKind::Var(name) if name == "Level"))
+                    .take_while(|(_, t)| matches!(&*t.kind, TermKind::Var(name) if tauto_surface::bindings::is_library(&name, "Level")))
                     .count();
                 if n > 0 {
                     if !d.generates.items.is_empty() {
@@ -172,8 +241,7 @@ impl Kernel {
                     for suffix in ["ind", "rec"] {
                         let mut alias = template.clone();
                         alias.member = Member::Eliminator(suffix);
-                        self.templates
-                            .insert(format!("{}::{suffix}", d.name), alias);
+                        self.templates.insert(eliminator(&d.name, suffix), alias);
                     }
                     out.push(stmt.clone());
                     continue;
@@ -186,7 +254,7 @@ impl Kernel {
                     name: match &stmt {
                         Stmt::Fn(f) => f.name.clone(),
                         Stmt::Theorem(t) | Stmt::Def(t) => t.name.clone(),
-                        _ => String::new(),
+                        _ => crate::surface::Name::Spelled(String::new()),
                     },
                     verdict: Verdict::Failed(d),
                 }),
@@ -201,7 +269,7 @@ impl Kernel {
         if self.templates.is_empty() {
             return Ok(());
         }
-        let wanted: RefCell<Vec<(String, Vec<Level>)>> = RefCell::new(Vec::new());
+        let wanted: RefCell<Vec<(Name, Vec<Level>, Name)>> = RefCell::new(Vec::new());
         let vars = self.core.level_vars.clone();
         let error: RefCell<Option<Diagnostic>> = RefCell::new(None);
         let templates = &self.templates;
@@ -221,11 +289,47 @@ impl Kernel {
                     let Some(tpl) = templates.get(name) else {
                         return;
                     };
+                    // `f(<u: 1, A: T>, x)`: the levels written by name are
+                    // taken out of the implicit arguments, in their order.
+                    if let Some(first) = arguments.first()
+                        && let TermKind::Record { name: r, fields, base } = &*first.kind
+                        && r.spelling() == Some(tauto_surface::IMPLICITS)
+                    {
+                        let wanted = level_names(&tpl.body, tpl.levels);
+                        let mut levels = Vec::new();
+                        for w in &wanted {
+                            match fields.iter().find(|(f, _)| f.as_str() == w.as_str()) {
+                                Some((_, v)) => levels.push(v.clone()),
+                                None => break,
+                            }
+                        }
+                        if levels.len() == wanted.len() {
+                            let rest: Vec<(String, SurfaceTerm)> = fields
+                                .iter()
+                                .filter(|(f, _)| !wanted.iter().any(|w| w.as_str() == f.as_str()))
+                                .cloned()
+                                .collect();
+                            let record = first.with_kind(
+                                TermKind::Record {
+                                    name: r.clone(),
+                                    fields: rest.clone(),
+                                    base: base.clone(),
+                                },
+                                first.span,
+                            );
+                            let tail = arguments[1..].to_vec();
+                            *arguments = levels;
+                            if !rest.is_empty() {
+                                arguments.push(record);
+                            }
+                            arguments.extend(tail);
+                        }
+                    }
                     if arguments.len() < tpl.levels {
                         *error.borrow_mut() = Some(fail(
                             msg!(
                                 "kernel-universe-takes-levels",
-                                name = name,
+                                name = (name).to_string(),
                                 levels = tpl.levels
                             ),
                             t.span,
@@ -247,8 +351,9 @@ impl Kernel {
                             }
                         }
                     }
+                    let family = mangle(&tpl.owner, &levels);
                     let instance = tpl.instance_name(&levels);
-                    wanted.borrow_mut().push((name.clone(), levels));
+                    wanted.borrow_mut().push((name.clone(), levels, family));
                     let rest: Vec<SurfaceTerm> = arguments[tpl.levels..].to_vec();
                     let head = SurfaceTerm::var(&instance, function.span);
                     if rest.is_empty() {
@@ -261,10 +366,10 @@ impl Kernel {
                 TermKind::Match { arms, .. } => {
                     fn template_pattern(
                         p: &crate::surface::Pattern,
-                        templates: &std::collections::HashMap<String, Template>,
+                        templates: &std::collections::HashMap<Name, Template>,
                     ) -> bool {
                         use crate::surface::Pattern;
-                        let is_constructor = |n: &str| {
+                        let is_constructor = |n: &Name| {
                             templates
                                 .get(n)
                                 .is_some_and(|t| matches!(t.member, Member::Constructor(_)))
@@ -291,7 +396,7 @@ impl Kernel {
                 }
                 TermKind::Var(name) if templates.contains_key(name) => {
                     *error.borrow_mut() = Some(fail(
-                        msg!("kernel-universe-write-levels", name = &*name),
+                        msg!("kernel-universe-write-levels", name = (&*name).to_string()),
                         t.span,
                     ));
                 }
@@ -301,7 +406,7 @@ impl Kernel {
         if let Some(d) = error.into_inner() {
             return Err(d);
         }
-        for (name, levels) in wanted.into_inner() {
+        for (name, levels, _family) in wanted.into_inner() {
             self.instance(&name, &levels, out)?;
         }
         Ok(())
@@ -310,7 +415,7 @@ impl Kernel {
     /// Declares `name` at `levels` (once), pushing it to `out`.
     fn instance(
         &mut self,
-        name: &str,
+        name: &Name,
         levels: &[Level],
         out: &mut Vec<Stmt>,
     ) -> Result<(), Diagnostic> {
@@ -329,7 +434,7 @@ impl Kernel {
 
     fn instance_inner(
         &mut self,
-        name: &str,
+        name: &Name,
         levels: &[Level],
         out: &mut Vec<Stmt>,
     ) -> Result<(), Diagnostic> {
@@ -340,7 +445,7 @@ impl Kernel {
         }
         let (mut stmt, names) = match tpl.body {
             Body::Theorem(mut decl, def) => {
-                let names: Vec<String> = decl.params[..tpl.levels]
+                let names: Vec<Name> = decl.params[..tpl.levels]
                     .iter()
                     .map(|(n, _)| n.clone())
                     .collect();
@@ -357,14 +462,14 @@ impl Kernel {
                 )
             }
             Body::Inductive(mut decl) => {
-                let names: Vec<String> = decl.params[..tpl.levels]
+                let names: Vec<Name> = decl.params[..tpl.levels]
                     .iter()
                     .map(|(n, _)| n.clone())
                     .collect();
                 decl.params.drain(..tpl.levels);
                 decl.name = instance;
-                for c in &mut decl.constructors {
-                    c.name = mangle(&c.name, levels);
+                for (index, c) in decl.constructors.iter_mut().enumerate() {
+                    c.name = constructor_instance(&tpl.owner, &c.name, index, levels);
                 }
                 (Stmt::Inductive(decl), names)
             }
@@ -395,7 +500,7 @@ impl Kernel {
                 function,
                 arguments,
             } = &*t.kind
-                && matches!(&*function.kind, TermKind::Var(n) if n == "Type")
+                && matches!(&*function.kind, TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "Type"))
                 && let [e] = arguments.as_slice()
             {
                 match marked_level(e, &marked, levels) {
@@ -434,7 +539,8 @@ impl Kernel {
 }
 
 impl Kernel {
-    pub(super) fn template_of(&self, stmt: &Stmt) -> Option<String> {
+    /// The template `stmt` declares, if it declares one.
+    pub(super) fn template_of(&self, stmt: &Stmt) -> Option<Name> {
         let name = match stmt {
             Stmt::Theorem(d) | Stmt::Def(d) => &d.name,
             Stmt::Inductive(d) => &d.name,
@@ -445,17 +551,17 @@ impl Kernel {
     }
 
     /// The template an instance (`id@1`, `UBox@2`) was made of.
-    pub(super) fn instance_of<'n>(&self, name: &'n str) -> Option<&'n str> {
-        let (owner, _) = name.split_once('@')?;
-        let t = self.templates.get(owner)?;
-        matches!(t.member, Member::Declaration).then_some(owner)
+    pub(super) fn instance_of(&self, name: &Name) -> Option<Name> {
+        let owner = Name::Global(name.as_global()?.origin()?.clone());
+        let template = self.templates.get(&owner)?;
+        matches!(template.member, Member::Declaration).then_some(owner)
     }
 
     /// Checks the template `name` once with its levels left as variables,
     /// in a copy of the kernel that is dropped after: its entries are the
     /// template's, under its own name. The copy's reduction counts against
     /// the declaration in hand.
-    pub(super) fn check_template(&mut self, name: &str, builtin: bool, entries: &mut Vec<Entry>) {
+    pub(super) fn check_template(&mut self, name: &Name, builtin: bool, entries: &mut Vec<Entry>) {
         let tpl = self.templates[name].clone();
         let vars = level_names(&tpl.body, tpl.levels);
         let levels: Vec<Level> = vars.iter().map(|v| Level::var(v)).collect();
@@ -469,7 +575,7 @@ impl Kernel {
         let mut own = Vec::new();
         match made {
             Err(d) => own.push(Entry {
-                name: name.to_string(),
+                name: name.clone(),
                 verdict: Verdict::Failed(d),
             }),
             Ok(()) => {
@@ -492,19 +598,27 @@ impl Kernel {
         self.core.adopt_budget(&mut scratch.core);
         // `id@u` is reported as `id`, `UBox::rec@u` as `UBox::rec`, and a
         // constructor `ubox@u` as `ubox`.
-        let mut names = vec![(instance.clone(), name.to_string())];
+        let mut names = vec![(instance.clone(), name.clone())];
         if let Body::Inductive(d) = &tpl.body {
-            names.extend(
-                d.constructors
-                    .iter()
-                    .map(|c| (mangle(&c.name, &levels), c.name.clone())),
-            );
+            names.extend(d.constructors.iter().enumerate().map(|(index, c)| {
+                (
+                    constructor_instance(name, &c.name, index, &levels),
+                    c.name.clone(),
+                )
+            }));
+            for suffix in ["ind", "rec"] {
+                names.push((eliminator(&instance, suffix), eliminator(name, suffix)));
+            }
             let short = tauto_surface::surface::qualify::short;
             let written: Vec<(String, String)> = names
                 .iter()
                 .map(|(made, source)| (short(made).to_string(), short(source).to_string()))
                 .collect();
-            names.extend(written);
+            names.extend(
+                written
+                    .into_iter()
+                    .map(|(made, source)| (Name::from(made), Name::from(source))),
+            );
         }
         let rename = |text: &str| -> String {
             names.iter().fold(text.to_string(), |text, (made, source)| {
@@ -523,7 +637,9 @@ impl Kernel {
             })
         };
         for mut e in own {
-            e.name = rename(&e.name);
+            if let Some((_, source)) = names.iter().find(|(made, _)| *made == e.name) {
+                e.name = source.clone();
+            }
             if let Verdict::Failed(d) = &mut e.verdict {
                 d.message = rename_message(&d.message, &rename);
             }
@@ -532,9 +648,49 @@ impl Kernel {
     }
 }
 
-fn mangle(name: &str, levels: &[Level]) -> String {
+fn mangle(name: &Name, levels: &[Level]) -> Name {
     let ls: Vec<String> = levels.iter().map(Level::to_string).collect();
-    format!("{name}@{}", ls.join(","))
+    let display = format!("{name}@{}", ls.join(","));
+    match name.as_global() {
+        Some(reference) => {
+            let arguments = levels
+                .iter()
+                .map(|level| level_term(level, Default::default()))
+                .collect::<Vec<_>>();
+            reference
+                .specialize(
+                    &format!(
+                        "universe:{}",
+                        tauto_surface::bindings::argument_key(&arguments)
+                    ),
+                    display,
+                )
+                .into()
+        }
+        None => Name::from(display),
+    }
+}
+
+fn eliminator(owner: &Name, suffix: &str) -> Name {
+    let kind = if suffix == "ind" {
+        tauto_surface::identity::Generation::Induction
+    } else {
+        tauto_surface::identity::Generation::Recursion
+    };
+    match owner.as_global() {
+        Some(reference) => reference.generated(kind).into(),
+        None => format!("{owner}::{suffix}").into(),
+    }
+}
+
+fn constructor_instance(owner: &Name, name: &Name, index: usize, levels: &[Level]) -> Name {
+    let family = mangle(owner, levels);
+    match family.as_global() {
+        Some(reference) => reference
+            .constructor(index, name.rsplit("::").next().unwrap())
+            .into(),
+        None => mangle(name, levels),
+    }
 }
 
 /// The level `t` writes with each marked level parameter replaced by its
@@ -553,14 +709,14 @@ fn marked_level(
             function,
             arguments,
         } => match (&*function.kind, arguments.as_slice()) {
-            (TermKind::Var(op), [a, b]) if op == "+" => {
+            (TermKind::Var(op), [a, b]) if tauto_surface::bindings::is_library(&op, "+") => {
                 // The levels have no sum of two variables: one side is closed.
                 match numeric_level(b) {
                     Some(k) => marked_level(a, marked, levels)?.plus(k)?,
                     None => marked_level(b, marked, levels)?.plus(numeric_level(a)?)?,
                 }
             }
-            (TermKind::Var(op), [a, b]) if op == "max" => {
+            (TermKind::Var(op), [a, b]) if tauto_surface::bindings::is_library(&op, "max") => {
                 marked_level(a, marked, levels)?.join(&marked_level(b, marked, levels)?)
             }
             _ => return None,
@@ -572,7 +728,7 @@ fn marked_level(
 
 /// A level written as a call's level argument: a closed numeral expression,
 /// or one over `vars`, the level parameters of the template being checked.
-fn level_arg(t: &SurfaceTerm, vars: &[String]) -> Option<Level> {
+fn level_arg(t: &SurfaceTerm, vars: &[Name]) -> Option<Level> {
     if let Some(n) = numeric_level(t) {
         return Some(Level::konst(n));
     }
@@ -600,7 +756,8 @@ impl Kernel {
             else {
                 return;
             };
-            if !matches!(&*function.kind, TermKind::Var(n) if n == "recursor") {
+            if !matches!(&*function.kind, TermKind::Var(n) if tauto_surface::bindings::is_library(&n, "recursor"))
+            {
                 return;
             }
             let result = (|| {
@@ -637,33 +794,46 @@ impl Kernel {
         }
     }
 
-    fn recursor_at(
+    pub(super) fn recursor_at(
         &mut self,
-        family: &str,
+        family: &Name,
         level: &Level,
         span: tauto_parol::Span,
-    ) -> Result<String, Diagnostic> {
+    ) -> Result<Name, Diagnostic> {
         let fail = |m: Message| Diagnostic::new(m, Some(span));
-        let ind = self
-            .inds
-            .get(family)
-            .cloned()
-            .ok_or_else(|| fail(msg!("kernel-recursor-not-family", name = family)))?;
-        let name = format!("{family}::rec@{level}");
-        if self.recs.contains_key(&name) {
+        let ind = self.inds.get(family).cloned().ok_or_else(|| {
+            fail(msg!(
+                "kernel-recursor-not-family",
+                name = (family).to_string()
+            ))
+        })?;
+        if let Some(name) = self.core.specialized_recursor(family, level)
+            && self.recs.contains_key(&name)
+        {
             return Ok(name);
         }
         // The ordinary recursor only exists when the inductive's large-elimination
         // check succeeded. In particular a general proposition cannot gain one here.
         for member in &ind.group {
-            if !self.recs.contains_key(&format!("{member}::rec")) {
-                return Err(fail(msg!("kernel-recursor-no-type", name = family)));
+            let original = self
+                .resolver
+                .generated(member, tauto_surface::identity::Generation::Recursion);
+            if !self.recs.contains_key(&original) {
+                return Err(fail(msg!(
+                    "kernel-recursor-no-type",
+                    name = (family).to_string()
+                )));
             }
         }
         self.core.recursor_at(family, level).map_err(fail)?;
         for member in &ind.group {
-            let original = format!("{member}::rec");
-            let name = format!("{member}::rec@{level}");
+            let original = self
+                .resolver
+                .generated(member, tauto_surface::identity::Generation::Recursion);
+            let name = self
+                .core
+                .specialized_recursor(member, level)
+                .expect("the core accepted this specialized recursor");
             if self.recs.contains_key(&name) {
                 continue;
             }
@@ -674,7 +844,10 @@ impl Kernel {
             self.set_implicit(&name, ind.params.len());
             self.recs.insert(name, member.clone());
         }
-        Ok(name)
+        Ok(self
+            .core
+            .specialized_recursor(family, level)
+            .expect("the core accepted this specialized recursor"))
     }
 }
 
@@ -732,10 +905,12 @@ fn numeric_level(t: &SurfaceTerm) -> Option<u32> {
             function,
             arguments,
         } => match (&*function.kind, arguments.as_slice()) {
-            (TermKind::Var(op), [a, b]) if op == "+" => {
+            (TermKind::Var(op), [a, b]) if tauto_surface::bindings::is_library(&op, "+") => {
                 numeric_level(a)?.checked_add(numeric_level(b)?)?
             }
-            (TermKind::Var(op), [a, b]) if op == "max" => numeric_level(a)?.max(numeric_level(b)?),
+            (TermKind::Var(op), [a, b]) if tauto_surface::bindings::is_library(&op, "max") => {
+                numeric_level(a)?.max(numeric_level(b)?)
+            }
             _ => return None,
         },
         _ => return None,
@@ -743,7 +918,15 @@ fn numeric_level(t: &SurfaceTerm) -> Option<u32> {
     (n <= 65535).then_some(n)
 }
 
-fn declaration_names(stmt: &Stmt) -> Vec<String> {
+fn constructor_source_slot(owner: &Name, constructor: &Name) -> String {
+    let leaf = constructor.rsplit("::").next().unwrap();
+    match owner.rsplit_once("::") {
+        Some((module, _)) => format!("{module}::{leaf}"),
+        None => leaf.to_string(),
+    }
+}
+
+fn declaration_names(stmt: &Stmt) -> Vec<Name> {
     match stmt {
         Stmt::Theorem(d) | Stmt::Def(d) => vec![d.name.clone()],
         Stmt::Fn(d) => vec![d.name.clone()],
@@ -751,8 +934,8 @@ fn declaration_names(stmt: &Stmt) -> Vec<String> {
         Stmt::Inductive(d) => {
             let mut names = vec![
                 d.name.clone(),
-                format!("{}::ind", d.name),
-                format!("{}::rec", d.name),
+                eliminator(&d.name, "ind"),
+                eliminator(&d.name, "rec"),
             ];
             names.extend(d.constructors.iter().map(|c| c.name.clone()));
             names
@@ -765,13 +948,14 @@ fn declaration_names(stmt: &Stmt) -> Vec<String> {
 // Specialization is deliberately not a binder-renaming pass. Reject reuse of
 // level names before erasing their binders, including names buried in patterns
 // and local statements, so the subsequent term walk cannot capture a variable.
-fn reject_level_shadowing(stmt: &mut Stmt, levels: &[String]) -> Result<(), Diagnostic> {
+fn reject_level_shadowing(stmt: &mut Stmt, levels: &[Name]) -> Result<(), Diagnostic> {
     use crate::surface::{Handler, Pattern};
-    fn pattern(p: &Pattern, levels: &[String]) -> bool {
+    fn pattern(p: &Pattern, levels: &[Name]) -> bool {
         match p {
-            Pattern::Bind(n) => levels.contains(n),
+            Pattern::Bind(n) => levels.iter().any(|level| level.as_str() == n.as_str()),
             Pattern::Ctor { name, args } => {
-                levels.contains(name) || args.iter().any(|p| pattern(p, levels))
+                levels.iter().any(|level| level.as_str() == name.as_str())
+                    || args.iter().any(|p| pattern(p, levels))
             }
             Pattern::Record { fields, .. } => fields.iter().any(|(_, p)| pattern(p, levels)),
             Pattern::Tuple(items) => items.iter().any(|p| pattern(p, levels)),
@@ -779,16 +963,25 @@ fn reject_level_shadowing(stmt: &mut Stmt, levels: &[String]) -> Result<(), Diag
             _ => false,
         }
     }
-    fn statement(s: &Stmt, levels: &[String]) -> bool {
+    fn statement(s: &Stmt, levels: &[Name]) -> bool {
         match s {
-            Stmt::Theorem(d) | Stmt::Def(d) => d.params.iter().any(|(n, _)| levels.contains(n)),
+            Stmt::Theorem(d) | Stmt::Def(d) => d
+                .params
+                .iter()
+                .any(|(n, _)| levels.iter().any(|level| level.as_str() == n.as_str())),
             Stmt::Inductive(d) => {
-                d.params.iter().any(|(n, _)| levels.contains(n))
-                    || d.constructors
-                        .iter()
-                        .any(|c| c.params.iter().any(|(n, _)| levels.contains(n)))
+                d.params
+                    .iter()
+                    .any(|(n, _)| levels.iter().any(|level| level.as_str() == n.as_str()))
+                    || d.constructors.iter().any(|c| {
+                        c.params
+                            .iter()
+                            .any(|(n, _)| levels.iter().any(|level| level.as_str() == n.as_str()))
+                    })
             }
-            Stmt::Let { name, .. } | Stmt::Var { name, .. } => levels.contains(name),
+            Stmt::Let { name, .. } | Stmt::Var { name, .. } => {
+                levels.iter().any(|level| level.as_str() == name.as_str())
+            }
             Stmt::Expr(_) | Stmt::Return(_) | Stmt::Assign { .. } | Stmt::While { .. } => false,
             // Nested declarations and not-yet-expanded syntax need their own
             // binding semantics; keep them outside this numeric template subset.
@@ -796,34 +989,46 @@ fn reject_level_shadowing(stmt: &mut Stmt, levels: &[String]) -> Result<(), Diag
         }
     }
     let mut seen = HashSet::new();
-    let mut invalid = levels.iter().any(|n| !seen.insert(n)) || statement(stmt, levels);
+    let mut invalid = levels.iter().any(|n| !seen.insert(n.as_str())) || statement(stmt, levels);
     walk::stmt(stmt, &mut |t| {
         invalid |= match &*t.kind {
-            TermKind::Pi { params, .. } => params
+            TermKind::Pi { params, .. } => params.iter().any(|(n, _)| {
+                n.as_ref()
+                    .is_some_and(|n| levels.iter().any(|level| level.as_str() == n.as_str()))
+            }),
+            TermKind::Lam { params, .. } => params
                 .iter()
-                .any(|(n, _)| n.as_ref().is_some_and(|n| levels.contains(n))),
-            TermKind::Lam { params, .. } => params.iter().any(|n| levels.contains(n)),
-            TermKind::Exists { binder, .. } => levels.contains(binder),
+                .any(|n| levels.iter().any(|level| level.as_str() == n.as_str())),
+            TermKind::Exists { binder, .. } => {
+                levels.iter().any(|level| level.as_str() == binder.as_str())
+            }
             TermKind::Block(stmts) => stmts.iter().any(|s| match s {
-                Stmt::Let { name, .. } | Stmt::Var { name, .. } => levels.contains(name),
+                Stmt::Let { name, .. } | Stmt::Var { name, .. } => {
+                    levels.iter().any(|level| level.as_str() == name.as_str())
+                }
                 Stmt::Expr(_) | Stmt::Return(_) | Stmt::Assign { .. } | Stmt::While { .. } => false,
                 _ => true,
             }),
             TermKind::Match { binder, arms, .. } => {
-                binder.as_ref().is_some_and(|n| levels.contains(n))
+                binder
+                    .as_ref()
+                    .is_some_and(|n| levels.iter().any(|level| level.as_str() == n.as_str()))
                     || arms.iter().any(|a| pattern(&a.pattern, levels))
             }
             TermKind::Handle { handlers, .. } => handlers.iter().any(|h| match h {
                 Handler::Return { pattern: p, .. } => pattern(p, levels),
                 Handler::Operation { patterns, cont, .. } => {
                     patterns.iter().any(|p| pattern(p, levels))
-                        || cont.as_ref().is_some_and(|n| levels.contains(n))
+                        || cont.as_ref().is_some_and(|n| {
+                            levels.iter().any(|level| level.as_str() == n.as_str())
+                        })
                 }
             }),
-            TermKind::Step(s) => s
-                .arms
-                .iter()
-                .any(|a| a.binders.iter().any(|(n, _)| levels.contains(n))),
+            TermKind::Step(s) => s.arms.iter().any(|a| {
+                a.binders
+                    .iter()
+                    .any(|(n, _)| levels.iter().any(|level| level.as_str() == n.as_str()))
+            }),
             TermKind::Quote { .. } | TermKind::Other(_) => true,
             _ => false,
         };

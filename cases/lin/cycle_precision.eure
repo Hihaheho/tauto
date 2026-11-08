@@ -1,0 +1,62 @@
+// What keeps the cycle check from reporting a cycle a program cannot build
+// (`docs/design/shared-levels.md`): a generic function is read afresh at each
+// call, and a value keeps only the storages its type allows.
+
+@ cases.a-generic-helper-keeps-its-callers-apart
+// `keep` is given a mutex of integers and a mutex of closures. Read once for
+// both calls, the closure would go into `b` too, and `s → b → closure → s`
+// would be a cycle.
+source = ```nib
+fn keep<A>(m: Mutex(A), v: A): Unit { Mutex::put(m, v) }
+let b := Mutex::new(0)
+let s := Ref::new(b)
+let a := Mutex::new(() => 0)
+keep(b, 1)
+keep(a, () => {
+  let t := s
+  0
+})
+```
+lin = "ok"
+
+@ cases.a-field-read-keeps-only-storages-of-its-type
+// `rt.tab` reads every storage of `rt`, `inner` too, so the vec taken out
+// of the mutex would also be `s`. A `Vec` is never a `Ref`: the closure goes
+// only into the vec, and `s → closure → inner → s` is not a cycle.
+source = ```nib
+struct Rt { inner: Ref(Ref(() -> i64)), tab: Mutex(Vec(() -> i64)) }
+let s := Ref::new(() => 0)
+let inner := Ref::new(s)
+let rt := Rt { inner: inner, tab: Mutex::new(Vec::new()) }
+var v := Mutex::take(rt.tab)
+Vec::push(&mut v, () => {
+  let t := inner
+  0
+})
+Mutex::put(rt.tab, v)
+```
+lin = "ok"
+
+@ cases.a-closure-kept-through-a-generic-helper-in-its-own-mutex-is-a-cycle
+source = ```nib
+fn keep<A>(m: Mutex(A), v: A): Unit { Mutex::put(m, v) }
+let a := Mutex::new(() => 0)
+keep(a, () => {
+  let t := a
+  0
+})
+```
+lin = "error: strong reference cycle"
+
+@ cases.a-closure-in-a-hashmap-in-its-own-mutex-is-a-cycle
+// The precise reading still follows a storage through the map it is kept in.
+source = ```nib
+let m := Mutex::new(HashMap::new())
+var t := Mutex::take(m)
+HashMap::insert(&mut t, 1, () => {
+  let x := m
+  0
+})
+Mutex::put(m, t)
+```
+lin = "error: strong reference cycle"

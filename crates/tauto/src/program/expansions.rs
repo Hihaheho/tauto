@@ -13,7 +13,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::macros::expand::{Saved, expand_files_resuming};
+use crate::macros::expand::{Saved, expand_files_resuming_bound};
 use crate::macros::{Options, Output};
 use crate::surface::Stmt;
 
@@ -27,6 +27,7 @@ struct Given {
     seeing: HashMap<String, String>,
     module: Option<String>,
     limit: Option<(String, Duration)>,
+    standard: bool,
 }
 
 struct Kept {
@@ -46,6 +47,7 @@ thread_local! {
 pub fn keep_expansions(keep: bool) {
     KEEP.with(|k| k.set(keep));
     crate::surface::parsed::keep(keep);
+    tauto_macro::macros::expand::keep_steps(keep);
     if !keep {
         KEPT_EXPANSIONS.with(|k| k.borrow_mut().clear());
     }
@@ -63,10 +65,39 @@ pub(super) fn expand(
     seeing: Vec<HashMap<String, String>>,
     modules: Vec<String>,
     limits: Vec<(String, Duration)>,
+    bindings: Option<tauto_surface::resolve::Resolver>,
+    standard_files: Vec<bool>,
 ) -> Output {
     let opts = Options::default();
+    // A revision of a program (`load_revision`) is given the identities of the one before; the
+    // files kept from before already have theirs, so it goes on from them when they are kept.
+    if bindings.is_some() && !KEEP.with(Cell::get) {
+        return crate::macros::expand::expand_files_resuming_bound(
+            files,
+            &opts,
+            seeing,
+            modules,
+            limits,
+            None,
+            None,
+            bindings,
+            standard_files,
+        )
+        .0;
+    }
     if !KEEP.with(Cell::get) || files.is_empty() {
-        return expand_files_resuming(files, &opts, seeing, modules, limits, None, None).0;
+        return expand_files_resuming_bound(
+            files,
+            &opts,
+            seeing,
+            modules,
+            limits,
+            None,
+            None,
+            bindings,
+            standard_files,
+        )
+        .0;
     }
     let given: Vec<Given> = files
         .iter()
@@ -76,6 +107,7 @@ pub(super) fn expand(
             seeing: seeing.get(i).cloned().unwrap_or_default(),
             module: modules.get(i).cloned(),
             limit: limits.get(i).cloned(),
+            standard: standard_files.get(i).copied().unwrap_or(false),
         })
         .collect();
     let last = files.len() - 1;
@@ -94,7 +126,7 @@ pub(super) fn expand(
     });
     let resumed = from.as_ref().map(Saved::files);
     let missed = crate::syntax::tables_missed();
-    let (out, saved) = expand_files_resuming(
+    let (out, saved) = expand_files_resuming_bound(
         files,
         &opts,
         seeing,
@@ -102,6 +134,8 @@ pub(super) fn expand(
         limits,
         from,
         resumed.is_none_or(|r| r < last).then_some(last),
+        if resumed.is_none() { bindings } else { None },
+        standard_files,
     );
     let complete = crate::syntax::tables_missed() == missed;
     if let Some(saved) = saved

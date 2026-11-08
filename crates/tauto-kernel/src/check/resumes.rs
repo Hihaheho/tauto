@@ -7,6 +7,7 @@
 //! calls `k(true)` and `k(false)` is rejected here, as the run rejects it, rather
 //! than proven about and then not run.
 
+use crate::surface::Name;
 use crate::surface::{Handler, Pattern, Stmt, SurfaceTerm, TermKind, walk};
 use std::collections::HashMap;
 use tauto_message::{Message, msg};
@@ -49,14 +50,14 @@ impl Uses {
     }
 }
 
-fn binds(p: &Pattern, k: &str) -> bool {
+fn binds(p: &Pattern, k: &Name) -> bool {
     let mut names = Vec::new();
     super::pattern_binders(p, &mut names);
     names.iter().any(|n| n == k)
 }
 
 /// The calls of `k` on the path through `t` that calls it most.
-fn uses(t: &SurfaceTerm, k: &str) -> Uses {
+fn uses(t: &SurfaceTerm, k: &Name) -> Uses {
     match &*t.kind {
         TermKind::Var(v) if v == k => Uses::ONE,
         TermKind::If {
@@ -126,7 +127,7 @@ fn uses(t: &SurfaceTerm, k: &str) -> Uses {
     }
 }
 
-fn block(stmts: &[Stmt], k: &str) -> Uses {
+fn block(stmts: &[Stmt], k: &Name) -> Uses {
     let mut total = Uses::NONE;
     for s in stmts {
         match s {
@@ -154,7 +155,7 @@ fn block(stmts: &[Stmt], k: &str) -> Uses {
 /// effect's `resume` allows, with the message to give.
 pub(super) fn overused(
     s: &Stmt,
-    resumes: &HashMap<String, Option<String>>,
+    resumes: &HashMap<Name, Option<String>>,
 ) -> Option<(Message, Span)> {
     let mut found = None;
     let mut s = s.clone();
@@ -198,8 +199,8 @@ pub(super) fn overused(
                 found = Some((
                     msg!(
                         "kernel-resume-overused",
-                        effect = effect,
-                        cont = k,
+                        effect = (effect).to_string(),
+                        cont = (k).to_string(),
                         times = times,
                         written = written,
                         hint = hint

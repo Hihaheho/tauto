@@ -1,31 +1,35 @@
-// `-> &mut A` and `let &mut x`.
+// `): &mut A` and `let &mut x`.
 
 @ cases.get-mut-writes-through
 source = ```nib
-var v = vec_new()
-vec_push(&mut v, 1)
-match vec_get_mut(&mut v, 0) {
+import std::prelude::Affine
+
+var v := Vec::new()
+Vec::push(&mut v, 1)
+match Vec::get_mut(&mut v, 0) {
   Some(x) => { x := 5 }
-  None => ()
+  None => #()
 }
-match vec_get(&v, 0) {
+match Vec::get(&v, 0) {
   Some(x) => perform show("v0", x)
-  None => ()
+  None => #()
 }
 ```
 shows = ["v0 = 5"]
 
 @ cases.hashmap-get-mut-writes-through
 source = ```nib
-var m = hashmap_new()
-hashmap_insert(&mut m, "a", 1)
-match hashmap_get_mut(&mut m, "a") {
+import std::prelude::Affine
+
+var m := HashMap::new()
+HashMap::insert(&mut m, "a", 1)
+match HashMap::get_mut(&mut m, "a") {
   Some(x) => { x := x + 41 }
-  None => ()
+  None => #()
 }
-match hashmap_get(&m, "a") {
+match HashMap::get(&m, "a") {
   Some(x) => perform show("a", x)
-  None => ()
+  None => #()
 }
 ```
 shows = ["a = 42"]
@@ -33,53 +37,86 @@ shows = ["a = 42"]
 @ cases.let-mut-freezes-all
 source = ```nib
 affine struct F {}
-var v = vec_new()
-vec_push(&mut v, F {})
-let &mut x = vec_last_mut(&mut v)
-vec_len(&v)
+var v := Vec::new()
+Vec::push(&mut v, F {})
+let &mut x := Vec::last_mut(&mut v)
+Vec::len(&v)
 ```
 lin = "error: v is frozen by x"
 
 @ cases.let-mut-ends-with-block
 source = ```nib
 affine struct F {}
-var v = vec_new()
-vec_push(&mut v, F {})
+var v := Vec::new()
+Vec::push(&mut v, F {})
 {
-  let &mut x = vec_last_mut(&mut v)
+  let &mut x := Vec::last_mut(&mut v)
 }
-vec_len(&v)
+Vec::len(&v)
 ```
 lin = "ok"
 
 @ cases.mut-result-needs-mut-param
-source = "fn f(&x: i64) -> &mut i64 { x }"
+source = "fn f(&x: i64): &mut i64 { x }"
 types = "error: -> &mut i64 needs a &mut parameter"
 
 @ cases.mut-result-of-dup-not-value
 source = ```nib
-fn last(&mut x: i64) -> &mut i64 { x }
-var n = 1
-let m = last(&mut n)
+fn last(&mut x: i64): &mut i64 { x }
+var n := 1
+let m := last(&mut n)
 ```
 types = "error: a borrow cannot be stored"
 
 @ cases.mut-result-writes-through
 source = ```nib
-fn same(&mut x: i64) -> &mut i64 { x }
-var n = 1
+fn same(&mut x: i64): &mut i64 { x }
+var n := 1
 {
-  let &mut m = same(&mut n)
+  let &mut m := same(&mut n)
   m := 9
 }
 perform show("n", n)
 ```
 shows = ["n = 9"]
 
+@ cases.mut-result-lends-a-field
+source = ```nib
+struct S { n: u64 }
+fn field(&mut s: S): &mut u64 { s.n }
+var s := S { n: 1 }
+{
+  let &mut n := field(&mut s)
+  n := n + 1
+}
+perform show("n", s.n)
+```
+shows = ["n = 2"]
+
+@ cases.mut-result-lends-an-affine-field-by-branch
+source = ```nib
+import std::prelude::Affine
+
+struct In { v: Vec(i64), k: i64 }
+struct Out { a: In, b: In }
+fn pick(&mut o: Out, left: Bool): &mut In {
+  if left { o.a } else { o.b }
+}
+var o := Out { a: In { v: Vec::new(), k: 0 }, b: In { v: Vec::new(), k: 0 } }
+{
+  let &mut x := pick(&mut o, false)
+  x.k := 5
+  Vec::push(&mut x.v, 9)
+}
+o.a.k := 1
+perform show("o", o)
+```
+shows = ["o = Out { a: In { v: Vec[], k: 1 }, b: In { v: Vec[9], k: 5 } }"]
+
 @ cases.closure-cannot-return-mut
 source = ```nib
-var v = vec_new()
-vec_push(&mut v, 1)
-let g = (&mut v: Vec(i64)) => vec_last_mut(&mut v)
+var v := Vec::new()
+Vec::push(&mut v, 1)
+let g := (&mut v: Vec(i64)) => Vec::last_mut(&mut v)
 ```
 types = "error: a closure cannot return a borrow"

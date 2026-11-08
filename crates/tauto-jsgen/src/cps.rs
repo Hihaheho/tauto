@@ -6,6 +6,16 @@ use tauto_message::msg;
 use tauto_nir::cps::{Cps, CpsPat, MatchArm, PathStep, Prim, Unary, Value};
 use tauto_nir::*;
 
+// Runtime provenance checks the representation as well: a generic or aggregate
+// field is eligible only when its actual value has an ownership certificate.
+pub(crate) fn retainable_field(ty: &Ty) -> bool {
+    match ty {
+        Ty::Ref(_) | Ty::RefMut(_) | Ty::Slice(_) | Ty::Infer => false,
+        Ty::Fn(f) => f.kind.dup(),
+        _ => true,
+    }
+}
+
 /// What the host configuration adds to a module.
 #[derive(Debug, Clone, Default)]
 pub struct Options {
@@ -35,7 +45,7 @@ pub fn generate(pkg: &Package) -> R<String> {
 /// The host type an extern parameter or result carries directly.
 fn host_type<'t>(ty: &'t Ty, options: &Options) -> R<Option<&'t str>> {
     let found = |ty: &'t Ty| match ty {
-        Ty::Data(name, args) if args.is_empty() && options.host_types.contains(name) => {
+        Ty::Data(name, args) if args.is_empty() && options.host_types.contains(name.as_str()) => {
             Some(name.as_str())
         }
         _ => None,
@@ -71,15 +81,20 @@ fn host_signatures(pkg: &Package, options: &Options) -> R<String> {
         if matches!(x.ret, Ty::Ref(_) | Ty::RefMut(_)) && ret.is_some() {
             return unsupported(msg!("jsgen-what-borrowed-host-return"));
         }
-        let owner = if options.retain.contains(&x.name) {
+        let owner = if options.retain.contains(x.name.as_str()) {
             let Some(owner) = params.iter().position(|p| p != "null") else {
-                return Err(msg!("jsgen-extern-retain-owner", name = &x.name).to_string());
+                return Err(
+                    msg!("jsgen-extern-retain-owner", name = x.name.to_string()).to_string()
+                );
             };
             for (_, ty, pass) in &x.params {
                 if let Ty::Fn(f) = ty
                     && (*pass != Pass::Value || f.tier != Tier::S)
                 {
-                    return Err(msg!("jsgen-extern-retain-callbacks", name = &x.name).to_string());
+                    return Err(
+                        msg!("jsgen-extern-retain-callbacks", name = x.name.to_string())
+                            .to_string(),
+                    );
                 }
             }
             owner.to_string()
@@ -188,9 +203,13 @@ pub(crate) fn export_table<'p>(pkg: &'p Package, options: &Options) -> R<Vec<Exp
     let mut table = Vec::new();
     for name in &options.exports {
         let Some(export) = pkg.exports.iter().find(|e| &e.name == name) else {
-            return Err(msg!("jsgen-export-not-function", name = name).to_string());
+            return Err(msg!("jsgen-export-not-function", name = name.to_string()).to_string());
         };
-        if let Some(effect) = export.row.iter().find(|e| *e != "show" && *e != "Div") {
+        if let Some(effect) = export
+            .row
+            .iter()
+            .find(|e| *e != "show" && *e != "Div" && *e != "wait")
+        {
             return Err(msg!("jsgen-export-performs", name = name, effect = effect).to_string());
         }
         let f = pkg
@@ -202,8 +221,8 @@ pub(crate) fn export_table<'p>(pkg: &'p Package, options: &Options) -> R<Vec<Exp
             Err(msg!("jsgen-export-signature", name = name, what = msg!(what)).to_string())
         };
         let host = |ty: &Ty| match ty {
-            Ty::Data(n, args) if args.is_empty() && options.host_types.contains(n) => {
-                Some(n.clone())
+            Ty::Data(n, args) if args.is_empty() && options.host_types.contains(n.as_str()) => {
+                Some(n.to_string())
             }
             _ => None,
         };
@@ -247,6 +266,7 @@ pub(crate) fn export_table<'p>(pkg: &'p Package, options: &Options) -> R<Vec<Exp
         };
         // A host function may return a Promise.
         let sync = !params.contains(&Crossing::HostFn)
+            && !export.row.iter().any(|effect| effect == "wait")
             && !reaches_host(pkg, export.inst, &waits, &mut BTreeSet::new());
         table.push(ExportEntry {
             name: export.name.as_str(),
@@ -290,16 +310,21 @@ pub fn generate_with(pkg: &Package, options: &Options) -> R<String> {
 
 /// `program.mjs` and the module of each chunk (`chunks.rs`).
 /// The name `shown` writes for each constructor whose full name is not the
-/// name written: the same `qualify::short` the evaluator and the Rust backend
-/// show, since only the compiler knows which `::` ends a module.
+/// name written. Structures display their type name and enum values display
+/// their constructor's leaf, as the evaluator and the Rust backend do.
 fn shown_names(pkg: &Package) -> String {
     let pairs: Vec<String> = pkg
         .datas
         .iter()
-        .flat_map(|d| &d.ctors)
-        .filter_map(|c| {
-            let short = tauto::surface::qualify::short(&c.name);
-            (short != c.name).then(|| format!("[{},{}]", quote(&c.name), quote(short)))
+        .flat_map(|d| d.ctors.iter().map(move |c| (d, c)))
+        .filter_map(|(d, c)| {
+            let tag = crate::constructor_symbol(pkg, &c.name);
+            let short = if d.is_struct {
+                tauto::surface::qualify::short(&d.name)
+            } else {
+                tag.rsplit("::").next().unwrap()
+            };
+            (short != tag).then(|| format!("[{},{}]", quote(tag), quote(short)))
         })
         .collect();
     format!("\nconst shownNames=new Map([{}]);\n", pairs.join(","))
@@ -310,7 +335,10 @@ pub fn generate_modules(pkg: &Package, options: &Options) -> R<Modules> {
     let owners = crate::chunks::owners(pkg, &entries);
     let restarts = crate::tail_calls::candidates(pkg);
     // The runtime (`shake.rs`) goes in front once the rest is written.
-    let mut out = String::new();
+    let mut out = format!(
+        "const declarationRefs=Array.from({{length:{}}},()=>Symbol());\n",
+        pkg.declarations.len()
+    );
     out.push_str(&host_signatures(pkg, options)?);
     out.push_str(&shown_names(pkg));
     out.push_str(&crate::syntax::parsers(pkg)?);
@@ -443,7 +471,7 @@ impl Print<'_> {
     fn arm(&self, a: &MatchArm) -> R<String> {
         Ok(format!(
             "[{},{},{}]",
-            pattern(&a.pat),
+            pattern(self.pkg, &a.pat),
             self.cps(&a.guard)?,
             self.cps(&a.body)?
         ))
@@ -490,7 +518,6 @@ impl Print<'_> {
                 let value = self.cps(value)?;
                 match op {
                     Unary::Not => format!("mapValue({value},v=>!v)"),
-                    Unary::Member(index) => format!("mapValue({value},v=>field(v,null,{index}))"),
                     Unary::Field { name, index } => format!(
                         "mapValue({value},v=>field(v,{},{}))",
                         quote(name),
@@ -576,7 +603,7 @@ impl Print<'_> {
                 let ids =
                     |ids: &[u32]| ids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
                 format!(
-                    "closureValue({},[{}],[{}],{},[{}],{},[{}],[{}],{})",
+                    "closureValue({},[{}],[{}],{},[{}],{},[{}],[{}],{},[{}])",
                     self.cps(&c.body)?,
                     ids(&c.params),
                     ids(&c.captures),
@@ -593,12 +620,13 @@ impl Print<'_> {
                         .collect::<Vec<_>>()
                         .join(","),
                     ids(&c.moves),
-                    c.once
+                    c.once,
+                    ids(&c.owned_refs)
                 )
             }
             Cps::Perform { op, quant: q, args } => format!(
                 "performValue({},{},[{}])",
-                quote(op),
+                quote(&crate::operation_symbol(self.pkg, op)),
                 quote(quant(*q)),
                 self.all(args)?
             ),
@@ -608,8 +636,12 @@ impl Print<'_> {
                     .map(|a| {
                         Ok(format!(
                             "{{op:{},pats:[{}],k:{},guard:{},body:{}}}",
-                            quote(&a.op),
-                            a.pats.iter().map(pattern).collect::<Vec<_>>().join(","),
+                            quote(&crate::operation_symbol(self.pkg, &a.op)),
+                            a.pats
+                                .iter()
+                                .map(|p| pattern(self.pkg, p))
+                                .collect::<Vec<_>>()
+                                .join(","),
                             a.k.map(|k| k.to_string()).unwrap_or("null".into()),
                             self.cps(&a.guard)?,
                             self.cps(&a.body)?
@@ -687,9 +719,10 @@ impl Print<'_> {
                 order,
                 is_struct,
                 data,
+                field_types,
             } => format!(
-                "construct({},[{}],vs,[{}],{is_struct},{})",
-                quote(ctor),
+                "construct({},[{}],vs,[{}],{is_struct},{},{})",
+                quote(crate::constructor_symbol(self.pkg, ctor)),
                 names
                     .iter()
                     .map(|n| n.as_ref().map(|n| quote(n)).unwrap_or("null".into()))
@@ -700,19 +733,8 @@ impl Print<'_> {
                     .map(usize::to_string)
                     .collect::<Vec<_>>()
                     .join(","),
-                quote(data)
-            ),
-            Prim::Product { picks } => format!(
-                "(charge({}),{{kind:'Product',fields:[{}]}})",
-                1 + picks.len(),
-                picks
-                    .iter()
-                    .map(|(i, j)| match j {
-                        Some(j) => format!("unref(vs[{i}]).fields[{j}]"),
-                        None => format!("vs[{i}]"),
-                    })
-                    .collect::<Vec<_>>()
-                    .join(",")
+                quote(&crate::owner_symbol(self.pkg, data)),
+                field_types.iter().all(retainable_field)
             ),
             Prim::Concat => "vs.join('')".into(),
             Prim::TextOfInt => "String(vs[0])".into(),
@@ -740,6 +762,7 @@ fn value(v: &Value) -> String {
         Value::Int(n) => format!("{n}n"),
         Value::Float(x) => float_literal(*x),
         Value::Bool(b) => b.to_string(),
+        Value::Declaration(slot) => format!("declarationRefs[{slot}]"),
         Value::Text(t) => quote(t),
         Value::Fn(i) => format!("f{i}"),
     }
@@ -758,20 +781,20 @@ fn quant(q: Quant) -> &'static str {
         Quant::Many => "many",
     }
 }
-fn pattern(p: &CpsPat) -> String {
+fn pattern(pkg: &Package, p: &CpsPat) -> String {
     match p {
         CpsPat::Wild => "['wild']".into(),
         CpsPat::Bind { id, borrow, owned } => format!("['bind',{id},{borrow},{owned}]"),
         CpsPat::Literal(v) => format!("['literal',{}]", value(v)),
         CpsPat::Ctor { ctor, fields, data } => format!(
             "['ctor',{},[{}],{}]",
-            quote(ctor),
-            fields.iter().map(pattern).collect::<Vec<_>>().join(","),
-            quote(data)
-        ),
-        CpsPat::Product(fields) => format!(
-            "['product',[{}]]",
-            fields.iter().map(pattern).collect::<Vec<_>>().join(",")
+            quote(crate::constructor_symbol(pkg, ctor)),
+            fields
+                .iter()
+                .map(|p| pattern(pkg, p))
+                .collect::<Vec<_>>()
+                .join(","),
+            quote(&crate::owner_symbol(pkg, data))
         ),
     }
 }
@@ -886,6 +909,11 @@ const BUILTINS: &[&str] = &[
     "Pending::take",
     "Pending::is_ready",
     "Pending::signal",
+    "Signal::fresh",
+    "Signal::raise",
+    "Signal::is_raised",
+    "Signal::either",
+    "Signal::listen",
     "budget_value",
     "info_more",
     "info_unbounded",
@@ -896,10 +924,14 @@ const BUILTINS: &[&str] = &[
     "Os::write_file",
     "Os::read_bytes",
     "Os::write_bytes",
+    "Os::read_under",
+    "Os::read_bytes_under",
     "Os::create_dir",
     "Os::list_dir",
     "Os::remove",
     "Os::stat",
+    "Os::read_link",
+    "Os::write_new",
     "Os::move_path",
     "Os::copy_file",
     "Os::canonicalize",
@@ -910,6 +942,7 @@ const BUILTINS: &[&str] = &[
     "Os::read_line",
     "Os::read_stdin",
     "Os::flush",
+    "Os::on_shutdown",
     "Os::env",
     "Os::wall_ms",
     "Os::monotonic_ns",
@@ -976,7 +1009,7 @@ mod ownership_tests {
         let callee = local(1, repr);
         FnInst {
             id,
-            source: format!("caller{id}"),
+            source: format!("caller{id}").into(),
             rust_name: format!("caller{id}"),
             tier: Tier::S,
             generics: vec![],
@@ -1104,8 +1137,70 @@ mod ownership_tests {
             .find(|line| line.starts_with("const b0 = "))
             .unwrap();
         assert!(
-            output.ends_with(",[],[1,2,3],false,[],false,[],[3],true);"),
+            output.ends_with(",[],[1,2,3],false,[],false,[],[3],true,[]);"),
             "{output}"
         );
+    }
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+
+    fn exported(row: Vec<String>) -> (Package, Options) {
+        let name = "ready_wait";
+        let function = FnInst {
+            id: 0,
+            source: name.into(),
+            rust_name: name.into(),
+            tier: Tier::O,
+            generics: Vec::new(),
+            params: Vec::new(),
+            ret: Ty::Unit,
+            body: Expr {
+                kind: ExprKind::Unit,
+                ty: Ty::Unit,
+                span: Span::default(),
+            },
+            span: Span::default(),
+        };
+        let pkg = Package {
+            fns: vec![function],
+            exports: vec![Export {
+                inst: 0,
+                name: name.into(),
+                row,
+                pure_borrow_callbacks: Vec::new(),
+            }],
+            ..Package::default()
+        };
+        let options = Options {
+            exports: vec![name.into()],
+            ..Options::default()
+        };
+        (pkg, options)
+    }
+
+    #[test]
+    fn a_wait_export_has_an_async_boundary_and_declaration() {
+        tauto_messages::install();
+        let (pkg, options) = exported(vec!["wait".into()]);
+        assert!(!export_table(&pkg, &options).unwrap()[0].sync);
+        let declaration = crate::generate_declarations_with(&pkg, &options).unwrap();
+        assert!(
+            declaration.contains("\"ready_wait\": () => Promise<null>"),
+            "{declaration}"
+        );
+        assert!(generate_with(&pkg, &options).is_ok());
+    }
+
+    #[test]
+    fn a_source_effect_named_wait_is_not_the_standard_wait() {
+        tauto_messages::install();
+        let (pkg, options) = exported(vec!["custom::wait".into()]);
+        let error = export_table(&pkg, &options)
+            .err()
+            .expect("source effect is unhandled");
+        assert!(error.contains("custom::wait"), "{error}");
     }
 }

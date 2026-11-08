@@ -11,14 +11,16 @@ pub mod builtins;
 pub mod code;
 pub mod host;
 pub mod hostcall;
+pub mod image;
 pub mod machine;
+pub mod native;
 pub mod syntax;
 pub mod value;
 pub mod wire;
 
 pub use code::{Program, compile};
 pub use host::{Captured, Host, Process};
-pub use value::Error;
+pub use value::{Error, Value};
 
 #[derive(Debug)]
 pub enum End {
@@ -35,5 +37,22 @@ pub fn run(program: &Program, host: &mut dyn Host, steps: u64) -> End {
         Ok(_) => End::Done,
         Err(Error::Exit(code)) => End::Exit(code),
         Err(Error::Runtime(message)) => End::Error(message),
+    }
+}
+
+/// Calls function instance `inst` of the program (an index of the
+/// package's `fns`) with `args`, with at most `steps` steps.
+pub fn call(
+    program: &Program,
+    host: &mut dyn Host,
+    inst: u32,
+    args: Vec<Value>,
+    steps: u64,
+) -> Result<value::Value, End> {
+    let mut m = machine::Machine::new(program, host, steps);
+    match m.run_fn(inst, args) {
+        Ok(v) => Ok(v),
+        Err(Error::Exit(code)) => Err(End::Exit(code)),
+        Err(Error::Runtime(message)) => Err(End::Error(message)),
     }
 }

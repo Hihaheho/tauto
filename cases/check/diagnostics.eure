@@ -1,0 +1,113 @@
+@ cases.an-imported-type-error-keeps-its-file-and-span
+files."dep.taut" = `let あ: i64 := true`
+files."main.nib" = `import "dep.taut"`
+diagnostics = [{ stage => "types", file => "dep.taut", message => "", span => "let あ: i64 := «true»" }]
+
+@ cases.a-wrong-step-goal-offers-the-edit-of-the-written-arm
+files."lib.taut" = ```tauto
+import std::prelude::Macro
+
+pub macro fn same(s: ProofStep): SynExpr { Syn::hole(1, s.span) }
+```
+files."main.nib" = ```tauto
+import "lib.taut"
+theorem t(n: Nat): n = n {
+  by same!(): n = n {
+    ⊢ Succ(n) = n from ?rest
+  }
+}
+```
+diagnostics = [{ file => "main.nib", message => "step.goal_mismatch", fix => "⊢ n = n", fix_span => "⊢ Succ(n) = n", span => "«⊢ Succ(n) = n from ?rest»" }]
+
+@ cases.a-reserved-word-used-as-a-name-is-named
+entry = "main.taut"
+files."main.taut" = `enum Block { def(Nat) }`
+load_error = "`def` is a keyword and cannot be used as a name"
+
+@ cases.a-keyword-used-as-a-function-name-is-pointed-at
+entry = "main.taut"
+files."main.taut" = `fn loop(n: Nat): Nat { n }`
+load_error = "1:4: `loop` is a keyword and cannot be used as a name; write it as `r#loop`"
+
+@ cases.a-let-with-a-record-pattern-says-let-takes-no-pattern
+description = "`let { a, b } := v` is not read as `let` used as a name: the error says `let` takes no pattern and points to field access or `match`"
+entry = "main.taut"
+files."main.taut" = ```tauto
+struct Pair { body: Nat, failed: Nat }
+
+fn f(b: Pair): Nat {
+  let { body, failed } := b
+  body
+}
+```
+load_error = "4:3: `let` binds a single name and does not take a pattern"
+
+@ cases.a-typed-let-written-with-eq-points-at-assign
+description = "`let x: T = v` reads `T = v` as an equality type and misses the `:=`; the error says so"
+entry = "main.taut"
+files."main.taut" = ```tauto
+theorem t(): Nat = Nat {
+  let x: Nat =
+    Zero
+  Refl
+}
+```
+load_error = "this `let` has `=` but no `:=`"
+
+@ cases.a-typed-let-with-eq-on-one-line-points-at-assign
+entry = "main.taut"
+files."main.taut" = ```tauto
+theorem t(): Nat = Nat {
+  let x: Nat = Zero
+  Refl
+}
+```
+load_error = "this `let` has `=` but no `:=`"
+
+@ cases.an-implicit-argument-that-cannot-be-inferred-points-at-its-call
+description = "`miiii` is a `let` name; the error points at the call that could not infer `x`, not at the value bound to the name"
+imports = [path`../../std/Base.taut`]
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+pub(open) inductive 記号: Type {
+  M: 記号
+  I: 記号
+  U: 記号
+}
+
+pub fn concat(a: List(記号), b: List(記号)): List(記号) {
+  match a {
+    [] => b
+    [x, ..rest] => [x, ..concat(rest, b)]
+  }
+}
+
+pub(open) inductive 導出可能: List(記号) -> Prop {
+  公理: 導出可能([M, I])
+  規則1<x: List(記号)>(h: 導出可能(concat(x, [I]))): 導出可能(concat(x, [I, U]))
+  規則2<x: List(記号)>(h: 導出可能([M, ..x])): 導出可能([M, ..concat(x, x)])
+}
+
+theorem t(): 導出可能([M, I, I, I, I, U]) {
+  let mii: 導出可能([M, I, I]) := 規則2(公理)
+  let miiii: 導出可能([M, I, I, I, I]) := 規則2(mii)
+  規則1(miiii)
+}
+```
+checks.t = "error: "
+@ cases.an-implicit-argument-that-cannot-be-inferred-points-at-its-call.diagnostics[]
+file = "input/main.taut"
+name = "t"
+message = "cannot infer the implicit arguments of `導出可能::規則1`"
+span = "«規則1(miiii)»"
+
+@ cases.a-record-without-a-name-needs-a-hash
+description = "`{ x: 1 }` is a record type, not a record value: a value is written `#{ x: 1 }`"
+entry = "main.taut"
+files."main.taut" = ```tauto
+fn main(): i64 {
+  let r := { x: 1 }
+  0
+}
+```
+diagnostics = [{ stage => "types", file => "main.taut", message => "a record type `{ … }` is not a value: write a record without a name as `#{ … }`" }]

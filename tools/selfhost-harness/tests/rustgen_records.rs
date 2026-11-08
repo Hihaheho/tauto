@@ -24,11 +24,11 @@ fn records_preserve_types_fields_and_written_evaluation_order() {
   let valid := rustgen_record_unique(fields)
   let duplicate := Cons(RustgenRecordField::Mk("first", RustgenValue::Mk(RustgenInt, "3"), "local2"), fields)
   let order := rustgen_record_bindings(fields) == "let local0 = 2; let local1 = text; "
-  let arranged := match rustgen_record_arguments(params, fields): Bool {
+  let arranged := ⊢ Bool from match rustgen_record_arguments(params, fields) {
     RustgenErr(message) => false
-    RustgenOk(values) => match values: Bool {
+    RustgenOk(values) => ⊢ Bool from match values {
       Nil => false
-      Cons(first, rest) => match rest: Bool {
+      Cons(first, rest) => ⊢ Bool from match rest {
         Nil => false
         Cons(second, tail) => first.code == "local1" && second.code == "local0" && rustgen_same(first.ty, RustgenText)
       }

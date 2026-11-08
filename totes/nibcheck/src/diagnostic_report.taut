@@ -27,7 +27,7 @@ pub fn diagnostic_report_after(
   k: (Checker) -> Mut1(TypeReport, Checker),
   m: Mut1(Unit, Checker)
 ): Mut1(TypeReport, Checker) {
-  match m: Mut1(TypeReport, Checker) { mut1(v, next) => k(next) }
+  ⊢ Mut1(TypeReport, Checker) from match m { mut1(v, next) => k(next) }
 }
 pub def DiagnosticReportResult(
   p: (Checker) -> Prop,
@@ -52,14 +52,8 @@ pub theorem diagnostic_report_cons(
   first: ∀ clean: DiagnosticClean(ck_st(m)). And(p, m = mut1(Star, c)),
   tail: DiagnosticReportTail(q, widths, k),
   clean: DiagnosticReportClean(diagnostic_report_after(k, m))
-): And(
-  And(p, q(c)),
-  diagnostic_report_after(k, m) = mut1(finish_report(c, widths), c)
-) {
-  match m: And(
-    And(p, q(c)),
-    diagnostic_report_after(k, m) = mut1(finish_report(c, widths), c)
-  ) {
+): And(And(p, q(c)), diagnostic_report_after(k, m) = mut1(finish_report(c, widths), c)) {
+  ⊢ And(And(p, q(c)), diagnostic_report_after(k, m) = mut1(finish_report(c, widths), c)) from match m {
     mut1(v, next) => {
       let remaining: DiagnosticReportResult(q, next, widths, k(next)) := tail(next, clean)
       let clean_next: DiagnosticClean(

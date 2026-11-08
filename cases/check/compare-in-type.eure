@@ -1,0 +1,36 @@
+@ cases.a-parenthesized-comparison-is-the-left-of-an-equality-in-a-type
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+import std::Base
+
+fn lt_proof(i: Nat, n: Nat, q: (i < n) = true): (i < n) = true { q }
+
+fn le_succ(i: Nat, n: Nat, q: (i <= n + 1) = true): (i <= n + 1) = true { q }
+
+fn by_lambda(i: Nat, n: Nat): ((q: (i < n) = true) -> (i < n) = true) {
+  (q: (i < n) = true) => q
+}
+
+theorem zero_lt_one(): (Zero < Succ(Zero)) = true { Refl }
+```
+
+checks_all = "ok"
+checks."input/main.taut::lt_proof" = "ok"
+checks."input/main.taut::le_succ" = "ok"
+checks."input/main.taut::by_lambda" = "ok"
+checks."input/main.taut::zero_lt_one" = "ok"
+
+@ cases.a-boolean-literal-is-the-left-of-an-equality-in-a-type
+entry = "input/main.taut"
+files."input/main.taut" = ```tauto
+fn from_absurd(h: false = true): Nat { Zero }
+
+fn by_lambda(): (y: false = true) -> Nat { (y: false = true) => Zero }
+
+theorem refl_true(): true = true { Refl }
+```
+
+checks_all = "ok"
+checks."input/main.taut::from_absurd" = "ok"
+checks."input/main.taut::by_lambda" = "ok"
+checks."input/main.taut::refl_true" = "ok"

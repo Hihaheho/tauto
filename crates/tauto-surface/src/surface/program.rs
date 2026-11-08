@@ -3,18 +3,77 @@
 //! expressions (see the parent module).
 
 use std::collections::HashMap;
+use std::sync::Mutex;
 
-use tauto_message::msg;
+use tauto_message::{Message, msg};
 use tauto_parol::{NodeId, NonTerminalKind as Nt, Span, parse};
 
 use super::qualify::SEPARATOR;
-use super::{BudgetLimit, Reader, SurfaceTerm, SyntaxLit, TermKind};
+use super::{BudgetLimit, Name, Reader, SurfaceTerm, SyntaxLit, TermKind};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub stmts: Vec<Stmt>,
     /// What reading the modules found wrong, for the type check to report.
-    pub errors: Vec<(String, Span)>,
+    pub errors: Vec<(Message, Span)>,
+}
+
+/// A generic bound, with effect-set members carried as references after binding.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GenericBound {
+    written: String,
+    effects: Option<Vec<Name>>,
+}
+
+impl GenericBound {
+    /// Source rewriting is allowed only before the members have been bound.
+    pub fn edit_spelling(&mut self, edit: &mut dyn FnMut(&mut String)) {
+        if self
+            .effects
+            .as_ref()
+            .is_some_and(|members| members.iter().any(Name::is_resolved))
+        {
+            return;
+        }
+        edit(&mut self.written);
+        self.effects = super::effect_sets::set_of_bound(&self.written)
+            .map(|(_, effects)| effects.into_iter().map(Name::from).collect());
+    }
+
+    pub fn effects_mut(&mut self) -> Option<&mut Vec<Name>> {
+        self.effects.as_mut()
+    }
+    pub fn effect_set(&self) -> Option<(&str, &[Name])> {
+        Some((self.written.split_once('{')?.0, self.effects.as_deref()?))
+    }
+}
+impl From<String> for GenericBound {
+    fn from(written: String) -> Self {
+        let effects = super::effect_sets::set_of_bound(&written)
+            .map(|(_, effects)| effects.into_iter().map(Name::from).collect());
+        Self { written, effects }
+    }
+}
+impl From<&str> for GenericBound {
+    fn from(written: &str) -> Self {
+        written.to_string().into()
+    }
+}
+impl AsRef<str> for GenericBound {
+    fn as_ref(&self) -> &str {
+        &self.written
+    }
+}
+impl std::ops::Deref for GenericBound {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.written
+    }
+}
+impl std::fmt::Display for GenericBound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.written)
+    }
 }
 
 /// `=> fn a, theorem b`: the complete list (kind and name) of the declarations a
@@ -38,7 +97,8 @@ pub struct Replace {
     /// The word before the declaration's kind; anything but `replace` is an error.
     pub word: String,
     pub kind: String,
-    pub name: String,
+    pub name: Name,
+    /// From the word to the name.
     pub at: Span,
 }
 
@@ -79,7 +139,7 @@ pub enum Stmt {
     /// `let &x = f(&v)` (`borrow`) binds the borrow `f` returns, `let &mut x`
     /// (`borrow_mut`) a `&mut` borrow.
     Let {
-        name: String,
+        name: Name,
         ty: Option<SurfaceTerm>,
         value: SurfaceTerm,
         borrow: bool,
@@ -88,7 +148,7 @@ pub enum Stmt {
     /// `var &x = f(&v)` (`borrow`) binds a view that is advanced with
     /// `&mut x`.
     Var {
-        name: String,
+        name: Name,
         ty: Option<SurfaceTerm>,
         value: SurfaceTerm,
         borrow: bool,
@@ -96,7 +156,7 @@ pub enum Stmt {
     /// `x := v`, or `x.f.g := v`: writes the `var` or `&mut` binding `x`,
     /// or the field of it that `place` (the whole `x.f.g`) names.
     Assign {
-        name: String,
+        name: Name,
         place: Option<SurfaceTerm>,
         value: SurfaceTerm,
     },
@@ -197,7 +257,7 @@ pub enum Stmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SyntaxUse {
     pub role: String,
-    pub function: String,
+    pub function: Name,
     pub span: Span,
 }
 
@@ -211,7 +271,7 @@ pub fn dictionary_name(class: &str, index: usize) -> String {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternInstance {
-    pub class: String,
+    pub class: Name,
     pub ty: SurfaceTerm,
     pub span: Span,
 }
@@ -220,10 +280,12 @@ pub struct ExternInstance {
 /// `Other` terms, never run) and the laws.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassDecl {
-    pub name: String,
+    /// All class parameters, in dependency order.
+    pub parameters: Vec<(Name, SurfaceTerm)>,
+    pub name: Name,
     /// `pub` or `pub(open)` as written before the declaration.
     pub vis: Vis,
-    pub param: String,
+    pub param: Name,
     /// How many parameters were written; a class has one.
     pub arity: usize,
     /// The bound of the parameter as written: a kind.
@@ -233,11 +295,20 @@ pub struct ClassDecl {
     pub span: Span,
 }
 
+impl ClassDecl {
+    /// Whether the proof language can read the class's parameter: one
+    /// parameter of kind `Type`. A class over a type constructor
+    /// (`F: (Shared) -> Shared`) is a class of the program only.
+    pub fn over_types(&self) -> bool {
+        self.arity != 0 && !self.bound.as_deref().is_some_and(|b| b.contains("->"))
+    }
+}
+
 /// A `law` item: a theorem schema in a class, a
 /// theorem to prove in an instance. Nib reads past it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LawDecl {
-    pub name: String,
+    pub name: Name,
     pub span: Span,
     /// Its generics and parameters, the proposition, and the proof when there
     /// is one.
@@ -246,9 +317,13 @@ pub struct LawDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InstanceDecl {
-    pub generics: Vec<String>,
-    pub bounds: Vec<Option<String>>,
-    pub class: String,
+    /// Argument types of the instance telescope.
+    pub generic_types: Vec<SurfaceTerm>,
+    /// Arguments after the first class argument.
+    pub arguments: Vec<SurfaceTerm>,
+    pub generics: Vec<Name>,
+    pub bounds: Vec<Option<GenericBound>>,
+    pub class: Name,
     pub head: SurfaceTerm,
     pub where_: Vec<Constraint>,
     pub methods: Vec<FnDecl>,
@@ -258,17 +333,17 @@ pub struct InstanceDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EffectDecl {
-    pub name: String,
+    pub name: Name,
     /// `pub` or `pub(open)` as written before the declaration.
     pub vis: Vis,
-    pub generics: Vec<String>,
+    pub generics: Vec<Name>,
     /// For each generic: whether it is declared a row variable, `!e`.
     pub rows: Vec<bool>,
     /// The written parameter types; `None` when a parameter has none.
     pub params: Vec<Option<SurfaceTerm>>,
     /// The written parameter names, one for each of `params`; empty when
     /// the declaration came from somewhere that carries none (a macro).
-    pub param_names: Vec<String>,
+    pub param_names: Vec<Name>,
     /// `None` for `()`.
     pub result: Option<SurfaceTerm>,
     /// `resume 0`, `resume <=1`, `resume 1`, `resume ω` or `direct` as
@@ -288,10 +363,10 @@ pub struct EffectDecl {
 pub struct DataDecl {
     /// `copy`, `shared`, `affine` or `linear`, when written.
     pub kind: Option<String>,
-    pub name: String,
+    pub name: Name,
     /// `pub` or `pub(open)` as written before the declaration.
     pub vis: Vis,
-    pub generics: Vec<String>,
+    pub generics: Vec<Name>,
     /// For each generic: whether it is declared a row variable, `!e`.
     pub rows: Vec<bool>,
     pub constructors: Vec<DataConstructor>,
@@ -306,7 +381,7 @@ impl DataDecl {
     /// (`docs/design/row-parameters.md`). `known` is not read: a generic is a
     /// row parameter because it is declared one, not because of how a field
     /// uses it ([`row_parameters_of`] finds them all).
-    pub fn row_parameters(&self, _known: &HashMap<String, Vec<usize>>) -> Vec<usize> {
+    pub fn row_parameters(&self, _known: &HashMap<Name, Vec<usize>>) -> Vec<usize> {
         self.rows
             .iter()
             .enumerate()
@@ -340,7 +415,7 @@ impl DataDecl {
                 .generics
                 .iter()
                 .zip(&self.rows)
-                .any(|(g, row)| g == v && *row)
+                .any(|(g, row)| g.spelling() == Some(v.as_str()) && *row)
         });
         used
     }
@@ -351,11 +426,11 @@ impl DataDecl {
 /// generic to another's row parameter (`struct App(!e) { a: Answer(e) }`).
 pub fn row_parameters_of<'a>(
     decls: impl IntoIterator<Item = &'a DataDecl>,
-) -> HashMap<String, Vec<usize>> {
+) -> HashMap<Name, Vec<usize>> {
     let decls: Vec<&DataDecl> = decls.into_iter().collect();
     let mut known = HashMap::new();
     loop {
-        let next: HashMap<String, Vec<usize>> = decls
+        let next: HashMap<Name, Vec<usize>> = decls
             .iter()
             .map(|d| (d.name.clone(), d.row_parameters(&known)))
             .collect();
@@ -369,24 +444,26 @@ pub fn row_parameters_of<'a>(
 /// A constructor's fields; a positional field has no name.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DataConstructor {
-    pub name: String,
+    pub name: Name,
     pub fields: Vec<(Option<String>, SurfaceTerm)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnDecl {
-    pub name: String,
+    pub name: Name,
     /// `pub` or `pub(open)` as written before the declaration.
     pub vis: Vis,
-    /// `<A, B>`: type parameters, instantiated afresh at every use.
-    pub generics: Vec<String>,
+    /// Implicit parameters, in telescope order.
+    pub generics: Vec<Name>,
+    /// Their types. Missing entries mean `Type` for generated declarations.
+    pub generic_types: Vec<SurfaceTerm>,
     /// For each generic: whether it is declared a row variable, `!e`.
     pub rows: Vec<bool>,
     /// A bound for each generic when written: `shared`, `linear`, `<=1`.
-    pub bounds: Vec<Option<String>>,
+    pub bounds: Vec<Option<GenericBound>>,
     /// Where each generic is written, when the source says.
     pub bound_spans: Vec<Span>,
-    pub params: Vec<String>,
+    pub params: Vec<Name>,
     /// For each parameter: `None` takes the value, `Some(false)` a borrow
     /// (`&x`), `Some(true)` a mutable borrow (`&mut x`).
     pub borrows: Vec<Option<bool>>,
@@ -394,7 +471,7 @@ pub struct FnDecl {
     pub param_types: Vec<Option<SurfaceTerm>>,
     pub result: Option<SurfaceTerm>,
     /// The row written after `!`, when there is one.
-    pub effects: Option<Vec<String>>,
+    pub effects: Option<Vec<Name>>,
     /// `where C(T), …`, in the order written.
     pub where_: Vec<Constraint>,
     pub span: Span,
@@ -413,10 +490,30 @@ pub struct FnDecl {
     pub body: SurfaceTerm,
 }
 
+impl FnDecl {
+    /// The explicit types of implicit binders, in declaration order.
+    pub fn generic_parameters(&self) -> Vec<(Name, SurfaceTerm)> {
+        self.generics
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                (
+                    name.clone(),
+                    self.generic_types.get(i).cloned().unwrap_or_else(|| {
+                        SurfaceTerm::var(&crate::bindings::library_name("Type"), self.span)
+                    }),
+                )
+            })
+            .collect()
+    }
+}
+
 /// `C(T)` in a `where`: `T` has the class `C`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Constraint {
-    pub class: String,
+    /// Arguments after the first class argument.
+    pub arguments: Vec<SurfaceTerm>,
+    pub class: Name,
     pub ty: SurfaceTerm,
     pub span: Span,
 }
@@ -424,10 +521,10 @@ pub struct Constraint {
 /// `inductive T(p: A): Sort { c(x: B): T(p) }`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InductiveDecl {
-    pub name: String,
+    pub name: Name,
     /// `pub` or `pub(open)` as written before the declaration.
     pub vis: Vis,
-    pub params: Vec<(String, SurfaceTerm)>,
+    pub params: Vec<(Name, SurfaceTerm)>,
     pub sort: SurfaceTerm,
     pub constructors: Vec<Constructor>,
     /// `inductive T(): Type => fn T::beq, … { … }`: what is made besides the eliminators.
@@ -437,11 +534,11 @@ pub struct InductiveDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Constructor {
-    pub name: String,
+    pub name: Name,
     /// How many leading `params` are generics, which a call or a pattern may
     /// leave out.
     pub implicit: usize,
-    pub params: Vec<(String, SurfaceTerm)>,
+    pub params: Vec<(Name, SurfaceTerm)>,
     pub result: SurfaceTerm,
 }
 
@@ -450,12 +547,12 @@ pub struct Constructor {
 /// are implicit: a call that leaves them out has them inferred.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TheoremDecl {
-    pub name: String,
+    pub name: Name,
     /// `pub` or `pub(open)` as written before the declaration.
     pub vis: Vis,
     /// How many leading `params` are generics.
     pub implicit: usize,
-    pub params: Vec<(String, SurfaceTerm)>,
+    pub params: Vec<(Name, SurfaceTerm)>,
     pub ty: SurfaceTerm,
     pub body: Option<SurfaceTerm>,
     /// `decreasing_by x`: the parameter the recursion is structural on.
@@ -467,18 +564,18 @@ pub struct TheoremDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     Wild,
-    Bind(String),
+    Bind(Name),
     Int(i64),
     Bool(bool),
     Text(String),
     /// `Succ(k)`, or a bare name that turns out to be a constructor.
     Ctor {
-        name: String,
+        name: Name,
         args: Vec<Pattern>,
     },
     /// `Point { x, y: 0 }`: a struct's fields by name; `x` alone binds `x`.
     Record {
-        name: String,
+        name: Name,
         fields: Vec<(String, Pattern)>,
     },
     /// `#(p, q)`: a product's pattern, two or more members as written. Only the
@@ -495,7 +592,7 @@ impl Pattern {
     /// program as `p` on the labelled value.
     pub fn labelled(tag: &str, p: Pattern) -> Pattern {
         Pattern::Ctor {
-            name: format!("@{tag}"),
+            name: format!("@{tag}").into(),
             args: vec![p],
         }
     }
@@ -537,7 +634,7 @@ pub struct Step {
 /// its proof.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StepArm {
-    pub binders: Vec<(String, SurfaceTerm)>,
+    pub binders: Vec<(Name, SurfaceTerm)>,
     pub goal: SurfaceTerm,
     pub body: SurfaceTerm,
     pub span: Span,
@@ -549,10 +646,11 @@ pub enum Handler {
     Return { pattern: Pattern, body: SurfaceTerm },
     /// `op(p, …), k if guard => body`
     Operation {
-        effect: String,
+        effect: Name,
+        /// The instance the arm answers.
         instance: Instance,
         patterns: Vec<Pattern>,
-        cont: Option<String>,
+        cont: Option<Name>,
         guard: Option<SurfaceTerm>,
         body: SurfaceTerm,
     },
@@ -563,7 +661,8 @@ pub enum Handler {
 /// bound. Both are empty for an operation without generics.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Instance {
-    pub forall: Vec<String>,
+    /// The names bound by `∀ … .`.
+    pub forall: Vec<Name>,
     /// The type arguments, in the order of the operation's generics.
     pub args: Vec<SurfaceTerm>,
 }
@@ -603,19 +702,44 @@ pub fn parse_expr_at(source: &str, base: u32) -> Result<SurfaceTerm, String> {
 /// A program with the modules left as written: a program of
 /// several files resolves them once all its files are read.
 pub fn parse_program_unresolved_at(source: &str, base: u32) -> Result<Program, String> {
+    parse_program_located_at(source, base).map_err(|e| e.to_string())
+}
+
+/// Why a text does not read as a program, and where.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParseError {
+    pub message: String,
+    /// The byte it is at, counted from the `base` the text was read from;
+    /// `None` when the parser gave no place.
+    pub at: Option<u32>,
+}
+
+/// `message at byte N`, the way the toolchain has shown it.
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.at {
+            Some(at) => write!(f, "{} at byte {at}", self.message),
+            None => f.write_str(&self.message),
+        }
+    }
+}
+
+/// [`parse_program_unresolved_at`] with the place of a failure as data.
+pub fn parse_program_located_at(source: &str, base: u32) -> Result<Program, ParseError> {
     if !super::parsed::kept() {
         return read_program_at(source, base);
     }
     super::parsed::get_or_read(source, base, || read_program_at(source, base))
 }
 
-fn read_program_at(source: &str, base: u32) -> Result<Program, String> {
+fn read_program_at(source: &str, base: u32) -> Result<Program, ParseError> {
+    let failed = |message: String, at: Option<u32>| ParseError {
+        message,
+        at: at.map(|a| (base as u64 + a as u64) as u32),
+    };
     let parsed = parse(source);
     if let Some(e) = parsed.errors.first() {
-        let at = e
-            .span
-            .map(|s| format!(" at byte {}", base as u64 + s.start as u64))
-            .unwrap_or_default();
+        let at = e.span.map(|s| s.start as u32);
         // `extern "rust" { … }`: the rust path is not written in the source.
         let after_extern = e.span.is_some_and(|s| {
             source[..(s.start as usize).min(source.len())]
@@ -623,17 +747,18 @@ fn read_program_at(source: &str, base: u32) -> Result<Program, String> {
                 .ends_with("extern")
         });
         if after_extern {
-            // ` at byte N` stays as it is: `tauto` reads the place from it.
-            return Err(format!("{}{at}", msg!("surface-extern-rust-path")));
+            return Err(failed(msg!("surface-extern-rust-path").to_string(), at));
         }
-        return Err(format!("{}{at}", e.message));
+        return Err(failed(e.message.to_string(), at));
     }
     let mut reader = Reader::new(&parsed, source);
     reader.base = base;
-    let root = parsed.cst.root().ok_or("empty parse")?;
+    let root = parsed
+        .cst
+        .root()
+        .ok_or_else(|| failed("empty parse".to_string(), None))?;
     if let Some(at) = reader.bare_kind(root) {
-        return Err(format!(
-            "{} at byte {}",
+        return Err(failed(
             msg!(
                 "surface-bare-kind",
                 kind = source[at.0 as usize..at.1 as usize].trim(),
@@ -643,12 +768,13 @@ fn read_program_at(source: &str, base: u32) -> Result<Program, String> {
                     "linear" => "Linear",
                     _ => "Type",
                 }
-            ),
-            base as u64 + at.0 as u64
+            )
+            .to_string(),
+            Some(at.0 as u32),
         ));
     }
     if let Some((at, message)) = reader.refused_form(root) {
-        return Err(format!("{message} at byte {}", base as u64 + at as u64));
+        return Err(failed(message.to_string(), Some(at as u32)));
     }
     let mut stmts = Vec::new();
     if let Some(program) = reader.find(root, Nt::Program)
@@ -754,7 +880,7 @@ impl Reader<'_> {
         let function = self.fn_decl(decl);
         let name = match &function {
             Stmt::Fn(f) => f.name.clone(),
-            _ => String::new(),
+            _ => crate::identity::Name::Spelled(String::new()),
         };
         let function = match self.first(id, Nt::Visibility) {
             Some(v) => with_vis(function, self.vis(v), self.span(v)),
@@ -762,8 +888,8 @@ impl Reader<'_> {
         };
         out.push(function);
         out.push(Stmt::Macro {
-            function: name.clone(),
-            name,
+            function: name.to_string(),
+            name: name.to_string(),
             span,
         });
     }
@@ -791,7 +917,9 @@ impl Reader<'_> {
                 self.descend(u, Nt::Ident, &mut names);
                 SyntaxUse {
                     role: names.first().map(|n| self.name_of(*n)).unwrap_or_default(),
-                    function: names.get(1).map(|n| self.name_of(*n)).unwrap_or_default(),
+                    function: crate::identity::Name::Spelled(
+                        names.get(1).map(|n| self.name_of(*n)).unwrap_or_default(),
+                    ),
                     span: self.span(u),
                 }
             })
@@ -825,7 +953,7 @@ impl Reader<'_> {
         Some(Replace {
             word: self.name_of(word),
             kind,
-            name,
+            name: crate::identity::Name::Spelled(name),
             at: Span::new(self.span(word).start, self.span(first).end),
         })
     }
@@ -873,7 +1001,7 @@ impl Reader<'_> {
         };
         match kind {
             Some(Nt::LetDecl) => Stmt::Let {
-                name: ident(self),
+                name: crate::identity::Name::Spelled(ident(self)),
                 ty: self.ty(inner).map(|t| self.term(t)),
                 value: expr(self),
                 borrow: self.first(inner, Nt::Borrow).is_some(),
@@ -882,7 +1010,7 @@ impl Reader<'_> {
                     .is_some_and(|b| self.first(b, Nt::KwMut).is_some()),
             },
             Some(Nt::VarDecl) => Stmt::Var {
-                name: ident(self),
+                name: crate::identity::Name::Spelled(ident(self)),
                 ty: self.ty(inner).map(|t| self.term(t)),
                 value: expr(self),
                 borrow: self.first(inner, Nt::Amp).is_some(),
@@ -943,7 +1071,7 @@ impl Reader<'_> {
                 });
                 match self.first(inner, Nt::Text) {
                     Some(t) => Stmt::Import {
-                        path: super::unquote_text(self.text(t)),
+                        path: super::unquote_text(&self.text(t)),
                         module: false,
                         names,
                         span,
@@ -974,10 +1102,13 @@ impl Reader<'_> {
                 let mut methods = Vec::new();
                 self.descend(inner, Nt::ExternFn, &mut methods);
                 Stmt::Class(ClassDecl {
+                    parameters: self.generics(inner),
                     vis: Vis::Private,
-                    name: ident(self),
+                    name: crate::identity::Name::Spelled(ident(self)),
                     arity: generics.len(),
-                    param: generics.first().cloned().unwrap_or_default(),
+                    param: crate::identity::Name::Spelled(
+                        generics.first().cloned().unwrap_or_default(),
+                    ),
                     bound: bounds.into_iter().next().flatten(),
                     methods: methods.into_iter().map(|m| self.method(m)).collect(),
                     laws: self.laws(inner),
@@ -989,9 +1120,16 @@ impl Reader<'_> {
                 let mut methods = Vec::new();
                 self.descend(inner, Nt::FnDecl, &mut methods);
                 Stmt::Instance(InstanceDecl {
-                    generics,
-                    bounds,
-                    class: ident(self),
+                    generic_types: self.generics(inner).into_iter().map(|(_, t)| t).collect(),
+                    arguments: self
+                        .all(inner, Nt::Type)
+                        .into_iter()
+                        .skip(1)
+                        .map(|t| self.term(t))
+                        .collect(),
+                    generics: generics.into_iter().map(Name::from).collect(),
+                    bounds: bounds.into_iter().map(|b| b.map(Into::into)).collect(),
+                    class: crate::identity::Name::Spelled(ident(self)),
                     head: self
                         .ty(inner)
                         .map(|t| self.term(t))
@@ -1010,10 +1148,11 @@ impl Reader<'_> {
                 let instances = instances
                     .into_iter()
                     .map(|i| ExternInstance {
-                        class: self
-                            .first(i, Nt::Ident)
-                            .map(|n| self.name_of(n))
-                            .unwrap_or_default(),
+                        class: crate::identity::Name::Spelled(
+                            self.first(i, Nt::Ident)
+                                .map(|n| self.name_of(n))
+                                .unwrap_or_default(),
+                        ),
                         ty: self
                             .ty(i)
                             .map(|t| self.term(t))
@@ -1033,11 +1172,11 @@ impl Reader<'_> {
                         DataDecl {
                             vis: Vis::Private,
                             kind: self.data_kind(t),
-                            name: name.clone(),
+                            name: crate::identity::Name::Spelled(name.clone()),
                             generics: Vec::new(),
                             rows: Vec::new(),
                             constructors: vec![DataConstructor {
-                                name,
+                                name: crate::identity::Name::Spelled(name),
                                 fields: Vec::new(),
                             }],
                             host: true,
@@ -1115,7 +1254,7 @@ impl Reader<'_> {
         let params = self
             .all(decl, Nt::Param)
             .into_iter()
-            .filter_map(|p| self.first(p, Nt::Ident).map(|i| self.name_of(i)))
+            .filter_map(|p| self.first(p, Nt::Ident).map(|i| self.name_of(i).into()))
             .collect();
         // An `extern` function has no block: its body is an `Other` term,
         // never run.
@@ -1178,10 +1317,11 @@ impl Reader<'_> {
         };
         Stmt::Fn(FnDecl {
             vis: Vis::Private,
-            name,
-            generics,
+            name: crate::identity::Name::Spelled(name),
+            generic_types: self.generics(decl).into_iter().map(|(_, ty)| ty).collect(),
+            generics: generics.into_iter().map(Name::from).collect(),
             rows,
-            bounds,
+            bounds: bounds.into_iter().map(|b| b.map(Into::into)).collect(),
             bound_spans: self.generic_spans(decl),
             params,
             borrows,
@@ -1204,10 +1344,17 @@ impl Reader<'_> {
                 self.all(w, Nt::Constraint)
                     .into_iter()
                     .map(|c| Constraint {
-                        class: self
-                            .first(c, Nt::Ident)
-                            .map(|i| self.name_of(i))
-                            .unwrap_or_default(),
+                        arguments: self
+                            .all(c, Nt::Type)
+                            .into_iter()
+                            .skip(1)
+                            .map(|t| self.term(t))
+                            .collect(),
+                        class: crate::identity::Name::Spelled(
+                            self.first(c, Nt::Ident)
+                                .map(|i| self.name_of(i))
+                                .unwrap_or_default(),
+                        ),
                         ty: self
                             .ty(c)
                             .map(|t| self.term(t))
@@ -1268,17 +1415,16 @@ impl Reader<'_> {
                 .map(|i| self.name_of(i))
                 .unwrap_or_default()
         };
-        let (param_names, params): (Vec<String>, Vec<Option<SurfaceTerm>>) = if signature.is_some()
-        {
+        let (param_names, params): (Vec<Name>, Vec<Option<SurfaceTerm>>) = if signature.is_some() {
             written
                 .iter()
-                .map(|&p| (param_name(p), self.ty(p).map(|t| self.term(t))))
+                .map(|&p| (param_name(p).into(), self.ty(p).map(|t| self.term(t))))
                 .unzip()
         } else {
             Default::default()
         };
-        let generics: Vec<String> = if alias.is_some() {
-            written.iter().map(|&p| param_name(p)).collect()
+        let generics: Vec<Name> = if alias.is_some() {
+            written.iter().map(|&p| param_name(p).into()).collect()
         } else {
             self.generics(decl).into_iter().map(|(g, _)| g).collect()
         };
@@ -1296,8 +1442,8 @@ impl Reader<'_> {
             });
         Stmt::Effect(EffectDecl {
             vis: Vis::Private,
-            name,
-            generics,
+            name: crate::identity::Name::Spelled(name),
+            generics: generics.into_iter().map(Name::from).collect(),
             rows,
             params,
             param_names,
@@ -1330,10 +1476,10 @@ impl Reader<'_> {
     /// A form the grammar reads but the language does not have: an effect operation written as
     /// `effect ask: (q: T) -> R` (it is `effect ask(q: T): R`), and an effect row with two row
     /// variables or a set literal that writes an effect twice.
-    fn refused_form(&self, root: NodeId) -> Option<(u32, String)> {
+    fn refused_form(&self, root: NodeId) -> Option<(u32, Message)> {
         for (kind, span) in self.cst.terminals() {
             if kind == tauto_parol::TerminalKind::Ident && span.text(self.source) == "r#_" {
-                return Some((span.start, msg!("surface-raw-underscore").to_string()));
+                return Some((span.start, msg!("surface-raw-underscore")));
             }
         }
         let mut effects = Vec::new();
@@ -1349,10 +1495,7 @@ impl Reader<'_> {
                             && self.text(t).trim_start().starts_with('(')
                     });
             if old {
-                return Some((
-                    self.span(e).start,
-                    msg!("surface-old-effect-operation").to_string(),
-                ));
+                return Some((self.span(e).start, msg!("surface-old-effect-operation")));
             }
         }
         let mut rows = Vec::new();
@@ -1372,7 +1515,7 @@ impl Reader<'_> {
                         if seen.contains(&written) {
                             return Some((
                                 self.span(name).start,
-                                msg!("surface-row-repeats-effect", name = written).to_string(),
+                                msg!("surface-row-repeats-effect", name = written),
                             ));
                         }
                         seen.push(written);
@@ -1380,10 +1523,7 @@ impl Reader<'_> {
                 }
             }
             if variables > 1 {
-                return Some((
-                    self.span(row).start,
-                    msg!("surface-row-variables").to_string(),
-                ));
+                return Some((self.span(row).start, msg!("surface-row-variables")));
             }
         }
         None
@@ -1538,7 +1678,7 @@ impl Reader<'_> {
                     Some(t) => self.term(t),
                     None => self.other(f),
                 };
-                (name, ty)
+                (name.into(), ty)
             })
             .collect()
     }
@@ -1556,10 +1696,13 @@ impl Reader<'_> {
         DataDecl {
             vis: Vis::Private,
             kind: self.data_kind(decl),
-            name: name.clone(),
+            name: crate::identity::Name::Spelled(name.clone()),
             generics: self.generics(decl).into_iter().map(|(g, _)| g).collect(),
             rows: self.generic_rows(decl),
-            constructors: vec![DataConstructor { name, fields }],
+            constructors: vec![DataConstructor {
+                name: crate::identity::Name::Spelled(name),
+                fields,
+            }],
             host: false,
             span: self.span(decl),
         }
@@ -1590,13 +1733,16 @@ impl Reader<'_> {
                             .collect(),
                     },
                 };
-                DataConstructor { name, fields }
+                DataConstructor {
+                    name: crate::identity::Name::Spelled(name),
+                    fields,
+                }
             })
             .collect();
         DataDecl {
             vis: Vis::Private,
             kind: self.data_kind(decl),
-            name,
+            name: crate::identity::Name::Spelled(name),
             generics: self.generics(decl).into_iter().map(|(g, _)| g).collect(),
             rows: self.generic_rows(decl),
             constructors,
@@ -1607,7 +1753,7 @@ impl Reader<'_> {
 
     /// `<A, n: Nat>` or `(A: Type, n: Nat)`: the generics, typed `Type`
     /// unless a kind is written; `Shared` is read as `Type`.
-    fn generics(&self, node: NodeId) -> Vec<(String, SurfaceTerm)> {
+    fn generics(&self, node: NodeId) -> Vec<(Name, SurfaceTerm)> {
         let Some(generics) = self.generic_node(node) else {
             return Vec::new();
         };
@@ -1626,12 +1772,12 @@ impl Reader<'_> {
                     (None, Some(k)) => self.kind_term(&self.term(k)),
                     (None, None) => SurfaceTerm::var("Type", self.span(g)),
                 };
-                (name, kind)
+                (name.into(), kind)
             })
             .collect()
     }
 
-    fn typed_params(&self, node: NodeId) -> Vec<(String, SurfaceTerm)> {
+    fn typed_params(&self, node: NodeId) -> Vec<(Name, SurfaceTerm)> {
         self.all(node, Nt::Param)
             .into_iter()
             .map(|p| {
@@ -1643,7 +1789,7 @@ impl Reader<'_> {
                     Some(t) => self.term(t),
                     None => self.other(p),
                 };
-                (name, ty)
+                (name.into(), ty)
             })
             .collect()
     }
@@ -1737,7 +1883,7 @@ impl Reader<'_> {
                     String::new()
                 };
                 Constructor {
-                    name,
+                    name: crate::identity::Name::Spelled(name),
                     implicit,
                     params,
                     result: match self.ty(c) {
@@ -1753,7 +1899,7 @@ impl Reader<'_> {
         );
         Stmt::Inductive(InductiveDecl {
             vis: Vis::Private,
-            name,
+            name: crate::identity::Name::Spelled(name),
             params: self.typed_params(decl),
             sort,
             constructors,
@@ -1809,11 +1955,11 @@ impl Reader<'_> {
             let span = c.span;
             let class = SurfaceTerm::var(&c.class, span);
             params.push((
-                dictionary_name(&c.class, i),
+                crate::identity::Name::Spelled(dictionary_name(&c.class, i)),
                 SurfaceTerm::new(
                     TermKind::App {
                         function: Box::new(class),
-                        arguments: vec![c.ty],
+                        arguments: std::iter::once(c.ty).chain(c.arguments).collect(),
                     },
                     span,
                 ),
@@ -1828,7 +1974,7 @@ impl Reader<'_> {
                 Some(t) => self.term(t),
                 None => self.other(p),
             };
-            params.push((pname, ty));
+            params.push((crate::identity::Name::Spelled(pname), ty));
         }
         let ty = match self.ty(decl) {
             Some(t) => self.term(t),
@@ -1842,7 +1988,7 @@ impl Reader<'_> {
             .map(|c| self.term(c));
         Stmt::Theorem(TheoremDecl {
             vis: Vis::Private,
-            name,
+            name: crate::identity::Name::Spelled(name),
             implicit,
             params,
             ty,
@@ -1873,7 +2019,13 @@ impl Reader<'_> {
                     .collect()
             })
             .unwrap_or_default();
-        SurfaceTerm::new(TermKind::Perform { effect, args }, span)
+        SurfaceTerm::new(
+            TermKind::Perform {
+                effect: crate::identity::Name::Spelled(effect),
+                args,
+            },
+            span,
+        )
     }
 
     pub(super) fn budget(&self, id: NodeId, span: Span) -> SurfaceTerm {
@@ -1888,7 +2040,7 @@ impl Reader<'_> {
         };
         let mut limits = Vec::new();
         for name in &names {
-            let limit = match self.text(*name) {
+            let limit = match &*self.text(*name) {
                 "steps" => BudgetLimit::Steps,
                 "memory" => BudgetLimit::Memory,
                 _ => return self.other(id),
@@ -1943,12 +2095,17 @@ impl Reader<'_> {
             // `C => ⊢ G from p`: the goal and the proof are under the arm's body.
             let goal = self
                 .first(arm, Nt::ArmBody)
-                .and_then(|b| self.ty(b))
+                .and_then(|b| self.goal_expr(b))
+                .and_then(|g| self.ty(g))
                 .map(|g| self.term(g));
-            let body = self
-                .first(arm, Nt::ArmBody)
-                .map(|e| self.term(e))
-                .unwrap_or_else(|| self.other(arm));
+            // The arm's goal is checked by the arm itself; its body is the `p` under it.
+            let body = match self.first(arm, Nt::ArmBody) {
+                Some(b) => match self.goal_expr(b) {
+                    Some(g) => self.goal_body(g),
+                    None => self.term(b),
+                },
+                None => self.other(arm),
+            };
             arms.push(MatchArm {
                 pattern,
                 guard,
@@ -1958,9 +2115,19 @@ impl Reader<'_> {
         }
         SurfaceTerm::new(
             TermKind::Match {
-                scrutinee: Box::new(self.term(scrutinee)),
-                result: self.ty(id).map(|t| Box::new(self.term(t))),
-                binder: self.first(id, Nt::Ident).map(|i| self.name_of(i)),
+                // `match x: T`: the scrutinee's type, as `(x: T)`.
+                scrutinee: Box::new(match self.ty(id) {
+                    Some(ty) => SurfaceTerm::new(
+                        TermKind::Ascribe {
+                            term: Box::new(self.term(scrutinee)),
+                            ty: Box::new(self.term(ty)),
+                        },
+                        self.span(scrutinee),
+                    ),
+                    None => self.term(scrutinee),
+                }),
+                result: None,
+                binder: self.first(id, Nt::Ident).map(|i| self.name_of(i).into()),
                 arms,
             },
             span,
@@ -1993,7 +2160,7 @@ impl Reader<'_> {
                         .ty(b)
                         .map(|t| self.term(t))
                         .unwrap_or_else(|| self.other(b));
-                    (name, ty)
+                    (name.into(), ty)
                 })
                 .collect();
             let goal = self
@@ -2056,7 +2223,8 @@ impl Reader<'_> {
             };
         }
         if let Some(path) = self.first(*alt, Nt::PathPattern) {
-            let text = self.text(path).trim();
+            let text = self.text(path);
+            let text = text.trim();
             let simple = self.first(path, Nt::PatternArgs).is_none()
                 && self.first(path, Nt::PatternImplicits).is_none()
                 && self.all(path, Nt::Ident).len() == 1
@@ -2065,13 +2233,15 @@ impl Reader<'_> {
                 return if text == "_" {
                     Pattern::Wild
                 } else {
-                    Pattern::Bind(super::unraw(text).to_string())
+                    Pattern::Bind(crate::identity::Name::Spelled(
+                        super::unraw(text).to_string(),
+                    ))
                 };
             }
             let name = self
                 .all(path, Nt::Ident)
                 .iter()
-                .map(|id| self.text(*id).trim())
+                .map(|id| self.text(*id).trim().to_owned())
                 .collect::<Vec<_>>()
                 .join(SEPARATOR);
             // `C<n: m>(…)`: the implicit arguments named, carried first as a
@@ -2099,7 +2269,7 @@ impl Reader<'_> {
                 .unwrap_or_default();
             let Some(args) = self.first(path, Nt::PatternArgs) else {
                 return Pattern::Ctor {
-                    name,
+                    name: crate::identity::Name::Spelled(name),
                     args: implicits,
                 };
             };
@@ -2114,11 +2284,14 @@ impl Reader<'_> {
                     let field = self.text(field).to_string();
                     let p = match self.first(f, Nt::Pattern) {
                         Some(p) => self.pattern(p),
-                        None => Pattern::Bind(field.clone()),
+                        None => Pattern::Bind(crate::identity::Name::Spelled(field.clone())),
                     };
                     fields.push((field, p));
                 }
-                return Pattern::Record { name, fields };
+                return Pattern::Record {
+                    name: crate::identity::Name::Spelled(name),
+                    fields,
+                };
             }
             let mut all = implicits;
             all.extend(
@@ -2126,7 +2299,10 @@ impl Reader<'_> {
                     .into_iter()
                     .map(|p| self.pattern(p)),
             );
-            return Pattern::Ctor { name, args: all };
+            return Pattern::Ctor {
+                name: crate::identity::Name::Spelled(name),
+                args: all,
+            };
         }
         // `#(a, b)`: a product's pattern; `#()` is the constructor `Star` of the
         // unit, written with the prelude's full name, so a file's own `Star` is
@@ -2139,17 +2315,59 @@ impl Reader<'_> {
                 .collect();
             return match items.len() {
                 0 => Pattern::Ctor {
-                    name: prelude_name("Star"),
+                    name: crate::identity::Name::Spelled(prelude_name("Star")),
                     args: Vec::new(),
                 },
                 1 => Pattern::Other("one-element tuple".into()),
                 _ => Pattern::Tuple(items),
             };
         }
+        // `[x, ..rest]`: `Cons(x, rest)`, and `[]` is `Nil`, the patterns the
+        // constructors make, as `[x, ..rest]` the term does.
+        if let Some(list) = self.first(*alt, Nt::ListPattern) {
+            let mut items: Vec<Pattern> = Vec::new();
+            let mut tail = None;
+            let mut next = self.first(list, Nt::ListPatternItems);
+            while let Some(at) = next {
+                next = None;
+                for c in self.cst.children(at) {
+                    match self.nt(c) {
+                        Some(Nt::Pattern) => items.push(self.pattern(c)),
+                        Some(Nt::ListPatternRest) => {
+                            tail = self.first(c, Nt::Ident).map(|i| {
+                                let text = self.text(i);
+                                let text = text.trim();
+                                if text == "_" {
+                                    Pattern::Wild
+                                } else {
+                                    Pattern::Bind(crate::identity::Name::Spelled(
+                                        super::unraw(text).to_string(),
+                                    ))
+                                }
+                            });
+                        }
+                        Some(Nt::ListPatternItems) => next = Some(c),
+                        _ => {}
+                    }
+                }
+            }
+            let nil = Pattern::Ctor {
+                name: crate::identity::Name::Spelled("Nil".into()),
+                args: Vec::new(),
+            };
+            return items
+                .into_iter()
+                .rev()
+                .fold(tail.unwrap_or(nil), |rest, item| Pattern::Ctor {
+                    name: crate::identity::Name::Spelled("Cons".into()),
+                    args: vec![item, rest],
+                });
+        }
         let Some(lit) = self.first(*alt, Nt::LiteralPattern) else {
             return Pattern::Other("PatternAlt".into());
         };
-        let text = self.text(lit).trim();
+        let text = self.text(lit);
+        let text = text.trim();
         if self.first(lit, Nt::True).is_some() {
             Pattern::Bool(true)
         } else if self.first(lit, Nt::False).is_some() {
@@ -2232,14 +2450,14 @@ impl Reader<'_> {
                 .map(|f| {
                     self.all(f, Nt::Ident)
                         .into_iter()
-                        .map(|i| self.name_of(i))
+                        .map(|i| self.name_of(i).into())
                         .collect()
                 })
                 .unwrap_or_default(),
             args: self
                 .first(op, Nt::OperationTypes)
                 .map(|t| {
-                    self.all(t, Nt::AngleType)
+                    self.all(t, Nt::OperationType)
                         .into_iter()
                         .map(|a| self.term(a))
                         .collect()
@@ -2264,10 +2482,10 @@ impl Reader<'_> {
             .map(|e| self.term(e))
             .unwrap_or_else(|| self.other(op));
         Handler::Operation {
-            effect,
+            effect: crate::identity::Name::Spelled(effect),
             instance,
             patterns,
-            cont,
+            cont: cont.map(Name::from),
             guard,
             body,
         }
@@ -2275,7 +2493,7 @@ impl Reader<'_> {
 }
 
 /// The variable under a field path `x.f.g` written before `:=`.
-fn place_root(t: &SurfaceTerm) -> Option<String> {
+fn place_root(t: &SurfaceTerm) -> Option<Name> {
     match &*t.kind {
         TermKind::Var(name) => Some(name.clone()),
         TermKind::Field { base, .. } => place_root(base),
@@ -2350,4 +2568,42 @@ fn prelude_name(n: &str) -> String {
         super::qualify::PRELUDE_MODULE,
         super::qualify::SEPARATOR
     )
+}
+
+/// What a text of the prelude reads as, with spans from 0, read once in a
+/// process: the prelude's name tables each look at the same few texts.
+pub(super) fn prelude_unresolved(source: &str) -> &'static Result<Program, String> {
+    static READ: PreludeMemo = Mutex::new(None);
+    prelude_memo(&READ, source, || parse_program_unresolved_at(source, 0))
+}
+
+/// [`prelude_unresolved`], with modules resolved as [`parse_program_as_written`] does.
+pub(super) fn prelude_as_written(source: &str) -> &'static Result<Program, String> {
+    static READ: PreludeMemo = Mutex::new(None);
+    prelude_memo(&READ, source, || parse_program_as_written(source))
+}
+
+type PreludeMemo = Mutex<Option<HashMap<String, &'static Result<Program, String>>>>;
+
+/// The lock is not held while reading: reading may ask a name table, which
+/// asks for a text here.
+fn prelude_memo(
+    memo: &PreludeMemo,
+    source: &str,
+    read: impl FnOnce() -> Result<Program, String>,
+) -> &'static Result<Program, String> {
+    if let Some(found) = memo
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|texts| texts.get(source))
+    {
+        return found;
+    }
+    let read: &'static _ = Box::leak(Box::new(read()));
+    memo.lock()
+        .unwrap()
+        .get_or_insert_default()
+        .entry(source.to_string())
+        .or_insert(read)
 }

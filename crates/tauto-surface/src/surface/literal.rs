@@ -9,7 +9,7 @@
 //! the syntax tree. Tools that work on the text of a file (the formatter, the editor's colours)
 //! find literals and comments here and nowhere else.
 
-use tauto_message::msg;
+use tauto_message::{Message, msg};
 use tauto_parol::{NodeId, NodeKind, NonTerminalKind as Nt, Span, TerminalKind};
 
 use super::fence::Comment;
@@ -30,7 +30,7 @@ pub struct SyntaxLit {
     pub shifts: Vec<(u32, u32)>,
     /// A line of a block that is less indented than its closing: the message
     /// and where. Reported when the literal is read into a value.
-    pub error: Option<(String, Span)>,
+    pub error: Option<(Message, Span)>,
     pub span: Span,
 }
 
@@ -239,7 +239,7 @@ impl Reader<'_> {
                 indent
             } else {
                 error.get_or_insert((
-                    msg!("surface-block-indent", lead = lead, indent = indent).to_string(),
+                    msg!("surface-block-indent", lead = lead, indent = indent),
                     Span::new(start + offset as u32, start + (offset + bare.len()) as u32),
                 ));
                 lead

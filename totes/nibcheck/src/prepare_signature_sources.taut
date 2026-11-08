@@ -50,11 +50,11 @@ pub theorem signature_append_synthesized_sound(
   derived: ∀ accepted: DiagnosticClean(ck_st(m)). ElaboratedSignatures(env, false, ck_val(m)),
   clean: DiagnosticClean(ck_st(signature_append_synthesized(synthesized, m)))
 ): PreparedSourceSignatures(env, program, ck_val(signature_append_synthesized(synthesized, m))) {
-  match m: PreparedSourceSignatures(
+  ⊢ PreparedSourceSignatures(
     env,
     program,
     ck_val(signature_append_synthesized(synthesized, m))
-  ) {
+  ) from match m {
     mut1(own, next) => PreparedSourceSignatures::Mk(
       own,
       ck_synthesized_schemes(synthesized, next),
@@ -114,11 +114,11 @@ pub theorem signature_prepared_bind<A: Type>(
   program,
   ck_val(frame_bind(A, List(Pair(SurfaceFn, Scheme)), k, m))
 ) {
-  match m: PreparedSourceSignatures(
+  ⊢ PreparedSourceSignatures(
     ck_datas_of(c),
     program,
     ck_val(frame_bind(A, List(Pair(SurfaceFn, Scheme)), k, m))
-  ) {
+  ) from match m {
     mut1(value, next) => Eq::subst(
       (env: Datas) => PreparedSourceSignatures(env, program, ck_val(k(value, next))),
       Eq::congr(frame_read_datas, read),
@@ -261,7 +261,7 @@ pub theorem data_names_normal(
   c: Checker,
   duplicate: Option(SurfaceData)
 ): CkNormalFrame(c, data_names_check(c, duplicate)) {
-  match duplicate: CkNormalFrame(c, data_names_check(c, duplicate)) {
+  ⊢ CkNormalFrame(c, data_names_check(c, duplicate)) from match duplicate {
     None => normal => normal
     Some(source) => normal => normal
   }
@@ -280,7 +280,7 @@ pub theorem decl_names_normal(
   c: Checker,
   duplicate: Option(SurfaceFn)
 ): CkNormalFrame(c, decl_names_check(c, duplicate)) {
-  match duplicate: CkNormalFrame(c, decl_names_check(c, duplicate)) {
+  ⊢ CkNormalFrame(c, decl_names_check(c, duplicate)) from match duplicate {
     None => normal => normal
     Some(source) => normal => normal
   }

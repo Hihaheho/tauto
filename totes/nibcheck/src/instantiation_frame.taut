@@ -19,7 +19,7 @@ pub fn instantiation_bound(
   span: TySpan,
   arg: Option(Kind)
 ): Unit {
-  match arg: Unit {
+  ⊢ Unit from match arg {
     Some(k) => set_to(
       &mut c.ctor_bounds,
       Cons(
@@ -41,7 +41,7 @@ pub theorem instantiation_bound_frame(
   span: TySpan,
   arg: Option(Kind)
 ): CkReadFrame(c, instantiation_bound(c, g, v, name, span, arg)) {
-  match arg: CkReadFrame(c, instantiation_bound(c, g, v, name, span, arg)) { Some(k) => Refl
+  ⊢ CkReadFrame(c, instantiation_bound(c, g, v, name, span, arg)) from match arg { Some(k) => Refl
     None => Refl }
 }
 
@@ -150,7 +150,14 @@ pub theorem instantiation_cons_unf(
   name: Text,
   span: TySpan,
   map: Ordmap(Text, Ty)
-): ck_instantiate_map_ctors(Cons(g, rest), c, ctors, name, span, map) = instantiation_cons(g, rest, c, ctors, name, span, map) { Refl }
+): ck_instantiate_map_ctors(
+  Cons(g, rest),
+  c,
+  ctors,
+  name,
+  span,
+  map
+) = instantiation_cons(g, rest, c, ctors, name, span, map) { Refl }
 
 pub theorem ck_instantiate_map_ctors_frame(
   gs: List(Pair(Text, Kind)),
@@ -160,7 +167,7 @@ pub theorem ck_instantiate_map_ctors_frame(
   span: TySpan,
   map: Ordmap(Text, Ty)
 ): CkReadFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) {
-  match gs: CkReadFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) {
+  ⊢ CkReadFrame(c, ck_instantiate_map_ctors(gs, c, ctors, name, span, map)) from match gs {
     Nil => Refl
     Cons(g, rest) => Eq::subst(
       (z: Mut1(Ordmap(Text, Ty), Checker)) => CkReadFrame(c, z),
@@ -205,7 +212,7 @@ pub fn instantiation_pred(
   span: TySpan,
   found: Option(Ty)
 ): Mut1(Unit, Checker) {
-  match found: Mut1(Unit, Checker) {
+  ⊢ Mut1(Unit, Checker) from match found {
     None => mut1(Star, c)
     Some(t) => ck_rewrap1(ck_pend(c, instantiation_constraint(p), t, what, span))
   }
@@ -218,7 +225,7 @@ pub theorem instantiation_pred_frame(
   span: TySpan,
   found: Option(Ty)
 ): CkReadFrame(c, instantiation_pred(c, p, what, span, found)) {
-  match found: CkReadFrame(c, instantiation_pred(c, p, what, span, found)) {
+  ⊢ CkReadFrame(c, instantiation_pred(c, p, what, span, found)) from match found {
     None => Refl
     Some(t) => frame_rewrap(
       c,
@@ -289,7 +296,13 @@ pub theorem instantiation_preds_cons_unf(
   map: Ordmap(Text, Ty),
   what: Text,
   span: TySpan
-): ck_pend_preds(Cons(p, rest), c, map, what, span) = instantiation_preds_cons(p, rest, c, map, what, span) { Refl }
+): ck_pend_preds(
+  Cons(p, rest),
+  c,
+  map,
+  what,
+  span
+) = instantiation_preds_cons(p, rest, c, map, what, span) { Refl }
 
 pub theorem ck_pend_preds_frame(
   ps: List(Pair(Text, Text)),
@@ -298,7 +311,7 @@ pub theorem ck_pend_preds_frame(
   what: Text,
   span: TySpan
 ): CkReadFrame(c, ck_pend_preds(ps, c, map, what, span)) {
-  match ps: CkReadFrame(c, ck_pend_preds(ps, c, map, what, span)) {
+  ⊢ CkReadFrame(c, ck_pend_preds(ps, c, map, what, span)) from match ps {
     Nil => Refl
     Cons(p, rest) => Eq::subst(
       (z: Mut1(Unit, Checker)) => CkReadFrame(c, z),
@@ -364,14 +377,18 @@ pub theorem instantiation_named_cons_unf(
   rest: List(Text),
   c: Checker,
   map: Ordmap(Text, Ty)
-): ck_instantiate_named_map(Cons(g, rest), c, map) = instantiation_named_cons(g, rest, c, map) { Refl }
+): ck_instantiate_named_map(
+  Cons(g, rest),
+  c,
+  map
+) = instantiation_named_cons(g, rest, c, map) { Refl }
 
 pub theorem ck_instantiate_named_map_frame(
   gs: List(Text),
   c: Checker,
   map: Ordmap(Text, Ty)
 ): CkReadFrame(c, ck_instantiate_named_map(gs, c, map)) {
-  match gs: CkReadFrame(c, ck_instantiate_named_map(gs, c, map)) {
+  ⊢ CkReadFrame(c, ck_instantiate_named_map(gs, c, map)) from match gs {
     Nil => Refl
     Cons(g, rest) => Eq::subst(
       (z: Mut1(Ordmap(Text, Ty), Checker)) => CkReadFrame(c, z),
